@@ -1,0 +1,260 @@
+[
+  {
+    "collectionGroup": "development_sessions",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "owner_id",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "last_activity",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "__name__",
+        "order": "DESCENDING"
+      }
+    ]
+  },
+  {
+    "collectionGroup": "development_facts",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "is_current", "order": "ASCENDING" },
+      { "fieldPath": "owner_id", "order": "ASCENDING" },
+      {
+        "fieldPath": "vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "facts",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "is_current", "order": "ASCENDING" },
+      { "fieldPath": "owner_id", "order": "ASCENDING" },
+      {
+        "fieldPath": "vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "development_facts",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "is_current", "order": "ASCENDING" },
+      {
+        "fieldPath": "vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "facts",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "is_current", "order": "ASCENDING" },
+      {
+        "fieldPath": "vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "is_current", "order": "ASCENDING" },
+      {
+        "fieldPath": "vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "is_current", "order": "ASCENDING" },
+      {
+        "fieldPath": "vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "lineage_id", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "lineage_id", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "__name__", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "__name__", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      {
+        "fieldPath": "vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      {
+        "fieldPath": "vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      {
+        "fieldPath": "metadata_vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      {
+        "fieldPath": "metadata_vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      {
+        "fieldPath": "tags_vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      {
+        "fieldPath": "tags_vector",
+        "vectorConfig": { "dimension": 768, "flat": {} }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "domain", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "ASCENDING" },
+      { "fieldPath": "__name__", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "domain", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "ASCENDING" },
+      { "fieldPath": "__name__", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "DESCENDING" },
+      { "fieldPath": "__name__", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "DESCENDING" },
+      { "fieldPath": "__name__", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "domain", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "DESCENDING" },
+      { "fieldPath": "__name__", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "domain", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "DESCENDING" },
+      { "fieldPath": "__name__", "order": "DESCENDING" }
+    ]
+  }
+]

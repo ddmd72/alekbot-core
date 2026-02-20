@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alek Bot Cabinet</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: { DEFAULT: "#6366f1", hover: "#4f46e5" },
+              warm: { bg: "#f0ece6", card: "#faf8f5", border: "#e8e2d9" }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      body { background-color: #f0ece6; }
+      .card { background: #faf8f5; border: 1px solid #e8e2d9; box-shadow: 0 1px 4px rgba(60,40,20,0.07); }
+      .card-divider { border-color: #ede8e0; }
+      .section-header { background: #f5f1eb; border-bottom: 1px solid #e8e2d9; }
+    </style>
+  </head>
+  <body class="min-h-screen">
+
+    <!-- Top nav bar -->
+    <header class="sticky top-0 z-10" style="background:#2c2420; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
+      <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-xl">🤖</span>
+          <span class="font-semibold text-white">Alek Bot</span>
+        </div>
+        <div class="flex items-center gap-4">
+          <span id="user-email" class="text-sm" style="color:#c8bfb5;"></span>
+          <button
+            onclick="logout()"
+            class="text-sm px-3 py-1.5 rounded-md transition-colors"
+            style="border:1px solid #6b5e54; color:#d4c9be; background:transparent;"
+            onmouseover="this.style.background='#3d3028'" onmouseout="this.style.background='transparent'"
+          >Logout</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Toast notifications -->
+    <div id="toast" class="fixed top-4 right-4 z-50 hidden">
+      <div id="toast-inner" class="px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-xs"></div>
+    </div>
+
+    <!-- Main content -->
+    <main class="max-w-3xl mx-auto px-4 py-8 space-y-6">
+
+      <!-- Account info bar -->
+      <div id="account-bar" class="hidden card rounded-xl px-5 py-3 flex items-center gap-4 text-sm text-gray-600">
+        <span>Account: <span id="account-tier" class="font-medium text-gray-800"></span></span>
+        <span class="text-gray-300">|</span>
+        <span>Role: <span id="account-role" class="font-medium text-gray-800"></span></span>
+      </div>
+
+      <!-- ────────────────────────────────────────────── -->
+      <!-- Platform Connections                          -->
+      <!-- ────────────────────────────────────────────── -->
+      <section class="card rounded-xl overflow-hidden">
+        <div class="section-header px-5 py-4">
+          <h2 class="font-semibold text-gray-800">Connected Platforms</h2>
+          <p class="text-sm text-gray-500 mt-0.5">Link your chat accounts to use Alek Bot</p>
+        </div>
+        <div class="divide-y card-divider" id="platforms-container">
+          <div class="px-5 py-4 text-sm text-gray-400">Loading...</div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────── -->
+      <!-- My Memory (Facts)                             -->
+      <!-- ────────────────────────────────────────────── -->
+      <section class="card rounded-xl overflow-hidden">
+        <!-- Header -->
+        <div class="section-header px-5 py-4 flex items-center justify-between">
+          <div>
+            <h2 class="font-semibold text-gray-800">My Memory</h2>
+            <p class="text-sm text-gray-500 mt-0.5">Facts Alek Bot knows about you</p>
+          </div>
+          <button
+            id="load-facts-btn"
+            onclick="browseInit()"
+            class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors"
+          >Load facts</button>
+        </div>
+
+        <!-- Controls (hidden until loaded) -->
+        <div id="facts-controls" class="hidden px-5 py-3 space-y-3" style="border-bottom:1px solid #e8e2d9;">
+          <!-- Search row -->
+          <div class="flex gap-2">
+            <input
+              id="facts-search"
+              type="text"
+              placeholder="Search your memory..."
+              class="flex-1 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              style="border:1px solid #e0d9d0; background:#f5f1eb;"
+              onkeydown="if(event.key==='Enter') runSearch()"
+            />
+            <button
+              onclick="runSearch()"
+              class="text-sm px-3 py-2 rounded-lg bg-indigo-500 text-white hover:bg-indigo-600 transition-colors whitespace-nowrap"
+            >🔍 Search</button>
+            <button
+              id="back-to-browse-btn"
+              onclick="backToBrowse()"
+              class="hidden text-sm px-3 py-2 rounded-lg transition-colors whitespace-nowrap"
+              style="border:1px solid #d4cdc4; color:#6b7280; background:transparent;"
+            >← Browse</button>
+          </div>
+          <!-- Domain chips (browse mode only) -->
+          <div id="domain-chips" class="flex flex-wrap gap-2"></div>
+        </div>
+
+        <!-- Mode indicator -->
+        <div id="facts-mode-bar" class="hidden px-5 py-2 text-xs" style="background:#f5f1eb; border-bottom:1px solid #e8e2d9; color:#9ca3af;"></div>
+
+        <!-- Scrollable facts list -->
+        <div id="facts-container" class="divide-y overflow-y-auto" style="border-color:#ede8e0; max-height:520px;">
+          <div class="px-5 py-6 text-sm text-gray-400 text-center">Click "Load facts" to view your memory.</div>
+        </div>
+
+        <!-- Footer: count + pagination -->
+        <div id="facts-footer" class="hidden px-5 py-3 flex items-center justify-between" style="border-top:1px solid #e8e2d9;">
+          <span id="facts-count" class="text-xs text-gray-400"></span>
+          <div id="facts-pagination" class="flex items-center gap-2"></div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────── -->
+      <!-- Team Invites (owner only)                     -->
+      <!-- ────────────────────────────────────────────── -->
+      <section id="invites-section" class="hidden card rounded-xl overflow-hidden">
+        <div class="section-header px-5 py-4 flex items-center justify-between">
+          <div>
+            <h2 class="font-semibold text-gray-800">Team Invites</h2>
+            <p class="text-sm text-gray-500 mt-0.5">Generate invite links for colleagues</p>
+          </div>
+          <button
+            onclick="generateTeamInvite()"
+            class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors"
+          >Generate link</button>
+        </div>
+
+        <!-- Generated code display -->
+        <div id="generated-code" class="hidden px-5 py-4" style="border-bottom:1px solid #e8e2d9;"></div>
+
+        <!-- Codes table -->
+        <div class="px-5 py-4">
+          <button
+            onclick="loadCodes()"
+            class="text-sm text-indigo-500 hover:text-indigo-700 font-medium"
+          >↻ Refresh</button>
+          <div id="codes-list" class="mt-3"></div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ─── Modals ──────────────────────────────────────────── -->
+    <div id="modal-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center" style="background:rgba(44,36,32,0.5);" onclick="closeModal(event)">
+
+      <!-- Mark as invalid -->
+      <div id="modal-invalid" class="hidden card rounded-xl w-full max-w-md mx-4 p-6" onclick="event.stopPropagation()">
+        <h3 class="font-semibold text-gray-800 mb-1">Remove this fact</h3>
+        <p class="text-xs text-gray-500 mb-4">This will immediately remove the fact from your memory. Alek will no longer use it in conversations.</p>
+        <div class="mb-5">
+          <label class="text-xs font-medium text-gray-400 uppercase tracking-wide">Fact to remove</label>
+          <div id="modal-invalid-fact" class="mt-1.5 text-sm text-gray-600 px-3 py-2.5 rounded-lg leading-relaxed" style="background:#f0ece6; border:1px solid #e8e2d9;"></div>
+        </div>
+        <div class="flex gap-2 justify-end">
+          <button onclick="closeModal()" class="text-sm px-3 py-1.5 rounded-md transition-colors" style="border:1px solid #d4cdc4; color:#6b7280;" onmouseover="this.style.background='#f0ece6'" onmouseout="this.style.background='transparent'">Cancel</button>
+          <button id="modal-invalid-btn" onclick="invalidateFactDirect()" class="text-sm px-3 py-1.5 rounded-md bg-red-500 text-white hover:bg-red-600 transition-colors">Remove</button>
+        </div>
+      </div>
+
+      <!-- Correct this fact -->
+      <div id="modal-correct" class="hidden card rounded-xl w-full max-w-md mx-4 p-6" onclick="event.stopPropagation()">
+        <h3 class="font-semibold text-gray-800 mb-1">Correct this fact</h3>
+        <p class="text-xs text-gray-500 mb-4">This copies a message to paste into your chat with Alek. Alek will update the fact — the old version will remain visible in the cabinet until the next memory sync.</p>
+        <div class="mb-3">
+          <label class="text-xs font-medium text-gray-400 uppercase tracking-wide">Current (incorrect)</label>
+          <div id="modal-correct-old" class="mt-1.5 text-sm text-gray-400 px-3 py-2.5 rounded-lg leading-relaxed" style="background:#f0ece6; border:1px solid #e8e2d9;"></div>
+        </div>
+        <div class="mb-5">
+          <label class="text-xs font-medium text-gray-400 uppercase tracking-wide">Correct version</label>
+          <textarea
+            id="modal-correct-new"
+            rows="3"
+            class="mt-1.5 w-full text-sm px-3 py-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
+            style="border:1px solid #d4cdc4; background:#faf8f5;"
+            placeholder="Type the correct version..."
+            onkeydown="if(event.key==='Enter' && event.metaKey) copyCorrectMessage()"
+          ></textarea>
+          <p class="text-xs text-gray-400 mt-1">⌘↵ to copy</p>
+        </div>
+        <div class="flex gap-2 justify-end">
+          <button onclick="closeModal()" class="text-sm px-3 py-1.5 rounded-md transition-colors" style="border:1px solid #d4cdc4; color:#6b7280;" onmouseover="this.style.background='#f0ece6'" onmouseout="this.style.background='transparent'">Cancel</button>
+          <button onclick="copyCorrectMessage()" class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">Copy message</button>
+        </div>
+      </div>
+
+    </div>
+
+    <script>
+      const API = "";
+      let currentUser = null;
+      let allFacts = [];
+
+      // ─── Domain badge colors ─────────────────────────────────
+      const DOMAIN_COLORS = {
+        health:       "bg-red-100 text-red-700",
+        biographical: "bg-blue-100 text-blue-700",
+        possession:   "bg-amber-100 text-amber-700",
+        location:     "bg-green-100 text-green-700",
+        relationship: "bg-purple-100 text-purple-700",
+        financial:    "bg-teal-100 text-teal-700",
+        professional: "bg-sky-100 text-sky-700",
+      };
+      function domainColor(domain) {
+        return DOMAIN_COLORS[domain] || "bg-gray-100 text-gray-600";
+      }
+      function domainLabel(domain) {
+        return domain ? domain.replace(/_/g, " ") : "—";
+      }
+
+      // ─── Init ────────────────────────────────────────────────
+      async function init() {
+        try {
+          const res = await fetch(`${API}/auth/me`, { credentials: "include" });
+          if (!res.ok) throw new Error("Not authenticated");
+
+          currentUser = await res.json();
+
+          document.getElementById("user-email").textContent = currentUser.user.email;
+          document.getElementById("account-tier").textContent = currentUser.account.tier;
+          document.getElementById("account-role").textContent = currentUser.account.role;
+          document.getElementById("account-bar").classList.remove("hidden");
+
+          // Show invites section only for owner
+          if (currentUser.account.role === "owner") {
+            document.getElementById("invites-section").classList.remove("hidden");
+            loadCodes();
+          }
+
+          // Joined via invite?
+          if (new URLSearchParams(window.location.search).get("joined") === "true") {
+            showToast("✅ Successfully joined the team!", "success");
+          }
+
+          loadPlatforms();
+        } catch (e) {
+          showToast("Please log in first", "error");
+          setTimeout(() => (window.location.href = "/auth/login"), 2000);
+        }
+      }
+
+      // ─── Platform cards ──────────────────────────────────────
+      async function loadPlatforms() {
+        try {
+          const res = await fetch(`${API}/api/user/platforms`, { credentials: "include" });
+          const data = res.ok ? await res.json() : { platforms: {} };
+          renderPlatforms(data.platforms || {});
+        } catch {
+          renderPlatforms({});
+        }
+      }
+
+      function renderPlatforms(platforms) {
+        const container = document.getElementById("platforms-container");
+        container.innerHTML = [
+          platformCard("slack",    platforms.slack,    "Slack",    "U0AC..."),
+          platformCard("telegram", platforms.telegram, "Telegram", "123456789"),
+        ].join("");
+      }
+
+      function platformCard(id, linkedId, label, placeholder) {
+        const linked = !!linkedId;
+        return `
+          <div class="px-5 py-4">
+            <div class="flex items-center justify-between gap-4">
+              <div class="flex items-center gap-3 min-w-0">
+                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 ${linked ? "bg-green-400" : "bg-gray-300"}"></span>
+                <div class="min-w-0">
+                  <div class="text-sm font-medium text-gray-800">${label}</div>
+                  ${linked
+                    ? `<div class="text-xs text-green-600 font-mono mt-0.5">${linkedId}</div>`
+                    : `<div class="text-xs text-gray-400 mt-0.5">not connected</div>`
+                  }
+                </div>
+              </div>
+              <div class="flex items-center gap-2 flex-shrink-0">
+                ${linked
+                  ? `<button
+                       onclick="unlinkPlatform('${id}')"
+                       class="text-xs px-2.5 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50 transition-colors"
+                     >Unlink</button>`
+                  : `<input
+                       id="input-${id}"
+                       type="text"
+                       placeholder="${placeholder}"
+                       class="text-xs rounded px-2.5 py-1.5 w-36 focus:outline-none focus:ring-2 focus:ring-indigo-300" style="border:1px solid #d4cdc4; background:#f5f1eb;"
+                     />
+                     <button
+                       onclick="linkPlatform('${id}', '${label}')"
+                       class="text-xs px-2.5 py-1.5 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors whitespace-nowrap"
+                     >Link</button>`
+                }
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      async function linkPlatform(id, label) {
+        const input = document.getElementById(`input-${id}`);
+        const value = input.value.trim();
+        if (!value) { showToast("Enter your " + label + " ID", "error"); return; }
+
+        if (id === "slack" && !value.match(/^U[A-Z0-9]+$/i)) {
+          showToast("Slack ID must start with U (e.g. U0AC0NL3L8K)", "error"); return;
+        }
+        if (id === "telegram" && !value.match(/^\d+$/)) {
+          showToast("Telegram ID must be numeric", "error"); return;
+        }
+
+        try {
+          const isTelegram = id === "telegram";
+          const endpoint = isTelegram ? "/api/user/link-telegram" : "/api/user/link-platform";
+          const body = isTelegram
+            ? { telegram_user_id: value }
+            : { platform: id, platform_user_id: value };
+
+          const res = await fetch(`${API}${endpoint}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify(body)
+          });
+
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || "Link failed");
+          }
+
+          showToast(`✅ ${label} linked`, "success");
+          loadPlatforms();
+        } catch (e) {
+          showToast(e.message, "error");
+        }
+      }
+
+      async function unlinkPlatform(platform) {
+        if (!confirm(`Unlink ${platform}?`)) return;
+        try {
+          const res = await fetch(`${API}/api/user/link-platform?platform=${platform}`, {
+            method: "DELETE",
+            credentials: "include"
+          });
+          if (!res.ok) throw new Error("Unlink failed");
+          showToast(`${platform} unlinked`, "success");
+          loadPlatforms();
+        } catch (e) {
+          showToast(e.message, "error");
+        }
+      }
+
+      // ─── Facts: state ────────────────────────────────────────
+      let factsMode = "idle";   // idle | browse | search
+      let browseCursor = null;
+      let browseDomain = "all";
+      let browseKnownDomains = [];
+
+      // ─── Browse mode ─────────────────────────────────────────
+      async function browseInit() {
+        browseCursor = null;
+        browseDomain = "all";
+        browseKnownDomains = [];
+        await browseLoad(true);
+      }
+
+      async function browseLoad(isFirst = false) {
+        const btn = document.getElementById("load-facts-btn");
+        btn.textContent = "Loading...";
+        btn.disabled = true;
+
+        try {
+          const domainParam = browseDomain !== "all" ? `&domain=${encodeURIComponent(browseDomain)}` : "";
+          const cursorParam = browseCursor ? `&cursor=${encodeURIComponent(browseCursor)}` : "";
+          const res = await fetch(`${API}/api/user/facts/browse?limit=100${domainParam}${cursorParam}`, { credentials: "include" });
+          if (!res.ok) throw new Error("Failed to load facts");
+          const data = await res.json();
+
+          if (isFirst) {
+            factsMode = "browse";
+            document.getElementById("facts-controls").classList.remove("hidden");
+            document.getElementById("facts-footer").classList.remove("hidden");
+            document.getElementById("back-to-browse-btn").classList.add("hidden");
+            document.getElementById("domain-chips").classList.remove("hidden");
+            document.getElementById("facts-mode-bar").classList.add("hidden");
+          }
+
+          allFacts = data.facts || [];
+          browseCursor = data.next_cursor || null;
+
+          // Track domains seen so far
+          allFacts.forEach(f => { if (f.domain && !browseKnownDomains.includes(f.domain)) browseKnownDomains.push(f.domain); });
+
+          renderFacts(allFacts, data.next_cursor);
+          renderDomainChips(browseKnownDomains.sort());
+          btn.textContent = "↻ Reload";
+        } catch (e) {
+          showToast("Error loading facts: " + e.message, "error");
+          btn.textContent = "Load facts";
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      async function browseNextPage() {
+        if (!browseCursor) return;
+        await browseLoad(false);
+      }
+
+      function setDomainFilter(domain) {
+        browseDomain = domain;
+        browseCursor = null;
+        browseLoad(false);
+      }
+
+      function backToBrowse() {
+        document.getElementById("facts-search").value = "";
+        document.getElementById("domain-chips").classList.remove("hidden");
+        document.getElementById("back-to-browse-btn").classList.add("hidden");
+        document.getElementById("facts-mode-bar").classList.add("hidden");
+        browseInit();
+      }
+
+      // ─── Search mode ─────────────────────────────────────────
+      async function runSearch() {
+        const query = document.getElementById("facts-search").value.trim();
+        if (!query) { backToBrowse(); return; }
+
+        const btn = document.getElementById("load-facts-btn");
+        btn.textContent = "Searching...";
+        btn.disabled = true;
+
+        try {
+          const res = await fetch(`${API}/api/user/facts/search`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ query })
+          });
+          if (!res.ok) throw new Error("Search failed");
+          const data = await res.json();
+
+          factsMode = "search";
+          allFacts = data.facts || [];
+          document.getElementById("domain-chips").classList.add("hidden");
+          document.getElementById("back-to-browse-btn").classList.remove("hidden");
+          const modeBar = document.getElementById("facts-mode-bar");
+          modeBar.classList.remove("hidden");
+          modeBar.textContent = `Semantic search: "${query}" — top ${allFacts.length} results`;
+          renderFacts(allFacts, null);
+          document.getElementById("facts-controls").classList.remove("hidden");
+          document.getElementById("facts-footer").classList.remove("hidden");
+        } catch (e) {
+          showToast("Search error: " + e.message, "error");
+        } finally {
+          btn.textContent = factsMode === "browse" ? "↻ Reload" : "Load facts";
+          btn.disabled = false;
+        }
+      }
+
+      // ─── Rendering ───────────────────────────────────────────
+      function renderFacts(facts, nextCursor) {
+        const container = document.getElementById("facts-container");
+        const countEl = document.getElementById("facts-count");
+        const paginationEl = document.getElementById("facts-pagination");
+
+        if (facts.length === 0) {
+          container.innerHTML = `<div class="px-5 py-6 text-sm text-gray-400 text-center">No facts found</div>`;
+          countEl.textContent = "0 facts";
+          paginationEl.innerHTML = "";
+          return;
+        }
+
+        container.innerHTML = facts.map((f, i) => {
+          const date = f.created_at
+            ? new Date(f.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+            : "";
+          const badge = f.domain
+            ? `<span class="inline-block text-xs px-2 py-0.5 rounded-full font-medium ${domainColor(f.domain)}">${domainLabel(f.domain)}</span>`
+            : "";
+          return `
+            <div class="px-5 py-3 flex items-start gap-3 transition-colors" style="background:transparent;" onmouseover="this.style.background='#ede8df'" onmouseout="this.style.background='transparent'">
+              <div class="flex-1 min-w-0">
+                <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(f.text)}</p>
+                <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+                  ${badge}
+                  ${date ? `<span class="text-xs text-gray-400">${date}</span>` : ""}
+                </div>
+              </div>
+              <div class="flex-shrink-0 flex gap-1 pt-0.5">
+                <button
+                  data-idx="${i}"
+                  onclick="openCorrectModal(allFacts[this.dataset.idx].text)"
+                  title="Correct this fact"
+                  class="text-xs px-2 py-1 rounded transition-colors"
+                  style="color:#b0a89e; border:1px solid #e8e2d9; background:transparent;"
+                  onmouseover="this.style.borderColor='#6366f1'; this.style.color='#6366f1';"
+                  onmouseout="this.style.borderColor='#e8e2d9'; this.style.color='#b0a89e';"
+                >Edit</button>
+                <button
+                  data-idx="${i}"
+                  onclick="openInvalidModal(allFacts[this.dataset.idx].id, allFacts[this.dataset.idx].text)"
+                  title="Mark as invalid"
+                  class="text-xs px-2 py-1 rounded transition-colors"
+                  style="color:#b0a89e; border:1px solid #e8e2d9; background:transparent;"
+                  onmouseover="this.style.borderColor='#ef4444'; this.style.color='#ef4444';"
+                  onmouseout="this.style.borderColor='#e8e2d9'; this.style.color='#b0a89e';"
+                >Invalid</button>
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        countEl.textContent = `${facts.length} fact${facts.length !== 1 ? "s" : ""}${nextCursor ? " (more available)" : ""}`;
+
+        paginationEl.innerHTML = nextCursor
+          ? `<button onclick="browseNextPage()" class="text-xs px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">Load more</button>`
+          : "";
+      }
+
+      function renderDomainChips(domains) {
+        const container = document.getElementById("domain-chips");
+        const chips = [{ label: "All", value: "all" }, ...domains.map(d => ({ label: domainLabel(d), value: d }))];
+        container.innerHTML = chips.map(chip => `
+          <button
+            onclick="setDomainFilter('${chip.value}')"
+            id="chip-${chip.value}"
+            class="text-xs px-2.5 py-1 rounded-full border transition-colors ${chip.value === browseDomain ? "bg-indigo-500 text-white border-indigo-500" : "text-gray-600 hover:border-indigo-300"}" style="${chip.value === browseDomain ? "" : "border-color:#d4cdc4;"}"
+          >${chip.label}</button>
+        `).join("");
+      }
+
+      // ─── Fact action modals ──────────────────────────────────
+      let _modalFactText = "";
+      let _modalFactId = "";
+
+      function openInvalidModal(factId, factText) {
+        _modalFactId = factId;
+        _modalFactText = factText;
+        document.getElementById("modal-invalid-fact").textContent = factText;
+        document.getElementById("modal-invalid-btn").textContent = "Remove";
+        document.getElementById("modal-invalid-btn").disabled = false;
+        document.getElementById("modal-invalid").classList.remove("hidden");
+        document.getElementById("modal-correct").classList.add("hidden");
+        document.getElementById("modal-overlay").classList.remove("hidden");
+      }
+
+      function openCorrectModal(factText) {
+        _modalFactText = factText;
+        document.getElementById("modal-correct-old").textContent = factText;
+        document.getElementById("modal-correct-new").value = "";
+        document.getElementById("modal-correct").classList.remove("hidden");
+        document.getElementById("modal-invalid").classList.add("hidden");
+        document.getElementById("modal-overlay").classList.remove("hidden");
+        setTimeout(() => document.getElementById("modal-correct-new").focus(), 50);
+      }
+
+      function closeModal(e) {
+        if (e && e.target !== document.getElementById("modal-overlay")) return;
+        document.getElementById("modal-overlay").classList.add("hidden");
+      }
+
+      document.addEventListener("keydown", e => {
+        if (e.key === "Escape") document.getElementById("modal-overlay").classList.add("hidden");
+      });
+
+      async function invalidateFactDirect() {
+        const btn = document.getElementById("modal-invalid-btn");
+        btn.textContent = "Removing...";
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/api/user/facts/${_modalFactId}/invalidate`, {
+            method: "POST",
+            credentials: "include"
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || "Failed to remove fact");
+          }
+          document.getElementById("modal-overlay").classList.add("hidden");
+          // Remove fact from local list and re-render immediately
+          allFacts = allFacts.filter(f => f.id !== _modalFactId);
+          renderFacts(allFacts, browseCursor);
+          showToast("✅ Fact removed from your memory", "success");
+        } catch (e) {
+          btn.textContent = "Remove";
+          btn.disabled = false;
+          showToast(e.message, "error");
+        }
+      }
+
+      function copyCorrectMessage() {
+        const newText = document.getElementById("modal-correct-new").value.trim();
+        if (!newText) { showToast("Please enter the correct version", "error"); return; }
+        const msg = `I found this fact in my memory database and it needs correction.\nCurrent (incorrect): "${_modalFactText}"\nCorrect version: "${newText}"\nPlease update it accordingly.`;
+        navigator.clipboard.writeText(msg).then(() => {
+          document.getElementById("modal-overlay").classList.add("hidden");
+          showToast("✅ Message copied — paste it into your chat with Alek", "success");
+        });
+      }
+
+      // ─── Team Invites ────────────────────────────────────────
+      async function generateTeamInvite() {
+        const email = prompt("Enter email address to invite:");
+        if (!email || !email.trim()) return;
+
+        try {
+          const res = await fetch(`${API}/api/user/invite-codes`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ type: "team_invite", email: email.trim(), role: "MEMBER" })
+          });
+
+          if (!res.ok) {
+            const err = await res.json();
+            if (err.error && err.error.includes("not authorized")) {
+              showToast("❌ Email not on whitelist. Contact admin.", "error");
+            } else {
+              throw new Error(err.error || "Failed to generate invite");
+            }
+            return;
+          }
+
+          const data = await res.json();
+          const deepLink = `${window.location.origin}/join?code=${data.code}`;
+          const expiry = new Date(data.expires_at).toLocaleString();
+
+          const codeEl = document.getElementById("generated-code");
+          codeEl.classList.remove("hidden");
+          codeEl.innerHTML = `
+            <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+              <div class="font-mono font-bold text-indigo-700 text-lg mb-1">${data.code}</div>
+              <div class="text-xs text-gray-500 mb-3">Valid until: ${expiry}</div>
+              <div class="flex items-center gap-2">
+                <input type="text" id="deep-link" value="${deepLink}" readonly
+                  class="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 bg-white font-mono" />
+                <button onclick="copyDeepLink()"
+                  class="text-xs px-2.5 py-1.5 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors whitespace-nowrap">
+                  Copy link
+                </button>
+              </div>
+            </div>
+          `;
+          loadCodes();
+        } catch (e) {
+          showToast(e.message, "error");
+        }
+      }
+
+      async function loadCodes() {
+        try {
+          const res = await fetch(`${API}/api/user/invite-codes`, { credentials: "include" });
+          if (!res.ok) throw new Error("Failed to load codes");
+          const data = await res.json();
+          const list = document.getElementById("codes-list");
+
+          if (!data.invites.length) {
+            list.innerHTML = `<p class="text-sm text-gray-400">No codes generated yet</p>`;
+            return;
+          }
+
+          list.innerHTML = `
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-xs text-gray-400 uppercase">
+                  <th class="text-left pb-2 font-medium">Code</th>
+                  <th class="text-left pb-2 font-medium">Status</th>
+                  <th class="text-left pb-2 font-medium">Created</th>
+                  <th class="text-left pb-2 font-medium">Used</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-50">
+                ${data.invites.map(c => `
+                  <tr class="hover:bg-gray-50">
+                    <td class="py-2 font-mono text-xs text-gray-700">${c.code}</td>
+                    <td class="py-2">
+                      <span class="text-xs px-2 py-0.5 rounded-full font-medium ${c.is_valid ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}">
+                        ${c.is_valid ? "Active" : "Used/Expired"}
+                      </span>
+                    </td>
+                    <td class="py-2 text-xs text-gray-500">${new Date(c.created_at).toLocaleDateString()}</td>
+                    <td class="py-2 text-xs text-gray-500">${c.used_at ? new Date(c.used_at).toLocaleDateString() : "—"}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          `;
+        } catch (e) {
+          showToast("Error loading codes: " + e.message, "error");
+        }
+      }
+
+      function copyDeepLink() {
+        const input = document.getElementById("deep-link");
+        navigator.clipboard.writeText(input.value);
+        showToast("✅ Link copied!", "success");
+      }
+
+      // ─── Auth ────────────────────────────────────────────────
+      async function logout() {
+        await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
+        window.location.href = "/auth/login";
+      }
+
+      // ─── Toast ───────────────────────────────────────────────
+      let _toastTimer = null;
+      function showToast(msg, type) {
+        const el = document.getElementById("toast");
+        const inner = document.getElementById("toast-inner");
+        inner.textContent = msg;
+        inner.className = `px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-xs ${
+          type === "success" ? "bg-green-600 text-white" : "bg-red-600 text-white"
+        }`;
+        el.classList.remove("hidden");
+        clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => el.classList.add("hidden"), 4000);
+      }
+
+      // ─── Utils ───────────────────────────────────────────────
+      function escapeHtml(str) {
+        return (str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      }
+
+      init();
+    </script>
+  </body>
+</html>

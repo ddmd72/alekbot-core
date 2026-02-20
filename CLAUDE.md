@@ -1,0 +1,146 @@
+# Alek-Core
+
+Personal exocortex — a knowledge management system powered by LLMs.
+Solo developer. Production on GCP (Cloud Run + Firestore).
+
+## Commands
+
+```bash
+make check             # Quick check: unit tests + domain purity
+make test              # All tests
+make test-unit         # Unit tests
+make test-integration  # Integration tests
+make test-e2e-all      # E2E all agents
+make dev               # Local run (Socket Mode)
+make dev-emulator      # With Firestore emulator
+make deploy-dev        # Deploy to dev
+make deploy            # Deploy to prod
+```
+
+Linter and formatter not yet configured (Milestone 4).
+
+## What and Why
+
+Exocortex — AI extension of memory and thinking via Slack/Telegram.
+Not a chatbot. A system that remembers, thinks in the background, and responds to the point.
+
+**Cycle:** user speaks → bot responds using accumulated knowledge →
+background process extracts new facts from the conversation → bot gets smarter.
+
+## Key Mechanisms
+
+**Multi-agent network** — not one LLM for everything, but specialists:
+- Router (Gemini Flash) — classifies requests, performs semantic memory search,
+  passes enriched context downstream
+- Quick (Flash) — simple answers, <2s, 70% of requests, 10x cheaper
+- Smart (Claude Opus) — complex tasks, tool orchestration
+- WebSearch (Flash + Grounding) — separate agent, because Gemini API cannot
+  combine Google Search grounding and function calling in one request
+- Memory (no LLM) — pure vector search, free
+- Consolidation (Opus) — background "memory consolidation"
+
+**Consolidation** — analogous to long-term memory formation:
+- Sliding window (100-200 messages) fills up → batch goes to queue
+- Cloud Tasks runs ConsolidationAgent in the background (non-blocking for user)
+- "Life Chronicler" extracts facts and principles from raw messages
+- Deduplication (threshold 0.96, number-aware) — a duplicate is better than a loss
+- 3 vectors per fact (text, tags, metadata) + SCD2 versioning
+- Biographical cache updated → next conversation already knows the new facts
+
+**Prompt Builder (Token System)** — not hardcoded prompts, but assembly:
+- Tokens — verified fragments from a library (humor, style, voice)
+- Blueprints — templates with {{TOKENIZED}} and [[RUNTIME]] placeholders
+- 4 priority levels: USER > ACCOUNT > AGENT > SYSTEM
+- Static part is cached (24h TTL, 5ms instead of 110ms)
+- Dynamic part (biographical context, history) — injected per request
+
+**Memory search** — 6 parallel queries across different vectors,
+ranked via Reciprocal Rank Fusion (RRF). One search per request,
+result reused by all agents.
+
+## Economics
+
+- 70% of requests → Flash (cheap), 30% → Opus (expensive) = -62% LLM costs
+- Budget ~$100/month, 1 vCPU Cloud Run — async is mandatory
+- Solo-dev — maintainability beats architectural elegance
+
+## Architecture
+
+Hexagonal Architecture (Ports & Adapters).
+
+```
+src/
+  domain/       — Models, enums, value objects. ZERO external dependencies.
+  ports/        — ABC interfaces. Import only domain/ and stdlib.
+  adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, Slack, Telegram).
+  services/     — Business logic. Receive ports via DI.
+  agents/       — Multi-agent system. core/ — agents, infrastructure/ — billing/logging.
+  handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler).
+  infrastructure/ — AgentCoordinator, queues.
+  composition/  — ServiceContainer: creates shared services (LLM, repos, session_store).
+  config/       — EnvironmentConfig, Settings, AuthConfig.
+  utils/        — Logger, telemetry.
+main.py         — Bootstrap: creates ServiceContainer + UserAgentFactory, graceful shutdown.
+```
+
+## Import Rules (CRITICAL)
+
+```
+domain/   → ONLY stdlib, pydantic. Never adapters/, services/, config/.
+ports/    → domain/ + stdlib + ABC.
+adapters/ → domain/, ports/, config/.
+services/ → domain/, ports/. Do NOT import concrete adapters.
+agents/   → Inherit BaseAgent. Receive dependencies via constructor.
+```
+
+## Code Conventions
+
+- **All I/O — async/await.** No synchronous calls to DB or LLM.
+- **Pydantic BaseModel** for domain entities. **@dataclass** for value objects (MessageContext, RoutingMetadata).
+- **File naming:** `{entity}_service.py`, `{provider}_adapter.py`, `firestore_{entity}_repo.py`, `{purpose}_agent.py`.
+- **Class naming:** `GeminiAdapter(LLMService)`, `FirestoreFactRepository(FactRepository)`, `QuickResponseAgent(BaseAgent)`.
+- **Shared state** protect with `asyncio.Lock`. No exceptions.
+- **Errors** log before re-raise. Do not silently swallow exceptions.
+- **Do not use print()** — only `from src.utils.logger import logger`.
+
+## Patterns
+
+- **Port is justified** when: 2+ implementations, testable substitution, system boundary.
+- **Port is not needed** for internal services with a single implementation.
+- **PerformanceTier** (ECO/BALANCED/PERFORMANCE) — abstraction between agents and concrete models.
+- **ProviderRegistry** — runtime LLM provider selection (gemini/claude/grok).
+- **CircuitBreaker** — in BaseAgent, protects against cascading failures.
+- **SCD2 versioning** — FactEntity uses valid_from/valid_to/is_current.
+- **Multi-tenant** — always pass account_id. Collections with env prefix.
+
+## Tests
+
+- pytest + pytest-asyncio (asyncio_mode=auto).
+- Fixtures in `tests/conftest.py`: `mock_env_config`, `mock_llm_service`, `mock_repository`.
+- Mocks via `AsyncMock(spec=PortClass)`.
+- Markers: `@pytest.mark.requirement("REQ-XXX")`, `@pytest.mark.performance`.
+- Structure: `tests/unit/`, `tests/integration/`, `tests/performance/`.
+
+## Project Documentation
+
+Detailed docs in `docs/` (arc42). Read as needed:
+- Architecture: `docs/04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md`
+- Structure: `docs/04_solution_strategy/current_implementation/STRUCTURE.md`
+- RFCs: `docs/10_rfcs/`
+- Roadmap: `docs/12_risks/IMPLEMENTATION_ROADMAP.md`
+
+## Language
+
+- Respond to the user in whatever language they write in.
+- All changes to documents (docs/, CLAUDE.md, code comments, docstrings, log messages) must be written in English.
+
+## What NOT to Do
+
+- Do not add DI containers (dependency-injector etc.) — manual DI in main.py.
+- Do not create ports for cleanliness — only when there's a real need.
+- Do not commit .env, *-admin-key.json, service-account*.json.
+- Do not touch `archive/` — this is deprecated legacy code.
+- All PII or sensitive data exports (Firestore queries, user facts, analysis results) MUST be
+  saved only to `scripts/memory/` (gitignored). Never save them to tracked directories.
+- Both dev and prod Firestore use the `us-production` named database. The `(default)` database
+  is not used. Always use `database="us-production"` (or rely on `FIRESTORE_DATABASE` env var).

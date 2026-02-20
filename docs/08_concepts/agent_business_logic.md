@@ -1,0 +1,580 @@
+# Multi-Agent System: Business Logic
+
+**Status:** 📘 Concept Documentation
+**Created:** 21.01.2026
+**Updated:** 30.01.2026 (v6.0 revisions)
+**Version:** 2.0
+
+## 📖 HowTo: Using This Document
+
+### Purpose
+Describes the business logic of the multi-agent system: how agents work together to process requests, learn, and synthesize knowledge.
+
+### When to Read
+- **For AI Agents:** When understanding agent workflows or delegation patterns.
+- **For Developers:** When designing new agents or debugging agent interactions.
+
+### When to Update
+This document MUST be updated when:
+- [ ] New agents are added to the system.
+- [ ] Agent communication patterns change.
+- [ ] Business rules for agent selection evolve.
+
+### Cross-References
+- **Multi-Agent System:** [../05_building_blocks/multi_agent_system/README.md](../05_building_blocks/multi_agent_system/README.md)
+- **Hybrid Router:** [../05_building_blocks/hybrid_router/README.md](../05_building_blocks/hybrid_router/README.md)
+- **Sliding Window Consolidation:** [../05_building_blocks/sliding_window_consolidation/README.md](../05_building_blocks/sliding_window_consolidation/README.md)
+- **Runtime View:** [../06_runtime/README.md](../06_runtime/README.md)
+
+---
+
+## 🏗️ System Architecture (v6.0)
+
+### High-Level Flow
+
+```
+User Message
+    ↓
+ConversationHandler (Platform-Agnostic Orchestrator)
+    ↓
+AgentCoordinator (Central Router)
+    ↓
+RouterAgent (Triage & Classification)
+    ├─ Simple Query → QuickResponseAgent
+    └─ Complex Query → SmartResponseAgent
+        ├─ Delegates to MemorySearchAgent
+        └─ Delegates to WebSearchAgent
+    ↓
+Response Synthesis
+    ↓
+User receives answer
+```
+
+### Shared Session Context (v6.0)
+
+Session context is stored centrally in `SessionStore` (Firestore). Agents load context on demand via `session_id`.
+
+**Key Benefits:**
+- Eliminates repeated serialization of long histories
+- Ensures all agents see the same truth
+- Keeps response agents lightweight while providing full context
+
+**Flow:**
+```
+ConversationHandler → AgentCoordinator → Agent
+Agent → SessionStore.load(session_id)
+Agent → Reasoning + Delegation → Final answer
+ConversationHandler → Relay result + persist session
+```
+
+**Code References:**
+- `src/handlers/conversation_handler.py` - Orchestration
+- `src/infrastructure/agent_coordinator.py` - Routing
+- `src/adapters/firestore_session_store.py` - Session persistence
+
+---
+
+## 🤖 Agent Roles & Responsibilities
+
+### 1. RouterAgent - "The Dispatcher"
+
+**Business Purpose:** Triage and classify user queries for optimal routing
+
+**When Activated:** Every user message (first in chain)
+
+**Process Flow:**
+```
+1. Receive user query from ConversationHandler
+2. LLM Triage: Analyze complexity (1-10) and tone
+3. Rule-Based Fallback: Pattern matching if LLM fails
+4. Routing Decision:
+   - Complexity ≤5 → quick_response_agent
+   - Complexity >5 → smart_response_agent
+5. Return routing target + metadata
+```
+
+**Example:**
+```
+User: "Hi"
+  ↓
+RouterAgent: complexity=1, tone=casual
+  ↓
+Routes to QuickResponseAgent (fast, cheap)
+```
+
+**Why Separate Agent:**
+- Optimizes cost (70% of queries use Flash model)
+- Reduces latency for simple queries
+- Hybrid LLM + rule-based approach
+
+**Code:** `src/agents/core/router_agent.py`
+
+See: [Hybrid Router](../05_building_blocks/hybrid_router/README.md)
+
+---
+
+### 2. QuickResponseAgent - "The Fast Responder"
+
+**Business Purpose:** Handle simple queries with minimal cost
+
+**When Activated:** Router classifies query as simple (complexity ≤5)
+
+**Process Flow:**
+```
+1. Load session history (last 20 messages)
+2. Build lightweight prompt (kernel + user query)
+3. Call Gemini Flash (fast, cheap model)
+4. Return response (no tool access)
+```
+
+**Example:**
+```
+User: "Good morning!"
+  ↓
+QuickResponseAgent: Load last 20 messages
+  ↓
+Flash model: "Good morning! How are you?"
+```
+
+**Why Separate Agent:**
+- Uses Flash model (10x cheaper than Thinking)
+- No tool overhead
+- Optimized for <2s latency
+
+**Code:** `src/agents/core/quick_response_agent.py`
+
+---
+
+### 3. SmartResponseAgent - "The Orchestrator"
+
+**Business Purpose:** Handle complex queries with delegation to specialists
+
+**When Activated:** Router classifies query as complex (complexity >5)
+
+**Process Flow:**
+```
+1. Load session history (last 60 messages) with tiered context:
+   - Last N model turns (default 5) → full response text
+   - Older model turns → compressed summary (history_summary)
+   - User messages → always full text
+2. Build comprehensive prompt (kernel + context + tool declarations)
+3. force_tool_use=True ensures LLM always calls a tool (never outputs plain text)
+4. Agent delegation loop (max 5 turns):
+   - Needs memory? → Delegate to MemorySearchAgent (always sequential, first)
+   - Needs web info? → Delegate to WebSearchAgent
+   - Ready to respond? → Call deliver_response(full_response, history_summary)
+5. deliver_response is the ONLY output channel:
+   - full_response: complete Slack mrkdwn answer for the user
+   - history_summary: ≤300 chars compressed summary stored in session history
+   - Loop terminates immediately on deliver_response call
+```
+
+**Session History Storage (per turn):**
+```
+MessagePart.text      → history_summary (compressed, ≤300 chars)
+MessagePart.full_text → full response (always stored, used for recent N turns)
+```
+
+**Example:**
+```
+User: "What's my car and current gas prices?"
+  ↓
+SmartResponseAgent: Load history with tiered context
+  ↓
+Turn 1: LLM calls search_memory("my car")
+  → MemorySearchAgent returns: "Honda Civic 2019"
+Turn 2: LLM calls ask_web_search_agent("gas prices Valencia")
+  → WebSearchAgent returns: "€1.45/liter"
+Turn 3: LLM calls deliver_response(
+    full_response="You have a Honda Civic 2019...",
+    history_summary="Q: car+gas. A: Civic 2019, €1.45/l. 🚗⛽"
+  )
+  → Loop terminates, response delivered
+```
+
+**Why Separate Agent:**
+- Uses full Pro model (complex reasoning, large context)
+- Can delegate to multiple specialists in parallel
+- Structured output via deliver_response guarantees history compression
+
+**Code:** `src/agents/core/smart_response_agent.py`
+
+---
+
+### 4. MemorySearchAgent - "The Archivist"
+
+**Business Purpose:** Retrieve relevant personal knowledge from user's memory
+
+**When Activated:**
+- User asks about their past ("What did I say about...?")
+- User references personal information ("Where's my car?")
+- SmartResponseAgent delegates memory search
+
+**Process Flow:**
+```
+1. Receive search query from SmartResponseAgent
+2. Generate semantic embedding of query
+3. Perform vector search in Firestore (user's facts)
+4. Return top N relevant facts with scores
+5. SmartResponseAgent uses facts to ground response
+```
+
+**Example:**
+```
+User: "What's the model of my car?"
+  ↓
+MemorySearchAgent: Vector search("car model")
+  ↓
+Finds: "User owns a Honda Civic 2019" (score: 0.92)
+  ↓
+Returns to SmartResponseAgent for synthesis
+```
+
+**Why Separate Agent:**
+- No LLM needed (pure vector search)
+- Can be cached/optimized independently
+- Isolated from web search logic
+
+**Code:** `src/agents/memory_search_agent.py`
+
+---
+
+### 5. WebSearchAgent - "The Explorer"
+
+**Business Purpose:** Search the internet for current/external information
+
+**When Activated:**
+- User asks about current events ("What's the weather?")
+- User needs external information ("Flights to Krakow?")
+- SmartResponseAgent delegates web search
+
+**Process Flow:**
+```
+1. Receive search query from SmartResponseAgent
+2. Load session context for query formulation
+3. Call Gemini with Google Search grounding tool
+4. LLM performs search + synthesizes answer
+5. Return formatted answer with citations
+```
+
+**Example:**
+```
+User: "What's the weather in Valencia today?"
+  ↓
+WebSearchAgent: Gemini Grounding search("Valencia weather")
+  ↓
+Finds: Current weather data
+  ↓
+Returns: "Valencia: 22°C, sunny, light breeze"
+```
+
+**Why Separate Agent:**
+- Uses Gemini Grounding (native search integration)
+- Dedicated Flash instance for cost optimization
+- Isolated from personal data search
+
+**Code:** `src/agents/web_search_agent.py`
+
+---
+
+### 6. ConsolidationAgent - "The Life Chronicler"
+
+**Business Purpose:** Extract knowledge from conversation batches and persist to long-term memory
+
+**When Activated:**
+- Session overflow (>200 messages trigger sliding window)
+- Session expiration (90-day TTL)
+- Manual trigger (future: `/consolidate` command)
+
+**Process Flow:**
+```
+1. Receive message batch from ConsolidationQueue
+2. Load user's biographical context (cached)
+3. LLM analyzes messages for facts and anchors:
+   - Facts: Objective statements ("User owns X")
+   - Anchors: Subjective principles ("User values Y")
+4. Generate embeddings for each fact (parallel)
+5. Deduplicate via vector similarity check (distance <0.15)
+6. Batch write facts/anchors to Firestore
+7. Mark batch as processed (delete from queue)
+```
+
+**Example:**
+```
+Batch of 100 messages:
+  "I moved to Valencia"
+  "I love hiking"
+  "I bought a Honda Civic"
+  ↓
+ConsolidationAgent extracts:
+  Fact: "User resides in Valencia, Spain"
+  Fact: "User owns a Honda Civic"
+  Anchor: "Value: Connection with nature through outdoor activities"
+  ↓
+Saves to Firestore with embeddings
+```
+
+**Business Rules:**
+- **Fact vs Anchor Classification:**
+  - Facts: "what is" (User owns X, User lives in Y)
+  - Anchors: "how to think" (User values X, User believes Y)
+
+- **Synthesis Protocol:**
+  - High confidence observations → Direct conversion to facts
+  - Low confidence observations → Pattern detection
+  - Single weak signal is NOT enough (must see pattern)
+
+- **Deduplication:**
+  - Check against existing facts via vector search
+  - Merge/update instead of duplicate
+  - Maintain SCD Type 2 history (`is_current` flag)
+
+- **Anchor Formulation:**
+  - Concise, universal, aphoristic
+  - "Value: X" or "Belief: Y" format
+
+**Why Separate Agent:**
+- Uses Thinking model (complex synthesis)
+- Expensive operation (run rarely, in background)
+- Complex logic isolated from request/response agents
+
+**Code:** `src/agents/consolidation_agent.py`
+
+See: [Sliding Window Consolidation](../05_building_blocks/sliding_window_consolidation/README.md)
+
+---
+
+## 🔄 Agent Communication Flow
+
+### Synchronous Flow (Query)
+
+```
+User: "What's my car and current gas prices?"
+    ↓
+ConversationHandler → AgentCoordinator
+    ↓
+RouterAgent: complexity=8, routes to smart_response
+    ↓
+SmartResponseAgent: Analyzes query, decides to delegate
+    ↓
+┌──────────────────────┐  ┌───────────────────────┐
+│ MemorySearchAgent    │  │ WebSearchAgent        │
+│ searches "my car"    │  │ searches "gas prices" │
+└──────────────────────┘  └───────────────────────┘
+    ↓                          ↓
+"Honda Civic 2019"       "€1.45/liter in Valencia"
+    ↓──────────────┬────────────↓
+                   ↓
+           SmartResponseAgent synthesizes
+                   ↓
+           ConversationHandler persists session
+                   ↓
+User: "You have a Honda Civic 2019. Current gas prices
+       in Valencia are around €1.45 per liter."
+```
+
+### Asynchronous Flow (Learning - v6.0)
+
+```
+User: "I moved to Valencia last month"
+    ↓
+SmartResponseAgent: Responds immediately
+    ↓
+SessionStore: Appends message to session
+    ↓
+[Session reaches 200 messages threshold]
+    ↓
+SessionStore: Creates batch in ConsolidationQueue
+    ↓
+[Background] ConsolidationHandler:
+    ↓
+Fetches batch → Triggers ConsolidationAgent
+    ↓
+ConsolidationAgent:
+    Extracts: "User lives in Valencia" (high conf)
+    Extracts: "User moved recently" (medium conf)
+    ↓
+Creates Fact: "User resides in Valencia, Spain"
+Updates old fact: "User lived in Kyiv" → is_current=False
+    ↓
+Batch deleted from queue
+```
+
+
+---
+
+## 🎯 Agent Selection Logic
+
+### How RouterAgent Chooses Agents
+
+**1. LLM Triage (Primary):**
+```python
+triage_result = await llm.generate(
+    prompt="""Analyze this query:
+    - Complexity (1-10)
+    - Tone (casual/professional/technical/urgent)
+    - Type (simple/personal/external)
+
+    Query: "{query}"
+    """
+)
+# complexity ≤5 → quick_response
+# complexity >5 → smart_response
+```
+
+**2. Rule-Based Fallback:**
+```python
+if len(query.split()) <= 3 and "?" not in query:
+    return "quick_response_agent"  # Greeting
+
+if any(word in query for word in ["analyze", "compare", "explain"]):
+    return "smart_response_agent"  # Complex reasoning
+```
+
+**3. Agent Capability Check:**
+```python
+class MemorySearchAgent(BaseAgent):
+    config = AgentConfig(
+        capabilities=["memory_search", "personal_data"]
+    )
+
+    async def can_handle(self, message: AgentMessage) -> bool:
+        # Check if intent and payload are valid
+        return (
+            message.intent == AgentIntent.DELEGATE
+            and "query" in message.payload
+        )
+```
+
+**Example Decision Tree:**
+```
+Query: "What's my car?"
+  ↓
+RouterAgent: complexity=4, type=personal
+  ↓
+Routes to: QuickResponseAgent
+  ↓
+QuickResponseAgent: Recognizes personal query
+  ↓
+Option 1: Has recent memory in context → Answer directly
+Option 2: Context insufficient → Could delegate to MemorySearchAgent
+  ↓
+Response delivered
+```
+
+---
+
+## 💰 Cost Optimization Strategy
+
+### Model Selection by Task Complexity (v6.0)
+
+| Task | Agent | Model | Cost/1K tokens | Justification |
+|------|-------|-------|----------------|---------------|
+| **Vector Search** | Memory | None | FREE | Pure math, no LLM |
+| **Simple Responses** | Quick | Flash | $0.0001 | Fast queries, no tools |
+| **Complex Responses** | Smart | Thinking | $0.001 | Multi-step reasoning |
+| **Web Search** | Web | Flash | $0.0001 | Search + synthesis |
+| **Consolidation** | Consolidation | Thinking | $0.001 | Knowledge synthesis |
+
+**Cost Savings Example (100 messages/day):**
+- **Old System:** All messages → Pro model → $10/day
+- **New System (v6.0):**
+  - 70 simple → Flash → $0.70
+  - 30 complex → Thinking → $3.00
+  - 1 consolidation → Thinking → $0.10
+  - **Total:** $3.80/day
+- **Savings: 62%**
+
+---
+
+## 🛡️ Resilience Patterns
+
+### Circuit Breaker (Built into BaseAgent)
+
+**Purpose:** Prevent cascading failures
+
+**How It Works:**
+```
+Normal Operation:
+  Agent → Success → Circuit CLOSED ✓
+
+Failure Scenario:
+  Agent → Fail #1 → Circuit CLOSED (retry)
+  Agent → Fail #2 → Circuit CLOSED (retry)
+  Agent → Fail #3 → Circuit OPEN ⚠️
+
+Recovery:
+  Wait 5 minutes → Circuit HALF-OPEN
+  Test request → Success → Circuit CLOSED ✓
+```
+
+**Business Impact:**
+- Failed agent doesn't block entire system
+- User gets partial results instead of complete failure
+- System auto-recovers without manual intervention
+
+**Code:** `src/agents/base_agent.py:CircuitBreaker`
+
+### Retry with Exponential Backoff
+
+**Purpose:** Handle transient failures
+
+**Pattern:**
+```
+Attempt 1: Fail → Wait 1s
+Attempt 2: Fail → Wait 2s
+Max Retries: 2 (configurable per agent)
+```
+
+**Business Impact:**
+- Temporary network issues don't cause failures
+- Rate limiting is respected
+- User experience is smoother
+
+---
+
+## 📊 Observability & Monitoring
+
+### What We Track (v6.0)
+
+**Per-Agent Metrics:**
+- Success/failure rate
+- Average latency (p50, p95, p99)
+- Token usage (cost tracking)
+- Circuit breaker state
+
+**Per-Request Metrics:**
+- Total duration (end-to-end)
+- Agent execution breakdown
+- Delegation depth
+- Error types and codes
+
+**Business Value:**
+- Identify slow agents → Optimize
+- Track cost per user → Budget planning
+- Monitor errors → Proactive fixes
+
+**Implementation:**
+- OpenTelemetry spans: `agent.process`, `agent.delegate`
+- Cloud Trace integration
+- Structured logging with trace IDs
+
+See: [Observability Strategy](../05_building_blocks/observability_strategy/README.md)
+
+---
+
+---
+
+## 📖 Summary
+
+**Key Business Benefits:**
+1. **Cost Optimization:** ~62% savings by routing to the right model (Flash for simple, Pro for complex)
+2. **Context Quality:** Tiered history — recent turns get full context, older turns get compressed summary
+3. **Structured Output:** SmartAgent outputs exclusively via `deliver_response` tool — guarantees history_summary and prevents plain-text leakage
+4. **Reliability:** Circuit breakers, retries, graceful degradation across all agents
+5. **Scalability:** Easy to add new specialist agents via AgentCoordinator registry
+
+---
+
+**Last Updated:** 2026-02-18
+**Version:** 2.1

@@ -1,0 +1,37 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "gcr.io/$PROJECT_ID/alek-bot:latest", "."]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/alek-bot:latest"]
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "alek-bot"
+      - "--image=gcr.io/$PROJECT_ID/alek-bot:latest"
+      - "--region=us-central1"
+      - "--set-env-vars=APP_ENV=production,SLACK_MODE=http,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,FIRESTORE_DATABASE=us-production,OAUTH_REDIRECT_URI=$_OAUTH_REDIRECT_URI,ENABLE_HISTORY_OPTIMIZATION=true"
+      - "--min-instances=1"
+      - "--max-instances=1"
+      - "--memory=1024Mi"
+      - "--port=8080"
+      - "--allow-unauthenticated"
+      - "--set-secrets=SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_OAUTH_CLIENT_ID=GOOGLE_OAUTH_CLIENT_ID:latest,GOOGLE_OAUTH_CLIENT_SECRET=GOOGLE_OAUTH_CLIENT_SECRET:latest,FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY:latest,OAUTH_SESSION_SECRET=OAUTH_SESSION_SECRET:latest,DOCS_OWNER_USER_ID=docs-owner-user-id:latest,TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest,TELEGRAM_WEBHOOK_SECRET=TELEGRAM_WEBHOOK_SECRET:latest"
+
+  # Explicitly grant public access — --allow-unauthenticated alone is not
+  # reliable if the Cloud Build SA lacks roles/iam.securityAdmin.
+  # This step is idempotent and ensures every deployment leaves the service
+  # publicly accessible.
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "services"
+      - "add-iam-policy-binding"
+      - "alek-bot-prod"
+      - "--region=us-central1"
+      - "--member=allUsers"
+      - "--role=roles/run.invoker"

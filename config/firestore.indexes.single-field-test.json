@@ -1,0 +1,22 @@
+[
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "account_id",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "is_current",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "tags_vector",
+        "vectorConfig": {
+          "dimension": 768
+        }
+      }
+    ]
+  }
+]
