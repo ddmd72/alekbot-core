@@ -23,6 +23,11 @@ MEMORY ?= 1024Mi
 MIN_INSTANCES ?= 1
 MAX_INSTANCES ?= 1
 
+# Cloud Run Service URLs — defined in .env (gitignored), loaded via include above
+# Required: SERVICE_URL_DEV, SERVICE_URL_PROD
+OAUTH_REDIRECT_URI_DEV ?= $(SERVICE_URL_DEV)/auth/callback
+OAUTH_REDIRECT_URI_PROD ?= $(SERVICE_URL_PROD)/auth/callback
+
 # Local Development
 APP_ENV ?= development
 SLACK_MODE ?= socket
@@ -283,13 +288,15 @@ build: ## Build Docker container
 deploy: ## Build + deploy to Cloud Run (production)
 	@echo "🚀 Build + deploy to Cloud Run (PRODUCTION)..."
 	@echo "Using cloudbuild-prod.yaml configuration"
-	gcloud builds submit --config=cloudbuild-prod.yaml .
+	gcloud builds submit --config=cloudbuild-prod.yaml \
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_PROD),_OAUTH_REDIRECT_URI=$(OAUTH_REDIRECT_URI_PROD) .
 	@echo "✅ Production deployment complete!"
 
 deploy-dev: ## Build + deploy to Cloud Run (development)
 	@echo "🚀 Build + deploy to Cloud Run (DEVELOPMENT)..."
 	@echo "Using cloudbuild-dev.yaml configuration"
-	gcloud builds submit --config=cloudbuild-dev.yaml .
+	gcloud builds submit --config=cloudbuild-dev.yaml \
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(OAUTH_REDIRECT_URI_DEV) .
 	@echo "✅ Development deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from firestore.indexes.json

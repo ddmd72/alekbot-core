@@ -111,7 +111,6 @@ def test_build_router_respects_provider_preference(builder):
     config = UserBotConfig(provider_preference="grok")
     
     # Need to register grok in registry for this test
-    from tests.unit.services.test_agent_context_builder import FakeProvider
     builder.registry.register("grok", FakeProvider("grok"))
     
     ctx = builder.build("router", config)

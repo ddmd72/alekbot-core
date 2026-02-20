@@ -52,14 +52,14 @@ class RouterAgent(BaseAgent):
     - Complex requests → SmartResponseAgent (reasoning, tools)
     
     Example simple requests:
-    - Greetings: "Привіт", "Hello"
-    - Acknowledgments: "Ок", "Спасибо"
+    - Greetings: "Hi", "Hello"
+    - Acknowledgments: "Ok", "Thanks"
     - Simple questions with quick answers
-    
+
     Example complex requests:
-    - Personal data queries: "Який у мене розмір взуття?"
-    - External data queries: "Яка погода в Валенсії?"
-    - Multi-step reasoning: "Порівняй ці два варіанти..."
+    - Personal data queries: "What shoe size do I wear?"
+    - External data queries: "What's the weather in Valencia?"
+    - Multi-step reasoning: "Compare these two options..."
     """
     
     # Simple phrases that don't require complex processing
@@ -569,8 +569,8 @@ class RouterAgent(BaseAgent):
         Ported from BrainService.is_simple_request()
         
         Simple requests:
-        - Greetings: "Привіт", "Hello"
-        - Acknowledgments: "Ок", "Дякую"
+        - Greetings: "Hi", "Hello"
+        - Acknowledgments: "Ok", "Thanks"
         - Very short phrases (1-2 words)
         
         Args:
@@ -610,8 +610,8 @@ class RouterAgent(BaseAgent):
         Personal requests need memory search to retrieve facts.
         
         Examples:
-        - "Який мій розмір взуття?"
-        - "Нагадай мені про зустріч"
+        - "What's my shoe size?"
+        - "Remind me about the meeting"
         - "What's my car model?"
         
         Args:

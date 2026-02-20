@@ -134,6 +134,26 @@ Detailed docs in `docs/` (arc42). Read as needed:
 - Respond to the user in whatever language they write in.
 - All changes to documents (docs/, CLAUDE.md, code comments, docstrings, log messages) must be written in English.
 
+## ⛔ SECRETS RULE — READ BEFORE TOUCHING ANY FILE
+
+**NEVER write secrets, credentials, infrastructure details, or PII into any git-tracked file.**
+
+This includes — but is not limited to:
+- API keys, tokens, passwords, signing secrets, webhook secrets
+- Cloud Run service URLs, project IDs, service account emails
+- Internal hostnames, IP addresses, resource names
+- User IDs, account IDs, email addresses
+- OAuth client IDs/secrets, Firebase config values
+
+**The only place for this data is `.env` (gitignored) or GCP Secret Manager.**
+
+If a Makefile target, script, or config needs a URL or ID — define it as a variable
+loaded from `.env`, never hardcoded in the tracked file itself.
+
+When in doubt: if it identifies or grants access to infrastructure, it goes in `.env`.
+
+---
+
 ## What NOT to Do
 
 - Do not add DI containers (dependency-injector etc.) — manual DI in main.py.
