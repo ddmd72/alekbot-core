@@ -29,21 +29,6 @@ OAUTH_REDIRECT_URI_PROD ?= $(SERVICE_URL_PROD)/auth/callback
 DEV_USER_ID ?= $(USER_ID)
 PROD_USER_ID ?= $(USER_ID)
 
-# Diagrams
-DIAGRAMS_OUTPUT ?= presentation
-DIAGRAMS_CURRENT := \
-	docs/diagrams/01_context/system_context_current.md \
-	docs/diagrams/02_container/hexagonal_overview_current.md \
-	docs/diagrams/03_component/tool_architecture_current.md \
-	docs/diagrams/04_sequences/message_flow_current.md \
-	docs/diagrams/05_deployment/deployment_current.md
-DIAGRAMS_TARGET := \
-	docs/diagrams/01_context/system_context_target.md \
-	docs/diagrams/02_container/hexagonal_overview_target.md \
-	docs/diagrams/03_component/tool_architecture_target.md \
-	docs/diagrams/04_sequences/message_flow_target.md \
-	docs/diagrams/05_deployment/deployment_target.md
-DIAGRAMS_MERMAID := $(DIAGRAMS_CURRENT) $(DIAGRAMS_TARGET)
 
 # ============================================================================
 # PHONY TARGETS (targets that don't create files)
@@ -63,7 +48,6 @@ DIAGRAMS_MERMAID := $(DIAGRAMS_CURRENT) $(DIAGRAMS_TARGET)
 .PHONY: update-kernel-light-dev update-kernel-light-prod update-kernel-dev update-kernel-prod
 .PHONY: diff-component
 .PHONY: check
-.PHONY: diagrams-install diagrams-export diagrams-export-current diagrams-export-target diagrams-clean
 .PHONY: delete-prod delete-dev delete-all
 
 # ============================================================================
@@ -148,13 +132,6 @@ help: ## Show this help message
 	@echo "  make sync-components-agent-dev   Sync specific agent to dev (AGENT=smart)"
 	@echo "  make sync-components-dry-run     Dry-run sync (see what would be uploaded)"
 	@echo "  make diff-component  Diff component versions (COMPONENT, ENV, VERSIONS)"
-	@echo ""
-	@echo "🗺️  DIAGRAMS:"
-	@echo "  make diagrams-install   Install Mermaid CLI (mmdc)"
-	@echo "  make diagrams-export    Export all diagrams to SVG"
-	@echo "  make diagrams-export-current Export current-only diagrams"
-	@echo "  make diagrams-export-target  Export target-only diagrams"
-	@echo "  make diagrams-clean     Remove exported diagrams"
 	@echo ""
 	@echo "🗑️  CLEANUP:"
 	@echo "  make delete-prod        Delete production service (DANGEROUS)"
@@ -485,46 +462,6 @@ sync-components-dry-run: ## Dry-run sync to see what would be uploaded
 
 diff-component: ## Diff component versions (args: COMPONENT, ENV, VERSIONS)
 	@$(PYTHON) scripts/memory/ops/diff.py --component $(COMPONENT) --versions $(VERSIONS) --environment $(ENV)
-
-# ============================================================================
-# DIAGRAMS
-# ============================================================================
-
-diagrams-install: ## Install Mermaid CLI (mmdc)
-	@echo "📦 Installing Mermaid CLI..."
-	npm install -g @mermaid-js/mermaid-cli
-	@echo "✅ Installed. If 'mmdc' is not found, ensure npm global bin is on PATH."
-
-$(DIAGRAMS_OUTPUT):
-	@mkdir -p $(DIAGRAMS_OUTPUT)
-
-diagrams-export: ## Export all diagrams to SVG
-	@mkdir -p $(DIAGRAMS_OUTPUT)
-	@for file in $(DIAGRAMS_MERMAID); do \
-		base=$$(basename $$file .md); \
-		npx -p @mermaid-js/mermaid-cli mmdc -i $$file -o $(DIAGRAMS_OUTPUT)/$$base.svg --backgroundColor transparent; \
-		if [ -f $(DIAGRAMS_OUTPUT)/$$base-1.svg ]; then mv $(DIAGRAMS_OUTPUT)/$$base-1.svg $(DIAGRAMS_OUTPUT)/$$base.svg; fi; \
-	done
-
-diagrams-export-current: ## Export current diagrams to SVG
-	@mkdir -p $(DIAGRAMS_OUTPUT)
-	@for file in $(DIAGRAMS_CURRENT); do \
-		base=$$(basename $$file .md); \
-		npx -p @mermaid-js/mermaid-cli mmdc -i $$file -o $(DIAGRAMS_OUTPUT)/$$base.svg --backgroundColor transparent; \
-		if [ -f $(DIAGRAMS_OUTPUT)/$$base-1.svg ]; then mv $(DIAGRAMS_OUTPUT)/$$base-1.svg $(DIAGRAMS_OUTPUT)/$$base.svg; fi; \
-	done
-
-diagrams-export-target: ## Export target diagrams to SVG
-	@mkdir -p $(DIAGRAMS_OUTPUT)
-	@for file in $(DIAGRAMS_TARGET); do \
-		base=$$(basename $$file .md); \
-		npx -p @mermaid-js/mermaid-cli mmdc -i $$file -o $(DIAGRAMS_OUTPUT)/$$base.svg --backgroundColor transparent; \
-		if [ -f $(DIAGRAMS_OUTPUT)/$$base-1.svg ]; then mv $(DIAGRAMS_OUTPUT)/$$base-1.svg $(DIAGRAMS_OUTPUT)/$$base.svg; fi; \
-	done
-
-diagrams-clean: ## Remove exported diagrams
-	@echo "🧹 Removing exported diagrams from $(DIAGRAMS_OUTPUT)..."
-	rm -f $(DIAGRAMS_OUTPUT)/*.svg
 
 # ============================================================================
 # CLEANUP (DANGEROUS)
