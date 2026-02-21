@@ -16,9 +16,12 @@ JSON format:
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from google.cloud import firestore
+
+_DEFAULT_DATABASE = os.environ.get("FIRESTORE_DATABASE", "us-production")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -48,13 +51,13 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--database",
-        default="us-production",
-        help="Firestore database ID (default: us-production).",
+        default=_DEFAULT_DATABASE,
+        help="Firestore database ID (default: $FIRESTORE_DATABASE env var).",
     )
     return parser.parse_args()
 
 
-def list_collection(collection: str, verbose: bool = False, database: str = "us-production") -> None:
+def list_collection(collection: str, verbose: bool = False, database: str = _DEFAULT_DATABASE) -> None:
     """List all documents in a collection."""
     db = firestore.Client(database=database)
     
@@ -85,7 +88,7 @@ def list_collection(collection: str, verbose: bool = False, database: str = "us-
     print(f"  python firestore_utils/download.py {collection} <document_id>")
 
 
-def download_document(collection: str, document_id: str, output_format: str, output_path: Path, verbose: bool = False, database: str = "us-production") -> None:
+def download_document(collection: str, document_id: str, output_format: str, output_path: Path, verbose: bool = False, database: str = _DEFAULT_DATABASE) -> None:
     db = firestore.Client(database=database)
     
     if verbose:

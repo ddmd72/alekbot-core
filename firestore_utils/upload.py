@@ -11,9 +11,13 @@ Behavior:
 
 import argparse
 import json
+import os
+import sys
 from pathlib import Path
 
 from google.cloud import firestore
+
+_DEFAULT_DATABASE = os.environ.get("FIRESTORE_DATABASE", "us-production")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -28,8 +32,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--database",
-        default="us-production",
-        help="Firestore database ID (default: us-production).",
+        default=_DEFAULT_DATABASE,
+        help="Firestore database ID (default: $FIRESTORE_DATABASE env var).",
     )
     return parser.parse_args()
 
@@ -40,7 +44,14 @@ def _infer_format(override: str | None) -> str:
     return "groovy"
 
 
-def upload_document(collection: str, document_name: str, file_format: str, database: str = "us-production") -> str:
+def upload_document(collection: str, document_name: str, file_format: str, database: str = _DEFAULT_DATABASE) -> str:
+    # Require explicit confirmation when writing to non-development collections
+    if not collection.startswith("development_"):
+        answer = input(f"⚠️  PRODUCTION write to '{collection}' (db={database}). Type 'YES' to continue: ")
+        if answer.strip() != "YES":
+            print("Aborted.")
+            sys.exit(1)
+
     db = firestore.Client(database=database)
     document_id = document_name
     doc_ref = db.collection(collection).document(document_id)
