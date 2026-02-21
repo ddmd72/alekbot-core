@@ -3,10 +3,11 @@ Unit tests for MemorySearchAgent.
 """
 
 import pytest
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import Mock, AsyncMock, patch
 from src.agents.memory_search_agent import MemorySearchAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
 from src.domain.entities import FactEntity, FactType
+from src.ports.llm_service import AgentExecutionContext, ProviderCapabilities
 
 
 class TestMemorySearchAgent:
@@ -155,3 +156,138 @@ class TestMemorySearchAgent:
 
         assert response.status == AgentStatus.FAILED
         assert "No search keys provided" in response.error
+
+
+class TestMemorySearchAgentLLM:
+    """Tests for the LLM-based key formulation path."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = Mock()
+        llm.generate_content = AsyncMock()
+        llm.get_capabilities = Mock(return_value=ProviderCapabilities())
+        return llm
+
+    @pytest.fixture
+    def mock_execution_context(self, mock_llm):
+        ctx = Mock(spec=AgentExecutionContext)
+        ctx.provider = mock_llm
+        ctx.model_name = "gemini-flash"
+        ctx.capabilities = ProviderCapabilities()
+        return ctx
+
+    @pytest.fixture
+    def mock_prompt_builder(self):
+        builder = Mock()
+        builder.build_for_agent = AsyncMock(return_value="You extract search keys.")
+        return builder
+
+    @pytest.fixture
+    def mock_search_enrichment(self):
+        enrichment = Mock()
+        enrichment.enrich_context = AsyncMock()
+        return enrichment
+
+    @pytest.fixture
+    def agent_with_llm(self, mock_execution_context, mock_prompt_builder, mock_search_enrichment):
+        from unittest.mock import Mock, AsyncMock
+        mock_repo = Mock()
+        mock_repo.search_facts = AsyncMock(return_value=[])
+        mock_embedding = Mock()
+        mock_embedding.get_embedding = AsyncMock(return_value=[0.1])
+
+        config = AgentConfig(agent_id="memory_agent_llm", agent_type="memory_search")
+        return MemorySearchAgent(
+            config=config,
+            repository=mock_repo,
+            embedding_service=mock_embedding,
+            account_id="account-123",
+            search_enrichment=mock_search_enrichment,
+            execution_context=mock_execution_context,
+            prompt_builder=mock_prompt_builder,
+            user_id="user-123",
+        )
+
+    @pytest.mark.asyncio
+    async def test_formulate_keys_valid_json(self, agent_with_llm, mock_llm):
+        """LLM returns valid JSON — keys extracted correctly."""
+        mock_llm.generate_content.return_value = Mock(text='{"keywords":["car","vehicle"],"primary_query":"user car brand","alternative_query":"vehicle model ownership","domains":["possession"]}')
+
+        keys = await agent_with_llm._formulate_search_keys("Какая марка моей машины?")
+
+        assert keys["keywords"] == ["car", "vehicle"]
+        assert keys["primary_query"] == "user car brand"
+        assert keys["alternative_query"] == "vehicle model ownership"
+        assert keys["domains"] == ["possession"]
+
+    @pytest.mark.asyncio
+    async def test_formulate_keys_malformed_response_falls_back(self, agent_with_llm, mock_llm):
+        """Structured output is enforced by the adapter; if malformed JSON still arrives, fallback to empty dict."""
+        mock_llm.generate_content.return_value = Mock(text='```json\n{"keywords":["home"],"primary_query":"user home address","alternative_query":"residence location"}\n```')
+
+        keys = await agent_with_llm._formulate_search_keys("Где я живу?")
+
+        assert keys == {}
+
+    @pytest.mark.asyncio
+    async def test_formulate_keys_llm_failure_returns_empty(self, agent_with_llm, mock_llm):
+        """LLM call raises exception — returns empty dict without crashing."""
+        mock_llm.generate_content.side_effect = Exception("LLM timeout")
+
+        keys = await agent_with_llm._formulate_search_keys("What is my job?")
+
+        assert keys == {}
+
+    @pytest.mark.asyncio
+    async def test_formulate_keys_invalid_json_returns_empty(self, agent_with_llm, mock_llm):
+        """LLM returns non-JSON text — returns empty dict without crashing."""
+        mock_llm.generate_content.return_value = Mock(text="Sorry, I cannot help with that.")
+
+        keys = await agent_with_llm._formulate_search_keys("What is my job?")
+
+        assert keys == {}
+
+    @pytest.mark.asyncio
+    async def test_execute_llm_path_calls_enrichment(self, agent_with_llm, mock_llm, mock_search_enrichment):
+        """execute() uses LLM to formulate keys then calls SearchEnrichmentService."""
+        mock_llm.generate_content.return_value = Mock(text='{"keywords":["car"],"primary_query":"user car","alternative_query":"vehicle ownership"}')
+
+        from unittest.mock import Mock as M
+        enriched = M()
+        enriched.facts = []
+        enriched.dedup_count = 0
+        enriched.total_sources = 0
+        mock_search_enrichment.enrich_context.return_value = enriched
+
+        message = AgentMessage.create(
+            sender="smart",
+            recipient="memory_agent_llm",
+            intent=AgentIntent.QUERY,
+            payload={"query": "Какая марка моей машины?"},
+        )
+
+        response = await agent_with_llm.execute(message)
+
+        assert response.status == AgentStatus.SUCCESS
+        mock_llm.generate_content.assert_called_once()
+        mock_search_enrichment.enrich_context.assert_called_once()
+        call_kwargs = mock_search_enrichment.enrich_context.call_args.kwargs
+        assert call_kwargs["keywords"] == ["car"]
+        assert call_kwargs["search_phrase_1"] == "user car"
+
+    @pytest.mark.asyncio
+    async def test_execute_llm_failure_falls_back_to_legacy(self, agent_with_llm, mock_llm):
+        """If LLM fails during key formulation, falls back to raw query legacy search."""
+        mock_llm.generate_content.side_effect = Exception("LLM down")
+
+        message = AgentMessage.create(
+            sender="smart",
+            recipient="memory_agent_llm",
+            intent=AgentIntent.QUERY,
+            payload={"query": "my car"},
+        )
+
+        response = await agent_with_llm.execute(message)
+
+        # Should not crash — falls back to legacy single-vector search
+        assert response.status == AgentStatus.SUCCESS

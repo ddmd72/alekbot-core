@@ -59,6 +59,10 @@ def parse_llm_response(raw_text: str) -> Tuple[Optional[str], Optional[str], Opt
         if not isinstance(data, dict):
             return raw_text, None, None
             
+        # Validate that this looks like a response envelope, not an arbitrary JSON snippet
+        if not any(k in data for k in ("full_response", "response_summary", "rich_content")):
+            return raw_text, None, None
+
         # Extract fields
         user_text = data.get("full_response")
         history_summary = data.get("response_summary")

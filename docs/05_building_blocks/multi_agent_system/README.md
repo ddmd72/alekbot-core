@@ -25,6 +25,7 @@ This document MUST be updated when:
 
 - **Target Architecture:** [../../04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md](../../04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md)
 - **Hybrid Router:** [../hybrid_router/README.md](../hybrid_router/README.md)
+- **Agent Registry (ACP v2):** [../agent_registry/README.md](../agent_registry/README.md)
 - **Prompt Design System v3:** [../prompt_design_system_v3/README.md](../prompt_design_system_v3/README.md)
 - **Sliding Window Consolidation:** [../sliding_window_consolidation/README.md](../sliding_window_consolidation/README.md)
 
@@ -84,8 +85,21 @@ The central hub for all agent interactions.
 
 1. **Ingress:** `ConversationHandler` creates an `AgentMessage` and routes it to the `RouterAgent`.
 2. **Triage:** `RouterAgent` classifies the intent and delegates to `Quick` or `Smart` agents.
-3. **Specialization:** `SmartResponseAgent` delegates sub-tasks (memory search, web search) back to the coordinator.
+3. **Specialization:** `SmartResponseAgent` calls `delegate_to_specialist(intent, query)` → coordinator resolves via `AgentRegistry` → routes to the appropriate specialist.
 4. **Aggregation:** Results are synthesized and returned to the user.
+
+### 3.3 ACP v2: Agent Registry Pattern
+
+ACP v1 had SmartAgent hardcoding tool schemas per specialist (tight coupling). ACP v2 replaces this with a dynamic registry:
+
+- **AgentRegistry** maps intents → AgentManifest (agent_id + execution mode per intent).
+- **SmartAgent** has 1 fixed tool: `delegate_to_specialist(intent, query, context)`. Never grows.
+- **AgentCoordinator** adds `handle_delegation()` — translates the generic tool call into a concrete AgentMessage routed to the right specialist.
+- **ExecutionMode:** SYNC (search queries, inline result) or ASYNC (long tasks, Cloud Tasks + callback).
+
+Available intents are injected into the `delegate_to_specialist` tool description dynamically from the registry. Adding a new agent = register in `main.py` + add entry to `PROTOCOL_SMART_AGENT_SELECTION` Firestore token. Zero SmartAgent code changes.
+
+See: [Agent Registry Building Block](../agent_registry/README.md) for full details.
 
 ---
 
@@ -113,12 +127,12 @@ Agents are instantiated and managed per user to ensure strict data isolation and
 
 - **Router Agent:** Intent classification and triage.
 - **Quick Agent:** Fast, low-cost responses (Gemini Flash). Outputs JSON (`full_response` + `response_summary`) parsed by `llm_response_parser`.
-- **Smart Agent:** Deep reasoning and tool delegation (Gemini Pro / Claude). Returns plain text (no output-channel tool). After generating a response, it fires an async `response_summary_task` (via `HistorySummaryService`) so history compression never blocks Slack delivery. Timeout: `240s`, `max_retries=0` (retry doubles wall-time to 8 min — unacceptable UX on thinking models).
+- **Smart Agent:** Deep reasoning and specialist delegation (Gemini Pro / Claude). Uses 1 generic `delegate_to_specialist(intent, query)` tool — intents resolved via AgentRegistry. After generating a response, fires async `response_summary_task` (via `HistorySummaryService`) so history compression never blocks Slack delivery. Timeout: `240s`, `max_retries=0`.
 
 ### 5.2 Specialist Agents (Tools)
 
-- **Memory Search Agent:** Multi-vector RRF search across user facts.
-- **Web Search Agent:** Real-time information retrieval via Google Search.
+- **Memory Search Agent:** Two-phase: (1) LLM key formulation via `COGNITIVE_PROCESS_MEMORY_SEARCH` Firestore token — Gemini Flash extracts `keywords`, `primary_query`, `alternative_query`, `domains` from the delegation query; (2) multi-vector RRF search via `SearchEnrichmentService`. Schema-enforced: 3–5 keywords, 2 domains max, 50-char query limit.
+- **Web Search Agent:** Real-time information retrieval via Google Search grounding.
 - **Consolidation Agent:** Background synthesis of conversation history into facts.
 
 ### 5.3 Infrastructure Agents
@@ -217,19 +231,22 @@ ConversationHandler.handle_message()
 ## 9. Code References
 
 - `src/domain/agent.py`: ACP definitions (Message, Response, Config).
-- `src/infrastructure/agent_coordinator.py`: Routing and parallel execution.
+- `src/infrastructure/agent_coordinator.py`: Routing, parallel execution, and `handle_delegation()` (ACP v2).
+- `src/infrastructure/agent_registry.py`: AgentRegistry, AgentManifest, ExecutionMode (ACP v2).
 - `src/agents/base_agent.py`: Base class with resilience primitives.
-- `src/services/user_agent_factory.py`: Lifecycle and DI management. Creates `HistorySummaryService` from `postprocessing_context` and injects into `SmartResponseAgent`.
+- `src/agents/core/smart_response_agent.py`: `delegate_to_specialist` tool + memory-first parallel scheduling.
+- `src/agents/memory_search_agent.py`: LLM key formulation + `MEMORY_SEARCH_RESPONSE_SCHEMA`.
+- `src/handlers/agent_worker_handler.py`: ASYNC task execution from Cloud Tasks.
+- `src/services/user_agent_factory.py`: Lifecycle and DI management.
 - `src/services/history_summary_service.py`: LLM-based response compression (Gemini-locked, fail-fast).
-- `src/agents/core/`: Implementation of Router, Quick, and Smart agents.
-- `src/utils/llm_response_parser.py`: Unified JSON parser for `full_response` + `response_summary`.
-- `src/handlers/conversation_handler.py`: Fire-and-forget summary task resolution + `ENABLE_HISTORY_OPTIMIZATION` flag + graceful degradation fallback.
+- `src/utils/llm_response_parser.py`: Unified JSON parser for `full_response` + `response_summary`. Guards against mistaking embedded JSON examples for response envelopes.
+- `src/handlers/conversation_handler.py`: Fire-and-forget summary task + graceful degradation fallback.
 
 ---
 
 ## 10. Status
 
 **Status:** ✅ Production Ready
-**Last Updated:** 2026-02-20
+**Last Updated:** 2026-02-21
 
 ---

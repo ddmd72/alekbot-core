@@ -227,17 +227,21 @@ class UserAgentFactory:
 
         account_id = user_profile.account_id
 
+        memory_search_context = self.context_builder.build("quick", user_profile.config)
         memory_agent = MemorySearchAgent(
             config=AgentConfig(
                 agent_id=f"memory_search_agent_{user_id}",
                 agent_type="memory_search",
-                timeout_ms=5000,
+                timeout_ms=10000,
                 capabilities=["personal_data_retrieval", "fact_search"],
             ),
             repository=self.repository,
             embedding_service=self.embedding_service,
             account_id=account_id,
             search_enrichment=search_enrichment_service,
+            execution_context=memory_search_context,
+            prompt_builder=prompt_builder,
+            user_id=user_id,
         )
 
         grounding_tool = types.Tool(google_search=types.GoogleSearch())

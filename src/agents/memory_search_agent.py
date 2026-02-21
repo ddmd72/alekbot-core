@@ -11,13 +11,17 @@ SESSION_2026_02_09: Updated to support 3-key search strategy:
 - alternative_query: Alternative phrasing for diversity
 """
 
+import json
 import time
 from typing import List, Optional
+from ..utils.debug_logger import get_debug_logger
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.search_enrichment_port import SearchEnrichmentPort
+from ..ports.llm_service import AgentExecutionContext, LLMRequest, Message, MessagePart
+from ..ports.prompt_builder_port import PromptBuilderPort
 from ..domain.entities import FactType
 from ..utils.logger import logger
 
@@ -25,14 +29,46 @@ from ..utils.logger import logger
 class MemorySearchAgent(BaseAgent):
     """
     Agent responsible for searching user's personal memory archive.
-    
+
     Capabilities:
     - Multi-vector RRF search (keywords + 2 semantic vectors)
     - Personal data retrieval
     - Historical fact lookup
-    
+
     Does NOT require LLM - pure search with enrichment.
     """
+
+    # Structured output schema for LLM key formulation.
+    # Gemini enforces this at API level; Claude will need separate handling when its adapter is fixed.
+    # keywords: API-enforced 3-5 items (minItems/maxItems).
+    # domains: API-enforced enum — only exact domain values accepted, max 2.
+    MEMORY_SEARCH_RESPONSE_SCHEMA = {
+        "type": "OBJECT",
+        "properties": {
+            "keywords": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"},
+                "minItems": 3,
+                "maxItems": 5,
+            },
+            "primary_query": {"type": "STRING", "maxLength": 50},
+            "alternative_query": {"type": "STRING", "maxLength": 50},
+            "domains": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "STRING",
+                    "enum": [
+                        "biographical", "possession", "health", "medical_records",
+                        "location", "work", "network", "preference", "skill",
+                        "project", "finance", "education", "legal",
+                        "entertainment", "communication",
+                    ],
+                },
+                "maxItems": 2,
+            },
+        },
+        "required": ["keywords", "primary_query", "alternative_query"],
+    }
     
     def __init__(
         self,
@@ -40,27 +76,39 @@ class MemorySearchAgent(BaseAgent):
         repository: FactRepository,
         embedding_service: EmbeddingService,
         account_id: str,
-        search_enrichment: Optional[SearchEnrichmentPort] = None
+        search_enrichment: Optional[SearchEnrichmentPort] = None,
+        execution_context: Optional[AgentExecutionContext] = None,
+        prompt_builder: Optional[PromptBuilderPort] = None,
+        user_id: Optional[str] = None,
     ):
         """
         Initialize Memory Search Agent.
-        
+
         Args:
             config: Agent configuration
             repository: Fact repository for search
             embedding_service: Service for generating embeddings
             account_id: Account ID for data isolation (OAuth Multi-Tenant V3)
             search_enrichment: Optional enrichment service (if None, falls back to simple search)
+            execution_context: LLM execution context for key formulation (Flash).
+                               If provided, agent derives 3-key params from raw query via LLM.
+            prompt_builder: Prompt builder for loading memorysearch system prompt from Firestore.
+            user_id: User ID for prompt building.
         """
         super().__init__(config)
         self._repo = repository
         self._embedding = embedding_service
         self._account_id = account_id
         self._search_enrichment = search_enrichment
-        
+        self._llm = execution_context.provider if execution_context else None
+        self._model_name = execution_context.model_name if execution_context else None
+        self._prompt_builder = prompt_builder
+        self._user_id = user_id
+
         logger.info(
             f"🧠 MemorySearchAgent initialized for account {account_id[:20]}... "
-            f"(enrichment={'enabled' if search_enrichment else 'disabled'})"
+            f"(enrichment={'enabled' if search_enrichment else 'disabled'}, "
+            f"llm={'enabled' if self._llm else 'disabled'})"
         )
     
     async def can_handle(self, message: AgentMessage) -> bool:
@@ -101,65 +149,123 @@ class MemorySearchAgent(BaseAgent):
         logger.debug(f"🧠 [MemorySearchAgent] can_handle=True (format={'3-key' if has_3key else 'legacy'})")
         return True
     
+    async def _formulate_search_keys(self, query: str) -> dict:
+        """
+        Use Flash LLM to derive 3-key search parameters from a raw user query.
+
+        Returns a dict with keys: keywords, primary_query, alternative_query, domains (optional).
+        Falls back to minimal single-key dict on any error.
+        """
+        try:
+            system_prompt = ""
+            if self._prompt_builder:
+                system_prompt = await self._prompt_builder.build_for_agent(
+                    agent_type="memorysearch",
+                    user_id=self._user_id,
+                    account_id=self._account_id,
+                    routing_metadata=None,
+                )
+
+            user_text = f'SEARCH_REQUEST "{query}"'
+            request = LLMRequest(
+                model_name=self._model_name,
+                system_instruction=system_prompt,
+                messages=[Message(role="user", parts=[MessagePart(text=user_text)])],
+                tools=[],
+                temperature=0.0,
+                response_mime_type="application/json",
+                response_schema=self.MEMORY_SEARCH_RESPONSE_SCHEMA,
+            )
+
+            debug_logger = get_debug_logger()
+            debug_logger.log_prompt(
+                agent_name="memory_search",
+                prompt=user_text,
+                system_instruction=system_prompt,
+                metadata={"user_id": (self._user_id or "")[:8], "query": query[:80]}
+            )
+
+            response = await self._llm.generate_content(request=request)
+            raw_response = (response.text or "").strip()
+
+            debug_logger.log_response(
+                agent_name="memory_search",
+                response=raw_response,
+                metadata={"user_id": (self._user_id or "")[:8]}
+            )
+
+            keys = json.loads(raw_response)
+            logger.info(
+                f"🔍 [MemorySearchAgent] LLM formulated keys: "
+                f"keywords={keys.get('keywords')}, "
+                f"primary='{keys.get('primary_query', '')[:60]}', "
+                f"domains={keys.get('domains')}"
+            )
+            return keys
+
+        except Exception as e:
+            logger.warning(f"⚠️ [MemorySearchAgent] Key formulation failed ({e}), falling back to raw query")
+            return {}
+
     async def execute(self, message: AgentMessage) -> AgentResponse:
         """
         Execute memory search using 3-key multi-vector strategy.
-        
-        Args:
-            message: Agent message containing search keys
-            
-        Returns:
-            Agent response with search results
-        """
-        # Extract search keys (support both 3-key and legacy format)
-        keywords = message.payload.get("keywords", [])
-        primary_query = message.payload.get("primary_query", "")
-        alternative_query = message.payload.get("alternative_query", "")
-        legacy_query = message.payload.get("query", "")
-        domains = message.payload.get("domains", None)
 
-        # Log what SmartAgent sent
-        logger.info(
-            f"🔍 [MemorySearchAgent] === TOOL CALL FROM SmartAgent ===\n"
-            f"   keywords: {keywords}\n"
-            f"   primary_query: '{primary_query}'\n"
-            f"   alternative_query: '{alternative_query}'\n"
-            f"   domains: {domains if domains else 'N/A'}\n"
-            f"   legacy_query: '{legacy_query if legacy_query else 'N/A'}'"
-        )
-        
-        # Validate input
-        if not (keywords or primary_query or legacy_query):
+        If an LLM is configured, derives search keys from raw query automatically.
+        Otherwise expects pre-formulated keys in payload (legacy behaviour).
+        """
+        raw_query = message.payload.get("query", "")
+
+        # --- LLM path: derive keys from query ---
+        if self._llm and raw_query:
+            logger.info(f"🔍 [MemorySearchAgent] === LLM key formulation for: '{raw_query[:80]}' ===")
+            keys = await self._formulate_search_keys(raw_query)
+            keywords = keys.get("keywords", [])
+            primary_query = keys.get("primary_query", "")
+            alternative_query = keys.get("alternative_query", "")
+            domains = keys.get("domains") or None
+        else:
+            # --- Legacy path: keys pre-formulated by SmartAgent ---
+            keywords = message.payload.get("keywords", [])
+            primary_query = message.payload.get("primary_query", "")
+            alternative_query = message.payload.get("alternative_query", "")
+            domains = message.payload.get("domains", None)
+            logger.info(
+                f"🔍 [MemorySearchAgent] === Legacy keys from payload ===\n"
+                f"   keywords: {keywords}\n"
+                f"   primary_query: '{primary_query}'\n"
+                f"   alternative_query: '{alternative_query}'\n"
+                f"   domains: {domains if domains else 'N/A'}"
+            )
+
+        if not (keywords or primary_query or raw_query):
             return AgentResponse.failure(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
-                error="No search keys provided (need keywords/primary_query/alternative_query or legacy query)"
+                error="No search keys provided"
             )
-        
+
         start_time = time.time()
-        
+
         try:
-            # Use enrichment service if available and 3-key format provided
-            if self._search_enrichment and keywords and primary_query:
+            if self._search_enrichment and (keywords or primary_query):
                 logger.info(f"🔍 [MemorySearchAgent] Using SearchEnrichmentService (multi-vector RRF)")
                 return await self._execute_enriched_search(
                     message=message,
                     keywords=keywords,
-                    primary_query=primary_query,
+                    primary_query=primary_query or raw_query,
                     alternative_query=alternative_query,
                     domains=domains,
-                    start_time=start_time
+                    start_time=start_time,
                 )
             else:
-                # Fallback to legacy single-vector search
                 logger.info(f"🔍 [MemorySearchAgent] Using legacy single-vector search (fallback)")
-                fallback_query = primary_query or legacy_query
                 return await self._execute_legacy_search(
                     message=message,
-                    query=fallback_query,
-                    start_time=start_time
+                    query=primary_query or raw_query,
+                    start_time=start_time,
                 )
-                
+
         except Exception as e:
             logger.error(f"❌ [MemorySearchAgent] Error: {e}", exc_info=True)
             return AgentResponse.failure(

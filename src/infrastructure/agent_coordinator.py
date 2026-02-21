@@ -6,27 +6,43 @@ Central routing and coordination service for multi-agent architecture.
 """
 
 import asyncio
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from ..domain.agent import AgentMessage, AgentResponse, AgentStatus, AgentIntent
 from ..agents.base_agent import BaseAgent
 from ..utils.logger import logger
+from .agent_registry import AgentRegistry, ExecutionMode
+from ..ports.task_queue import TaskQueue
 
 
 class AgentCoordinator:
     """
     Coordinator for agent communication and routing.
-    
+
     Responsibilities:
     - Register and manage agents
-    - Route messages to appropriate agents
-    - Handle broadcast routing (intent-based)
+    - Route messages to appropriate agents (ACP v1: route_message)
+    - Handle delegate_to_specialist calls from SmartAgent (ACP v2: handle_delegation)
     - Execute agents in parallel
     - Provide agent discovery
     """
-    
-    def __init__(self):
-        """Initialize coordinator with empty agent registry."""
+
+    def __init__(
+        self,
+        registry: Optional[AgentRegistry] = None,
+        task_queue: Optional[TaskQueue] = None,
+    ):
+        """
+        Initialize coordinator.
+
+        Args:
+            registry: AgentRegistry for v2 intent-based routing.
+                      If None, handle_delegation() will always return failure.
+            task_queue: TaskQueue port for async intent execution.
+                        Required when any registered intent uses ExecutionMode.ASYNC.
+        """
         self.agents: Dict[str, BaseAgent] = {}
+        self._registry = registry
+        self._task_queue = task_queue
         logger.info("🎯 AgentCoordinator initialized")
     
     def register_agent(self, agent: BaseAgent) -> None:
@@ -279,6 +295,131 @@ class AgentCoordinator:
         
         return suggestions if suggestions else self.list_agents()
     
+    # ------------------------------------------------------------------ #
+    # ACP v2: Intent-based delegation (used by SmartResponseAgent)        #
+    # ------------------------------------------------------------------ #
+
+    async def handle_delegation(
+        self,
+        intent: str,
+        query: str,
+        context: Dict[str, Any],
+        calling_agent_id: str = "unknown",
+    ) -> AgentResponse:
+        """
+        Handle a delegate_to_specialist call from SmartResponseAgent.
+
+        Looks up intent in AgentRegistry, then routes:
+        - SYNC  → _execute_sync (immediate, returns result)
+        - ASYNC → _execute_async (enqueue Cloud Tasks, returns ack)
+
+        Args:
+            intent:           Intent name (e.g. "search_memory", "index_gmail")
+            query:            User query or command string
+            context:          Must contain user_id. May contain extra params
+                              under "params" key that are spread into AgentMessage.payload.
+            calling_agent_id: For logging only.
+        """
+        if self._registry is None:
+            logger.error("handle_delegation called but no AgentRegistry configured")
+            return AgentResponse.failure(
+                task_id="delegation",
+                agent_id="coordinator",
+                error="AgentRegistry not configured"
+            )
+
+        manifest = self._registry.get_agent_for_intent(intent)
+        if not manifest:
+            logger.warning(f"Unknown intent '{intent}' requested by {calling_agent_id}")
+            return AgentResponse.failure(
+                task_id="delegation",
+                agent_id="coordinator",
+                error=f"No agent registered for intent: {intent}",
+                suggestions=[i["name"] for i in self._registry.get_available_intents()]
+            )
+
+        mode = manifest.intents[intent]
+        logger.info(
+            f"Delegating intent='{intent}' to agent='{manifest.agent_id}' "
+            f"mode={mode} (from {calling_agent_id})"
+        )
+
+        if mode == ExecutionMode.SYNC:
+            return await self._execute_sync(manifest.agent_id, intent, query, context)
+        else:
+            return await self._execute_async(manifest.agent_id, intent, query, context)
+
+    async def _execute_sync(
+        self,
+        base_agent_id: str,
+        intent: str,
+        query: str,
+        context: Dict[str, Any],
+    ) -> AgentResponse:
+        """Route SYNC intent to the per-user agent instance via route_message."""
+        user_id = context.get("user_id", "")
+        agent_id = f"{base_agent_id}_{user_id}" if user_id else base_agent_id
+
+        # Extra params from SmartAgent's delegate_to_specialist context.params field
+        extra_payload = context.get("params", {})
+
+        message = AgentMessage.create(
+            sender="coordinator",
+            recipient=agent_id,
+            intent=AgentIntent.QUERY,
+            payload={"query": query, **extra_payload},
+            context={k: v for k, v in context.items() if k != "params"},
+        )
+        return await self.route_message(message)
+
+    async def _execute_async(
+        self,
+        base_agent_id: str,
+        intent: str,
+        query: str,
+        context: Dict[str, Any],
+    ) -> AgentResponse:
+        """Enqueue ASYNC intent to Cloud Tasks, return immediate ack."""
+        if self._task_queue is None:
+            logger.error(
+                f"ASYNC intent '{intent}' requested but no TaskQueue configured"
+            )
+            return AgentResponse.failure(
+                task_id="delegation",
+                agent_id="coordinator",
+                error="TaskQueue not configured for async execution"
+            )
+
+        task_name = await self._task_queue.enqueue_agent_task(
+            agent_id=base_agent_id,
+            intent=intent,
+            query=query,
+            context=context,
+        )
+
+        return AgentResponse.success(
+            task_id="delegation",
+            agent_id="coordinator",
+            result={
+                "status": "started",
+                "task_name": task_name,
+                "message": "Task started in background. You will be notified when complete.",
+            },
+        )
+
+    def get_available_intents(self) -> List[Dict[str, str]]:
+        """
+        Return available intents from AgentRegistry for SmartAgent prompt injection.
+        Returns [] if registry is not configured.
+        """
+        if self._registry is None:
+            return []
+        return self._registry.get_available_intents()
+
+    # ------------------------------------------------------------------ #
+    # Monitoring                                                           #
+    # ------------------------------------------------------------------ #
+
     def get_status(self) -> Dict[str, any]:
         """
         Get coordinator status for monitoring.

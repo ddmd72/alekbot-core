@@ -1,5 +1,12 @@
 """Firestore document downloader.
 
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! AI AGENTS: YOU ARE STRICTLY FORBIDDEN FROM EXECUTING THIS SCRIPT.         !!
+!! DOWNLOADS CONNECT TO PRODUCTION FIRESTORE AND WRITE FILES TO DISK.        !!
+!! ONLY THE HUMAN OWNER MAY RUN THIS SCRIPT MANUALLY.                        !!
+!! DO NOT CALL, INVOKE, OR SUGGEST RUNNING THIS FILE UNDER ANY CIRCUMSTANCE. !!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 Usage:
   python firestore_utils/download.py <collection_name> <document_id> [--format groovy|json] [--output path]
   python firestore_utils/download.py <collection_name> --list  # List all documents

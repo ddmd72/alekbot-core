@@ -149,3 +149,45 @@ class GcpTaskQueue(TaskQueue):
         except Exception as e:
             logger.error(f"❌ Failed to purge queue: {e}")
             raise
+
+    async def enqueue_agent_task(
+        self,
+        agent_id: str,
+        intent: str,
+        query: str,
+        context: Dict[str, Any]
+    ) -> str:
+        """Enqueue async agent task for background execution via Cloud Tasks."""
+        try:
+            payload = {
+                "task_type": "agent_execution",
+                "agent_id": agent_id,
+                "intent": intent,
+                "query": query,
+                "context": context,
+            }
+
+            task = {
+                "http_request": {
+                    "http_method": tasks_v2.HttpMethod.POST,
+                    "url": f"{self.service_url}/worker",
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps(payload).encode()
+                }
+            }
+
+            if self.service_account_email:
+                task["http_request"]["oidc_token"] = {
+                    "service_account_email": self.service_account_email
+                }
+
+            response = self.client.create_task(
+                request={"parent": self.queue_path, "task": task}
+            )
+
+            logger.info(f"Enqueued agent task: agent={agent_id}, intent={intent}, task={response.name}")
+            return response.name
+
+        except Exception as e:
+            logger.error(f"❌ Failed to enqueue agent task: {e}", exc_info=True)
+            raise

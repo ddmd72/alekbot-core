@@ -21,6 +21,9 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.services.file_upload_service import FileUploadService
 from src.composition.service_container import ServiceContainer
 from src.infrastructure.agent_coordinator import AgentCoordinator
+from src.infrastructure.agent_registry import AgentRegistry, AgentManifest, ExecutionMode
+from src.adapters.gcp_task_queue import GcpTaskQueue
+from src.handlers.agent_worker_handler import AgentWorkerHandler
 from src.domain.agent import AgentConfig
 from src.agents.infrastructure.billing_agent import BillingAgent
 from src.agents.infrastructure.logger_agent import LoggerAgent
@@ -128,8 +131,40 @@ async def main():
             whitelist_repo
         )
 
+        logger.info("🎯 Initializing Agent Registry...")
+        agent_registry = AgentRegistry()
+        agent_registry.register(AgentManifest(
+            agent_id="memory_search_agent",
+            intents={"search_memory": ExecutionMode.SYNC},
+            description="Semantic search through biographical facts and personal knowledge",
+        ))
+        agent_registry.register(AgentManifest(
+            agent_id="web_search_agent",
+            intents={"search_web": ExecutionMode.SYNC},
+            description="Real-time web search for current information",
+        ))
+
+        # Task queue: only in HTTP mode where Cloud Tasks is available
+        agent_task_queue = None
+        if env_config.is_http_mode and config.get("GOOGLE_CLOUD_PROJECT"):
+            queue_suffix = "dev" if env_config.is_development else "prod"
+            service_url = config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
+            agent_task_queue = GcpTaskQueue(
+                project_id=config["GOOGLE_CLOUD_PROJECT"],
+                location="europe-west1",
+                queue_name=f"agent-tasks-{queue_suffix}",
+                service_url=service_url,
+                service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
+            )
+            logger.info(f"📬 Agent task queue initialized: agent-tasks-{queue_suffix}")
+        else:
+            logger.info("📬 Agent task queue: disabled (socket mode or no GCP project)")
+
         logger.info("🎯 Initializing Agent Coordinator...")
-        coordinator = AgentCoordinator()
+        coordinator = AgentCoordinator(registry=agent_registry, task_queue=agent_task_queue)
+
+        logger.info("🔧 Initializing Agent Worker Handler...")
+        agent_worker_handler = AgentWorkerHandler(coordinator=coordinator)
 
         logger.info("💳 Initializing Billing Agent...")
         quota_service = FirestoreQuotaService(user_repo)
@@ -471,6 +506,11 @@ async def main():
                 # Add /worker endpoint (moved from adapter to shared app)
                 @main_app.route("/worker", methods=["POST"])
                 async def worker():
+                    from quart import request, jsonify
+                    payload = await request.get_json(silent=True) or {}
+                    if payload.get("task_type") == "agent_execution":
+                        result = await agent_worker_handler.handle_task(payload)
+                        return jsonify(result), 200
                     return await slack_adapter._handle_worker_task()
                 
                 logger.info("✅ All blueprints registered on shared app (port 8080)")

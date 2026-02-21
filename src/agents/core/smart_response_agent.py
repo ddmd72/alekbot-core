@@ -86,11 +86,8 @@ class SmartResponseAgent(BaseAgent):
     MAX_AGENT_RETRIES = 2
     RETRY_BACKOFF_SECONDS = 1
 
-    # LLM "tools" → specialist agent mapping (technical API detail)
-    FUNCTION_TO_AGENT_MAP = {
-        "search_memory": "memory_search_agent",
-        "ask_web_search_agent": "web_search_agent"
-    }
+    # ACP v2: agent delegation goes through coordinator.handle_delegation()
+    # No hardcoded map — registry provides intent → agent routing.
 
     def __init__(
         self,
@@ -221,6 +218,7 @@ class SmartResponseAgent(BaseAgent):
             loop_result = await self._execute_agent_delegation_loop(
                 session_id=session_id,
                 user_id=user_id,
+                account_id=account_id,
                 system_prompt=system_prompt,
                 history=clean_history,
                 tool_declarations=self._get_tool_declarations()
@@ -313,7 +311,8 @@ class SmartResponseAgent(BaseAgent):
         user_id: str,
         system_prompt: str,
         history: List[Message],
-        tool_declarations: List[Dict[str, Any]]
+        tool_declarations: List[Dict[str, Any]],
+        account_id: Optional[str] = None,
     ) -> AgentLoopResult:
         """
         Agent-based delegation loop with smart ordering:
@@ -515,7 +514,8 @@ class SmartResponseAgent(BaseAgent):
             tool_responses = await self._execute_agents_smart_parallel(
                 tool_calls=response.tool_calls,
                 user_id=user_id,
-                session_id=session_id
+                session_id=session_id,
+                account_id=account_id,
             )
             logger.info(
                 "🧠 [SmartResponseAgent] Turn %s - Agent delegation completed",
@@ -548,7 +548,8 @@ class SmartResponseAgent(BaseAgent):
         self,
         tool_calls: List[ToolCall],
         user_id: str,
-        session_id: str
+        session_id: str,
+        account_id: Optional[str] = None,
     ) -> List[ToolResponse]:
         """
         Execute agent calls with smart ordering:
@@ -558,8 +559,15 @@ class SmartResponseAgent(BaseAgent):
         results: List[Optional[ToolResponse]] = [None] * len(tool_calls)
         memory_context: List[str] = []
 
-        memory_calls = [(idx, tc) for idx, tc in enumerate(tool_calls) if tc.name == "search_memory"]
-        other_calls = [(idx, tc) for idx, tc in enumerate(tool_calls) if tc.name != "search_memory"]
+        # ACP v2: delegate_to_specialist with intent="search_memory" runs first (memory-first ordering).
+        def _is_memory_call(tc: ToolCall) -> bool:
+            return (
+                tc.name == "delegate_to_specialist"
+                and (tc.args or {}).get("intent") == "search_memory"
+            )
+
+        memory_calls = [(idx, tc) for idx, tc in enumerate(tool_calls) if _is_memory_call(tc)]
+        other_calls = [(idx, tc) for idx, tc in enumerate(tool_calls) if not _is_memory_call(tc)]
 
         # Phase 1: execute memory searches first (sequential)
         for idx, tool_call in memory_calls:
@@ -567,7 +575,8 @@ class SmartResponseAgent(BaseAgent):
             memory_result = await self._delegate_to_agent_with_retry(
                 tool_call=tool_call,
                 user_id=user_id,
-                session_id=session_id
+                session_id=session_id,
+                account_id=account_id,
             )
             results[idx] = memory_result
             if memory_result.result_str:
@@ -584,7 +593,8 @@ class SmartResponseAgent(BaseAgent):
                     tool_call=tc,
                     user_id=user_id,
                     session_id=session_id,
-                    memory_context=memory_context
+                    account_id=account_id,
+                    memory_context=memory_context,
                 )
                 for _, tc in other_calls
             ]
@@ -611,65 +621,69 @@ class SmartResponseAgent(BaseAgent):
         tool_call: ToolCall,
         user_id: str,
         session_id: str,
-        memory_context: Optional[List[str]] = None
+        account_id: Optional[str] = None,
+        memory_context: Optional[List[str]] = None,
     ) -> ToolResponse:
-        """Delegate a tool_call to the mapped agent with retry logic."""
-        agent_id = self.FUNCTION_TO_AGENT_MAP.get(tool_call.name)
-        if agent_id is None:
-            return ToolResponse(
-                name=tool_call.name,
-                result_str=f"SYSTEM ERROR: Tool '{tool_call.name}' not found."
-            )
+        """
+        Handle a delegate_to_specialist tool call via coordinator.handle_delegation().
 
-        resolved_agent_id = self._resolve_agent_id(agent_id, user_id)
-
+        Extracts intent, query, and optional params from the tool_call args,
+        then routes through AgentRegistry (ACP v2).
+        """
         if not self.coordinator:
             return ToolResponse(
                 name=tool_call.name,
                 result_str="SYSTEM ERROR: AgentCoordinator not configured."
             )
 
-        payload = dict(tool_call.args or {})
-        if memory_context:
-            payload["memory_context"] = memory_context
+        args = tool_call.args or {}
+        intent = args.get("intent", "")
+        query = args.get("query", "")
+        context_params = args.get("context", {})  # optional rich params from LLM
 
-        # SESSION 2026-02-09: Detailed logging for search_memory 3-key calls
-        if tool_call.name == "search_memory":
+        if not intent:
+            return ToolResponse(
+                name=tool_call.name,
+                result_str=f"SYSTEM ERROR: delegate_to_specialist called without 'intent'. args={args}"
+            )
+
+        # Build delegation context — merge session context with memory and extra params
+        delegation_context: Dict[str, Any] = {
+            "user_id": user_id,
+            "account_id": account_id,
+            "session_id": session_id,
+            "memory_context": memory_context or [],
+            "params": context_params,   # spread into AgentMessage.payload in _execute_sync
+        }
+
+        # Detailed log for search_memory (preserves observability from ACP v1)
+        if intent == "search_memory":
             logger.info(
                 f"🔍 [SmartResponseAgent] === CALLING search_memory ===\n"
-                f"   Agent: {resolved_agent_id}\n"
-                f"   Tool Call Args from LLM:\n"
-                f"      keywords: {tool_call.args.get('keywords', 'N/A')}\n"
-                f"      primary_query: {tool_call.args.get('primary_query', 'N/A')}\n"
-                f"      alternative_query: {tool_call.args.get('alternative_query', 'N/A')}\n"
-                f"   Full payload: {payload}"
+                f"   intent: {intent}\n"
+                f"   query: {query}\n"
+                f"   context_params: {context_params}"
             )
         else:
-            logger.debug(
-                f"🔄 [SmartResponseAgent] Delegating to {resolved_agent_id}: "
-                f"tool_call.name={tool_call.name}, "
-                f"tool_call.args={tool_call.args}, "
-                f"payload={payload}"
+            logger.info(
+                f"🔄 [SmartResponseAgent] delegate_to_specialist: intent={intent}, query={query}"
             )
 
         for attempt in range(self.MAX_AGENT_RETRIES + 1):
-            agent_message = AgentMessage.create(
-                sender=self.agent_id,
-                recipient=resolved_agent_id,
-                intent=AgentIntent.QUERY,
-                payload=payload,
-                context={
-                    "session_id": session_id,
-                    "user_id": user_id,
-                    "memory_context": memory_context or []
-                }
+            response = await self.coordinator.handle_delegation(
+                intent=intent,
+                query=query,
+                context=delegation_context,
+                calling_agent_id=self.agent_id,
             )
-
-            response = await self.coordinator.route_message(agent_message)
 
             if response.status == AgentStatus.SUCCESS:
                 result_str = self._format_agent_result(response.result)
                 structured_data = response.metadata.get("structured_data") if response.metadata else None
+                logger.info(
+                    f"✅ [SmartResponseAgent] delegate_to_specialist result: intent={intent}\n"
+                    f"   result preview: {result_str[:300]}{'...' if len(result_str) > 300 else ''}"
+                )
                 return ToolResponse(
                     name=tool_call.name,
                     result_str=result_str,
@@ -678,7 +692,7 @@ class SmartResponseAgent(BaseAgent):
 
             if attempt < self.MAX_AGENT_RETRIES:
                 logger.warning(
-                    f"⚠️ Agent '{resolved_agent_id}' failed (attempt {attempt + 1}/"
+                    f"⚠️ Delegation intent='{intent}' failed (attempt {attempt + 1}/"
                     f"{self.MAX_AGENT_RETRIES + 1}). Retrying..."
                 )
                 await asyncio.sleep(self.RETRY_BACKOFF_SECONDS)
@@ -702,14 +716,6 @@ class SmartResponseAgent(BaseAgent):
             return result.text
         return str(result)
 
-    def _resolve_agent_id(self, base_agent_id: str, user_id: Optional[str]) -> str:
-        """Resolve user-specific agent ID when multi-tenant factory is used."""
-        if not user_id:
-            return base_agent_id
-        if base_agent_id.endswith(f"_{user_id}"):
-            return base_agent_id
-        return f"{base_agent_id}_{user_id}"
-
     async def _generate_history_summary(self, response_text: str) -> Optional[str]:
         """
         Post-processing step: generate a compact history summary via HistorySummaryService.
@@ -723,57 +729,54 @@ class SmartResponseAgent(BaseAgent):
 
     def _get_tool_declarations(self) -> List[Dict[str, Any]]:
         """
-        Build tool declarations for LLM API.
+        Build tool declarations for LLM API (ACP v2).
+
+        SmartAgent has one generic delegation tool: delegate_to_specialist.
+        Available intents are injected dynamically from AgentRegistry via coordinator.
 
         IMPORTANT: Gemini requires "tools" schema in requests. We keep this
-        technical format even though these are agent endpoints.
-        
-        SESSION_2026_02_09: Updated search_memory to use 3-key multi-vector strategy.
+        technical format even though these are agent delegation endpoints.
+
+        TODO (owner): update delegate_to_specialist description text in Firestore
+        prompt tokens — user will craft final prompt copy.
         """
+        available_intents = (
+            self.coordinator.get_available_intents()
+            if self.coordinator else []
+        )
+
+        intents_description = "\n".join(
+            f"- {i['name']}: {i['description']}" for i in available_intents
+        ) or "(no specialist agents registered)"
+
         return [
             {
-                "name": "search_memory",
-                "description": "Search user's personal long-term memory using multi-vector strategy",
+                "name": "delegate_to_specialist",
+                "description": (
+                    "Delegate a task to a specialist agent.\n\n"
+                    f"Available intents:\n{intents_description}\n\n"
+                    "Parameters:\n"
+                    "- intent: intent name from the list above\n"
+                    "- query: the user's question or command\n"
+                    "- context: optional dict with extra parameters for the specialist"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "keywords": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "3-5 domain keywords for tag-based search (e.g., ['car', 'vehicle', 'mitsubishi'])"
-                        },
-                        "primary_query": {
+                        "intent": {
                             "type": "string",
-                            "description": "Primary search phrase describing what you're looking for"
+                            "description": "Intent name (from available intents list)"
                         },
-                        "alternative_query": {
+                        "query": {
                             "type": "string",
-                            "description": "Alternative phrasing or related concept for diversity"
+                            "description": "User question or command"
                         },
-                        "domains": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": (
-                                "Optional. 1-3 fact domain names for direct category search. "
-                                "Use when query clearly targets a specific life area. "
-                                "Valid values: biographical, possession, health, medical_records, "
-                                "location, work, network, preference, skill, project, "
-                                "finance, education, legal, entertainment, communication"
-                            )
+                        "context": {
+                            "type": "object",
+                            "description": "Optional extra parameters for the specialist agent"
                         }
                     },
-                    "required": ["keywords", "primary_query", "alternative_query"]
-                }
-            },
-            {
-                "name": "ask_web_search_agent",
-                "description": "Search the web via WebSearchAgent",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query"}
-                    },
-                    "required": ["query"]
+                    "required": ["intent", "query"]
                 }
             },
         ]

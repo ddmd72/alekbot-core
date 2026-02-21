@@ -1,5 +1,13 @@
 # Firestore Utils
 
+> ## ⛔ AI AGENTS — READ THIS FIRST
+>
+> **YOU ARE FORBIDDEN FROM RUNNING ANY SCRIPT IN THIS DIRECTORY.**
+> Upload and download operations connect to production Firestore.
+> Uploads are destructive and irreversible.
+> **ONLY THE HUMAN OWNER EXECUTES THESE SCRIPTS MANUALLY.**
+> Do not call, invoke, or suggest running `upload.py` or `download.py` under any circumstance.
+
 Utilities to download and upload Firestore documents for safe local editing.
 
 **Important:** All operations target the `us-production` Firestore database by default.
@@ -71,7 +79,7 @@ python firestore_utils/download.py development_domain_prompt_tokens_v3_system PR
 python firestore_utils/download.py development_domain_prompt_tokens_v3_system FEW_SHOT_EXAMPLES_RANEVSKAYA_ZHVANETSKY
 python firestore_utils/download.py development_domain_prompt_tokens_v3_system OUTPUT_FORMAT_JSON
 python firestore_utils/download.py development_domain_prompt_tokens_v3_system OUTPUT_FORMAT_STANDARD
-
+python firestore_utils/download.py development_domain_prompt_tokens_v3_system PROTOCOL_SMART_AGENT_SELECTION
 
 
 ```
@@ -103,6 +111,8 @@ python firestore_utils/upload.py domain_prompt_tokens_v3_system COGNITIVE_PROCES
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_ROUTER
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_CONSOLIDATION
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_SMART
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system PROTOCOL_SMART_AGENT_SELECTION
+
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system FEW_SHOT_EXAMPLES_RANEVSKAYA_ZHVANETSKY
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system PROTOCOL_SEARCH_MEMORY
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system OUTPUT_FORMAT_JSON
@@ -114,7 +124,7 @@ python firestore_utils/upload.py development_domain_prompt_tokens_v3_system OUTP
 Upload JSON file (full document):
 
 ```bash
-python firestore_utils/upload.py domain_prompt_profiles_v3 smart_agent_v1_SYSTEM_smart --format json
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_MEMORY_SEARCH --format json
 ```
 
 ## Database Parameter (Advanced)

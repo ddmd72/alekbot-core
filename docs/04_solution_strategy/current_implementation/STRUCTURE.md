@@ -93,11 +93,13 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── ui_messages.py  # Semantic UI Status Types
 │   └── user.py         # User domain entities + PerformanceTier
 ├── handlers/           # Application Layer (Orchestrators)
+│   ├── agent_worker_handler.py  # 🆕 ASYNC agent execution from Cloud Tasks (ACP v2)
 │   ├── consolidation_handler.py # 🆕 Batch processing orchestrator
 │   ├── conversation_handler.py # Platform-agnostic main orchestrator
 │   └── learning_loop.py # ⚠️ LEGACY
 ├── infrastructure/     # 🆕 System Infrastructure
-│   ├── agent_coordinator.py # Central routing hub
+│   ├── agent_coordinator.py # Central routing hub + handle_delegation() (ACP v2)
+│   ├── agent_registry.py    # 🆕 AgentRegistry — dynamic intent → agent mapping (ACP v2)
 │   └── message_queue.py     # Async communication hub
 ├── locales/            # 🆕 Localization System
 │   ├── en.py           # English strings (Stub)
@@ -151,10 +153,11 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── memory_search_tool.py
 │   └── web_search_agent_tool.py
 └── utils/
-├── logger.py         # Centralized logging configuration
-├── performance_logger.py # Performance timing helpers
-├── timer.py          # Timer utilities
-├── weather_parser.py # 🆕 Structured weather data extraction
+├── logger.py              # Centralized logging configuration
+├── llm_response_parser.py # Unified parser for LLM response envelopes (full_response, response_summary, rich_content)
+├── performance_logger.py  # Performance timing helpers
+├── timer.py               # Timer utilities
+├── weather_parser.py      # 🆕 Structured weather data extraction
 └── server.py
 
 ## `src/`
@@ -199,6 +202,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`tool_result.py`**: Standardized result object for tool executions (`ToolResult`).
 
 ### `handlers/` - Application Layer (Orchestrators)
+-   **`agent_worker_handler.py`**: 🆕 Handles ASYNC agent execution payloads from Cloud Tasks (`task_type="agent_execution"`). Routes via `coordinator.route_message()`. User notification deferred (to be implemented with first ASYNC agent).
 -   **`conversation_handler.py`**: **Primary platform-agnostic orchestrator**. Coordinates agent flow, session persistence, and UI updates. Implements graceful degradation: SmartAgent `TIMEOUT`/`FAILED` → QuickAgent direct fallback with injected `[System: ...]` context note. Raw error text is never exposed to the user.
 -   **`consolidation_handler.py`**: 🆕 Orchestrates the sliding window batch processing (Cold Storage).
 -   **`learning_loop.py`**: ⚠️ LEGACY.
@@ -279,20 +283,23 @@ The multi-agent system enables specialized task handling with different LLM mode
 **Core Agents (`agents/core/`):**
 -   **`router_agent.py`**: LLM triage + rule-based fallback routing (complexity threshold=5).
 -   **`quick_response_agent.py`**: Fast responses using `gemini-3-flash-preview`.
--   **`smart_response_agent.py`**: Complex reasoning + parallel agent delegation.
+-   **`smart_response_agent.py`**: Complex reasoning + specialist delegation via `delegate_to_specialist(intent, query)` — generic ACP v2 tool. Available intents injected dynamically from `AgentRegistry`. Memory-first parallel scheduling for `search_memory` intent.
 
 **Specialized Agents:**
--   **`memory_search_agent.py`**: RAG specialist (Pure vector search).
+-   **`memory_search_agent.py`**: Two-phase memory retrieval: (1) LLM key formulation — Gemini Flash converts the delegation query into 3 optimized search keys (keywords, primary_query, alternative_query) + optional domains using `COGNITIVE_PROCESS_MEMORY_SEARCH` Firestore token; (2) multi-vector RRF search via `SearchEnrichmentService`. Schema enforced at API level: 3–5 keywords, 2 domains max (enum), 50-char query limit.
 -   **`web_search_agent.py`**: Web search specialist using Gemini Grounding.
 -   **`consolidation_agent.py`**: Knowledge synthesis specialist ("Life Chronicler"). Uses biographical context caching and vector-based deduplication.
 -   **`observation_agent.py`**: ⚠️ LEGACY (kept for reference).
 
 **Agent Infrastructure:**
 -   **`infrastructure/agent_coordinator.py`**: Central routing hub with explicit and broadcast routing.
-    -   Explicit routing (by agent_id)
-    -   Broadcast routing (intent-based, capability-based)
-    -   Parallel execution support
-    -   Health monitoring and circuit breaker coordination
+    -   Explicit routing (by agent_id), broadcast routing, parallel execution
+    -   `handle_delegation(intent, query, context)` — ACP v2 entry point; resolves via AgentRegistry, routes SYNC or ASYNC
+    -   `get_available_intents()` — proxies to registry for SmartAgent tool description injection
+-   **`infrastructure/agent_registry.py`**: 🆕 ACP v2 registry.
+    -   `AgentRegistry.register(AgentManifest)` — maps intents → manifests
+    -   `AgentManifest(agent_id, intents: Dict[str, ExecutionMode], description, requires_auth)`
+    -   `ExecutionMode`: SYNC (inline) or ASYNC (Cloud Tasks + callback)
 
 **Agent Communication Protocol (ACP):**
 -   **`domain/agent.py`**: Defines unified communication protocol:

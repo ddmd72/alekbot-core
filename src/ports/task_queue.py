@@ -31,3 +31,18 @@ class TaskQueue(Protocol):
     async def purge_queue(self) -> None:
         """Purge all queued tasks."""
         ...
+
+    async def enqueue_agent_task(
+        self,
+        agent_id: str,
+        intent: str,
+        query: str,
+        context: Dict[str, Any]
+    ) -> str:
+        """
+        Enqueue an async agent task for background execution.
+
+        Returns task name (Cloud Tasks task ID).
+        Worker receives payload with task_type="agent_execution".
+        """
+        ...
