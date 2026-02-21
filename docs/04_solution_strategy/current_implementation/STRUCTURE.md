@@ -107,22 +107,35 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── locales/            # 🆕 Localization System
 │   ├── en.py           # English strings (Stub)
 │   └── uk.py           # Ukrainian strings (Primary)
-├── ports/              # Port Interfaces (Abstractions)
-│   ├── account_repository.py # AccountRepository port
-│   ├── log_sink.py     # 🆕 Log sink port
-│   ├── consolidation_queue.py # 🆕 Consolidation queue interface
-│   ├── file_service.py # 🆕 File management interface
-│   ├── quota_service.py # QuotaService port
-│   ├── task_queue.py   # 🆕 Task queue port
-│   ├── repository.py   # FactRepository interface
-│   ├── llm_service.py  # LLM Provider Port
-│   ├── session_store.py # 🆕 Session persistence interface
-│   ├── conversation_handler_port.py # ConversationHandlerPort ABC (injected into platform adapters)
-│   ├── fact_write_port.py # FactWritePort ABC (injected into agents and FactManagementAdapter)
-│   ├── platform_auth_port.py # PlatformAuthPort + IAMDecision (platform adapter authorization)
-│   ├── prompt_builder_port.py # PromptBuilderPort ABC (injected into all agents)
-│   ├── search_enrichment_port.py # SearchEnrichmentPort ABC (injected into RouterAgent and MemorySearchAgent)
-│   └── user_repository.py # UserRepository port
+├── ports/              # Port Interfaces (28 ABCs)
+│   ├── llm_service.py  # LLM Provider Port (Gemini, Claude, Grok)
+│   ├── repository.py   # FactRepository interface (SCD Type 2)
+│   ├── session_store.py # Session persistence interface
+│   ├── embedding_service.py # Text embedding port
+│   ├── account_repository.py # Billing account port
+│   ├── user_repository.py # User profile + platform identity port
+│   ├── auth_port.py    # OAuth 2.0 / OIDC authentication port
+│   ├── iam_port.py     # Role-based access control port
+│   ├── invite_code_repository.py # Invite code management port
+│   ├── whitelist_repository.py # Email/domain whitelist port
+│   ├── quota_service.py # Usage tracking + quota port
+│   ├── conversation_handler_port.py # ConversationHandlerPort (platform adapter decoupling)
+│   ├── platform_auth_port.py # PlatformAuthPort + IAMDecision
+│   ├── prompt_builder_port.py # PromptBuilderPort (all agents)
+│   ├── fact_write_port.py # FactWritePort (agents + adapters)
+│   ├── search_enrichment_port.py # SearchEnrichmentPort (router, memory, fact mgmt)
+│   ├── fact_management_port.py # Deliberate fact management port
+│   ├── consolidation_queue.py # Batch queue management port
+│   ├── log_sink.py     # Structured logging sink port
+│   ├── task_queue.py   # Background task queue port
+│   ├── file_service.py # File upload port
+│   ├── audio_transcription_port.py # Audio transcription port (inactive)
+│   ├── prompt_assembler.py # Prompt assembly port
+│   ├── prompt_component_repository.py # Prompt component storage port
+│   └── prompt_v3/      # Prompt Design System v3 ports
+│       ├── token_repository.py
+│       ├── blueprint_repository.py
+│       └── agent_profile_repository.py
 ├── services/
 │   ├── agent_context_builder.py # 🆕 Resolves Provider/Tier/Model for agents
 │   ├── history_summary_service.py # 🆕 LLM-based history compression (Gemini-locked, fail-fast)
@@ -199,19 +212,47 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`uk.py` / `en.py`**: Centralized UI strings and phrases for different languages.
 
 ### `ports/` - Port Interfaces (Abstractions)
--   **`account_repository.py`**: Port for account-level usage + quota.
+
+28 port interfaces organized by domain concern:
+
+**Core Ports:**
+-   **`llm_service.py`**: `LLMService` ABC. Interface for LLM provider operations (generate, stream, upload files). Re-exports `Message`, `MessagePart`, `ToolCall` from `domain/llm.py` for backward compatibility. Adapters: `GeminiAdapter`, `ClaudeAdapter`, `GrokAdapter`.
+-   **`repository.py`**: `FactRepository` ABC. Interface for memory storage operations (SCD Type 2, vector search). Adapter: `FirestoreFactRepository`.
+-   **`session_store.py`**: `SessionStore` ABC. Interface for session persistence (load, save, append, batch append). Adapter: `FirestoreSessionStore`.
+-   **`embedding_service.py`**: `EmbeddingService` ABC. Text embedding generation. Adapter: `GeminiEmbeddingAdapter`.
+
+**User & Account Ports:**
+-   **`account_repository.py`**: Port for billing account operations + quota management. Adapter: `FirestoreAccountRepository`.
+-   **`user_repository.py`**: Port for user profile CRUD + platform identity linking. Adapter: `FirestoreUserRepository`.
+-   **`auth_port.py`**: `AuthPort` ABC. OAuth 2.0 / OIDC authentication (authorization URL, token exchange, verification). Adapter: `FirebaseAuthAdapter`.
+-   **`iam_port.py`**: `IAMPort` ABC. Role-based access control (OWNER/MEMBER/VIEWER, resource-level permissions). Adapter: `FirestoreIAMAdapter`.
+-   **`invite_code_repository.py`**: Port for invite code management (create, consume, list). Adapter: `FirestoreInviteCodeRepository`.
+-   **`whitelist_repository.py`**: Port for email/domain whitelist management. Adapter: `FirestoreWhitelistRepository`.
+-   **`quota_service.py`**: Port for non-blocking usage tracking and quota management. Adapter: `FirestoreQuotaService`.
+
+**Platform & Handler Ports:**
 -   **`conversation_handler_port.py`**: `ConversationHandlerPort` ABC — injected into all platform adapters (Slack, Telegram). Decouples adapters from the concrete `ConversationHandler` in `handlers/`.
--   **`fact_write_port.py`**: `FactWritePort` ABC — injected into `ConsolidationAgent`, `FactManagementAdapter`, and `UserAgentFactory`. Decouples consumers from `FactWriteService`.
--   **`log_sink.py`**: Port for structured logging sinks.
--   **`platform_auth_port.py`**: `PlatformAuthPort` ABC + `IAMDecision` dataclass — injected into all platform adapters for centralized authorization.
--   **`prompt_builder_port.py`**: `PromptBuilderPort` ABC — injected into all 5 agents (RouterAgent, QuickResponseAgent, SmartResponseAgent, WebSearchAgent, ConsolidationAgent).
--   **`quota_service.py`**: Port for non-blocking usage tracking and quota management.
--   **`search_enrichment_port.py`**: `SearchEnrichmentPort` ABC — injected into `RouterAgent`, `MemorySearchAgent`, and `FactManagementAdapter`.
--   **`task_queue.py`**: Port for background task queues.
--   **`llm_service.py`**: `LLMService` ABC. Interface for LLM provider operations (generate, stream, upload files). Re-exports `Message`, `MessagePart`, `ToolCall` from `domain/llm.py` for backward compatibility.
--   **`repository.py`**: `FactRepository` ABC (Abstract Base Class). Interface for memory storage operations.
--   **`session_store.py`**: `SessionStore` ABC. Interface for session persistence. Imports `Message` from `domain/llm.py` (not from `ports/llm_service.py`).
--   **`user_repository.py`**: Port for user profile retrieval/storage.
+-   **`platform_auth_port.py`**: `PlatformAuthPort` ABC + `IAMDecision` dataclass — injected into all platform adapters for centralized authorization. Implemented by `IAMService`.
+
+**Agent & Service Ports:**
+-   **`prompt_builder_port.py`**: `PromptBuilderPort` ABC — injected into all 5 agents (RouterAgent, QuickResponseAgent, SmartResponseAgent, WebSearchAgent, ConsolidationAgent). Implemented by `PromptBuilder`.
+-   **`fact_write_port.py`**: `FactWritePort` ABC — injected into `ConsolidationAgent`, `FactManagementAdapter`, and `UserAgentFactory`. Implemented by `FactWriteService`.
+-   **`search_enrichment_port.py`**: `SearchEnrichmentPort` ABC — injected into `RouterAgent`, `MemorySearchAgent`, and `FactManagementAdapter`. Implemented by `SearchEnrichmentService`.
+-   **`fact_management_port.py`**: `FactManagementPort` ABC. Deliberate fact management (search, create, merge, discard). Adapter: `FactManagementAdapter`.
+-   **`consolidation_queue.py`**: `ConsolidationQueue` ABC. Batch queue management (enqueue, get pending, update status, cleanup). Adapter: `FirestoreConsolidationQueue`.
+
+**Infrastructure Ports:**
+-   **`log_sink.py`**: Port for structured logging sinks. Adapter: `GcpLogSink`.
+-   **`task_queue.py`**: Port for background task queues. Adapter: `GcpTaskQueue`.
+-   **`file_service.py`**: Port for file upload to LLM providers.
+-   **`audio_transcription_port.py`**: `AudioTranscriptionPort` ABC. Audio-to-text transcription (not yet active).
+
+**Prompt v3 Ports:**
+-   **`prompt_assembler.py`**: `PromptAssembler` ABC. Format-agnostic prompt assembly. Adapter: `GroovyPromptAssembler`.
+-   **`prompt_component_repository.py`**: Port for prompt component storage (defaults, user overrides, agent-specific). Adapter: `FirestorePromptComponentRepository`.
+-   **`prompt_v3/token_repository.py`**: Port for token (prompt fragment) storage with categorization. Adapter: `FirestoreTokenRepository`.
+-   **`prompt_v3/blueprint_repository.py`**: Port for blueprint (prompt template) storage. Adapter: `FirestoreBlueprintRepository`.
+-   **`prompt_v3/agent_profile_repository.py`**: Port for agent profile storage with 4-level priority resolution. Adapter: `FirestoreAgentProfileRepository`.
 
 ### `services/` - Application Services
 -   **`agent_context_builder.py`**: Resolves Provider/Tier/Model for agents. Defines `AgentProviderStrategy` (allowed providers per agent type — including `"postprocessing"` locked to Gemini) and `AgentContextBuilder` (builds `AgentExecutionContext` from user config + strategy).

@@ -340,3 +340,36 @@ from ..services.deduplication_service import SmartDeduplicationService
 | `Message`/`MessagePart` in ports (1.1) | P1 | Low effort, high ROI |
 | `UserAgentFactory` → 3 concrete adapters (1.2) | P1 | Medium effort |
 | `http_adapter` → `FirestoreSessionStore`, `FirestoreEventDedupStore` (type hints only) | P3 | Debatable — these are constructor params, not usage |
+
+---
+
+## 8. Port Contract Fixes — 2026-02-21
+
+> **Date:** 2026-02-21
+> **Scope:** Port-level bug fixes found during Review v2
+> **Status:** ✅ All port contract bugs fixed. 34 regression tests added.
+
+### 8.1 Bugs Fixed
+
+| Port | Bug | Fix |
+|------|-----|-----|
+| `consolidation_queue.py` | `get_queue_size()` and `cleanup_old_batches()` defined twice (duplicate lines 41-49) | Duplicate definitions removed |
+| `consolidation_queue.py` | `enqueue_batch()` and `get_pending_batches()` missing from port (adapter implemented them but port didn't declare them) | Added as `@abstractmethod` — port now declares all 7 methods |
+| `session_store.py` | `append_messages_batch()` missing `@abstractmethod` decorator | Decorator added — port now declares all 5 abstract methods |
+
+### 8.2 Regression Tests
+
+New test file: `tests/unit/ports/test_port_contracts.py` (34 tests)
+
+- `TestConsolidationQueueContract` — verifies all 7 abstract methods present, no duplicates, correct signatures
+- `TestConsolidationQueueMockImplementation` — verifies `AsyncMock(spec=ConsolidationQueue)` works for all methods
+- `TestSessionStoreContract` — verifies all 5 abstract methods present, including `append_messages_batch`
+- `TestSessionStoreMockImplementation` — verifies mock store satisfies the full contract
+
+### 8.3 Updated Scores
+
+| Layer | Before (7.3) | After (8.2) |
+|-------|-------------|-------------|
+| **ports/** | 80% | 95% |
+
+Overall review score updated: **8.5 → 9.0/10** (see `docs/reviews/HEXAGONAL_ARCHITECTURE_REVIEW_V2.md`)

@@ -1,6 +1,6 @@
 # Hexagonal Architecture Patterns in Alek-Core
 
-**Last Updated:** 2026-02-20
+**Last Updated:** 2026-02-21
 **Status:** Active Guide
 
 ---
@@ -410,41 +410,50 @@ fact_management_adapter = self.fact_management_adapter_factory(search_enrichment
 
 ---
 
-## Pattern 7: Shared ConversationHandler in Platform Adapters
+## Pattern 7: Port-Based Platform Adapter Decoupling
 
 ### Problem
 
-Each request handler creates a new `ConversationHandler(...)` with identical parameters — DRY violation.
+Platform adapters (Slack, Telegram) import and instantiate `ConversationHandler` from the handlers layer, creating an adapter → application layer dependency.
 
 ### Solution
 
-Create `ConversationHandler` once in `PlatformAdapter.__init__()` and store as `self.conversation_handler`.
+1. Define `ConversationHandlerPort` and `PlatformAuthPort` ABCs in `ports/`.
+2. `PlatformAdapter` depends only on these ports (no concrete handler import).
+3. `SlackAdapterFactory` (in `composition/`) creates the concrete handler and injects it.
 
 ```python
-# src/adapters/platform/base_adapter.py
+# src/ports/conversation_handler_port.py
+class ConversationHandlerPort(ABC):
+    @abstractmethod
+    async def handle_message(self, context: MessageContext, response_channel) -> None: ...
+
+    @abstractmethod
+    async def handle_command(self, command: str, context: MessageContext, response_channel) -> Optional[bool]: ...
+
+# src/adapters/platform/base_adapter.py — depends on port, not handler
 class PlatformAdapter(ABC):
-    def __init__(self, coordinator, agent_factory, iam_service, file_service, ...):
-        self.coordinator = coordinator
-        self.agent_factory = agent_factory
-        # ...
+    def __init__(self, conversation_handler: ConversationHandlerPort,
+                 platform_auth: PlatformAuthPort, ...):
+        self.conversation_handler = conversation_handler  # Port!
+        self.platform_auth = platform_auth                # Port!
 
-        # Created once — ConversationHandler is stateless, safe to reuse
-        self.conversation_handler = ConversationHandler(
-            coordinator=coordinator,
-            agent_factory=agent_factory,
-            file_service=file_service,
-            consolidation_queue=consolidation_queue,
-            global_config=consolidation_config,
-            audio_service=audio_service,
+# src/composition/slack_adapter_factory.py — creates and injects
+class SlackAdapterFactory:
+    def create(self) -> SlackAdapter:
+        handler = ConversationHandler(...)       # Concrete — legal in composition/
+        auth = IAMService(...)                   # Concrete — legal in composition/
+        return SocketModeAdapter(
+            conversation_handler=handler,        # Injected as ConversationHandlerPort
+            platform_auth=auth,                  # Injected as PlatformAuthPort
         )
-
-# TelegramWebhookAdapter (subclass)
-async def _process_message(self, context, response_channel):
-    await self.conversation_handler.handle_message(context, response_channel)
-    # NOT: conversation_handler = ConversationHandler(...) every time
 ```
 
-**Rule:** If an object is stateless (holds only references to shared services), create it once.
+**Key Points:**
+- Platform adapters depend only on ports — no import from `handlers/` or `services/`
+- `SlackAdapterFactory` lives in `composition/` where concrete imports are legal
+- `ConversationHandler` is created once (stateless, safe to reuse)
+- Same pattern applies to Telegram via its own factory
 
 ---
 
@@ -660,9 +669,14 @@ Bootstrap/wiring rules:
 | Factory Callable | `create_fact_management_adapter()` for per-user adapter | `src/composition/service_container.py` |
 | Port Abstraction | `SessionStore` port, `FirestoreSessionStore` adapter | `src/ports/session_store.py`, `src/adapters/firestore_session_store.py` |
 | Port/Adapter | `EmbeddingService` port, Gemini adapter | `src/ports/embedding_service.py`, `src/adapters/gemini_embedding_adapter.py` |
+| Platform Port | `ConversationHandlerPort` decouples adapters from handlers | `src/ports/conversation_handler_port.py` |
+| Platform Port | `PlatformAuthPort` + `IAMDecision` for platform authorization | `src/ports/platform_auth_port.py` |
+| Agent Port | `PromptBuilderPort` injected into all 5 agents | `src/ports/prompt_builder_port.py` |
+| Agent Port | `FactWritePort` injected into ConsolidationAgent + adapters | `src/ports/fact_write_port.py` |
+| Agent Port | `SearchEnrichmentPort` injected into Router + Memory agents | `src/ports/search_enrichment_port.py` |
 | Domain Types | `Message`, `MessagePart`, `ToolCall` in domain/ | `src/domain/llm.py` |
 | Domain Logic | `SmartDeduplicationService` in domain/ (stdlib only) | `src/domain/deduplication_service.py` |
-| Shared Handler | `ConversationHandler` created once in `PlatformAdapter.__init__` | `src/adapters/platform/base_adapter.py` |
+| Composition Factory | `SlackAdapterFactory` creates adapter with ports injected | `src/composition/slack_adapter_factory.py` |
 | Circular Resolution | `BiographicalContextService ↔ FirestoreFactRepository` | `src/composition/service_container.py` |
 | Adapter Rename | `FactManagementAdapter` (dropped "Firestore" prefix) | `src/adapters/fact_management_adapter.py` |
 
@@ -674,8 +688,9 @@ Bootstrap/wiring rules:
 - **Building Block:** `docs/05_building_blocks/fact_write_service/README.md`
 - **RFC:** `docs/10_rfcs/EXECUTION_CONTEXT_HEXAGONAL_RFC.md`
 - **Audit:** `docs/11_quality/audit_2026_02/REVIEW_HEXAGONAL_2026_02_19.md`
+- **Review v2:** `docs/reviews/HEXAGONAL_ARCHITECTURE_REVIEW_V2.md`
 
 ---
 
-**Last Review:** 2026-02-20 (updated to reflect Session 2026-02-19/20 fixes)
+**Last Review:** 2026-02-21 (updated to reflect hexagonal cleanup + port contract fixes)
 **Status:** Active Reference ✅

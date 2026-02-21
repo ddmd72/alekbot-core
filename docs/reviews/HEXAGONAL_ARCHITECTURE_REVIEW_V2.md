@@ -3,7 +3,7 @@
 **Date:** 2026-02-21
 **Scope:** Full codebase audit — architecture, code quality, tests, production readiness
 **Previous Review:** 7.5/10 (v1, pre-refactor)
-**Current Verdict:** 8.5 / 10 — massive improvement after hexagonal cleanup; 3 minor violations remain
+**Current Verdict:** 9.0 / 10 — massive improvement after hexagonal cleanup; port contract bugs fixed, 34 contract tests added
 
 ---
 
@@ -17,7 +17,7 @@ This is a **repeat review** after the hexagonal architecture cleanup (`7fd0cd8`)
 - **~180 Python files** in `src/`, **86 test files** in `tests/`
 - **5 new ports** created: `ConversationHandlerPort`, `PlatformAuthPort`, `PromptBuilderPort`, `FactWritePort`, `SearchEnrichmentPort`
 - **0 violations** in domain/ (26 files) — PRISTINE
-- **2 bugs** in ports/ (28 files) — duplicate methods, missing @abstractmethod (unchanged from first v2 pass)
+- **0 bugs** in ports/ (28 files) — all port contract bugs fixed (2026-02-21), 34 contract tests added
 - **2 violations** in adapters/ (down from 18) — concrete adapter imports in `http_adapter.py`
 - **0 violations** in services/ (down from 2) — all fixed
 - **1 violation** in agents/ (down from 9) — `HistorySummaryService` in `smart_response_agent.py`
@@ -108,19 +108,19 @@ This eliminates the "mini-composition root" anti-pattern. Platform adapters now 
 
 Unchanged. 26 files, zero violations. See v1 review for full analysis.
 
-### 2. Ports Layer — GOOD (8/10) ⚠️
+### 2. Ports Layer — EXCELLENT (10/10) ✅
 
 **Files:** 28 (up from 23 — 5 new ports added)
 **Import violations:** 0
-**Bugs:** 2 (unchanged)
+**Bugs:** 0 (all fixed 2026-02-21)
 
-The 5 new ports are well-designed and properly justified. The existing bugs remain:
+The 5 new ports are well-designed and properly justified. All port contract bugs have been fixed:
 
-**BUG: Duplicate methods in `consolidation_queue.py`** — `get_queue_size()` and `cleanup_old_batches()` each defined twice (lines 10-13 and 41-44, lines 20-23 and 46-49).
+**FIXED: `consolidation_queue.py`** — Removed duplicate `get_queue_size()` and `cleanup_old_batches()` definitions. Added missing `enqueue_batch()` and `get_pending_batches()` abstract methods. Port now declares all 7 methods matching the `FirestoreConsolidationQueue` adapter.
 
-**BUG: Missing `@abstractmethod` on `session_store.py:29`** — `append_messages_batch()` not abstract.
+**FIXED: `session_store.py`** — Added `@abstractmethod` to `append_messages_batch()`. Port now declares all 5 abstract methods.
 
-**Incomplete contract: `ConsolidationQueue`** — missing `enqueue_batch()` and `get_pending_batches()` that the adapter implements.
+**VERIFIED:** 34 port contract tests added in `tests/unit/ports/test_port_contracts.py` — verify abstract method presence, no duplicates, correct signatures, and mock implementation compatibility.
 
 ### 3. Adapters Layer — GOOD (8/10) ✅ (up from 5/10)
 
@@ -182,13 +182,15 @@ This could be fixed by creating a `HistorySummaryPort`, but since there's only o
 
 ## Remaining Issues
 
-### Port Bugs (Fix Now — 30 min)
+### ~~Port Bugs~~ — ALL FIXED (2026-02-21)
 
-| # | Issue | File | Fix |
-|---|-------|------|-----|
-| 1 | Duplicate `get_queue_size()` and `cleanup_old_batches()` | `ports/consolidation_queue.py` | Remove duplicate definitions (lines 41-49) |
-| 2 | Missing `enqueue_batch()` and `get_pending_batches()` | `ports/consolidation_queue.py` | Add as `@abstractmethod` |
-| 3 | Missing `@abstractmethod` on `append_messages_batch()` | `ports/session_store.py:29` | Add decorator |
+| # | Issue | File | Status |
+|---|-------|------|--------|
+| 1 | ~~Duplicate `get_queue_size()` and `cleanup_old_batches()`~~ | `ports/consolidation_queue.py` | **FIXED** — duplicates removed |
+| 2 | ~~Missing `enqueue_batch()` and `get_pending_batches()`~~ | `ports/consolidation_queue.py` | **FIXED** — added as `@abstractmethod` |
+| 3 | ~~Missing `@abstractmethod` on `append_messages_batch()`~~ | `ports/session_store.py` | **FIXED** — decorator added |
+
+**Regression tests:** `tests/unit/ports/test_port_contracts.py` (34 tests) ensures these bugs cannot recur.
 
 ### Minor Architecture Issues (When Convenient)
 
@@ -205,7 +207,7 @@ This could be fixed by creating a `HistorySummaryPort`, but since there's only o
 | Layer | v1 Score | v2 Score | Change | Violations |
 |-------|----------|----------|--------|------------|
 | Domain | 10/10 | 10/10 | — | 0 |
-| Ports | 10/10 | 8/10 | -2 (bugs found) | 0 imports, 2 bugs |
+| Ports | 10/10 | 10/10 | — | 0 imports, 0 bugs (all fixed) |
 | Adapters | 5/10 | 8/10 | **+3** | 2 (down from 18) |
 | Services | 8/10 | 9/10 | **+1** | 0 (down from 2) |
 | Agents | 7/10 | 9/10 | **+2** | 1 (down from 9) |
@@ -214,12 +216,13 @@ This could be fixed by creating a `HistorySummaryPort`, but since there's only o
 | Composition | 9/10 | 10/10 | **+1** | 0 (SlackAdapterFactory here now) |
 | Web | 8/10 | 8/10 | — | 0 |
 
-**Overall: 8.5/10** (up from 7.5/10)
+**Overall: 9.0/10** (up from 7.5/10)
 
 **Import violations: 29 → 3** (90% reduction)
+**Port bugs: 3 → 0** (all fixed with 34 regression tests)
 **New ports: +5** (ConversationHandlerPort, PlatformAuthPort, PromptBuilderPort, FactWritePort, SearchEnrichmentPort)
 
-**Path to 9.5+/10:** Fix 3 port bugs (30 min) + fix 2 concrete adapter imports in `http_adapter.py` + extend architecture test.
+**Path to 9.5+/10:** Fix 2 concrete adapter imports in `http_adapter.py` + extend architecture test to cover all layer boundaries.
 
 ---
 
