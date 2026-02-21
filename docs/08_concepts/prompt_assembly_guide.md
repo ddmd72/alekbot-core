@@ -378,37 +378,35 @@ request = LLMRequest(
 
 ---
 
-### Pattern 3: Static Prompt Agent (Router)
+### Pattern 3: PromptBuilder Agent (Router)
 
 **Characteristics:**
 
-- Uses pre-written prompt file
-- No component assembly
-- Simple triage/classification task
+- Prompt assembled via `PromptBuilderPort` (v3 Token System)
+- Cached after first load — no repeated Firestore reads
+- No file-based prompt loading; all content lives in Firestore
 
 **Implementation:**
 
 ```python
-# Load prompt from file
-def _load_triage_prompt(self) -> str:
-    return self.triage_prompt_path.read_text()
-
-# Use directly
-prompt = self._load_triage_prompt()
-request = LLMRequest(
-    model_name=self.model_name,
-    system_instruction=prompt,
-    messages=clean_messages,
-    temperature=0.0,
-    response_mime_type="application/json",
-    response_schema=TRIAGE_RESPONSE_SCHEMA
-)
+async def _load_triage_prompt(self, message: AgentMessage) -> str:
+    if self._cached_triage_prompt is None:
+        if not self.prompt_builder:
+            raise RuntimeError("RouterAgent requires prompt_builder for LLM triage")
+        account_id = message.context.get("account_id")
+        self._cached_triage_prompt = await self.prompt_builder.build_for_agent(
+            agent_type="router",
+            user_id=self.user_id,
+            account_id=account_id,
+            routing_metadata=None
+        )
+    return self._cached_triage_prompt
 ```
 
 **Key Files:**
 
 - `src/agents/core/router_agent.py`
-- `memory/router_triage.groovy` (prompt file)
+- `src/ports/prompt_builder_port.py`
 
 ---
 

@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 from src.agents.core.router_agent import RouterAgent, create_router_agent
 from src.domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from src.ports.llm_service import AgentExecutionContext, ProviderCapabilities, LLMService
+from src.ports.prompt_builder_port import PromptBuilderPort
 from src.domain.user import PerformanceTier
 
 
@@ -78,7 +79,14 @@ def mock_llm():
 
 
 @pytest.fixture
-def router_with_llm(router_config, mock_llm):
+def mock_prompt_builder():
+    pb = AsyncMock(spec=PromptBuilderPort)
+    pb.build_for_agent.return_value = "You are a triage router. Classify the request."
+    return pb
+
+
+@pytest.fixture
+def router_with_llm(router_config, mock_llm, mock_prompt_builder):
     ec = AgentExecutionContext(
         agent_type="router",
         provider=mock_llm,
@@ -91,7 +99,8 @@ def router_with_llm(router_config, mock_llm):
         execution_context=ec,
         coordinator=None,
         quick_agent_id="quick_agent",
-        smart_agent_id="smart_agent"
+        smart_agent_id="smart_agent",
+        prompt_builder=mock_prompt_builder
     )
 
 

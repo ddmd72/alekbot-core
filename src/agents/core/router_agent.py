@@ -12,7 +12,6 @@ import asyncio
 import json
 import re
 from dataclasses import asdict
-from pathlib import Path
 from typing import Optional, Set, List
 from ..base_agent import BaseAgent
 from ...domain.agent import (
@@ -167,25 +166,10 @@ class RouterAgent(BaseAgent):
         quick_agent_id: str = "quick_response_agent",
         smart_agent_id: str = "smart_response_agent",
         user_id: Optional[str] = None,
-        # ============================================================================
-        # LEGACY Provider Refactor Session 20: Direct LLM dependency
-        # Plan: docs/architecture/provider_refactor/POST_AUDIT_EXECUTION_PLAN.md
-        # Reason: Replaced by AgentExecutionContext for hexagonal compliance
-        # Removal: After Session 26 validation + production deployment
-        # ============================================================================
-        # llm_service: Optional[LLMService] = None,
         session_store: Optional[SessionStore] = None,
         repository: Optional[FactRepository] = None,
         embedding_service: Optional[EmbeddingService] = None,
         search_enrichment_service: Optional[SearchEnrichmentPort] = None,
-        # ============================================================================
-        # LEGACY Provider Refactor Session 20: Hardcoded model name
-        # Plan: docs/architecture/provider_refactor/POST_AUDIT_EXECUTION_PLAN.md
-        # Reason: Model selection delegated to AgentContextBuilder via tiers
-        # Removal: After Session 26 validation + production deployment
-        # ============================================================================
-        # classifier_model: str = "gemini-3-flash-preview",
-        triage_prompt_path: Optional[Path] = None,
         prompt_builder: Optional[PromptBuilderPort] = None
     ):
         """
@@ -214,25 +198,18 @@ class RouterAgent(BaseAgent):
         self.embedding_service = embedding_service
         self.search_enrichment_service = search_enrichment_service
         self.prompt_builder = prompt_builder
-        
-        # Use absolute path relative to this file to avoid issues in Docker
-        base_dir = Path(__file__).parent.parent.parent.parent
-        self.triage_prompt_path = triage_prompt_path or (
-            base_dir / "src/agents/prompts/triage_router_v1.prompt"
-        )
-        
         self._cached_triage_prompt: Optional[str] = None
         if self.user_id and self.agent_id == "router_agent":
             self.agent_id = f"router_agent_{self.user_id}"
 
         logger.info(
             "🎯 RouterAgent initialized "
-            "(quick=%s, smart=%s, llm=%s, history=%s, prompt=%s, enrichment=%s)",
+            "(quick=%s, smart=%s, llm=%s, history=%s, prompt_builder=%s, enrichment=%s)",
             quick_agent_id,
             smart_agent_id,
             "enabled" if self.llm else "disabled",
             "enabled" if self.session_store else "disabled",
-            self.triage_prompt_path,
+            "enabled" if self.prompt_builder else "disabled",
             "enabled" if self.search_enrichment_service else "disabled"
         )
     
@@ -403,40 +380,15 @@ class RouterAgent(BaseAgent):
 
     async def _load_triage_prompt(self, message: AgentMessage) -> str:
         if self._cached_triage_prompt is None:
-            prompt = None
-            if self.prompt_builder:
-                try:
-                    # SESSION_2026_02_08: Extract account_id from message context (same as QuickAgent)
-                    account_id = message.context.get("account_id")
-                    
-                    prompt = await self.prompt_builder.build_for_agent(
-                        agent_type="router",
-                        user_id=self.user_id,
-                        account_id=account_id,  # FIX: Extract from message.context
-                        routing_metadata=None
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "⚠️ [RouterAgent] Failed to build v3 prompt, falling back to static: %s",
-                        exc
-                    )
-
-            if prompt:
-                self._cached_triage_prompt = prompt
-            else:
-                if not self.triage_prompt_path.exists():
-                    import os
-                    cwd = os.getcwd()
-                    parent_dir = self.triage_prompt_path.parent
-                    exists_parent = parent_dir.exists()
-                    files_in_parent = os.listdir(parent_dir) if exists_parent else "N/A"
-                    
-                    logger.error(
-                        f"❌ [RouterAgent] Triage prompt NOT FOUND at {self.triage_prompt_path}. "
-                        f"CWD: {cwd}, Parent exists: {exists_parent}, Files in parent: {files_in_parent}"
-                    )
-                    raise FileNotFoundError(f"Triage prompt not found at {self.triage_prompt_path}")
-                self._cached_triage_prompt = self.triage_prompt_path.read_text()
+            if not self.prompt_builder:
+                raise RuntimeError("RouterAgent requires prompt_builder for LLM triage")
+            account_id = message.context.get("account_id")
+            self._cached_triage_prompt = await self.prompt_builder.build_for_agent(
+                agent_type="router",
+                user_id=self.user_id,
+                account_id=account_id,
+                routing_metadata=None
+            )
         return self._cached_triage_prompt
 
     async def _classify_with_llm(self, text: str, message: AgentMessage, history: List[Message] = None) -> dict:
@@ -721,24 +673,15 @@ def create_router_agent(
     quick_agent_id: str = "quick_response_agent",
     smart_agent_id: str = "smart_response_agent",
     user_id: Optional[str] = None,
-    # ============================================================================
-    # LEGACY Provider Refactor Session 20: Direct LLM parameters
-    # Plan: docs/architecture/provider_refactor/POST_AUDIT_EXECUTION_PLAN.md
-    # Reason: Replaced by execution_context parameter
-    # Removal: After Session 26 validation + production deployment
-    # ============================================================================
-    # llm_service: Optional[LLMService] = None,
     session_store: Optional[SessionStore] = None,
     repository: Optional[FactRepository] = None,
     embedding_service: Optional[EmbeddingService] = None,
     search_enrichment_service: Optional[SearchEnrichmentPort] = None,
-    # classifier_model: str = "gemini-3-flash-preview",
-    triage_prompt_path: Optional[Path] = None,
     prompt_builder: Optional[PromptBuilderPort] = None
 ) -> RouterAgent:
     """
     Factory function to create RouterAgent with default config.
-    
+
     Args:
         execution_context: Agent execution context with provider and model
         coordinator: AgentCoordinator for routing
@@ -746,8 +689,8 @@ def create_router_agent(
         smart_agent_id: ID of smart response agent
         user_id: Optional user id
         session_store: Session store for history
-        triage_prompt_path: Path to triage prompt
-        
+        prompt_builder: PromptBuilderPort (required for LLM triage)
+
     Returns:
         Configured RouterAgent instance
     """
@@ -775,6 +718,5 @@ def create_router_agent(
         repository=repository,
         embedding_service=embedding_service,
         search_enrichment_service=search_enrichment_service,
-        triage_prompt_path=triage_prompt_path,
         prompt_builder=prompt_builder
     )

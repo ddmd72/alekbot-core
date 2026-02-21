@@ -1,317 +1,286 @@
 """
-Unit tests for prompt component port interfaces.
+Unit tests for prompt-related port contracts.
 
-Tests verify interface contracts using mock implementations.
-
-Session: 23 (Prompt Component Architecture Implementation)
-RFC: docs/architecture/rfcs/PROMPT_COMPONENT_ARCHITECTURE_RFC.md
+Covers:
+- PromptComponentRepository (5 abstract methods)
+- PromptAssembler (2 abstract methods)
+- PromptBuilderPort (6 abstract methods: 2 async, 4 sync)
 """
 
+import inspect
 import pytest
-from typing import List, Optional
-from src.domain.prompt import PromptComponent, ComponentScope, PromptTemplate, TEMPLATE_LIGHT
+from abc import ABC
+from unittest.mock import AsyncMock, MagicMock
+
 from src.ports.prompt_component_repository import PromptComponentRepository
 from src.ports.prompt_assembler import PromptAssembler, AssemblyError
+from src.ports.prompt_builder_port import PromptBuilderPort
+from src.domain.prompt import PromptComponent, ComponentScope, TEMPLATE_LIGHT
 
 
 # =============================================================================
-# Mock Implementations for Testing
+# PromptComponentRepository
 # =============================================================================
 
-class MockPromptComponentRepository(PromptComponentRepository):
-    """Mock implementation for testing repository interface."""
-    
-    def __init__(self):
-        self.default_components = []
-        self.user_overrides = {}
-    
-    async def get_default_components(self) -> List[PromptComponent]:
-        """Return mock default components."""
-        return self.default_components
-    
-    async def get_user_overrides(self, user_id: str) -> List[PromptComponent]:
-        """Return mock user overrides."""
-        return self.user_overrides.get(user_id, [])
-    
-    async def save_user_override(self, user_id: str, component: PromptComponent) -> None:
-        """Save mock user override."""
-        if user_id not in self.user_overrides:
-            self.user_overrides[user_id] = []
-        self.user_overrides[user_id].append(component)
-    
-    async def delete_user_override(self, user_id: str, component_id: str) -> None:
-        """Delete mock user override."""
-        if user_id in self.user_overrides:
-            self.user_overrides[user_id] = [
-                c for c in self.user_overrides[user_id] if c.id != component_id
-            ]
+class TestPromptComponentRepositoryContract:
+    """Verify PromptComponentRepository port declares all required abstract methods."""
 
-    async def resolve_component(
-        self,
-        component_id: str,
-        agent_type: str,
-        user_id: Optional[str] = None
-    ) -> Optional[PromptComponent]:
-        """Resolve component — mock returns None (no overrides)."""
-        return None
+    def test_is_abstract_class(self):
+        assert issubclass(PromptComponentRepository, ABC)
 
+    def test_cannot_instantiate_directly(self):
+        with pytest.raises(TypeError):
+            PromptComponentRepository()
 
-class MockPromptAssembler(PromptAssembler):
-    """Mock implementation for testing assembler interface."""
-    
-    def __init__(self, should_validate: bool = True):
-        self.should_validate = should_validate
-        self.last_assembled = None
-    
-    def assemble(
-        self,
-        template: PromptTemplate,
-        components: List[PromptComponent],
-        runtime_data: dict
-    ) -> str:
-        """Mock assembly - just concatenate component IDs."""
-        result = f"class {template.name} {{\n"
-        for comp in components:
-            result += f"  {comp.id}\n"
-        result += "}"
-        self.last_assembled = result
-        return result
-    
-    def validate(self, prompt: str) -> bool:
-        """Mock validation."""
-        return self.should_validate
+    def test_has_get_default_components(self):
+        assert hasattr(PromptComponentRepository, "get_default_components")
+        assert getattr(PromptComponentRepository.get_default_components, "__isabstractmethod__", False)
+
+    def test_has_get_user_overrides(self):
+        assert hasattr(PromptComponentRepository, "get_user_overrides")
+        assert getattr(PromptComponentRepository.get_user_overrides, "__isabstractmethod__", False)
+
+    def test_has_save_user_override(self):
+        assert hasattr(PromptComponentRepository, "save_user_override")
+        assert getattr(PromptComponentRepository.save_user_override, "__isabstractmethod__", False)
+
+    def test_has_delete_user_override(self):
+        assert hasattr(PromptComponentRepository, "delete_user_override")
+        assert getattr(PromptComponentRepository.delete_user_override, "__isabstractmethod__", False)
+
+    def test_has_resolve_component(self):
+        assert hasattr(PromptComponentRepository, "resolve_component")
+        assert getattr(PromptComponentRepository.resolve_component, "__isabstractmethod__", False)
+
+    def test_all_abstract_methods_count(self):
+        """Port should have exactly 5 abstract methods."""
+        abstract_methods = {
+            name for name, method in inspect.getmembers(PromptComponentRepository)
+            if getattr(method, "__isabstractmethod__", False)
+        }
+        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
+
+    def test_get_default_components_signature(self):
+        sig = inspect.signature(PromptComponentRepository.get_default_components)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "scope"]
+        assert sig.parameters["scope"].default is None
+
+    def test_resolve_component_signature(self):
+        sig = inspect.signature(PromptComponentRepository.resolve_component)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "component_id", "agent_type", "user_id"]
+        assert sig.parameters["user_id"].default is None
 
 
-# =============================================================================
-# Repository Interface Tests
-# =============================================================================
+class TestPromptComponentRepositoryMockImplementation:
+    """Verify AsyncMock(spec=PromptComponentRepository) satisfies the port contract."""
 
-class TestPromptComponentRepositoryInterface:
-    """Tests for PromptComponentRepository interface contract."""
-    
     @pytest.fixture
-    def repo(self):
-        """Create mock repository."""
-        return MockPromptComponentRepository()
-    
-    @pytest.mark.asyncio
-    async def test_get_default_components_returns_list(self, repo):
-        """Test get_default_components returns list."""
-        components = await repo.get_default_components()
-        assert isinstance(components, list)
-    
-    @pytest.mark.asyncio
-    async def test_get_default_components_empty_initially(self, repo):
-        """Test repository starts empty."""
-        components = await repo.get_default_components()
-        assert len(components) == 0
-    
-    @pytest.mark.asyncio
-    async def test_get_default_components_can_populate(self, repo):
-        """Test can populate default components."""
-        test_comp = PromptComponent(
-            id="test",
-            scope=ComponentScope.CLASS_ROOT,
-            content="test",
-            order=1
-        )
-        repo.default_components = [test_comp]
-        
-        components = await repo.get_default_components()
-        assert len(components) == 1
-        assert components[0].id == "test"
-    
-    @pytest.mark.asyncio
-    async def test_get_user_overrides_returns_list(self, repo):
-        """Test get_user_overrides returns list."""
-        overrides = await repo.get_user_overrides("user123")
-        assert isinstance(overrides, list)
-    
-    @pytest.mark.asyncio
-    async def test_get_user_overrides_empty_for_new_user(self, repo):
-        """Test new user has no overrides."""
-        overrides = await repo.get_user_overrides("new_user")
-        assert len(overrides) == 0
-    
-    @pytest.mark.asyncio
-    async def test_save_user_override(self, repo):
-        """Test saving user override."""
-        override = PromptComponent(
-            id="custom",
-            scope=ComponentScope.CLASS_PROPERTIES,
-            content="custom content",
-            order=10,
-            is_user_override=True
-        )
-        
-        await repo.save_user_override("user123", override)
-        
-        overrides = await repo.get_user_overrides("user123")
-        assert len(overrides) == 1
-        assert overrides[0].id == "custom"
-    
-    @pytest.mark.asyncio
-    async def test_save_multiple_user_overrides(self, repo):
-        """Test saving multiple overrides."""
-        override1 = PromptComponent(
-            id="override1",
-            scope=ComponentScope.CLASS_PROPERTIES,
-            content="content1",
-            order=10,
-            is_user_override=True
-        )
-        override2 = PromptComponent(
-            id="override2",
-            scope=ComponentScope.CLASS_POLICIES,
-            content="content2",
-            order=20,
-            is_user_override=True
-        )
-        
-        await repo.save_user_override("user123", override1)
-        await repo.save_user_override("user123", override2)
-        
-        overrides = await repo.get_user_overrides("user123")
-        assert len(overrides) == 2
-    
-    @pytest.mark.asyncio
-    async def test_delete_user_override(self, repo):
-        """Test deleting user override."""
-        override = PromptComponent(
-            id="to_delete",
-            scope=ComponentScope.CLASS_PROPERTIES,
-            content="content",
-            order=10,
-            is_user_override=True
-        )
-        
-        await repo.save_user_override("user123", override)
-        assert len(await repo.get_user_overrides("user123")) == 1
-        
-        await repo.delete_user_override("user123", "to_delete")
-        assert len(await repo.get_user_overrides("user123")) == 0
-    
-    @pytest.mark.asyncio
-    async def test_delete_specific_override_only(self, repo):
-        """Test deleting only specific override."""
-        override1 = PromptComponent(
-            id="keep",
-            scope=ComponentScope.CLASS_PROPERTIES,
-            content="content1",
-            order=10,
-            is_user_override=True
-        )
-        override2 = PromptComponent(
-            id="delete",
-            scope=ComponentScope.CLASS_POLICIES,
-            content="content2",
-            order=20,
-            is_user_override=True
-        )
-        
-        await repo.save_user_override("user123", override1)
-        await repo.save_user_override("user123", override2)
-        
-        await repo.delete_user_override("user123", "delete")
-        
-        overrides = await repo.get_user_overrides("user123")
-        assert len(overrides) == 1
-        assert overrides[0].id == "keep"
+    def mock_repo(self):
+        return AsyncMock(spec=PromptComponentRepository)
+
+    async def test_get_default_components(self, mock_repo):
+        mock_repo.get_default_components.return_value = []
+        result = await mock_repo.get_default_components()
+        assert isinstance(result, list)
+
+    async def test_get_default_components_with_scope(self, mock_repo):
+        mock_repo.get_default_components.return_value = []
+        result = await mock_repo.get_default_components(scope=ComponentScope.CLASS_ROOT)
+        assert isinstance(result, list)
+
+    async def test_get_user_overrides(self, mock_repo):
+        mock_repo.get_user_overrides.return_value = []
+        result = await mock_repo.get_user_overrides("user1")
+        assert isinstance(result, list)
+
+    async def test_save_user_override(self, mock_repo):
+        comp = PromptComponent(id="x", scope=ComponentScope.CLASS_ROOT, content="c", order=1)
+        await mock_repo.save_user_override("user1", comp)
+        mock_repo.save_user_override.assert_called_once_with("user1", comp)
+
+    async def test_delete_user_override(self, mock_repo):
+        await mock_repo.delete_user_override("user1", "comp_id")
+        mock_repo.delete_user_override.assert_called_once_with("user1", "comp_id")
+
+    async def test_resolve_component_returns_none(self, mock_repo):
+        mock_repo.resolve_component.return_value = None
+        result = await mock_repo.resolve_component("comp_id", "quick", user_id="user1")
+        assert result is None
 
 
 # =============================================================================
-# Assembler Interface Tests
+# PromptAssembler
 # =============================================================================
 
-class TestPromptAssemblerInterface:
-    """Tests for PromptAssembler interface contract."""
-    
+class TestPromptAssemblerContract:
+    """Verify PromptAssembler port declares all required abstract methods."""
+
+    def test_is_abstract_class(self):
+        assert issubclass(PromptAssembler, ABC)
+
+    def test_cannot_instantiate_directly(self):
+        with pytest.raises(TypeError):
+            PromptAssembler()
+
+    def test_has_assemble(self):
+        assert hasattr(PromptAssembler, "assemble")
+        assert getattr(PromptAssembler.assemble, "__isabstractmethod__", False)
+
+    def test_has_validate(self):
+        assert hasattr(PromptAssembler, "validate")
+        assert getattr(PromptAssembler.validate, "__isabstractmethod__", False)
+
+    def test_all_abstract_methods_count(self):
+        """Port should have exactly 2 abstract methods."""
+        abstract_methods = {
+            name for name, method in inspect.getmembers(PromptAssembler)
+            if getattr(method, "__isabstractmethod__", False)
+        }
+        assert len(abstract_methods) == 2, f"Expected 2 abstract methods, got {abstract_methods}"
+
+    def test_assembly_error_is_exception(self):
+        assert issubclass(AssemblyError, Exception)
+
+    def test_assemble_signature(self):
+        sig = inspect.signature(PromptAssembler.assemble)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "template", "components", "runtime_data"]
+        assert sig.return_annotation == str
+
+    def test_validate_signature(self):
+        sig = inspect.signature(PromptAssembler.validate)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "prompt"]
+        assert sig.return_annotation == bool
+
+
+class TestPromptAssemblerMockImplementation:
+    """Verify MagicMock(spec=PromptAssembler) satisfies the port contract."""
+
     @pytest.fixture
-    def assembler(self):
-        """Create mock assembler."""
-        return MockPromptAssembler()
-    
-    def test_assemble_returns_string(self, assembler):
-        """Test assemble returns string."""
-        components = [
-            PromptComponent(
-                id="test",
-                scope=ComponentScope.CLASS_ROOT,
-                content="test content",
-                order=1
-            )
-        ]
-        
-        result = assembler.assemble(
-            template=TEMPLATE_LIGHT,
-            components=components,
-            runtime_data={}
-        )
-        
+    def mock_assembler(self):
+        return MagicMock(spec=PromptAssembler)
+
+    def test_assemble_returns_string(self, mock_assembler):
+        mock_assembler.assemble.return_value = "class Alek {}"
+        result = mock_assembler.assemble(TEMPLATE_LIGHT, [], {})
         assert isinstance(result, str)
-        assert len(result) > 0
-    
-    def test_assemble_uses_template_name(self, assembler):
-        """Test assembled prompt includes template name."""
-        components = []
-        
-        result = assembler.assemble(
-            template=TEMPLATE_LIGHT,
-            components=components,
-            runtime_data={}
-        )
-        
-        assert "Alek" in result
-    
-    def test_assemble_includes_components(self, assembler):
-        """Test assembled prompt includes components."""
-        components = [
-            PromptComponent(
-                id="comp1",
-                scope=ComponentScope.CLASS_ROOT,
-                content="content1",
-                order=1
-            ),
-            PromptComponent(
-                id="comp2",
-                scope=ComponentScope.CLASS_PROPERTIES,
-                content="content2",
-                order=2
-            )
-        ]
-        
-        result = assembler.assemble(
-            template=TEMPLATE_LIGHT,
-            components=components,
-            runtime_data={}
-        )
-        
-        assert "comp1" in result
-        assert "comp2" in result
-    
-    def test_validate_returns_bool(self, assembler):
-        """Test validate returns boolean."""
-        result = assembler.validate("test prompt")
+
+    def test_validate_returns_bool(self, mock_assembler):
+        mock_assembler.validate.return_value = True
+        result = mock_assembler.validate("some prompt")
         assert isinstance(result, bool)
-    
-    def test_validate_success(self, assembler):
-        """Test validation passes for valid prompt."""
-        assembler.should_validate = True
-        assert assembler.validate("valid prompt") is True
-    
-    def test_validate_failure(self, assembler):
-        """Test validation fails for invalid prompt."""
-        assembler.should_validate = False
-        assert assembler.validate("invalid prompt") is False
-    
-    def test_assembly_error_exception(self):
-        """Test AssemblyError can be raised."""
+
+    def test_assembly_error_is_raiseable(self):
         with pytest.raises(AssemblyError):
-            raise AssemblyError("Test error")
-    
-    def test_assembly_error_with_message(self):
-        """Test AssemblyError preserves message."""
+            raise AssemblyError("assembly failed")
+
+    def test_assembly_error_preserves_message(self):
         try:
-            raise AssemblyError("Custom error message")
+            raise AssemblyError("custom error")
         except AssemblyError as e:
-            assert str(e) == "Custom error message"
+            assert str(e) == "custom error"
+
+
+# =============================================================================
+# PromptBuilderPort
+# =============================================================================
+
+class TestPromptBuilderPortContract:
+    """Verify PromptBuilderPort port declares all required abstract methods."""
+
+    def test_is_abstract_class(self):
+        assert issubclass(PromptBuilderPort, ABC)
+
+    def test_cannot_instantiate_directly(self):
+        with pytest.raises(TypeError):
+            PromptBuilderPort()
+
+    def test_has_preload_components(self):
+        assert hasattr(PromptBuilderPort, "preload_components")
+        assert getattr(PromptBuilderPort.preload_components, "__isabstractmethod__", False)
+
+    def test_has_build_for_agent(self):
+        assert hasattr(PromptBuilderPort, "build_for_agent")
+        assert getattr(PromptBuilderPort.build_for_agent, "__isabstractmethod__", False)
+
+    def test_has_merge_enriched_context_with_biographical(self):
+        assert hasattr(PromptBuilderPort, "merge_enriched_context_with_biographical")
+        assert getattr(
+            PromptBuilderPort.merge_enriched_context_with_biographical,
+            "__isabstractmethod__",
+            False,
+        )
+
+    def test_has_invalidate_cache(self):
+        assert hasattr(PromptBuilderPort, "invalidate_cache")
+        assert getattr(PromptBuilderPort.invalidate_cache, "__isabstractmethod__", False)
+
+    def test_has_invalidate_biographical_cache(self):
+        assert hasattr(PromptBuilderPort, "invalidate_biographical_cache")
+        assert getattr(PromptBuilderPort.invalidate_biographical_cache, "__isabstractmethod__", False)
+
+    def test_has_get_cache_stats(self):
+        assert hasattr(PromptBuilderPort, "get_cache_stats")
+        assert getattr(PromptBuilderPort.get_cache_stats, "__isabstractmethod__", False)
+
+    def test_all_abstract_methods_count(self):
+        """Port should have exactly 6 abstract methods."""
+        abstract_methods = {
+            name for name, method in inspect.getmembers(PromptBuilderPort)
+            if getattr(method, "__isabstractmethod__", False)
+        }
+        assert len(abstract_methods) == 6, f"Expected 6 abstract methods, got {abstract_methods}"
+
+    def test_build_for_agent_signature(self):
+        sig = inspect.signature(PromptBuilderPort.build_for_agent)
+        params = list(sig.parameters.keys())
+        assert "self" in params
+        assert "agent_type" in params
+        assert "user_id" in params
+        assert sig.parameters["user_id"].default is None
+        assert sig.return_annotation == str
+
+    def test_invalidate_cache_signature(self):
+        sig = inspect.signature(PromptBuilderPort.invalidate_cache)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "component_key"]
+        assert sig.parameters["component_key"].default is None
+
+    def test_invalidate_biographical_cache_signature(self):
+        sig = inspect.signature(PromptBuilderPort.invalidate_biographical_cache)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "user_id"]
+
+
+class TestPromptBuilderPortMockImplementation:
+    """Verify AsyncMock(spec=PromptBuilderPort) satisfies the port contract."""
+
+    @pytest.fixture
+    def mock_builder(self):
+        return AsyncMock(spec=PromptBuilderPort)
+
+    async def test_preload_components(self, mock_builder):
+        await mock_builder.preload_components()
+        mock_builder.preload_components.assert_called_once()
+
+    async def test_build_for_agent_returns_string(self, mock_builder):
+        mock_builder.build_for_agent.return_value = "SYSTEM PROMPT"
+        result = await mock_builder.build_for_agent(agent_type="quick", user_id="u1")
+        assert isinstance(result, str)
+        assert result == "SYSTEM PROMPT"
+
+    def test_invalidate_cache(self, mock_builder):
+        mock_builder.invalidate_cache(component_key=None)
+        mock_builder.invalidate_cache.assert_called_once_with(component_key=None)
+
+    def test_invalidate_biographical_cache(self, mock_builder):
+        mock_builder.invalidate_biographical_cache("user1")
+        mock_builder.invalidate_biographical_cache.assert_called_once_with("user1")
+
+    def test_get_cache_stats(self, mock_builder):
+        mock_builder.get_cache_stats.return_value = {"hits": 5, "misses": 2}
+        result = mock_builder.get_cache_stats()
+        assert isinstance(result, dict)

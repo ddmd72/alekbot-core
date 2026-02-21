@@ -459,47 +459,6 @@ class TestQuickResponseAgentCleanHistory:
 
 
 # ============================================================================
-# Prompt Building Tests
-# ============================================================================
-
-class TestQuickResponseAgentPromptBuilding:
-    """Test prompt building — methods _build_system_prompt/_format_light_prompt removed (now uses prompt_builder.build_for_agent)."""
-
-    @pytest.mark.skip(reason="_build_system_prompt removed — prompt building moved to prompt_builder.build_for_agent()")
-    @pytest.mark.asyncio
-    async def test_build_prompt_includes_time(self, quick_agent):
-        prompt = await quick_agent._build_system_prompt()
-        assert "Current date and time is" in prompt
-
-    @pytest.mark.skip(reason="_build_system_prompt removed — prompt building moved to prompt_builder.build_for_agent()")
-    @pytest.mark.asyncio
-    async def test_build_prompt_includes_protocols(self, quick_agent):
-        prompt = await quick_agent._build_system_prompt()
-        assert "Alek.run()" in prompt
-        assert "Brevity_Protocol" in prompt
-
-    @pytest.mark.skip(reason="_build_system_prompt removed — prompt building moved to prompt_builder.build_for_agent()")
-    @pytest.mark.asyncio
-    async def test_build_prompt_uses_cache(self, quick_agent, mock_prompt_builder):
-        await quick_agent._build_system_prompt()
-        await quick_agent._build_system_prompt()
-        assert mock_prompt_builder.build_system_prompt.call_count == 2
-
-    @pytest.mark.skip(reason="_build_system_prompt removed — prompt building moved to prompt_builder.build_for_agent()")
-    @pytest.mark.asyncio
-    async def test_invalidate_cache(self, quick_agent, mock_prompt_builder):
-        await quick_agent._build_system_prompt()
-        await quick_agent._build_system_prompt()
-        assert mock_prompt_builder.build_system_prompt.call_count == 2
-
-    @pytest.mark.skip(reason="_format_light_prompt removed — prompt building moved to prompt_builder.build_for_agent()")
-    def test_format_light_prompt(self, quick_agent):
-        components = {"kernel": "KERNEL", "slack_rules": "RULES"}
-        result = quick_agent._format_light_prompt(components)
-        assert "KERNEL" in result
-
-
-# ============================================================================
 # Factory Function Tests
 # ============================================================================
 

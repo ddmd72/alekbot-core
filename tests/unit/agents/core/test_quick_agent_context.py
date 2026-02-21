@@ -147,39 +147,3 @@ async def test_quick_agent_stores_and_passes_user_id(mock_deps):
     assert kwargs["user_id"] == user_id
     assert kwargs["agent_type"] == "quick"
 
-@pytest.mark.skip(reason="_build_system_prompt removed — prompt building moved to prompt_builder.build_for_agent()")
-@pytest.mark.asyncio
-async def test_quick_agent_prompt_injection(mock_deps):
-    llm, session_store, prompt_builder = mock_deps
-    user_id = _read_env_value("DEV_USER_ID")
-    
-    config = AgentConfig(
-        agent_id="test",
-        agent_type="quick_response",
-        llm_model="gemini",
-        metadata={"user_id": user_id}
-    )
-    
-    execution_context = AgentExecutionContext(
-        agent_type="quick",
-        provider=llm,
-        model_name="gemini",
-        tier=PerformanceTier.ECO,
-        capabilities=ProviderCapabilities()
-    )
-    agent = QuickResponseAgent(
-        config=config,
-        execution_context=execution_context,
-        session_store=session_store,
-        prompt_builder=prompt_builder
-    )
-    
-    semantic_context = "- Enriched Fact A\n- Enriched Fact B"
-    system_prompt = await agent._build_system_prompt(semantic_context=semantic_context)
-
-    assert "Quick Bio" in system_prompt
-    assert "ENRICHED CONTEXT (Router merged block)" in system_prompt
-    assert "Enriched Fact A" in system_prompt
-    assert "Alek.run()" in system_prompt
-    assert "SEMANTIC CONTEXT" not in system_prompt
-    assert system_prompt.index("ENRICHED CONTEXT") < system_prompt.index("Alek.run()")

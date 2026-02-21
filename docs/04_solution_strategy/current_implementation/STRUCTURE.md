@@ -71,11 +71,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── infrastructure/ # 🆕 Infrastructure Support Agents
 │   │   ├── billing_agent.py # Usage reporting (Stub)
 │   │   └── logger_agent.py  # Centralized logging (Stub)
-│   ├── prompts/        # Agent Prompts (Groovy-style templates)
-│   │   ├── __init__.py
-│   │   ├── triage_router_v1.groovy # LLM triage prompt for RouterAgent
-│   │   ├── consolidation_v2.prompt
-│   │   └── consolidation_legacy.prompt
 │   └── core/           # Core business agents (routing + response)
 │       ├── __init__.py
 │       ├── router_agent.py        # Rule-based classification & routing

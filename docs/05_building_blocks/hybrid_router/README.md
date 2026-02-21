@@ -17,7 +17,7 @@ This document MUST be updated when:
 
 - [ ] The triage logic (rule-based vs LLM-based) changes.
 - [ ] New routing categories or target agents are added.
-- [ ] The triage prompt (`triage_router_v1.prompt`) is modified.
+- [ ] The triage prompt (managed via PromptBuilder v3 in Firestore) is modified.
 - [ ] The complexity threshold for agent selection is adjusted.
 - [ ] Integration with `SearchEnrichmentService` changes.
 
@@ -53,7 +53,7 @@ For common, unambiguous phrases, the router uses static keyword matching to avoi
 
 For complex or ambiguous queries, the router uses a lightweight LLM (Gemini Flash, ECO tier) to perform deep classification.
 
-- **Prompt:** `triage_router_v1.prompt` (token-based in v3).
+- **Prompt:** assembled via `PromptBuilderPort` (Token System v3, stored in Firestore).
 - **Output:** Structured JSON following a strict schema.
 - **Vision Support:** If the message contains attachments (images), the router automatically increases the complexity score to ensure the `SmartResponseAgent` (with vision capabilities) is selected.
 
@@ -93,7 +93,7 @@ The router doesn't just route; it prepares the context for the target agent.
 
 - `src/agents/core/router_agent.py`: Main implementation.
 - `src/domain/tone.py`: Tone detection and metadata building.
-- `src/agents/prompts/triage_router_v1.prompt`: Triage instructions.
+- `src/ports/prompt_builder_port.py`: Port for triage prompt assembly.
 - `src/services/search_enrichment_service.py`: Context enrichment.
 
 ---
