@@ -43,14 +43,29 @@ The system follows **Hexagonal Architecture (Ports & Adapters)** with explicit p
 3. **Domain Layer:** Multi-agent network (Router, Quick, Smart, Specialist agents).
 4. **Driven Adapters:** Provider-specific implementations of ports.
 
-**Port Examples:**
+**Port Examples (28 ports total):**
 
-- `FactRepository` (implemented by `FirestoreFactRepository`)
-- `SessionStore` (implemented by `FirestoreSessionStore`)
-- `TaskQueue` (implemented by `GcpTaskQueue`)
-- `LogSink` (implemented by `GcpLogSink`)
+Core:
+- `LLMService` → `GeminiAdapter`, `ClaudeAdapter`, `GrokAdapter`
+- `FactRepository` → `FirestoreFactRepository`
+- `SessionStore` → `FirestoreSessionStore`
+
+Platform decoupling (added 2026-02-21):
+- `ConversationHandlerPort` → `ConversationHandler`
+- `PlatformAuthPort` → `IAMService`
+- `PromptBuilderPort` → `PromptBuilder`
+
+Agent/service decoupling (added 2026-02-21):
+- `FactWritePort` → `FactWriteService`
+- `SearchEnrichmentPort` → `SearchEnrichmentService`
+
+Infrastructure:
+- `TaskQueue` → `GcpTaskQueue`
+- `LogSink` → `GcpLogSink`
+- `ConsolidationQueue` → `FirestoreConsolidationQueue`
 
 > **Note:** Firestore is treated as an adapter behind ports, not a core architectural dependency.
+> See `STRUCTURE.md` for the full 28-port catalog.
 
 ## 3. Data Architecture (Memory Graph)
 
@@ -154,6 +169,7 @@ The system is composed of 11 core building blocks, each documented in detail:
 - **Per-user asyncio.Lock** in `UserAgentFactory` — prevents duplicate agent creation under concurrent requests
 - **TTL sweep** in `UserAgentFactory` — background eviction of expired user-agent sets (5min interval)
 - **Overflow safety** — `FirestoreSessionStore` overflow tracked via `_pending_tasks`, `while` loop handles multi-batch overflow
+- **Hexagonal Architecture Cleanup** (2026-02-21) — 5 new ports created (`ConversationHandlerPort`, `PlatformAuthPort`, `PromptBuilderPort`, `FactWritePort`, `SearchEnrichmentPort`), `SlackAdapterFactory` moved to `composition/`, import violations reduced from 29 to 3, all port contracts verified complete (28 ports, 34 contract tests)
 
 ### 7.3 📋 Planned (Milestones 5-6)
 
@@ -176,11 +192,12 @@ The system is composed of 11 core building blocks, each documented in detail:
 ```
 main.py
   ├─> EnvironmentConfig
-  ├─> ProviderRegistry (Gemini, Claude)
-  ├─> UserAgentFactory
+  ├─> ServiceContainer (shared singletons: LLM adapters, repos, services)
+  ├─> ProviderRegistry (Gemini, Claude, Grok)
+  ├─> UserAgentFactory (per-user agents, receives ports via DI)
   ├─> AgentCoordinator
-  ├─> ConversationHandler
-  ├─> SlackAdapter (via factory)
+  ├─> ConversationHandler (implements ConversationHandlerPort)
+  ├─> SlackAdapterFactory (composition/ — creates adapter with ports injected)
   └─> adapter.start()
 ```
 

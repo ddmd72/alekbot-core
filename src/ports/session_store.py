@@ -26,6 +26,7 @@ class SessionStore(ABC):
         """Append a message to session history."""
         raise NotImplementedError
 
+    @abstractmethod
     async def append_messages_batch(self, session_id: str, messages: list[Message], owner_id: Optional[str] = None) -> None:
         """Append multiple messages atomically to session history."""
         raise NotImplementedError

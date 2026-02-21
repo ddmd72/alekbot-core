@@ -71,13 +71,13 @@ Hexagonal Architecture (Ports & Adapters).
 ```
 src/
   domain/       — Models, enums, value objects. ZERO external dependencies.
-  ports/        — ABC interfaces. Import only domain/ and stdlib.
+  ports/        — 28 ABC interfaces. Import only domain/ and stdlib.
   adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, Slack, Telegram).
   services/     — Business logic. Receive ports via DI.
   agents/       — Multi-agent system. core/ — agents, infrastructure/ — billing/logging.
   handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler).
   infrastructure/ — AgentCoordinator, queues.
-  composition/  — ServiceContainer: creates shared services (LLM, repos, session_store).
+  composition/  — ServiceContainer + SlackAdapterFactory: wires ports to adapters.
   config/       — EnvironmentConfig, Settings, AuthConfig.
   utils/        — Logger, telemetry.
 main.py         — Bootstrap: creates ServiceContainer + UserAgentFactory, graceful shutdown.
