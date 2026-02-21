@@ -11,13 +11,15 @@ from telegram import Bot, Update
 from ..platform.base_adapter import PlatformAdapter
 from .response_channel import TelegramResponseChannel
 from ...domain.messaging import MessageContext, FileAttachment
+from ...ports.conversation_handler_port import ConversationHandlerPort
+from ...ports.platform_auth_port import PlatformAuthPort
 from ...utils.logger import logger
 
 
 class TelegramWebhookAdapter(PlatformAdapter):
     """
     Telegram webhook adapter (production mode).
-    
+
     Security: Uses HMAC verification via X-Telegram-Bot-Api-Secret-Token.
     Onboarding: Unauthorized users receive Web UI link (same as Slack).
     """
@@ -28,7 +30,9 @@ class TelegramWebhookAdapter(PlatformAdapter):
         webhook_secret: str,
         dedup_store,
         session_store,
-        **kwargs
+        conversation_handler: ConversationHandlerPort,
+        iam_service: PlatformAuthPort,
+        audio_service=None,
     ):
         """
         Initialize Telegram webhook adapter.
@@ -38,9 +42,15 @@ class TelegramWebhookAdapter(PlatformAdapter):
             webhook_secret: HMAC secret for webhook verification
             dedup_store: Deduplication store for update_id tracking
             session_store: Session store for resolving user sessions
-            **kwargs: Passed to PlatformAdapter (coordinator, agent_factory, etc.)
+            conversation_handler: ConversationHandlerPort for processing messages
+            iam_service: PlatformAuthPort for authorization
+            audio_service: Optional audio transcription port
         """
-        super().__init__(**kwargs)
+        super().__init__(
+            conversation_handler=conversation_handler,
+            iam_service=iam_service,
+            audio_service=audio_service,
+        )
         
         self.token = token
         self.webhook_secret = webhook_secret

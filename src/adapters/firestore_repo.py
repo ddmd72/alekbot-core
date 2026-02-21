@@ -12,7 +12,6 @@ from ..ports.repository import FactRepository
 from ..config.environment import EnvironmentConfig
 from ..utils.timer import log_execution_time
 from ..ports.embedding_service import EmbeddingService
-from ..adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from ..utils.logger import logger
 
 class FirestoreFactRepository(FactRepository):

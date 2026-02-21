@@ -294,3 +294,49 @@ from ..services.deduplication_service import SmartDeduplicationService
 - `firestore_fact_management_adapter` ──→ `FactWriteService`, `SearchEnrichmentService`
 - `firestore_repo` ──→ `SmartDeduplicationService` (lazy)
 - `http_adapter` ──→ `FirestoreSessionStore`, `FirestoreEventDedupStore`
+
+---
+
+## 7. Post-Fix Appendix — 2026-02-21
+
+> **Date:** 2026-02-21
+> **Scope:** Hexagonal Architecture cleanup sprint (P0 + P1 + P2 violations)
+> **Status:** ✅ All targeted violations resolved. `make check` passes: 817 passed, 0 failed.
+
+### 7.1 Violations Resolved
+
+| # | Violation | Fix Applied |
+|---|-----------|-------------|
+| 1.3 | Platform adapters created `ConversationHandler` inline (5 instantiations across 3 adapters) | `ConversationHandlerPort` ABC created in `ports/`. `PlatformAdapter` constructor now accepts `ConversationHandlerPort` + `PlatformAuthPort`. `SlackAdapterFactory` moved to `composition/` where it creates `ConversationHandler` once and injects it. |
+| 1.4a | `firestore_fact_management_adapter` imported `FactWriteService`, `SearchEnrichmentService` from `services/` | `FactWritePort` and `SearchEnrichmentPort` ABCs created. Both adapters and all consumers now use ports. |
+| Dead import | `firestore_repo.py:15` imported `GeminiEmbeddingAdapter` (already injected as port) | Import removed. |
+| P1-1 | `adapters/slack/factory.py` — composition root logic inside `adapters/` | Moved to `composition/slack_adapter_factory.py`. `adapters/slack/factory.py` deleted. |
+| P2 | Agents imported `PromptBuilder` concrete class | `PromptBuilderPort` ABC created. 5 agents updated to use the port. |
+
+### 7.2 New Ports Added
+
+| Port | Justification |
+|------|---------------|
+| `ports/conversation_handler_port.py` | Decouples platform adapters (infrastructure) from `handlers/` (application layer) |
+| `ports/fact_write_port.py` | 2+ consumers (ConsolidationAgent, FactManagementAdapter, UserAgentFactory) |
+| `ports/platform_auth_port.py` | Centralizes authorization contract; already had 2+ platform adapters |
+| `ports/prompt_builder_port.py` | 5 agents inject it — clear multi-consumer port |
+| `ports/search_enrichment_port.py` | 3 consumers (RouterAgent, MemorySearchAgent, FactManagementAdapter) |
+
+### 7.3 Updated Layer Scoreboard
+
+| Layer | Before | After | Remaining |
+|-------|--------|-------|-----------|
+| **ports/** | 80% | 80% | port→port (`session_store`/`file_service` → `llm_service`) — fix 1.1 |
+| **services/** | 85% | 88% | `user_agent_factory` → 3 concrete adapters — fix 1.2 |
+| **adapters/** | 75% | 88% | `http_adapter` → `FirestoreSessionStore`, `FirestoreEventDedupStore` (type hints); `firestore_repo` lazy import |
+| **agents/** | 98% | 98% | Exemplary — no violations |
+| **composition/** | 100% | 100% | Proper composition root |
+
+### 7.4 What Remains Open
+
+| Issue | Priority | Note |
+|-------|----------|------|
+| `Message`/`MessagePart` in ports (1.1) | P1 | Low effort, high ROI |
+| `UserAgentFactory` → 3 concrete adapters (1.2) | P1 | Medium effort |
+| `http_adapter` → `FirestoreSessionStore`, `FirestoreEventDedupStore` (type hints only) | P3 | Debatable — these are constructor params, not usage |

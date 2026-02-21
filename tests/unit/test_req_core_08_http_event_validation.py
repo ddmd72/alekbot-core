@@ -11,11 +11,9 @@ def http_adapter():
         config={"SLACK_SIGNING_SECRET": "test_secret", "SLACK_BOT_TOKEN": "xoxb"},
         task_service=AsyncMock(),
         session_store=AsyncMock(),
-        coordinator=AsyncMock(),
-        agent_factory=AsyncMock(),
+        conversation_handler=AsyncMock(),
         iam_service=AsyncMock(),
         dedup_store=AsyncMock(),
-        file_service=AsyncMock()
     )
 
 

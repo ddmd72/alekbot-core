@@ -100,7 +100,7 @@ Every event (message or mention) triggers an `iam_service.authorize("slack", sla
 
 ## 5. Code References
 
-- `src/adapters/slack/factory.py`: Factory for creating the appropriate adapter.
+- `src/composition/slack_adapter_factory.py`: Factory for creating the appropriate adapter (lives in `composition/` — creates `ConversationHandler` and injects it as a port).
 - `src/adapters/slack/http_adapter.py`: Production webhook implementation.
 - `src/adapters/slack/socket_adapter.py`: Development WebSocket implementation.
 - `src/adapters/slack/response_channel.py`: Slack-specific message formatting.
@@ -120,6 +120,6 @@ Every event (message or mention) triggers an `iam_service.authorize("slack", sla
 
 ---
 
-**Last Updated:** 2026-02-10  
+**Last Updated:** 2026-02-21
 **Status:** ✅ Complete  
 **Phase:** Documentation Audit Phase 3.6

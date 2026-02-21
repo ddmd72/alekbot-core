@@ -28,8 +28,8 @@ from ...ports.llm_service import LLMService, Message, MessagePart, LLMRequest
 from ...ports.session_store import SessionStore
 from ...ports.repository import FactRepository
 from ...ports.embedding_service import EmbeddingService
-from ...services.search_enrichment_service import SearchEnrichmentService
-from ...services.prompt_builder import PromptBuilder
+from ...ports.search_enrichment_port import SearchEnrichmentPort
+from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_service import AgentExecutionContext
 from ...utils.logger import logger
 from ...utils.debug_logger import get_debug_logger
@@ -177,7 +177,7 @@ class RouterAgent(BaseAgent):
         session_store: Optional[SessionStore] = None,
         repository: Optional[FactRepository] = None,
         embedding_service: Optional[EmbeddingService] = None,
-        search_enrichment_service: Optional[SearchEnrichmentService] = None,
+        search_enrichment_service: Optional[SearchEnrichmentPort] = None,
         # ============================================================================
         # LEGACY Provider Refactor Session 20: Hardcoded model name
         # Plan: docs/architecture/provider_refactor/POST_AUDIT_EXECUTION_PLAN.md
@@ -186,7 +186,7 @@ class RouterAgent(BaseAgent):
         # ============================================================================
         # classifier_model: str = "gemini-3-flash-preview",
         triage_prompt_path: Optional[Path] = None,
-        prompt_builder: Optional[PromptBuilder] = None
+        prompt_builder: Optional[PromptBuilderPort] = None
     ):
         """
         Initialize Router Agent.
@@ -731,10 +731,10 @@ def create_router_agent(
     session_store: Optional[SessionStore] = None,
     repository: Optional[FactRepository] = None,
     embedding_service: Optional[EmbeddingService] = None,
-    search_enrichment_service: Optional[SearchEnrichmentService] = None,
+    search_enrichment_service: Optional[SearchEnrichmentPort] = None,
     # classifier_model: str = "gemini-3-flash-preview",
     triage_prompt_path: Optional[Path] = None,
-    prompt_builder: Optional[PromptBuilder] = None
+    prompt_builder: Optional[PromptBuilderPort] = None
 ) -> RouterAgent:
     """
     Factory function to create RouterAgent with default config.

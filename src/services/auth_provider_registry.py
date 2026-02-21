@@ -9,22 +9,21 @@ RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 from typing import Dict, Optional
 
 from ..ports.auth_port import AuthPort
-from ..adapters.firebase_auth_adapter import FirebaseAuthAdapter
-from ..config.auth import AuthConfig, AuthProvider
 from ..utils.logger import logger
 
 
 class AuthProviderRegistry:
     """
-    OAuth provider registry with lazy initialization.
+    OAuth provider registry.
 
-    Manages OAuth authentication providers (Firebase, AWS Cognito, Okta, etc.).
-    Provides unified interface for application layer to access auth providers.
+    Receives pre-built AuthPort instances from the composition root (main.py).
+    Adapters are created outside this class, keeping services → ports direction clean.
 
     Usage:
-        registry = AuthProviderRegistry(auth_config)
-        firebase = registry.get_provider("firebase")
-        tokens = await firebase.exchange_code_for_tokens(code, redirect_uri)
+        from src.adapters.firebase_auth_adapter import FirebaseAuthAdapter
+        firebase = FirebaseAuthAdapter(project_id=..., ...)
+        registry = AuthProviderRegistry(providers={"firebase": firebase})
+        provider = registry.get_provider("firebase")
 
     Future Enhancement (Phase 2):
         - Support multiple providers simultaneously
@@ -32,53 +31,23 @@ class AuthProviderRegistry:
         - Runtime provider switching
     """
 
-    def __init__(self, auth_config: Optional[AuthConfig] = None):
+    def __init__(
+        self,
+        providers: Dict[str, AuthPort],
+        default_provider_name: str = "firebase",
+    ):
         """
-        Initialize auth provider registry.
+        Initialize auth provider registry with pre-built provider instances.
 
         Args:
-            auth_config: OAuth configuration (defaults to new AuthConfig())
+            providers: Mapping of provider_name → AuthPort implementation.
+            default_provider_name: Name used when get_provider() is called without args.
         """
-        self.auth_config = auth_config or AuthConfig()
-        self._providers: Dict[str, AuthPort] = {}
-        self._initialized = False
-
-    def _initialize_providers(self) -> None:
-        """
-        Lazy initialization of OAuth providers.
-
-        Creates provider instances based on configuration.
-        Only initializes providers once on first access.
-        """
-        if self._initialized:
-            return
-
-        # Initialize Firebase (MVP)
-        if self.auth_config.is_firebase:
-            try:
-                firebase_adapter = FirebaseAuthAdapter(
-                    project_id=self.auth_config.firebase_project_id,
-                    web_api_key=self.auth_config.firebase_web_api_key,
-                    service_account_path=self.auth_config.firebase_service_account,
-                    oauth_client_id=self.auth_config.google_oauth_client_id,
-                    oauth_client_secret=self.auth_config.google_oauth_client_secret,
-                )
-                self._providers["firebase"] = firebase_adapter
-                logger.info("🔐 Firebase OAuth provider registered")
-            except Exception as e:
-                logger.error(f"Failed to initialize Firebase auth provider: {e}")
-                raise ValueError(f"Firebase auth initialization failed: {e}")
-
-        # Future: Initialize other providers (AWS Cognito, Okta, Auth0)
-        # if self.auth_config.default_provider == AuthProvider.COGNITO:
-        #     self._providers["cognito"] = CognitoAuthAdapter(...)
-
-        self._initialized = True
-
-        if not self._providers:
+        if not providers:
             raise ValueError("No OAuth providers configured")
-
-        logger.info(f"✅ OAuth providers initialized: {list(self._providers.keys())}")
+        self._providers: Dict[str, AuthPort] = providers
+        self._default_provider_name = default_provider_name
+        logger.info(f"✅ OAuth providers registered: {list(self._providers.keys())}")
 
     def get_provider(self, provider_name: Optional[str] = None) -> AuthPort:
         """
@@ -86,7 +55,7 @@ class AuthProviderRegistry:
 
         Args:
             provider_name: Provider identifier ("firebase", "cognito", etc.)
-                          If None, returns default provider from config
+                          If None, returns the default provider.
 
         Returns:
             AuthPort implementation for the specified provider
@@ -94,13 +63,8 @@ class AuthProviderRegistry:
         Raises:
             ValueError: Provider not found or not configured
         """
-        # Lazy initialization
-        if not self._initialized:
-            self._initialize_providers()
-
-        # Use default provider if not specified
         if provider_name is None:
-            provider_name = self.auth_config.default_provider.value
+            provider_name = self._default_provider_name
 
         if provider_name not in self._providers:
             available = list(self._providers.keys())
@@ -113,12 +77,12 @@ class AuthProviderRegistry:
 
     def get_default_provider(self) -> AuthPort:
         """
-        Get default OAuth provider from configuration.
+        Get default OAuth provider.
 
         Returns:
             AuthPort implementation for default provider
         """
-        return self.get_provider(self.auth_config.default_provider.value)
+        return self.get_provider(self._default_provider_name)
 
     def list_available_providers(self) -> list[str]:
         """
@@ -127,9 +91,6 @@ class AuthProviderRegistry:
         Returns:
             List of provider identifiers (e.g., ["firebase"])
         """
-        if not self._initialized:
-            self._initialize_providers()
-
         return list(self._providers.keys())
 
     def parse_external_user_id(self, external_user_id: str) -> tuple[str, str]:

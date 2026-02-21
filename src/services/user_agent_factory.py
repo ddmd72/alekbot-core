@@ -9,9 +9,11 @@ received as ports via constructor injection from ServiceContainer — no adapter
 instantiation happens here.
 """
 
+from __future__ import annotations
+
 import asyncio
 import time
-from typing import Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 from google.genai import types
 
@@ -26,7 +28,7 @@ from ..ports.session_store import SessionStore
 from ..services.user_prompt_builder import UserPromptBuilder
 from ..services.search_enrichment_service import SearchEnrichmentService
 from ..services.biographical_context_service import BiographicalContextService
-from ..services.fact_write_service import FactWriteService
+from ..ports.fact_write_port import FactWritePort
 from ..services.provider_registry import ProviderRegistry
 from ..services.agent_context_builder import AgentContextBuilder
 from ..services.configuration_service import ConfigurationService
@@ -38,8 +40,10 @@ from ..agents.core.router_agent import create_router_agent
 from ..agents.memory_search_agent import MemorySearchAgent
 from ..agents.web_search_agent import WebSearchAgent
 from ..agents.consolidation_agent import ConsolidationAgent
-from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from ..infrastructure.agent_coordinator import AgentCoordinator
 
 
 class UserAgentFactory:
@@ -71,7 +75,7 @@ class UserAgentFactory:
         context_builder: AgentContextBuilder,
         component_service: Optional[PromptComponentService],
         assembly_service,
-        fact_write_service: FactWriteService,
+        fact_write_service: FactWritePort,
         fact_management_adapter_factory: Callable,
     ) -> None:
         self.config = config

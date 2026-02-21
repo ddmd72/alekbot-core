@@ -5,34 +5,17 @@ Centralized authorization logic for the system.
 Replaces IdentityResolver with clean, testable IAM-centric architecture.
 """
 from typing import Optional
-from dataclasses import dataclass
 
 from ..domain.user import UserProfile
 from ..domain.billing import BillingAccount
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
 from ..ports.whitelist_repository import WhitelistRepository
+from ..ports.platform_auth_port import IAMDecision, PlatformAuthPort
 from ..utils.logger import logger
 
 
-@dataclass
-class IAMDecision:
-    """
-    Authorization decision from IAMService.
-    
-    Contains the decision action and associated data needed by caller.
-    """
-    action: str  # "allow" | "reject" | "create_account"
-    user: Optional[UserProfile] = None
-    message: Optional[str] = None
-    metadata: dict = None  # Additional context (e.g., platform_user_id for display)
-    
-    def __post_init__(self):
-        if self.metadata is None:
-            self.metadata = {}
-
-
-class IAMService:
+class IAMService(PlatformAuthPort):
     """
     Centralized Identity & Access Management service.
     

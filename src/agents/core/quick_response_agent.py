@@ -32,7 +32,7 @@ from ...ports.llm_service import (
     LLMRequest
 )
 from ...ports.session_store import SessionStore
-from ...services.prompt_builder import PromptBuilder
+from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_service import AgentExecutionContext
 from ...domain.billing import calculate_cost
 from ...utils.logger import logger
@@ -72,7 +72,7 @@ class QuickResponseAgent(BaseAgent):
         config: AgentConfig,
         execution_context: AgentExecutionContext,
         session_store: SessionStore,
-        prompt_builder: PromptBuilder,
+        prompt_builder: PromptBuilderPort,
         repository: Optional[Any] = None,
         embedding_service: Optional[Any] = None,
         coordinator: "AgentCoordinator" = None,  # type: ignore
@@ -461,7 +461,7 @@ class QuickResponseAgent(BaseAgent):
 def create_quick_response_agent(
     execution_context: AgentExecutionContext,
     session_store: SessionStore,
-    prompt_builder: PromptBuilder,
+    prompt_builder: PromptBuilderPort,
     repository: Optional[Any] = None,
     embedding_service: Optional[Any] = None,
     coordinator: "AgentCoordinator" = None,  # type: ignore

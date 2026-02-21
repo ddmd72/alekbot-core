@@ -25,8 +25,10 @@ from ..domain.prompt import (
     ANONYMOUS_USER_ID,
     ANONYMOUS_ACCOUNT_ID
 )
+from ..ports.prompt_builder_port import PromptBuilderPort
 
-class PromptBuilder:
+
+class PromptBuilder(PromptBuilderPort):
     """
     Provider-agnostic prompt builder service.
 

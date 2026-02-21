@@ -39,7 +39,7 @@ from ...ports.llm_service import (
     LLMRequest
 )
 from ...ports.session_store import SessionStore
-from ...services.prompt_builder import PromptBuilder
+from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_service import AgentExecutionContext
 from ...services.history_summary_service import HistorySummaryService
 from ...utils.logger import logger
@@ -97,7 +97,7 @@ class SmartResponseAgent(BaseAgent):
         config: AgentConfig,
         execution_context: AgentExecutionContext,
         session_store: SessionStore,
-        prompt_builder: PromptBuilder,
+        prompt_builder: PromptBuilderPort,
         repository: Optional[Any] = None,
         embedding_service: Optional[Any] = None,
         coordinator: "AgentCoordinator" = None,  # type: ignore
@@ -862,7 +862,7 @@ class SmartResponseAgent(BaseAgent):
 def create_smart_response_agent(
     execution_context: AgentExecutionContext,
     session_store: SessionStore,
-    prompt_builder: PromptBuilder,
+    prompt_builder: PromptBuilderPort,
     repository: Optional[Any] = None,
     embedding_service: Optional[Any] = None,
     coordinator: "AgentCoordinator" = None,  # type: ignore

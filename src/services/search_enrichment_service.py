@@ -6,10 +6,11 @@ from ..domain.search import EnrichedContext, EnrichedFact, SearchLimits
 from ..domain.vector_math import cosine_similarity
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
+from ..ports.search_enrichment_port import SearchEnrichmentPort
 from ..utils.logger import logger
 
 
-class SearchEnrichmentService:
+class SearchEnrichmentService(SearchEnrichmentPort):
     """
     Multi-vector semantic search with RRF ranking.
     

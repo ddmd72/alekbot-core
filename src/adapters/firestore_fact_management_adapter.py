@@ -14,8 +14,8 @@ from ..domain.search import SearchLimits
 from ..ports.fact_management_port import FactManagementPort
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
-from ..services.fact_write_service import FactWriteService
-from ..services.search_enrichment_service import SearchEnrichmentService
+from ..ports.fact_write_port import FactWritePort
+from ..ports.search_enrichment_port import SearchEnrichmentPort
 from ..utils.logger import logger
 
 
@@ -36,8 +36,8 @@ class FirestoreFactManagementAdapter(FactManagementPort):
         self,
         repository: FactRepository,
         embedding_service: EmbeddingService,
-        fact_write_service: FactWriteService,
-        search_enrichment_service: SearchEnrichmentService,
+        fact_write_service: FactWritePort,
+        search_enrichment_service: SearchEnrichmentPort,
         max_retries: int = 3
     ) -> None:
         self._repo = repository

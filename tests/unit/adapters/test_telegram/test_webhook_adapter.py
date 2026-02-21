@@ -8,28 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
 from src.domain.user import UserProfile
-from src.services.iam_service import IAMDecision
+from src.ports.platform_auth_port import IAMDecision
 
 
 class TestTelegramWebhookAdapter:
     """Unit tests for TelegramWebhookAdapter."""
 
     @pytest.fixture
-    def mock_dependencies(self):
-        """Create mock dependencies for adapter."""
-        return {
-            'coordinator': MagicMock(),
-            'agent_factory': AsyncMock(),
-            'iam_service': AsyncMock(),
-            'file_service': MagicMock(),
-            'consolidation_queue': MagicMock(),
-            'consolidation_config': MagicMock(),
-            'dedup_store': AsyncMock(),
-            'session_store': AsyncMock()
-        }
-
-    @pytest.fixture
-    def adapter(self, mock_dependencies):
+    def adapter(self):
         """Create TelegramWebhookAdapter with mocked Bot to avoid real API calls."""
         with patch("src.adapters.telegram.webhook_adapter.Bot") as MockBot:
             mock_bot = AsyncMock()
@@ -37,7 +23,10 @@ class TestTelegramWebhookAdapter:
             instance = TelegramWebhookAdapter(
                 token="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
                 webhook_secret="test_webhook_secret_32chars_min",
-                **mock_dependencies
+                dedup_store=AsyncMock(),
+                session_store=AsyncMock(),
+                conversation_handler=AsyncMock(),
+                iam_service=AsyncMock(),
             )
         # adapter.bot is now the AsyncMock (reference persists after patch exits)
         return instance

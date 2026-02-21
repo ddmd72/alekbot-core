@@ -7,27 +7,23 @@ from typing import Optional
 from slack_bolt.async_app import AsyncApp
 
 from ..platform.base_adapter import PlatformAdapter
+from ...ports.conversation_handler_port import ConversationHandlerPort
+from ...ports.platform_auth_port import PlatformAuthPort
 
 
 class SlackAdapter(PlatformAdapter):
     """
     Abstract base class for Slack adapters.
     Implements Hexagonal Architecture - this is a Driving Adapter port.
-    
-    Updated (2026-02-09): Inherits from PlatformAdapter for multi-platform support.
     """
 
     def __init__(
         self,
         app: AsyncApp,
         config: dict,
-        coordinator=None,
-        agent_factory=None,
-        iam_service=None,
-        file_service=None,
-        consolidation_queue=None,
-        consolidation_config=None,
-        **kwargs
+        conversation_handler: ConversationHandlerPort,
+        iam_service: PlatformAuthPort,
+        audio_service=None,
     ):
         """
         Initialize the Slack adapter.
@@ -35,22 +31,14 @@ class SlackAdapter(PlatformAdapter):
         Args:
             app: Slack Bolt AsyncApp instance
             config: Configuration dictionary
-            coordinator: AgentCoordinator instance
-            agent_factory: UserAgentFactory instance
-            iam_service: IAMService instance
-            file_service: FileService instance
-            consolidation_queue: ConsolidationQueue instance
-            consolidation_config: Consolidation configuration dict
-            **kwargs: Additional arguments for PlatformAdapter
+            conversation_handler: ConversationHandlerPort for processing messages
+            iam_service: PlatformAuthPort for authorization
+            audio_service: Optional audio transcription port
         """
         super().__init__(
-            coordinator=coordinator,
-            agent_factory=agent_factory,
+            conversation_handler=conversation_handler,
             iam_service=iam_service,
-            file_service=file_service,
-            consolidation_queue=consolidation_queue,
-            consolidation_config=consolidation_config,
-            **kwargs
+            audio_service=audio_service,
         )
         self.app = app
         self.config = config
@@ -76,17 +64,17 @@ class SlackAdapter(PlatformAdapter):
     async def _translate_platform_files(self, platform_files: list) -> list:
         """
         Translate Slack files to FileAttachment DTOs.
-        
+
         Slack files have direct URL access (no API call needed like Telegram).
-        
+
         Args:
             platform_files: List of Slack file objects
-            
+
         Returns:
             List of FileAttachment DTOs
         """
         from ...domain.messaging import FileAttachment
-        
+
         attachments = []
         for file_obj in platform_files:
             try:
@@ -101,5 +89,5 @@ class SlackAdapter(PlatformAdapter):
                 from ...utils.logger import logger
                 logger.warning(f"⚠️ Failed to translate Slack file: {e}")
                 continue
-        
+
         return attachments

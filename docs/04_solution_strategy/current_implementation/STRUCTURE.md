@@ -54,13 +54,13 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── groovy_prompt_assembler.py # 🆕 Groovy DSL prompt assembler
 │   └── slack/          # Slack integration subsystem
 │       ├── base.py
-│       ├── factory.py
 │       ├── http_adapter.py
 │       ├── socket_adapter.py
 │       └── response_channel.py
 ├── composition/        # Composition Root (Dependency Injection)
 │   ├── __init__.py
-│   └── service_container.py # ServiceContainer — owns all shared (singleton-per-worker) services
+│   ├── service_container.py # ServiceContainer — owns all shared (singleton-per-worker) services
+│   └── slack_adapter_factory.py # Factory for Slack adapter selection (composition root — legal to import all layers)
 ├── agents/             # 🆕 Multi-Agent System (Specialized Task Handlers)
 │   ├── __init__.py
 │   ├── base_agent.py   # BaseAgent + CircuitBreaker
@@ -117,6 +117,11 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── repository.py   # FactRepository interface
 │   ├── llm_service.py  # LLM Provider Port
 │   ├── session_store.py # 🆕 Session persistence interface
+│   ├── conversation_handler_port.py # ConversationHandlerPort ABC (injected into platform adapters)
+│   ├── fact_write_port.py # FactWritePort ABC (injected into agents and FactManagementAdapter)
+│   ├── platform_auth_port.py # PlatformAuthPort + IAMDecision (platform adapter authorization)
+│   ├── prompt_builder_port.py # PromptBuilderPort ABC (injected into all agents)
+│   ├── search_enrichment_port.py # SearchEnrichmentPort ABC (injected into RouterAgent and MemorySearchAgent)
 │   └── user_repository.py # UserRepository port
 ├── services/
 │   ├── agent_context_builder.py # 🆕 Resolves Provider/Tier/Model for agents
@@ -159,10 +164,9 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`firestore_repo.py`**: Firestore implementation of `FactRepository`. Supports SCD Type 2 and native vector search. Receives `SmartDeduplicationService` via DI (no lazy imports).
 -   **`firestore_session_store.py`**: Session persistence with **90-day TTL** and sliding window overflow logic.
 -   **`platform/`**: Base adapter layer for all messaging platforms:
-    -   `base_adapter.py`: Abstract `PlatformAdapter`. Creates shared `ConversationHandler` once in `__init__` (stateless, reused across requests). Subclasses access it via `self.conversation_handler`.
+    -   `base_adapter.py`: Abstract `PlatformAdapter`. Receives `ConversationHandlerPort` and `PlatformAuthPort` via constructor injection. Does not instantiate any concrete handlers.
 -   **`slack/`**: Slack integration subsystem with dual-mode support:
     -   `base.py`: Abstract `SlackAdapter` base class
-    -   `factory.py`: Factory pattern for creating HTTP or Socket adapters
     -   `http_adapter.py`: HTTP Events API adapter for Cloud Run production
     -   `socket_adapter.py`: Socket Mode adapter for local development
     -   `response_channel.py`: Implementation of `ResponseChannel` protocol for Slack
@@ -170,6 +174,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 ### `composition/` - Composition Root (Dependency Injection)
 
 -   **`service_container.py`**: `ServiceContainer` — created once per worker process. Owns all shared services: LLM adapters (Gemini, Claude, Grok), repositories (FirestoreFactRepository, FirestorePromptComponentRepository), services (ProviderRegistry, AgentContextBuilder, PromptComponentService, BiographicalContextService, ConfigurationService, **FactWriteService**) and `FirestoreSessionStore` with overflow-callback. Provides `agent_services()` dict for injection into `UserAgentFactory`. Also provides `create_fact_management_adapter(search_enrichment_service)` — factory method for per-user `FactManagementAdapter`.
+-   **`slack_adapter_factory.py`**: `SlackAdapterFactory` — creates the appropriate Slack adapter (Socket or HTTP) based on `EnvironmentConfig`. Lives in `composition/` because it imports from `handlers/` (to create `ConversationHandler`) and `infrastructure/` — layers that `adapters/` cannot legally access. Creates `ConversationHandler` here and passes it as `ConversationHandlerPort` to the platform adapter.
 
 ### `config/` - Configuration Layer
 -   **`environment.py`**: Centralized environment detection and configuration. Manages `APP_ENV` (development/production/test) and `SLACK_MODE` (http/socket). Provides Firestore collection prefixes for environment isolation.
@@ -195,8 +200,13 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 
 ### `ports/` - Port Interfaces (Abstractions)
 -   **`account_repository.py`**: Port for account-level usage + quota.
+-   **`conversation_handler_port.py`**: `ConversationHandlerPort` ABC — injected into all platform adapters (Slack, Telegram). Decouples adapters from the concrete `ConversationHandler` in `handlers/`.
+-   **`fact_write_port.py`**: `FactWritePort` ABC — injected into `ConsolidationAgent`, `FactManagementAdapter`, and `UserAgentFactory`. Decouples consumers from `FactWriteService`.
 -   **`log_sink.py`**: Port for structured logging sinks.
+-   **`platform_auth_port.py`**: `PlatformAuthPort` ABC + `IAMDecision` dataclass — injected into all platform adapters for centralized authorization.
+-   **`prompt_builder_port.py`**: `PromptBuilderPort` ABC — injected into all 5 agents (RouterAgent, QuickResponseAgent, SmartResponseAgent, WebSearchAgent, ConsolidationAgent).
 -   **`quota_service.py`**: Port for non-blocking usage tracking and quota management.
+-   **`search_enrichment_port.py`**: `SearchEnrichmentPort` ABC — injected into `RouterAgent`, `MemorySearchAgent`, and `FactManagementAdapter`.
 -   **`task_queue.py`**: Port for background task queues.
 -   **`llm_service.py`**: `LLMService` ABC. Interface for LLM provider operations (generate, stream, upload files). Re-exports `Message`, `MessagePart`, `ToolCall` from `domain/llm.py` for backward compatibility.
 -   **`repository.py`**: `FactRepository` ABC (Abstract Base Class). Interface for memory storage operations.

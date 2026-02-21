@@ -1,30 +1,36 @@
 """
 Slack Adapter Factory
-Creates appropriate adapter based on configuration
+Creates appropriate Slack adapter based on configuration.
+
+Lives in composition/ so it can legally import from handlers/, infrastructure/,
+services/, and adapters/. Creates ConversationHandler here and injects it as
+ConversationHandlerPort into the platform adapter.
 """
 from typing import Optional
 from slack_bolt.async_app import AsyncApp
 
-from .base import SlackAdapter
-from .socket_adapter import SocketModeAdapter
-from .http_adapter import HTTPModeAdapter
-from ...adapters.gcp_task_queue import GcpTaskQueue
-from ...adapters.firestore_session_store import FirestoreSessionStore
-from ...adapters.firestore_dedup_store import FirestoreEventDedupStore
-from ...config.environment import EnvironmentConfig
-from ...utils.logger import logger
-from ...infrastructure.agent_coordinator import AgentCoordinator
-from ...services.user_agent_factory import UserAgentFactory
-from ...services.iam_service import IAMService
-from ...ports.file_service import FileService
+from ..adapters.slack.base import SlackAdapter
+from ..adapters.slack.socket_adapter import SocketModeAdapter
+from ..adapters.slack.http_adapter import HTTPModeAdapter
+from ..adapters.gcp_task_queue import GcpTaskQueue
+from ..adapters.firestore_session_store import FirestoreSessionStore
+from ..adapters.firestore_dedup_store import FirestoreEventDedupStore
+from ..config.environment import EnvironmentConfig
+from ..handlers.conversation_handler import ConversationHandler
+from ..infrastructure.agent_coordinator import AgentCoordinator
+from ..services.user_agent_factory import UserAgentFactory
+from ..services.iam_service import IAMService
+from ..ports.file_service import FileService
+from ..utils.logger import logger
 
 
 class SlackAdapterFactory:
     """
     Factory for creating Slack adapters based on configuration.
     Implements Factory pattern for dual-mode support.
-    
-    Updated (2026-02-05): Replaced IdentityResolver with IAMService.
+
+    Composition root: creates ConversationHandler and injects it
+    as ConversationHandlerPort into the platform adapter.
     """
 
     @staticmethod
@@ -53,7 +59,11 @@ class SlackAdapterFactory:
             agent_factory: Factory for creating per-user agents
             iam_service: IAMService for centralized authorization
             file_service: FileService instance
+            session_store: Session store (required for HTTP mode)
             db_client: Firestore AsyncClient (required for HTTP mode)
+            consolidation_queue: Optional consolidation queue
+            consolidation_config: Optional consolidation config
+            audio_service: Optional audio transcription service
 
         Returns:
             SlackAdapter instance (either SocketModeAdapter or HTTPModeAdapter)
@@ -61,6 +71,16 @@ class SlackAdapterFactory:
         mode = env_config.slack_mode.value
 
         logger.info(f"🏭 Creating Slack adapter: {mode}")
+
+        # Create ConversationHandler here (composition root)
+        conversation_handler = ConversationHandler(
+            coordinator=coordinator,
+            agent_factory=agent_factory,
+            file_service=file_service,
+            consolidation_queue=consolidation_queue,
+            global_config=consolidation_config,
+            audio_service=audio_service,
+        )
 
         if env_config.is_socket_mode:
             socket_config = config.copy()
@@ -72,12 +92,8 @@ class SlackAdapterFactory:
             return SocketModeAdapter(
                 app=app,
                 config=socket_config,
-                coordinator=coordinator,
-                agent_factory=agent_factory,
+                conversation_handler=conversation_handler,
                 iam_service=iam_service,
-                file_service=file_service,
-                consolidation_queue=consolidation_queue,
-                consolidation_config=consolidation_config,
                 audio_service=audio_service,
             )
 
@@ -111,13 +127,9 @@ class SlackAdapterFactory:
                 config=config,
                 task_service=task_service,
                 session_store=session_store,
-                coordinator=coordinator,
-                agent_factory=agent_factory,
+                conversation_handler=conversation_handler,
                 iam_service=iam_service,
                 dedup_store=dedup_store,
-                file_service=file_service,
-                consolidation_queue=consolidation_queue,
-                consolidation_config=consolidation_config,
                 audio_service=audio_service,
             )
 

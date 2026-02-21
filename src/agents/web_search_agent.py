@@ -13,7 +13,7 @@ from typing import Optional
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent
 from ..ports.llm_service import AgentExecutionContext
-from ..services.prompt_builder import PromptBuilder
+from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.llm_service import Message, MessagePart, LLMRequest
 from ..utils.logger import logger
 
@@ -35,7 +35,7 @@ class WebSearchAgent(BaseAgent):
         config: AgentConfig,
         execution_context: AgentExecutionContext,
         grounding_tool: object,
-        prompt_builder: Optional[PromptBuilder] = None,
+        prompt_builder: Optional[PromptBuilderPort] = None,
         user_id: Optional[str] = None
     ):
         """

@@ -16,12 +16,10 @@ from .response_channel import SlackResponseChannel
 from ...domain.messaging import MessageContext, FileAttachment
 from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
 from ...ports.task_queue import TaskQueue
+from ...ports.conversation_handler_port import ConversationHandlerPort
+from ...ports.platform_auth_port import PlatformAuthPort
 from ...adapters.firestore_session_store import FirestoreSessionStore
 from ...adapters.firestore_dedup_store import FirestoreEventDedupStore
-from ...infrastructure.agent_coordinator import AgentCoordinator
-from ...services.user_agent_factory import UserAgentFactory
-from ...services.iam_service import IAMService
-from ...ports.file_service import FileService
 from ...utils.logger import logger
 from ...utils.telemetry import (
     start_span,
@@ -49,24 +47,16 @@ class HTTPModeAdapter(SlackAdapter):
         config: dict,
         task_service: TaskQueue,
         session_store: FirestoreSessionStore,
-        coordinator: AgentCoordinator,
-        agent_factory: UserAgentFactory,
-        iam_service: IAMService,
+        conversation_handler: ConversationHandlerPort,
+        iam_service: PlatformAuthPort,
         dedup_store: FirestoreEventDedupStore,
-        file_service: FileService,
-        consolidation_queue: Optional[Any] = None,
-        consolidation_config: Optional[Any] = None,
         audio_service: Optional[Any] = None,
     ):
         super().__init__(
             app,
             config,
-            coordinator,
-            agent_factory,
-            iam_service,
-            file_service,
-            consolidation_queue,
-            consolidation_config,
+            conversation_handler=conversation_handler,
+            iam_service=iam_service,
             audio_service=audio_service,
         )
 
@@ -254,11 +244,10 @@ class HTTPModeAdapter(SlackAdapter):
                 logger.warning(f"⚠️ Empty text and no files in message event, skipping")
                 return
 
-            # IAM Authorization (NEW - 2026-02-05)
+            # IAM Authorization
             decision = await self.iam_service.authorize("slack", platform_user_id=slack_user_id)
-            
+
             if decision.action == "reject":
-                # User NOT authorized → send registration message and STOP
                 logger.warning(f"⛔ Unauthorized Slack user: {slack_user_id}")
                 response_channel = SlackResponseChannel(
                     self.app.client,
@@ -267,7 +256,7 @@ class HTTPModeAdapter(SlackAdapter):
                 )
                 await response_channel.send_message(decision.message)
                 return
-            
+
             # User authorized → continue
             user_profile = decision.user
             user_id = user_profile.user_id
@@ -276,8 +265,6 @@ class HTTPModeAdapter(SlackAdapter):
             set_request_context(user_id=user_id, session_id=session_id)
             set_log_context(user_id=user_id, session_id=session_id)
             logger.info(f"👤 Processing message for user {user_id} ({user_profile.display_name})")
-
-            await self.agent_factory.ensure_agents_for_user(user_id)
 
             response_channel = SlackResponseChannel(
                 self.app.client,
@@ -323,11 +310,10 @@ class HTTPModeAdapter(SlackAdapter):
             thread_ts = event.get("ts")
             slack_user_id = event.get("user", "unknown")
 
-            # IAM Authorization (NEW - 2026-02-05)
+            # IAM Authorization
             decision = await self.iam_service.authorize("slack", platform_user_id=slack_user_id)
-            
+
             if decision.action == "reject":
-                # User NOT authorized → send registration message and STOP
                 logger.warning(f"⛔ Unauthorized Slack user: {slack_user_id}")
                 response_channel = SlackResponseChannel(
                     self.app.client,
@@ -336,7 +322,7 @@ class HTTPModeAdapter(SlackAdapter):
                 )
                 await response_channel.send_message(decision.message)
                 return
-            
+
             # User authorized → continue
             user_profile = decision.user
             user_id = user_profile.user_id
@@ -345,8 +331,6 @@ class HTTPModeAdapter(SlackAdapter):
             set_request_context(user_id=user_id, session_id=session_id)
             set_log_context(user_id=user_id, session_id=session_id)
             logger.info(f"👤 Processing mention for user {user_id} ({user_profile.display_name})")
-
-            await self.agent_factory.ensure_agents_for_user(user_id)
 
             context = MessageContext(
                 text=text,

@@ -13,7 +13,7 @@ from src.adapters.firestore_quota_service import FirestoreQuotaService
 from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
 from src.services.iam_service import IAMService
 from src.services.user_agent_factory import UserAgentFactory
-from src.adapters.slack.factory import SlackAdapterFactory
+from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.utils.server import run_dummy_server
 from src.utils.logger import logger
 from src.utils.telemetry import init_telemetry
@@ -32,6 +32,7 @@ from src.services.session_service import SessionService
 from src.services.invite_code_service import InviteCodeService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.config.auth import AuthConfig
+from src.adapters.firebase_auth_adapter import FirebaseAuthAdapter
 from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
 
 
@@ -258,7 +259,14 @@ async def main():
         # ====================================================================
         logger.info("🔐 Initializing OAuth + Cabinet Services...")
         auth_config = AuthConfig(config)  # Pass config with secrets from Secret Manager
-        auth_registry = AuthProviderRegistry(auth_config)
+        firebase_adapter = FirebaseAuthAdapter(
+            project_id=auth_config.firebase_project_id,
+            web_api_key=auth_config.firebase_web_api_key,
+            service_account_path=auth_config.firebase_service_account,
+            oauth_client_id=auth_config.google_oauth_client_id,
+            oauth_client_secret=auth_config.google_oauth_client_secret,
+        )
+        auth_registry = AuthProviderRegistry(providers={"firebase": firebase_adapter})
         
         # Services
         auth_service = AuthenticationService(
@@ -371,26 +379,32 @@ async def main():
                         from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
                         from src.adapters.firestore_dedup_store import FirestoreDedupStore
                         from src.adapters.platform.factory import PlatformAdapterFactory
-                        
+                        from src.handlers.conversation_handler import ConversationHandler
+
                         # Initialize dedup store for Telegram
                         dedup_store = FirestoreDedupStore(
                             db_client=db_client,
                             collection_name=env_config.event_dedup_collection
                         )
-                        
+
+                        # Create ConversationHandler for Telegram (composition root)
+                        telegram_conversation_handler = ConversationHandler(
+                            coordinator=coordinator,
+                            agent_factory=agent_factory,
+                            file_service=file_service,
+                            consolidation_queue=consolidation_queue,
+                            global_config=config.get("CONSOLIDATION"),
+                            audio_service=None,
+                        )
+
                         # Initialize Telegram adapter
                         telegram_adapter = TelegramWebhookAdapter(
                             token=telegram_config["token"],
                             webhook_secret=telegram_config["webhook_secret"],
                             dedup_store=dedup_store,
                             session_store=session_store,
-                            coordinator=coordinator,
-                            agent_factory=agent_factory,
+                            conversation_handler=telegram_conversation_handler,
                             iam_service=iam_service,
-                            file_service=file_service,
-                            consolidation_queue=consolidation_queue,
-                            consolidation_config=config.get("CONSOLIDATION"),
-                            audio_service=None,
                         )
                         
                         # Register Telegram blueprint

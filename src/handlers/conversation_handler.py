@@ -20,6 +20,7 @@ from ..services.file_conversion_service import (
     convert_file_to_text, is_native_binary, make_history_stub,
 )
 from ..ports.audio_transcription_port import AudioTranscriptionPort
+from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 from ..utils.logging_context import set_log_context
@@ -52,7 +53,7 @@ def strtobool(val: str) -> bool:
         raise ValueError(f"invalid truth value {val!r}")
 
 
-class ConversationHandler:
+class ConversationHandler(ConversationHandlerPort):
     """
     Platform-agnostic conversation orchestrator.
 

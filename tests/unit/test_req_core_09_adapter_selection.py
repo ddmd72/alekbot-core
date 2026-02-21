@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
-from src.adapters.slack.factory import SlackAdapterFactory
+from src.composition.slack_adapter_factory import SlackAdapterFactory
 
 
 @pytest.mark.requirement("REQ-CORE-09")
@@ -25,7 +25,8 @@ def test_factory_selects_socket_mode_with_dev_tokens():
         "DEV_SLACK_APP_TOKEN": "dev-app",
     }
 
-    with patch("src.adapters.slack.factory.SocketModeAdapter") as mock_socket:
+    with patch("src.composition.slack_adapter_factory.SocketModeAdapter") as mock_socket, \
+         patch("src.composition.slack_adapter_factory.ConversationHandler"):
         SlackAdapterFactory.create_adapter(
             app=app,
             coordinator=AsyncMock(),
@@ -68,9 +69,10 @@ def test_factory_selects_http_mode_with_dependencies():
         "SLACK_BOT_TOKEN": "prod-bot"
     }
 
-    with patch("src.adapters.slack.factory.GcpTaskQueue") as mock_tasks, \
-         patch("src.adapters.slack.factory.HTTPModeAdapter") as mock_http, \
-         patch("src.adapters.slack.factory.FirestoreEventDedupStore"):
+    with patch("src.composition.slack_adapter_factory.GcpTaskQueue") as mock_tasks, \
+         patch("src.composition.slack_adapter_factory.HTTPModeAdapter") as mock_http, \
+         patch("src.composition.slack_adapter_factory.FirestoreEventDedupStore"), \
+         patch("src.composition.slack_adapter_factory.ConversationHandler"):
         SlackAdapterFactory.create_adapter(
             app=app,
             coordinator=AsyncMock(),

@@ -28,11 +28,11 @@ from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_management_port import FactManagementPort
 from ..ports.llm_service import LLMService, LLMResponse, ToolCall, Message, MessagePart, LLMRequest
-from ..services.prompt_builder import PromptBuilder
+from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from ..utils.debug_logger import get_debug_logger
 from ..ports.llm_service import AgentExecutionContext
-from ..services.fact_write_service import FactWriteService
+from ..ports.fact_write_port import FactWritePort
 
 
 @dataclass
@@ -64,10 +64,10 @@ class ConsolidationAgent(BaseAgent):
         execution_context: AgentExecutionContext,
         repository: FactRepository,
         embedding_service: EmbeddingService,
-        fact_write_service: FactWriteService,
+        fact_write_service: FactWritePort,
         fact_management_port: Optional[FactManagementPort] = None,  # NEW: Phase 3
         prompt_version: str = "v3",  # Changed default to v3
-        prompt_builder: Optional[PromptBuilder] = None,
+        prompt_builder: Optional[PromptBuilderPort] = None,
         facts_limit: int = 50,
         principles_limit: int = 15
     ):

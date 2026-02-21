@@ -10,10 +10,8 @@ from .base import SlackAdapter
 from .response_channel import SlackResponseChannel
 from ...domain.messaging import MessageContext, FileAttachment
 from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
-from ...infrastructure.agent_coordinator import AgentCoordinator
-from ...services.user_agent_factory import UserAgentFactory
-from ...services.iam_service import IAMService
-from ...ports.file_service import FileService
+from ...ports.conversation_handler_port import ConversationHandlerPort
+from ...ports.platform_auth_port import PlatformAuthPort
 from ...utils.logger import logger
 
 
@@ -24,31 +22,21 @@ class SocketModeAdapter(SlackAdapter):
 
     Translates Slack events into platform-agnostic MessageContext and
     delegates processing to ConversationHandler.
-    
-    Updated (2026-02-05): Replaced IdentityResolver with IAMService.
     """
 
     def __init__(
         self,
         app: AsyncApp,
         config: dict,
-        coordinator: AgentCoordinator,
-        agent_factory: UserAgentFactory,
-        iam_service: IAMService,
-        file_service: FileService,
-        consolidation_queue: Optional[Any] = None,
-        consolidation_config: Optional[Any] = None,
+        conversation_handler: ConversationHandlerPort,
+        iam_service: PlatformAuthPort,
         audio_service: Optional[Any] = None,
     ):
         super().__init__(
             app,
             config,
-            coordinator,
-            agent_factory,
-            iam_service,
-            file_service,
-            consolidation_queue,
-            consolidation_config,
+            conversation_handler=conversation_handler,
+            iam_service=iam_service,
             audio_service=audio_service,
         )
 
@@ -91,22 +79,19 @@ class SocketModeAdapter(SlackAdapter):
             text = message.get("text", "")
             slack_user_id = message.get("user", "unknown")
 
-            # IAM Authorization (NEW - 2026-02-05)
+            # IAM Authorization
             decision = await self.iam_service.authorize("slack", platform_user_id=slack_user_id)
-            
+
             if decision.action == "reject":
-                # User NOT authorized → send registration message
                 logger.warning(f"⛔ Unauthorized Slack user: {slack_user_id}")
                 await say(decision.message)
                 return
-            
+
             # User authorized → continue
             user_profile = decision.user
             user_id = user_profile.user_id
             account_id = user_profile.account_id or ANONYMOUS_ACCOUNT_ID  # SESSION_26
             logger.info(f"👤 Processing message for user {user_id} ({user_profile.display_name})")
-
-            await self.agent_factory.ensure_agents_for_user(user_id)
 
             if text.startswith("$"):
                 command = text.lstrip("$").strip().lower()
@@ -154,22 +139,19 @@ class SocketModeAdapter(SlackAdapter):
             text = event["text"].split(">", 1)[-1].strip()
             slack_user_id = event.get("user", "unknown")
 
-            # IAM Authorization (NEW - 2026-02-05)
+            # IAM Authorization
             decision = await self.iam_service.authorize("slack", platform_user_id=slack_user_id)
-            
+
             if decision.action == "reject":
-                # User NOT authorized → send registration message
                 logger.warning(f"⛔ Unauthorized Slack user: {slack_user_id}")
                 await say(decision.message)
                 return
-            
+
             # User authorized → continue
             user_profile = decision.user
             user_id = user_profile.user_id
             account_id = user_profile.account_id or ANONYMOUS_ACCOUNT_ID  # SESSION_26
             logger.info(f"👤 Processing mention for user {user_id} ({user_profile.display_name})")
-
-            await self.agent_factory.ensure_agents_for_user(user_id)
 
             context = MessageContext(
                 text=text,

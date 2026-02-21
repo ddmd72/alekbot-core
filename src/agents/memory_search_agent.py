@@ -17,7 +17,7 @@ from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
-from ..services.search_enrichment_service import SearchEnrichmentService
+from ..ports.search_enrichment_port import SearchEnrichmentPort
 from ..domain.entities import FactType
 from ..utils.logger import logger
 
@@ -40,7 +40,7 @@ class MemorySearchAgent(BaseAgent):
         repository: FactRepository,
         embedding_service: EmbeddingService,
         account_id: str,
-        search_enrichment: Optional[SearchEnrichmentService] = None
+        search_enrichment: Optional[SearchEnrichmentPort] = None
     ):
         """
         Initialize Memory Search Agent.

@@ -34,10 +34,11 @@ from ..domain.entities import (
 )
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
+from ..ports.fact_write_port import FactWritePort
 from ..utils.logger import logger
 
 
-class FactWriteService:
+class FactWriteService(FactWritePort):
     """
     Service for writing facts with automatic multi-vector embedding generation.
     
