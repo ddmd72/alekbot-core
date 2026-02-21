@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import time
 import argparse
 from google.cloud import firestore
@@ -7,9 +8,14 @@ from src.config.environment import EnvironmentConfig
 async def backup_collections(collections_list):
     db = firestore.AsyncClient()
     config = EnvironmentConfig()
-    
-    # Ensure we are careful with production
+
+    # Require explicit confirmation when targeting production
     prefix = config.firestore_collection_prefix
+    if config.is_production:
+        answer = input(f"⚠️  PRODUCTION backup (prefix='{prefix}'). Type 'YES' to continue: ")
+        if answer.strip() != "YES":
+            print("Aborted.")
+            sys.exit(1)
     timestamp = int(time.time())
     
     for col_base in collections_list:

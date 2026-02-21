@@ -43,10 +43,6 @@ PROD_USER_ID ?= $(USER_ID)
 .PHONY: services status auth
 .PHONY: check-models
 .PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
-.PHONY: sync-components-dev sync-components-system-dev sync-components-agent-dev sync-components-dry-run
-.PHONY: download-kernel-light-dev download-kernel-light-prod download-kernel-dev download-kernel-prod
-.PHONY: update-kernel-light-dev update-kernel-light-prod update-kernel-dev update-kernel-prod
-.PHONY: diff-component
 .PHONY: check
 .PHONY: delete-prod delete-dev delete-all
 
@@ -115,21 +111,6 @@ help: ## Show this help message
 	@echo "  make test-e2e-consolidation  E2E test Consolidation agent"
 	@echo "  make test-e2e-websearch      E2E test WebSearch agent"
 	@echo "  make test-e2e-all            E2E test all agents"
-	@echo ""
-	@echo "🔧 COMPONENT MANAGEMENT:"
-	@echo "  make download-kernel-light-dev   Download kernel_light from dev"
-	@echo "  make download-kernel-light-prod  Download kernel_light from prod"
-	@echo "  make update-kernel-light-dev     Upload kernel_light to dev"
-	@echo "  make update-kernel-light-prod    Upload kernel_light to prod (CONFIRM_PROD_UPDATE=YES)"
-	@echo "  make download-kernel-dev         Download kernel (full) from dev"
-	@echo "  make download-kernel-prod        Download kernel (full) from prod"
-	@echo "  make update-kernel-dev           Upload kernel (full) to dev"
-	@echo "  make update-kernel-prod          Upload kernel (full) to prod (CONFIRM_PROD_UPDATE=YES)"
-	@echo "  make sync-components-dev         Sync all components to dev"
-	@echo "  make sync-components-system-dev  Sync SYSTEM components only to dev"
-	@echo "  make sync-components-agent-dev   Sync specific agent to dev (AGENT=smart)"
-	@echo "  make sync-components-dry-run     Dry-run sync (see what would be uploaded)"
-	@echo "  make diff-component  Diff component versions (COMPONENT, ENV, VERSIONS)"
 	@echo ""
 	@echo "🗑️  CLEANUP:"
 	@echo "  make delete-prod        Delete production service (DANGEROUS)"
@@ -399,53 +380,6 @@ test-e2e-websearch: ## E2E: WebSearch agent (production flow)
 
 test-e2e-all: ## E2E: All agents (production flow)
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type all
-
-# ============================================================================
-# COMPONENT MANAGEMENT (kernel + prompt components)
-# ============================================================================
-
-download-kernel-light-dev: ## Download current kernel_light from dev
-	@$(PYTHON) scripts/memory/ops/download_component.py --component kernel_light --environment dev --output memory/kernel_light_dev_download.groovy
-
-download-kernel-light-prod: ## Download current kernel_light from prod
-	@$(PYTHON) scripts/memory/ops/download_component.py --component kernel_light --environment prod --output memory/kernel_light_prod_download.groovy
-
-update-kernel-light-dev: ## Upload local kernel_light to dev
-	@$(PYTHON) scripts/memory/ops/update_component.py --component kernel_light --environment dev --file memory/kernel_light_v2_final_proposal.groovy
-
-update-kernel-light-prod: ## Upload local kernel_light to prod (requires CONFIRM_PROD_UPDATE=YES)
-	@echo "❌ Production kernel_light update is disabled. Set CONFIRM_PROD_UPDATE=YES to proceed." && \
-	[ "$$CONFIRM_PROD_UPDATE" = "YES" ] && \
-	$(PYTHON) scripts/memory/ops/update_component.py --component kernel_light --environment prod --file memory/kernel_light_v2_final_proposal.groovy || exit 1
-
-download-kernel-dev: ## Download current kernel (full) from dev
-	@$(PYTHON) scripts/memory/ops/download_component.py --component kernel --environment dev --output memory/kernel_dev_download.groovy
-
-download-kernel-prod: ## Download current kernel (full) from prod
-	@$(PYTHON) scripts/memory/ops/download_component.py --component kernel --environment prod --output memory/kernel_prod_download.groovy
-
-update-kernel-dev: ## Upload local kernel (full) to dev
-	@$(PYTHON) scripts/memory/ops/update_component.py --component kernel --environment dev --file memory/kernel.groovy
-
-update-kernel-prod: ## Upload local kernel (full) to prod (requires CONFIRM_PROD_UPDATE=YES)
-	@echo "❌ Production kernel update is disabled. Set CONFIRM_PROD_UPDATE=YES to proceed." && \
-	[ "$$CONFIRM_PROD_UPDATE" = "YES" ] && \
-	$(PYTHON) scripts/memory/ops/update_component.py --component kernel --environment prod --file memory/kernel.groovy || exit 1
-
-sync-components-dev: ## Sync all components (SYSTEM + agents) to development
-	@$(PYTHON) scripts/prompt/sync_components.py --env development --level all
-
-sync-components-system-dev: ## Sync SYSTEM components only to development
-	@$(PYTHON) scripts/prompt/sync_components.py --env development --level system
-
-sync-components-agent-dev: ## Sync specific agent to development (AGENT=smart)
-	@$(PYTHON) scripts/prompt/sync_components.py --env development --level agent --agent $(AGENT)
-
-sync-components-dry-run: ## Dry-run sync to see what would be uploaded
-	@$(PYTHON) scripts/prompt/sync_components.py --env development --level all --dry-run
-
-diff-component: ## Diff component versions (args: COMPONENT, ENV, VERSIONS)
-	@$(PYTHON) scripts/memory/ops/diff.py --component $(COMPONENT) --versions $(VERSIONS) --environment $(ENV)
 
 # ============================================================================
 # CLEANUP (DANGEROUS)

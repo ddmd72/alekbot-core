@@ -14,12 +14,13 @@ Date: 2026-02-08
 """
 
 import asyncio
+import os
 import time
 import sys
 from google.cloud import firestore
 
-PROJECT_ID = "gen-lang-client-0554950952"
-DATABASE_ID = "us-production"  # Named database in nam5, not (default)
+PROJECT_ID = os.environ["GOOGLE_CLOUD_PROJECT"]
+DATABASE_ID = os.environ.get("FIRESTORE_DATABASE", "us-production")
 
 
 async def backup_and_clear(source_collection: str, confirm: bool = False):

@@ -9,6 +9,8 @@ import argparse
 import sys
 from typing import Dict, Any
 
+import os
+
 from google.cloud import firestore
 
 # Configure logging
@@ -18,8 +20,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = "gen-lang-client-0554950952"
-DATABASE_ID = "us-production"
+PROJECT_ID = os.environ["GOOGLE_CLOUD_PROJECT"]
+DATABASE_ID = os.environ.get("FIRESTORE_DATABASE", "us-production")
 BATCH_SIZE = 400
 
 # Migration mapping: DEV → PROD

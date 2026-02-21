@@ -3,10 +3,11 @@
 Export facts for specific account from dev and prod collections.
 """
 import asyncio
+import os
 from google.cloud import firestore
 from datetime import datetime
 
-ACCOUNT_ID = "account-os.getenv("USER_ID", "DEMO_USER")"
+ACCOUNT_ID = os.environ.get("DEV_ACCOUNT_ID") or f"account-{os.environ['DEV_USER_ID']}"
 DEV_COLLECTION = "development_domain_facts_v2"
 PROD_COLLECTION = "domain_facts_v2"
 OUTPUT_FILE = "reports/account_facts_export.md"

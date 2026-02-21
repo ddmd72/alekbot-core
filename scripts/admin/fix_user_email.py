@@ -46,6 +46,13 @@ async def fix_user_email(user_id: str, email: str = None):
             logger.warning("⚠️ Email is MISSING!")
         return
 
+    # Require explicit confirmation before writing to Firestore
+    env_name = env_config.env.value
+    answer = input(f"⚠️  About to update email in {collection_name} (env={env_name}). Type 'YES' to confirm: ")
+    if answer.strip() != "YES":
+        logger.info("Aborted.")
+        return
+
     # Update email
     await doc_ref.update({"email": email})
     logger.info(f"✅ Updated email to: {email}")
