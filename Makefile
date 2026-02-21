@@ -19,18 +19,11 @@ PYTHON ?= python3
 # Service Configuration
 SERVICE_NAME ?= alek-bot
 SERVICE_NAME_DEV ?= alek-bot-dev
-MEMORY ?= 1024Mi
-MIN_INSTANCES ?= 1
-MAX_INSTANCES ?= 1
 
 # Cloud Run Service URLs — defined in .env (gitignored), loaded via include above
 # Required: SERVICE_URL_DEV, SERVICE_URL_PROD
 OAUTH_REDIRECT_URI_DEV ?= $(SERVICE_URL_DEV)/auth/callback
 OAUTH_REDIRECT_URI_PROD ?= $(SERVICE_URL_PROD)/auth/callback
-
-# Local Development
-APP_ENV ?= development
-SLACK_MODE ?= socket
 
 # Prompt inspection helpers (fallback order: DEV/PROD-specific → USER_ID)
 DEV_USER_ID ?= $(USER_ID)
@@ -59,17 +52,17 @@ DIAGRAMS_MERMAID := $(DIAGRAMS_CURRENT) $(DIAGRAMS_TARGET)
 .PHONY: help
 .PHONY: install install-dev clean clean-test-sessions clean-test-sessions-prod
 .PHONY: dev dev-emulator run test lint format kill-local
-.PHONY: build deploy deploy-dev deploy-indexes
+.PHONY: deploy deploy-dev deploy-indexes
 .PHONY: start stop restart start-dev stop-dev
 .PHONY: logs logs-dev logs-tail logs-perf logs-dev-tail
 .PHONY: services status auth
-.PHONY: migrate-memory rebuild-memory count-facts check-models
-.PHONY: debug-prompt compare-prompts inspect-quick inspect-smart inspect-console inspect-quick-dev inspect-smart-dev inspect-console-dev sync-components-dev sync-components-prod sync-components-system-dev sync-components-system-prod sync-components-agent-dev sync-components-agent-prod sync-components-dry-run update-component rollback-component diff-component
-.PHONY: list-agent-providers list-agent-providers-dev list-agent-providers-prod
+.PHONY: check-models
+.PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
+.PHONY: sync-components-dev sync-components-system-dev sync-components-agent-dev sync-components-dry-run
 .PHONY: download-kernel-light-dev download-kernel-light-prod download-kernel-dev download-kernel-prod
 .PHONY: update-kernel-light-dev update-kernel-light-prod update-kernel-dev update-kernel-prod
+.PHONY: diff-component
 .PHONY: check
-.PHONY: test-dynamic-prompt
 .PHONY: diagrams-install diagrams-export diagrams-export-current diagrams-export-target diagrams-clean
 .PHONY: delete-prod delete-dev delete-all
 
@@ -92,19 +85,17 @@ help: ## Show this help message
 	@echo ""
 	@echo "🔧 DEVELOPMENT:"
 	@echo "  make dev             Run bot locally (Socket Mode)"
-	@echo "  make dev-emulator    Run with Firestore emulator"
+	@echo "  make dev-emulator    Run with Firestore emulator (port 8081)"
 	@echo "  make kill-local      Kill all local bot processes"
 	@echo "  make clean-test-sessions Clean up test sessions from development_sessions"
 	@echo "  make clean-test-sessions-prod 🔴 Clean up test sessions from PRODUCTION"
 	@echo "  make test            Run all tests"
 	@echo "  make test-unit       Run unit tests"
 	@echo "  make test-integration Run integration tests"
-	@echo "  make test-system     Run system tests"
 	@echo "  make lint            Run code linting"
 	@echo "  make format          Format code"
 	@echo ""
 	@echo "🏗️  BUILD & DEPLOY:"
-	@echo "  make build           Build Docker container"
 	@echo "  make deploy          Build + deploy to Cloud Run (production)"
 	@echo "  make deploy-dev      Build + deploy to Cloud Run (development)"
 	@echo ""
@@ -117,12 +108,14 @@ help: ## Show this help message
 	@echo ""
 	@echo "📊 MONITORING & LOGS:"
 	@echo "  make logs            View production logs (last 30 entries)"
-	@echo "  make logs-dev        View development logs (last 30 entries)"
+	@echo "  make logs-dev        View development logs (last 150 entries)"
 	@echo "  make logs-tail       Live tail production logs"
 	@echo "  make logs-perf       Live tail production perf logs"
-	@echo "  make logs-dev-tail        Live tail development logs"
-	@echo "  make logs-dev-clean       View development logs (clean mode)"
-	@echo "  make logs-dev-full        View development logs (full mode)"
+	@echo "  make logs-dev-tail   Live tail development logs"
+	@echo "  make logs-tail-clean      Tail prod logs (clean mode)"
+	@echo "  make logs-tail-full       Tail prod logs (full mode)"
+	@echo "  make logs-dev-tail-clean  Tail dev logs (clean mode)"
+	@echo "  make logs-dev-tail-full   Tail dev logs (full mode)"
 	@echo "  make logs-mode-dev-clean  Set LOG_TRACE_CONTEXT=clean in dev service"
 	@echo "  make logs-mode-dev-full   Set LOG_TRACE_CONTEXT=full in dev service"
 	@echo "  make logs-mode-prod-clean Set LOG_TRACE_CONTEXT=clean in prod service"
@@ -130,36 +123,31 @@ help: ## Show this help message
 	@echo "  make services        Show all service URLs"
 	@echo "  make status          Show service status"
 	@echo ""
-	@echo "🗄️  MEMORY & MAINTENANCE:"
-	@echo "  make migrate-memory     Migrate memory from YAML to Firestore"
-	@echo "  make rebuild-memory     Rebuild memory index (sync YAML ↔ Firestore)"
-	@echo "  make count-facts        Count facts in database"
-	@echo "  make check-models       Check available Gemini models"
+	@echo "🗄️  MAINTENANCE:"
+	@echo "  make check-models    Check available Gemini models"
 	@echo ""
 	@echo "🧪 E2E TESTING (Production Flow):"
-	@echo "  make test-e2e-smart     E2E test Smart agent prompt assembly"
-	@echo "  make test-e2e-quick     E2E test Quick agent prompt assembly"
-	@echo "  make test-e2e-router    E2E test Router agent prompt assembly"
-	@echo "  make test-e2e-consolidation E2E test Consolidation agent"
-	@echo "  make test-e2e-all       E2E test all agents"
+	@echo "  make test-e2e-smart          E2E test Smart agent"
+	@echo "  make test-e2e-quick          E2E test Quick agent"
+	@echo "  make test-e2e-router         E2E test Router agent"
+	@echo "  make test-e2e-consolidation  E2E test Consolidation agent"
+	@echo "  make test-e2e-websearch      E2E test WebSearch agent"
+	@echo "  make test-e2e-all            E2E test all agents"
 	@echo ""
 	@echo "🔧 COMPONENT MANAGEMENT:"
-	@echo "  make download-kernel-light-dev Download current kernel_light from dev"
-	@echo "  make download-kernel-light-prod Download current kernel_light from prod"
-	@echo "  make update-kernel-light-dev    Upload local kernel_light to dev"
-	@echo "  make update-kernel-light-prod   Upload local kernel_light to prod (blocked by default)"
-	@echo "  make download-kernel-dev        Download current kernel (full) from dev"
-	@echo "  make download-kernel-prod       Download current kernel (full) from prod"
-	@echo "  make update-kernel-dev          Upload local kernel (full) to dev"
-	@echo "  make update-kernel-prod         Upload local kernel (full) to prod (blocked by default)"
-	@echo "  make sync-components-dev        Sync all components (SYSTEM + agents) to dev"
-	@echo "  make sync-components-prod       Sync all components to production"
-	@echo "  make sync-components-system-dev Sync SYSTEM components only to dev"
-	@echo "  make sync-components-agent-dev  Sync specific agent to dev (args: AGENT=smart)"
-	@echo "  make sync-components-dry-run    Dry-run to see what would be uploaded"
-	@echo "  make update-component   Update single component (args: COMPONENT, ENV, FILE)"
-	@echo "  make rollback-component Roll back component version (args: COMPONENT, ENV, VERSION)"
-	@echo "  make diff-component     Diff component versions (args: COMPONENT, ENV, VERSIONS)"
+	@echo "  make download-kernel-light-dev   Download kernel_light from dev"
+	@echo "  make download-kernel-light-prod  Download kernel_light from prod"
+	@echo "  make update-kernel-light-dev     Upload kernel_light to dev"
+	@echo "  make update-kernel-light-prod    Upload kernel_light to prod (CONFIRM_PROD_UPDATE=YES)"
+	@echo "  make download-kernel-dev         Download kernel (full) from dev"
+	@echo "  make download-kernel-prod        Download kernel (full) from prod"
+	@echo "  make update-kernel-dev           Upload kernel (full) to dev"
+	@echo "  make update-kernel-prod          Upload kernel (full) to prod (CONFIRM_PROD_UPDATE=YES)"
+	@echo "  make sync-components-dev         Sync all components to dev"
+	@echo "  make sync-components-system-dev  Sync SYSTEM components only to dev"
+	@echo "  make sync-components-agent-dev   Sync specific agent to dev (AGENT=smart)"
+	@echo "  make sync-components-dry-run     Dry-run sync (see what would be uploaded)"
+	@echo "  make diff-component  Diff component versions (COMPONENT, ENV, VERSIONS)"
 	@echo ""
 	@echo "🗺️  DIAGRAMS:"
 	@echo "  make diagrams-install   Install Mermaid CLI (mmdc)"
@@ -208,8 +196,6 @@ auth: ## Authenticate with Google Cloud
 
 dev: ## Run bot locally (Socket Mode)
 	@echo "🏃 Starting bot in local development mode..."
-	@echo "Environment: $(APP_ENV)"
-	@echo "Slack Mode: $(SLACK_MODE)"
 	@if [ -d "venv" ]; then \
 		echo "🐍 Using venv"; \
 		. venv/bin/activate && export APP_ENV=development SLACK_MODE=socket && python3 main.py; \
@@ -237,9 +223,9 @@ clean-test-sessions-prod: ## 🔴 Clean up test sessions from PRODUCTION session
 		python3 scripts/cleanup_test_sessions_prod.py; \
 	fi
 
-dev-emulator: ## Run with Firestore emulator
+dev-emulator: ## Run with Firestore emulator (emulator on port 8081, app on 8080)
 	@echo "🏠 Starting bot with Firestore emulator..."
-	@export FIRESTORE_EMULATOR_HOST=localhost:8080 APP_ENV=development SLACK_MODE=socket && $(PYTHON) main.py
+	@export FIRESTORE_EMULATOR_HOST=localhost:8081 APP_ENV=development SLACK_MODE=socket && $(PYTHON) main.py
 
 test: ## Run all tests
 	@echo "🧪 Running all tests..."
@@ -252,10 +238,6 @@ test-unit: ## Run unit tests
 test-integration: ## Run integration tests
 	@echo "🧪 Running integration tests..."
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/ -v --asyncio-mode=auto
-
-test-system: ## Run system tests
-	@echo "🧪 Running system tests..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/system/ -v --asyncio-mode=auto
 
 lint: ## Run code linting
 	@echo "🔍 Running linter..."
@@ -280,10 +262,6 @@ check: test-unit ## Quick pre-commit check (unit tests + domain purity)
 # ============================================================================
 # BUILD & DEPLOY
 # ============================================================================
-
-build: ## Build Docker container
-	@echo "🏗️  Building Docker container..."
-	gcloud builds submit --tag gcr.io/$(PROJECT_ID)/$(SERVICE_NAME)
 
 deploy: ## Build + deploy to Cloud Run (production)
 	@echo "🚀 Build + deploy to Cloud Run (PRODUCTION)..."
@@ -341,25 +319,11 @@ logs: ## View production logs (last 30 entries)
 	  --format="value(textPayload)" \
 	  --project=$(PROJECT_ID)
 
-logs-dev: ## View development logs (last 30 entries)
-	@echo "📋 Development logs (last 30 entries):"
+logs-dev: ## View development logs (last 150 entries)
+	@echo "📋 Development logs (last 150 entries):"
 	@gcloud run services logs read $(SERVICE_NAME_DEV) \
 	  --region=$(REGION) \
 	  --limit=150 \
-	  --format="value(textPayload)"
-
-logs-dev-clean: ## View development logs without trace/session suffixes
-	@echo "📋 Development logs (clean mode, last 30 entries):"
-	@LOG_TRACE_CONTEXT=clean gcloud run services logs read $(SERVICE_NAME_DEV) \
-	  --region=$(REGION) \
-	  --limit=30 \
-	  --format="value(textPayload)"
-
-logs-dev-full: ## View development logs with trace/session suffixes
-	@echo "📋 Development logs (full mode, last 30 entries):"
-	@LOG_TRACE_CONTEXT=full gcloud run services logs read $(SERVICE_NAME_DEV) \
-	  --region=$(REGION) \
-	  --limit=30 \
 	  --format="value(textPayload)"
 
 logs-tail: ## Live tail production logs
@@ -448,28 +412,14 @@ status: ## Show service status
 	@gcloud run services describe $(SERVICE_NAME_DEV) --region=$(REGION) --format="table(status.conditions[0].type,status.conditions[0].status,metadata.labels)" 2>/dev/null || echo "  Not deployed"
 
 # ============================================================================
-# MEMORY & MAINTENANCE
+# MAINTENANCE
 # ============================================================================
-
-migrate-memory: ## Migrate memory from YAML to Firestore
-	@echo "🚀 Migrating memory (YAML → Firestore)..."
-	@$(PYTHON) scripts/memory/migrate.py
-	@echo "✅ Migration complete"
-
-rebuild-memory: ## Rebuild memory index
-	@echo "🔄 Rebuilding memory index..."
-	@$(PYTHON) scripts/memory/rebuild.py
-	@echo "✅ Memory index rebuilt"
-
-count-facts: ## Count facts in database
-	@echo "📊 Counting facts..."
-	@$(PYTHON) scripts/deprecated/count_facts.py
 
 check-models: ## Check available Gemini models
 	@echo "🔍 Checking available models..."
 	@$(PYTHON) scripts/validation/check_models.py
 
-# Prompt inspection (E2E tests with production flow)
+# E2E tests (production flow)
 
 test-e2e-smart: ## E2E: Smart agent (production flow)
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type smart
@@ -480,7 +430,7 @@ test-e2e-quick: ## E2E: Quick agent (production flow)
 test-e2e-router: ## E2E: Router agent (production flow)
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type router
 
-test-e2e-consolidation: ## E2E: Consolidation agent (expected fail - v2)
+test-e2e-consolidation: ## E2E: Consolidation agent
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type consolidation
 
 test-e2e-websearch: ## E2E: WebSearch agent (production flow)
@@ -489,16 +439,20 @@ test-e2e-websearch: ## E2E: WebSearch agent (production flow)
 test-e2e-all: ## E2E: All agents (production flow)
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type all
 
+# ============================================================================
+# COMPONENT MANAGEMENT (kernel + prompt components)
+# ============================================================================
+
 download-kernel-light-dev: ## Download current kernel_light from dev
 	@$(PYTHON) scripts/memory/ops/download_component.py --component kernel_light --environment dev --output memory/kernel_light_dev_download.groovy
 
 download-kernel-light-prod: ## Download current kernel_light from prod
 	@$(PYTHON) scripts/memory/ops/download_component.py --component kernel_light --environment prod --output memory/kernel_light_prod_download.groovy
 
-update-kernel-light-dev: ## Upload local kernel_light to dev (memory/kernel_light_v2_final_proposal.groovy)
+update-kernel-light-dev: ## Upload local kernel_light to dev
 	@$(PYTHON) scripts/memory/ops/update_component.py --component kernel_light --environment dev --file memory/kernel_light_v2_final_proposal.groovy
 
-update-kernel-light-prod: ## Upload local kernel_light to prod (blocked by default)
+update-kernel-light-prod: ## Upload local kernel_light to prod (requires CONFIRM_PROD_UPDATE=YES)
 	@echo "❌ Production kernel_light update is disabled. Set CONFIRM_PROD_UPDATE=YES to proceed." && \
 	[ "$$CONFIRM_PROD_UPDATE" = "YES" ] && \
 	$(PYTHON) scripts/memory/ops/update_component.py --component kernel_light --environment prod --file memory/kernel_light_v2_final_proposal.groovy || exit 1
@@ -509,10 +463,10 @@ download-kernel-dev: ## Download current kernel (full) from dev
 download-kernel-prod: ## Download current kernel (full) from prod
 	@$(PYTHON) scripts/memory/ops/download_component.py --component kernel --environment prod --output memory/kernel_prod_download.groovy
 
-update-kernel-dev: ## Upload local kernel (full) to dev (memory/kernel.groovy)
+update-kernel-dev: ## Upload local kernel (full) to dev
 	@$(PYTHON) scripts/memory/ops/update_component.py --component kernel --environment dev --file memory/kernel.groovy
 
-update-kernel-prod: ## Upload local kernel (full) to prod (blocked by default)
+update-kernel-prod: ## Upload local kernel (full) to prod (requires CONFIRM_PROD_UPDATE=YES)
 	@echo "❌ Production kernel update is disabled. Set CONFIRM_PROD_UPDATE=YES to proceed." && \
 	[ "$$CONFIRM_PROD_UPDATE" = "YES" ] && \
 	$(PYTHON) scripts/memory/ops/update_component.py --component kernel --environment prod --file memory/kernel.groovy || exit 1
@@ -520,34 +474,19 @@ update-kernel-prod: ## Upload local kernel (full) to prod (blocked by default)
 sync-components-dev: ## Sync all components (SYSTEM + agents) to development
 	@$(PYTHON) scripts/prompt/sync_components.py --env development --level all
 
-sync-components-prod: ## Sync all components (SYSTEM + agents) to production
-	@$(PYTHON) scripts/prompt/sync_components.py --env production --level all
-
 sync-components-system-dev: ## Sync SYSTEM components only to development
 	@$(PYTHON) scripts/prompt/sync_components.py --env development --level system
 
-sync-components-system-prod: ## Sync SYSTEM components only to production
-	@$(PYTHON) scripts/prompt/sync_components.py --env production --level system
-
-sync-components-agent-dev: ## Sync specific agent to development (args: AGENT=smart)
+sync-components-agent-dev: ## Sync specific agent to development (AGENT=smart)
 	@$(PYTHON) scripts/prompt/sync_components.py --env development --level agent --agent $(AGENT)
-
-sync-components-agent-prod: ## Sync specific agent to production (args: AGENT=smart)
-	@$(PYTHON) scripts/prompt/sync_components.py --env production --level agent --agent $(AGENT)
 
 sync-components-dry-run: ## Dry-run sync to see what would be uploaded
 	@$(PYTHON) scripts/prompt/sync_components.py --env development --level all --dry-run
 
-update-component: ## Update single component (args: COMPONENT, ENV, FILE)
-	@$(PYTHON) scripts/memory/ops/update_component.py --component $(COMPONENT) --environment $(ENV) --file $(FILE)
-
-rollback-component: ## Roll back component version (args: COMPONENT, ENV, VERSION)
-	@$(PYTHON) scripts/memory/ops/rollback.py --component $(COMPONENT) --version $(VERSION) --environment $(ENV)
-
 diff-component: ## Diff component versions (args: COMPONENT, ENV, VERSIONS)
 	@$(PYTHON) scripts/memory/ops/diff.py --component $(COMPONENT) --versions $(VERSIONS) --environment $(ENV)
 
-# ==========================================================================
+# ============================================================================
 # DIAGRAMS
 # ============================================================================
 
@@ -559,7 +498,6 @@ diagrams-install: ## Install Mermaid CLI (mmdc)
 $(DIAGRAMS_OUTPUT):
 	@mkdir -p $(DIAGRAMS_OUTPUT)
 
-# Export all diagrams to SVG (current + target)
 diagrams-export: ## Export all diagrams to SVG
 	@mkdir -p $(DIAGRAMS_OUTPUT)
 	@for file in $(DIAGRAMS_MERMAID); do \
@@ -568,7 +506,6 @@ diagrams-export: ## Export all diagrams to SVG
 		if [ -f $(DIAGRAMS_OUTPUT)/$$base-1.svg ]; then mv $(DIAGRAMS_OUTPUT)/$$base-1.svg $(DIAGRAMS_OUTPUT)/$$base.svg; fi; \
 	done
 
-# Export current-only diagrams
 diagrams-export-current: ## Export current diagrams to SVG
 	@mkdir -p $(DIAGRAMS_OUTPUT)
 	@for file in $(DIAGRAMS_CURRENT); do \
@@ -577,7 +514,6 @@ diagrams-export-current: ## Export current diagrams to SVG
 		if [ -f $(DIAGRAMS_OUTPUT)/$$base-1.svg ]; then mv $(DIAGRAMS_OUTPUT)/$$base-1.svg $(DIAGRAMS_OUTPUT)/$$base.svg; fi; \
 	done
 
-# Export target-only diagrams
 diagrams-export-target: ## Export target diagrams to SVG
 	@mkdir -p $(DIAGRAMS_OUTPUT)
 	@for file in $(DIAGRAMS_TARGET); do \
@@ -590,7 +526,7 @@ diagrams-clean: ## Remove exported diagrams
 	@echo "🧹 Removing exported diagrams from $(DIAGRAMS_OUTPUT)..."
 	rm -f $(DIAGRAMS_OUTPUT)/*.svg
 
-# ==========================================================================
+# ============================================================================
 # CLEANUP (DANGEROUS)
 # ============================================================================
 

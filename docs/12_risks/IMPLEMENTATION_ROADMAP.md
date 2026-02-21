@@ -41,6 +41,38 @@ Strategic roadmap for Alek-Core architecture evolution, focusing on MVP and Ente
 
 ---
 
+## 🔒 Security Backlog (pre-Enterprise, discovered 20.02.2026)
+
+Three issues found during security audit of HTTP endpoints. Non-critical for solo use,
+mandatory before team/multi-user rollout.
+
+### SEC-1: Rate limiting on `/api/user/*` endpoints [P1]
+
+- **Problem:** No per-user rate limiting on web APIs (`/api/user/facts/search`,
+  `/api/user/invite-codes`, etc.). Could enable enumeration or spam attacks in a team setup.
+- **Fix:** Add token bucket rate limiter per `user_id` on all `/api/user/*` routes.
+  Pattern already exists for Slack (1 msg/sec) and Telegram (20 msg/sec) — reuse it.
+- **Files:** `src/web/user_cabinet_app.py`, `src/utils/rate_limiter.py`
+
+### SEC-2: DB re-check on token refresh [P2]
+
+- **Problem:** `/auth/refresh` issues a new access token without verifying the user still
+  exists or is active in Firestore. A deleted/revoked user retains access for up to 30 days
+  (refresh token TTL).
+- **Fix:** In `AuthService.refresh_token()`, fetch user from DB and reject if not found or
+  deactivated.
+- **Files:** `src/services/authentication_service.py`
+
+### SEC-3: Verify 401/403 responses don't leak stack traces [P2]
+
+- **Problem:** Unconfirmed whether error handlers return raw Python tracebacks on auth
+  failures (common Quart/Flask misconfiguration in non-DEBUG mode).
+- **Fix:** Audit all error handlers; ensure 4xx/5xx return only `{"error": "..."}` JSON,
+  never tracebacks. Add explicit `@app.errorhandler` for 401, 403, 500 if missing.
+- **Files:** `src/web/user_cabinet_app.py`, `src/web/oauth_app.py`, `main.py`
+
+---
+
 ## 🏢 Planned Milestones (Phase 3: Enterprise)
 
 - **Milestone 7**: User Onboarding & OAuth
