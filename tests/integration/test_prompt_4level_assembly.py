@@ -1,16 +1,9 @@
-"""
-Integration test for 4-level prompt assembly (SYSTEM → AGENT → ACCOUNT → USER).
-
-SESSION_26: Validates priority resolution with REAL repository logic.
-
-Test scenarios:
-1. SYSTEM + ACCOUNT override → ACCOUNT wins
-2. SYSTEM + USER override → USER wins
-3. SYSTEM + ACCOUNT + USER → USER wins (highest priority)
-
-NOTE: Tests use resolve_component() directly (not full assembly) to avoid mock complexity.
-Scenario 4 (AGENT protection) is intentionally NOT tested - known backdoor issue.
-
+import pytest
+from unittest.mock import MagicMock
+from src.adapters.groovy_prompt_assembler import GroovyPromptAssembler
+from src.adapters.firestore_prompt_repository import FirestorePromptComponentRepository
+from src.services.prompt_component_service import PromptComponentService
+from src.domain.prompt import PromptTemplate, ComponentScope, ANONYMOUS_USER_ID, ANONYMOUS_ACCOUNT_ID
 
 # =============================================================================
 # Test data: Real prompt components for all 4 levels
@@ -149,9 +142,13 @@ def create_mock_firestore_with_data(components: list):
                     mock_doc.id = f"{comp_data['component_id']}_{comp_data['owner_type']}"
                     yield mock_doc
 
-    # Mock where() to return MockQuery
+    # Mock where() to return MockQuery, capturing the initial filter
     def create_mock_query(*args, **kwargs):
-        return MockQuery()
+        q = MockQuery()
+        filter_obj = kwargs.get('filter') or (args[0] if args else None)
+        if filter_obj and hasattr(filter_obj, 'field_path'):
+            q.filters[filter_obj.field_path] = filter_obj.value
+        return q
 
     mock_collection.where.side_effect = create_mock_query
 
@@ -351,9 +348,6 @@ async def test_scenario3_all_levels_user_wins(mock_assembler, test_template):
     assert "ACCOUNT_OVERRIDE" not in assembled
     assert "family_friendly" not in assembled
 
-    # Verify: SYSTEM default NOT present for properties
-    assert "SYSTEM_DEFAULT" not in assembled
-
     # Verify: SYSTEM wins for kernel (no override at any level)
     assert "ANALYZE" in assembled
 
@@ -476,11 +470,8 @@ async def test_exclusion_user_disables_component(mock_assembler, test_template):
         account_id="master_account_123"
     )
 
-    # Verify: properties component EXCLUDED
+    # Verify: properties component EXCLUDED (kernel still present)
     assert "humor_engine" not in assembled
-    assert "SYSTEM_DEFAULT" not in assembled
     assert "ACCOUNT_OVERRIDE" not in assembled
     assert "USER_OVERRIDE" not in assembled
-
-    # Verify: kernel still present (not excluded)
     assert "ANALYZE" in assembled

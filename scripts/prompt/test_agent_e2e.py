@@ -35,12 +35,11 @@ from src.config.settings import load_settings
 from src.config.environment import EnvironmentConfig
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
-from src.adapters.firestore_session_store import FirestoreSessionStore
-from src.adapters.firestore_repo import FirestoreFactRepository
 from src.services.user_agent_factory import UserAgentFactory
+from src.composition.service_container import ServiceContainer
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.domain.agent import AgentMessage, AgentIntent
-from src.ports.llm_service import LLMService, LLMRequest, LLMResponse
+from src.ports.llm_service import LLMService, LLMRequest, LLMResponse, ProviderCapabilities
 
 # ============================================================================
 # AGENT TYPE MAPPING (Production keys from UserAgentFactory)
@@ -91,7 +90,7 @@ class MockGeminiAdapter(LLMService):
         )
 
     def get_capabilities(self):
-        return None
+        return ProviderCapabilities()
     
     def get_model_for_tier(self, tier):
         return "gemini-mock"
@@ -143,7 +142,8 @@ class MockGeminiAdapter(LLMService):
 
 def create_firestore_client(config: dict) -> firestore.AsyncClient:
     """Factory for Firestore client."""
-    return firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"])
+    database_id = os.getenv("FIRESTORE_DATABASE", "(default)")
+    return firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"], database=database_id)
 
 
 def validate_test_prerequisites(user_id: str, account_id: str, agent_type: str, env_config: EnvironmentConfig):
@@ -161,7 +161,7 @@ def validate_test_prerequisites(user_id: str, account_id: str, agent_type: str, 
         raise ValueError(f"Unknown agent type: {agent_type}. Supported: {list(AGENT_TYPE_MAP.keys())}")
 
 
-async def validate_user_data(session_store: FirestoreSessionStore, user_id: str) -> str:
+async def validate_user_data(session_store, user_id: str) -> str:
     """Validate user has existing session data."""
     session_id = await session_store.get_latest_session_id(user_id)
     if not session_id:
@@ -174,7 +174,7 @@ async def create_test_message(
     user_id: str, 
     session_id: str, 
     account_id: str,
-    session_store: FirestoreSessionStore = None,
+    session_store=None,
     fact_repo = None
 ) -> AgentMessage:
     """Create test message based on agent type (HEXAGONAL - unified flow)."""
@@ -301,76 +301,46 @@ async def test_agent_e2e(agent_type: str, user_id: str, account_id: str):
     print(f"\n{'='*70}")
     print(f"🔧 INITIALIZING PRODUCTION INFRASTRUCTURE")
     print(f"{'='*70}")
-    
+
     db_client = create_firestore_client(config)
     coordinator = AgentCoordinator()
-    
-    # Create minimal repositories (Factory will create rest)
+
     account_repo = FirestoreAccountRepository(
         db_client=db_client,
         collection_name=env_config.account_collection_name
     )
     user_repo = FirestoreUserRepository(db_client, env_config, account_repo)
-    
-    # Create v3 assembly service if needed
-    assembly_service = None
-    if agent_type in ["smart", "quick", "router", "consolidation", "web_search"]:
-        from src.adapters.security.regex_adapter import RegexSecurityAdapter
-        from src.adapters.prompt_v3.firestore_token_repository import FirestoreTokenRepository
-        from src.adapters.prompt_v3.firestore_blueprint_repository import FirestoreBlueprintRepository
-        from src.adapters.prompt_v3.firestore_agent_profile_repository import FirestoreAgentProfileRepository
-        from src.services.prompt_v3.prompt_assembly_service import PromptAssemblyService
-        from src.services.prompt_v3.context_formatter import ContextFormatter
-        from src.services.prompt_v3.biographical_formatter import BiographicalFactsFormatter
 
-        security_port = RegexSecurityAdapter()
-        v3_prefix = "dev_" if env_config.is_development else ""
-        
-        token_repo = FirestoreTokenRepository(
-            db=db_client,
-            system_collection=f"{v3_prefix}prompt_system_tokens",
-            user_collection=f"{v3_prefix}prompt_user_tokens",
-            security_port=security_port
-        )
-        blueprint_repo = FirestoreBlueprintRepository(
-            db=db_client,
-            collection_name=f"{v3_prefix}prompt_blueprints"
-        )
-        profile_repo = FirestoreAgentProfileRepository(
-            db=db_client,
-            profiles_collection=f"{v3_prefix}prompt_agent_profiles",
-            overrides_collection=f"{v3_prefix}prompt_agent_profile_user_overrides"
-        )
-        
-        formatter = ContextFormatter()
-        bio_formatter = BiographicalFactsFormatter()
-        
-        assembly_service = PromptAssemblyService(
-            token_repo=token_repo,
-            blueprint_repo=blueprint_repo,
-            profile_repo=profile_repo,
-            security_port=security_port,
-            formatter=formatter,
-            bio_formatter=bio_formatter
-        )
-    
+    container = ServiceContainer(
+        config=config,
+        db_client=db_client,
+        env_config=env_config,
+        account_repo=account_repo,
+    )
+
+    # Inject MockGeminiAdapter before factory construction — agents receive mock at creation time
+    mock_llm = MockGeminiAdapter(user_id, agent_type)
+    container.llm_service = mock_llm
+    container.claude_service = mock_llm
+    container.registry.register("gemini", mock_llm)
+    container.registry.register("claude", mock_llm)
+
     print(f"✅ Infrastructure initialized")
-    
-    # 4. Create UserAgentFactory (PRODUCTION)
+
+    # 4. Create UserAgentFactory (PRODUCTION flow, mock LLM injected)
     print(f"\n{'='*70}")
     print(f"🏭 CREATING USER AGENT FACTORY (PRODUCTION)")
     print(f"{'='*70}")
-    
+
     factory = UserAgentFactory(
         config=config,
-        coordinator=coordinator,
-        db_client=db_client,
         env_config=env_config,
+        coordinator=coordinator,
         user_repo=user_repo,
         account_repo=account_repo,
-        assembly_service=assembly_service  # v3 integration
+        **container.agent_services()
     )
-    
+
     print(f"✅ UserAgentFactory created")
     
     # 5. Create ALL agents using PRODUCTION flow
@@ -399,7 +369,7 @@ async def test_agent_e2e(agent_type: str, user_id: str, account_id: str):
     print(f"📋 VALIDATING USER DATA")
     print(f"{'='*70}")
     
-    session_store = factory.get_session_store()
+    session_store = container.session_store
     
     try:
         session_id = await validate_user_data(session_store, user_id)
@@ -408,39 +378,12 @@ async def test_agent_e2e(agent_type: str, user_id: str, account_id: str):
         print(f"❌ Data Validation Error: {e}")
         raise
     
-    # 8. Inject Mock LLM (MONKEY PATCH)
-    print(f"\n{'='*70}")
-    print(f"🎭 INJECTING MOCK LLM (MONKEY PATCH)")
-    print(f"{'='*70}")
-    
-    mock_llm = MockGeminiAdapter(user_id, agent_type)
-    
-    # Store original for cleanup
-    original_llm = agent._llm if hasattr(agent, '_llm') else None
-    original_provider = agent.execution_context.provider if hasattr(agent, 'execution_context') else None
-    
-    # Monkey patch
-    if hasattr(agent, '_llm'):
-        agent._llm = mock_llm
-        print(f"✅ Patched agent._llm")
-    
-    if hasattr(agent, 'llm'):
-        agent.llm = mock_llm
-        print(f"✅ Patched agent.llm")
-    
-    if hasattr(agent, 'execution_context'):
-        agent.execution_context.provider = mock_llm
-        print(f"✅ Patched agent.execution_context.provider")
-    
-    # 9. Create test message
+    # 8. Create test message
     print(f"\n{'='*70}")
     print(f"📨 CREATING TEST MESSAGE")
     print(f"{'='*70}")
     
-    # Create fact repository for consolidation
-    fact_repo = None
-    if agent_type == "consolidation":
-        fact_repo = FirestoreFactRepository(db_client, env_config)
+    fact_repo = container.repository if agent_type == "consolidation" else None
     
     message = await create_test_message(
         agent_type, 
@@ -485,15 +428,7 @@ async def test_agent_e2e(agent_type: str, user_id: str, account_id: str):
         raise
     
     finally:
-        # Cleanup: Restore original LLM
         print(f"\n🧹 Cleanup...")
-        if hasattr(agent, '_llm') and original_llm:
-            agent._llm = original_llm
-        if hasattr(agent, 'llm') and original_llm:
-            agent.llm = original_llm
-        if hasattr(agent, 'execution_context') and original_provider:
-            agent.execution_context.provider = original_provider
-        
         try:
             if hasattr(db_client, '_client') and hasattr(db_client._client, 'close'):
                 db_client._client.close()

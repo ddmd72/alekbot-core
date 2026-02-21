@@ -7,10 +7,15 @@ from src.services.invite_code_service import InviteCodeService
 from src.domain.invite_code import InviteCode, InviteType
 from src.domain.user import UserProfile
 from src.domain.billing import BillingAccount
+from src.domain.whitelist import WhitelistEntry
+from src.ports.user_repository import UserRepository
+from src.ports.account_repository import AccountRepository
+from src.ports.invite_code_repository import InviteCodeRepository
+from src.ports.whitelist_repository import WhitelistRepository
 
 @pytest.fixture
 def mock_user_repo():
-    repo = AsyncMock()
+    repo = AsyncMock(spec=UserRepository)
     repo.get_user = AsyncMock()
     repo.get_user_by_platform_id = AsyncMock()
     repo.update_user = AsyncMock(side_effect=lambda x: x)
@@ -19,13 +24,22 @@ def mock_user_repo():
 
 @pytest.fixture
 def mock_account_repo():
-    repo = AsyncMock()
+    repo = AsyncMock(spec=AccountRepository)
     repo.create_account = AsyncMock(side_effect=lambda x: x)
+    repo.get_account = AsyncMock()
+    repo.update_account = AsyncMock(side_effect=lambda x: x)
+    return repo
+
+@pytest.fixture
+def mock_whitelist_repo():
+    repo = AsyncMock(spec=WhitelistRepository)
+    whitelist = WhitelistEntry(allowed_emails=set(), allowed_domains={"test.com"})
+    repo.get_whitelist = AsyncMock(return_value=whitelist)
     return repo
 
 @pytest.fixture
 def mock_invite_repo():
-    repo = AsyncMock()
+    repo = AsyncMock(spec=InviteCodeRepository)
     # Use a dict to simulate DB for invites
     invites = {}
     
@@ -47,8 +61,8 @@ def mock_invite_repo():
     return repo
 
 @pytest.fixture
-def invite_service(mock_invite_repo, mock_user_repo, mock_account_repo):
-    return InviteCodeService(mock_invite_repo, mock_user_repo, mock_account_repo)
+def invite_service(mock_invite_repo, mock_user_repo, mock_account_repo, mock_whitelist_repo):
+    return InviteCodeService(mock_invite_repo, mock_user_repo, mock_account_repo, mock_whitelist_repo)
 
 @pytest.fixture
 def identity_resolver(mock_user_repo, mock_account_repo, invite_service):
@@ -137,7 +151,7 @@ async def test_team_invite_consumption(invite_service, mock_user_repo, mock_acco
     code = await invite_service.generate_team_invite("owner", "acc-owner", "MEMBER")
     
     # 3. Setup Joining User (currently in their own default account)
-    joiner = UserProfile(user_id="joiner", account_id="acc-joiner-default")
+    joiner = UserProfile(user_id="joiner", account_id="acc-joiner-default", email="joiner@test.com")
     mock_user_repo.get_user.side_effect = lambda uid: joiner if uid == "joiner" else (owner if uid == "owner" else None)
     
     # 4. Consume Invite

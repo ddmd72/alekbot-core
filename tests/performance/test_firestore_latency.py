@@ -15,13 +15,13 @@ from google.cloud import firestore
 
 from src.config.settings import load_settings
 from src.adapters.firestore_repo import FirestoreFactRepository
-from src.services.embedding_service import EmbeddingService
+from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.agents.memory_search_agent import MemorySearchAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent
 
 
 import os
-TEST_USER_ID = os.getenv("TEST_ACCOUNT_ID", "test-account-id")
+TEST_ACCOUNT_ID = os.getenv("TEST_ACCOUNT_ID", "test-account-id")
 TEST_QUERY = "машина авто модель car"
 
 
@@ -31,7 +31,7 @@ def _make_repo(config):
         db_client = firestore.AsyncClient(project="emulator-project")
     else:
         db_client = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"])
-    embedding_service = EmbeddingService(api_key=config["GEMINI_API_KEY"])
+    embedding_service = GeminiEmbeddingAdapter(api_key=config["GEMINI_API_KEY"])
     repo = FirestoreFactRepository(db_client, env_config, embedding_service=embedding_service)
     return repo, embedding_service
 
@@ -53,7 +53,7 @@ async def test_memory_search_firestore_latency():
         ),
         repository=repo,
         embedding_service=embedding_service,
-        owner_id=TEST_USER_ID
+        account_id=TEST_ACCOUNT_ID
     )
 
     message = AgentMessage.create(
@@ -90,7 +90,7 @@ async def test_biographical_context_cache_latency():
     await repo.initialize()
 
     start = time.perf_counter()
-    facts = await repo.get_biographical_context_cached(TEST_USER_ID, limit=100)
+    facts = await repo.get_biographical_context_cached(TEST_ACCOUNT_ID, limit=100)
     total_ms = (time.perf_counter() - start) * 1000
 
     assert isinstance(facts, list)
