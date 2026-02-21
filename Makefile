@@ -35,7 +35,7 @@ PROD_USER_ID ?= $(USER_ID)
 # ============================================================================
 
 .PHONY: help
-.PHONY: install install-dev clean clean-test-sessions clean-test-sessions-prod
+.PHONY: install install-dev clean
 .PHONY: dev dev-emulator run test lint format kill-local
 .PHONY: deploy deploy-dev deploy-indexes
 .PHONY: start stop restart start-dev stop-dev
@@ -71,8 +71,6 @@ help: ## Show this help message
 	@echo "  make dev             Run bot locally (Socket Mode)"
 	@echo "  make dev-emulator    Run with Firestore emulator (port 8081)"
 	@echo "  make kill-local      Kill all local bot processes"
-	@echo "  make clean-test-sessions Clean up test sessions from development_sessions"
-	@echo "  make clean-test-sessions-prod 🔴 Clean up test sessions from PRODUCTION"
 	@echo "  make test            Run all tests"
 	@echo "  make test-unit       Run unit tests"
 	@echo "  make test-integration Run integration tests"
@@ -185,20 +183,6 @@ run: dev ## Alias for 'make dev'
 kill-local: ## Kill all local bot processes
 	@echo "🔪 Killing all local bot processes..."
 	@pkill -9 -f "main.py" 2>/dev/null && echo "✅ All bot processes killed" || echo "ℹ️  No bot processes found"
-
-clean-test-sessions: ## Clean up test sessions from development_sessions
-	@if [ -d "venv" ]; then \
-		. venv/bin/activate && python3 scripts/cleanup_test_sessions.py; \
-	else \
-		python3 scripts/cleanup_test_sessions.py; \
-	fi
-
-clean-test-sessions-prod: ## 🔴 Clean up test sessions from PRODUCTION sessions collection
-	@if [ -d "venv" ]; then \
-		. venv/bin/activate && python3 scripts/cleanup_test_sessions_prod.py; \
-	else \
-		python3 scripts/cleanup_test_sessions_prod.py; \
-	fi
 
 dev-emulator: ## Run with Firestore emulator (emulator on port 8081, app on 8080)
 	@echo "🏠 Starting bot with Firestore emulator..."
