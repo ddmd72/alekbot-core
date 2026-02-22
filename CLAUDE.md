@@ -80,6 +80,9 @@ src/
   composition/  — ServiceContainer + SlackAdapterFactory: wires ports to adapters.
   config/       — EnvironmentConfig, Settings, AuthConfig.
   utils/        — Logger, telemetry.
+  web/          — Quart web app (OAuth + Cabinet UI). Endpoints: /auth/login, /auth/callback,
+                  /auth/link-oauth, /auth/me, /auth/refresh, /auth/logout.
+                  Runs as a separate Quart app alongside the Slack/Telegram bot.
 main.py         — Bootstrap: creates ServiceContainer + UserAgentFactory, graceful shutdown.
 ```
 

@@ -7,7 +7,9 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
 from src.domain.entities import FactEntity, FactType
-from src.ports.llm_service import AgentExecutionContext, ProviderCapabilities, LLMService
+from src.ports.llm_service import AgentExecutionContext, ProviderCapabilities, LLMService, LLMResponse
+from src.ports.fact_management_port import FactManagementPort
+from src.domain.llm import ToolCall
 from src.domain.user import PerformanceTier
 from src.domain.request_context import RequestContext
 
@@ -234,3 +236,245 @@ class TestConsolidationAgent:
         # _parse_consolidation_results returns {} on invalid JSON,
         # which is falsy → agent returns "Failed to parse consolidation results"
         assert "Failed to parse" in response.error
+
+
+class TestConsolidationAgentV3:
+    """Tests for ConsolidationAgent v3 multi-turn tool-use path."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        service = MagicMock(spec=LLMService)
+        service.generate_content = AsyncMock()
+        return service
+
+    @pytest.fixture
+    def mock_repo(self):
+        repo = Mock()
+        repo.get_observations = AsyncMock(return_value=[])
+        repo.get_active_facts = AsyncMock(return_value=[])
+        repo.archive_observations = AsyncMock()
+        repo.refresh_biographical_context_cache = AsyncMock()
+        repo.get_biographical_context_cached = AsyncMock(return_value=[])
+        return repo
+
+    @pytest.fixture
+    def mock_embedding(self):
+        service = Mock()
+        service.get_embedding = AsyncMock()
+        return service
+
+    @pytest.fixture
+    def mock_fact_write_service(self):
+        svc = AsyncMock()
+        svc.add_facts_batch = AsyncMock(return_value=(1, 0))
+        return svc
+
+    @pytest.fixture
+    def mock_prompt_builder(self):
+        builder = MagicMock()
+        builder.build_for_agent = AsyncMock(return_value="CONSOLIDATION V3 PROMPT")
+        builder.invalidate_biographical_cache = MagicMock()
+        return builder
+
+    @pytest.fixture
+    def mock_fact_management(self):
+        return AsyncMock(spec=FactManagementPort)
+
+    @pytest.fixture
+    def agent_v3(self, mock_llm, mock_repo, mock_embedding, mock_fact_write_service,
+                 mock_prompt_builder, mock_fact_management):
+        config = AgentConfig(
+            agent_id="consolidation_agent",
+            agent_type="consolidation",
+            llm_model="gemini-3-pro-preview"
+        )
+        ec = AgentExecutionContext(
+            agent_type="consolidation",
+            provider=mock_llm,
+            model_name="gemini-3-pro-preview",
+            tier=PerformanceTier.PERFORMANCE,
+            capabilities=ProviderCapabilities()
+        )
+        return ConsolidationAgent(
+            config=config,
+            execution_context=ec,
+            repository=mock_repo,
+            embedding_service=mock_embedding,
+            fact_write_service=mock_fact_write_service,
+            fact_management_port=mock_fact_management,
+            prompt_version="v3",
+            prompt_builder=mock_prompt_builder,
+        )
+
+    @pytest.mark.asyncio
+    async def test_v3_create_fact_tool_called(self, agent_v3, mock_llm, mock_fact_management):
+        """v3: LLM calls create_fact tool → FactManagementPort.create_fact is invoked."""
+        mock_fact_management.create_fact.return_value = {
+            "fact_id": "new-fact-123", "status": "created", "message": "ok"
+        }
+
+        # Turn 1: LLM returns a create_fact tool call
+        turn1 = LLMResponse(
+            tool_calls=[ToolCall(
+                name="create_fact",
+                args={
+                    "content": "User owns a cat",
+                    "fact_attributes": {
+                        "domain": "personal",
+                        "temporal_class": "stable",
+                        "context_priority": "medium",
+                        "tags": ["pets"],
+                        "type": "state",
+                    }
+                }
+            )]
+        )
+        # Turn 2: LLM returns final report (no tool calls)
+        turn2 = LLMResponse(
+            text='{"operations": [{"action": "CREATE", "fact_id": "new-fact-123", "reason": "new fact"}]}'
+        )
+        mock_llm.generate_content.side_effect = [turn1, turn2]
+
+        message = AgentMessage.create(
+            sender="test",
+            recipient="consolidation_agent",
+            intent=AgentIntent.DELEGATE,
+            payload={"task": "consolidate", "messages": [{"role": "user", "text": "I have a cat"}]},
+            context={"user_id": "user123"}
+        )
+
+        async with RequestContext(user_id="user123", account_id="account-123"):
+            response = await agent_v3.execute(message)
+
+        assert response.status == AgentStatus.SUCCESS
+        mock_fact_management.create_fact.assert_called_once_with(
+            content="User owns a cat",
+            metadata={
+                "domain": "personal",
+                "temporal_class": "stable",
+                "context_priority": "medium",
+                "tags": ["pets"],
+                "type": "state",
+                "account_id": "account-123",
+                "user_id": "user123",
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_v3_update_fact_tool_called(self, agent_v3, mock_llm, mock_fact_management):
+        """v3: LLM calls update_fact tool → FactManagementPort.update_fact is invoked."""
+        mock_fact_management.update_fact.return_value = {
+            "fact_id": "existing-456", "status": "updated", "message": "ok"
+        }
+
+        turn1 = LLMResponse(
+            tool_calls=[ToolCall(
+                name="update_fact",
+                args={"fact_id": "existing-456", "updates": {"content": "User owns two cats"}}
+            )]
+        )
+        turn2 = LLMResponse(
+            text='{"operations": [{"action": "UPDATE", "fact_id": "existing-456", "reason": "correction"}]}'
+        )
+        mock_llm.generate_content.side_effect = [turn1, turn2]
+
+        message = AgentMessage.create(
+            sender="test",
+            recipient="consolidation_agent",
+            intent=AgentIntent.DELEGATE,
+            payload={"task": "consolidate", "messages": [{"role": "user", "text": "I have two cats now"}]},
+            context={"user_id": "user123"}
+        )
+
+        async with RequestContext(user_id="user123", account_id="account-123"):
+            response = await agent_v3.execute(message)
+
+        assert response.status == AgentStatus.SUCCESS
+        mock_fact_management.update_fact.assert_called_once_with(
+            fact_id="existing-456",
+            updates={"content": "User owns two cats"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_v3_search_fact_tool_called(self, agent_v3, mock_llm, mock_fact_management):
+        """v3: LLM calls search_existing_facts → FactManagementPort.search_existing_facts invoked."""
+        mock_fact_management.search_existing_facts.return_value = [
+            {"fact_id": "f1", "content": "User owns a cat", "similarity": 0.9}
+        ]
+
+        turn1 = LLMResponse(
+            tool_calls=[ToolCall(
+                name="search_existing_facts",
+                args={"keywords": ["pets", "cat"], "primary_query": "does user have pets", "limit": 10}
+            )]
+        )
+        turn2 = LLMResponse(
+            text='{"operations": []}'
+        )
+        mock_llm.generate_content.side_effect = [turn1, turn2]
+
+        message = AgentMessage.create(
+            sender="test",
+            recipient="consolidation_agent",
+            intent=AgentIntent.DELEGATE,
+            payload={"task": "consolidate", "messages": [{"role": "user", "text": "I still have my cat"}]},
+            context={"user_id": "user123"}
+        )
+
+        async with RequestContext(user_id="user123", account_id="account-123"):
+            response = await agent_v3.execute(message)
+
+        assert response.status == AgentStatus.SUCCESS
+        mock_fact_management.search_existing_facts.assert_called_once_with(
+            keywords=["pets", "cat"],
+            primary_query="does user have pets",
+            alternative_query="",
+            limit=10
+        )
+
+    @pytest.mark.asyncio
+    async def test_v3_falls_back_to_v2_without_fact_management_port(
+        self, mock_llm, mock_repo, mock_embedding, mock_fact_write_service, mock_prompt_builder
+    ):
+        """Without fact_management_port, v3 config silently falls back to v2 path."""
+        config = AgentConfig(
+            agent_id="consolidation_agent",
+            agent_type="consolidation",
+            llm_model="gemini-3-pro-preview"
+        )
+        ec = AgentExecutionContext(
+            agent_type="consolidation",
+            provider=mock_llm,
+            model_name="gemini-3-pro-preview",
+            tier=PerformanceTier.PERFORMANCE,
+            capabilities=ProviderCapabilities()
+        )
+        agent = ConsolidationAgent(
+            config=config,
+            execution_context=ec,
+            repository=mock_repo,
+            embedding_service=mock_embedding,
+            fact_write_service=mock_fact_write_service,
+            fact_management_port=None,  # explicitly absent
+            prompt_version="v3",
+            prompt_builder=mock_prompt_builder,
+        )
+
+        mock_response = Mock()
+        mock_response.text = '{"new_facts": [], "new_anchors": []}'
+        mock_llm.generate_content.return_value = mock_response
+
+        message = AgentMessage.create(
+            sender="test",
+            recipient="consolidation_agent",
+            intent=AgentIntent.DELEGATE,
+            payload={"task": "consolidate", "messages": [{"role": "user", "text": "hello"}]},
+            context={"user_id": "user123"}
+        )
+
+        async with RequestContext(user_id="user123", account_id="account-123"):
+            response = await agent.execute(message)
+
+        # v2 path: LLM called with generate_content (not multi-turn), succeeds
+        assert response.status == AgentStatus.SUCCESS
+        mock_llm.generate_content.assert_called_once()
