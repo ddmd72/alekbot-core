@@ -63,6 +63,8 @@ class GeminiAdapter(LLMService):
         automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None
     ) -> LLMResponse:
         force_tool_use: bool = False
+        max_tokens: Optional[int] = None
+        disable_safety: bool = False
         if request:
             model_name = request.model_name
             system_instruction = request.system_instruction
@@ -74,6 +76,8 @@ class GeminiAdapter(LLMService):
             cache_config = request.cache_config
             automatic_function_calling = request.automatic_function_calling
             force_tool_use = request.force_tool_use
+            max_tokens = request.max_tokens
+            disable_safety = request.disable_safety
             stream_callback = None
 
         if not model_name or messages is None:
@@ -109,14 +113,25 @@ class GeminiAdapter(LLMService):
                 function_calling_config=types.FunctionCallingConfig(mode="ANY")
             )
 
+        safety_threshold = "BLOCK_NONE" if disable_safety else "BLOCK_ONLY_HIGH"
+        safety_settings = [
+            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold=safety_threshold),
+            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold=safety_threshold),
+            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold=safety_threshold),
+            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold=safety_threshold),
+            types.SafetySetting(category="HARM_CATEGORY_CIVIC_INTEGRITY", threshold=safety_threshold),
+        ]
+
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=temperature,
+            max_output_tokens=max_tokens,
             tools=tools,
             tool_config=tool_config,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=not afc_enabled),
             response_mime_type=response_mime_type,
-            response_schema=response_schema
+            response_schema=response_schema,
+            safety_settings=safety_settings,
         )
 
         if stream_callback:

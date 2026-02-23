@@ -30,6 +30,7 @@ class PromptBuilderPort(ABC):
         capabilities: Optional[ProviderCapabilities] = None,
         biographical_facts: Optional[List[Dict]] = None,
         conversation_history: Optional[List[dict]] = None,
+        include_biographical: bool = True,
     ) -> str:
         """
         Build complete system prompt string for the given agent type.

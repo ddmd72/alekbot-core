@@ -46,7 +46,12 @@ To capture different aspects of relevance, the system executes **up to 7 paralle
 
 ### 2.1 Query Matrix
 
-The system uses 3 input phrases (extracted by the Router) and maps them to specialized vector fields in Firestore. An optional domain channel fires first when `relevant_domains` is provided.
+The system supports up to 7 channels. Two callers use different subsets:
+
+- **RouterAgent:** 6 channels (`search_phrase_2=""` — alternative phrase channel skipped). Rationale: router is a quick first-pass enrichment, not deep retrieval.
+- **MemorySearchAgent:** All 7 channels (full retrieval, LLM formulates `alternative_query` via its own cognitive process prompt).
+
+The system uses 3 input phrases and maps them to specialized vector fields in Firestore. An optional domain channel fires when `relevant_domains` is provided.
 
 | Channel | Input | Vector Field | Rationale |
 | ------- | ----- | ------------ | --------- |
@@ -504,5 +509,5 @@ pytest tests/integration/test_search_enrichment_integration.py
 
 ---
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-02-23
 **Status:** ✅ Production Ready
