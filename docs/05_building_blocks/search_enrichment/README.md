@@ -46,7 +46,12 @@ To capture different aspects of relevance, the system executes **up to 7 paralle
 
 ### 2.1 Query Matrix
 
-The system uses 3 input phrases (extracted by the Router) and maps them to specialized vector fields in Firestore. An optional domain channel fires first when `relevant_domains` is provided.
+The system supports up to 7 channels. Two callers use different subsets:
+
+- **RouterAgent:** 6 channels (`search_phrase_2=""` — alternative phrase channel skipped). Rationale: router is a quick first-pass enrichment, not deep retrieval.
+- **MemorySearchAgent:** All 7 channels (full retrieval, LLM formulates `alternative_query` via its own cognitive process prompt).
+
+The system uses 3 input phrases and maps them to specialized vector fields in Firestore. An optional domain channel fires when `relevant_domains` is provided.
 
 | Channel | Input | Vector Field | Rationale |
 | ------- | ----- | ------------ | --------- |
@@ -346,7 +351,8 @@ async def enrich_context(
     biographical_facts: Optional[List[Union[FactEntity, Dict]]] = None,
     limits: Optional[SearchLimits] = None,
     dedup_threshold: float = 0.98,
-    skip_semantic_dedup: bool = False
+    skip_semantic_dedup: bool = False,
+    sequential: bool = False,
 ) -> EnrichedContext
 ```
 
@@ -364,6 +370,9 @@ async def enrich_context(
 - `skip_semantic_dedup`: Skip semantic deduplication entirely
   - `False`: Normal search (remove semantic duplicates)
   - `True`: Consolidation mode (keep ALL facts with different IDs)
+- `sequential`: Execute Firestore vector queries one-by-one instead of `asyncio.gather`
+  - `False` (default): Parallel — optimal for all paths; 6 parallel streams complete in 700ms–1.2s with full CPU
+  - `True`: Sequential — reduces peak concurrency; use only if Firestore quota pressure is observed
 
 **Returns:**
 
@@ -383,10 +392,23 @@ class EnrichedContext:
 class EnrichedFact:
     fact_id: str
     content: str
-    source: str  # "keyword_tags", "phrase1_text", etc.
-    relevance_score: Optional[float]  # Can be None
-    vector: Optional[List[float]]  # Included for dedup!
+    source: str                      # "keyword_tags", "phrase1_text", etc.
+    relevance_score: Optional[float] # Can be None
+    vector: Optional[List[float]]    # Included for dedup!
+    # Taxonomy fields — populated by SearchEnrichmentService directly from Firestore.
+    # Eliminates the need for a secondary get_facts_by_ids batch fetch in callers.
+    fact_type: Optional[str]         # e.g. "FACT", "ANCHOR", "EVENT"
+    domain: Optional[str]            # e.g. "health", "possession", "professional"
+    temporal_class: Optional[str]    # e.g. "PERMANENT", "PERIODIC", "POINT_IN_TIME"
+    state: Optional[str]             # e.g. "current", "outdated"
+    context_priority: Optional[str]  # e.g. "HIGH", "MEDIUM", "LOW"
+    tags: Optional[List[str]]
+    metadata: Optional[Dict]
+    reported_date: Optional[str]     # ISO-8601 string, e.g. "2026-02-24"
+    version: Optional[int]
 ```
+
+**Design note:** Taxonomy fields are populated in both the domain-channel path and the vector-search path, so all callers receive a fully populated DTO regardless of which search channel matched. Fields are `None` when the underlying Firestore document lacks the field.
 
 ---
 
@@ -431,14 +453,51 @@ pytest tests/integration/test_search_enrichment_integration.py
 
 ### 10.1 Latency
 
-**Typical Performance:**
+**Isolated execution (single caller, no concurrent find_nearest from other paths):**
 
-- Up to 7 parallel queries: ~150-250ms (Firestore)
-- RRF ranking: ~5-10ms (in-memory)
-- Semantic dedup: ~20-50ms (in-memory, no Firestore reads)
-- **Total:** ~200-300ms
+| Step | Time |
+|------|------|
+| Batch embedding (up to 3 vectors) | ~100-200ms |
+| Up to 6 parallel `find_nearest` (Firestore KNN) | ~300-500ms |
+| RRF ranking | ~5-10ms (in-memory) |
+| Semantic dedup | ~20-50ms (in-memory) |
+| **Total** | **~450-750ms** |
 
-### 10.2 Cost
+**Previously observed degradation (resolved 2026-02-24):**
+
+When consolidation ran via `asyncio.create_task()`, Cloud Run throttled CPU to ~5% immediately after
+returning 200. With ~5% CPU, grpc.aio callbacks for Firestore `find_nearest` were starved — causing
+74–180s latency. This had nothing to do with the number of concurrent streams or Firestore KNN backend
+limits. The fix was architectural: consolidation now runs inside its own Cloud Tasks HTTP request, which
+keeps Cloud Run at full CPU. Under full CPU, latency with 6 parallel streams is 700ms–1.2s.
+
+**No gRPC errors are raised.** The Firestore SDK silently waits for grpc.aio callback delivery — which
+only happens when the event loop has CPU to process it. Confirmed via diagnostic logging of `grpc`,
+`grpc.aio`, and `google` namespaces — zero retries or exceptions observed.
+
+### 10.2 Concurrency Control (`_FIND_NEAREST_SEMAPHORE`)
+
+A module-level semaphore in `src/adapters/firestore_repo.py` caps the number of simultaneous `find_nearest` calls across **all callers in the process**:
+
+```python
+# src/adapters/firestore_repo.py
+_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(30)
+```
+
+**Why this exists:** Quota guard against Firestore RESOURCE_EXHAUSTED errors under very high concurrency
+(e.g., many simultaneous Cloud Tasks workers hitting the same process). Not a latency fix — with full CPU
+allocation (see §10.1), parallel find_nearest calls complete in 700ms–1.2s regardless.
+
+**Current value: 30.**
+
+**Interaction between callers:**
+
+The semaphore is shared by all code paths in the same process:
+- `SearchEnrichmentService.enrich_context()` — used by RouterAgent and MemorySearchAgent (up to 6 streams per call)
+- `FactManagementAdapter.search_existing_facts()` — used by ConsolidationAgent (up to 6 streams per call)
+- Any `AgentWorkerHandler` task that triggers a search agent
+
+### 10.3 Cost
 
 **Firestore Reads:**
 
@@ -448,7 +507,7 @@ pytest tests/integration/test_search_enrichment_integration.py
 **Embedding API Calls:**
 
 - Up to 3 embeddings per search (keywords, phrase1, phrase2); domain channel requires none
-- Embeddings generated in parallel
+- Batch API call: `batchEmbedContents` sends all non-empty texts in a single HTTP request
 
 ---
 
@@ -502,7 +561,31 @@ pytest tests/integration/test_search_enrichment_integration.py
 - Increase `total_limit` in SearchLimits
 - Review numeric extraction regex
 
+### 12.4 find_nearest Takes 74–180s
+
+**Symptom:** `[find_nearest] DONE ... elapsed=74000ms` (or more) in logs. No errors, no retries.
+Typically occurs only during consolidation, not during router/user-facing requests.
+
+**Cause:** Cloud Run CPU throttling. Cloud Run reduces CPU to ~5% when no HTTP request is actively
+being processed. If consolidation is launched via `asyncio.create_task()`, the worker returns 200
+immediately, ending the HTTP request. grpc.aio callbacks (Firestore AsyncClient) are only delivered
+when the asyncio event loop has CPU — at 5% CPU, this can take 74–180s.
+
+**Confirmation:** Send a user message while consolidation is stuck → `find_nearest` unblocks instantly
+(new HTTP request restores full CPU).
+
+**Fix (already applied):** Consolidation runs inside its own Cloud Tasks HTTP request (`task_type="consolidation"`
+in `main.py:/worker`). The request stays alive throughout consolidation → full CPU. See
+`src/handlers/consolidation_handler.py` and `main.py:overflow_callback`.
+
+**If this regresses:** Check that `overflow_callback` in `main.py` is calling
+`agent_task_queue.enqueue_consolidation_task()` and NOT `asyncio.create_task(process_user_batches_on_overflow(...))`.
+
+**Note on `[_cygrpc] Loaded running loop` messages:** This is the gRPC C extension registering itself
+with the asyncio event loop. It appears frequently under CPU pressure. It is not an error and does
+not indicate a connection problem — it is a symptom of CPU throttling.
+
 ---
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-02-24
 **Status:** ✅ Production Ready

@@ -35,7 +35,7 @@ class AgentProviderStrategy:
         },
         "quick": {
             "default_provider": "gemini",
-            "allowed_providers": ["grok", "gemini"],
+            "allowed_providers": ["grok", "gemini", "claude"],
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },

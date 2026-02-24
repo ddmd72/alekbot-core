@@ -173,7 +173,48 @@ Compression LLM instruction (enforced via `response_schema`):
 
 ---
 
-## 7. Status & Roadmap
+## 7. Operational Notes
+
+### 7.1 Cloud Run CPU Allocation and KNN Latency
+
+ConsolidationAgent runs as a Cloud Tasks HTTP request on the same Cloud Run instance that handles user messages.
+
+**Root cause of consolidation slowness (resolved 2026-02-24):**
+
+Cloud Run throttles CPU to ~5% when no active HTTP request is being processed. The original
+implementation used `asyncio.create_task()` to fire consolidation — which immediately returned
+200 to the caller, ending the HTTP request and triggering CPU throttling. With ~5% CPU, grpc.aio
+(Firestore AsyncClient) callbacks were starved, causing `find_nearest` to degrade from ~700ms to
+**74–180 seconds**. An incoming Slack message (a new HTTP request) instantly restored full CPU
+and unblocked the hanging queries.
+
+**Fix in place:**
+- **Overflow path:** `overflow_callback` enqueues `task_type="consolidation"` to Cloud Tasks.
+  Cloud Tasks sends a separate HTTP POST to `/worker` — this request stays alive through the entire
+  consolidation run, giving it a full CPU allocation.
+- **Manual `$consolidate`:** `conversation_handler.py` and `run_consolidation_process` now `await`
+  consolidation directly instead of wrapping it in `asyncio.create_task()`. The worker HTTP request
+  stays open until completion.
+
+**Normal performance:** `find_nearest` queries complete in 700ms–1.2s with full CPU.
+
+**Remaining mitigation:** `_FIND_NEAREST_SEMAPHORE` in `src/adapters/firestore_repo.py` caps
+global concurrent `find_nearest` calls (currently 30) to prevent RESOURCE_EXHAUSTED quota errors
+under high concurrency. This is a quota guard, not a latency fix.
+
+### 7.2 Per-Session Worker Serialization
+
+Multiple Cloud Tasks worker requests for the same Slack session (same `thread_ts`) can arrive concurrently. Each would trigger its own agent chain including Firestore reads, compounding the resource contention described above.
+
+**Mitigation in place:** `HTTPModeAdapter._session_locks` (a `WeakValueDictionary[str, asyncio.Lock]`) in `src/adapters/slack/http_adapter.py`. If a worker for session X is already processing, subsequent workers return HTTP 429 → Cloud Tasks retries after backoff.
+
+### 7.3 Startup Vector Index Warmup
+
+Firestore FLAT vector indexes are loaded into memory lazily — the first `find_nearest` call for each field triggers a cold load that takes 40–60s. Without warmup, the first consolidation job after a Cloud Run cold start hits this delay for all 3 indexes simultaneously, causing a retry cascade.
+
+**Mitigation in place:** `main.py` fires 3 parallel `find_nearest` calls against the `_warmup` synthetic account at process startup, loading all 3 indexes (`vector`, `tags_vector`, `metadata_vector`) before the first real request arrives. Failures are non-fatal — logged as warnings and swallowed.
+
+## 8. Status & Roadmap
 
 **Status:** ✅ Production Ready
 
@@ -185,6 +226,6 @@ Compression LLM instruction (enforced via `response_schema`):
 
 ---
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-02-24
 **Status:** ✅ Complete
 **Phase:** Documentation Audit Phase 3.2

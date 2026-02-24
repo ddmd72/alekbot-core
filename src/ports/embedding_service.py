@@ -6,9 +6,18 @@ class EmbeddingService(ABC):
     
     @abstractmethod
     async def get_embedding(
-        self, 
-        text: str, 
+        self,
+        text: str,
         task_type: str = "RETRIEVAL_DOCUMENT"
     ) -> List[float]:
         """Generate embedding vector for text."""
+        pass
+
+    @abstractmethod
+    async def get_embeddings_batch(
+        self,
+        texts: List[str],
+        task_type: str = "RETRIEVAL_DOCUMENT"
+    ) -> List[List[float]]:
+        """Generate embedding vectors for multiple texts in a single API call."""
         pass

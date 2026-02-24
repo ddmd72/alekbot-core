@@ -46,3 +46,12 @@ class TaskQueue(Protocol):
         Worker receives payload with task_type="agent_execution".
         """
         ...
+
+    async def enqueue_consolidation_task(self, user_id: str) -> str:
+        """
+        Enqueue a consolidation task for a user.
+
+        Returns task name (Cloud Tasks task ID).
+        Worker receives payload with task_type="consolidation".
+        """
+        ...

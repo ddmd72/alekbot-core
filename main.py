@@ -93,6 +93,48 @@ async def main():
         except Exception as e:
             logger.warning(f"⚠️ Firestore Warmup failed (non-critical): {e}")
 
+        # 2. Warm up Firestore vector search backend (separate from gRPC connection warmup).
+        # The regular read above warms the gRPC channel, but each FLAT vector index is loaded
+        # into memory lazily on the first find_nearest call for that field. Without this,
+        # the first consolidation search triggers a 40-60s per-index load → retry cascade.
+        # All 3 indexes (vector, tags_vector, metadata_vector) must be warmed in parallel —
+        # each is an independent index with its own cold start.
+        try:
+            from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
+            from google.cloud.firestore_v1.vector import Vector as FSVector
+            from google.cloud.firestore import FieldFilter as FSFieldFilter
+            facts_col = db_client.collection(env_config.domain_facts_collection)
+            warmup_vector = FSVector([0.1] * 768)
+            warmup_query = facts_col.where(
+                filter=FSFieldFilter("account_id", "==", "_warmup")
+            ).where(
+                filter=FSFieldFilter("state", "==", "current")
+            )
+            await asyncio.gather(
+                warmup_query.find_nearest(
+                    vector_field="vector",
+                    query_vector=warmup_vector,
+                    distance_measure=DistanceMeasure.COSINE,
+                    limit=1
+                ).get(),
+                warmup_query.find_nearest(
+                    vector_field="tags_vector",
+                    query_vector=warmup_vector,
+                    distance_measure=DistanceMeasure.COSINE,
+                    limit=1
+                ).get(),
+                warmup_query.find_nearest(
+                    vector_field="metadata_vector",
+                    query_vector=warmup_vector,
+                    distance_measure=DistanceMeasure.COSINE,
+                    limit=1
+                ).get(),
+                return_exceptions=True  # one index fails → others continue
+            )
+            logger.info("✅ Firestore vector search warmed up (all 3 fields)")
+        except Exception as e:
+            logger.warning(f"⚠️ Firestore vector warmup failed (non-critical): {e}")
+
         # NOTE: Embedding initialization moved to UserAgentFactory.ensure_agents_for_user()
         # where repository is created with proper BiographicalContextService injection
 
@@ -249,14 +291,19 @@ async def main():
                     batch_id = await consolidation_queue.enqueue_batch(batch)
                     logger.info(f"📦 [Overflow] Created batch {batch_id} for user {user_id[:8]}")
 
-                    # Immediate processing trigger (fire-and-forget)
-                    from src.handlers.consolidation_handler import process_user_batches_on_overflow
-                    asyncio.create_task(process_user_batches_on_overflow(
-                        user_id=user_id,
-                        coordinator=coordinator,
-                        agent_factory=factory,
-                        queue=consolidation_queue
-                    ))
+                    # Trigger processing — via Cloud Tasks in HTTP mode (own request = full CPU),
+                    # fire-and-forget create_task in socket mode (no CPU throttling there)
+                    if agent_task_queue:
+                        await agent_task_queue.enqueue_consolidation_task(user_id=user_id)
+                        logger.info(f"📬 [Overflow] Consolidation task enqueued for user {user_id[:8]}")
+                    else:
+                        from src.handlers.consolidation_handler import process_user_batches_on_overflow
+                        asyncio.create_task(process_user_batches_on_overflow(
+                            user_id=user_id,
+                            coordinator=coordinator,
+                            agent_factory=factory,
+                            queue=consolidation_queue
+                        ))
                 else:
                     logger.warning("⚠️ Consolidation queue not initialized, overflow batch lost!")
             except Exception as e:
@@ -511,6 +558,25 @@ async def main():
                     if payload.get("task_type") == "agent_execution":
                         result = await agent_worker_handler.handle_task(payload)
                         return jsonify(result), 200
+                    elif payload.get("task_type") == "consolidation":
+                        user_id = payload.get("user_id")
+                        factory = _agent_factory_ref[0]
+                        if not user_id or factory is None:
+                            return jsonify({"error": "missing user_id or factory not ready"}), 400
+                        from src.handlers.consolidation_handler import process_user_batches_on_overflow
+                        # Process one batch per HTTP request → each task keeps full CPU on Cloud Run.
+                        # Re-enqueue if more batches remain so Cloud Tasks chains them naturally.
+                        has_more = await process_user_batches_on_overflow(
+                            user_id=user_id,
+                            coordinator=coordinator,
+                            agent_factory=factory,
+                            queue=consolidation_queue,
+                            max_batches=1,
+                        )
+                        if has_more and agent_task_queue:
+                            await agent_task_queue.enqueue_consolidation_task(user_id=user_id)
+                            logger.info(f"📬 [Worker] Re-enqueued next consolidation task for user {user_id[:8]}")
+                        return jsonify({"status": "ok"}), 200
                     return await slack_adapter._handle_worker_task()
                 
                 logger.info("✅ All blueprints registered on shared app (port 8080)")

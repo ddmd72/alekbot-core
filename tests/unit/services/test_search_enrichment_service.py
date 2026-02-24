@@ -20,6 +20,9 @@ class FakeEmbeddingService:
     async def get_embedding(self, text, task_type="RETRIEVAL_QUERY"):
         return [text]
 
+    async def get_embeddings_batch(self, texts, task_type="RETRIEVAL_QUERY"):
+        return [[text] for text in texts]
+
 
 def _make_fact(fact_id: str, text: str) -> FactEntity:
     return FactEntity(

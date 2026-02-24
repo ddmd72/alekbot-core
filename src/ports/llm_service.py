@@ -73,6 +73,7 @@ class LLMRequest(BaseModel):
     cache_config: Optional[PromptCacheConfig] = None
     automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None
     force_tool_use: bool = False
+    disable_safety: bool = False
 
 
 class LLMResponse(BaseModel):

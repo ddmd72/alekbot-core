@@ -210,7 +210,8 @@ class PromptBuilder(PromptBuilderPort):
         routing_metadata: Optional[RoutingMetadata] = None,
         capabilities: Optional[ProviderCapabilities] = None,
         biographical_facts: Optional[List[Dict]] = None,
-        conversation_history: Optional[List[dict]] = None
+        conversation_history: Optional[List[dict]] = None,
+        include_biographical: bool = True,
     ) -> str:
         """
         Build complete system prompt for agent using PromptAssemblyService.
@@ -224,6 +225,8 @@ class PromptBuilder(PromptBuilderPort):
             capabilities: Provider capabilities
             biographical_facts: Optional pre-fetched biographical facts (override)
             conversation_history: Optional conversation history for runtime injection
+            include_biographical: Whether to load biographical facts from Firestore.
+                Set False for agents that don't need personal context (e.g. router).
 
         Returns:
             Fully formatted system prompt string
@@ -231,8 +234,10 @@ class PromptBuilder(PromptBuilderPort):
         if not self.assembly_service:
             raise ValueError("assembly_service is required for build_for_agent()")
 
-        # Fetch biographical facts unless provided explicitly
-        if biographical_facts is None:
+        # Fetch biographical facts unless explicitly disabled or already provided
+        if not include_biographical:
+            biographical_facts = []
+        elif biographical_facts is None:
             biographical_facts = []
 
             # Facts belong to account (OAuth Multi-Tenant)

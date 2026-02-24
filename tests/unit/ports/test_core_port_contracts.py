@@ -294,17 +294,26 @@ class TestEmbeddingServiceContract:
     def test_has_get_embedding(self):
         assert getattr(EmbeddingService.get_embedding, "__isabstractmethod__", False)
 
+    def test_has_get_embeddings_batch(self):
+        assert getattr(EmbeddingService.get_embeddings_batch, "__isabstractmethod__", False)
+
     def test_all_abstract_methods_count(self):
         abstract_methods = {
             name for name, method in inspect.getmembers(EmbeddingService)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 1, f"Expected 1 abstract method, got {abstract_methods}"
+        assert len(abstract_methods) == 2, f"Expected 2 abstract methods, got {abstract_methods}"
 
     def test_get_embedding_signature(self):
         sig = inspect.signature(EmbeddingService.get_embedding)
         params = list(sig.parameters.keys())
         assert params == ["self", "text", "task_type"]
+        assert sig.parameters["task_type"].default == "RETRIEVAL_DOCUMENT"
+
+    def test_get_embeddings_batch_signature(self):
+        sig = inspect.signature(EmbeddingService.get_embeddings_batch)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "texts", "task_type"]
         assert sig.parameters["task_type"].default == "RETRIEVAL_DOCUMENT"
 
 
@@ -341,12 +350,18 @@ class TestFactManagementPortContract:
     def test_has_discard_candidate(self):
         assert getattr(FactManagementPort.discard_candidate, "__isabstractmethod__", False)
 
+    def test_has_create_fact(self):
+        assert getattr(FactManagementPort.create_fact, "__isabstractmethod__", False)
+
+    def test_has_update_fact(self):
+        assert getattr(FactManagementPort.update_fact, "__isabstractmethod__", False)
+
     def test_all_abstract_methods_count(self):
         abstract_methods = {
             name for name, method in inspect.getmembers(FactManagementPort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 3, f"Expected 3 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
 
     def test_search_existing_facts_signature(self):
         sig = inspect.signature(FactManagementPort.search_existing_facts)
@@ -375,6 +390,28 @@ class TestFactManagementPortMockImplementation:
         mock_port.discard_candidate.return_value = {"status": "discarded"}
         result = await mock_port.discard_candidate("duplicate")
         assert isinstance(result, dict)
+
+    async def test_create_fact(self, mock_port):
+        mock_port.create_fact.return_value = {"fact_id": "abc123", "status": "created", "message": "ok"}
+        result = await mock_port.create_fact("User owns a cat", {"account_id": "a1", "user_id": "u1"})
+        assert isinstance(result, dict)
+        assert "fact_id" in result
+
+    async def test_update_fact(self, mock_port):
+        mock_port.update_fact.return_value = {"fact_id": "abc123", "status": "updated", "message": "ok"}
+        result = await mock_port.update_fact("abc123", {"content": "User owns two cats"})
+        assert isinstance(result, dict)
+        assert "status" in result
+
+    def test_create_fact_signature(self):
+        sig = inspect.signature(FactManagementPort.create_fact)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "content", "metadata"]
+
+    def test_update_fact_signature(self):
+        sig = inspect.signature(FactManagementPort.update_fact)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "fact_id", "updates"]
 
 
 # =============================================================================
@@ -441,6 +478,9 @@ class TestFactRepositoryContract:
     def test_has_get_active_facts(self):
         assert getattr(FactRepository.get_active_facts, "__isabstractmethod__", False)
 
+    def test_has_get_active_facts_ordered(self):
+        assert getattr(FactRepository.get_active_facts_ordered, "__isabstractmethod__", False)
+
     def test_has_get_paginated_facts(self):
         assert getattr(FactRepository.get_paginated_facts, "__isabstractmethod__", False)
 
@@ -489,7 +529,7 @@ class TestFactRepositoryContract:
             name for name, method in inspect.getmembers(FactRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 18, f"Expected 18 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 19, f"Expected 19 abstract methods, got {abstract_methods}"
 
     def test_add_fact_signature(self):
         sig = inspect.signature(FactRepository.add_fact)

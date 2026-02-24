@@ -37,8 +37,8 @@ class SearchConfig:
     # Session: 2026-02-07 Biographical Cache Optimization
     # Plan: docs/SESSION_2026_02_07_BIOGRAPHICAL_CACHE_OPTIMIZATION.md
     # RFC: docs/10_rfcs/BIOGRAPHICAL_CACHE_MULTI_VECTOR_RFC.md
-    DEFAULT_BIOGRAPHICAL_CACHE_LIMIT: int = 50
-    DEFAULT_PRINCIPLES_CACHE_LIMIT: int = 15
+    DEFAULT_BIOGRAPHICAL_CACHE_LIMIT: int = 65
+    DEFAULT_PRINCIPLES_CACHE_LIMIT: int = 20
 
     # History optimization (2026-02-18): Tiered history loading
     DEFAULT_HISTORY_RECENT_FULL_TURNS: int = 5

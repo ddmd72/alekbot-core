@@ -48,7 +48,8 @@ class SearchEnrichmentService(SearchEnrichmentPort):
         biographical_facts: Optional[List[Union[FactEntity, Dict]]] = None,
         limits: Optional[SearchLimits] = None,
         dedup_threshold: float = 0.98,
-        skip_semantic_dedup: bool = False
+        skip_semantic_dedup: bool = False,
+        sequential: bool = False,
     ) -> EnrichedContext:
         """
         Build enriched context using multi-channel search strategy + RRF ranking.
@@ -88,6 +89,9 @@ class SearchEnrichmentService(SearchEnrichmentPort):
             skip_semantic_dedup: Skip semantic deduplication entirely (default: False)
                 - False: Normal search (remove semantic duplicates)
                 - True: Consolidation mode (keep ALL facts with different IDs for MERGE)
+            sequential: Execute Firestore vector queries one-by-one instead of asyncio.gather
+                - False (default): Parallel — optimal for conversation path (latency matters)
+                - True: Sequential — reduces peak concurrency; use if quota pressure is observed
 
         Returns:
             EnrichedContext with deduplicated facts
@@ -109,25 +113,20 @@ class SearchEnrichmentService(SearchEnrichmentPort):
         # Join keywords into single query
         keyword_query = " ".join([k for k in keywords if k]) if keywords else ""
 
-        # Generate embeddings once per phrase (parallel)
-        embedding_tasks = []
-        if keyword_query:
-            embedding_tasks.append(self._embedding.get_embedding(keyword_query, "RETRIEVAL_QUERY"))
+        # Single batch call: 3 texts → 3 vectors in ~1-2s vs ~15s for 3 parallel to_thread calls.
+        # This shrinks the idle window before find_nearest from ~24s to ~11s.
+        # Only send non-empty texts — Gemini API rejects empty strings.
+        _slots = [keyword_query, search_phrase_1, search_phrase_2]
+        _filled = [(i, t) for i, t in enumerate(_slots) if t]
+        if _filled:
+            _idxs, _txts = zip(*_filled)
+            _batch = await self._embedding.get_embeddings_batch(list(_txts), "RETRIEVAL_QUERY")
+            _vec = dict(zip(_idxs, _batch))
         else:
-            embedding_tasks.append(asyncio.sleep(0, result=None))  # Placeholder
-        
-        if search_phrase_1:
-            embedding_tasks.append(self._embedding.get_embedding(search_phrase_1, "RETRIEVAL_QUERY"))
-        else:
-            embedding_tasks.append(asyncio.sleep(0, result=None))
-        
-        if search_phrase_2:
-            embedding_tasks.append(self._embedding.get_embedding(search_phrase_2, "RETRIEVAL_QUERY"))
-        else:
-            embedding_tasks.append(asyncio.sleep(0, result=None))
-
-        embeddings = await asyncio.gather(*embedding_tasks)
-        keyword_vector, phrase1_vector, phrase2_vector = embeddings
+            _vec = {}
+        keyword_vector = _vec.get(0) if keyword_query else None
+        phrase1_vector  = _vec.get(1) if search_phrase_1 else None
+        phrase2_vector  = _vec.get(2) if search_phrase_2 else None
 
         # Up to 7 parallel queries (1 domain + 6 vector)
         search_tasks = []
@@ -165,8 +164,19 @@ class SearchEnrichmentService(SearchEnrichmentPort):
                 self._search_by_vector_field(phrase2_vector, "metadata_vector", effective_limits.phrase_two_limit, "phrase2_metadata")
             )
 
-        # Execute all queries in parallel (up to 7 queries)
-        results = await asyncio.gather(*search_tasks, return_exceptions=True)
+        # Execute queries: parallel for conversation path, sequential for consolidation
+        if sequential:
+            logger.info(
+                f"🔍 [SearchEnrichment] Sequential mode: executing {len(search_tasks)} queries one-by-one"
+            )
+            results = []
+            for task in search_tasks:
+                try:
+                    results.append(await task)
+                except Exception as exc:
+                    results.append(exc)
+        else:
+            results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
         # Filter out exceptions
         valid_results = [self._safe_results(r) for r in results]
@@ -485,9 +495,18 @@ class SearchEnrichmentService(SearchEnrichmentPort):
                 EnrichedFact(
                     fact_id=fact.id,
                     content=fact.text,
-                    vector=fact.vector,  # Include vector for deduplication
+                    vector=fact.vector,
                     source=source_label,
-                    relevance_score=1.0  # Direct match, highest relevance
+                    relevance_score=1.0,
+                    fact_type=fact.type.value if fact.type else None,
+                    domain=fact.domain.value if fact.domain else None,
+                    temporal_class=fact.temporal_class.value if fact.temporal_class else None,
+                    state=fact.state.value if fact.state else None,
+                    context_priority=fact.context_priority.value if fact.context_priority else None,
+                    tags=fact.tags,
+                    metadata=fact.metadata,
+                    reported_date=fact.reported_date.isoformat() if fact.reported_date else None,
+                    version=fact.version,
                 )
                 for fact in facts
             ]
@@ -531,9 +550,18 @@ class SearchEnrichmentService(SearchEnrichmentPort):
                 EnrichedFact(
                     fact_id=fact.id,
                     content=fact.text,
-                    vector=fact.vector,  # Include vector for deduplication
+                    vector=fact.vector,
                     source=source_label,
-                    relevance_score=getattr(fact, "similarity", None)
+                    relevance_score=getattr(fact, "similarity", None),
+                    fact_type=fact.type.value if fact.type else None,
+                    domain=fact.domain.value if fact.domain else None,
+                    temporal_class=fact.temporal_class.value if fact.temporal_class else None,
+                    state=fact.state.value if fact.state else None,
+                    context_priority=fact.context_priority.value if fact.context_priority else None,
+                    tags=fact.tags,
+                    metadata=fact.metadata,
+                    reported_date=fact.reported_date.isoformat() if fact.reported_date else None,
+                    version=fact.version,
                 )
                 for fact in facts
             ]

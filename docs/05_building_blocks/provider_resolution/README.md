@@ -60,10 +60,11 @@ A central service locator that maintains active instances of LLM adapters (Gemin
 Defines the default provider and allowed overrides for each agent type.
 
 - **Router:** Default `gemini`, allowed: `["grok", "gemini"]` (fast inference).
-- **Quick:** Default `gemini`, allowed: `["grok", "gemini"]` (native tools).
+- **Quick:** Default `gemini`, allowed: `["grok", "gemini", "claude"]` (native tools). Claude supported since 2026-02-23: `AutomaticFunctionCallingConfig` is now conditional on `capabilities.native_tools` (True for Gemini/Grok, False for Claude).
 - **Smart:** Default `gemini`, allowed: `["claude", "openai", "gemini", "grok"]` (tool orchestration).
 - **Consolidation:** Default `claude`, allowed: `["claude", "gemini"]` (context caching).
 - **Postprocessing:** Default `gemini`, allowed: `["gemini"]` — **locked, no override**. Rationale: `response_schema` (structured JSON output) is a Gemini-only feature; Claude and Grok silently ignore it, causing JSON parse failures in `HistorySummaryService`. Tier (ECO/BALANCED/PERFORMANCE) remains user-configurable via `agent_tiers["postprocessing"]`.
+- **MemorySearch:** No dedicated strategy entry — resolved via `build("router", config)`. Always gets the same provider/model as RouterAgent (Gemini Flash by default). Rationale: MemorySearch does key formulation only (small, fast task), not user-facing reasoning.
 
 ---
 
@@ -170,3 +171,6 @@ The result is an `AgentExecutionContext` DTO containing:
 **Last Updated:** 2026-02-24
 **Status:** ✅ Complete (Per-Agent Provider Selection + Postprocessing Lock + Prompt Cache Strategy)
 **Phase:** Provider Resolution Enhancement + Hexagonal Prompt Caching
+**Last Updated:** 2026-02-23
+**Status:** ✅ Complete (Per-Agent Provider Selection + Postprocessing Lock + Claude Quick support)
+**Phase:** Provider Resolution Enhancement

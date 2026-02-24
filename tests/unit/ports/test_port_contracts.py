@@ -72,12 +72,12 @@ class TestConsolidationQueueContract:
             assert count == 1, f"{method_name} defined {count} times, expected 1"
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 7 abstract methods."""
+        """Port should have exactly 8 abstract methods."""
         abstract_methods = {
             name for name, method in inspect.getmembers(ConsolidationQueue)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 7, f"Expected 7 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 8, f"Expected 8 abstract methods, got {abstract_methods}"
 
     def test_enqueue_batch_signature(self):
         sig = inspect.signature(ConsolidationQueue.enqueue_batch)

@@ -1,7 +1,7 @@
 # Prompt Assembly Guide
 
 **Status:** ✅ Active
-**Last Updated:** 2026-02-01
+**Last Updated:** 2026-02-23
 **Session:** 25 (Prompt Component Refactoring)
 
 ## Overview
@@ -300,6 +300,41 @@ TEMPLATE_CONSOLIDATION = PromptTemplate(
 
 ---
 
+## `build_for_agent` API
+
+### Signature
+
+```python
+async def build_for_agent(
+    self,
+    agent_type: str,
+    user_id: str,
+    account_id: Optional[str] = None,
+    routing_metadata: Optional[RoutingMetadata] = None,
+    semantic_context: Optional[SemanticContext] = None,
+    capabilities: Optional[ProviderCapabilities] = None,
+    include_biographical: bool = True,
+) -> str
+```
+
+### `include_biographical` Flag (2026-02-23)
+
+Controls whether the biographical context is fetched from Firestore and injected into the prompt.
+
+| Value | Behavior | Use case |
+| ----- | -------- | -------- |
+| `True` (default) | Fetches `get_biographical_context_cached(account_id)` and injects into prompt | Conversational agents (Smart, Quick) |
+| `False` | Skips Firestore fetch; `biographical_facts = []` | Router, MemorySearch — agents that don't use bio context in their system prompt |
+
+**Rationale:** RouterAgent and MemorySearchAgent do not include biographical facts in their prompts. Without this flag, they were paying ~1400ms on first call per session for a Firestore fetch they never used.
+
+**Callers using `include_biographical=False`:**
+
+- `RouterAgent._load_triage_prompt()` — router prompt has no bio slot
+- `MemorySearchAgent._formulate_search_keys()` — key formulation prompt has no bio slot
+
+---
+
 ## Agent Patterns
 
 ### Pattern 1: Conversational Agents (Smart, Quick)
@@ -398,7 +433,8 @@ async def _load_triage_prompt(self, message: AgentMessage) -> str:
             agent_type="router",
             user_id=self.user_id,
             account_id=account_id,
-            routing_metadata=None
+            routing_metadata=None,
+            include_biographical=False,  # Router doesn't need bio context
         )
     return self._cached_triage_prompt
 ```

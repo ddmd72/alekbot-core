@@ -248,12 +248,15 @@ class FactWriteService(FactWritePort):
         tags_text = " ".join(tags) if tags else text  # Fallback to text if no tags
         metadata_text = json.dumps(metadata, ensure_ascii=False) if metadata else text
         
-        # Parallel generation of 3 vectors
-        # Session 2026-02-08: Use asyncio.gather for 3x speedup
-        vector, tags_vector, metadata_vector = await asyncio.gather(
-            self._embedding.get_embedding(text, "RETRIEVAL_DOCUMENT"),
-            self._embedding.get_embedding(tags_text, "SEMANTIC_SIMILARITY"),
-            self._embedding.get_embedding(metadata_text, "SEMANTIC_SIMILARITY")
+        # Single batch call: 3 texts → 3 vectors in one HTTP request (~5s vs ~15s).
+        # genai.Client serializes concurrent to_thread calls at the HTTP layer,
+        # so asyncio.gather with 3 get_embedding() calls was effectively sequential.
+        # All three use "RETRIEVAL_DOCUMENT" — consistent with the "RETRIEVAL_QUERY"
+        # vectors used at search time (SearchEnrichmentService). Previously
+        # tags/metadata used "SEMANTIC_SIMILARITY" which was already mismatched
+        # with the "RETRIEVAL_QUERY" search vectors.
+        vector, tags_vector, metadata_vector = await self._embedding.get_embeddings_batch(
+            [text, tags_text, metadata_text], "RETRIEVAL_DOCUMENT"
         )
         
         logger.debug(

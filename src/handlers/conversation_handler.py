@@ -577,17 +577,17 @@ class ConversationHandler(ConversationHandlerPort):
                 # Save trimmed session
                 await session_store.save_session(session.session_id, session)
                 
-                # Process
+                # Process — await keeps HTTP request alive → full CPU on Cloud Run
                 from src.handlers.consolidation_handler import process_user_batches_on_overflow
-                asyncio.create_task(process_user_batches_on_overflow(
+                await process_user_batches_on_overflow(
                     user_id=context.user_id,
                     coordinator=self.coordinator,
                     agent_factory=self.agent_factory,
                     queue=self.consolidation_queue
-                ))
-                
+                )
+
                 await response_channel.send_message(
-                    f"✅ Manual consolidation triggered. Processing {len(serialized)} messages in background.",
+                    f"✅ Консолідація завершена: оброблено {len(serialized)} повідомлень.",
                     thread_id=context.thread_id
                 )
             else:

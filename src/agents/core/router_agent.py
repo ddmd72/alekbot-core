@@ -149,7 +149,6 @@ class RouterAgent(BaseAgent):
         "required": [
             "target_agent",
             "confidence",
-            "reasoning",
             "search_intent",
             "relevant_domains",
             "semantic_lens",
@@ -387,7 +386,8 @@ class RouterAgent(BaseAgent):
                 agent_type="router",
                 user_id=self.user_id,
                 account_id=account_id,
-                routing_metadata=None
+                routing_metadata=None,
+                include_biographical=False
             )
         return self._cached_triage_prompt
 
@@ -434,6 +434,8 @@ class RouterAgent(BaseAgent):
             system_instruction=prompt,
             messages=clean_messages,
             temperature=0.0,
+            max_tokens=300,
+            disable_safety=True,
             response_mime_type="application/json",
             response_schema=self.TRIAGE_RESPONSE_SCHEMA
         )

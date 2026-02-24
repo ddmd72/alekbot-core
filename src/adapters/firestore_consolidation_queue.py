@@ -88,6 +88,20 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         await doc_ref.delete()
         logger.debug(f"🗑️ Deleted batch {batch_id}")
     
+    async def reset_processing_batches(self, user_id: str) -> int:
+        """Reset stale PROCESSING → RETRY_PENDING. Recovers zombies from crashed workers."""
+        query = (
+            self.collection
+            .where(filter=FieldFilter("status", "==", BatchStatus.PROCESSING.value))
+            .where(filter=FieldFilter("user_id", "==", user_id))
+        )
+        docs = await query.get()
+        for doc in docs:
+            await doc.reference.update({"status": BatchStatus.RETRY_PENDING.value})
+        if docs:
+            logger.info(f"♻️ Reset {len(docs)} stale PROCESSING batches → RETRY_PENDING for user {user_id[:8]}")
+        return len(docs)
+
     async def cleanup_old_batches(self, user_id: str, max_messages: int = 600) -> int:
         """Delete oldest completed/failed batches if total > max_messages."""
         current_size = await self.get_queue_size(user_id)

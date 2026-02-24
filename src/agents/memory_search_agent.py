@@ -67,7 +67,7 @@ class MemorySearchAgent(BaseAgent):
                 "maxItems": 2,
             },
         },
-        "required": ["keywords", "primary_query", "alternative_query"],
+        "required": ["keywords", "primary_query", "alternative_query", "domains"],
     }
     
     def __init__(
@@ -164,6 +164,7 @@ class MemorySearchAgent(BaseAgent):
                     user_id=self._user_id,
                     account_id=self._account_id,
                     routing_metadata=None,
+                    include_biographical=False,
                 )
 
             user_text = f'SEARCH_REQUEST "{query}"'
@@ -173,6 +174,8 @@ class MemorySearchAgent(BaseAgent):
                 messages=[Message(role="user", parts=[MessagePart(text=user_text)])],
                 tools=[],
                 temperature=0.0,
+                max_tokens=150,
+                disable_safety=True,
                 response_mime_type="application/json",
                 response_schema=self.MEMORY_SEARCH_RESPONSE_SCHEMA,
             )
@@ -187,6 +190,7 @@ class MemorySearchAgent(BaseAgent):
 
             response = await self._llm.generate_content(request=request)
             raw_response = (response.text or "").strip()
+            logger.info("🔍 [MemorySearchAgent] LLM raw response: %r", raw_response[:300])
 
             debug_logger.log_response(
                 agent_name="memory_search",

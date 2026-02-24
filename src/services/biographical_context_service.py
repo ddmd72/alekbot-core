@@ -17,7 +17,7 @@ Architecture:
 from typing import List, Dict, Optional, Any
 
 from ..ports.repository import FactRepository
-from ..domain.entities import FactType, FactState, ContextPriority
+from ..domain.entities import FactType, FactState, ContextPriority, FactDomain
 from ..config.settings import SearchConfig
 from ..utils.logger import logger
 
@@ -131,80 +131,38 @@ class BiographicalContextService:
         )
         
         # ========================================================================
-        # STEP 2: Get ALL CURRENT facts (direct query, no semantic search)
-        # SESSION 2026-02-17: Repository filters state == CURRENT (only active facts)
+        # STEP 2: Fetch facts — BIOGRAPHICAL domain first, fill from others if needed.
+        # Uses context_priority_rank for efficient ORDER BY in Firestore (no Python sort).
         # ========================================================================
-        current_facts = await self._repo.get_active_facts(
-            owner_id=account_id,
-            tags=None  # Get all facts, no filtering
+        biog_facts = await self._repo.get_active_facts_ordered(
+            account_id, domain=FactDomain.BIOGRAPHICAL.value, limit=facts_limit
         )
-        
-        logger.debug(
-            f"📊 [BiographicalContext] Loaded {len(current_facts)} facts "
-            f"(SUPERSEDED already filtered in Repository query)"
-        )
-        
-        # ========================================================================
-        # STEP 4: Group by context_priority (CRITICAL/HIGH/MEDIUM/LOW)
-        # SESSION 2026-02-16: Sort within each priority by created_at DESC (newest first)
-        # ========================================================================
-        critical = []
-        high = []
-        medium = []
-        low = []
-        
-        for fact in current_facts:
-            priority = fact.context_priority or ContextPriority.MEDIUM  # Default MEDIUM
-            
-            if priority == ContextPriority.CRITICAL:
-                critical.append(fact)
-            elif priority == ContextPriority.HIGH:
-                high.append(fact)
-            elif priority == ContextPriority.MEDIUM:
-                medium.append(fact)
-            elif priority == ContextPriority.LOW:
-                low.append(fact)
-            # ARCHIVAL priority excluded automatically
-        
-        # Sort each priority group by created_at DESC (newest first)
-        critical.sort(key=lambda f: f.created_at or "", reverse=True)
-        high.sort(key=lambda f: f.created_at or "", reverse=True)
-        medium.sort(key=lambda f: f.created_at or "", reverse=True)
-        low.sort(key=lambda f: f.created_at or "", reverse=True)
-        
-        logger.debug(
-            f"📊 [BiographicalContext] Priority distribution: "
-            f"CRITICAL={len(critical)}, HIGH={len(high)}, "
-            f"MEDIUM={len(medium)}, LOW={len(low)}"
-        )
+
+        current_facts = list(biog_facts)
+        if len(current_facts) < facts_limit:
+            remaining = facts_limit - len(current_facts)
+            biog_ids = {f.id for f in current_facts}
+            all_ordered = await self._repo.get_active_facts_ordered(account_id, limit=facts_limit)
+            fill = [f for f in all_ordered if f.id not in biog_ids][:remaining]
+            current_facts.extend(fill)
+            logger.debug(
+                f"📊 [BiographicalContext] Loaded {len(biog_facts)} biographical + {len(fill)} fill facts"
+            )
+        else:
+            logger.debug(
+                f"📊 [BiographicalContext] Loaded {len(biog_facts)} biographical facts (limit reached)"
+            )
+
+        selected_facts = current_facts
         
         # ========================================================================
-        # STEP 5: Build combined list with intelligent limits
-        # CRITICAL always ALL (over limit if necessary)
-        # ========================================================================
-        selected_facts = critical[:]  # ALL CRITICAL facts
-        remaining_limit = max(0, facts_limit - len(selected_facts))
-        
-        # Add HIGH until limit
-        selected_facts.extend(high[:remaining_limit])
-        remaining_limit = max(0, facts_limit - len(selected_facts))
-        
-        # Add MEDIUM until limit
-        selected_facts.extend(medium[:remaining_limit])
-        remaining_limit = max(0, facts_limit - len(selected_facts))
-        
-        # Add LOW if space available
-        selected_facts.extend(low[:remaining_limit])
-        
-        # ========================================================================
-        # STEP 6: Separate into facts vs principles + convert to dict format
-        # SESSION 2026-02-17: Mindset-based separation (tag "mindset")
+        # STEP 3: Separate into facts vs principles + convert to dict format
+        # Facts are already in priority order from Firestore — no Python sorting needed.
+        # Principle = any fact with "mindset" tag (domain irrelevant).
         # ========================================================================
         biographical_facts = []
-        principles_all = []
-        
-        # First pass: separate facts from principles (preserve priority order)
-        # Principle = any fact with "mindset" tag (domain irrelevant)
+        principles_list = []
+
         for fact in selected_facts:
             fact_dict = {
                 "id": fact.id,
@@ -213,46 +171,17 @@ class BiographicalContextService:
                 "tags": fact.tags,
                 "context_priority": fact.context_priority.value if fact.context_priority else "medium",
                 "created_at": fact.created_at.isoformat() if fact.created_at else None,
-                "_priority_obj": fact.context_priority or ContextPriority.MEDIUM  # Temp for sorting
             }
-            
-            # SESSION 2026-02-17: Principle = "mindset" tag (any domain)
+
             if "mindset" in fact.tags:
-                principles_all.append(fact_dict)
+                if len(principles_list) < principles_limit:
+                    principles_list.append(fact_dict)
             else:
                 biographical_facts.append(fact_dict)
-        
-        # Apply principles limit with same priority logic
-        # CRITICAL principles always included (over limit if necessary)
-        principles_critical = [p for p in principles_all if p["_priority_obj"] == ContextPriority.CRITICAL]
-        principles_high = [p for p in principles_all if p["_priority_obj"] == ContextPriority.HIGH]
-        principles_medium = [p for p in principles_all if p["_priority_obj"] == ContextPriority.MEDIUM]
-        principles_low = [p for p in principles_all if p["_priority_obj"] == ContextPriority.LOW]
-        
-        principles_list = principles_critical[:]  # ALL CRITICAL principles
-        remaining_limit = max(0, principles_limit - len(principles_list))
-        
-        principles_list.extend(principles_high[:remaining_limit])
-        remaining_limit = max(0, principles_limit - len(principles_list))
-        
-        principles_list.extend(principles_medium[:remaining_limit])
-        remaining_limit = max(0, principles_limit - len(principles_list))
-        
-        principles_list.extend(principles_low[:remaining_limit])
-        
-        # Remove temp priority object
-        for p in principles_list:
-            del p["_priority_obj"]
-        for f in biographical_facts:
-            del f["_priority_obj"]
-        
-        critical_facts_count = len([f for f in selected_facts if f.context_priority == ContextPriority.CRITICAL and f.type != FactType.PRINCIPLE])
-        critical_principles_count = len([p for p in principles_list if p["context_priority"] == "critical"])
-        
+
         logger.info(
             f"✅ [BiographicalContext] Cache refreshed for {account_id[:8]}: "
-            f"{len(biographical_facts)} facts (CRITICAL={critical_facts_count} always included), "
-            f"{len(principles_list)} principles (CRITICAL={critical_principles_count} always included)"
+            f"{len(biographical_facts)} facts, {len(principles_list)} principles"
         )
         
         return {

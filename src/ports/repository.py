@@ -29,6 +29,27 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
+    async def get_active_facts_ordered(
+        self,
+        account_id: str,
+        domain: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[FactEntity]:
+        """
+        Current non-archival facts ordered by priority rank then recency.
+
+        Args:
+            account_id: Account ID
+            domain: Optional domain filter (e.g. "biographical")
+            limit: Maximum number of results
+
+        Returns:
+            Facts sorted by context_priority_rank ASC, created_at DESC.
+            Excludes facts with ARCHIVAL priority.
+        """
+        pass
+
+    @abstractmethod
     async def get_paginated_facts(
         self,
         owner_id: str,

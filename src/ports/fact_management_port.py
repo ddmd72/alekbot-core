@@ -39,6 +39,34 @@ class FactManagementPort(ABC):
         pass
 
     @abstractmethod
+    async def create_fact(self, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a new fact.
+
+        Args:
+            content: Fact text
+            metadata: Fact metadata (must include account_id, user_id, domain, etc.)
+
+        Returns:
+            Result dict with fact_id, status, message
+        """
+        pass
+
+    @abstractmethod
+    async def update_fact(self, fact_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update an existing fact.
+
+        Args:
+            fact_id: UUID of fact to update
+            updates: Fields to update (content, tags, state, etc.)
+
+        Returns:
+            Result dict with status, version, message
+        """
+        pass
+
+    @abstractmethod
     async def merge_facts(
         self,
         fact_ids: List[str],

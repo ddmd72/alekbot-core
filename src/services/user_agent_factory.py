@@ -228,7 +228,7 @@ class UserAgentFactory:
 
         account_id = user_profile.account_id
 
-        memory_search_context = self.context_builder.build("quick", user_profile.config)
+        memory_search_context = self.context_builder.build("router", user_profile.config)
         memory_agent = MemorySearchAgent(
             config=AgentConfig(
                 agent_id=f"memory_search_agent_{user_id}",

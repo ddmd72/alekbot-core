@@ -191,3 +191,36 @@ class GcpTaskQueue(TaskQueue):
         except Exception as e:
             logger.error(f"❌ Failed to enqueue agent task: {e}", exc_info=True)
             raise
+
+    async def enqueue_consolidation_task(self, user_id: str) -> str:
+        """Enqueue consolidation task via Cloud Tasks — gives it its own HTTP request + full CPU."""
+        try:
+            payload = {
+                "task_type": "consolidation",
+                "user_id": user_id,
+            }
+
+            task = {
+                "http_request": {
+                    "http_method": tasks_v2.HttpMethod.POST,
+                    "url": f"{self.service_url}/worker",
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps(payload).encode()
+                }
+            }
+
+            if self.service_account_email:
+                task["http_request"]["oidc_token"] = {
+                    "service_account_email": self.service_account_email
+                }
+
+            response = self.client.create_task(
+                request={"parent": self.queue_path, "task": task}
+            )
+
+            logger.info(f"📦 Enqueued consolidation task for user {user_id[:8]}: {response.name}")
+            return response.name
+
+        except Exception as e:
+            logger.error(f"❌ Failed to enqueue consolidation task: {e}", exc_info=True)
+            raise

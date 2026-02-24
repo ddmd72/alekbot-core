@@ -14,6 +14,35 @@ from ..utils.timer import log_execution_time
 from ..ports.embedding_service import EmbeddingService
 from ..utils.logger import logger
 
+# Forward google.api_core retry events (DEBUG) to our INFO logger so they appear in Cloud Run.
+import logging as _logging
+
+class _GcpRetryForwarder(_logging.Handler):
+    """Forward google.api_core retry events to app logger at INFO level."""
+    def emit(self, record):
+        logger.info(f"🔄 [gcp_retry] {record.getMessage()}")
+
+_gcp_retry_logger = _logging.getLogger("google.api_core.retry_async")
+_gcp_retry_logger.addHandler(_GcpRetryForwarder())
+_gcp_retry_logger.setLevel(_logging.DEBUG)
+
+# Numeric rank for context_priority — stored in Firestore only (not in FactEntity).
+# Allows efficient ORDER BY queries without changing the domain model.
+_PRIORITY_RANK: Dict[str, int] = {
+    "critical": 1,
+    "high":     2,
+    "medium":   3,
+    "low":      4,
+    "archival": 5,
+}
+
+# Quota guard: cap concurrent Firestore find_nearest calls to prevent
+# RESOURCE_EXHAUSTED when multiple agents fire parallel vector searches.
+# Each search spawns up to 6 find_nearest queries; this semaphore prevents
+# quota saturation under high concurrency.
+_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(30)
+
+
 class FirestoreFactRepository(FactRepository):
     """
     Adapter for Google Cloud Firestore with environment isolation.
@@ -128,7 +157,6 @@ class FirestoreFactRepository(FactRepository):
         
         # SESSION 2026-02-09: FIX - Vector() wrapper REQUIRED for correct serialization
         # Without Vector() wrapper, Firestore saves as map {0: val, 1: val, ...} instead of array
-        # Index type (FLAT vs HNSW) is controlled by firestore.indexes.json, NOT by wrapper
         # Vector() wrapper ensures proper vector field recognition by Firestore Vector Search
         
         if 'vector' in data and data['vector'] is not None:
@@ -137,7 +165,11 @@ class FirestoreFactRepository(FactRepository):
             data['tags_vector'] = Vector(data['tags_vector'])
         if 'metadata_vector' in data and data['metadata_vector'] is not None:
             data['metadata_vector'] = Vector(data['metadata_vector'])
-        
+
+        data['context_priority_rank'] = _PRIORITY_RANK.get(
+            data.get('context_priority') or 'medium', 3
+        )
+
         await doc_ref.set(data)
         return fact.id
 
@@ -189,19 +221,28 @@ class FirestoreFactRepository(FactRepository):
             # Firestore supports 'array_contains_any' for tags
             query = query.where(filter=FieldFilter("tags", "array_contains_any", tags))
 
-        # Use get() instead of stream() for better performance on small result sets
+        # Exclude embedding vectors — callers never use raw floats (biographical context,
+        # prompt builder, cabinet UI, anchors). Each vector field is 768 floats (~3KB),
+        # 3 fields per doc = ~9KB. With 147 facts that's ~1.3MB of unused data → 22-39s latency.
+        query = query.select([
+            # Required fields (no defaults in FactEntity)
+            "account_id", "created_by_user_id", "lineage_id", "text", "type",
+            # Legacy migration support (owner_id → account_id + created_by_user_id)
+            "owner_id",
+            # Optional fields used by callers
+            "state", "domain", "tags", "context_priority",
+            "valid_from", "valid_to", "created_at", "updated_at",
+            "source", "version", "language", "visibility",
+            "reported_date", "is_current", "metadata",
+        ])
+
         docs = await query.get()
+        logger.info(f"🗂️ [get_active_facts] loaded {len(docs)} docs for {owner_id[:8]}")
 
         results = []
         for doc in docs:
             data = doc.to_dict()
-            if 'vector' in data and isinstance(data['vector'], Vector):
-                data['vector'] = list(data['vector'])
-            # SESSION 2026-02-07: Multi-vector support
-            if 'tags_vector' in data and isinstance(data['tags_vector'], Vector):
-                data['tags_vector'] = list(data['tags_vector'])
-            if 'metadata_vector' in data and isinstance(data['metadata_vector'], Vector):
-                data['metadata_vector'] = list(data['metadata_vector'])
+            data['id'] = doc.id  # doc.id not included in .select() projection
             # Migrate ownership fields for backward compatibility
             data = self._migrate_ownership_fields(data)
             results.append(FactEntity(**data))
@@ -325,31 +366,56 @@ class FirestoreFactRepository(FactRepository):
 
         # STEP 3: Vector search by account_id with configurable vector field
         # SESSION 2026-02-17: Only CURRENT facts (not STALE, ARCHIVED, SUPERSEDED, INVALIDATED)
+        # .select() excludes the 3 embedding fields server-side — callers never read raw floats.
+        # 10 results × 3 vectors × ~3KB = ~90KB/call; 6 parallel calls = ~540KB → gRPC saturation.
         vector_query = (
             self.facts_col
             .where(filter=FieldFilter("account_id", "==", search_account_id))
             .where(filter=FieldFilter("state", "==", "current"))  # Only active current facts
+            .select([
+                "account_id", "owner_id", "created_by_user_id", "lineage_id",
+                "text", "type", "state", "domain", "tags", "context_priority",
+                "valid_from", "valid_to", "created_at", "source", "version",
+                "visibility", "metadata", "temporal_class", "reported_date",
+                "vector",  # Required by SearchEnrichmentService for RRF semantic dedup
+                # tags_vector and metadata_vector excluded (~6KB saved per result)
+            ])
             .find_nearest(
                 vector_field=vector_field,  # Configurable: "vector" | "metadata_vector" | "tags_vector"
-                query_vector=query_vector,  # REMOVED Vector() wrapper to avoid forcing FLAT index
+                query_vector=query_vector,  # No Vector() wrapper needed for query vectors
                 distance_measure=DistanceMeasure.COSINE,
                 limit=limit
             )
         )
 
-        docs = await vector_query.get()
+        t0 = asyncio.get_event_loop().time()
+        async with _FIND_NEAREST_SEMAPHORE:
+            t1 = asyncio.get_event_loop().time()
+            logger.info(
+                f"🔍 [find_nearest] START field={vector_field} limit={limit} "
+                f"sem_wait={1000*(t1-t0):.0f}ms account={search_account_id[:8]}"
+            )
+            try:
+                docs = await vector_query.get()
+                t2 = asyncio.get_event_loop().time()
+                logger.info(
+                    f"✅ [find_nearest] DONE field={vector_field} "
+                    f"results={len(docs)} elapsed={1000*(t2-t1):.0f}ms"
+                )
+            except Exception as exc:
+                t2 = asyncio.get_event_loop().time()
+                logger.error(
+                    f"💥 [find_nearest] FAIL field={vector_field} "
+                    f"elapsed={1000*(t2-t1):.0f}ms "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                raise
 
         # STEP 5: Parse results
         results = []
         for doc in docs:
             data = doc.to_dict()
-            if 'vector' in data and isinstance(data['vector'], Vector):
-                data['vector'] = list(data['vector'])
-            # SESSION 2026-02-07: Multi-vector support
-            if 'tags_vector' in data and isinstance(data['tags_vector'], Vector):
-                data['tags_vector'] = list(data['tags_vector'])
-            if 'metadata_vector' in data and isinstance(data['metadata_vector'], Vector):
-                data['metadata_vector'] = list(data['metadata_vector'])
+            data['id'] = doc.id  # doc.id not included in .select() projection
             data = self._migrate_ownership_fields(data)
             results.append(FactEntity(**data))
 
@@ -362,7 +428,6 @@ class FirestoreFactRepository(FactRepository):
         
         # SESSION 2026-02-09: FIX - Vector() wrapper REQUIRED for correct serialization
         # Without Vector() wrapper, Firestore saves as map {0: val, 1: val, ...} instead of array
-        # Index type (FLAT vs HNSW) is controlled by firestore.indexes.json, NOT by wrapper
         # Vector() wrapper ensures proper vector field recognition by Firestore Vector Search
         
         if 'vector' in data and data['vector'] is not None:
@@ -371,8 +436,70 @@ class FirestoreFactRepository(FactRepository):
             data['tags_vector'] = Vector(data['tags_vector'])
         if 'metadata_vector' in data and data['metadata_vector'] is not None:
             data['metadata_vector'] = Vector(data['metadata_vector'])
-        
+
+        data['context_priority_rank'] = _PRIORITY_RANK.get(
+            data.get('context_priority') or 'medium', 3
+        )
+
         await doc_ref.set(data)
+
+    @log_execution_time
+    async def get_active_facts_ordered(
+        self,
+        account_id: str,
+        domain: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[FactEntity]:
+        """
+        Bounded, priority-ordered query for biographical cache building.
+
+        Uses context_priority_rank (adapter-only Firestore field) for efficient
+        ORDER BY without touching the domain model. Excludes ARCHIVAL priority (rank=5).
+
+        Requires indexes:
+          (account_id, state, context_priority_rank, created_at DESC)
+          (account_id, state, domain, context_priority_rank, created_at DESC)  — with domain filter
+        """
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", account_id))
+            .where(filter=FieldFilter("state", "==", "current"))
+        )
+
+        if domain:
+            query = query.where(filter=FieldFilter("domain", "==", domain))
+
+        query = (
+            query
+            .where(filter=FieldFilter("context_priority_rank", "<", 5))
+            .order_by("context_priority_rank", direction=firestore.Query.ASCENDING)
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .select([
+                "account_id", "created_by_user_id", "lineage_id", "text", "type",
+                "owner_id",
+                "state", "domain", "tags", "context_priority",
+                "valid_from", "valid_to", "created_at", "updated_at",
+                "source", "version", "language", "visibility",
+                "reported_date", "is_current", "metadata",
+            ])
+        )
+
+        if limit:
+            query = query.limit(limit)
+
+        docs = await query.get()
+        logger.info(
+            f"🗂️ [get_active_facts_ordered] {len(docs)} docs for {account_id[:8]}"
+            f"{f' domain={domain}' if domain else ''}"
+        )
+
+        results = []
+        for doc in docs:
+            data = doc.to_dict()
+            data['id'] = doc.id
+            data = self._migrate_ownership_fields(data)
+            results.append(FactEntity(**data))
+        return results
 
     async def get_lineage(self, lineage_id: str) -> List[FactEntity]:
         docs = self.facts_col.where(filter=FieldFilter("lineage_id", "==", lineage_id)).order_by("created_at", direction=firestore.Query.DESCENDING).stream()

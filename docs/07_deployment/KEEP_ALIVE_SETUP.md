@@ -50,6 +50,16 @@ gcloud logging read 'resource.type=cloud_scheduler_job' \
 - **Keeps instance warm:** Prevents scale-to-zero
 - **Preserves cache:** In-memory prompt cache stays alive
 
+> **Note: Cold start vs. CPU throttling are two separate Cloud Run behaviors.**
+>
+> This setup prevents **scale-to-zero cold starts** (instance termination after ~15 min of inactivity).
+>
+> A separate issue is **CPU throttling**: Cloud Run reduces CPU to ~5% even on a warm instance when
+> no HTTP request is actively being processed. `asyncio.create_task()` calls that immediately return
+> 200 trigger this throttling mid-execution. The fix for CPU throttling is architectural — background
+> jobs must be dispatched via Cloud Tasks (separate HTTP request = full CPU), not via `create_task`.
+> See `src/handlers/consolidation_handler.py` and `main.py:overflow_callback` for the applied pattern.
+
 ---
 
 ## Cost Analysis

@@ -16,6 +16,16 @@ class EnrichedFact:
     source: str  # "keyword", "phrase_1", "phrase_2"
     relevance_score: Optional[float] = None
     vector: Optional[List[float]] = None  # Included for semantic deduplication
+    # Taxonomy fields — populated by SearchEnrichmentService; None for callers that don't need them
+    fact_type: Optional[str] = None
+    domain: Optional[str] = None
+    temporal_class: Optional[str] = None
+    state: Optional[str] = None
+    context_priority: Optional[str] = None
+    tags: Optional[List[str]] = None
+    metadata: Optional[Dict] = None
+    reported_date: Optional[str] = None  # ISO string
+    version: Optional[int] = None
 
 @dataclass
 class EnrichedContext:
