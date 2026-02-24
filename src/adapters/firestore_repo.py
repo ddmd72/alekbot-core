@@ -147,7 +147,6 @@ class FirestoreFactRepository(FactRepository):
         
         # SESSION 2026-02-09: FIX - Vector() wrapper REQUIRED for correct serialization
         # Without Vector() wrapper, Firestore saves as map {0: val, 1: val, ...} instead of array
-        # Index type (FLAT vs HNSW) is controlled by firestore.indexes.json, NOT by wrapper
         # Vector() wrapper ensures proper vector field recognition by Firestore Vector Search
         
         if 'vector' in data and data['vector'] is not None:
@@ -369,7 +368,7 @@ class FirestoreFactRepository(FactRepository):
             ])
             .find_nearest(
                 vector_field=vector_field,  # Configurable: "vector" | "metadata_vector" | "tags_vector"
-                query_vector=query_vector,  # REMOVED Vector() wrapper to avoid forcing FLAT index
+                query_vector=query_vector,  # No Vector() wrapper needed for query vectors
                 distance_measure=DistanceMeasure.COSINE,
                 limit=limit
             )
@@ -415,7 +414,6 @@ class FirestoreFactRepository(FactRepository):
         
         # SESSION 2026-02-09: FIX - Vector() wrapper REQUIRED for correct serialization
         # Without Vector() wrapper, Firestore saves as map {0: val, 1: val, ...} instead of array
-        # Index type (FLAT vs HNSW) is controlled by firestore.indexes.json, NOT by wrapper
         # Vector() wrapper ensures proper vector field recognition by Firestore Vector Search
         
         if 'vector' in data and data['vector'] is not None:
