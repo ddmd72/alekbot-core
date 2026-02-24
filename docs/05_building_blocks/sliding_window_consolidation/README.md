@@ -173,7 +173,31 @@ Compression LLM instruction (enforced via `response_schema`):
 
 ---
 
-## 7. Status & Roadmap
+## 7. Operational Notes
+
+### 7.1 Concurrent Execution and KNN Latency
+
+ConsolidationAgent runs as a Cloud Tasks HTTP request on the same Cloud Run instance that handles user messages. Both paths share the same asyncio event loop and the same `_FIND_NEAREST_SEMAPHORE` semaphore.
+
+**What happens when consolidation and a user request overlap:**
+
+1. ConsolidationAgent's `search_existing_facts` tool calls `SearchEnrichmentService` → 3–6 `find_nearest` streams.
+2. A concurrent Slack message event triggers RouterAgent → another 3–6 `find_nearest` streams.
+3. Combined: 6–12 streams hit the Firestore KNN backend simultaneously.
+4. Firestore throttles silently → each `find_nearest` degrades from ~500ms to **30–44s**.
+5. No exceptions raised by the SDK. Only observable via elapsed time in `[find_nearest] DONE` log lines.
+
+This is a structural constraint of running multiple search-heavy agents on a single 1-vCPU Cloud Run instance. Consolidation is a background process — its latency (1–5 min total) is acceptable. The main risk is degrading the user-facing response path during consolidation.
+
+**Mitigation in place:** `_FIND_NEAREST_SEMAPHORE` in `src/adapters/firestore_repo.py` caps global concurrent `find_nearest` calls. See the Search Enrichment building block for tuning guidance.
+
+### 7.2 Per-Session Worker Serialization
+
+Multiple Cloud Tasks worker requests for the same Slack session (same `thread_ts`) can arrive concurrently. Each would trigger its own agent chain including Firestore reads, compounding the resource contention described above.
+
+**Mitigation in place:** `HTTPModeAdapter._session_locks` (a `WeakValueDictionary[str, asyncio.Lock]`) in `src/adapters/slack/http_adapter.py`. If a worker for session X is already processing, subsequent workers return HTTP 429 → Cloud Tasks retries after backoff.
+
+## 8. Status & Roadmap
 
 **Status:** ✅ Production Ready
 

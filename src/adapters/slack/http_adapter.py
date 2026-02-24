@@ -3,10 +3,12 @@ HTTP Mode Adapter
 Enterprise-level implementation using platform-agnostic ConversationHandler
 Implements Slack Events API with async queue processing via Cloud Tasks
 """
+import asyncio
 import hashlib
 import hmac
 import json
 import time
+import weakref
 from typing import Optional, Dict, Any
 from slack_bolt.async_app import AsyncApp
 from quart import Blueprint, request, jsonify
@@ -65,6 +67,7 @@ class HTTPModeAdapter(SlackAdapter):
         self.task_service = task_service
         self.session_store = session_store
         self.dedup_store = dedup_store
+        self._session_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
         if not self.slack_signing_secret:
             raise ValueError("SLACK_SIGNING_SECRET is required for HTTP Mode")
@@ -194,28 +197,40 @@ class HTTPModeAdapter(SlackAdapter):
                 logger.warning(f"⚠️ Missing event_data or session_id in worker task")
                 return jsonify({"ok": False, "error": "Missing required fields"}), 400
 
-            with start_span("worker.process_event", {
-                "session_id": session_id,
-                "trace_id": get_trace_ids().get("trace_id")
-            }, ctx=ctx):
-                set_request_context(session_id=session_id)
-                set_log_context(session_id=session_id)
-                logger.info(f"🔧 Processing worker task for session {session_id[:8]}...")
+            # Per-session lock: serialize concurrent workers for the same session.
+            # Strong local ref keeps the lock alive in WeakValueDictionary until function returns.
+            lock = self._session_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._session_locks[session_id] = lock
 
-                event = event_data.get("event", {})
-                event_type = event.get("type")
+            if lock.locked():
+                logger.info(f"⏭️ Session {session_id[:8]} busy, returning 429 for Cloud Tasks retry")
+                return jsonify({"ok": False, "error": "session_busy"}), 429
 
-                if event.get("bot_id"):
+            async with lock:
+                with start_span("worker.process_event", {
+                    "session_id": session_id,
+                    "trace_id": get_trace_ids().get("trace_id")
+                }, ctx=ctx):
+                    set_request_context(session_id=session_id)
+                    set_log_context(session_id=session_id)
+                    logger.info(f"🔧 Processing worker task for session {session_id[:8]}...")
+
+                    event = event_data.get("event", {})
+                    event_type = event.get("type")
+
+                    if event.get("bot_id"):
+                        return jsonify({"ok": True}), 200
+
+                    if event_type == "message":
+                        await self._process_message_event(event, session_id)
+                    elif event_type == "app_mention":
+                        await self._process_mention_event(event, session_id)
+                    else:
+                        logger.info(f"⏭️ Skipping unsupported event type: {event_type}")
+
                     return jsonify({"ok": True}), 200
-
-                if event_type == "message":
-                    await self._process_message_event(event, session_id)
-                elif event_type == "app_mention":
-                    await self._process_mention_event(event, session_id)
-                else:
-                    logger.info(f"⏭️ Skipping unsupported event type: {event_type}")
-
-                return jsonify({"ok": True}), 200
 
         except Exception as e:
             logger.error(f"❌ Error in worker task: {e}", exc_info=True)

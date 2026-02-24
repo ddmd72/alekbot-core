@@ -436,14 +436,52 @@ pytest tests/integration/test_search_enrichment_integration.py
 
 ### 10.1 Latency
 
-**Typical Performance:**
+**Isolated execution (single caller, no concurrent find_nearest from other paths):**
 
-- Up to 7 parallel queries: ~150-250ms (Firestore)
-- RRF ranking: ~5-10ms (in-memory)
-- Semantic dedup: ~20-50ms (in-memory, no Firestore reads)
-- **Total:** ~200-300ms
+| Step | Time |
+|------|------|
+| Batch embedding (up to 3 vectors) | ~100-200ms |
+| Up to 6 parallel `find_nearest` (Firestore KNN) | ~300-500ms |
+| RRF ranking | ~5-10ms (in-memory) |
+| Semantic dedup | ~20-50ms (in-memory) |
+| **Total** | **~450-750ms** |
 
-### 10.2 Cost
+**Under concurrent load (6+ simultaneous `find_nearest` streams across all callers):**
+
+Firestore's KNN backend throttles heavily when multiple concurrent vector streams hit the same index. Measured behavior (Cloud Run, 1 vCPU, `us-production` database):
+
+| Concurrent find_nearest streams | Per-query latency |
+|----------------------------------|-------------------|
+| 1–3 (normal) | ~300–500ms |
+| 6+ (consolidation + router overlap) | **30–44s per query** |
+
+This is not a cold-start issue — the degradation occurs consistently on every request when concurrency exceeds ~3 streams.
+
+**No gRPC errors are raised.** The Firestore SDK silently waits for the backend. Confirmed via diagnostic logging of `grpc`, `grpc.aio`, and `google` namespaces — zero retries or exceptions observed between `batchEmbedContents OK` and `find_nearest DONE` log lines.
+
+### 10.2 Concurrency Control (`_FIND_NEAREST_SEMAPHORE`)
+
+A module-level semaphore in `src/adapters/firestore_repo.py` caps the number of simultaneous `find_nearest` calls across **all callers in the process**:
+
+```python
+# src/adapters/firestore_repo.py
+_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(12)
+```
+
+**Why this exists:** ConsolidationAgent's multi-turn tool loop previously issued multiple parallel `search_existing_facts` calls. Without a cap, N tools × 6 vectors = N×6 concurrent KNN streams → silent backend throttle → each query degraded to 30–135s.
+
+**Current value: 12.** This was raised from 6 during initial investigation and may need to be lowered further. See Known Issues below.
+
+**Interaction between callers:**
+
+The semaphore is shared by all code paths in the same process:
+- `SearchEnrichmentService.enrich_context()` — used by RouterAgent and MemorySearchAgent (up to 6 streams per call)
+- `FactManagementAdapter.search_existing_facts()` — used by ConsolidationAgent (up to 6 streams per call)
+- Any `AgentWorkerHandler` task that triggers a search agent
+
+When ConsolidationAgent (Cloud Tasks request) and RouterAgent (Slack event worker) execute concurrently on the same Cloud Run instance, their combined streams easily exceed the latency cliff.
+
+### 10.3 Cost
 
 **Firestore Reads:**
 
@@ -453,7 +491,7 @@ pytest tests/integration/test_search_enrichment_integration.py
 **Embedding API Calls:**
 
 - Up to 3 embeddings per search (keywords, phrase1, phrase2); domain channel requires none
-- Embeddings generated in parallel
+- Batch API call: `batchEmbedContents` sends all non-empty texts in a single HTTP request
 
 ---
 
@@ -507,7 +545,29 @@ pytest tests/integration/test_search_enrichment_integration.py
 - Increase `total_limit` in SearchLimits
 - Review numeric extraction regex
 
+### 12.4 find_nearest Takes 30–44s
+
+**Symptom:** `[find_nearest] DONE ... elapsed=30000ms` or longer in logs. No errors, no retries.
+
+**Cause:** Too many concurrent `find_nearest` streams across all active callers in the same Cloud Run instance. Firestore's KNN backend silently throttles when more than ~3 streams are active simultaneously. The gRPC client does not raise an exception — it just waits.
+
+**Diagnostic:** Enable full gRPC debug logging to confirm no retries are happening:
+
+```python
+# src/adapters/firestore_repo.py
+for _logger_name in ['google', 'grpc', 'grpc.aio', 'google.api_core.retry_async']:
+    _l = _logging.getLogger(_logger_name)
+    _l.addHandler(_GcpRetryForwarder())
+    _l.setLevel(_logging.DEBUG)
+```
+
+If only `[_cygrpc] Loaded running loop` messages appear (no retry/exception) between `batchEmbedContents OK` and `find_nearest DONE`, the cause is backend throttling, not a connection issue.
+
+**Fix:** Lower `_FIND_NEAREST_SEMAPHORE` in `src/adapters/firestore_repo.py`. Value of 3 keeps each batch of 6 queries in sequential groups of 3, each completing in ~500ms instead of 30–44s.
+
+**Note on `[_cygrpc] Loaded running loop` messages:** This is the gRPC C extension registering itself with the asyncio event loop. It appears frequently under CPU pressure (1 vCPU Cloud Run). It is not an error and does not indicate a connection problem.
+
 ---
 
-**Last Updated:** 2026-02-23
+**Last Updated:** 2026-02-24
 **Status:** ✅ Production Ready

@@ -50,7 +50,7 @@ A domain-level interface that defines the contract for vector generation.
 The production implementation using Google's Gemini API.
 
 - **Model:** `models/gemini-embedding-001`.
-- **Dimensionality:** Fixed at **768** to match Firestore's KNN vector indexes (flat configuration).
+- **Dimensionality:** Fixed at **768** to match Firestore's KNN vector indexes.
 - **Concurrency:** Uses `asyncio.to_thread` for safe integration with the async runtime.
 
 ---

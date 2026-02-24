@@ -396,82 +396,90 @@ class ConsolidationAgent(BaseAgent):
             Message(role="user", parts=[MessagePart(text="Begin deliberate consolidation.")])
         ]
         total_tokens = 0
-        
-        for turn in range(self.MAX_CONSOLIDATION_TURNS):
-            logger.info(
-                f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1}/{self.MAX_CONSOLIDATION_TURNS}"
-            )
-            
-            # Build LLM request
-            request = LLMRequest(
-                model_name=self.model_name,
-                system_instruction=system_prompt,
-                messages=history,
-                tools=self._get_tool_declarations(),
-                temperature=0.7
-            )
-            
-            # Call LLM
-            response: LLMResponse = await self._llm.generate_content(request=request)
-            
-            if response.usage_metadata:
-                total_tokens += response.usage_metadata.total_tokens
-            
-            # No tool calls → final report (Step 8)
-            if not response.tool_calls:
-                logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} - Final report received")
-                
-                # Parse final JSON report
-                operations = self._parse_operations_report(response.text or "")
-                
-                debug_logger.log_response(
-                    agent_name="consolidation_v3",
-                    response=response.text or "",
-                    metadata={
-                        "user_id": user_id[:8],
-                        "tokens": total_tokens,
-                        "operations": len(operations)
-                    }
+
+        try:
+            for turn in range(self.MAX_CONSOLIDATION_TURNS):
+                logger.info(
+                    f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1}/{self.MAX_CONSOLIDATION_TURNS}"
                 )
-                
-                return {"operations": operations}
-            
-            # Tool calls → execute (Step 6)
-            logger.info(
-                f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} - Executing {len(response.tool_calls)} tools"
-            )
-            
-            # Add model's tool calls to history
-            if response.raw_content:
-                history.append(Message(role="model", parts=[], raw_content=response.raw_content))
-            else:
+
+                # Build LLM request
+                request = LLMRequest(
+                    model_name=self.model_name,
+                    system_instruction=system_prompt,
+                    messages=history,
+                    tools=self._get_tool_declarations(),
+                    temperature=0.7
+                )
+
+                # Call LLM
+                response: LLMResponse = await self._llm.generate_content(request=request)
+
+                if response.usage_metadata:
+                    total_tokens += response.usage_metadata.total_tokens
+
+                # No tool calls → final report (Step 8)
+                if not response.tool_calls:
+                    logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} - Final report received")
+
+                    # Parse final JSON report
+                    operations = self._parse_operations_report(response.text or "")
+
+                    debug_logger.log_response(
+                        agent_name="consolidation_v3",
+                        response=response.text or "",
+                        metadata={
+                            "user_id": user_id[:8],
+                            "tokens": total_tokens,
+                            "operations": len(operations)
+                        }
+                    )
+
+                    return {"operations": operations}
+
+                # Tool calls → execute (Step 6)
+                logger.info(
+                    f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} - Executing {len(response.tool_calls)} tools"
+                )
+
+                # Add model's tool calls to history
+                if response.raw_content:
+                    history.append(Message(role="model", parts=[], raw_content=response.raw_content))
+                else:
+                    history.append(Message(
+                        role="model",
+                        parts=[MessagePart(tool_call=tc) for tc in response.tool_calls]
+                    ))
+
+                # Mirror router pattern: touch Firestore for this account between LLM and find_nearest.
+                # RouterAgent calls get_biographical_context_cached() in the same position.
+                await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+
+                # Execute tools
+                tool_responses = await self._execute_fact_management_tools(
+                    tool_calls=response.tool_calls,
+                    user_id=user_id,
+                    account_id=account_id
+                )
+
+                # Add tool responses to history
                 history.append(Message(
-                    role="model",
-                    parts=[MessagePart(tool_call=tc) for tc in response.tool_calls]
+                    role="user",
+                    parts=[
+                        MessagePart(tool_response={
+                            "name": tr.name,
+                            "response": {"result": tr.result_str}
+                        })
+                        for tr in tool_responses
+                    ]
                 ))
-            
-            # Execute tools
-            tool_responses = await self._execute_fact_management_tools(
-                tool_calls=response.tool_calls,
-                user_id=user_id,
-                account_id=account_id
-            )
-            
-            # Add tool responses to history
-            history.append(Message(
-                role="user",
-                parts=[
-                    MessagePart(tool_response={
-                        "name": tr.name,
-                        "response": {"result": tr.result_str}
-                    })
-                    for tr in tool_responses
-                ]
-            ))
-        
-        # Max turns reached without final report
-        logger.warning(f"⚠️ [ConsolidationAgent] Max turns reached without final report")
-        return {"operations": []}
+
+            # Max turns reached without final report
+            logger.warning(f"⚠️ [ConsolidationAgent] Max turns reached without final report")
+            return {"operations": []}
+
+        finally:
+            pass
     
     async def _execute_fact_management_tools(
         self,
