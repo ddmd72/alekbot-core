@@ -3,6 +3,8 @@ from unittest.mock import MagicMock
 
 from src.services.agent_context_builder import AgentContextBuilder, AgentExecutionContext
 from src.services.provider_registry import ProviderRegistry
+from src.services.prompt_cache_strategy import PromptCacheStrategy
+from src.services.caching_llm_proxy import CachingLLMProxy
 from src.domain.user import UserBotConfig, PerformanceTier
 from src.ports.llm_service import LLMService, ProviderCapabilities
 
@@ -10,7 +12,10 @@ from src.ports.llm_service import LLMService, ProviderCapabilities
 class FakeProvider(LLMService):
     def __init__(self, name: str):
         self.name = name
-        self.caps = ProviderCapabilities(native_tools=(name == "gemini"))
+        self.caps = ProviderCapabilities(
+            native_tools=(name == "gemini"),
+            context_caching=(name == "claude"),
+        )
 
     async def generate_content(self, *args, **kwargs):
         pass
@@ -149,3 +154,58 @@ def test_build_with_default_tier_override(builder):
     # Agent-specific tier overrides are respected
     assert quick_ctx.tier == PerformanceTier.PERFORMANCE
     assert smart_ctx.tier == PerformanceTier.PERFORMANCE
+
+
+# ============================================================================
+# Caching strategy integration tests
+# ============================================================================
+
+
+@pytest.fixture
+def builder_with_cache(registry):
+    return AgentContextBuilder(registry, cache_strategy=PromptCacheStrategy())
+
+
+def test_build_wraps_provider_when_caching_strategy_applies(builder_with_cache):
+    """Consolidation (Claude, caching capable) → provider wrapped in CachingLLMProxy."""
+    config = UserBotConfig()
+    ctx = builder_with_cache.build("consolidation", config)
+
+    assert isinstance(ctx.provider, CachingLLMProxy)
+
+
+def test_build_no_wrapping_without_cache_strategy(builder):
+    """Without cache_strategy, provider is raw (backward compatible)."""
+    config = UserBotConfig()
+    ctx = builder.build("consolidation", config)
+
+    assert not isinstance(ctx.provider, CachingLLMProxy)
+    assert isinstance(ctx.provider, FakeProvider)
+
+
+def test_build_no_wrapping_for_non_caching_provider(builder_with_cache):
+    """Gemini (non-caching) → no wrapping even with cache strategy."""
+    config = UserBotConfig()
+    ctx = builder_with_cache.build("quick", config)  # quick defaults to gemini
+
+    # Gemini has context_caching=False, so strategy returns None
+    assert not isinstance(ctx.provider, CachingLLMProxy)
+    assert isinstance(ctx.provider, FakeProvider)
+
+
+def test_build_no_wrapping_for_router(builder_with_cache):
+    """Router → no caching even if provider supports it."""
+    config = UserBotConfig()
+    ctx = builder_with_cache.build("router", config)
+
+    assert not isinstance(ctx.provider, CachingLLMProxy)
+
+
+def test_wrapped_provider_delegates_capabilities(builder_with_cache):
+    """CachingLLMProxy delegates get_capabilities correctly."""
+    config = UserBotConfig()
+    ctx = builder_with_cache.build("consolidation", config)
+
+    # Should delegate to inner Claude provider
+    caps = ctx.provider.get_capabilities()
+    assert caps.context_caching is True

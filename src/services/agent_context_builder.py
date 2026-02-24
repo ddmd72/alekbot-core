@@ -2,6 +2,7 @@ from typing import Dict, Optional, List, Any
 
 from ..domain.user import UserBotConfig, PerformanceTier
 from ..ports.llm_service import LLMService, ProviderCapabilities, AgentExecutionContext
+from ..ports.prompt_cache_strategy_port import PromptCacheStrategyPort
 from .provider_registry import ProviderRegistry
 
 # Backward-compat re-export: importers of agent_context_builder still work unchanged.
@@ -83,8 +84,13 @@ class AgentContextBuilder:
     to resolve concrete LLMService instances.
     """
 
-    def __init__(self, registry: ProviderRegistry):
+    def __init__(
+        self,
+        registry: ProviderRegistry,
+        cache_strategy: Optional[PromptCacheStrategyPort] = None,
+    ):
         self.registry = registry
+        self._cache_strategy = cache_strategy
 
     def build(self, agent_type: str, config: UserBotConfig) -> AgentExecutionContext:
         """
@@ -114,6 +120,7 @@ class AgentContextBuilder:
         # Level 3: Use strategy default (already set above)
         
         provider = self.registry.get(provider_name)
+        capabilities = provider.get_capabilities()
 
         # 2. Resolve Tier
         tier = config.get_tier_for_agent(agent_type)
@@ -122,10 +129,17 @@ class AgentContextBuilder:
         model_override = config.get_model_override(agent_type)
         model_name = model_override or provider.get_model_for_tier(tier)
 
+        # 4. Apply caching strategy (transparent to agents)
+        if self._cache_strategy:
+            cache_config = self._cache_strategy.resolve(agent_type, capabilities)
+            if cache_config:
+                from .caching_llm_proxy import CachingLLMProxy
+                provider = CachingLLMProxy(provider, cache_config)
+
         return AgentExecutionContext(
             agent_type=agent_type,
             provider=provider,
             model_name=model_name,
             tier=tier,
-            capabilities=provider.get_capabilities()
+            capabilities=capabilities
         )

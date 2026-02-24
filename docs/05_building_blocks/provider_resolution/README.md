@@ -24,6 +24,7 @@ This document MUST be updated when:
 ### Cross-References
 
 - **Provider Resolution Guide:** [../../08_concepts/provider_resolution_guide.md](../../08_concepts/provider_resolution_guide.md)
+- **Prompt Cache Strategy:** [../prompt_cache_strategy/README.md](../prompt_cache_strategy/README.md)
 - **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
 - **Constraints:** [../../02_constraints/README.md](../../02_constraints/README.md)
 
@@ -123,11 +124,22 @@ config = UserBotConfig()  # Empty config
 # router agent → gemini (strategy default)
 ```
 
-### 3.3 Execution Context
+### 3.3 Prompt Cache Strategy (Step 5)
+
+After resolving provider, tier, and model, the builder applies the **Prompt Cache Strategy**:
+
+5. **Cache Strategy:** If a `PromptCacheStrategyPort` is configured:
+   - Call `strategy.resolve(agent_type, capabilities)`.
+   - If it returns a `PromptCacheConfig`, wrap the provider in `CachingLLMProxy`.
+   - The proxy transparently injects `cache_config` into every `LLMRequest`.
+
+This step is transparent to agents — they receive a `CachingLLMProxy` (which implements `LLMService`) instead of the raw adapter. See [Prompt Cache Strategy](../prompt_cache_strategy/README.md) for details.
+
+### 3.4 Execution Context
 
 The result is an `AgentExecutionContext` DTO containing:
 
-- Concrete `LLMService` instance.
+- Concrete `LLMService` instance (possibly wrapped with `CachingLLMProxy`).
 - Resolved `model_name`.
 - Target `tier`.
 - Provider `capabilities` (vision, tools, caching).
@@ -156,6 +168,9 @@ The result is an `AgentExecutionContext` DTO containing:
 
 ---
 
+**Last Updated:** 2026-02-24
+**Status:** ✅ Complete (Per-Agent Provider Selection + Postprocessing Lock + Prompt Cache Strategy)
+**Phase:** Provider Resolution Enhancement + Hexagonal Prompt Caching
 **Last Updated:** 2026-02-23
 **Status:** ✅ Complete (Per-Agent Provider Selection + Postprocessing Lock + Claude Quick support)
 **Phase:** Provider Resolution Enhancement

@@ -23,6 +23,7 @@ This directory contains Request for Comments (RFC) documents that describe propo
 | [GMAIL_EMAIL_INDEXING](./GMAIL_EMAIL_INDEXING_RFC.md)               | PROPOSED | LLM-based email indexing with semantic search. |
 | [NATIVE_TOOLS_INTEGRATION](./NATIVE_TOOLS_INTEGRATION_RFC.md)       | PROPOSED | Using native LLM tool calling capabilities.    |
 | [TESTING_STRATEGY](./TESTING_STRATEGY_RFC.md)                       | ACTIVE   | Comprehensive testing framework and protocols. |
+| [HEXAGONAL_PROMPT_CACHING](./HEXAGONAL_PROMPT_CACHING_RFC.md)       | ACCEPTED | Transparent prompt caching via proxy pattern.  |
 | [WEBSEARCH_STRUCTURED_OUTPUT](./WEBSEARCH_STRUCTURED_OUTPUT_RFC.md) | PROPOSED | Enforcing JSON schemas for web search results. |
 
 ---
@@ -33,5 +34,5 @@ See [Archived RFCs](../archive/rfcs/) for implemented and obsolete proposals.
 
 ---
 
-**Last Updated:** 2026-02-16  
+**Last Updated:** 2026-02-24
 **Status:** ✅ Audited
