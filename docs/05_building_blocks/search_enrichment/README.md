@@ -371,8 +371,8 @@ async def enrich_context(
   - `False`: Normal search (remove semantic duplicates)
   - `True`: Consolidation mode (keep ALL facts with different IDs)
 - `sequential`: Execute Firestore vector queries one-by-one instead of `asyncio.gather`
-  - `False` (default): Parallel — optimal for conversation path where latency matters
-  - `True`: Sequential — for consolidation background path to prevent Firestore KNN throttling when 6+ concurrent vector queries exceed the throughput budget
+  - `False` (default): Parallel — optimal for all paths; 6 parallel streams complete in 700ms–1.2s with full CPU
+  - `True`: Sequential — reduces peak concurrency; use only if Firestore quota pressure is observed
 
 **Returns:**
 
@@ -463,18 +463,17 @@ pytest tests/integration/test_search_enrichment_integration.py
 | Semantic dedup | ~20-50ms (in-memory) |
 | **Total** | **~450-750ms** |
 
-**Under concurrent load (6+ simultaneous `find_nearest` streams across all callers):**
+**Previously observed degradation (resolved 2026-02-24):**
 
-Firestore's KNN backend throttles heavily when multiple concurrent vector streams hit the same index. Measured behavior (Cloud Run, 1 vCPU, `us-production` database):
+When consolidation ran via `asyncio.create_task()`, Cloud Run throttled CPU to ~5% immediately after
+returning 200. With ~5% CPU, grpc.aio callbacks for Firestore `find_nearest` were starved — causing
+74–180s latency. This had nothing to do with the number of concurrent streams or Firestore KNN backend
+limits. The fix was architectural: consolidation now runs inside its own Cloud Tasks HTTP request, which
+keeps Cloud Run at full CPU. Under full CPU, latency with 6 parallel streams is 700ms–1.2s.
 
-| Concurrent find_nearest streams | Per-query latency |
-|----------------------------------|-------------------|
-| 1–3 (normal) | ~300–500ms |
-| 6+ (consolidation + router overlap) | **30–44s per query** |
-
-This is not a cold-start issue — the degradation occurs consistently on every request when concurrency exceeds ~3 streams.
-
-**No gRPC errors are raised.** The Firestore SDK silently waits for the backend. Confirmed via diagnostic logging of `grpc`, `grpc.aio`, and `google` namespaces — zero retries or exceptions observed between `batchEmbedContents OK` and `find_nearest DONE` log lines.
+**No gRPC errors are raised.** The Firestore SDK silently waits for grpc.aio callback delivery — which
+only happens when the event loop has CPU to process it. Confirmed via diagnostic logging of `grpc`,
+`grpc.aio`, and `google` namespaces — zero retries or exceptions observed.
 
 ### 10.2 Concurrency Control (`_FIND_NEAREST_SEMAPHORE`)
 
@@ -482,12 +481,14 @@ A module-level semaphore in `src/adapters/firestore_repo.py` caps the number of 
 
 ```python
 # src/adapters/firestore_repo.py
-_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(12)
+_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(30)
 ```
 
-**Why this exists:** ConsolidationAgent's multi-turn tool loop previously issued multiple parallel `search_existing_facts` calls. Without a cap, N tools × 6 vectors = N×6 concurrent KNN streams → silent backend throttle → each query degraded to 30–135s.
+**Why this exists:** Quota guard against Firestore RESOURCE_EXHAUSTED errors under very high concurrency
+(e.g., many simultaneous Cloud Tasks workers hitting the same process). Not a latency fix — with full CPU
+allocation (see §10.1), parallel find_nearest calls complete in 700ms–1.2s regardless.
 
-**Current value: 12.** This was raised from 6 during initial investigation and may need to be lowered further. See Known Issues below.
+**Current value: 30.**
 
 **Interaction between callers:**
 
@@ -495,8 +496,6 @@ The semaphore is shared by all code paths in the same process:
 - `SearchEnrichmentService.enrich_context()` — used by RouterAgent and MemorySearchAgent (up to 6 streams per call)
 - `FactManagementAdapter.search_existing_facts()` — used by ConsolidationAgent (up to 6 streams per call)
 - Any `AgentWorkerHandler` task that triggers a search agent
-
-When ConsolidationAgent (Cloud Tasks request) and RouterAgent (Slack event worker) execute concurrently on the same Cloud Run instance, their combined streams easily exceed the latency cliff.
 
 ### 10.3 Cost
 
@@ -562,27 +561,29 @@ When ConsolidationAgent (Cloud Tasks request) and RouterAgent (Slack event worke
 - Increase `total_limit` in SearchLimits
 - Review numeric extraction regex
 
-### 12.4 find_nearest Takes 30–44s
+### 12.4 find_nearest Takes 74–180s
 
-**Symptom:** `[find_nearest] DONE ... elapsed=30000ms` or longer in logs. No errors, no retries.
+**Symptom:** `[find_nearest] DONE ... elapsed=74000ms` (or more) in logs. No errors, no retries.
+Typically occurs only during consolidation, not during router/user-facing requests.
 
-**Cause:** Too many concurrent `find_nearest` streams across all active callers in the same Cloud Run instance. Firestore's KNN backend silently throttles when more than ~3 streams are active simultaneously. The gRPC client does not raise an exception — it just waits.
+**Cause:** Cloud Run CPU throttling. Cloud Run reduces CPU to ~5% when no HTTP request is actively
+being processed. If consolidation is launched via `asyncio.create_task()`, the worker returns 200
+immediately, ending the HTTP request. grpc.aio callbacks (Firestore AsyncClient) are only delivered
+when the asyncio event loop has CPU — at 5% CPU, this can take 74–180s.
 
-**Diagnostic:** Enable full gRPC debug logging to confirm no retries are happening:
+**Confirmation:** Send a user message while consolidation is stuck → `find_nearest` unblocks instantly
+(new HTTP request restores full CPU).
 
-```python
-# src/adapters/firestore_repo.py
-for _logger_name in ['google', 'grpc', 'grpc.aio', 'google.api_core.retry_async']:
-    _l = _logging.getLogger(_logger_name)
-    _l.addHandler(_GcpRetryForwarder())
-    _l.setLevel(_logging.DEBUG)
-```
+**Fix (already applied):** Consolidation runs inside its own Cloud Tasks HTTP request (`task_type="consolidation"`
+in `main.py:/worker`). The request stays alive throughout consolidation → full CPU. See
+`src/handlers/consolidation_handler.py` and `main.py:overflow_callback`.
 
-If only `[_cygrpc] Loaded running loop` messages appear (no retry/exception) between `batchEmbedContents OK` and `find_nearest DONE`, the cause is backend throttling, not a connection issue.
+**If this regresses:** Check that `overflow_callback` in `main.py` is calling
+`agent_task_queue.enqueue_consolidation_task()` and NOT `asyncio.create_task(process_user_batches_on_overflow(...))`.
 
-**Fix:** Lower `_FIND_NEAREST_SEMAPHORE` in `src/adapters/firestore_repo.py`. Value of 3 keeps each batch of 6 queries in sequential groups of 3, each completing in ~500ms instead of 30–44s.
-
-**Note on `[_cygrpc] Loaded running loop` messages:** This is the gRPC C extension registering itself with the asyncio event loop. It appears frequently under CPU pressure (1 vCPU Cloud Run). It is not an error and does not indicate a connection problem.
+**Note on `[_cygrpc] Loaded running loop` messages:** This is the gRPC C extension registering itself
+with the asyncio event loop. It appears frequently under CPU pressure. It is not an error and does
+not indicate a connection problem — it is a symptom of CPU throttling.
 
 ---
 

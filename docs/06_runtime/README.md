@@ -302,42 +302,54 @@ See: [Sliding Window Consolidation Building Block](../05_building_blocks/sliding
 ### 4.1 Trigger Conditions
 1. **Session Overflow:** Sliding window threshold exceeded (automatic)
 2. **Session Expiration:** 90-day TTL reached (automatic)
-3. **Manual Trigger:** User command `$consolidate` (future)
+3. **Manual Trigger:** User command `$consolidate` (implemented)
 
 ### 4.2 Consolidation Flow
 
 ```mermaid
 sequenceDiagram
     participant SH as SessionStore
-    participant CQ as ConsolidationQueue
+    participant OC as overflow_callback
+    participant CT as Cloud Tasks
+    participant W as /worker
     participant CH as ConsolidationHandler
     participant CA as ConsolidationAgent
     participant FR as FactRepository
+    participant CQ as ConsolidationQueue
 
     Note over SH: Session exceeds threshold
-    SH->>CQ: create_batch(messages, user_id)
+    SH->>CQ: enqueue_batch(messages, user_id)
     CQ->>CQ: status = PENDING
+    SH->>OC: overflow_callback(user_id)
 
-    Note over CH: Background processor
-    CH->>CQ: get_next_batch()
+    Note over OC: HTTP mode (Cloud Run)
+    OC->>CT: enqueue_consolidation_task(user_id)
+    CT->>W: POST /worker {task_type=consolidation}
+
+    Note over W: Full CPU — request stays alive
+    W->>CH: process_user_batches_on_overflow(user_id)
+    CH->>CQ: get_pending_batches(user_id)
     CQ-->>CH: batch (status=PENDING)
 
     CH->>CQ: update_status(PROCESSING)
-    CH->>CA: process_batch(messages)
+    CH->>CA: route_message(consolidate)
 
     Note over CA: LLM Analysis
     CA->>CA: load biographical context
     CA->>CA: extract facts & anchors
-    CA->>CA: generate embeddings
+    CA->>CA: generate embeddings (batch)
     CA->>CA: deduplicate via vector search
 
     CA->>FR: save_facts(facts)
-    CA->>FR: save_anchors(anchors)
     CA-->>CH: consolidation result
 
-    CH->>CQ: update_status(COMPLETED)
     CH->>CQ: delete_batch()
 ```
+
+**CPU allocation note:** Cloud Tasks dispatches a separate HTTP request for consolidation. This request
+stays alive until consolidation completes, ensuring Cloud Run allocates full CPU throughout. Previously,
+`asyncio.create_task()` was used, which immediately returned 200 → CPU throttled to ~5% → 74–180s
+latency. See `src/handlers/consolidation_handler.py` for implementation.
 
 ### 4.3 Consolidation Agent
 
@@ -351,11 +363,12 @@ sequenceDiagram
 5. **Save:** Batch write to `FactRepository`
 
 **Performance:**
-- Batch size: 100 messages
-- Processing time: ~20-35s (5-7x speedup from optimization)
+- Batch size: 50–100 messages
+- Processing time: ~15-30s (with full CPU allocation via Cloud Tasks)
 - Timeout: 60s
 
-**Prompt:** `src/agents/prompts/consolidation_v2.prompt`
+**Prompt:** Assembled at runtime via PromptBuilder v3 (token-based, stored in Firestore).
+Life Chronicler blueprint — no file-based prompts.
 
 See: [Sliding Window Consolidation](../05_building_blocks/sliding_window_consolidation/README.md)
 
@@ -388,7 +401,7 @@ See: [Provider Resolution](../05_building_blocks/provider_resolution/README.md)
 - **Quick Response:** <2s (p95)
 - **Smart Response:** <5s (p95)
 - **Specialist Agents:** <3s (p95)
-- **Consolidation:** <60s (p95)
+- **Consolidation:** <30s (p95, with full CPU via Cloud Tasks)
 
 ### 6.2 Throughput
 - **Concurrent Users:** 100+ (Cloud Run auto-scaling)

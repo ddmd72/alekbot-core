@@ -91,9 +91,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
                 - True: Consolidation mode (keep ALL facts with different IDs for MERGE)
             sequential: Execute Firestore vector queries one-by-one instead of asyncio.gather
                 - False (default): Parallel — optimal for conversation path (latency matters)
-                - True: Sequential — for consolidation background path (prevents Firestore
-                  find_nearest throttling when burst of 6+ concurrent vector queries saturate
-                  throughput; latency is irrelevant for background tasks)
+                - True: Sequential — reduces peak concurrency; use if quota pressure is observed
 
         Returns:
             EnrichedContext with deduplicated facts

@@ -291,14 +291,19 @@ async def main():
                     batch_id = await consolidation_queue.enqueue_batch(batch)
                     logger.info(f"📦 [Overflow] Created batch {batch_id} for user {user_id[:8]}")
 
-                    # Immediate processing trigger (fire-and-forget)
-                    from src.handlers.consolidation_handler import process_user_batches_on_overflow
-                    asyncio.create_task(process_user_batches_on_overflow(
-                        user_id=user_id,
-                        coordinator=coordinator,
-                        agent_factory=factory,
-                        queue=consolidation_queue
-                    ))
+                    # Trigger processing — via Cloud Tasks in HTTP mode (own request = full CPU),
+                    # fire-and-forget create_task in socket mode (no CPU throttling there)
+                    if agent_task_queue:
+                        await agent_task_queue.enqueue_consolidation_task(user_id=user_id)
+                        logger.info(f"📬 [Overflow] Consolidation task enqueued for user {user_id[:8]}")
+                    else:
+                        from src.handlers.consolidation_handler import process_user_batches_on_overflow
+                        asyncio.create_task(process_user_batches_on_overflow(
+                            user_id=user_id,
+                            coordinator=coordinator,
+                            agent_factory=factory,
+                            queue=consolidation_queue
+                        ))
                 else:
                     logger.warning("⚠️ Consolidation queue not initialized, overflow batch lost!")
             except Exception as e:
@@ -553,6 +558,19 @@ async def main():
                     if payload.get("task_type") == "agent_execution":
                         result = await agent_worker_handler.handle_task(payload)
                         return jsonify(result), 200
+                    elif payload.get("task_type") == "consolidation":
+                        user_id = payload.get("user_id")
+                        factory = _agent_factory_ref[0]
+                        if not user_id or factory is None:
+                            return jsonify({"error": "missing user_id or factory not ready"}), 400
+                        from src.handlers.consolidation_handler import process_user_batches_on_overflow
+                        await process_user_batches_on_overflow(
+                            user_id=user_id,
+                            coordinator=coordinator,
+                            agent_factory=factory,
+                            queue=consolidation_queue
+                        )
+                        return jsonify({"status": "ok"}), 200
                     return await slack_adapter._handle_worker_task()
                 
                 logger.info("✅ All blueprints registered on shared app (port 8080)")

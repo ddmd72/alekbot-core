@@ -1550,6 +1550,41 @@ mandatory before team/multi-user rollout.
      --set-env-vars USE_OAUTH_COLLECTIONS=true,APP_ENV=development
    ```
 
+### Session Context (24.02.2026 - Cloud Run CPU Throttling Fix)
+
+- **What Was Done:**
+  - Diagnosed root cause of consolidation `find_nearest` latency: 74–180s instead of ~700ms.
+  - Root cause: `asyncio.create_task()` returns immediately → HTTP request ends → Cloud Run
+    throttles CPU to ~5% → grpc.aio (Firestore AsyncClient) callbacks starved.
+    Confirmed by: incoming Slack message (new HTTP request) instantly restored full CPU and
+    unblocked all pending `find_nearest` calls. Heartbeat task (`asyncio.sleep(0.1)`) had no effect.
+  - **Fix 1 — overflow path:** `overflow_callback` now calls
+    `agent_task_queue.enqueue_consolidation_task(user_id)` → Cloud Tasks dispatches a separate
+    `POST /worker` with `task_type="consolidation"` → consolidation runs with full CPU.
+    Socket mode fallback: `asyncio.create_task()` (no HTTP throttling in socket mode).
+  - **Fix 2 — manual `$consolidate`:** `conversation_handler.py` and `run_consolidation_process`
+    now `await` consolidation directly (was `asyncio.create_task()`). Worker HTTP request stays
+    open → full CPU throughout.
+  - Removed incorrect heartbeat code (`_grpc_event_loop_heartbeat`) from `consolidation_handler.py`.
+  - Increased `_FIND_NEAREST_SEMAPHORE` from 18 → 30 (quota guard, not latency fix).
+  - Added `enqueue_consolidation_task()` to `TaskQueue` port + `GcpTaskQueue` adapter.
+  - Added `task_type="consolidation"` branch to `/worker` endpoint.
+  - Updated docs: `sliding_window_consolidation/README.md` (§7.1), `KEEP_ALIVE_SETUP.md`,
+    `STRUCTURE.md`.
+- **Why:**
+  - Cloud Run CPU throttling applies to ANY `asyncio.create_task()` pattern for long-running work.
+    The fix pattern (Cloud Tasks for background jobs) is now documented as the project standard.
+- **Status:** ✅ Complete — verified in prod (find_nearest 700ms–1.2s post-fix)
+- **Files Changed:**
+  - `src/handlers/consolidation_handler.py`
+  - `src/handlers/conversation_handler.py`
+  - `src/ports/task_queue.py`
+  - `src/adapters/gcp_task_queue.py`
+  - `src/adapters/firestore_repo.py`
+  - `main.py`
+
+---
+
 ### POST-MVP: Continue Architecture Evolution
 
 1. Enable `USE_MARKDOWN_PROMPT` in Dev and test with real traffic.

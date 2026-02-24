@@ -26,11 +26,21 @@ _gcp_retry_logger = _logging.getLogger("google.api_core.retry_async")
 _gcp_retry_logger.addHandler(_GcpRetryForwarder())
 _gcp_retry_logger.setLevel(_logging.DEBUG)
 
-# Limit concurrent Firestore find_nearest calls to prevent RESOURCE_EXHAUSTED
-# when ConsolidationAgent fires N parallel search_existing_facts tool calls.
-# Each search spawns 6 find_nearest queries; without this cap, N*6 simultaneous
-# vector queries saturate Firestore quota → silent SDK retry cascade (~135s).
-_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(12)
+# Numeric rank for context_priority — stored in Firestore only (not in FactEntity).
+# Allows efficient ORDER BY queries without changing the domain model.
+_PRIORITY_RANK: Dict[str, int] = {
+    "critical": 1,
+    "high":     2,
+    "medium":   3,
+    "low":      4,
+    "archival": 5,
+}
+
+# Quota guard: cap concurrent Firestore find_nearest calls to prevent
+# RESOURCE_EXHAUSTED when multiple agents fire parallel vector searches.
+# Each search spawns up to 6 find_nearest queries; this semaphore prevents
+# quota saturation under high concurrency.
+_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(30)
 
 
 class FirestoreFactRepository(FactRepository):
@@ -155,7 +165,11 @@ class FirestoreFactRepository(FactRepository):
             data['tags_vector'] = Vector(data['tags_vector'])
         if 'metadata_vector' in data and data['metadata_vector'] is not None:
             data['metadata_vector'] = Vector(data['metadata_vector'])
-        
+
+        data['context_priority_rank'] = _PRIORITY_RANK.get(
+            data.get('context_priority') or 'medium', 3
+        )
+
         await doc_ref.set(data)
         return fact.id
 
@@ -422,8 +436,70 @@ class FirestoreFactRepository(FactRepository):
             data['tags_vector'] = Vector(data['tags_vector'])
         if 'metadata_vector' in data and data['metadata_vector'] is not None:
             data['metadata_vector'] = Vector(data['metadata_vector'])
-        
+
+        data['context_priority_rank'] = _PRIORITY_RANK.get(
+            data.get('context_priority') or 'medium', 3
+        )
+
         await doc_ref.set(data)
+
+    @log_execution_time
+    async def get_active_facts_ordered(
+        self,
+        account_id: str,
+        domain: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[FactEntity]:
+        """
+        Bounded, priority-ordered query for biographical cache building.
+
+        Uses context_priority_rank (adapter-only Firestore field) for efficient
+        ORDER BY without touching the domain model. Excludes ARCHIVAL priority (rank=5).
+
+        Requires indexes:
+          (account_id, state, context_priority_rank, created_at DESC)
+          (account_id, state, domain, context_priority_rank, created_at DESC)  — with domain filter
+        """
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", account_id))
+            .where(filter=FieldFilter("state", "==", "current"))
+        )
+
+        if domain:
+            query = query.where(filter=FieldFilter("domain", "==", domain))
+
+        query = (
+            query
+            .where(filter=FieldFilter("context_priority_rank", "<", 5))
+            .order_by("context_priority_rank", direction=firestore.Query.ASCENDING)
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .select([
+                "account_id", "created_by_user_id", "lineage_id", "text", "type",
+                "owner_id",
+                "state", "domain", "tags", "context_priority",
+                "valid_from", "valid_to", "created_at", "updated_at",
+                "source", "version", "language", "visibility",
+                "reported_date", "is_current", "metadata",
+            ])
+        )
+
+        if limit:
+            query = query.limit(limit)
+
+        docs = await query.get()
+        logger.info(
+            f"🗂️ [get_active_facts_ordered] {len(docs)} docs for {account_id[:8]}"
+            f"{f' domain={domain}' if domain else ''}"
+        )
+
+        results = []
+        for doc in docs:
+            data = doc.to_dict()
+            data['id'] = doc.id
+            data = self._migrate_ownership_fields(data)
+            results.append(FactEntity(**data))
+        return results
 
     async def get_lineage(self, lineage_id: str) -> List[FactEntity]:
         docs = self.facts_col.where(filter=FieldFilter("lineage_id", "==", lineage_id)).order_by("created_at", direction=firestore.Query.DESCENDING).stream()

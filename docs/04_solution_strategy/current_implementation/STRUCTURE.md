@@ -204,7 +204,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 ### `handlers/` - Application Layer (Orchestrators)
 -   **`agent_worker_handler.py`**: 🆕 Handles ASYNC agent execution payloads from Cloud Tasks (`task_type="agent_execution"`). Routes via `coordinator.route_message()`. User notification deferred (to be implemented with first ASYNC agent).
 -   **`conversation_handler.py`**: **Primary platform-agnostic orchestrator**. Coordinates agent flow, session persistence, and UI updates. Implements graceful degradation: SmartAgent `TIMEOUT`/`FAILED` → QuickAgent direct fallback with injected `[System: ...]` context note. Raw error text is never exposed to the user.
--   **`consolidation_handler.py`**: 🆕 Orchestrates the sliding window batch processing (Cold Storage).
+-   **`consolidation_handler.py`**: 🆕 Orchestrates the sliding window batch processing (Cold Storage). Overflow trigger enqueues `task_type="consolidation"` via Cloud Tasks (own HTTP request = full CPU); manual `$consolidate` awaits directly in the worker request. Both patterns keep the HTTP request alive to prevent Cloud Run CPU throttling.
 -   **`learning_loop.py`**: ⚠️ LEGACY.
 
 ### `locales/` - Localization Layer
