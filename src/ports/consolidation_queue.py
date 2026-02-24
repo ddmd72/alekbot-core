@@ -47,3 +47,10 @@ class ConsolidationQueue(ABC):
     async def increment_attempts(self, batch_id: str) -> int:
         """Increment attempt counter. Returns new count."""
         pass
+
+    @abstractmethod
+    async def reset_processing_batches(self, user_id: str) -> int:
+        """Reset stale PROCESSING batches → RETRY_PENDING for this user.
+        Used at the start of each consolidation run to recover zombies left
+        by crashed or CPU-throttled workers. Returns count of batches reset."""
+        pass

@@ -86,6 +86,10 @@ async def process_user_batches_on_overflow(
         async with RequestContext(user_id=user_id, account_id=account_id):
             logger.debug(f"✅ RequestContext set: user_id={user_id[:8]}, account_id={account_id[:12] if account_id else 'None'}")
 
+            # Recovery: reset any PROCESSING zombies left by previous crashed/throttled workers.
+            # Moves stale PROCESSING → RETRY_PENDING so get_pending_batches can pick them up.
+            await queue.reset_processing_batches(user_id)
+
             # Process batches sequentially to maintain order and avoid race conditions.
             # max_batches=1 (overflow path): process one batch per Cloud Tasks HTTP request;
             # caller re-enqueues a new task when has_more=True.
