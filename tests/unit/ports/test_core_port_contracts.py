@@ -294,17 +294,26 @@ class TestEmbeddingServiceContract:
     def test_has_get_embedding(self):
         assert getattr(EmbeddingService.get_embedding, "__isabstractmethod__", False)
 
+    def test_has_get_embeddings_batch(self):
+        assert getattr(EmbeddingService.get_embeddings_batch, "__isabstractmethod__", False)
+
     def test_all_abstract_methods_count(self):
         abstract_methods = {
             name for name, method in inspect.getmembers(EmbeddingService)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 1, f"Expected 1 abstract method, got {abstract_methods}"
+        assert len(abstract_methods) == 2, f"Expected 2 abstract methods, got {abstract_methods}"
 
     def test_get_embedding_signature(self):
         sig = inspect.signature(EmbeddingService.get_embedding)
         params = list(sig.parameters.keys())
         assert params == ["self", "text", "task_type"]
+        assert sig.parameters["task_type"].default == "RETRIEVAL_DOCUMENT"
+
+    def test_get_embeddings_batch_signature(self):
+        sig = inspect.signature(EmbeddingService.get_embeddings_batch)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "texts", "task_type"]
         assert sig.parameters["task_type"].default == "RETRIEVAL_DOCUMENT"
 
 

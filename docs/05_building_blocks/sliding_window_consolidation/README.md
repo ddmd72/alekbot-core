@@ -197,6 +197,12 @@ Multiple Cloud Tasks worker requests for the same Slack session (same `thread_ts
 
 **Mitigation in place:** `HTTPModeAdapter._session_locks` (a `WeakValueDictionary[str, asyncio.Lock]`) in `src/adapters/slack/http_adapter.py`. If a worker for session X is already processing, subsequent workers return HTTP 429 → Cloud Tasks retries after backoff.
 
+### 7.3 Startup Vector Index Warmup
+
+Firestore FLAT vector indexes are loaded into memory lazily — the first `find_nearest` call for each field triggers a cold load that takes 40–60s. Without warmup, the first consolidation job after a Cloud Run cold start hits this delay for all 3 indexes simultaneously, causing a retry cascade.
+
+**Mitigation in place:** `main.py` fires 3 parallel `find_nearest` calls against the `_warmup` synthetic account at process startup, loading all 3 indexes (`vector`, `tags_vector`, `metadata_vector`) before the first real request arrives. Failures are non-fatal — logged as warnings and swallowed.
+
 ## 8. Status & Roadmap
 
 **Status:** ✅ Production Ready
@@ -209,6 +215,6 @@ Multiple Cloud Tasks worker requests for the same Slack session (same `thread_ts
 
 ---
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-02-24
 **Status:** ✅ Complete
 **Phase:** Documentation Audit Phase 3.2

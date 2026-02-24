@@ -89,56 +89,32 @@ class FactManagementAdapter(FactManagementPort):
                 search_phrase_1=primary_query,
                 search_phrase_2=alternative_query or primary_query,
                 limits=SearchLimits(
-                    keyword_limit=10,
-                    phrase_one_limit=15,
-                    phrase_two_limit=15,
-                    total_limit=limit
+                    keyword_limit=7,
+                    phrase_one_limit=10,
+                    phrase_two_limit=10,
+                    total_limit=limit,
                 ),
-                skip_semantic_dedup=True  # Keep ALL facts with different IDs for MERGE!
+                skip_semantic_dedup=True,  # Keep ALL facts with different IDs for MERGE!
             )
-            
-            # Batch-fetch full FactEntity objects for complete taxonomy data
-            fact_ids = [f.fact_id for f in enriched.facts]
-            full_facts = await self._repo.get_facts_by_ids(fact_ids)
-            fact_lookup: dict = {f.id: f for f in full_facts}
 
-            # Convert EnrichedFact → Dict with full FactEntity fields
+            # Convert EnrichedFact → Dict — taxonomy fields already carried by EnrichedFact
             results = []
             for ef in enriched.facts:
-                entity = fact_lookup.get(ef.fact_id)
-                if entity:
-                    results.append({
-                        "fact_id": ef.fact_id,
-                        "content": entity.text,
-                        "similarity": ef.relevance_score,
-                        "source": ef.source,
-                        "type": entity.type.value,
-                        "domain": entity.domain.value if entity.domain else None,
-                        "temporal_class": entity.temporal_class.value if entity.temporal_class else None,
-                        "state": entity.state.value,
-                        "context_priority": entity.context_priority.value,
-                        "tags": entity.tags,
-                        "metadata": entity.metadata,
-                        "reported_date": entity.reported_date.isoformat() if entity.reported_date else None,
-                        "version": entity.version,
-                    })
-                else:
-                    # Race condition: fact deleted between search and fetch
-                    results.append({
-                        "fact_id": ef.fact_id,
-                        "content": ef.content,
-                        "similarity": ef.relevance_score,
-                        "source": ef.source,
-                        "type": None,
-                        "domain": None,
-                        "temporal_class": None,
-                        "state": None,
-                        "context_priority": None,
-                        "tags": [],
-                        "metadata": {},
-                        "reported_date": None,
-                        "version": None,
-                    })
+                results.append({
+                    "fact_id": ef.fact_id,
+                    "content": ef.content,
+                    "similarity": ef.relevance_score,
+                    "source": ef.source,
+                    "type": ef.fact_type,
+                    "domain": ef.domain,
+                    "temporal_class": ef.temporal_class,
+                    "state": ef.state,
+                    "context_priority": ef.context_priority,
+                    "tags": ef.tags or [],
+                    "metadata": ef.metadata or {},
+                    "reported_date": ef.reported_date,
+                    "version": ef.version,
+                })
 
             # Log top 3 results (with safe similarity formatting)
             for i, result in enumerate(results[:3]):
@@ -154,8 +130,7 @@ class FactManagementAdapter(FactManagementPort):
 
             logger.info(
                 f"✅ [FactManagement] Found {len(results)} facts "
-                f"(multi-vector RRF, semantic_dedup=SKIPPED, "
-                f"id_dedup_only=True, enriched={len(fact_lookup)}/{len(fact_ids)})"
+                f"(multi-vector RRF, semantic_dedup=SKIPPED, id_dedup_only=True)"
             )
 
             return results

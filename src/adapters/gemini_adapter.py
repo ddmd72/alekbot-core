@@ -353,6 +353,12 @@ class GeminiAdapter(LLMService):
             return LLMResponse(text="")
 
         candidate = response.candidates[0]
+        if not candidate.content or not candidate.content.parts:
+            finish_reason = getattr(candidate, "finish_reason", None)
+            logger.warning(
+                "⚠️ [GeminiAdapter] Empty content/parts (finish_reason=%s)", finish_reason
+            )
+            return LLMResponse(text="")
         text = "".join([p.text for p in candidate.content.parts if p.text])
         logger.info(
             "🔍 [GeminiAdapter] Parsed response: text_len=%s parts=%s",

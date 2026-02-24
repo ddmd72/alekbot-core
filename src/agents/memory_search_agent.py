@@ -190,6 +190,7 @@ class MemorySearchAgent(BaseAgent):
 
             response = await self._llm.generate_content(request=request)
             raw_response = (response.text or "").strip()
+            logger.info("🔍 [MemorySearchAgent] LLM raw response: %r", raw_response[:300])
 
             debug_logger.log_response(
                 agent_name="memory_search",

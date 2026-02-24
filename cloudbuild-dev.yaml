@@ -24,6 +24,7 @@ steps:
       - "--min-instances=0"
       - "--max-instances=1"
       - "--memory=1024Mi"
+      - "--cpu=2"
       - "--port=8080" # Required for HTTP mode
       - "--allow-unauthenticated" # For dev testing
       - "--set-secrets=SLACK_BOT_TOKEN=SLACK_BOT_TOKEN_DEV:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET_DEV:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_OAUTH_CLIENT_ID=GOOGLE_OAUTH_CLIENT_ID:latest,GOOGLE_OAUTH_CLIENT_SECRET=GOOGLE_OAUTH_CLIENT_SECRET:latest,FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY:latest,OAUTH_SESSION_SECRET=OAUTH_SESSION_SECRET:latest,TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN_DEV:latest,TELEGRAM_WEBHOOK_SECRET=TELEGRAM_WEBHOOK_SECRET_DEV:latest,DOCS_OWNER_USER_ID=docs-owner-user-id:latest"

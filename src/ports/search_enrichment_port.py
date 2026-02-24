@@ -27,6 +27,7 @@ class SearchEnrichmentPort(ABC):
         limits: Optional[SearchLimits] = None,
         dedup_threshold: float = 0.98,
         skip_semantic_dedup: bool = False,
+        sequential: bool = False,
     ) -> EnrichedContext:
         """
         Build enriched context using multi-channel search strategy + RRF ranking.

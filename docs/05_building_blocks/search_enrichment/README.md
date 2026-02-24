@@ -351,7 +351,8 @@ async def enrich_context(
     biographical_facts: Optional[List[Union[FactEntity, Dict]]] = None,
     limits: Optional[SearchLimits] = None,
     dedup_threshold: float = 0.98,
-    skip_semantic_dedup: bool = False
+    skip_semantic_dedup: bool = False,
+    sequential: bool = False,
 ) -> EnrichedContext
 ```
 
@@ -369,6 +370,9 @@ async def enrich_context(
 - `skip_semantic_dedup`: Skip semantic deduplication entirely
   - `False`: Normal search (remove semantic duplicates)
   - `True`: Consolidation mode (keep ALL facts with different IDs)
+- `sequential`: Execute Firestore vector queries one-by-one instead of `asyncio.gather`
+  - `False` (default): Parallel — optimal for conversation path where latency matters
+  - `True`: Sequential — for consolidation background path to prevent Firestore KNN throttling when 6+ concurrent vector queries exceed the throughput budget
 
 **Returns:**
 
@@ -388,10 +392,23 @@ class EnrichedContext:
 class EnrichedFact:
     fact_id: str
     content: str
-    source: str  # "keyword_tags", "phrase1_text", etc.
-    relevance_score: Optional[float]  # Can be None
-    vector: Optional[List[float]]  # Included for dedup!
+    source: str                      # "keyword_tags", "phrase1_text", etc.
+    relevance_score: Optional[float] # Can be None
+    vector: Optional[List[float]]    # Included for dedup!
+    # Taxonomy fields — populated by SearchEnrichmentService directly from Firestore.
+    # Eliminates the need for a secondary get_facts_by_ids batch fetch in callers.
+    fact_type: Optional[str]         # e.g. "FACT", "ANCHOR", "EVENT"
+    domain: Optional[str]            # e.g. "health", "possession", "professional"
+    temporal_class: Optional[str]    # e.g. "PERMANENT", "PERIODIC", "POINT_IN_TIME"
+    state: Optional[str]             # e.g. "current", "outdated"
+    context_priority: Optional[str]  # e.g. "HIGH", "MEDIUM", "LOW"
+    tags: Optional[List[str]]
+    metadata: Optional[Dict]
+    reported_date: Optional[str]     # ISO-8601 string, e.g. "2026-02-24"
+    version: Optional[int]
 ```
+
+**Design note:** Taxonomy fields are populated in both the domain-channel path and the vector-search path, so all callers receive a fully populated DTO regardless of which search channel matched. Fields are `None` when the underlying Firestore document lacks the field.
 
 ---
 

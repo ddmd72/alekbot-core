@@ -93,6 +93,48 @@ async def main():
         except Exception as e:
             logger.warning(f"⚠️ Firestore Warmup failed (non-critical): {e}")
 
+        # 2. Warm up Firestore vector search backend (separate from gRPC connection warmup).
+        # The regular read above warms the gRPC channel, but each FLAT vector index is loaded
+        # into memory lazily on the first find_nearest call for that field. Without this,
+        # the first consolidation search triggers a 40-60s per-index load → retry cascade.
+        # All 3 indexes (vector, tags_vector, metadata_vector) must be warmed in parallel —
+        # each is an independent index with its own cold start.
+        try:
+            from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
+            from google.cloud.firestore_v1.vector import Vector as FSVector
+            from google.cloud.firestore import FieldFilter as FSFieldFilter
+            facts_col = db_client.collection(env_config.domain_facts_collection)
+            warmup_vector = FSVector([0.1] * 768)
+            warmup_query = facts_col.where(
+                filter=FSFieldFilter("account_id", "==", "_warmup")
+            ).where(
+                filter=FSFieldFilter("state", "==", "current")
+            )
+            await asyncio.gather(
+                warmup_query.find_nearest(
+                    vector_field="vector",
+                    query_vector=warmup_vector,
+                    distance_measure=DistanceMeasure.COSINE,
+                    limit=1
+                ).get(),
+                warmup_query.find_nearest(
+                    vector_field="tags_vector",
+                    query_vector=warmup_vector,
+                    distance_measure=DistanceMeasure.COSINE,
+                    limit=1
+                ).get(),
+                warmup_query.find_nearest(
+                    vector_field="metadata_vector",
+                    query_vector=warmup_vector,
+                    distance_measure=DistanceMeasure.COSINE,
+                    limit=1
+                ).get(),
+                return_exceptions=True  # one index fails → others continue
+            )
+            logger.info("✅ Firestore vector search warmed up (all 3 fields)")
+        except Exception as e:
+            logger.warning(f"⚠️ Firestore vector warmup failed (non-critical): {e}")
+
         # NOTE: Embedding initialization moved to UserAgentFactory.ensure_agents_for_user()
         # where repository is created with proper BiographicalContextService injection
 
