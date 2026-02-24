@@ -564,12 +564,18 @@ async def main():
                         if not user_id or factory is None:
                             return jsonify({"error": "missing user_id or factory not ready"}), 400
                         from src.handlers.consolidation_handler import process_user_batches_on_overflow
-                        await process_user_batches_on_overflow(
+                        # Process one batch per HTTP request → each task keeps full CPU on Cloud Run.
+                        # Re-enqueue if more batches remain so Cloud Tasks chains them naturally.
+                        has_more = await process_user_batches_on_overflow(
                             user_id=user_id,
                             coordinator=coordinator,
                             agent_factory=factory,
-                            queue=consolidation_queue
+                            queue=consolidation_queue,
+                            max_batches=1,
                         )
+                        if has_more and agent_task_queue:
+                            await agent_task_queue.enqueue_consolidation_task(user_id=user_id)
+                            logger.info(f"📬 [Worker] Re-enqueued next consolidation task for user {user_id[:8]}")
                         return jsonify({"status": "ok"}), 200
                     return await slack_adapter._handle_worker_task()
                 

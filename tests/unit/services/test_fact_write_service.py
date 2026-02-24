@@ -27,6 +27,7 @@ from src.domain.entities import (
 def mock_embedding():
     svc = MagicMock()
     svc.get_embedding = AsyncMock(return_value=[0.1] * 768)
+    svc.get_embeddings_batch = AsyncMock(return_value=[[0.1] * 768, [0.2] * 768, [0.3] * 768])
     return svc
 
 
@@ -226,8 +227,10 @@ async def test_three_embeddings_generated_per_fact(service, mock_embedding):
 
     await service.add_facts_batch("acc-1", "usr-1", facts)
 
-    # 3 get_embedding calls per fact
-    assert mock_embedding.get_embedding.await_count == 3
+    # 1 batch call with 3 texts per fact (text, tags_text, metadata_text)
+    mock_embedding.get_embeddings_batch.assert_awaited_once()
+    texts_arg = mock_embedding.get_embeddings_batch.call_args.args[0]
+    assert len(texts_arg) == 3
 
 
 @pytest.mark.asyncio
@@ -236,10 +239,9 @@ async def test_embeddings_use_correct_tasks(service, mock_embedding):
 
     await service.add_facts_batch("acc-1", "usr-1", facts)
 
-    call_args_list = mock_embedding.get_embedding.call_args_list
-    tasks = [c.args[1] for c in call_args_list]
-    assert "RETRIEVAL_DOCUMENT" in tasks
-    assert "SEMANTIC_SIMILARITY" in tasks
+    # All 3 vectors use RETRIEVAL_DOCUMENT (consistent with RETRIEVAL_QUERY at search time)
+    task_arg = mock_embedding.get_embeddings_batch.call_args.args[1]
+    assert task_arg == "RETRIEVAL_DOCUMENT"
 
 
 # ---------------------------------------------------------------------------

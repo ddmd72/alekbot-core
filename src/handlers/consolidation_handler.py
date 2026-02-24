@@ -5,7 +5,7 @@ Extracted from slack_handler.py for reusability across platforms.
 import re
 import json
 import asyncio
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from ..domain.messaging import ResponseChannel
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
@@ -55,15 +55,24 @@ async def process_user_batches_on_overflow(
     user_id: str,
     coordinator: AgentCoordinator,
     agent_factory: UserAgentFactory,
-    queue: ConsolidationQueue
-) -> None:
+    queue: ConsolidationQueue,
+    max_batches: Optional[int] = None,
+) -> bool:
     """
-    Process ALL pending consolidation batches for a specific user.
-    Triggered by the overflow event (Librarian process).
+    Process pending consolidation batches for a specific user.
+
+    Args:
+        max_batches: Maximum number of batches to process in this call.
+                     None = unlimited (used by manual $consolidate command).
+                     1 = one batch per Cloud Tasks HTTP request (overflow path) —
+                     caller re-enqueues another task if has_more is True.
+
+    Returns:
+        has_more: True if there are still pending/retry_pending batches after this call.
 
     SESSION_27: Establishes RequestContext for implicit multi-tenant operations.
     """
-    logger.info(f"👨‍🏫 [Librarian] Starting overflow consolidation for user {user_id[:8]}...")
+    logger.info(f"👨‍🏫 [Librarian] Starting overflow consolidation for user {user_id[:8]}... (max_batches={max_batches})")
 
     try:
         await agent_factory.ensure_agents_for_user(user_id)
@@ -77,9 +86,15 @@ async def process_user_batches_on_overflow(
         async with RequestContext(user_id=user_id, account_id=account_id):
             logger.debug(f"✅ RequestContext set: user_id={user_id[:8]}, account_id={account_id[:12] if account_id else 'None'}")
 
-            # Get all pending or retry_pending batches for this user
-            # We process them sequentially to maintain order and avoid race conditions
+            # Process batches sequentially to maintain order and avoid race conditions.
+            # max_batches=1 (overflow path): process one batch per Cloud Tasks HTTP request;
+            # caller re-enqueues a new task when has_more=True.
+            # max_batches=None (manual $consolidate): process all pending batches in one request.
+            processed = 0
             while True:
+                if max_batches is not None and processed >= max_batches:
+                    break
+
                 batches = await queue.get_pending_batches(user_id=user_id, limit=1)
                 if not batches:
                     logger.debug(f"✅ No more pending batches for user {user_id[:8]}")
@@ -119,6 +134,7 @@ async def process_user_batches_on_overflow(
                         facts_extracted = 0
 
                     logger.info(f"✅ [Librarian] Batch {batch.batch_id} consolidated: {facts_extracted} facts → DELETED")
+                    processed += 1
                 else:
                     # Failure -> Increment attempts and set to RETRY_PENDING or FAILED
                     attempts = await queue.increment_attempts(batch.batch_id)
@@ -138,11 +154,19 @@ async def process_user_batches_on_overflow(
                         )
                         logger.warning(f"⚠️ [Librarian] Batch {batch.batch_id} failed (attempt {attempts}). Set to retry later.")
 
-                    # Stop processing current user's queue on first failure to maintain order
+                    # Stop processing on first failure to maintain queue order
                     break
+
+        # Check whether there are still pending batches (used by caller to decide re-enqueue)
+        remaining = await queue.get_pending_batches(user_id=user_id, limit=1)
+        has_more = len(remaining) > 0
+        if has_more:
+            logger.info(f"📬 [Librarian] More pending batches remain for user {user_id[:8]}")
+        return has_more
 
     except Exception as e:
         logger.error(f"❌ [Librarian] Unhandled error in batch processing for {user_id}: {e}", exc_info=True)
+        return False
 
 async def _execute_consolidation_background(
     coordinator: AgentCoordinator,

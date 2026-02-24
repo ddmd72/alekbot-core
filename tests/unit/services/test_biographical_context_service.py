@@ -1,508 +1,200 @@
 """
-Unit tests for BiographicalContextService
+Unit tests for BiographicalContextService.
 
-Session: 2026-02-16 Deliberate Fact Management - Priority-Based Refresh
-Tests priority-based selection with sorting and principles logic.
+Refactored (2026-02-24): Service now calls get_active_facts_ordered (bounded, sorted by
+context_priority_rank in Firestore). Python-side sorting and CRITICAL-over-limit logic removed.
+Tests focus on: domain-first fill, facts/principles separation, principles limit.
 """
 
 import pytest
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, call
 
 from src.services.biographical_context_service import BiographicalContextService
-from src.domain.entities import FactEntity, FactType, FactState, ContextPriority
+from src.domain.entities import FactEntity, FactType, FactState, ContextPriority, FactDomain
+
+
+def make_fact(
+    text: str,
+    priority: ContextPriority = ContextPriority.MEDIUM,
+    tags: list[str] | None = None,
+    domain: FactDomain = FactDomain.BIOGRAPHICAL,
+    created_at: datetime | None = None,
+) -> FactEntity:
+    return FactEntity(
+        account_id="account-1",
+        created_by_user_id="user-1",
+        lineage_id=f"lineage-{text[:8]}",
+        text=text,
+        type=FactType.STATE,
+        domain=domain,
+        tags=tags or [],
+        context_priority=priority,
+        created_at=created_at or datetime(2025, 1, 1, tzinfo=timezone.utc),
+        state=FactState.CURRENT,
+    )
 
 
 class TestBiographicalContextService:
-    """Test suite for priority-based biographical context refresh."""
-    
+
     @pytest.fixture
-    def mock_repository(self):
-        """Create mock fact repository."""
-        repo = AsyncMock()
-        return repo
-    
+    def mock_repo(self):
+        return AsyncMock()
+
     @pytest.fixture
-    def service(self, mock_repository):
-        """Create biographical context service with mocked dependencies."""
-        return BiographicalContextService(
-            repository=mock_repository,
-            config_service=None,  # Will use defaults
-            account_repo=None
+    def service(self, mock_repo):
+        return BiographicalContextService(repository=mock_repo, config_service=None, account_repo=None)
+
+    # ========================================================================
+    # DOMAIN-FIRST SELECTION
+    # ========================================================================
+
+    async def test_biographical_domain_fetched_first(self, service, mock_repo):
+        """Service calls get_active_facts_ordered with domain=biographical first."""
+        biog_facts = [make_fact("biog fact")]
+        mock_repo.get_active_facts_ordered.return_value = biog_facts
+
+        await service.refresh_context("acc-123")
+
+        first_call = mock_repo.get_active_facts_ordered.call_args_list[0]
+        assert first_call == call("acc-123", domain="biographical", limit=65)
+
+    async def test_no_fill_when_biographical_reaches_limit(self, service, mock_repo):
+        """Second query not issued when biographical facts fill the limit."""
+        biog_facts = [make_fact(f"fact {i}") for i in range(65)]  # exactly at default limit
+        mock_repo.get_active_facts_ordered.return_value = biog_facts
+
+        await service.refresh_context("acc-123")
+
+        assert mock_repo.get_active_facts_ordered.call_count == 1
+
+    async def test_fill_from_all_domains_when_biographical_insufficient(self, service, mock_repo):
+        """When biographical < limit, second query fetches all domains for fill."""
+        biog_fact = make_fact("biog fact")
+        health_fact = make_fact("health fact", domain=FactDomain.HEALTH)
+        biog_facts = [biog_fact]
+        all_ordered = [biog_fact, health_fact]  # same object (same ID) + extra
+
+        mock_repo.get_active_facts_ordered.side_effect = [biog_facts, all_ordered]
+
+        result = await service.refresh_context("acc-123")
+
+        assert mock_repo.get_active_facts_ordered.call_count == 2
+        second_call = mock_repo.get_active_facts_ordered.call_args_list[1]
+        assert second_call == call("acc-123", limit=65)
+        # biog_fact + health_fact (deduped biog_fact from all_ordered)
+        assert len(result["facts"]) == 2
+
+    async def test_fill_deduplicates_already_fetched_biographical_facts(self, service, mock_repo):
+        """Facts from Q1 are not duplicated when Q2 returns them again."""
+        biog_fact = make_fact("shared fact")
+        extra_fact = make_fact("extra", domain=FactDomain.HEALTH)
+
+        mock_repo.get_active_facts_ordered.side_effect = [
+            [biog_fact],
+            [biog_fact, extra_fact],  # Q2 includes the same biog fact
+        ]
+
+        result = await service.refresh_context("acc-123")
+        texts = [f["text"] for f in result["facts"]]
+        assert texts.count("shared fact") == 1, "No duplicates after fill"
+
+    # ========================================================================
+    # FACTS VS PRINCIPLES SEPARATION
+    # ========================================================================
+
+    async def test_mindset_tagged_fact_goes_to_principles(self, service, mock_repo):
+        """Facts with 'mindset' tag are separated into principles."""
+        facts = [
+            make_fact("Regular fact", tags=[]),
+            make_fact("A principle", tags=["mindset"]),
+        ]
+        mock_repo.get_active_facts_ordered.return_value = facts
+
+        result = await service.refresh_context("acc-123")
+
+        assert len(result["facts"]) == 1
+        assert result["facts"][0]["text"] == "Regular fact"
+        assert len(result["principles"]) == 1
+        assert result["principles"][0]["text"] == "A principle"
+
+    async def test_principles_limit_applied(self, service, mock_repo):
+        """Principles capped at principles_limit (default 20)."""
+        principles = [make_fact(f"principle {i}", tags=["mindset"]) for i in range(25)]
+        mock_repo.get_active_facts_ordered.return_value = principles
+
+        result = await service.refresh_context("acc-123")
+
+        assert len(result["principles"]) == 20
+
+    async def test_principles_preserve_db_order(self, service, mock_repo):
+        """Principles are returned in the order provided by the repo (already priority-sorted)."""
+        principles = [
+            make_fact("high principle", priority=ContextPriority.HIGH, tags=["mindset"]),
+            make_fact("low principle", priority=ContextPriority.LOW, tags=["mindset"]),
+        ]
+        mock_repo.get_active_facts_ordered.return_value = principles
+
+        result = await service.refresh_context("acc-123")
+
+        assert result["principles"][0]["text"] == "high principle"
+        assert result["principles"][1]["text"] == "low principle"
+
+    # ========================================================================
+    # DICT FORMAT
+    # ========================================================================
+
+    async def test_fact_dict_contains_required_fields(self, service, mock_repo):
+        """Returned fact dicts have expected keys."""
+        mock_repo.get_active_facts_ordered.return_value = [make_fact("test")]
+
+        result = await service.refresh_context("acc-123")
+        fact = result["facts"][0]
+
+        assert "id" in fact
+        assert "text" in fact
+        assert "domain" in fact
+        assert "tags" in fact
+        assert "context_priority" in fact
+        assert "created_at" in fact
+        assert "_priority_obj" not in fact  # temp field must not leak
+
+    async def test_domain_none_serialized_as_unknown(self, service, mock_repo):
+        """Facts with domain=None serialize domain as 'unknown'."""
+        fact = FactEntity(
+            account_id="account-1",
+            created_by_user_id="user-1",
+            lineage_id="lineage-x",
+            text="no domain fact",
+            type=FactType.STATE,
+            tags=[],
+            state=FactState.CURRENT,
         )
-    
-    # ========================================================================
-    # PRIORITY-BASED SELECTION TESTS
-    # ========================================================================
-    
-    @pytest.mark.asyncio
-    async def test_critical_facts_always_included_over_limit(
-        self,
-        service,
-        mock_repository
-    ):
-        """CRITICAL facts always included even if exceeding limit."""
-        # Create 5 CRITICAL facts + 5 HIGH facts
-        facts = []
-        for i in range(5):
-            facts.append(FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-21",
-                text=f"Critical fact {i}",
-                type=FactType.STATE,
-                tags=["critical"],
-                context_priority=ContextPriority.CRITICAL,
-                created_at=datetime(2025, 1, i+1, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ))
-        
-        for i in range(5):
-            facts.append(FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-22",
-                text=f"High fact {i}",
-                type=FactType.STATE,
-                tags=["high"],
-                context_priority=ContextPriority.HIGH,
-                created_at=datetime(2025, 1, i+1, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ))
-        
-        mock_repository.get_active_facts.return_value = facts
-        
-        # Set limit to 3 (but 5 CRITICAL should still be included)
-        service._repo = mock_repository
-        
-        result = await service.refresh_context("account123")
-        
-        # All 5 CRITICAL + some HIGH (up to system default limit)
-        returned_facts = result["facts"]
-        critical_count = len([f for f in returned_facts if f["context_priority"] == "critical"])
-        
-        assert critical_count == 5, "All CRITICAL facts should be included"
-        assert len(returned_facts) >= 5, "Should include at least CRITICAL facts"
-    
-    @pytest.mark.asyncio
-    async def test_priority_ordering_critical_high_medium_low(
-        self,
-        service,
-        mock_repository
-    ):
-        """Facts returned in priority order: CRITICAL → HIGH → MEDIUM → LOW."""
-        facts = [
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-1",
-                text="Low fact",
-                type=FactType.STATE,
-                tags=["low"],
-                context_priority=ContextPriority.LOW,
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-2",
-                text="Critical fact",
-                type=FactType.STATE,
-                tags=["critical"],
-                context_priority=ContextPriority.CRITICAL,
-                created_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-3",
-                text="Medium fact",
-                type=FactType.STATE,
-                tags=["medium"],
-                context_priority=ContextPriority.MEDIUM,
-                created_at=datetime(2025, 1, 3, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-4",
-                text="High fact",
-                type=FactType.STATE,
-                tags=["high"],
-                context_priority=ContextPriority.HIGH,
-                created_at=datetime(2025, 1, 4, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            )
-        ]
-        
-        mock_repository.get_active_facts.return_value = facts
-        
-        result = await service.refresh_context("account123")
-        returned_facts = result["facts"]
-        
-        # Check priority order
-        priorities = [f["context_priority"] for f in returned_facts]
-        
-        assert priorities[0] == "critical", "CRITICAL should be first"
-        assert priorities[1] == "high", "HIGH should be second"
-        assert priorities[2] == "medium", "MEDIUM should be third"
-        assert priorities[3] == "low", "LOW should be last"
-    
-    # ========================================================================
-    # SORTING WITHIN PRIORITY GROUPS
-    # ========================================================================
-    
-    @pytest.mark.asyncio
-    async def test_sorting_within_priority_newest_first(
-        self,
-        service,
-        mock_repository
-    ):
-        """Within each priority group, facts sorted by created_at DESC (newest first)."""
-        facts = [
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-5",
-                text="High fact old",
-                type=FactType.STATE,
-                tags=["high"],
-                context_priority=ContextPriority.HIGH,
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-6",
-                text="High fact middle",
-                type=FactType.STATE,
-                tags=["high"],
-                context_priority=ContextPriority.HIGH,
-                created_at=datetime(2025, 1, 15, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-7",
-                text="High fact newest",
-                type=FactType.STATE,
-                tags=["high"],
-                context_priority=ContextPriority.HIGH,
-                created_at=datetime(2025, 1, 30, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            )
-        ]
-        
-        mock_repository.get_active_facts.return_value = facts
-        
-        result = await service.refresh_context("account123")
-        returned_facts = result["facts"]
-        
-        # All should be HIGH priority, sorted by date DESC
-        assert returned_facts[0]["text"] == "High fact newest"
-        assert returned_facts[1]["text"] == "High fact middle"
-        assert returned_facts[2]["text"] == "High fact old"
-    
-    # ========================================================================
-    # PRINCIPLES PRIORITY LOGIC
-    # ========================================================================
-    
-    @pytest.mark.asyncio
-    async def test_principles_apply_same_priority_logic(
-        self,
-        service,
-        mock_repository
-    ):
-        """Principles should use same priority logic as facts."""
-        facts = [
-            # 3 CRITICAL principles
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-8",
-                text="Critical principle 1",
-                type=FactType.PRINCIPLE,
-                tags=["mindset"],
-                context_priority=ContextPriority.CRITICAL,
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-9",
-                text="Critical principle 2",
-                type=FactType.PRINCIPLE,
-                tags=["mindset"],
-                context_priority=ContextPriority.CRITICAL,
-                created_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-10",
-                text="Critical principle 3",
-                type=FactType.PRINCIPLE,
-                tags=["mindset"],
-                context_priority=ContextPriority.CRITICAL,
-                created_at=datetime(2025, 1, 3, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            # 5 LOW principles
-            *[
-                FactEntity(
-                    account_id="account-1",
-                    created_by_user_id="user-1",
-                    lineage_id="lineage-11",
-                    text=f"Low principle {i}",
-                    type=FactType.PRINCIPLE,
-                    tags=["mindset"],
-                    context_priority=ContextPriority.LOW,
-                    created_at=datetime(2025, 1, i+10, tzinfo=timezone.utc),
-                    state=FactState.CURRENT
-                )
-                for i in range(5)
-            ]
-        ]
-        
-        mock_repository.get_active_facts.return_value = facts
-        
-        result = await service.refresh_context("account123")
-        principles = result["principles"]
-        
-        # All 3 CRITICAL principles should be included
-        critical_count = len([p for p in principles if p["context_priority"] == "critical"])
-        assert critical_count == 3, "All CRITICAL principles should be included"
-        
-        # Should include CRITICAL + some LOW (up to default limit)
-        assert len(principles) >= 3
-    
-    @pytest.mark.asyncio
-    async def test_critical_principles_over_limit(
-        self,
-        service,
-        mock_repository
-    ):
-        """CRITICAL principles included even if exceeding principles_limit."""
-        # Create 10 CRITICAL principles (exceeds typical limit of 3)
-        facts = [
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-12",
-                text=f"Critical principle {i}",
-                type=FactType.PRINCIPLE,
-                tags=["mindset"],
-                context_priority=ContextPriority.CRITICAL,
-                created_at=datetime(2025, 1, i+1, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            )
-            for i in range(10)
-        ]
-        
-        mock_repository.get_active_facts.return_value = facts
-        
-        result = await service.refresh_context("account123")
-        principles = result["principles"]
-        
-        # All 10 CRITICAL principles should be included (over limit)
-        assert len(principles) == 10, "All CRITICAL principles should be included even over limit"
-    
-    # ========================================================================
-    # MIXED FACTS AND PRINCIPLES
-    # ========================================================================
-    
-    @pytest.mark.asyncio
-    async def test_separate_facts_and_principles(
-        self,
-        service,
-        mock_repository
-    ):
-        """Facts and principles separated correctly."""
-        facts = [
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-13",
-                text="Biographical fact",
-                type=FactType.STATE,
-                tags=["bio"],
-                context_priority=ContextPriority.HIGH,
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-14",
-                text="Principle fact",
-                type=FactType.PRINCIPLE,
-                tags=["mindset"],
-                context_priority=ContextPriority.HIGH,
-                created_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-15",
-                text="Medical fact",
-                type=FactType.STATE,
-                tags=["medical"],
-                context_priority=ContextPriority.MEDIUM,
-                created_at=datetime(2025, 1, 3, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            )
-        ]
-        
-        mock_repository.get_active_facts.return_value = facts
-        
-        result = await service.refresh_context("account123")
-        
-        assert len(result["facts"]) == 2, "Should have 2 non-principle facts"
-        assert len(result["principles"]) == 1, "Should have 1 principle"
-        
-        assert result["principles"][0]["text"] == "Principle fact"
-        assert result["facts"][0]["text"] == "Biographical fact"
-        assert result["facts"][1]["text"] == "Medical fact"
-    
-    # ========================================================================
-    # DEFAULT PRIORITY HANDLING
-    # ========================================================================
-    
-    @pytest.mark.asyncio
-    async def test_none_priority_defaults_to_medium(
-        self,
-        service,
-        mock_repository
-    ):
-        """Facts with None priority default to MEDIUM."""
-        facts = [
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-16",
-                text="Fact without priority",
-                type=FactType.STATE,
-                tags=["test"],
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-17",
-                text="High priority fact",
-                type=FactType.STATE,
-                tags=["test"],
-                context_priority=ContextPriority.HIGH,
-                created_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            )
-        ]
-        
-        mock_repository.get_active_facts.return_value = facts
-        
-        result = await service.refresh_context("account123")
-        returned_facts = result["facts"]
-        
-        # HIGH should come first, then MEDIUM (None)
-        assert returned_facts[0]["text"] == "High priority fact"
-        assert returned_facts[1]["text"] == "Fact without priority"
-        assert returned_facts[1]["context_priority"] == "medium"
-    
-    # ========================================================================
-    # ARCHIVAL PRIORITY EXCLUSION
-    # ========================================================================
-    
-    @pytest.mark.asyncio
-    async def test_archival_priority_excluded(
-        self,
-        service,
-        mock_repository
-    ):
-        """Facts with ARCHIVAL priority are excluded from cache."""
-        facts = [
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-18",
-                text="Active fact",
-                type=FactType.STATE,
-                tags=["active"],
-                context_priority=ContextPriority.HIGH,
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            ),
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-19",
-                text="Archived fact",
-                type=FactType.STATE,
-                tags=["archived"],
-                context_priority=ContextPriority.ARCHIVAL,
-                created_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            )
-        ]
-        
-        mock_repository.get_active_facts.return_value = facts
-        
-        result = await service.refresh_context("account123")
-        returned_facts = result["facts"]
-        
-        assert len(returned_facts) == 1, "ARCHIVAL facts should be excluded"
-        assert returned_facts[0]["text"] == "Active fact"
-    
+        mock_repo.get_active_facts_ordered.return_value = [fact]
+
+        result = await service.refresh_context("acc-123")
+        assert result["facts"][0]["domain"] == "unknown"
+
     # ========================================================================
     # EMPTY CASES
     # ========================================================================
-    
-    @pytest.mark.asyncio
-    async def test_no_facts_returns_empty_lists(
-        self,
-        service,
-        mock_repository
-    ):
-        """No facts returns empty facts and principles lists."""
-        mock_repository.get_active_facts.return_value = []
-        
-        result = await service.refresh_context("account123")
-        
+
+    async def test_empty_result_when_no_facts(self, service, mock_repo):
+        """Empty repo returns empty facts and principles."""
+        mock_repo.get_active_facts_ordered.return_value = []
+
+        result = await service.refresh_context("acc-123")
+
         assert result["facts"] == []
         assert result["principles"] == []
-    
-    @pytest.mark.asyncio
-    async def test_only_principles_no_facts(
-        self,
-        service,
-        mock_repository
-    ):
-        """Only principles, no biographical facts."""
-        facts = [
-            FactEntity(
-                account_id="account-1",
-                created_by_user_id="user-1",
-                lineage_id="lineage-20",
-                text="Principle 1",
-                type=FactType.PRINCIPLE,
-                tags=["mindset"],
-                context_priority=ContextPriority.HIGH,
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-                state=FactState.CURRENT
-            )
+
+    async def test_only_principles_returns_empty_facts_list(self, service, mock_repo):
+        """All mindset-tagged facts → facts list is empty."""
+        mock_repo.get_active_facts_ordered.return_value = [
+            make_fact("principle", tags=["mindset"])
         ]
-        
-        mock_repository.get_active_facts.return_value = facts
-        
-        result = await service.refresh_context("account123")
-        
-        assert len(result["facts"]) == 0
+
+        result = await service.refresh_context("acc-123")
+
+        assert result["facts"] == []
         assert len(result["principles"]) == 1

@@ -478,6 +478,9 @@ class TestFactRepositoryContract:
     def test_has_get_active_facts(self):
         assert getattr(FactRepository.get_active_facts, "__isabstractmethod__", False)
 
+    def test_has_get_active_facts_ordered(self):
+        assert getattr(FactRepository.get_active_facts_ordered, "__isabstractmethod__", False)
+
     def test_has_get_paginated_facts(self):
         assert getattr(FactRepository.get_paginated_facts, "__isabstractmethod__", False)
 
@@ -526,7 +529,7 @@ class TestFactRepositoryContract:
             name for name, method in inspect.getmembers(FactRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 18, f"Expected 18 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 19, f"Expected 19 abstract methods, got {abstract_methods}"
 
     def test_add_fact_signature(self):
         sig = inspect.signature(FactRepository.add_fact)

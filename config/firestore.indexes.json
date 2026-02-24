@@ -219,6 +219,27 @@
     "collectionGroup": "development_domain_facts_v2",
     "queryScope": "COLLECTION",
     "fields": [
+      { "fieldPath": "account_id",            "order": "ASCENDING"  },
+      { "fieldPath": "state",                 "order": "ASCENDING"  },
+      { "fieldPath": "context_priority_rank", "order": "ASCENDING"  },
+      { "fieldPath": "created_at",            "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id",            "order": "ASCENDING"  },
+      { "fieldPath": "state",                 "order": "ASCENDING"  },
+      { "fieldPath": "domain",                "order": "ASCENDING"  },
+      { "fieldPath": "context_priority_rank", "order": "ASCENDING"  },
+      { "fieldPath": "created_at",            "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
       { "fieldPath": "account_id", "order": "ASCENDING" },
       { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "created_at", "order": "DESCENDING" },

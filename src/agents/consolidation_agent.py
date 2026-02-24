@@ -487,20 +487,24 @@ class ConsolidationAgent(BaseAgent):
         user_id: str,
         account_id: str
     ) -> List[ToolResponse]:
-        """Execute fact management tools via FactManagementPort."""
-        results: List[ToolResponse] = []
-        
-        for tool_call in tool_calls:
+        """Execute fact management tools via FactManagementPort.
+
+        All tool calls within a single LLM turn are dispatched concurrently via
+        asyncio.gather. search_existing_facts calls are always independent (each
+        searches for a different candidate fact). Write tools (create/update/merge)
+        reference fact_ids from prior search results, never each other.
+        asyncio.gather preserves order — tool_responses[i] matches tool_calls[i].
+        """
+
+        async def _execute_one(tool_call: ToolCall) -> ToolResponse:
             logger.info(f"🔧 [ConsolidationAgent] Executing tool: {tool_call.name}")
-            
             try:
                 if tool_call.name == "search_existing_facts":
-                    # Extract new 3-key format parameters
                     keywords = tool_call.args.get("keywords", [])
                     primary_query = tool_call.args.get("primary_query", "")
                     alternative_query = tool_call.args.get("alternative_query", "")
                     limit = tool_call.args.get("limit", 20)
-                    
+
                     logger.info(
                         f"   🔍 search_existing_facts("
                         f"keywords={keywords[:3]}{'...' if len(keywords) > 3 else ''}, "
@@ -508,74 +512,78 @@ class ConsolidationAgent(BaseAgent):
                         f"alternative='{alternative_query[:40] if alternative_query else 'N/A'}...', "
                         f"limit={limit})"
                     )
-                    
+
                     result = await self._fact_management.search_existing_facts(
                         keywords=keywords,
                         primary_query=primary_query,
                         alternative_query=alternative_query,
                         limit=limit
                     )
-                    results.append(ToolResponse(
+                    return ToolResponse(
                         name=tool_call.name,
                         result_str=json.dumps(result, ensure_ascii=False)
-                    ))
-                
+                    )
+
                 elif tool_call.name == "create_fact":
-                    # Extract fact_attributes and inject account_id/user_id
                     fact_attributes = tool_call.args.get("fact_attributes", {})
                     fact_attributes["account_id"] = account_id
                     fact_attributes["user_id"] = user_id
-                    
+
                     result = await self._fact_management.create_fact(
                         content=tool_call.args.get("content", ""),
                         metadata=fact_attributes
                     )
-                    results.append(ToolResponse(
+                    return ToolResponse(
                         name=tool_call.name,
                         result_str=json.dumps(result, ensure_ascii=False)
-                    ))
-                
+                    )
+
                 elif tool_call.name == "update_fact":
                     result = await self._fact_management.update_fact(
                         fact_id=tool_call.args.get("fact_id", ""),
                         updates=tool_call.args.get("updates", {})
                     )
-                    results.append(ToolResponse(
+                    return ToolResponse(
                         name=tool_call.name,
                         result_str=json.dumps(result, ensure_ascii=False)
-                    ))
-                
+                    )
+
                 elif tool_call.name == "merge_facts":
-                    # Extract fact_attributes and inject account_id/user_id
                     fact_attributes = tool_call.args.get("fact_attributes", {})
                     fact_attributes["account_id"] = account_id
                     fact_attributes["user_id"] = user_id
-                    
+
                     result = await self._fact_management.merge_facts(
                         fact_ids=tool_call.args.get("fact_ids", []),
                         merged_content=tool_call.args.get("merged_content", ""),
                         metadata=fact_attributes
                     )
-                    results.append(ToolResponse(
+                    return ToolResponse(
                         name=tool_call.name,
                         result_str=json.dumps(result, ensure_ascii=False)
-                    ))
-                
+                    )
+
                 else:
                     logger.warning(f"⚠️ Unknown tool: {tool_call.name}")
-                    results.append(ToolResponse(
+                    return ToolResponse(
                         name=tool_call.name,
                         result_str=json.dumps({"error": f"Unknown tool: {tool_call.name}"})
-                    ))
-            
+                    )
+
             except Exception as e:
                 logger.error(f"❌ Tool {tool_call.name} failed: {e}", exc_info=True)
-                results.append(ToolResponse(
+                return ToolResponse(
                     name=tool_call.name,
                     result_str=json.dumps({"error": str(e)}, ensure_ascii=False)
-                ))
-        
-        return results
+                )
+
+        if len(tool_calls) > 1:
+            logger.info(
+                f"👨‍🏫 [ConsolidationAgent] Dispatching {len(tool_calls)} tools in parallel"
+            )
+            return list(await asyncio.gather(*[_execute_one(tc) for tc in tool_calls]))
+
+        return [await _execute_one(tool_calls[0])]
     
     def _get_tool_declarations(self) -> List[Dict[str, Any]]:
         """
