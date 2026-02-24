@@ -109,6 +109,9 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
 - **Port is not needed** for internal services with a single implementation.
 - **PerformanceTier** (ECO/BALANCED/PERFORMANCE) — abstraction between agents and concrete models.
 - **ProviderRegistry** — runtime LLM provider selection (gemini/claude/grok).
+- **PromptCacheStrategy** — transparent prompt caching via proxy pattern. Agents declare their
+  type; strategy resolves cache config; `CachingLLMProxy` wraps the provider. Agents never
+  import or reference `PromptCacheConfig`. See `docs/10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md`.
 - **CircuitBreaker** — in BaseAgent, protects against cascading failures.
 - **SCD2 versioning** — FactEntity uses valid_from/valid_to/is_current.
 - **Multi-tenant** — always pass account_id. Collections with env prefix.

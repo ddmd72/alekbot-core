@@ -29,6 +29,7 @@ from ..services.biographical_context_service import BiographicalContextService
 from ..services.fact_write_service import FactWriteService
 from ..services.provider_registry import ProviderRegistry
 from ..services.agent_context_builder import AgentContextBuilder
+from ..services.prompt_cache_strategy import PromptCacheStrategy
 from ..services.prompt_component_service import PromptComponentService
 from ..services.search_enrichment_service import SearchEnrichmentService
 from ..utils.logger import logger
@@ -98,7 +99,11 @@ class ServiceContainer:
         if self.grok_service:
             self.registry.register("grok", self.grok_service)
 
-        self.context_builder = AgentContextBuilder(self.registry)
+        self.cache_strategy = PromptCacheStrategy()
+        self.context_builder = AgentContextBuilder(
+            self.registry,
+            cache_strategy=self.cache_strategy,
+        )
 
         # ------------------------------------------------------------------
         # Prompt v2 component infrastructure

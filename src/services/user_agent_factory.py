@@ -141,6 +141,7 @@ class UserAgentFactory:
         router_context = self.context_builder.build("router", user_profile.config)
         quick_context = self.context_builder.build("quick", user_profile.config)
         smart_context = self.context_builder.build("smart", user_profile.config)
+        consolidation_context = self.context_builder.build("consolidation", user_profile.config)
         postprocessing_context = self.context_builder.build("postprocessing", user_profile.config)
         history_summary_service = HistorySummaryService(
             llm_service=postprocessing_context.provider,
@@ -267,7 +268,7 @@ class UserAgentFactory:
                 timeout_ms=300000,
                 capabilities=["fact_consolidation", "synthesis", "deduplication"],
             ),
-            execution_context=smart_context,
+            execution_context=consolidation_context,
             repository=self.repository,
             embedding_service=self.embedding_service,
             fact_write_service=self.fact_write_service,
