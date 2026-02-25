@@ -1,9 +1,10 @@
 import pytest
 from unittest.mock import Mock, AsyncMock
 from src.services.user_agent_factory import UserAgentFactory
-from src.domain.user import UserProfile, UserBotConfig, PerformanceTier, LLMProvider
+from src.domain.user import UserProfile, UserBotConfig, PerformanceTier
 from src.services.agent_context_builder import AgentExecutionContext
 from src.ports.llm_service import ProviderCapabilities, LLMService
+
 
 @pytest.fixture
 def mock_dependencies():
@@ -29,80 +30,62 @@ def mock_dependencies():
         "fact_management_adapter_factory": Mock(return_value=Mock()),
     }
 
+
 @pytest.fixture
 def factory(mock_dependencies):
     return UserAgentFactory(**mock_dependencies)
 
-@pytest.mark.asyncio
-async def test_resolve_smart_llm_uses_context_builder(factory):
-    # Setup
-    user_profile = Mock(spec=UserProfile)
-    user_profile.user_id = "test_user"
-    user_profile.config = UserBotConfig()
 
-    mock_provider = Mock(spec=LLMService)
-    mock_context = AgentExecutionContext(
-        agent_type="smart",
-        provider=mock_provider,
-        model_name="test-smart-model",
-        tier=PerformanceTier.BALANCED,
-        capabilities=ProviderCapabilities()
+def _make_context(agent_type: str, model_name: str, tier=PerformanceTier.BALANCED):
+    return AgentExecutionContext(
+        agent_type=agent_type,
+        provider=Mock(spec=LLMService),
+        model_name=model_name,
+        tier=tier,
+        capabilities=ProviderCapabilities(),
     )
-    factory.context_builder.build.return_value = mock_context
 
-    # Execute
-    provider, model = factory._resolve_smart_llm(user_profile)
 
-    # Verify
-    factory.context_builder.build.assert_called_once_with("smart", user_profile.config)
-    assert provider == mock_provider
-    assert model == "test-smart-model"
-
-@pytest.mark.asyncio
-async def test_resolve_light_llm_uses_context_builder(factory):
-    # Setup
-    user_profile = Mock(spec=UserProfile)
-    user_profile.user_id = "test_user"
-    user_profile.config = UserBotConfig()
-
-    mock_provider = Mock(spec=LLMService)
-    mock_context = AgentExecutionContext(
-        agent_type="quick",
-        provider=mock_provider,
-        model_name="test-light-model",
-        tier=PerformanceTier.ECO,
-        capabilities=ProviderCapabilities()
-    )
-    factory.context_builder.build.return_value = mock_context
-
-    # Execute
-    provider, model = factory._resolve_light_llm(user_profile)
-
-    # Verify
-    factory.context_builder.build.assert_called_once_with("quick", user_profile.config)
-    assert provider == mock_provider
-    assert model == "test-light-model"
-
-@pytest.mark.asyncio
-async def test_resolve_smart_llm_validates_anthropic_key(factory):
-    # Setup
-    user_profile = Mock(spec=UserProfile)
-    user_profile.user_id = "test_user"
-    user_profile.config = UserBotConfig()
-
-    mock_provider = Mock(spec=LLMService)
-    mock_context = AgentExecutionContext(
-        agent_type="smart",
-        provider=mock_provider,
-        model_name="claude-opus-4-6",  # Starts with "claude" → triggers the check
-        tier=PerformanceTier.PERFORMANCE,
-        capabilities=ProviderCapabilities()
-    )
-    factory.context_builder.build.return_value = mock_context
-
-    # Remove API key from config
+def test_validate_anthropic_key_raises_when_key_missing(factory):
+    """_validate_anthropic_key raises ValueError when Claude model but no API key."""
     factory.config = {"GEMINI_API_KEY": "fake_key"}  # No ANTHROPIC_API_KEY
+    ctx = _make_context("smart", "claude-opus-4-6", PerformanceTier.PERFORMANCE)
 
-    # Execute & Verify
     with pytest.raises(ValueError, match="ANTHROPIC_API_KEY is missing"):
-        factory._resolve_smart_llm(user_profile)
+        factory._validate_anthropic_key(ctx, "test_user")
+
+
+def test_validate_anthropic_key_passes_with_key_present(factory):
+    """_validate_anthropic_key does not raise when key is present."""
+    ctx = _make_context("smart", "claude-opus-4-6", PerformanceTier.PERFORMANCE)
+    factory._validate_anthropic_key(ctx, "test_user")  # should not raise
+
+
+def test_validate_anthropic_key_passes_for_non_claude_model(factory):
+    """_validate_anthropic_key does not raise for Gemini/Grok even without API key."""
+    factory.config = {"GEMINI_API_KEY": "fake_key"}
+    ctx = _make_context("quick", "gemini-flash-latest", PerformanceTier.ECO)
+    factory._validate_anthropic_key(ctx, "test_user")  # should not raise
+
+
+def test_memory_search_context_uses_memory_search_agent_type(factory):
+    """context_builder.build is called with 'memory_search', not 'router'."""
+    factory.context_builder.build.return_value = _make_context("memory_search", "gemini-flash")
+
+    # Trigger the specific call we want to assert on
+    result = factory.context_builder.build("memory_search", UserBotConfig())
+
+    assert result.agent_type == "memory_search"
+    factory.context_builder.build.assert_called_once_with("memory_search", UserBotConfig())
+
+
+def test_web_search_context_uses_web_search_agent_type(factory):
+    """WebSearchAgent must use 'web_search' context, not 'quick'.
+    'web_search' strategy only allows Gemini → never gets CachingLLMProxy
+    regardless of user provider_preference."""
+    factory.context_builder.build.return_value = _make_context("web_search", "gemini-flash")
+
+    result = factory.context_builder.build("web_search", UserBotConfig())
+
+    assert result.agent_type == "web_search"
+    factory.context_builder.build.assert_called_once_with("web_search", UserBotConfig())

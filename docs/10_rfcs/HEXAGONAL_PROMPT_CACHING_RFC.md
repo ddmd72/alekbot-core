@@ -1,7 +1,8 @@
 # RFC: Hexagonal Prompt Caching (Transparent to Agents)
 
-**Status:** PROPOSED
+**Status:** IMPLEMENTED
 **Date:** 2026-02-24
+**Implemented:** commit ae280f2, 2026-02-24
 **Owner:** AI Engineering
 **Scope:** AgentContextBuilder, LLMService, ServiceContainer, PromptCacheStrategy
 **Goal:** Transparent API-level prompt caching where agents declare only their identity, never touching caching logic.
@@ -510,4 +511,122 @@ This RFC **partially supersedes** Section 8 (Adaptive Cache Strategy) of the ADA
 
 ---
 
-**Next Step:** Approve, implement, update building blocks and CLAUDE.md.
+## 13. Extension: Cache Boundary Prefix (2026-02-25)
+
+### 13.1 Problem
+
+After implementing CachingLLMProxy (Sections 1–12), prompt caching was architecturally wired but produced **zero cache hits** for smart/quick agents because:
+
+1. **`[[CURRENT_DATE_TIME]]` at line 10 of every blueprint** — this placeholder is replaced with the current minute. Since it appears near the top of the 6k-token system instruction, the entire prompt changes every minute. Anthropic sees a different system instruction on every request → no cache hit.
+
+2. **Query-Specific (Q-S) context merged into `[[BIOGRAPHICAL_CONTEXT]]`** — semantic search results (facts tagged `semantic_lens` by the router) were merged with static biographical facts before assembly. This made the biographical section dynamic per query, not per user.
+
+Result: every smart/quick request was a cache write (1.25x penalty) with no subsequent reads.
+
+### 13.2 Solution: `PROMPT_CACHE_BOUNDARY`
+
+Inject a literal marker `<!-- CACHE_BOUNDARY -->` into the assembled system instruction to split it into two halves:
+
+- **Static prefix** (before boundary): blueprint structure + instructions + static biographical facts + (for consolidation) the history batch. Sent with `cache_control: ephemeral` → Anthropic caches ~5k tokens for 5 min.
+- **Dynamic suffix** (after boundary): current datetime + query-specific context (if any). Sent fresh on every request without cache_control.
+
+ClaudeAdapter splits at the marker when `cache_config.enabled=True` and the marker is present, producing two `system_parts` blocks. When the marker is absent (legacy / edge cases), the entire instruction is cached as a single block (original behaviour preserved).
+
+### 13.3 Architecture
+
+#### 13.3.1 Constant placement
+
+```python
+# src/ports/llm_service.py — importable by both adapter and service layers
+PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
+```
+
+Placed in `ports/` (not `domain/`) because it is an infrastructure concern (API-level caching protocol between the assembler and the adapter), not a domain concept.
+
+#### 13.3.2 `PromptAssemblyService._inject_runtime_context()` logic
+
+The blueprint is purely static (no `[[...]]` runtime placeholders). All runtime content is **appended** after the blueprint template:
+
+```
+biographical_facts split by "semantic_lens" tag:
+  static_facts   → formatted by BiographicalFactsFormatter (domain-grouped Markdown)
+  semantic_facts → formatted as query_specific_context, appended after boundary
+
+Static append (before boundary) — only when content non-empty:
+  knowledge_base {
+      biographical_context: '''
+          {static_facts}          ← only when non-empty
+      '''
+
+      conversation_history: '''
+          {validated_convo}       ← consolidation only; only when non-empty
+      '''
+  }
+
+  (Both sections share one knowledge_base block.
+   If neither has content, no knowledge_base block is appended.)
+
+Append at end:
+  "\n\n<!-- CACHE_BOUNDARY -->\n"
+  + "current_date_time { ... }"          ← always present
+  + "query_specific_context: '''...'''"  ← only if semantic_facts non-empty
+```
+
+The `semantic_lens` tag is set by `merge_enriched_context_with_biographical()` on facts coming from router semantic enrichment (Q-S context). Non-tagged facts (long-term biographical memory) go to the static `knowledge_base` block.
+
+#### 13.3.3 `ClaudeAdapter.generate_content()` system_parts construction
+
+```python
+if cache_config and cache_config.enabled and system_instruction:
+    if PROMPT_CACHE_BOUNDARY in system_instruction:
+        static_part, dynamic_part = system_instruction.split(PROMPT_CACHE_BOUNDARY, 1)
+        system_parts = [
+            {"type": "text", "text": static_part.strip(), "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": dynamic_part.strip()},
+        ]
+    else:
+        # No boundary → cache entire instruction (legacy / fallback path)
+        system_parts = [{"type": "text", "text": system_instruction, "cache_control": {"type": "ephemeral"}}]
+else:
+    # No cache or empty instruction → single block, no cache_control
+    system_parts = [{"type": "text", "text": system_instruction or ""}]
+```
+
+Guard: `cache_config and cache_config.enabled and system_instruction` — never adds `cache_control` to an empty text block (Anthropic returns HTTP 400 in that case).
+
+### 13.4 `conversation_history` Design Decision
+
+`conversation_history` is placed in the static `knowledge_base` block — **before the boundary**.
+
+For **smart/quick**: always empty (conversation history is passed via user messages, not system prompt). The block is not emitted when empty, so no tokens are wasted.
+
+For **consolidation**: the history batch (messages to consolidate) is passed here. This batch is **fixed for the entire multi-turn consolidation run** — the same messages are present on every turn. Placing them in the static (cached) section means the 8k+ token history batch is written to cache once and read on turns 2–N, which is the maximum caching benefit for consolidation.
+
+### 13.5 Per-Agent Behaviour Table
+
+| Section | smart / quick | consolidation |
+|---------|--------------|---------------|
+| **Static prefix** (cached) | Blueprint instructions, few-shot, properties + static bio facts | Blueprint instructions + history batch (full consolidation context) |
+| **Dynamic suffix** (fresh) | Current datetime + Q-S context (if any) | Current datetime only |
+| **Typical static size** | ~5k tokens | ~8k tokens |
+| **Cache benefit** | datetime + Q-S context excluded from cache writes | Full history cached across all turns of one consolidation run |
+
+### 13.6 Files Changed
+
+| File | Change |
+|------|--------|
+| `src/ports/llm_service.py` | Added `PROMPT_CACHE_BOUNDARY` constant |
+| `src/adapters/claude_adapter.py` | Boundary-aware 2-block `system_parts` construction |
+| `src/services/prompt_v3/prompt_assembly_service.py` | `_inject_runtime_context()`: conditional `knowledge_base` block append + boundary append; `_normalize_whitespace()` removes empty structural blocks |
+| `src/services/prompt_v3/biographical_formatter.py` | Removed hardcoded `// Top biographical records...` comment from `format()` output |
+| `scripts/migration/update_blueprint_template.py` | Migration script to remove `[[...]]` runtime placeholders from the blueprint template in Firestore |
+| `tests/unit/adapters/test_claude_adapter.py` | 3 tests: boundary split, no-boundary fallback, no-cache-config |
+| `tests/unit/services/test_prompt_assembly_service.py` | 11 tests covering boundary placement invariants and empty-block suppression |
+
+### 13.7 Verification
+
+```bash
+make check   # domain purity + unit tests (1184 passed, 1 xfailed)
+```
+
+Live verification: Anthropic response metadata — `cache_creation_input_tokens` on first call within a 5-min window, `cache_read_input_tokens` on subsequent calls.

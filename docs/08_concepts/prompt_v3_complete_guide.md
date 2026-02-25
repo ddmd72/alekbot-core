@@ -475,12 +475,11 @@ await profile_repo.save_profile_slots(
 
 ```python
 biographical_facts = [
-    "Lives in Kyiv, Ukraine",
-    "Software engineer",
-    "Prefers concise responses"
+    {"text": "Lives in Kyiv, Ukraine", "domain": "biographical", "tags": [], "created_at": "..."},
+    {"text": "Software engineer", "domain": "work", "tags": [], "created_at": "..."},
 ]
 
-# Assembly service validates & injects
+# Assembly service validates & appends
 prompt = await assembly_service.assemble(
     agent_type="smart",
     user_id=user_id,
@@ -489,26 +488,31 @@ prompt = await assembly_service.assemble(
     conversation_history=[]
 )
 
-# Result: Facts injected into [[BIOGRAPHICAL_CONTEXT]] placeholder
+# Result: Facts appended as a knowledge_base block BEFORE the cache boundary.
+# The block is omitted entirely when biographical_facts is empty.
 ```
 
-**Security validation:**
+**How injection works internally:**
 
 ```python
-# Inside PromptAssemblyService.assemble()
-bio_text = "\n".join(biographical_facts)
+# Inside PromptAssemblyService._inject_runtime_context()
 
-result = await self.security_port.validate(
-    text=bio_text,
-    context=f"biographical_user_{user_id}",
-    zone=TrustZone.UNTRUSTED  # User input = untrusted
-)
+# 1. Facts tagged "semantic_lens" → dynamic section (after boundary)
+# 2. All other facts → static biographical_context (before boundary)
+static_facts = [f for f in biographical_facts if "semantic_lens" not in f.get("tags", [])]
 
-if result.risk_level == RiskLevel.CRITICAL:
-    raise ValueError("Security validation failed")
+# 3. Format with BiographicalFactsFormatter (domain-grouped Markdown)
+bio_text = self.bio_formatter.format(static_facts)
 
-# Inject sanitized text
-prompt = prompt.replace("[[BIOGRAPHICAL_CONTEXT]]", result.sanitized_text)
+# 4. Validate with SecurityPort (UNTRUSTED zone)
+result = await self.security_port.validate(bio_text, context=f"biographical_user_{user_id}", zone=TrustZone.UNTRUSTED)
+
+# 5. Append as knowledge_base block (only when non-empty — no empty wrappers)
+if result.sanitized_text:
+    prompt += "\n\nknowledge_base {\n    biographical_context: '''\n" + result.sanitized_text + "\n    '''\n}"
+
+# 6. Append cache boundary + current_datetime (always) + Q-S context (if any)
+prompt += "\n\n<!-- CACHE_BOUNDARY -->\n" + current_datetime_block
 ```
 
 ### 5.5 Validate Token Assignment
@@ -671,7 +675,7 @@ python scripts/prompt/test_e2e_smart_v3.py
 | `Profile slots empty`             | No SYSTEM profile             | Run `create_default_profiles.py --upload`             |
 | `can_assign() returns False`      | Category/permission mismatch  | Check `allowed_token_categories` and `overridable_by` |
 | `Prompt has {{PLACEHOLDERS}}`     | Token not resolved            | Check token exists + profile has assignment           |
-| `[[RUNTIME_VAR]] not replaced`    | Runtime injection missing     | Pass `biographical_facts` or `conversation_history`   |
+| `knowledge_base block missing`    | Bio facts list is empty       | Verify `BiographicalContextService` is returning facts and cache is warm |
 | `Immutability error`              | Trying to override immutable  | Lower-level slot has `non_overridable=true`           |
 
 ---
@@ -754,5 +758,5 @@ See [scripts/migration/README.md](../../scripts/migration/README.md) for details
 
 ---
 
-**Last Updated:** 2026-02-05  
-**Status:** ✅ Production Ready (MVP)
+**Last Updated:** 2026-02-25
+**Status:** ✅ Production Ready

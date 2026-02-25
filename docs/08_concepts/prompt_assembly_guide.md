@@ -1,308 +1,197 @@
 # Prompt Assembly Guide
 
 **Status:** ✅ Active
-**Last Updated:** 2026-02-23
-**Session:** 25 (Prompt Component Refactoring)
+**Last Updated:** 2026-02-25
 
 ## Overview
 
-This document explains how prompts are assembled in Alek Core using the **component-based architecture** with a **3-level hierarchy** (SYSTEM → AGENT → USER).
+Explains how prompts are assembled in Alek Core using the **v3 token-based system**. The central service is `PromptAssemblyService`. Agents never touch prompt construction directly — they call `PromptBuilderPort.build_for_agent()`.
 
 ## Table of Contents
 
-1. [Core Principles](#core-principles)
-2. [Architecture Overview](#architecture-overview)
-3. [Component Hierarchy](#component-hierarchy)
-4. [Assembly Flow](#assembly-flow)
-5. [Agent Patterns](#agent-patterns)
-6. [File Structure](#file-structure)
-7. [Code Examples](#code-examples)
-8. [Troubleshooting](#troubleshooting)
+1. [Assembly Chain](#1-assembly-chain)
+2. [Two-Phase Assembly](#2-two-phase-assembly)
+3. [Assembled Prompt Structure](#3-assembled-prompt-structure)
+4. [Agent Patterns](#4-agent-patterns)
+5. [build_for_agent API](#5-build_for_agent-api)
+6. [Biographical Facts: Static vs Query-Specific](#6-biographical-facts-static-vs-query-specific)
+7. [Cache Boundary and Anthropic Prompt Caching](#7-cache-boundary-and-anthropic-prompt-caching)
+8. [File Reference](#8-file-reference)
+9. [Debugging](#9-debugging)
+10. [Troubleshooting](#10-troubleshooting)
 
 ---
 
-## Core Principles
-
-### 1. Prompts as Code
-
-Prompts are treated as **code artifacts** using Groovy DSL syntax:
-
-- Stored in version-controlled files (`ai_templates/components/`)
-- Assembled from reusable components
-- Follow structured hierarchy (properties → policies → cognitive_process → knowledge_base → protocols → runtime_rules)
-
-### 2. Component-Based Assembly
-
-Instead of monolithic prompt files, prompts are built from **6 component types**:
-
-| Component           | Scope                       | Purpose                       |
-| ------------------- | --------------------------- | ----------------------------- |
-| `properties`        | `class.Alek.properties`     | Identity & personality        |
-| `policies`          | `class.Alek.policies`       | Core rules & constraints      |
-| `cognitive_process` | `class.Alek`                | Reasoning engine (root block) |
-| `few_shot_examples` | `class.Alek.knowledge_base` | Example interactions          |
-| `protocols`         | `class.Alek.protocols`      | Tool usage instructions       |
-| `runtime_rules`     | `class.Alek.runtime_rules`  | Platform-specific formatting  |
-
-### 3. Three-Level Hierarchy
-
-Components are resolved with priority:
+## 1. Assembly Chain
 
 ```
-USER (highest priority)
-  ↓ (override)
-AGENT
-  ↓ (override)
-SYSTEM (base/fallback)
-```
-
-**Example:**
-
-- `cognitive_process` for **smart** agent:
-  - Check `ai_templates/components/user/{user_id}/cognitive_process.groovy` ❌ (not found)
-  - Check `ai_templates/components/agent/smart/cognitive_process.groovy` ✅ **FOUND** (use this)
-  - Fallback to `ai_templates/components/system/cognitive_process.groovy` (skipped, already found)
-
----
-
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Agent (SmartAgent, QuickAgent, ConsolidationAgent)         │
-│ └─ _build_system_prompt()                                   │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│ PromptBuilder                                               │
-│ └─ build_for_agent(agent_type, user_id, ...)               │
-│    ├─ Loads template (TEMPLATE_FULL, TEMPLATE_LIGHT)       │
-│    └─ Calls component_service.get_assembled_prompt()       │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│ PromptComponentService                                      │
-│ └─ get_assembled_prompt(template, agent_type, user_id)     │
-│    ├─ Resolves components (3-level hierarchy)              │
-│    └─ Calls assembler.assemble(template, components)       │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│ GroovyPromptAssembler                                       │
-│ └─ assemble(template, components)                           │
-│    ├─ Follows template.scopes order                        │
-│    ├─ Builds Groovy DSL structure                          │
-│    └─ Returns assembled string                             │
-└─────────────────────────────────────────────────────────────┘
+Agent (SmartAgent, QuickAgent, ConsolidationAgent)
+  └─ build_system_prompt()
+       ↓
+PromptBuilderPort (port interface)
+  └─ UserPromptBuilder (service implementation)
+       └─ build_for_agent(agent_type, user_id, routing_metadata, ...)
+            ├─ BiographicalContextService.get_biographical_context_cached(account_id)
+            └─ PromptAssemblyService.assemble(agent_type, user_id, account_id,
+                                               biographical_facts, conversation_history)
+                 ├─ PHASE 1: _assemble_static_template()  ← cached 24h
+                 │    ├─ Load blueprint (universal_agent_v1) from Firestore
+                 │    ├─ Load 4-level profiles in parallel (SYSTEM, AGENT, ACCOUNT, USER)
+                 │    ├─ Resolve slot assignments (priority: USER > ACCOUNT > AGENT > SYSTEM)
+                 │    ├─ Fetch all assigned tokens in parallel
+                 │    ├─ Substitute {{CLASS_NAME}} placeholders
+                 │    └─ _normalize_whitespace(): remove empty blocks, collapse blank lines
+                 └─ PHASE 2: _inject_runtime_context()  ← every request
+                      ├─ Split biographical_facts: static vs semantic_lens (Q-S)
+                      ├─ Format + validate both via SecurityPort (UNTRUSTED zone)
+                      ├─ Format + validate conversation_history via SecurityPort
+                      ├─ Append knowledge_base {} block (bio + history, only if non-empty)
+                      └─ Append <!-- CACHE_BOUNDARY --> + current_datetime + Q-S context
 ```
 
 ---
 
-## Component Hierarchy
+## 2. Two-Phase Assembly
 
-### File Structure
+### Phase 1: Static Template (Cached 24h)
 
-```
-ai_templates/
-├── manifest.yaml                    # Component definitions
-└── components/
-    ├── system/                      # SYSTEM level (base)
-    │   ├── cognitive_process.groovy
-    │   ├── properties.groovy
-    │   ├── policies.groovy
-    │   ├── few_shot_examples.groovy
-    │   ├── protocols.groovy
-    │   └── runtime_rules.groovy
-    │
-    ├── agent/                       # AGENT level (overrides)
-    │   ├── smart/
-    │   │   └── cognitive_process.groovy  # Smart-specific reasoning
-    │   ├── quick/
-    │   │   └── cognitive_process.groovy  # Quick-specific reasoning
-    │   ├── consolidation/
-    │   │   ├── cognitive_process.groovy  # Consolidation-specific
-    │   │   └── properties.exclude        # Disable properties for this agent
-    │   └── ...
-    │
-    └── user/                        # USER level (per-user overrides)
-        └── {user_id}/
-            └── cognitive_process.groovy  # User-specific customization
+Resolves tokens from Firestore and builds the Groovy DSL class definition. The result is stored in an in-memory dict with a 24-hour TTL. Cache key: `prompt:{agent_type}:acc:{account_id}:usr:{user_id}`.
+
+**Cold start:** ~110ms (4 parallel Firestore queries)
+**Cache hit:** ~5ms
+
+After Phase 1, the template is a complete Groovy DSL class like:
+```groovy
+class Alek extends Agent {
+  personality {
+    archetype { ... }
+    vibe { ... }
+    humor_engine { ... }
+  }
+  knowledge_base {
+    few_shot_examples { ... }
+  }
+  policies { ... }
+  protocols { ... }
+  cognitive_process { ... }
+  output_format { ... }
+}
 ```
 
-### Component Resolution Logic
+### Phase 2: Runtime Injection (Every Request)
 
-Implemented in `FirestorePromptComponentRepository.resolve_component()`:
+Takes the cached static template and appends runtime content. Runs on every request — never cached.
 
-```python
-# 1. Try USER level (if user_id provided)
-if user_id:
-    component = await self._find_component(component_id, "USER", user_id)
-    if component and component.is_enabled:
-        return component  # ✅ Found at USER level
-
-# 2. Try AGENT level
-component = await self._find_component(component_id, "AGENT", agent_type)
-if component and component.is_enabled:
-    return component  # ✅ Found at AGENT level
-
-# 3. Fallback to SYSTEM level
-component = await self._find_component(component_id, "SYSTEM", None)
-if component and component.is_enabled:
-    return component  # ✅ Found at SYSTEM level
-
-return None  # ❌ Not found at any level
-```
-
-### Exclusion Pattern
-
-Use `.exclude` files to **disable** components at specific levels:
-
-```bash
-# Disable properties for consolidation agent
-ai_templates/components/agent/consolidation/properties.exclude
-```
-
-This creates a component with `is_enabled: false`, preventing fallback to SYSTEM level.
+Steps:
+1. Split `biographical_facts` into static (long-term memory) and semantic (query-specific, tagged `semantic_lens`)
+2. Format static facts with `BiographicalFactsFormatter` (domain-grouped Markdown)
+3. Validate both via `SecurityPort` (UNTRUSTED zone)
+4. Format and validate `conversation_history` via `SecurityPort`
+5. Build and append `knowledge_base {}` block if either biographical_context or conversation_history is non-empty
+6. Append `<!-- CACHE_BOUNDARY -->`
+7. Append `current_date_time {}` (always)
+8. Append `query_specific_context` block (only if Q-S facts present)
 
 ---
 
-## Assembly Flow
+## 3. Assembled Prompt Structure
 
-### Step-by-Step Process
+```
+[STATIC PREFIX — cached by Anthropic ~5 min]
 
-#### 1. Agent Calls PromptBuilder
+class Alek extends Agent {
+  personality {
+    archetype { ... }         ← ARCHETYPE token
+    vibe { ... }              ← VIBE token
+    voice { ... }             ← VOICE token
+    humor_engine { ... }      ← HUMOR_ENGINE token (user-customizable)
+    motto { ... }             ← MOTTO_DEFAULT token
+  }
+  behaviors { ... }           ← BEHAVIOR_GUIDE token
+  knowledge_base {
+    few_shot_examples { ... } ← FEW_SHOT_EXAMPLES token
+  }
+  policies { ... }            ← 6 POLICY tokens
+  protocols { ... }           ← 2 PROTOCOL tokens
+  cognitive_process { ... }   ← COGNITIVE_PROCESS token (agent-specific)
+  output_format { ... }       ← OUTPUT_FORMAT token
+  directives { ... }          ← 2 DIRECTIVE tokens
+}
 
-```python
-# src/agents/core/smart_response_agent.py
-async def _build_system_prompt(self, routing_metadata, semantic_context):
-    return await self.prompt_builder.build_for_agent(
-        agent_type="smart",
-        user_id=self.user_id,
-        routing_metadata=routing_metadata,
-        semantic_context=semantic_context,
-        capabilities=self.execution_context.capabilities
-    )
+knowledge_base {
+  biographical_context: '''
+    **Biographical**
+    - Born in Kyiv (Jan 01, 2000)
+    - Software engineer (Feb 10, 2025)
+
+    **Work**
+    - ...
+  '''
+
+  conversation_history: '''   ← ConsolidationAgent only
+    user: ...
+    assistant: ...
+  '''
+}
+
+[DYNAMIC SUFFIX — sent fresh every request]
+
+<!-- CACHE_BOUNDARY -->
+current_date_time {
+    2026-02-25 14:32 Tuesday (UTC)
+    System time is UTC. The user's local time may differ...
+}
+
+query_specific_context: '''   ← only when router found semantic facts
+    **Query-Specific Context:**
+    - User mentioned travel plans last week
+'''
 ```
 
-#### 2. PromptBuilder Selects Template
+**Key rules:**
+- The `knowledge_base` block is only appended when at least one of `biographical_context` or `conversation_history` is non-empty. No empty wrappers.
+- Both sections share one `knowledge_base` block (not two separate blocks).
+- `query_specific_context` is only appended when Q-S facts exist.
+
+---
+
+## 4. Agent Patterns
+
+### Pattern A: Conversational (Smart, Quick)
+
+- Conversation history → passed as `messages` parameter to LLM, NOT in system prompt
+- `conversation_history=[]` in `assemble()` call → no `conversation_history` section in `knowledge_base`
+- Biographical facts → static section (before boundary)
+- Q-S context from router enrichment → dynamic section (after boundary)
 
 ```python
-# src/services/prompt_builder.py
-async def build_for_agent(self, agent_type, user_id, ...):
-    # Select template based on agent type
-    if agent_type == "quick":
-        template = TEMPLATE_LIGHT
-    elif agent_type == "smart":
-        template = TEMPLATE_FULL
-    elif agent_type == "consolidation":
-        template = TEMPLATE_CONSOLIDATION
-
-    # Get assembled prompt from component service
-    return await self._build_with_component_service(
-        agent_type=agent_type,
-        user_id=user_id,
-        template=template,
-        ...
-    )
-```
-
-#### 3. PromptComponentService Resolves Components
-
-```python
-# src/services/prompt_component_service.py
-async def get_assembled_prompt(self, template, agent_type, user_id):
-    components = []
-
-    # Resolve each component in template
-    for scope in template.scopes:
-        component_id = self._scope_to_component_id(scope)
-        component = await self.repository.resolve_component(
-            component_id=component_id,
-            agent_type=agent_type,
-            user_id=user_id
-        )
-        if component:
-            components.append(component)
-
-    # Assemble into final prompt
-    return await self.assembler.assemble(template, components)
-```
-
-#### 4. GroovyPromptAssembler Builds Groovy DSL
-
-```python
-# src/adapters/groovy_prompt_assembler.py
-def assemble(self, template, components):
-    prompt_parts = [
-        "// Generated prompt using template: {template.name}",
-        "",
-        "class Alek {",
-    ]
-
-    # Iterate through template.scopes in order
-    for scope in template.scopes:
-        scope_components = [c for c in components if c.scope == scope]
-
-        if scope == ComponentScope.CLASS_PROPERTIES:
-            prompt_parts.append("    properties {")
-            prompt_parts.append("        " + component.content)
-            prompt_parts.append("    }")
-        elif scope == ComponentScope.CLASS_POLICIES:
-            prompt_parts.append("    policies {")
-            # ...
-
-    prompt_parts.append("}")
-    return "\n".join(prompt_parts)
-```
-
-### Template Definitions
-
-Located in `src/domain/prompt.py`:
-
-```python
-TEMPLATE_LIGHT = PromptTemplate(
-    name="light",
-    extends="base",
-    scopes=[
-        ComponentScope.CLASS_PROPERTIES,       # 1. properties
-        ComponentScope.CLASS_POLICIES,         # 2. policies
-        ComponentScope.CLASS_ROOT,             # 3. cognitive_process
-        ComponentScope.CLASS_KNOWLEDGE_BASE,   # 4. few_shot_examples (if needed)
-        ComponentScope.CLASS_PROTOCOLS,        # 5. protocols
-        ComponentScope.CLASS_RUNTIME_RULES,    # 6. runtime_rules
-    ]
-)
-
-TEMPLATE_FULL = PromptTemplate(
-    name="full",
-    extends="base",
-    scopes=[
-        ComponentScope.CLASS_PROPERTIES,       # Same structure
-        ComponentScope.CLASS_POLICIES,
-        ComponentScope.CLASS_ROOT,
-        ComponentScope.CLASS_KNOWLEDGE_BASE,
-        ComponentScope.CLASS_PROTOCOLS,
-        ComponentScope.CLASS_RUNTIME_RULES,
-    ]
-)
-
-TEMPLATE_CONSOLIDATION = PromptTemplate(
-    name="consolidation",
-    extends="base",
-    scopes=[
-        ComponentScope.CLASS_ROOT,  # Only cognitive_process needed
-    ]
+request = LLMRequest(
+    model_name=ctx.model_name,
+    system_instruction=system_prompt,  # assembled prompt (no history inside)
+    messages=conversation_messages,    # history here
+    tools=tool_declarations,
 )
 ```
 
+### Pattern B: Document Analysis (Consolidation)
+
+- History batch (messages to consolidate) → passed as `conversation_history` to `assemble()` → ends up in static `knowledge_base` block (before boundary, gets cached)
+- No Q-S context
+- The entire consolidation context (instructions + history batch) is in `system_instruction`; `messages=[]`
+
+```python
+request = LLMRequest(
+    model_name=ctx.model_name,
+    system_instruction=system_prompt,  # includes the history batch in knowledge_base
+    messages=[],                       # empty — everything is in system prompt
+)
+```
+
+**Why history in static (cached) for consolidation:** The batch of messages to consolidate is fixed for the entire run. Placing it before the cache boundary means Anthropic caches ~8k tokens on the first call and reads from cache on all subsequent turns. Maximum caching benefit.
+
 ---
 
-## `build_for_agent` API
-
-### Signature
+## 5. `build_for_agent` API
 
 ```python
 async def build_for_agent(
@@ -311,390 +200,141 @@ async def build_for_agent(
     user_id: str,
     account_id: Optional[str] = None,
     routing_metadata: Optional[RoutingMetadata] = None,
-    semantic_context: Optional[SemanticContext] = None,
     capabilities: Optional[ProviderCapabilities] = None,
     include_biographical: bool = True,
+    conversation_history: Optional[List[dict]] = None,
 ) -> str
 ```
 
-### `include_biographical` Flag (2026-02-23)
-
-Controls whether the biographical context is fetched from Firestore and injected into the prompt.
+### `include_biographical` Flag
 
 | Value | Behavior | Use case |
-| ----- | -------- | -------- |
-| `True` (default) | Fetches `get_biographical_context_cached(account_id)` and injects into prompt | Conversational agents (Smart, Quick) |
-| `False` | Skips Firestore fetch; `biographical_facts = []` | Router, MemorySearch — agents that don't use bio context in their system prompt |
+|-------|----------|----------|
+| `True` (default) | Fetches `get_biographical_context_cached(account_id)` from Firestore | Smart, Quick, Consolidation |
+| `False` | Skips Firestore fetch; `biographical_facts = []` | Router, MemorySearch — no bio slot in their prompts |
 
-**Rationale:** RouterAgent and MemorySearchAgent do not include biographical facts in their prompts. Without this flag, they were paying ~1400ms on first call per session for a Firestore fetch they never used.
+Router and MemorySearch skip biographical context to avoid ~1400ms cold fetch for data they never use.
 
-**Callers using `include_biographical=False`:**
+### `routing_metadata` for Q-S context
 
-- `RouterAgent._load_triage_prompt()` — router prompt has no bio slot
-- `MemorySearchAgent._formulate_search_keys()` — key formulation prompt has no bio slot
+When `routing_metadata` is passed, `UserPromptBuilder` calls `merge_enriched_context_with_biographical()` to extract facts tagged `semantic_lens` from the routing metadata. These become the query-specific context appended after the cache boundary.
 
 ---
 
-## Agent Patterns
+## 6. Biographical Facts: Static vs Query-Specific
 
-### Pattern 1: Conversational Agents (Smart, Quick)
+Facts come from two sources:
+1. **Long-term memory** (`BiographicalContextService`) — slow-changing, high-quality, stored in Firestore as `FactEntity`. These go in the **static** section before the boundary.
+2. **Query-specific (Q-S) context** — semantic search results from the router, tagged `semantic_lens` by `merge_enriched_context_with_biographical()`. These go in the **dynamic** section after the boundary.
 
-**Characteristics:**
+The split happens in `_inject_runtime_context()`:
+```python
+static_facts  = [f for f in biographical_facts if "semantic_lens" not in f.get("tags", [])]
+semantic_facts = [f for f in biographical_facts if "semantic_lens" in f.get("tags", [])]
+```
 
-- Real-time conversation
-- History passed as `messages` parameter to LLM
-- System prompt is **constant** (no conversation in prompt)
+**Why this split:** Long-term biographical facts rarely change (updated every ~30 new messages via consolidation). Placing them before the boundary means they are cached with the static template content. Q-S context changes every request (different query → different semantic search results), so it must be in the dynamic suffix.
 
-**Implementation:**
+---
+
+## 7. Cache Boundary and Anthropic Prompt Caching
+
+`PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"` is defined in `src/ports/llm_service.py`.
+
+When `ClaudeAdapter` receives a request with `cache_config.enabled=True` and the boundary marker is present in `system_instruction`, it splits the instruction into two `system_parts` blocks:
 
 ```python
-# Agent calls LLM
-request = LLMRequest(
-    model_name=self.model_name,
-    system_instruction=system_prompt,  # ← Prompt WITHOUT history
-    messages=debug_history,             # ← Conversation history
-    tools=tool_declarations,
-    temperature=0.7
-)
+static_part, dynamic_part = system_instruction.split(PROMPT_CACHE_BOUNDARY, 1)
+system_parts = [
+    {"type": "text", "text": static_part.strip(), "cache_control": {"type": "ephemeral"}},
+    {"type": "text", "text": dynamic_part.strip()},
+]
 ```
 
-**Key Files:**
+Anthropic caches the static block for ~5 minutes. On subsequent requests within the window, `cache_read_input_tokens` appears in the response metadata instead of paying for those tokens.
 
-- `src/agents/core/smart_response_agent.py`
-- `src/agents/core/quick_response_agent.py`
+**Guard:** `cache_control` is never added to an empty text block (Anthropic returns HTTP 400 in that case). The adapter checks `system_instruction` is non-empty before setting cache config.
 
-**Templates Used:**
-
-- SmartAgent: `TEMPLATE_FULL`
-- QuickAgent: `TEMPLATE_LIGHT`
+See [HEXAGONAL_PROMPT_CACHING_RFC.md](../10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md) Section 13 for full details.
 
 ---
 
-### Pattern 2: Document Analysis Agent (Consolidation)
+## 8. File Reference
 
-**Characteristics:**
+| File | Purpose |
+|------|---------|
+| `src/ports/prompt_builder_port.py` | `PromptBuilderPort` ABC — what agents call |
+| `src/services/user_prompt_builder.py` | Concrete implementation: fetches bio context, calls assembly service |
+| `src/services/prompt_v3/prompt_assembly_service.py` | Two-phase assembly, 4-level token resolution, 24h cache |
+| `src/services/prompt_v3/biographical_formatter.py` | Domain-grouped Markdown formatting of biographical facts |
+| `src/services/prompt_v3/context_formatter.py` | Conversation history formatting |
+| `src/ports/llm_service.py` | `PROMPT_CACHE_BOUNDARY` constant |
+| `src/adapters/claude_adapter.py` | Splits at boundary, applies `cache_control: ephemeral` |
+| `src/domain/prompt_v3/` | Domain models: Token, Blueprint, ProfileSlot, OwnerType |
+| `src/adapters/prompt_v3/` | Firestore repositories for tokens, blueprints, profiles |
+| `scripts/migration/update_blueprint_template.py` | Remove `[[...]]` placeholders from blueprint in Firestore |
 
-- Batch processing of old messages
-- Analyzes conversation as **document**
-- History **injected into system prompt**
+**Agent files:**
 
-**Implementation:**
+| Agent | File | Pattern |
+|-------|------|---------|
+| SmartAgent | `src/agents/core/smart_response_agent.py` | Conversational |
+| QuickAgent | `src/agents/core/quick_response_agent.py` | Conversational |
+| ConsolidationAgent | `src/agents/consolidation_agent.py` | Document Analysis |
+| RouterAgent | `src/agents/core/router_agent.py` | No bio context |
+
+---
+
+## 9. Debugging
+
+### Inspect Assembled Prompt
+
+```bash
+# E2E inspection script (uses real Firestore, captures output to debug_prompts/)
+python scripts/prompt/test_agent_e2e.py --agent smart
+```
+
+Captured prompts saved to `debug_prompts/` (gitignored).
+
+### Cache Hits in Logs
+
+```
+📦 Cache HIT: prompt:smart:acc:{account_id}:usr:{user_id}
+📦 Cache MISS: prompt:smart:acc:{account_id}:usr:{user_id} - assembling from repositories...
+✅ Assembled prompt: 5432 chars
+```
+
+### Invalidate Cache
 
 ```python
-# Assemble base prompt from components
-template = await component_service.get_assembled_prompt(
-    template=TEMPLATE_CONSOLIDATION,
-    agent_type="consolidation",
-    user_id=None
-)
+# Admin command via Slack
+$admin_cache_reset
 
-# Inject conversation into prompt
-final_prompt = template.replace("{CONVERSATION_INPUT}", conv_text) \
-                       .replace("{EXISTING_ANCHORS}", anchors) \
-                       .replace("{BIOGRAPHICAL_CONTEXT}", bio_context)
-
-# Call LLM with conversation in system prompt
-request = LLMRequest(
-    model_name=self.model_name,
-    system_instruction=final_prompt,  # ← Prompt WITH history
-    messages=[],                       # ← Empty (everything in system)
-    temperature=0.0
-)
-```
-
-**Key Files:**
-
-- `src/agents/consolidation_agent.py`
-- `scripts/prompt/inspect_real_consolidation_prompt.py`
-
-**Template Used:**
-
-- `TEMPLATE_CONSOLIDATION` (only `cognitive_process`)
-
----
-
-### Pattern 3: PromptBuilder Agent (Router)
-
-**Characteristics:**
-
-- Prompt assembled via `PromptBuilderPort` (v3 Token System)
-- Cached after first load — no repeated Firestore reads
-- No file-based prompt loading; all content lives in Firestore
-
-**Implementation:**
-
-```python
-async def _load_triage_prompt(self, message: AgentMessage) -> str:
-    if self._cached_triage_prompt is None:
-        if not self.prompt_builder:
-            raise RuntimeError("RouterAgent requires prompt_builder for LLM triage")
-        account_id = message.context.get("account_id")
-        self._cached_triage_prompt = await self.prompt_builder.build_for_agent(
-            agent_type="router",
-            user_id=self.user_id,
-            account_id=account_id,
-            routing_metadata=None,
-            include_biographical=False,  # Router doesn't need bio context
-        )
-    return self._cached_triage_prompt
-```
-
-**Key Files:**
-
-- `src/agents/core/router_agent.py`
-- `src/ports/prompt_builder_port.py`
-
----
-
-## File Structure
-
-### Key Files
-
-| File                                                  | Purpose                                    |
-| ----------------------------------------------------- | ------------------------------------------ |
-| `src/services/prompt_builder.py`                      | Orchestrates prompt building               |
-| `src/services/prompt_component_service.py`            | Resolves components with 3-level hierarchy |
-| `src/adapters/groovy_prompt_assembler.py`             | Assembles Groovy DSL from components       |
-| `src/adapters/firestore_prompt_repository.py`         | Loads components from Firestore            |
-| `src/domain/prompt.py`                                | Template definitions                       |
-| `ai_templates/manifest.yaml`                          | Component metadata (scope, order)          |
-| `ai_templates/components/`                            | Component source files                     |
-| `scripts/prompt/sync_components.py`                   | Sync components to Firestore               |
-| `scripts/prompt/inspect_smart_prompt.py`              | Inspect SmartAgent prompt                  |
-| `scripts/prompt/inspect_quick_prompt.py`              | Inspect QuickAgent prompt                  |
-| `scripts/prompt/inspect_real_consolidation_prompt.py` | Inspect ConsolidationAgent prompt          |
-
-### Agent Files
-
-| Agent              | File                                      | Pattern           |
-| ------------------ | ----------------------------------------- | ----------------- |
-| SmartAgent         | `src/agents/core/smart_response_agent.py` | Conversational    |
-| QuickAgent         | `src/agents/core/quick_response_agent.py` | Conversational    |
-| ConsolidationAgent | `src/agents/consolidation_agent.py`       | Document Analysis |
-| RouterAgent        | `src/agents/core/router_agent.py`         | Static Prompt     |
-| WebSearchAgent     | `src/agents/web_search_agent.py`          | Static Prompt     |
-
----
-
-## Code Examples
-
-### Example 1: Syncing Components to Firestore
-
-```bash
-# Sync all components (SYSTEM + agents) to development
-make sync-components-dev
-
-# Sync only SYSTEM components
-make sync-components-system-dev
-
-# Sync specific agent
-make sync-components-agent-dev AGENT=smart
-
-# Dry-run to see what would be uploaded
-make sync-components-dry-run
-```
-
-### Example 2: Inspecting Assembled Prompts
-
-```bash
-# Inspect SmartAgent prompt for dev user
-make inspect-smart-dev
-
-# Inspect QuickAgent prompt for dev user
-make inspect-quick-dev
-
-# Inspect ConsolidationAgent prompt for dev user
-make inspect-console-dev
-```
-
-Reports are saved to `reports/prompt/{date}-{agent}-{user_id}-{time}.md`.
-
-### Example 3: Adding a New Component
-
-1. **Create component file:**
-
-```bash
-# Add new component at SYSTEM level
-echo "critical_thinking { /* ... */ }" > ai_templates/components/system/critical_thinking.groovy
-```
-
-2. **Update manifest:**
-
-```yaml
-# ai_templates/manifest.yaml
-components:
-  critical_thinking:
-    scope: "class.Alek.policies"
-    order: 35
-    description: "Critical thinking protocols"
-```
-
-3. **Sync to Firestore:**
-
-```bash
-make sync-components-dev
-```
-
-4. **Update template (if needed):**
-
-```python
-# src/domain/prompt.py
-# Add to template.scopes if it's a new scope type
-```
-
-### Example 4: Creating Agent-Specific Override
-
-```bash
-# Create override for smart agent
-mkdir -p ai_templates/components/agent/smart
-echo "properties { /* smart-specific properties */ }" > ai_templates/components/agent/smart/properties.groovy
-
-# Sync
-make sync-components-agent-dev AGENT=smart
-```
-
-### Example 5: Disabling Component for Agent
-
-```bash
-# Disable few_shot_examples for quick agent
-touch ai_templates/components/agent/quick/few_shot_examples.exclude
-
-# Sync
-make sync-components-agent-dev AGENT=quick
+# Or directly
+assembly_service.invalidate_cache()
 ```
 
 ---
 
-## Troubleshooting
+## 10. Troubleshooting
 
-### Issue: Components not loading
-
-**Symptoms:**
-
-- Empty sections in assembled prompt
-- Missing `properties`, `policies`, etc.
-
-**Solution:**
-
-1. Check components exist in Firestore:
-
-   ```bash
-   # Query Firestore to verify components uploaded
-   ```
-
-2. Verify component_service initialized:
-
-   ```python
-   # Agent must pass component_service to PromptBuilder
-   prompt_builder = PromptBuilder(repo, component_service=component_service)
-   ```
-
-3. Check agent uses `build_for_agent()`:
-
-   ```python
-   # ✅ Correct
-   await self.prompt_builder.build_for_agent(agent_type="smart", ...)
-
-   # ❌ Legacy (don't use)
-   await self.prompt_builder.build_system_prompt(mode="full", ...)
-   ```
-
-### Issue: Duplicate datetime
-
-**Symptoms:**
-
-- "Current date and time" appears twice in prompt
-
-**Solution:**
-PromptBuilder already adds datetime. Agents should NOT add it:
-
-```python
-# ✅ Correct
-async def _build_system_prompt(self, ...):
-    return await self.prompt_builder.build_for_agent(...)
-
-# ❌ Wrong
-async def _build_system_prompt(self, ...):
-    system_prompt = await self.prompt_builder.build_for_agent(...)
-    current_time = datetime.now(...)
-    return f"Current date and time is {current_time}.\n\n{system_prompt}"  # ❌ Duplicate!
-```
-
-### Issue: Wrong component order
-
-**Symptoms:**
-
-- Components appear in wrong order in assembled prompt
-
-**Solution:**
-Order is defined by `template.scopes`. Components follow this order:
-
-1. `properties`
-2. `policies`
-3. `cognitive_process`
-4. `few_shot_examples` (knowledge_base)
-5. `protocols`
-6. `runtime_rules`
-
-To change order, update template in `src/domain/prompt.py`:
-
-```python
-TEMPLATE_FULL = PromptTemplate(
-    name="full",
-    extends="base",
-    scopes=[
-        ComponentScope.CLASS_PROPERTIES,      # Order defined here
-        ComponentScope.CLASS_POLICIES,
-        ComponentScope.CLASS_ROOT,            # cognitive_process
-        ComponentScope.CLASS_KNOWLEDGE_BASE,  # few_shot_examples
-        ComponentScope.CLASS_PROTOCOLS,
-        ComponentScope.CLASS_RUNTIME_RULES,
-    ]
-)
-```
-
-### Issue: Agent-specific component not loading
-
-**Symptoms:**
-
-- Agent uses SYSTEM component instead of agent-specific override
-
-**Solution:**
-
-1. Verify file exists:
-
-   ```bash
-   ls ai_templates/components/agent/smart/cognitive_process.groovy
-   ```
-
-2. Verify synced to Firestore:
-
-   ```bash
-   make sync-components-agent-dev AGENT=smart
-   ```
-
-3. Check Firestore collection name matches:
-   ```python
-   # In inspect script or agent factory
-   collection_name=f"{env_config.firestore_collection_prefix}prompt_components"
-   ```
+| Issue | Cause | Solution |
+|-------|-------|---------|
+| `KeyError: Blueprint not found` | Blueprint not in Firestore | Run `scripts/migration/create_blueprints.py --upload` |
+| `Prompt has {{PLACEHOLDERS}}` | Token not resolved | Check token exists + profile has assignment for that class |
+| Empty `policies` / `protocols` sections | `_normalize_whitespace()` removed them | Token missing from assignment → check SYSTEM profile in Firestore |
+| `knowledge_base` block missing | No biographical facts | Check `BiographicalContextService` returns facts and cache is warm |
+| No `<!-- CACHE_BOUNDARY -->` in prompt | Assembly service bug | Run `test_prompt_assembly_service.py` — `test_boundary_marker_always_appended` |
+| Q-S context in static section | Facts not tagged `semantic_lens` | Check `merge_enriched_context_with_biographical()` sets the tag |
+| Stale prompts after token change | 24h assembly cache | Run `$admin_cache_reset` or redeploy |
+| Duplicate `datetime` in prompt | Old agent code adds it manually | Remove the manual addition — assembler adds `current_date_time` automatically |
 
 ---
 
 ## Summary
 
-**Key Takeaways:**
-
-1. **Prompts = Code**: Components in `ai_templates/`, version-controlled, assembled dynamically
-2. **3-Level Hierarchy**: USER → AGENT → SYSTEM (with priority)
-3. **Two Patterns**:
-   - **Conversational** (Smart/Quick): system_instruction + messages
-   - **Document Analysis** (Consolidation): everything in system_instruction
-4. **Assembly Chain**: Agent → PromptBuilder → PromptComponentService → GroovyPromptAssembler
-5. **Templates Control Structure**: Order and included components defined in `src/domain/prompt.py`
-
-**Next Steps:**
-
-- Read [Groovy Prompt Pattern](./groovy_prompt_pattern.md) for DSL details
-- Original design documented in legacy RFC (archived)
-- Implementation notes in legacy session log (archived)
+1. **Two phases:** Static template (cached 24h, token resolution) + runtime injection (every request, appended not replaced)
+2. **No runtime placeholders in blueprint:** Blueprint is purely static `{{TOKEN_SLOT}}` only
+3. **One `knowledge_base` block:** Bio + history share a single block; neither emits empty wrappers
+4. **Cache boundary:** Static prefix (blueprint + bio + history for consolidation) cached by Anthropic; dynamic suffix (datetime + Q-S context) sent fresh
+5. **Agent differences:** Smart/Quick → bio in static, history in messages; Consolidation → history in static (gets cached), history not in messages

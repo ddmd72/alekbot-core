@@ -32,8 +32,6 @@ class BiographicalFactsFormatter:
     - created_at (ISO str): Timestamp for sorting
     """
 
-    HEADER = "// Top biographical records. Use memory_search for more details."
-    
     # Domain labels for section headers (human-readable, LLM-friendly)
     # Session 2026-02-17: Minimalistic - semantic key is sufficient for LLM
     DOMAIN_LABELS = {
@@ -69,9 +67,6 @@ class BiographicalFactsFormatter:
         # Group by domain (biographical, health, etc.) and separate semantic
         grouped = self._group_by_domain(facts)
         sections = []
-
-        if self.HEADER:
-            sections.append(self.HEADER)
 
         # Render domain sections (biographical first, then alphabetical)
         domain_order = ["biographical"] + sorted([d for d in grouped.keys() if d not in ["biographical", "semantic"]])

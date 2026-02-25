@@ -15,6 +15,8 @@ import asyncio
 from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple
 
+from src.ports.llm_service import PROMPT_CACHE_BOUNDARY
+
 from src.ports.prompt_v3.token_repository import TokenRepository
 from src.ports.prompt_v3.blueprint_repository import BlueprintRepository
 from src.ports.prompt_v3.agent_profile_repository import AgentProfileRepository
@@ -89,7 +91,8 @@ class PromptAssemblyService:
         user_id: Optional[str],
         account_id: Optional[str],
         biographical_facts: Optional[List[Dict]] = None,
-        conversation_history: Optional[List[dict]] = None
+        conversation_history: Optional[List[dict]] = None,
+        query_specific_context: Optional[str] = None,
     ) -> str:
         """Full prompt assembly with 3 section types + caching.
 
@@ -102,8 +105,13 @@ class PromptAssemblyService:
             agent_type: Agent type (e.g., "smart", "quick")
             user_id: User ID for USER-level overrides (optional)
             account_id: Account ID for ACCOUNT-level overrides (optional)
-            biographical_facts: List of biographical facts (RUNTIME validation)
+            biographical_facts: Static biographical facts only — no semantic_lens facts.
+                The caller (PromptBuilder.build_for_agent) is responsible for separating
+                Q-S context before calling assemble().
             conversation_history: List of conversation messages (RUNTIME validation)
+            query_specific_context: Pre-formatted query-specific context string from router
+                enrichment. Validated here via SecurityPort and appended after the cache
+                boundary. None if no Q-S context for this request.
 
         Returns:
             Assembled prompt string
@@ -111,15 +119,6 @@ class PromptAssemblyService:
         Raises:
             KeyError: If blueprint not found
             ValueError: If validation fails
-
-        Examples:
-            >>> prompt = await service.assemble(
-            ...     agent_type="smart",
-            ...     user_id="user_123",
-            ...     account_id="account_456",
-            ...     biographical_facts=["Lives in Kyiv"],
-            ...     conversation_history=[{"role": "user", "content": "Hi"}]
-            ... )
         """
         biographical_facts = biographical_facts or []
         conversation_history = conversation_history or []
@@ -135,13 +134,13 @@ class PromptAssemblyService:
         else:
             # CACHE MISS - assemble from Firestore
             logger.info(f"📦 Cache MISS: {cache_key} - assembling from repositories...")
-            
+
             static_prompt = await self._assemble_static_template(
                 agent_type=agent_type,
                 account_id=account_id,
                 user_id=user_id
             )
-            
+
             # Save to cache
             self._save_to_cache(cache_key, static_prompt)
 
@@ -151,7 +150,8 @@ class PromptAssemblyService:
             static_prompt,
             biographical_facts,
             conversation_history,
-            user_id or "anonymous"
+            user_id or "anonymous",
+            query_specific_context=query_specific_context,
         )
 
         logger.info(f"✅ Assembled prompt: {len(final_prompt)} chars")
@@ -217,6 +217,9 @@ class PromptAssemblyService:
 
         # 6. Remove unreplaced {{TOKENS}} that were not assigned
         prompt = self._remove_unreplaced_tokens(prompt)
+
+        # 7. Normalize whitespace: collapse empty structural blocks left by token removal
+        prompt = self._normalize_whitespace(prompt)
 
         logger.debug(f"Static template assembled: {len(prompt)} chars")
         return prompt
@@ -458,20 +461,23 @@ class PromptAssemblyService:
         prompt: str,
         biographical_facts: List[Dict],
         conversation_history: List[dict],
-        user_id: str
+        user_id: str,
+        query_specific_context: Optional[str] = None,
     ) -> str:
         """Inject RUNTIME data with SecurityPort validation.
 
         Args:
             prompt: Current prompt template
-            biographical_facts: List of biographical facts
+            biographical_facts: Static biographical facts (no semantic_lens facts — caller splits).
             conversation_history: List of conversation messages
             user_id: User ID for logging
+            query_specific_context: Pre-formatted Q-S context string from router enrichment.
+                Validated here via SecurityPort and appended after the cache boundary.
 
         Returns:
             Prompt with validated runtime context injected
         """
-        # Validate biographical facts (UNTRUSTED zone)
+        # Validate static biographical facts (UNTRUSTED zone)
         if biographical_facts:
             bio_text = self.bio_formatter.format(biographical_facts)
             bio_result = await self.security_port.validate(
@@ -483,6 +489,18 @@ class PromptAssemblyService:
             logger.debug(f"Validated biographical facts: {bio_result.risk_level.value}")
         else:
             validated_bio = ""
+
+        # Validate query-specific context (UNTRUSTED zone)
+        if query_specific_context:
+            qs_result = await self.security_port.validate(
+                query_specific_context,
+                context=f"semantic_user_{user_id}",
+                zone=TrustZone.UNTRUSTED
+            )
+            query_specific_str = qs_result.sanitized_text
+            logger.debug(f"Validated query-specific context: {qs_result.risk_level.value}")
+        else:
+            query_specific_str = ""
 
         # Format and validate conversation history (UNTRUSTED zone)
         if conversation_history:
@@ -497,18 +515,35 @@ class PromptAssemblyService:
         else:
             validated_convo = ""
 
-        # Inject [[CURRENT_DATE_TIME]]
+        # Build current datetime string
         utc_now = datetime.now(timezone.utc)
         current_datetime = (
             utc_now.strftime("%Y-%m-%d %H:%M %A (UTC)") + "\n        "
             "System time is UTC. The user's local time may differ — "
             "account for timezone when discussing time-sensitive topics."
         )
-        prompt = prompt.replace("[[CURRENT_DATE_TIME]]", current_datetime)
-        
-        # Replace RUNTIME placeholders (using [[...]] notation from universal blueprint)
-        prompt = prompt.replace("[[BIOGRAPHICAL_CONTEXT]]", validated_bio)
-        prompt = prompt.replace("[[CONVERSATION_HISTORY]]", validated_convo)
+
+        # Static runtime blocks — appended after the blueprint template (before the boundary).
+        # Blueprint no longer contains [[BIOGRAPHICAL_CONTEXT]] / [[CONVERSATION_HISTORY]]
+        # placeholders; these blocks are built conditionally here so empty wrappers never appear.
+        #
+        # For smart/quick: validated_bio may be non-empty; validated_convo is always "".
+        # For consolidation: validated_convo contains the history batch (fixed per run, cached).
+        kb_parts = []
+        if validated_bio:
+            kb_parts.append(f"    biographical_context: '''\n{validated_bio}\n    '''")
+        if validated_convo:
+            kb_parts.append(f"    conversation_history: '''\n{validated_convo}\n    '''")
+
+        if kb_parts:
+            kb_block = "knowledge_base {\n" + "\n\n".join(kb_parts) + "\n}"
+            prompt = prompt + "\n\n" + kb_block
+
+        # Append cache boundary + dynamic content
+        dynamic_parts = [f"current_date_time {{\n    {current_datetime}\n}}"]
+        if query_specific_str:
+            dynamic_parts.append(f"query_specific_context: '''\n{query_specific_str}\n'''")
+        prompt = prompt + "\n\n" + PROMPT_CACHE_BOUNDARY + "\n" + "\n\n".join(dynamic_parts)
 
         return prompt
     
@@ -538,6 +573,36 @@ class PromptAssemblyService:
             cleaned_lines.append(line)
         
         return '\n'.join(cleaned_lines)
+
+    def _normalize_whitespace(self, prompt: str) -> str:
+        """Collapse empty structural blocks and excessive blank lines.
+
+        After _remove_unreplaced_tokens() strips token lines, some blocks may be
+        left with only whitespace inside (e.g., `policies {\n\n}`). This method:
+          1. Removes blocks whose body is entirely whitespace (single-depth match).
+          2. Collapses 3+ consecutive blank lines to 2 newlines.
+
+        Args:
+            prompt: Prompt string after token replacement and unreplaced token removal.
+
+        Returns:
+            Cleaned prompt with empty blocks and excessive blank lines removed.
+        """
+        import re
+
+        # Remove empty single-depth blocks: "word_chars { <whitespace only> }"
+        # Handles patterns like:  policies {\n\n}  or  protocols { }
+        # Non-greedy to avoid eating nested content; only matches if body is whitespace.
+        prompt = re.sub(
+            r'\n[ \t]*\w[\w_]*[ \t]*\{[ \t\n]*\}',
+            '',
+            prompt,
+        )
+
+        # Collapse 3+ consecutive newlines to 2
+        prompt = re.sub(r'\n{3,}', '\n\n', prompt)
+
+        return prompt
 
     async def validate_slot_assignment(
         self,

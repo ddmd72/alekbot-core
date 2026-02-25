@@ -20,6 +20,7 @@ This document MUST be updated when:
 - [ ] Profile resolution logic (4-level priority) changes.
 - [ ] The assembly caching strategy or TTL is adjusted.
 - [ ] New section types (TOKENIZED, STATIC, RUNTIME) are added.
+- [ ] Cache boundary logic or `knowledge_base` block structure changes.
 
 ### Cross-References
 
@@ -50,8 +51,8 @@ Immutable, pre-approved prompt fragments validated at creation time.
 
 Templates defining the structure of an agent's prompt.
 
-- **Universal Blueprint:** Alek-Core uses a single `universal_agent_v1` blueprint for all agents.
-- **Placeholders:** Uses `{{TOKENIZED}}` for library tokens and `[[RUNTIME]]` for dynamic data.
+- **Universal Blueprint:** Alek-Core uses a single `universal_agent_v1` blueprint for all agents, stored in Firestore collection `development_domain_prompt_blueprints_v3`.
+- **Placeholders:** Uses `{{CLASS_NAME}}` placeholders for token slots (e.g., `{{ARCHETYPE}}`, `{{COGNITIVE_PROCESS}}`). Blueprint is **purely static** — no runtime placeholders. Runtime content (biographical facts, conversation history, current datetime) is appended by code after the blueprint template.
 
 ### 2.3 Profile Slots
 
@@ -75,11 +76,14 @@ The `PromptAssemblyService` orchestrates the creation of the final prompt.
 
 ### 3.2 Runtime Context Injection
 
-Dynamic data is injected at request time:
+Dynamic data is appended at request time (after the cached static template):
 
-1. **Formatting:** `BiographicalFactsFormatter` and `ContextFormatter` prepare the raw data.
+1. **Formatting:** `BiographicalFactsFormatter` prepares biographical facts grouped by domain. `ContextFormatter` prepares conversation history.
 2. **Validation:** All runtime data is treated as `UNTRUSTED` and validated via `SecurityPort`.
-3. **Injection:** Validated text is placed into `[[BIOGRAPHICAL_CONTEXT]]` and `[[CONVERSATION_HISTORY]]`.
+3. **Split by tag:** Biographical facts tagged `semantic_lens` (query-specific context from router enrichment) are separated from long-term biographical facts.
+4. **Static append (before boundary):** A `knowledge_base {}` block is appended conditionally — only when content is non-empty. Contains `biographical_context` (long-term facts) and/or `conversation_history` (consolidation only).
+5. **Cache boundary:** `<!-- CACHE_BOUNDARY -->` marker is appended. `ClaudeAdapter` splits at this marker: the prefix receives `cache_control: ephemeral` (Anthropic caches ~5k tokens for 5 min); the suffix is sent fresh.
+6. **Dynamic append (after boundary):** `current_date_time {}` (always) and `query_specific_context` (only when Q-S facts present).
 
 ---
 
@@ -126,6 +130,5 @@ All repository calls (profiles, tokens) are parallelized using `asyncio.gather`,
 
 ---
 
-**Last Updated:** 2026-02-10  
-**Status:** ✅ Complete  
-**Phase:** Documentation Audit Phase 3.12
+**Last Updated:** 2026-02-25
+**Status:** ✅ Production Ready

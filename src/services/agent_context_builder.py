@@ -4,6 +4,7 @@ from ..domain.user import UserBotConfig, PerformanceTier
 from ..ports.llm_service import LLMService, ProviderCapabilities, AgentExecutionContext
 from ..ports.prompt_cache_strategy_port import PromptCacheStrategyPort
 from .provider_registry import ProviderRegistry
+from .caching_llm_proxy import CachingLLMProxy
 
 # Backward-compat re-export: importers of agent_context_builder still work unchanged.
 __all__ = ["AgentExecutionContext", "AgentContextBuilder"]
@@ -133,7 +134,6 @@ class AgentContextBuilder:
         if self._cache_strategy:
             cache_config = self._cache_strategy.resolve(agent_type, capabilities)
             if cache_config:
-                from .caching_llm_proxy import CachingLLMProxy
                 provider = CachingLLMProxy(provider, cache_config)
 
         return AgentExecutionContext(

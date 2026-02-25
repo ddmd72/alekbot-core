@@ -255,12 +255,34 @@ class PromptBuilder(PromptBuilderPort):
         if conversation_history is None:
             conversation_history = []
 
+        # Split biographical_facts: static (long-term) vs query-specific (tagged semantic_lens).
+        # Agents call merge_enriched_context_with_biographical() before build_for_agent(), which
+        # tags router-enriched facts with "semantic_lens". The assembly service never sees that tag.
+        static_bio = [
+            f for f in biographical_facts
+            if "semantic_lens" not in (f.get("tags", []) if isinstance(f, dict) else [])
+        ]
+        qs_facts = [
+            f for f in biographical_facts
+            if "semantic_lens" in (f.get("tags", []) if isinstance(f, dict) else [])
+        ]
+        if qs_facts:
+            qs_lines = ["**Query-Specific Context:**"]
+            for fact in qs_facts:
+                text = (fact.get("text") or "").strip()
+                if text:
+                    qs_lines.append(f"- {text}")
+            query_specific_context: Optional[str] = "\n".join(qs_lines)
+        else:
+            query_specific_context = None
+
         return await self.assembly_service.assemble(
             agent_type=agent_type,
             user_id=user_id or ANONYMOUS_USER_ID,
             account_id=account_id or ANONYMOUS_ACCOUNT_ID,
-            biographical_facts=biographical_facts,
-            conversation_history=conversation_history
+            biographical_facts=static_bio,
+            conversation_history=conversation_history,
+            query_specific_context=query_specific_context,
         )
 
     async def _get_biographical_component(self, user_id: str) -> str:

@@ -7,6 +7,9 @@ from ..domain.user import PerformanceTier
 # Reexported here for backward compatibility with existing imports.
 from ..domain.llm import ToolCall, MessagePart, Message
 
+PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
+
+
 class UsageMetadata(BaseModel):
     """Token usage metadata from LLM providers."""
     prompt_tokens: int = 0
@@ -23,9 +26,9 @@ class AutomaticFunctionCallingConfig(BaseModel):
 class PromptCacheConfig(BaseModel):
     """Provider-agnostic cache configuration for prompt caching."""
     enabled: bool = False
-    ttl_seconds: Optional[int] = None
-    cache_scope: str = "user"
-    cache_key: Optional[str] = None
+    ttl_seconds: Optional[int] = None   # Reserved: provider-managed TTL (Claude ephemeral = 5 min)
+    cache_scope: str = "user"           # Reserved: future per-scope invalidation
+    cache_key: Optional[str] = None     # Reserved: future manual cache key control
 
 
 class CacheMetadata(BaseModel):
@@ -91,19 +94,25 @@ class LLMService(ABC):
 
     @abstractmethod
     async def generate_content(
-        self, 
-        model_name: str, 
-        system_instruction: str, 
-        messages: List[Message], 
+        self,
+        request: Optional[LLMRequest] = None,
+        model_name: Optional[str] = None,
+        system_instruction: Optional[str] = None,
+        messages: Optional[List[Message]] = None,
         tools: Optional[List[Any]] = None,
         temperature: float = 0.7,
         stream_callback: Optional[Any] = None,
         response_mime_type: Optional[str] = None,
         response_schema: Optional[Any] = None,
         cache_config: Optional[PromptCacheConfig] = None,
-        automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None
+        automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None,
     ) -> LLMResponse:
-        """Generates content using the specified model and parameters."""
+        """Generates content using the specified model and parameters.
+
+        Primary path: pass a fully-constructed ``LLMRequest`` via ``request``.
+        Legacy path: pass individual keyword arguments (backward-compat shim).
+        Implementations must handle both paths.
+        """
         pass
 
     @abstractmethod

@@ -31,6 +31,7 @@ from ..services.biographical_context_service import BiographicalContextService
 from ..ports.fact_write_port import FactWritePort
 from ..services.provider_registry import ProviderRegistry
 from ..services.agent_context_builder import AgentContextBuilder
+from ..ports.llm_service import AgentExecutionContext
 from ..services.configuration_service import ConfigurationService
 from ..services.prompt_component_service import PromptComponentService
 from ..agents.core.quick_response_agent import create_quick_response_agent
@@ -135,13 +136,12 @@ class UserAgentFactory:
         )
         await prompt_builder.preload_components()
 
-        light_llm_service, light_model = self._resolve_light_llm(user_profile)
-        smart_llm_service, smart_model = self._resolve_smart_llm(user_profile)
-
         router_context = self.context_builder.build("router", user_profile.config)
         quick_context = self.context_builder.build("quick", user_profile.config)
         smart_context = self.context_builder.build("smart", user_profile.config)
         consolidation_context = self.context_builder.build("consolidation", user_profile.config)
+        self._validate_anthropic_key(quick_context, user_profile.user_id)
+        self._validate_anthropic_key(smart_context, user_profile.user_id)
         postprocessing_context = self.context_builder.build("postprocessing", user_profile.config)
         history_summary_service = HistorySummaryService(
             llm_service=postprocessing_context.provider,
@@ -197,7 +197,7 @@ class UserAgentFactory:
             embedding_service=self.embedding_service,
             coordinator=self.coordinator,
             user_id=user_id,
-            model_name=light_model,
+            model_name=quick_context.model_name,
         )
 
         smart_agent = create_smart_response_agent(
@@ -208,7 +208,7 @@ class UserAgentFactory:
             embedding_service=self.embedding_service,
             coordinator=self.coordinator,
             user_id=user_id,
-            model_name=smart_model,
+            model_name=smart_context.model_name,
             history_recent_full_turns=history_recent_full_turns,
             history_summary_service=history_summary_service,
         )
@@ -228,7 +228,7 @@ class UserAgentFactory:
 
         account_id = user_profile.account_id
 
-        memory_search_context = self.context_builder.build("router", user_profile.config)
+        memory_search_context = self.context_builder.build("memory_search", user_profile.config)
         memory_agent = MemorySearchAgent(
             config=AgentConfig(
                 agent_id=f"memory_search_agent_{user_id}",
@@ -245,6 +245,7 @@ class UserAgentFactory:
             user_id=user_id,
         )
 
+        web_search_context = self.context_builder.build("web_search", user_profile.config)
         grounding_tool = types.Tool(google_search=types.GoogleSearch())
         web_agent = WebSearchAgent(
             config=AgentConfig(
@@ -253,7 +254,7 @@ class UserAgentFactory:
                 timeout_ms=60000,
                 capabilities=["web_search", "current_events"],
             ),
-            execution_context=quick_context,
+            execution_context=web_search_context,
             grounding_tool=grounding_tool,
             prompt_builder=prompt_builder,
             user_id=user_id,
@@ -364,28 +365,16 @@ class UserAgentFactory:
                 logger.info("♻️ [AgentFactory] Evicted expired cache for user %s", uid[:8])
 
     # ------------------------------------------------------------------
-    # Provider resolution
+    # Provider validation
     # ------------------------------------------------------------------
 
-    def _resolve_smart_llm(self, user_profile: UserProfile) -> tuple[object, str]:
-        """Resolve the Smart agent adapter and model via AgentContextBuilder."""
-        context = self.context_builder.build("smart", user_profile.config)
+    def _validate_anthropic_key(self, context: AgentExecutionContext, user_id: str) -> None:
+        """Raise if context resolved to a Claude model but ANTHROPIC_API_KEY is absent."""
         if context.model_name.startswith("claude") and not self.config.get("ANTHROPIC_API_KEY"):
             raise ValueError(
-                f"User {user_profile.user_id} resolved to ANTHROPIC provider "
+                f"User {user_id} resolved to ANTHROPIC provider "
                 "but ANTHROPIC_API_KEY is missing"
             )
-        return context.provider, context.model_name
-
-    def _resolve_light_llm(self, user_profile: UserProfile) -> tuple[object, str]:
-        """Resolve the Light agent adapter and model via AgentContextBuilder."""
-        context = self.context_builder.build("quick", user_profile.config)
-        if context.model_name.startswith("claude") and not self.config.get("ANTHROPIC_API_KEY"):
-            raise ValueError(
-                f"User {user_profile.user_id} resolved to ANTHROPIC provider "
-                "but ANTHROPIC_API_KEY is missing"
-            )
-        return context.provider, context.model_name
 
     def get_session_store(self) -> SessionStore:
         return self.session_store

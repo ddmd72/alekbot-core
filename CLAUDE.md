@@ -48,11 +48,12 @@ background process extracts new facts from the conversation → bot gets smarter
 - Biographical cache updated → next conversation already knows the new facts
 
 **Prompt Builder (Token System)** — not hardcoded prompts, but assembly:
-- Tokens — verified fragments from a library (humor, style, voice)
-- Blueprints — templates with {{TOKENIZED}} and [[RUNTIME]] placeholders
+- Tokens — verified fragments from a library (humor, style, voice, cognitive process, etc.)
+- Blueprints — purely static templates with `{{CLASS_NAME}}` token slot placeholders; no runtime placeholders
 - 4 priority levels: USER > ACCOUNT > AGENT > SYSTEM
-- Static part is cached (24h TTL, 5ms instead of 110ms)
-- Dynamic part (biographical context, history) — injected per request
+- Static template cached in-memory (24h TTL, 5ms vs 110ms cold)
+- Runtime context (biographical facts, conversation history) appended as `knowledge_base {}` block
+- `PROMPT_CACHE_BOUNDARY` splits the final prompt: static prefix cached by Anthropic (5 min), dynamic suffix (datetime + Q-S context) sent fresh every request
 
 **Memory search** — 6 parallel queries across different vectors,
 ranked via Reciprocal Rank Fusion (RRF). One search per request,

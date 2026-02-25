@@ -2,17 +2,18 @@ import time
 from anthropic import types, AsyncAnthropic
 from typing import List, Any, Optional, Dict, Union
 from ..ports.llm_service import (
-    LLMService, 
-    LLMResponse, 
-    ToolCall, 
-    Message, 
-    MessagePart, 
-    UsageMetadata, 
+    LLMService,
+    LLMResponse,
+    ToolCall,
+    Message,
+    MessagePart,
+    UsageMetadata,
     PromptCacheConfig,
     AutomaticFunctionCallingConfig,
     ProviderCapabilities,
     CacheMetadata,
-    LLMRequest
+    LLMRequest,
+    PROMPT_CACHE_BOUNDARY,
 )
 from ..domain.user import PerformanceTier
 from ..utils.logger import logger
@@ -108,12 +109,22 @@ class ClaudeAdapter(LLMService):
                 "Use manual tool orchestration or switch to Gemini."
             )
         
-        # Claude uses 'system' parameter for system instructions
-        system_parts = [{"type": "text", "text": system_instruction}]
-        
-        # Apply caching to system instruction if enabled
-        if cache_config and cache_config.enabled:
-            system_parts[0]["cache_control"] = {"type": "ephemeral"}
+        # Claude uses 'system' parameter for system instructions.
+        # When cache is enabled and the prompt contains a CACHE_BOUNDARY marker, split into two
+        # blocks: static prefix (cached) and dynamic suffix (sent fresh every request).
+        # If no boundary present, cache the entire instruction (legacy / consolidation path).
+        # Guard: never apply cache_control to empty text — Anthropic returns 400.
+        if cache_config and cache_config.enabled and system_instruction:
+            if PROMPT_CACHE_BOUNDARY in system_instruction:
+                static_part, dynamic_part = system_instruction.split(PROMPT_CACHE_BOUNDARY, 1)
+                system_parts = [
+                    {"type": "text", "text": static_part.strip(), "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": dynamic_part.strip()},
+                ]
+            else:
+                system_parts = [{"type": "text", "text": system_instruction, "cache_control": {"type": "ephemeral"}}]
+        else:
+            system_parts = [{"type": "text", "text": system_instruction or ""}]
 
         # Convert messages to Anthropic format
         claude_messages = await self._convert_messages(messages)
