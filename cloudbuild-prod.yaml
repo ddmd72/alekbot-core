@@ -14,7 +14,7 @@ steps:
       - "--image=gcr.io/$PROJECT_ID/alek-bot:latest"
       - "--region=us-central1"
       - "--set-env-vars=APP_ENV=production,SLACK_MODE=http,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,FIRESTORE_DATABASE=us-production,OAUTH_REDIRECT_URI=$_OAUTH_REDIRECT_URI,ENABLE_HISTORY_OPTIMIZATION=true"
-      - "--min-instances=1"
+      - "--min-instances=0"
       - "--max-instances=1"
       - "--memory=1024Mi"
       - "--port=8080"
