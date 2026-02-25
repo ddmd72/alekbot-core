@@ -35,7 +35,7 @@ def mock_deps():
     prompt_builder.invalidate_biographical_cache = MagicMock()
 
     fact_write_service = AsyncMock()
-    fact_write_service.add_facts_batch = AsyncMock(return_value=(1, 0))
+    fact_write_service.add_facts_batch = AsyncMock(return_value=(1, 0, []))
 
     return llm, repo, embedding, prompt_builder, fact_write_service
 

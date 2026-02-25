@@ -201,7 +201,7 @@ class FactManagementAdapter(FactManagementPort):
                 "reported_date": metadata.get("reported_date") or datetime.now(timezone.utc).isoformat(),
             }
 
-            saved, _ = await self._fact_write_service.add_facts_batch(
+            saved, _, saved_ids = await self._fact_write_service.add_facts_batch(
                 account_id=metadata["account_id"],
                 user_id=metadata["user_id"],
                 facts_data=[fact_data],
@@ -214,7 +214,7 @@ class FactManagementAdapter(FactManagementPort):
                 logger.warning(f"⚠️  [FactManagement] Failed to create fact: '{content[:50]}...'")
 
             return {
-                "fact_id": fact_data.get("id") or None,
+                "fact_id": saved_ids[0] if saved_ids else None,
                 "status": "created" if saved else "failed",
                 "message": "Fact created successfully" if saved else "Fact creation failed",
             }
@@ -373,7 +373,7 @@ class FactManagementAdapter(FactManagementPort):
                 "reported_date": metadata.get("reported_date") or datetime.now(timezone.utc).isoformat(),
             }
 
-            saved, _ = await self._fact_write_service.add_facts_batch(
+            saved, _, saved_ids = await self._fact_write_service.add_facts_batch(
                 account_id=metadata["account_id"],
                 user_id=metadata["user_id"],
                 facts_data=[fact_data],
@@ -388,7 +388,7 @@ class FactManagementAdapter(FactManagementPort):
                 logger.error("❌ [FactManagement] Failed to create merged fact")
 
             return {
-                "new_fact_id": fact_data.get("id") or None,
+                "new_fact_id": saved_ids[0] if saved_ids else None,
                 "old_fact_ids": superseded_ids,
                 "old_facts_state": "SUPERSEDED",
                 "status": "merged" if saved else "failed",

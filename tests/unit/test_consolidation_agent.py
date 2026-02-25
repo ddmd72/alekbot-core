@@ -45,8 +45,8 @@ class TestConsolidationAgent:
     @pytest.fixture
     def mock_fact_write_service(self):
         svc = AsyncMock()
-        # add_facts_batch returns (saved_count, skipped_count)
-        svc.add_facts_batch = AsyncMock(return_value=(2, 0))
+        # add_facts_batch returns (saved_count, skipped_count, saved_ids)
+        svc.add_facts_batch = AsyncMock(return_value=(2, 0, []))
         return svc
 
     @pytest.fixture
@@ -266,7 +266,7 @@ class TestConsolidationAgentV3:
     @pytest.fixture
     def mock_fact_write_service(self):
         svc = AsyncMock()
-        svc.add_facts_batch = AsyncMock(return_value=(1, 0))
+        svc.add_facts_batch = AsyncMock(return_value=(1, 0, []))
         return svc
 
     @pytest.fixture

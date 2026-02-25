@@ -50,9 +50,10 @@ def service(mock_repo, mock_embedding):
 
 @pytest.mark.asyncio
 async def test_empty_batch_returns_zero(service):
-    saved, skipped = await service.add_facts_batch("acc-1", "usr-1", [])
+    saved, skipped, ids = await service.add_facts_batch("acc-1", "usr-1", [])
     assert saved == 0
     assert skipped == 0
+    assert ids == []
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +64,7 @@ async def test_empty_batch_returns_zero(service):
 async def test_single_fact_saved(service, mock_repo):
     facts = [{"text": "User owns a cat", "tags": ["pet"], "type": "event"}]
 
-    saved, skipped = await service.add_facts_batch("acc-1", "usr-1", facts)
+    saved, skipped, ids = await service.add_facts_batch("acc-1", "usr-1", facts)
 
     assert saved == 1
     assert skipped == 0
@@ -253,7 +254,7 @@ async def test_duplicate_fact_skipped(service, mock_repo):
     mock_repo.add_fact_if_unique = AsyncMock(return_value=(False, "existing-id"))
     facts = [{"text": "Duplicate fact", "tags": [], "type": "event"}]
 
-    saved, skipped = await service.add_facts_batch("acc-1", "usr-1", facts)
+    saved, skipped, ids = await service.add_facts_batch("acc-1", "usr-1", facts)
 
     assert saved == 0
     assert skipped == 1
@@ -272,7 +273,7 @@ async def test_batch_mixed_saved_and_skipped(service, mock_repo):
         {"text": "Fact 3", "tags": [], "type": "state"},
     ]
 
-    saved, skipped = await service.add_facts_batch("acc-1", "usr-1", facts)
+    saved, skipped, ids = await service.add_facts_batch("acc-1", "usr-1", facts)
 
     assert saved == 2
     assert skipped == 1
@@ -286,7 +287,7 @@ async def test_batch_mixed_saved_and_skipped(service, mock_repo):
 async def test_skip_deduplication_uses_add_fact(service, mock_repo):
     facts = [{"text": "Direct fact", "tags": [], "type": "event"}]
 
-    saved, skipped = await service.add_facts_batch(
+    saved, skipped, ids = await service.add_facts_batch(
         "acc-1", "usr-1", facts, skip_deduplication=True
     )
 
@@ -320,7 +321,7 @@ async def test_account_id_and_user_id_set_on_entity(service, mock_repo):
 async def test_content_key_used_when_text_absent(service, mock_repo):
     facts = [{"content": "Fact via content key", "tags": [], "type": "event"}]
 
-    saved, skipped = await service.add_facts_batch("acc-1", "usr-1", facts)
+    saved, skipped, ids = await service.add_facts_batch("acc-1", "usr-1", facts)
 
     assert saved == 1
     call_args = mock_repo.add_fact_if_unique.call_args

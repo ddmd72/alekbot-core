@@ -106,7 +106,7 @@ class FactWriteService(FactWritePort):
             saved, skipped = await service.add_facts_batch(account_id, user_id, facts_data)
         """
         if not facts_data:
-            return 0, 0
+            return 0, 0, []
         
         logger.info(f"📝 [FactWriteService] Adding {len(facts_data)} facts for account {account_id[:8]}...")
         
@@ -119,7 +119,8 @@ class FactWriteService(FactWritePort):
         # Save facts one by one (semantic deduplication requires sequential processing)
         saved_count = 0
         skipped_count = 0
-        
+        saved_ids: List[str] = []
+
         for fact_data, vectors in zip(facts_data, all_vectors):
             # Extract data
             text = fact_data.get("content") or fact_data.get("text")
@@ -186,6 +187,7 @@ class FactWriteService(FactWritePort):
             
             if skip_deduplication:
                 fact_id = await self._repo.add_fact(fact_entity)
+                saved_ids.append(fact_id)
                 was_added = True
                 duplicate_id = None
             else:
@@ -212,8 +214,8 @@ class FactWriteService(FactWritePort):
             logger.info(
                 f"✅ [FactWriteService] Completed: {saved_count} saved, {skipped_count} duplicates"
             )
-        
-        return saved_count, skipped_count
+
+        return saved_count, skipped_count, saved_ids
 
     async def _generate_multi_vectors(self, fact_data: Dict) -> Dict[str, List[float]]:
         """

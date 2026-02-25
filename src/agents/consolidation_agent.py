@@ -277,7 +277,7 @@ class ConsolidationAgent(BaseAgent):
             
             # Save facts via FactWriteService (v2 path)
             all_facts_data = llm_facts + llm_anchors
-            saved_count, skipped_count = await self._fact_write_service.add_facts_batch(
+            saved_count, skipped_count, _ = await self._fact_write_service.add_facts_batch(
                 account_id=account_id,
                 user_id=user_id,
                 facts_data=all_facts_data

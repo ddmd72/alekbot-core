@@ -20,7 +20,7 @@ class FactWritePort(ABC):
         user_id: str,
         facts_data: List[Dict],
         skip_deduplication: bool = False,
-    ) -> Tuple[int, int]:
+    ) -> Tuple[int, int, List[str]]:
         """
         Add a batch of facts with automatic multi-vector embedding and deduplication.
 
@@ -31,5 +31,5 @@ class FactWritePort(ABC):
             skip_deduplication: Skip semantic deduplication (for deliberate fact management).
 
         Returns:
-            Tuple of (saved_count, skipped_count).
+            Tuple of (saved_count, skipped_count, saved_ids).
         """
