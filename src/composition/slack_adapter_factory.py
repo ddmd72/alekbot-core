@@ -12,6 +12,7 @@ from slack_bolt.async_app import AsyncApp
 from ..adapters.slack.base import SlackAdapter
 from ..adapters.slack.socket_adapter import SocketModeAdapter
 from ..adapters.slack.http_adapter import HTTPModeAdapter
+from ..adapters.slack.media_adapter import SlackMediaAdapter
 from ..adapters.gcp_task_queue import GcpTaskQueue
 from ..adapters.firestore_session_store import FirestoreSessionStore
 from ..adapters.firestore_dedup_store import FirestoreEventDedupStore
@@ -20,6 +21,7 @@ from ..handlers.conversation_handler import ConversationHandler
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..services.user_agent_factory import UserAgentFactory
 from ..services.iam_service import IAMService
+from ..services.rich_content_service import RichContentService
 from ..ports.file_service import FileService
 from ..utils.logger import logger
 
@@ -73,6 +75,12 @@ class SlackAdapterFactory:
         logger.info(f"🏭 Creating Slack adapter: {mode}")
 
         # Create ConversationHandler here (composition root)
+        media_adapter = SlackMediaAdapter(
+            app_client=app.client,
+            bot_token=config.get("SLACK_BOT_TOKEN", ""),
+        )
+        rich_content_service = RichContentService(media_port=media_adapter)
+
         conversation_handler = ConversationHandler(
             coordinator=coordinator,
             agent_factory=agent_factory,
@@ -80,6 +88,7 @@ class SlackAdapterFactory:
             consolidation_queue=consolidation_queue,
             global_config=consolidation_config,
             audio_service=audio_service,
+            rich_content_service=rich_content_service,
         )
 
         if env_config.is_socket_mode:

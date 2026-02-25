@@ -25,6 +25,10 @@ from ..utils.logger import logger
 from ..utils.telemetry import start_span
 from ..utils.logging_context import set_log_context
 from ..config.settings import ConsolidationSettings
+from ..services.rich_content_service import RichContentService
+
+# Content types that require external fetch + platform upload (not Block Kit)
+_MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file"})
 
 
 def strtobool(val: str) -> bool:
@@ -72,6 +76,7 @@ class ConversationHandler(ConversationHandlerPort):
         global_config: Optional[ConsolidationSettings] = None,
         security_port: Optional[Any] = None,
         audio_service: Optional[AudioTranscriptionPort] = None,
+        rich_content_service: Optional[RichContentService] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -80,6 +85,32 @@ class ConversationHandler(ConversationHandlerPort):
         self.global_config = global_config or ConsolidationSettings()
         self.security_port = security_port  # Phase 4: v3 OUTPUT validation
         self.audio_service = audio_service
+        self._rich_content_service = rich_content_service
+
+    async def _deliver_rich_content(
+        self,
+        content,
+        response_channel: ResponseChannel,
+        thread_id: Optional[str],
+    ) -> None:
+        """
+        Route rich content to the appropriate delivery path:
+          - weather_image / map_image / file → RichContentService (external fetch + upload)
+          - table and others → ResponseChannel.send_rich_content (Block Kit / fallback)
+        """
+        if content.content_type in _MEDIA_CONTENT_TYPES and self._rich_content_service:
+            channel_id = getattr(response_channel, "channel_id", None)
+            if channel_id:
+                await self._rich_content_service.process(content, channel_id)
+            else:
+                logger.warning(
+                    "ConversationHandler: response_channel has no channel_id — "
+                    "falling back to send_rich_content for type '%s'",
+                    content.content_type,
+                )
+                await response_channel.send_rich_content(content, thread_id=thread_id)
+        else:
+            await response_channel.send_rich_content(content, thread_id=thread_id)
 
     async def _get_consolidation_config(self, user_id: str) -> ConsolidationSettings:
         """Resolve consolidation settings for a specific user."""
@@ -378,11 +409,10 @@ class ConversationHandler(ConversationHandlerPort):
                     status_message_id,
                     "✅ Відповідь готова."
                 )
-                await response_channel.send_rich_content(
-                    structured_data,
-                    thread_id=context.thread_id
+                await self._deliver_rich_content(
+                    structured_data, response_channel, context.thread_id
                 )
-                
+
                 # History fallback for rich-only responses
                 if not history_text.strip():
                     history_text = structured_data.fallback_text
@@ -401,9 +431,8 @@ class ConversationHandler(ConversationHandlerPort):
                         status_message_id,
                         response_text
                     )
-                    await response_channel.send_rich_content(
-                        structured_data,
-                        thread_id=context.thread_id
+                    await self._deliver_rich_content(
+                        structured_data, response_channel, context.thread_id
                     )
                 else:
                     # Text Only

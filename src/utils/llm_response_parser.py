@@ -47,7 +47,7 @@ def parse_llm_response(raw_text: str) -> Tuple[Optional[str], Optional[str], Opt
     # Fast path: if not looking like JSON, treat as plain text
     if not (cleaned_text.startswith("{") and cleaned_text.endswith("}")):
         # Handle markdown code blocks wrapping JSON
-        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned_text, re.DOTALL)
+        json_match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", cleaned_text, re.DOTALL)
         if not json_match:
             return cleaned_text, None, None
         cleaned_text = json_match.group(1)
@@ -68,7 +68,7 @@ def parse_llm_response(raw_text: str) -> Tuple[Optional[str], Optional[str], Opt
         history_summary = data.get("response_summary")
         rich_data = data.get("rich_content")
         
-        # Validate rich_content structure
+        # Validate rich_content structure (accepts dict or single-element array)
         rich_content = None
         if isinstance(rich_data, dict):
             rich_content = RichContent(
@@ -76,6 +76,14 @@ def parse_llm_response(raw_text: str) -> Tuple[Optional[str], Optional[str], Opt
                 data=rich_data.get("data", {}),
                 fallback_text=rich_data.get("fallback", "")
             )
+        elif isinstance(rich_data, list) and rich_data:
+            item = rich_data[0]
+            if isinstance(item, dict):
+                rich_content = RichContent(
+                    content_type=item.get("type", "unknown"),
+                    data=item.get("data", {}),
+                    fallback_text=item.get("fallback", "")
+                )
             
         return user_text, history_summary, rich_content
         
