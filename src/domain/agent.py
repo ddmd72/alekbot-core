@@ -27,7 +27,7 @@ class RoutingMetadata:
     needs_tools: List[str]
     reasoning: str
     semantic_lens: List[str] = field(default_factory=list)
-    llm_target_agent: str = ""
+    needs_memory_search: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -37,7 +37,7 @@ class RoutingMetadata:
             "needs_tools": self.needs_tools,
             "reasoning": self.reasoning,
             "semantic_lens": self.semantic_lens,
-            "llm_target_agent": self.llm_target_agent
+            "needs_memory_search": self.needs_memory_search
         }
 
     @classmethod
@@ -49,7 +49,7 @@ class RoutingMetadata:
             needs_tools=list(data.get("needs_tools", [])),
             reasoning=data.get("reasoning", ""),
             semantic_lens=list(data.get("semantic_lens", [])),
-            llm_target_agent=data.get("llm_target_agent", "")
+            needs_memory_search=bool(data.get("needs_memory_search", False))
         )
 
 

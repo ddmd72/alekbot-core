@@ -60,5 +60,5 @@ def build_routing_metadata(classification: dict) -> RoutingMetadata:
         needs_tools=list(metadata.get("needs_tools", [])),
         reasoning=classification.get("reasoning", ""),
         semantic_lens=list(classification.get("semantic_lens", [])),
-        llm_target_agent=classification.get("target_agent", "")
+        needs_memory_search=bool(classification.get("needs_memory_search", False))
     )

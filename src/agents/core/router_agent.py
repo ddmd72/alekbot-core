@@ -120,11 +120,10 @@ class RouterAgent(BaseAgent):
         "затмение", "eclipse", "солнечное", "лунное"
     }
 
-    # Session 2026-02-17: Router v3 - Domain-based search + simplified schema
     TRIAGE_RESPONSE_SCHEMA = {
         "type": "OBJECT",
         "properties": {
-            "target_agent": {"type": "STRING"},
+            "needs_memory_search": {"type": "BOOLEAN"},
             "confidence": {"type": "NUMBER"},
             "reasoning": {"type": "STRING"},
             "search_intent": {"type": "STRING"},
@@ -147,7 +146,7 @@ class RouterAgent(BaseAgent):
             }
         },
         "required": [
-            "target_agent",
+            "needs_memory_search",
             "confidence",
             "search_intent",
             "relevant_domains",
@@ -472,18 +471,17 @@ class RouterAgent(BaseAgent):
         raise ValueError("No valid JSON found in triage response")
 
     def _apply_routing_rules(self, routing_metadata: RoutingMetadata) -> str:
-        """Apply explicit routing rules. LLM recommendation is the primary signal."""
-        # Complexity threshold — disabled, LLM routing preferred
-        # if routing_metadata.complexity_score >= 6:
-        #     return self.smart_agent_id
+        """Route based on two signals: needs_memory_search and complexity_score.
 
+        Safety net: low confidence always falls back to Smart.
+        """
         if routing_metadata.confidence < 0.75:
             return self.smart_agent_id
 
-        if routing_metadata.llm_target_agent and self.smart_agent_id.startswith(routing_metadata.llm_target_agent):
+        if routing_metadata.needs_memory_search or routing_metadata.complexity_score >= 5:
             return self.smart_agent_id
 
-        return self.quick_agent_id  # fallback
+        return self.quick_agent_id
 
     def _classify_request(self, text: str) -> dict:
         """

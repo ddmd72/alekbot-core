@@ -53,8 +53,8 @@ For common, unambiguous phrases, the router uses static keyword matching to avoi
 
 For complex or ambiguous queries, the router uses a lightweight LLM (Gemini Flash, ECO tier) to perform deep classification.
 
-- **Prompt:** assembled via `PromptBuilderPort` (Token System v3, stored in Firestore).
-- **Output:** Structured JSON following a strict schema.
+- **Prompt:** assembled via `PromptBuilderPort` (Token System v3, stored in Firestore — token `COGNITIVE_PROCESS_ROUTER`).
+- **Output:** Structured JSON. The LLM classifies the query by its **data characteristics**, not by naming a target agent. Routing decisions belong to code.
 - **Vision Support:** If the message contains attachments (images), the router automatically increases the complexity score to ensure the `SmartResponseAgent` (with vision capabilities) is selected.
 
 ---
@@ -65,17 +65,27 @@ For complex or ambiguous queries, the router uses a lightweight LLM (Gemini Flas
 
 The triage process produces `RoutingMetadata`, which includes:
 
-- `complexity_score`: 1-10 scale.
-- `confidence`: 0.0-1.0 score.
+- `complexity_score`: 1-10 — topic difficulty (not message length).
+- `needs_memory_search`: bool — whether one Router prefetch pass will be insufficient; agent needs its own deep KB retrieval.
+- `confidence`: 0.0-1.0 — LLM confidence in the complexity/depth assessment.
 - `user_tone`: Detected tone (friendly, professional, etc.).
-- `needs_tools`: List of required capabilities (memory, web, etc.).
+- `needs_tools`: List of required capabilities.
 - `semantic_lens`: Keywords for search enrichment.
 
 ### 3.2 Decision Rules
 
-- **Complexity >= 6:** Route to `SmartResponseAgent`.
-- **Confidence < 0.75:** Route to `SmartResponseAgent` (fallback for ambiguity).
-- **Otherwise:** Route to `QuickResponseAgent`.
+Two primary signals drive routing, evaluated in order:
+
+1. **Confidence < 0.75** → `SmartResponseAgent` (safety net for ambiguous queries).
+2. **`needs_memory_search = true` OR `complexity_score >= 5`** → `SmartResponseAgent`.
+3. **Otherwise** → `QuickResponseAgent`.
+
+**Complexity scale:**
+- `1–4`: chitchat, greeting, single factual question with one clear answer.
+- `5–7`: several facts needed, comparison, evaluation across data points.
+- `8–10`: multi-step reasoning, planning, synthesis across many domains.
+
+**`needs_memory_search` is independent of complexity.** A low-complexity query can still require deep KB retrieval (e.g., mutable data like lab results, or ambiguous multi-record lookups).
 
 ---
 
@@ -110,6 +120,6 @@ The router doesn't just route; it prepares the context for the target agent.
 
 ---
 
-**Last Updated:** 2026-02-10  
+**Last Updated:** 2026-02-26
 **Status:** ✅ Complete  
 **Phase:** Documentation Audit Phase 3.3

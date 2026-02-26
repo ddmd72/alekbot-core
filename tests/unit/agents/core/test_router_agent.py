@@ -443,7 +443,7 @@ class TestRouterAgentLlmTriage:
     @pytest.mark.asyncio
     async def test_llm_routes_to_quick_on_low_complexity(self, router_with_llm, mock_llm):
         mock_llm.generate_content.return_value = MagicMock(
-            text='{"target_agent":"quick_response_agent","confidence":0.9,"reasoning":"simple","search_intent":"none","relevant_domains":[],"semantic_lens":["привет"],"search_phrase":"","metadata":{"user_tone":"casual","complexity_score":3}}'
+            text='{"needs_memory_search":false,"confidence":0.9,"reasoning":"simple greeting","search_intent":"none","relevant_domains":[],"semantic_lens":[],"search_phrase":"","metadata":{"user_tone":"casual","complexity_score":2}}'
         )
 
         message = create_query_message("Привіт")
@@ -454,10 +454,10 @@ class TestRouterAgentLlmTriage:
     @pytest.mark.asyncio
     async def test_llm_routes_to_smart_on_high_complexity(self, router_with_llm, mock_llm):
         mock_llm.generate_content.return_value = MagicMock(
-            text='{"target_agent":"smart_agent","confidence":0.9,"reasoning":"complex","search_intent":"topic","relevant_domains":["weather"],"semantic_lens":["погода"],"search_phrase":"погода завтра","metadata":{"user_tone":"professional","complexity_score":6}}'
+            text='{"needs_memory_search":true,"confidence":0.9,"reasoning":"multi-fact query","search_intent":"topic","relevant_domains":["possession"],"semantic_lens":["car","vehicle"],"search_phrase":"user vehicles list","metadata":{"user_tone":"casual","complexity_score":6}}'
         )
 
-        message = create_query_message("Погода завтра")
+        message = create_query_message("Які у мене машини?")
         response = await router_with_llm.execute(message)
 
         assert response.result["routed_to"] == "smart_agent"
