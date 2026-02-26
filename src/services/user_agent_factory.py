@@ -252,7 +252,7 @@ class UserAgentFactory:
             config=AgentConfig(
                 agent_id=f"web_search_agent_{user_id}",
                 agent_type="web_search",
-                timeout_ms=60000,
+                timeout_ms=90000,
                 capabilities=["web_search", "current_events"],
             ),
             execution_context=web_search_context,
