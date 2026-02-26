@@ -279,7 +279,7 @@ class QuickResponseAgent(BaseAgent):
                 "response_length": len(user_text or "")
             }
             if history_summary:
-                metadata["history_summary"] = history_summary
+                metadata["response_summary"] = history_summary
 
             return AgentResponse.success(
                 task_id=message.task_id,

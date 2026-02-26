@@ -136,7 +136,7 @@ class ClaudeAdapter(LLMService):
             # Note: Prompt caching in streaming is supported but handled slightly differently in usage stats
             async with self.client.messages.stream(
                 model=model_name,
-                max_tokens=4096,
+                max_tokens=8192,
                 system=system_parts,
                 messages=claude_messages,
                 tools=claude_tools if claude_tools else [],
@@ -155,7 +155,7 @@ class ClaudeAdapter(LLMService):
         create_kwargs: dict = dict(
             model=model_name,
             extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
-            max_tokens=4096,
+            max_tokens=8192,
             system=system_parts,
             messages=claude_messages,
             tools=claude_tools if claude_tools else [],

@@ -28,7 +28,7 @@ from ..config.settings import ConsolidationSettings
 from ..services.rich_content_service import RichContentService
 
 # Content types that require external fetch + platform upload (not Block Kit)
-_MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file"})
+_MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file", "html_card"})
 
 
 def strtobool(val: str) -> bool:
@@ -95,13 +95,18 @@ class ConversationHandler(ConversationHandlerPort):
     ) -> None:
         """
         Route rich content to the appropriate delivery path:
-          - weather_image / map_image / file → RichContentService (external fetch + upload)
+          - map_image / file → RichContentService (convert + upload or GCS URL)
           - table and others → ResponseChannel.send_rich_content (Block Kit / fallback)
+
+        When RichContentService.process() returns a URL (e.g. HTML → GCS),
+        the URL is sent as a plain message so Slack unfurls it as a preview.
         """
         if content.content_type in _MEDIA_CONTENT_TYPES and self._rich_content_service:
             channel_id = getattr(response_channel, "channel_id", None)
             if channel_id:
-                await self._rich_content_service.process(content, channel_id)
+                url = await self._rich_content_service.process(content, channel_id)
+                if url:
+                    await response_channel.send_message(url, thread_id=thread_id)
             else:
                 logger.warning(
                     "ConversationHandler: response_channel has no channel_id — "

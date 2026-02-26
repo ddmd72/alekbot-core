@@ -392,6 +392,15 @@ async def main():
             except Exception as e:
                 logger.error(f"❌ Failed to start dummy server: {e}")
 
+        # HTML renderer (optional — lazy-starts Chromium on first html_card request)
+        html_renderer = None
+        if config.get("ENABLE_HTML_RENDERER"):
+            from src.adapters.playwright_html_renderer import PlaywrightHtmlRenderer
+            html_renderer = PlaywrightHtmlRenderer()
+            logger.info("✅ HTML renderer (Playwright) enabled")
+        else:
+            logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
+
         logger.info("🔌 Initializing Slack Adapter...")
         logger.debug(f"Socket mode: {env_config.is_socket_mode}")
         logger.debug(f"HTTP mode: {env_config.is_http_mode}")
@@ -420,6 +429,7 @@ async def main():
             consolidation_queue=consolidation_queue,
             consolidation_config=config.get("CONSOLIDATION"),
             audio_service=None,
+            html_renderer=html_renderer,
         )
 
         slack_adapter.register_handlers()
@@ -637,6 +647,8 @@ async def main():
         await agent_factory.shutdown()
         await billing_agent.shutdown()
         await logger_agent.shutdown()
+        if html_renderer:
+            await html_renderer.stop()
         logger.info("✅ Graceful shutdown complete")
 
     except Exception as e:

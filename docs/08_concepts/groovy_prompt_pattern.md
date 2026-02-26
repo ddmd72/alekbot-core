@@ -332,5 +332,71 @@ cognitive_process {
 
 ---
 
-**Last Updated:** 2026-02-25
-**Status:** ✅ Current (v3 Token System)
+## 10. FORMAT-Before-DRAFT: Output Format Decision Pattern
+
+### The Problem
+
+A common mistake in `cognitive_process` design is placing the visual/format decision
+**after** the draft step:
+
+```groovy
+// ❌ Anti-pattern: DRAFT → VISUAL (format decision after writing)
+cognitive_process {
+  steps: [
+    "1. ORIENT: ...",
+    "2. INTENT: ...",
+    "3. DRAFT: Write the answer.",
+    "4. VISUAL: Should I add a card?",  // Too late — model already committed to text
+    "5. OUTPUT: ..."
+  ]
+}
+```
+
+**Result:** The model treats the card as an optional afterthought. It has already
+framed the response as text and rarely switches formats retroactively. For structured
+data types (weather, prices, comparisons), the card becomes the exception instead of
+the norm.
+
+### The Solution: FORMAT Locks In Before DRAFT
+
+```groovy
+// ✅ Correct: FORMAT → DRAFT (format decision before writing)
+cognitive_process {
+  steps: [
+    "1. ORIENT: ...",
+    "2. INTENT: ...",
+    "3. FORMAT: Before writing anything — decide the delivery format.
+       Defaults: weather → html_card. Prices/rates → html_card.
+       Multi-day or multi-item data → html_card.
+       Conversational reply, opinion, advice, single fact → plain text.
+       If the user explicitly asked for text — respect that.
+       This decision locks in before drafting.",
+    "4. DRAFT: Write full_response AND HTML simultaneously (if FORMAT decided html_card).",
+    "5. OUTPUT: ..."
+  ]
+}
+```
+
+**Why this works:**
+- The model decides format as a first-class step with concrete defaults
+- Defaults are written as domain rules (`weather → html_card`), not as qualities
+  (`would a card help?`) — which the model tends to answer "no" for simple cases
+- Writing both `full_response` and `html` in one DRAFT step treats them as co-primary,
+  not primary + optional
+
+### When to Use Pattern Defaults vs. Pattern Questions
+
+| Approach | Use when |
+|---|---|
+| `weather → html_card` (domain rule) | You want consistent behavior for a specific data type |
+| `"Would a card make this better?"` (quality question) | You want the model to exercise judgment on novel cases |
+| Mixed: defaults + override | Most real cognitive processes — rules for known types, judgment for edge cases |
+
+**Implemented in:**
+- `firestore_utils/uploads/COGNITIVE_PROCESS_SMART.groovy` — step 4 FORMAT
+- `firestore_utils/uploads/COGNITIVE_PROCESS_QUICK.groovy` — step 3 FORMAT (no tools step)
+
+---
+
+**Last Updated:** 2026-02-26
+**Status:** ✅ Current (v3 Token System + FORMAT-before-DRAFT pattern)

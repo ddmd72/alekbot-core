@@ -164,7 +164,9 @@ def load_settings():
         "OAUTH_SESSION_SECRET": os.getenv("OAUTH_SESSION_SECRET"),
         # Telegram secrets (Session 2026-02-09 Phase 3)
         "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
-        "TELEGRAM_WEBHOOK_SECRET": os.getenv("TELEGRAM_WEBHOOK_SECRET")
+        "TELEGRAM_WEBHOOK_SECRET": os.getenv("TELEGRAM_WEBHOOK_SECRET"),
+        # Media storage
+        "GCS_MEDIA_BUCKET": os.getenv("GCS_MEDIA_BUCKET", ""),
     }
 
     if settings["GOOGLE_CLOUD_PROJECT"] and not env_config.use_emulator:
@@ -210,5 +212,6 @@ def load_settings():
     # Default: False (disabled) - must be explicitly enabled via environment variable
     # See: docs/10_rfcs/PROMPT_V3_ROLLBACK_PLAN.md
     settings["ENABLE_PROMPT_V3"] = os.getenv("ENABLE_PROMPT_V3", "false").lower() == "true"
+    settings["ENABLE_HTML_RENDERER"] = os.getenv("ENABLE_HTML_RENDERER", "false").lower() == "true"
 
     return settings

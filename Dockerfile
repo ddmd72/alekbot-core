@@ -19,6 +19,10 @@ COPY requirements.txt .
 # Встановлюємо бібліотеки
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Playwright Chromium — required for html_card rendering (ENABLE_HTML_RENDERER=true)
+# Adds ~300MB. Only Chromium is installed (not Firefox/WebKit).
+RUN python -m playwright install chromium --with-deps
+
 # Копіюємо решту коду
 COPY . .
 

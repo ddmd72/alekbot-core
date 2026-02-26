@@ -87,7 +87,14 @@ python firestore_utils/download.py development_domain_prompt_tokens_v3_system PR
 Download full document as JSON:
 
 ```bash
-python firestore_utils/download.py domain_prompt_profiles_v3 smart_agent_v1_SYSTEM_smart --format json
+# Blueprints
+python firestore_utils/download.py development_domain_prompt_blueprints_v3 universal_agent_v1 --format json
+python firestore_utils/download.py domain_prompt_blueprints_v3 universal_agent_v1 --format json
+
+# Profiles (SYSTEM level)
+python firestore_utils/download.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_smart --format json
+python firestore_utils/download.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_router --format json
+python firestore_utils/download.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_memorysearch --format json
 ```
 
 Specify output file name:
@@ -129,6 +136,15 @@ Upload JSON file (full document):
 
 ```bash
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_MEMORY_SEARCH --format json
+
+# Blueprints
+python firestore_utils/upload.py development_domain_prompt_blueprints_v3 universal_agent_v1 --format json
+python firestore_utils/upload.py domain_prompt_blueprints_v3 universal_agent_v1 --format json
+
+# Profiles (SYSTEM level)
+python firestore_utils/upload.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_memorysearch --format json
+python firestore_utils/upload.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_smart --format json
+
 ```
 
 ## Database Parameter (Advanced)

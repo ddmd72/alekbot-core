@@ -31,6 +31,14 @@ from google.cloud import firestore
 _DEFAULT_DATABASE = os.environ.get("FIRESTORE_DATABASE", "us-production")
 
 
+def _json_default(obj):
+    """Serialize Firestore types not handled by json.dumps."""
+    import datetime
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download Firestore document to file")
     parser.add_argument("collection", help="Firestore collection name")
@@ -125,7 +133,7 @@ def download_document(collection: str, document_id: str, output_format: str, out
             raise ValueError("Document missing 'content' field (required for groovy format)")
         output_path.write_text(content, encoding="utf-8")
     else:
-        output_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        output_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
 
 
 def main() -> None:
