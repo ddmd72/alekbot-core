@@ -20,7 +20,7 @@ steps:
       - "alek-bot-dev"
       - "--image=gcr.io/$PROJECT_ID/alek-bot-dev:latest"
       - "--region=us-central1"
-      - "--set-env-vars=APP_ENV=development,SLACK_MODE=http,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,FIRESTORE_DATABASE=us-production,OAUTH_REDIRECT_URI=$_OAUTH_REDIRECT_URI,ENABLE_HISTORY_OPTIMIZATION=true"
+      - "--set-env-vars=APP_ENV=development,SLACK_MODE=http,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,FIRESTORE_DATABASE=us-production,OAUTH_REDIRECT_URI=$_OAUTH_REDIRECT_URI,ENABLE_HISTORY_OPTIMIZATION=true,ENABLE_HTML_RENDERER=true"
       - "--min-instances=0"
       - "--max-instances=1"
       - "--memory=1024Mi"
