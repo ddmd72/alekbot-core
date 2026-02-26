@@ -55,6 +55,7 @@ class ProviderCapabilities(BaseModel):
     max_context_window: int = 32000
     supports_system_prompt: bool = True
     supports_json_mode: bool = False
+    native_grounding: bool = False  # Google Search grounding injected at API level (Gemini only)
 
 
 # ============================================================================
@@ -77,6 +78,7 @@ class LLMRequest(BaseModel):
     automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None
     force_tool_use: bool = False
     disable_safety: bool = False
+    use_grounding: bool = False  # Request native search grounding; adapter decides how to implement
 
 
 class LLMResponse(BaseModel):

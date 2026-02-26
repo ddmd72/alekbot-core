@@ -42,7 +42,8 @@ class GeminiAdapter(LLMService):
         native_tools=True,
         context_caching=False,
         vision=True,
-        max_context_window=1000000
+        max_context_window=1000000,
+        native_grounding=True,
     )
 
     def __init__(self, api_key: str):
@@ -65,6 +66,7 @@ class GeminiAdapter(LLMService):
         force_tool_use: bool = False
         max_tokens: Optional[int] = None
         disable_safety: bool = False
+        use_grounding: bool = False
         if request:
             model_name = request.model_name
             system_instruction = request.system_instruction
@@ -78,6 +80,7 @@ class GeminiAdapter(LLMService):
             force_tool_use = request.force_tool_use
             max_tokens = request.max_tokens
             disable_safety = request.disable_safety
+            use_grounding = request.use_grounding
             stream_callback = None
 
         if not model_name or messages is None:
@@ -103,10 +106,13 @@ class GeminiAdapter(LLMService):
         if automatic_function_calling and automatic_function_calling.enabled:
             afc_enabled = True
 
-        # Special case: Google Search Grounding is handled via tools in Gemini
-        # If we want to support it specifically, we could inject it here.
-        # For now, we just enable the flag in GenerateContentConfig
-        
+        # Native Google Search grounding — injected as a special tool when requested.
+        # Gemini handles it transparently: model decides when to search, results are
+        # embedded in the response text. Cannot be combined with force_tool_use.
+        if use_grounding:
+            google_search = types.Tool(google_search=types.GoogleSearch())
+            tools = [google_search] + (tools or [])
+
         tool_config = None
         if force_tool_use and tools:
             tool_config = types.ToolConfig(

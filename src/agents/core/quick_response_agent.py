@@ -219,19 +219,17 @@ class QuickResponseAgent(BaseAgent):
                 metadata={"user_id": user_id[:8] if user_id else "unknown"}
             )
             
-            # 4. Generate LLM response (native tools where supported)
-            afc = (
-                AutomaticFunctionCallingConfig(enabled=True)
-                if self.execution_context.capabilities.native_tools
-                else None
-            )
+            # 4. Generate LLM response (native tools + grounding where supported)
+            caps = self.execution_context.capabilities
+            afc = AutomaticFunctionCallingConfig(enabled=True) if caps.native_tools else None
             request = LLMRequest(
                 model_name=self.model_name,
                 system_instruction=system_prompt,
                 messages=clean_history,
                 tools=None,
                 temperature=0.7,
-                automatic_function_calling=afc
+                automatic_function_calling=afc,
+                use_grounding=caps.native_grounding,
             )
             response = await self.llm.generate_content(request=request)
             
