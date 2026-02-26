@@ -2,16 +2,17 @@ from typing import List, Any, Optional, Dict
 from google import genai
 from google.genai import types
 from ..ports.llm_service import (
-    LLMService, 
-    LLMResponse, 
-    ToolCall, 
-    Message, 
-    MessagePart, 
-    UsageMetadata, 
+    LLMService,
+    LLMResponse,
+    ToolCall,
+    Message,
+    MessagePart,
+    UsageMetadata,
     PromptCacheConfig,
     AutomaticFunctionCallingConfig,
     ProviderCapabilities,
-    LLMRequest
+    LLMRequest,
+    PROMPT_CACHE_BOUNDARY,
 )
 from ..domain.user import PerformanceTier
 from ..utils.logger import logger
@@ -82,6 +83,12 @@ class GeminiAdapter(LLMService):
             disable_safety = request.disable_safety
             use_grounding = request.use_grounding
             stream_callback = None
+
+        # Gemini does not support prompt caching — strip the boundary marker transparently.
+        # The marker is an HTML comment injected by PromptAssemblyService for Claude caching;
+        # leaving it in a Groovy-DSL system instruction breaks constrained JSON generation.
+        if system_instruction and PROMPT_CACHE_BOUNDARY in system_instruction:
+            system_instruction = system_instruction.replace(PROMPT_CACHE_BOUNDARY, "").strip()
 
         if not model_name or messages is None:
             raise ValueError("model_name and messages are required for Gemini generate_content")

@@ -38,10 +38,6 @@ class MemorySearchAgent(BaseAgent):
     Does NOT require LLM - pure search with enrichment.
     """
 
-    # Structured output schema for LLM key formulation.
-    # Gemini enforces this at API level; Claude will need separate handling when its adapter is fixed.
-    # keywords: API-enforced 3-5 items (minItems/maxItems).
-    # domains: API-enforced enum — only exact domain values accepted, max 2.
     MEMORY_SEARCH_RESPONSE_SCHEMA = {
         "type": "OBJECT",
         "properties": {
@@ -69,7 +65,7 @@ class MemorySearchAgent(BaseAgent):
         },
         "required": ["keywords", "primary_query", "alternative_query", "domains"],
     }
-    
+
     def __init__(
         self,
         config: AgentConfig,
