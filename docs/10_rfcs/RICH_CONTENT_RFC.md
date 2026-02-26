@@ -1,20 +1,21 @@
-# RFC: Rich Content — Images, Files, and Document Memory
+# RFC: Rich Content — Files and Media Delivery
 
-**Status:** Draft
+**Status:** Implemented (V1)
 **Author:** Solo dev
 **Created:** 2026-02-25
+**Updated:** 2026-02-26
 
 ---
 
 ## 1. Problem Statement
 
-SmartAgent responses are text-only. The system cannot deliver:
+SmartAgent responses were text-only. The system could not deliver:
 - Visual content (weather cards, maps)
-- Downloadable structured output (reports, summaries, decisions)
+- Downloadable structured output (reports, summaries, tables, documents)
 
-The `rich_content` field already exists in the SmartAgent JSON output and is parsed by
-`llm_response_parser.py`, but `OUTPUT_FORMAT_JSON.groovy` has no trigger conditions, and the
-Slack adapter's `send_rich_content` only handles `type="table"`. Everything else falls back to text.
+The `rich_content` field already existed in the SmartAgent JSON output and was parsed by
+`llm_response_parser.py`, but `OUTPUT_FORMAT_JSON.groovy` had no trigger conditions, and the
+Slack adapter's `send_rich_content` only handled `type="table"`. Everything else fell back to text.
 
 **Important:** The existing `type="table"` handler in `response_channel.py` contains
 non-trivial Block Kit rendering logic for structured data tables. It must not be removed —
@@ -26,198 +27,195 @@ only extended with new type handlers alongside it.
 
 | # | User request | Expected output |
 |---|---|---|
-| U1 | "What's the weather in Kyiv?" | Text response + weather image (wttr.in) |
-| U2 | "Give me a map of how to get to X" | Text response + static map image |
-| U3 | "Summarize our discussion and give me a file" | Text confirmation + downloadable .md file |
-| U4 | "Create a plan for X and save it" | Downloadable file (GCS, 30–60 day TTL) |
-| U5 | "What did we decide about the bike last month?" | *Future: RAG search in file memory* |
+| U1 | "Give me a summary as a file" | Text confirmation + downloadable .md file |
+| U2 | "Create a plan and export as Word" | Downloadable .docx file |
+| U3 | "Give me this data as Excel" | Downloadable .xlsx spreadsheet |
+| U4 | "Create an HTML report" | Downloadable .html file |
+| U5 | "What's the weather in Kyiv?" | Text response (no image — weather_image removed, see §6) |
+| U6 | "What did we decide about X?" | *Future: RAG search in file memory (M4+)* |
 
-U1 is M1. U3–U4 are M2. U2 is M3. U5 is a future branch (M4+), not in this RFC.
+U1–U4 delivered in V1. U5 text-only. U6 future branch.
 
 ---
 
-## 3. Architecture Overview
+## 3. Architecture (V1)
 
-Rich content follows the same hexagonal pattern as the rest of the system.
+Rich content follows the hexagonal pattern.
 **Agents declare what to generate; infrastructure handles how.**
 
 ```
 SmartAgent JSON output
-  rich_content: [{type: "weather_image", data: {location: "Kyiv"}, fallback: "Weather for Kyiv"}]
-  (array — multiple items per response allowed)
+  rich_content: {"type": "file", "data": {...}, "fallback": "File: name.ext"}
+  (single object or null — one item per response)
 
 ConversationHandler
-  └─ for each item in rich_content:
-       RichContentService.process(item, channel_id)
+  └─ _deliver_rich_content(content, response_channel, thread_id)
+       ├─ content_type in _MEDIA_CONTENT_TYPES ("file", "map_image") AND rich_content_service present
+       │     → RichContentService.process(content, channel_id)
+       └─ otherwise (type="table", no service, Telegram)
+             → response_channel.send_rich_content()  [Block Kit / fallback text]
 
 RichContentService (Application layer)
-  ├─ "weather_image"  → WttrFetcher → bytes → PlatformMediaPort.upload_image()
-  ├─ "map_image"      → MapsStaticFetcher → bytes → PlatformMediaPort.upload_image()
-  └─ "file"          → bytes → GcsMediaStorage.store(ttl_days=30) → PlatformMediaPort.upload_file()
+  └─ "file" → detect extension → convert if needed → PlatformMediaPort.upload_file()
+       ├─ .md / .html / .txt  → encode UTF-8 → bytes
+       ├─ .xlsx               → CSV string → openpyxl → bytes
+       └─ .docx               → Markdown string → python-docx → bytes
 
-PlatformMediaPort (new port)
+PlatformMediaPort (port)
   ├─ SlackMediaAdapter  → files_upload_v2
-  └─ TelegramMediaAdapter → sendPhoto / sendDocument (deferred)
+  └─ TelegramMediaAdapter → sendDocument (deferred — see §7)
 ```
 
 **Nothing new in agents.** SmartAgent only needs updated prompt instructions (token).
-All generation and delivery logic stays in Application/Adapter layers.
+All conversion and delivery logic stays in Application/Adapter layers.
 
 ---
 
-## 4. Content Types
+## 4. Content Types (V1)
 
-### 4.1 `weather_image`
-```json
-{"type": "weather_image", "data": {"location": "city name or address"}, "fallback": "Weather for X"}
-```
-- Source: `GET https://wttr.in/{location}_2.png` (3-day forecast PNG, no API key needed)
-- Storage: **ephemeral** — fetch bytes → upload to platform → discard
-- Trigger: any weather/forecast/temperature/precipitation query
+### 4.1 `file`
 
-### 4.2 `map_image`
-```json
-{"type": "map_image", "data": {"address": "full address or place name", "zoom": 14}, "fallback": "Map of X"}
-```
-- Source: Google Maps Static API (`GOOGLE_MAPS_API_KEY`) → PNG
-- Storage: **ephemeral** — fetch bytes → upload to platform → discard
-- Trigger: location queries, "show on map", "where is X"
-- Note: Full routing/places via MapsAgent is a separate future milestone
-
-### 4.3 `file`
 ```json
 {
   "type": "file",
   "data": {
-    "filename": "meeting-summary-2026-02-25.md",
+    "filename": "meeting-summary-2026-02-26.md",
     "title": "Meeting Summary: Architecture Discussion",
-    "content": "# Meeting Summary\n\n## Decisions\n...",
-    "tags": ["summary", "architecture", "decisions"]
+    "content": "# Meeting Summary\n\n## Decisions\n..."
   },
-  "fallback": "File: meeting-summary-2026-02-25.md"
+  "fallback": "File: meeting-summary-2026-02-26.md"
 }
 ```
-- Format: Markdown (`.md`) — renders in Slack preview, universally readable
-- Storage: **GCS bucket with TTL 30–60 days** (see §5)
-- Trigger: explicit user request ("give me a file", "save this", "I want a document", "export")
+
+**Trigger:** User explicitly asks for a file, document, export, spreadsheet, or to "save" something.
+Never proactive — only on explicit request.
+
+**Supported formats:**
+
+| Extension | LLM generates in `content` | Server converts via |
+|---|---|---|
+| `.md` | Markdown string | UTF-8 encode (no conversion) |
+| `.html` | Full HTML document (`<!DOCTYPE html>...`) | UTF-8 encode (no conversion) |
+| `.xlsx` | CSV string (first row = headers) | `openpyxl` CSV→xlsx |
+| `.docx` | Markdown string | `python-docx` Markdown→docx |
+
+**Error handling:** If conversion fails → fallback to `.txt` (raw content, UTF-8 encoded).
+No crash, logged as ERROR.
+
+**Storage:** Direct Slack upload via `files_upload_v2`. No GCS in V1 — see §5.
+
+### 4.2 `table` (existing, unchanged)
+
+Handled by `response_channel.py` Block Kit renderer. Not routed through `RichContentService`.
+Renders structured comparative data as an in-chat Slack block.
+
+### 4.3 `weather_image` (removed in V1)
+
+Initially implemented in M1 (wttr.in PNG via `files_upload_v2`). Removed after testing:
+- ASCII-art PNG output is poor quality ("факир был пьян")
+- No actionable improvement path within Slack's file upload model
+
+Weather queries now return text-only responses.
 
 ---
 
-## 5. File Storage Decision
+## 5. File Storage Decision (V1)
 
-### Decision: GCS bucket with TTL, no Firestore
+### Decision: Direct Slack Upload, No GCS
 
-Files are uploaded to a GCS bucket with a 30–60 day object lifecycle rule.
-The bot sends the download URL to Slack via `files_upload_v2`.
-No Firestore collection, no vector embedding, no RAG at this stage.
+Files are encoded to bytes and uploaded directly to Slack via `files_upload_v2`.
+No GCS bucket, no TTL, no URL generation in V1.
 
-**Why not Firestore + vectors yet:**
-- The "find my old files" use case is real but secondary to "get a file now"
-- Building document memory (Firestore + `FileSearchAgent`) risks polluting memory
-  with generated artifacts that may not deserve long-term retention
-- GCS TTL gives a natural retention window without manual cleanup
+**Why direct upload for V1:**
+- Eliminates GCS infrastructure complexity (MediaStoragePort, GcsMediaAdapter, lifecycle policy)
+- File lifecycle managed by Slack (permanent in workspace)
+- No PII exposure risk (no public URL, no web crawler access — critical for files with biographical data)
+- Satisfies the "get a file now" use case completely
 
-**Future branch (not in this RFC): Document Memory**
-When the use case "search in my files" is confirmed as frequent, promote to:
+**GCS option re-evaluated and deferred:**
+The original RFC planned GCS with 30-day TTL and a public URL for link preview.
+This was rejected because:
+1. Slack/Telegram unfurl fetches the URL → content goes to their infrastructure (PII leak)
+2. Signed URLs are capability-based — anyone with the link can read the file
+3. Web crawlers can index files if the URL appears anywhere public
+
+GCS remains the right approach only for non-PII, explicitly public content (e.g., future map images).
+
+**Future branch (M4): Document Memory**
+When "search in my files" is confirmed as a frequent use case, promote to:
 - Firestore `{env}_user_files` collection with `content_vector` (768-dim)
 - New port: `FileRepository` with `add_file()`, `search_files()`
-- New specialist: `FileSearchAgent` (registered in AgentRegistry, explicit-only trigger)
-- Migration: backfill GCS objects into Firestore
-
-### Images: Ephemeral by Design
-
-Weather and map images have no value beyond the moment they are sent.
-NOT stored anywhere. Bytes are fetched → uploaded → discarded.
+- New specialist: `FileSearchAgent` (explicit-only trigger)
 
 ---
 
 ## 6. Prompt Token Changes
 
-`OUTPUT_FORMAT_JSON.groovy` needs explicit trigger conditions added to `rich_content_rules`.
-The current instruction ("If response contains serializable data") is too vague.
-
-New rules define: **when** to use each type, **what fields** are required, and **one example** per type.
-
-`rich_content` is already an array — multiple items allowed per response (e.g., text + weather image).
+`OUTPUT_FORMAT_JSON.groovy` updated in V1:
+- Removed `weather_image` trigger entirely
+- Expanded `file` trigger with format-specific instructions for md / html / xlsx / docx
+- Added server-side conversion note: LLM generates CSV for xlsx, Markdown for docx — server converts
 
 ---
 
 ## 7. Implementation Milestones
 
-### M1 — Foundation + Weather Image
+### M1 — Weather Image (delivered, then removed)
 
-**Goal:** End-to-end rich content pipeline for the simplest case (weather image).
+Implemented: `PlatformMediaPort`, `SlackMediaAdapter`, `RichContentService` with WttrFetcher.
+Weather PNG fetched from wttr.in and uploaded to Slack via `files_upload_v2`.
 
-Changes:
-1. `OUTPUT_FORMAT_JSON.groovy` — add trigger conditions + examples for `weather_image`
-2. New port: `PlatformMediaPort` (`upload_image(bytes, alt_text, channel_id)`)
-3. New adapter: `SlackMediaAdapter` implementing `PlatformMediaPort` via `files_upload_v2`
-4. New service: `RichContentService` with type dispatcher + `WttrFetcher`
-5. `ConversationHandler` — call `RichContentService` for each `rich_content` item after text delivery
-6. Preserve existing `type="table"` handler in `response_channel.py` — add new types alongside it
+**Removed in V1:** ASCII-art output quality was unacceptable. `weather_image` trigger removed from
+`OUTPUT_FORMAT_JSON.groovy`. WttrFetcher removed from `RichContentService`.
+The hexagonal infrastructure (port + adapter + service) was retained — used for file delivery.
 
-Deliverable: "What's the weather in Madrid?" → text + 3-day forecast PNG in Slack.
+### M2 — File Delivery (delivered as V1)
 
----
+**Delivered scope:**
+1. `OUTPUT_FORMAT_JSON.groovy` — trigger conditions + format instructions for md / html / xlsx / docx
+2. `RichContentService._handle_file()` — extension-based dispatch + conversion
+3. `_csv_to_xlsx()` — CSV string → xlsx bytes via `openpyxl`
+4. `_markdown_to_docx()` + `_apply_inline()` — Markdown string → docx bytes via `python-docx`
+5. `ConversationHandler._deliver_rich_content()` — routes media types to service vs Block Kit
+6. `requirements.txt` — `openpyxl>=3.1.0`, `python-docx>=1.1.0`
 
-### M2 — File Generation (GCS)
+**Not in V1 (deferred):** GCS storage, MediaStoragePort, public URL delivery.
 
-**Goal:** LLM generates downloadable .md files, stored in GCS with TTL.
+### M3 — Map Images (planned)
 
-Changes:
-1. New port: `MediaStoragePort` (`store_file(bytes, filename, ttl_days) → url`)
-2. New adapter: `GcsMediaAdapter` (GCS bucket upload with object lifecycle TTL)
-3. `RichContentService` — `file` handler: encode content → GCS → get URL → upload to Slack
-4. `OUTPUT_FORMAT_JSON.groovy` — trigger conditions for `file` type
-5. `PlatformMediaPort.upload_file(bytes, filename, channel_id)`
-
-Deliverable: "Summarize and give me a file" → .md download link in Slack, available for 30 days.
-
----
-
-### M3 — Map Images
-
-**Goal:** Static map images on location queries.
+Static map images on location queries.
 
 Changes:
-1. `MapsStaticFetcher` in `RichContentService`
+1. `MapsStaticFetcher` in `RichContentService` → `map_image` handler
 2. `OUTPUT_FORMAT_JSON.groovy` — trigger conditions for `map_image`
-3. `GOOGLE_MAPS_API_KEY` added to `.env`, GCP secrets, and `cloudbuild-prod.yaml`
+3. `GOOGLE_MAPS_API_KEY` added to `.env`, GCP secrets, `cloudbuild-prod.yaml`
+4. GCS storage appropriate here (non-PII public map tiles)
 
-Deliverable: "Show me where X is" → text + map PNG in Slack.
+### M4 — Document Memory (concept)
 
----
+Promotes files to searchable memory tier. Separate design session required.
 
-### M4 — Document Memory (future branch, concept only)
+### M5 — PDF (planned, deferred)
 
-Promotes GCS files to searchable memory tier:
-- Firestore `{env}_user_files` collection + vector embedding
-- `FileRepository` port + `FirestoreFileRepository` adapter
-- `FileSearchAgent` registered in AgentRegistry (explicit-only trigger)
+LLM generates HTML → server converts via `weasyprint` (HTML→PDF).
+Blocked on: Dockerfile system dependencies (`libpango`, `libcairo`) for Cloud Run.
 
-Separate design session required. Not blocking M1–M3.
+### M6 — Telegram Media (deferred)
 
----
-
-### M5 — Maps Agent (concept only)
-
-Full Google Maps access via `delegate_to_specialist`:
-- Geocoding, Places Search, Directions API
-- New `MapsAgent` in AgentRegistry
-- `GOOGLE_MAPS_API_KEY` already provisioned from M3
-
-Separate design session required.
+`TelegramMediaAdapter(PlatformMediaPort)` implementing `sendDocument` / `sendPhoto`.
+Port and wiring pattern already defined. Telegram `ConversationHandler` currently
+uses `send_rich_content()` fallback → delivers `fallback_text` as plain text.
 
 ---
 
-## 8. What Is Out of Scope
+## 8. What Is Out of Scope (V1)
 
-- PDF generation
+- PDF generation (M5, needs Dockerfile changes for weasyprint)
+- GCS file storage (M4, deferred — PII safety rationale in §5)
 - Image generation (Imagen/DALL-E) — no concrete trigger identified
-- Telegram adapter for media (deferred — same port, different adapter)
+- Telegram media adapter (M6, deferred)
 - File editing or versioning
-- HTML file format
-- Chunked RAG on file content
+- Chunked RAG on file content (M4+)
 
 ---
 
@@ -225,5 +223,9 @@ Separate design session required.
 
 1. **FileSearchAgent trigger:** Explicit only — never proactive. Files are intentional artifacts.
 2. **Slack file upload API:** `files_upload_v2` (new API, not deprecated `files_upload`).
-3. **Weather image accompanies text:** Both delivered — fallback text always present for accessibility.
-4. **Existing table handler:** Preserved as-is. New type handlers are additive, not replacing.
+3. **Direct upload vs GCS URL:** Direct upload wins for PII-containing files. GCS only for public content (maps).
+4. **weather_image removed:** wttr.in ASCII PNG is poor quality. Text-only weather responses are sufficient.
+5. **Conversion responsibility:** Server-side (RichContentService), not LLM. LLM generates text formats (CSV, Markdown, HTML); server converts to binary.
+6. **Fallback on conversion error:** Rename to `.txt`, upload raw content. No crash, no silent data loss.
+7. **Existing table handler:** Preserved as-is. New type handlers are additive via `_deliver_rich_content()` routing.
+8. **`rich_content` is a single object:** Not an array. `OUTPUT_FORMAT_JSON.groovy` and parser aligned.

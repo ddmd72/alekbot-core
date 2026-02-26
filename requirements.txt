@@ -9,6 +9,8 @@ python-dotenv
 aiohttp
 aiofiles  # Async file I/O for Claude vision support
 markitdown[all]  # File-to-text conversion: DOCX, XLSX, YouTube, audio + image description in docs
+openpyxl>=3.1.0  # CSV → xlsx conversion in RichContentService
+python-docx>=1.1.0  # Markdown → docx conversion in RichContentService
 google-cloud-secret-manager
 firebase-admin>=6.0.0  # OAuth Multi-Tenant Session 3: Firebase Auth adapter
 PyJWT>=2.8.0  # OAuth Multi-Tenant Session 4: JWT session management
