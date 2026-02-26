@@ -19,6 +19,8 @@ This document MUST be updated when:
 - [ ] New Telegram-specific features are added (e.g., inline keyboards, voice messages).
 - [ ] Formatting logic (MarkdownV2) is modified.
 - [ ] File translation logic for Telegram changes.
+- [ ] `TelegramMediaAdapter` upload methods change.
+- [ ] `TelegramAdapterFactory` composition changes.
 
 ### Cross-References
 
@@ -26,6 +28,8 @@ This document MUST be updated when:
 - **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
 - **Security Validation:** [../security_validation/README.md](../security_validation/README.md)
 - **IAM Service:** [../../08_concepts/user_management_complete_guide.md](../../08_concepts/user_management_complete_guide.md)
+- **Rich Content Protocol:** [../rich_content_protocol/README.md](../rich_content_protocol/README.md)
+- **HTML Card RFC:** [../../10_rfcs/HTML_CARD_PLAYWRIGHT_RFC.md](../../10_rfcs/HTML_CARD_PLAYWRIGHT_RFC.md)
 
 ---
 
@@ -42,6 +46,7 @@ The Telegram Integration provides a production-ready adapter for the Telegram Bo
 - **MarkdownV2 Support:** Automatic conversion and escaping for Telegram's specific markdown flavor.
 - **Async File Handling:** Parallel translation of Telegram file IDs to public URLs.
 - **IAM Integration:** Centralized authorization for all incoming messages.
+- **Rich Content Delivery:** `html_card` → Playwright PNG → `bot.send_photo`. File attachments → `bot.send_document`. Via `TelegramMediaAdapter` + `RichContentService`.
 
 ---
 
@@ -56,13 +61,19 @@ graph LR
     Webhook --> Handler[ConversationHandler]
     Handler --> Agents[Multi-Agent System]
     Handler --> Channel[TelegramResponseChannel]
+    Handler --> RCS[RichContentService]
+    RCS --> Renderer[PlaywrightHtmlRenderer]
+    RCS --> Media[TelegramMediaAdapter]
     Channel --> Telegram
+    Media --> Telegram
 ```
 
 ### 2.2 Class Structure
 
 - **`TelegramWebhookAdapter`**: The "Driving" adapter. Handles HTTPS POST requests from Telegram, verifies signatures, and routes to `ConversationHandler`.
 - **`TelegramResponseChannel`**: The "Driven" adapter. Implements the `ResponseChannel` protocol to send messages and status updates back to Telegram.
+- **`TelegramMediaAdapter`**: Implements `PlatformMediaPort`. Delivers binary media — `upload_image` → `bot.send_photo(BytesIO)`, `upload_file` → `bot.send_document(BytesIO)`.
+- **`TelegramAdapterFactory`**: Composition root (`composition/telegram_adapter_factory.py`). Wires `TelegramMediaAdapter` → `RichContentService` → `ConversationHandler` → `TelegramWebhookAdapter`. Mirrors `SlackAdapterFactory` pattern. Receives the shared `html_renderer` singleton from `main.py`.
 
 ---
 
@@ -156,6 +167,30 @@ Telegram provides `file_id` instead of URLs.
 - **Parallelism:** Multiple attachments are translated in parallel using `asyncio.gather`.
 - **MIME Detection:** Guessed from file extension if not provided by Telegram.
 
+### 4.5 Rich Content Delivery
+
+Rich content (`html_card`, `file`) is delivered via `TelegramMediaAdapter`, which implements `PlatformMediaPort`:
+
+```
+Agent JSON output
+  rich_content: { type: "html_card", data: { html, alt_text }, fallback }
+
+ConversationHandler._deliver_rich_content()
+  └── RichContentService.process(content, channel_id)
+        ├── html_card → PlaywrightHtmlRenderer.render(html) → PNG bytes
+        │     → TelegramMediaAdapter.upload_image(png_bytes, alt_text, chat_id)
+        │           → bot.send_photo(chat_id, BytesIO(png_bytes), caption=alt_text)
+        │
+        └── file (.md/.html/.txt/.xlsx/.docx)
+              → encode / convert bytes
+              → TelegramMediaAdapter.upload_file(file_bytes, filename, title, chat_id)
+                    → bot.send_document(chat_id, BytesIO(file_bytes), filename=filename)
+```
+
+`table` type falls through to `send_rich_content()` → `fallback_text` (plain text, no Block Kit on Telegram).
+
+`channel_id` on Telegram is the numeric `chat_id` passed through from `TelegramResponseChannel`.
+
 ---
 
 ## 5. Code References
@@ -164,11 +199,16 @@ Telegram provides `file_id` instead of URLs.
 
 - `src/adapters/telegram/webhook_adapter.py`: Webhook handling and IAM.
 - `src/adapters/telegram/response_channel.py`: Formatting and sending.
+- `src/adapters/telegram/media_adapter.py`: `TelegramMediaAdapter` — `send_photo` / `send_document`.
+
+### Composition
+
+- `src/composition/telegram_adapter_factory.py`: `TelegramAdapterFactory` — wires all Telegram components.
 
 ### Configuration
 
 - `src/config/environment.py`: `validate_telegram_config()` helper.
-- `main.py`: Initialization and Blueprint registration.
+- `main.py`: Initialization via `TelegramAdapterFactory.create_adapter()`.
 
 ### Tests
 
@@ -183,10 +223,11 @@ Telegram provides `file_id` instead of URLs.
 
 ### Known Limitations
 
-- **Rich Content:** Tables and complex blocks are currently sent as fallback text.
+- **Rich Content — table type:** Sent as fallback plain text (no Block Kit equivalent on Telegram). `html_card` and `file` types are fully supported.
 - **Inline Keyboards:** Not yet implemented for interactive responses.
 - **Voice/Audio:** Not supported in the current version.
 - **Rate Limiting:** Uses a simple 5-second throttle for status updates (dots animation).
+- **GCS-based content:** `map_image` / `weather_image` (GCS URL types) are deferred — see Rich Content Protocol.
 
 ### Production Reliability
 
@@ -203,6 +244,6 @@ Telegram provides `file_id` instead of URLs.
 
 ---
 
-**Last Updated:** 2026-02-16  
-**Status:** ✅ Complete (Markdown Fallback Hardening)  
-**Phase:** Production Stability Enhancement
+**Last Updated:** 2026-02-26
+**Status:** ✅ Complete (Rich Content: TelegramMediaAdapter + TelegramAdapterFactory)
+**Phase:** Rich Content Delivery

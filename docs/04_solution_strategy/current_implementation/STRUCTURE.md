@@ -51,16 +51,25 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── firestore_session_store.py # Session persistence for HTTP mode (90-day TTL)
 │   ├── firestore_user_repo.py # Firestore UserRepository implementation
 │   ├── gemini_adapter.py # Google Gemini Implementation
+│   ├── gemini_embedding_adapter.py # Text embedding via text-embedding-004
+│   ├── gcs_media_adapter.py # 🆕 GCS bucket adapter for media URLs (map_image etc.)
 │   ├── groovy_prompt_assembler.py # 🆕 Groovy DSL prompt assembler
-│   └── slack/          # Slack integration subsystem
-│       ├── base.py
-│       ├── http_adapter.py
-│       ├── socket_adapter.py
-│       └── response_channel.py
+│   ├── playwright_html_renderer.py # 🆕 HTML → PNG via headless Chromium (HtmlRendererPort)
+│   ├── slack/          # Slack integration subsystem
+│   │   ├── base.py
+│   │   ├── http_adapter.py
+│   │   ├── media_adapter.py # 🆕 SlackMediaAdapter — files_upload_v2
+│   │   ├── socket_adapter.py
+│   │   └── response_channel.py
+│   └── telegram/       # 🆕 Telegram integration subsystem
+│       ├── media_adapter.py  # TelegramMediaAdapter — send_photo / send_document
+│       ├── response_channel.py # TelegramResponseChannel — MarkdownV2, fallback
+│       └── webhook_adapter.py  # TelegramWebhookAdapter — HMAC, IAM, routing
 ├── composition/        # Composition Root (Dependency Injection)
 │   ├── __init__.py
 │   ├── service_container.py # ServiceContainer — owns all shared (singleton-per-worker) services
-│   └── slack_adapter_factory.py # Factory for Slack adapter selection (composition root — legal to import all layers)
+│   ├── slack_adapter_factory.py # Factory for Slack adapter selection (composition root — legal to import all layers)
+│   └── telegram_adapter_factory.py # 🆕 Factory for Telegram adapter (composition root — mirrors Slack)
 ├── agents/             # 🆕 Multi-Agent System (Specialized Task Handlers)
 │   ├── __init__.py
 │   ├── base_agent.py   # BaseAgent + CircuitBreaker
@@ -128,6 +137,8 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── task_queue.py   # Background task queue port
 │   ├── file_service.py # File upload port
 │   ├── audio_transcription_port.py # Audio transcription port (inactive)
+│   ├── html_renderer_port.py # 🆕 HtmlRendererPort ABC + HtmlRenderError
+│   ├── platform_media_port.py # 🆕 PlatformMediaPort ABC (upload_image, upload_file)
 │   ├── prompt_assembler.py # Prompt assembly port
 │   ├── prompt_component_repository.py # Prompt component storage port
 │   └── prompt_v3/      # Prompt Design System v3 ports
@@ -146,6 +157,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── prompt_builder.py    # Compositional Prompt Builder (Updated for Components)
 │   ├── prompt_component_service.py # 🆕 3-level component resolution service
 │   ├── provider_registry.py # 🆕 LLM Provider Service Locator
+│   ├── rich_content_service.py # 🆕 File conversion + html_card render + media dispatch
 │   ├── search_enrichment_service.py # 🆕 Triple search & weighted merge
 │   ├── user_agent_factory.py # Per-user agent instance factory
 │   └── user_prompt_builder.py # Per-user prompt customization
@@ -177,16 +189,24 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`firestore_session_store.py`**: Session persistence with **90-day TTL** and sliding window overflow logic.
 -   **`platform/`**: Base adapter layer for all messaging platforms:
     -   `base_adapter.py`: Abstract `PlatformAdapter`. Receives `ConversationHandlerPort` and `PlatformAuthPort` via constructor injection. Does not instantiate any concrete handlers.
+-   **`playwright_html_renderer.py`**: 🆕 `PlaywrightHtmlRenderer(HtmlRendererPort)` — headless Chromium singleton. Renders HTML to PNG via `element.screenshot(omit_background=True)`. Detects widget structure (bare fragment vs full-page) via `body.children.length`. Lazy init, auto-reconnect, `--no-sandbox` on Cloud Run.
+-   **`gcs_media_adapter.py`**: 🆕 `GcsMediaAdapter` — uploads bytes to GCS and returns a public URL. Used for `weather_image` / `map_image` types. Slack only (no GCS on Telegram).
 -   **`slack/`**: Slack integration subsystem with dual-mode support:
     -   `base.py`: Abstract `SlackAdapter` base class
     -   `http_adapter.py`: HTTP Events API adapter for Cloud Run production
     -   `socket_adapter.py`: Socket Mode adapter for local development
     -   `response_channel.py`: Implementation of `ResponseChannel` protocol for Slack
+    -   `media_adapter.py`: 🆕 `SlackMediaAdapter(PlatformMediaPort)` — `files_upload_v2` for images and files
+-   **`telegram/`**: 🆕 Telegram integration subsystem:
+    -   `webhook_adapter.py`: `TelegramWebhookAdapter` — HMAC validation, IAM, deduplication, routing to `ConversationHandler`
+    -   `response_channel.py`: `TelegramResponseChannel` — MarkdownV2 formatting, 3-layer fallback, chunking
+    -   `media_adapter.py`: 🆕 `TelegramMediaAdapter(PlatformMediaPort)` — `bot.send_photo(BytesIO)` / `bot.send_document(BytesIO)`
 
 ### `composition/` - Composition Root (Dependency Injection)
 
 -   **`service_container.py`**: `ServiceContainer` — created once per worker process. Owns all shared services: LLM adapters (Gemini, Claude, Grok), repositories (FirestoreFactRepository, FirestorePromptComponentRepository), services (ProviderRegistry, AgentContextBuilder, PromptComponentService, BiographicalContextService, ConfigurationService, **FactWriteService**) and `FirestoreSessionStore` with overflow-callback. Provides `agent_services()` dict for injection into `UserAgentFactory`. Also provides `create_fact_management_adapter(search_enrichment_service)` — factory method for per-user `FactManagementAdapter`.
--   **`slack_adapter_factory.py`**: `SlackAdapterFactory` — creates the appropriate Slack adapter (Socket or HTTP) based on `EnvironmentConfig`. Lives in `composition/` because it imports from `handlers/` (to create `ConversationHandler`) and `infrastructure/` — layers that `adapters/` cannot legally access. Creates `ConversationHandler` here and passes it as `ConversationHandlerPort` to the platform adapter.
+-   **`slack_adapter_factory.py`**: `SlackAdapterFactory` — creates the appropriate Slack adapter (Socket or HTTP) based on `EnvironmentConfig`. Lives in `composition/` because it imports from `handlers/` (to create `ConversationHandler`) and `infrastructure/` — layers that `adapters/` cannot legally access. Creates `SlackMediaAdapter` → `RichContentService` → `ConversationHandler`, passes as `ConversationHandlerPort` to the platform adapter.
+-   **`telegram_adapter_factory.py`**: 🆕 `TelegramAdapterFactory` — mirrors `SlackAdapterFactory`. Creates `TelegramMediaAdapter` → `RichContentService(html_renderer=html_renderer)` → `ConversationHandler` → `TelegramWebhookAdapter`. Receives shared `html_renderer` singleton from `main.py`.
 
 ### `config/` - Configuration Layer
 -   **`environment.py`**: Centralized environment detection and configuration. Manages `APP_ENV` (development/production/test) and `SLACK_MODE` (http/socket). Provides Firestore collection prefixes for environment isolation.
@@ -246,6 +266,8 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`task_queue.py`**: Port for background task queues. Adapter: `GcpTaskQueue`.
 -   **`file_service.py`**: Port for file upload to LLM providers.
 -   **`audio_transcription_port.py`**: `AudioTranscriptionPort` ABC. Audio-to-text transcription (not yet active).
+-   **`platform_media_port.py`**: 🆕 `PlatformMediaPort` ABC — `upload_image(bytes, alt_text, channel_id)` and `upload_file(bytes, filename, title, channel_id)`. Implemented by `SlackMediaAdapter` and `TelegramMediaAdapter`.
+-   **`html_renderer_port.py`**: 🆕 `HtmlRendererPort` ABC + `HtmlRenderError`. `render(html, width=480) → bytes`. `HtmlRenderError` lives in ports/ so services can catch it without violating import rules. Implemented by `PlaywrightHtmlRenderer`.
 
 **Prompt v3 Ports:**
 -   **`prompt_assembler.py`**: `PromptAssembler` ABC. Format-agnostic prompt assembly. Adapter: `GroovyPromptAssembler`.
@@ -264,6 +286,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`gcs_service.py`**: (Legacy) Google Cloud Storage interactions for YAML-based memory (deprecated in favor of Firestore).
 -   **`identity_resolver.py`**: Resolves platform identities (e.g., Slack ID → user UUID).
 -   **`prompt_builder.py`**: Compositional prompt builder with component-level caching. Now supports unified dynamic `biographical_context` component with explicit on-demand invalidation.
+-   **`rich_content_service.py`**: 🆕 `RichContentService` — converts agent `RichContent` DTOs into platform-specific media. Routes `file` types through format converters (openpyxl for xlsx, python-docx for docx). Routes `html_card` through `HtmlRendererPort` → PNG bytes → `PlatformMediaPort.upload_image`. Routes GCS-based types through `GcsMediaAdapter`. Wired at composition root — never imported by agents or handlers.
 -   **`user_brain_factory.py`**: Creates per-user `BrainService` instances for multi-tenant isolation. (Legacy - replaced by UserAgentFactory)
 -   **`user_prompt_builder.py`**: Builds per-user system prompts with custom kernel/examples.
 -   **`task_queue/`**: Task queue infrastructure for asynchronous processing.

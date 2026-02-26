@@ -9,7 +9,7 @@ to platform-specific delivery — without leaking platform details into agents o
 
 - Before adding a new rich content type (new format, new media source)
 - When modifying `ConversationHandler` rich content routing
-- When adding a new platform adapter (Telegram, Web UI)
+- When adding a new platform adapter (Web UI, etc.)
 
 ## When to Update
 
@@ -74,8 +74,8 @@ ConversationHandler._deliver_rich_content()
         → response_channel.send_rich_content()  [Block Kit / fallback text]
 
 PlatformMediaPort
-  ├─ SlackMediaAdapter  → files_upload_v2  ✅ implemented
-  └─ TelegramMediaAdapter → sendDocument / sendPhoto   ⏳ deferred
+  ├─ SlackMediaAdapter      → files_upload_v2             ✅ implemented
+  └─ TelegramMediaAdapter   → sendPhoto / sendDocument    ✅ implemented
 ```
 
 **Key distinction — upload vs URL:**
@@ -110,27 +110,36 @@ Agent HTML string
        └─ PlaywrightHtmlRenderer
             ├─ Browser singleton (lazy init, auto-reconnect)
             ├─ page.set_content(html, wait_until="networkidle")
-            ├─ JS: measure content height (walk body.children → maxBottom)
-            └─ page.screenshot(clip={width, content_height})
-                 → PNG bytes (device_scale_factor=2, retina quality)
+            ├─ CSS inject: body { margin:0; padding:0; height:fit-content }
+            ├─ Detect widget structure:
+            │     body.children.length == 1 → element = body > *:first-child  (bare fragment)
+            │     body.children.length >= 2 → element = body                  (full page)
+            └─ element.screenshot(omit_background=True)
+                 → PNG bytes (device_scale_factor=2, retina quality, transparent outside widget)
 
 PNG bytes → PlatformMediaPort.upload_image(image_bytes, alt_text, channel_id)
-  └─ SlackMediaAdapter → files_upload_v2 → inline image in Slack thread
+  ├─ SlackMediaAdapter    → files_upload_v2             → inline image in Slack thread
+  └─ TelegramMediaAdapter → bot.send_photo(BytesIO(...)) → inline photo in Telegram chat
 ```
 
-**Why clip, not `body.screenshot()`:**
-`document.body.getBoundingClientRect()` in Chrome returns the full viewport rectangle
-(e.g., 0,0,480,800) regardless of actual content height. Using `body.screenshot()`
-would capture 800px with white space below the card. The JS walk finds the real rendered
-bottom of all body children, then `page.screenshot(clip=...)` clips exactly to that height.
+**Why `element.screenshot()` instead of full-page clip:**
+Two patterns LLM uses:
+- **Bare fragment** (`<div style="background:...">whole widget</div>`): body has 1 child.
+  Screenshot that child — `omit_background=True` makes area outside the element transparent.
+- **Full page** (`<body style="background:gradient..."><div class="header">...</div><div class="grid">...</div></body>`):
+  body has 2+ children. Screenshot `body` itself — gradient background is an element-level style,
+  preserved by the render. Area outside the body bounds is transparent.
 
-**Bare fragment support:**
-Agents often generate bare `<div>` fragments without `<html><body>` wrappers. Playwright
-auto-wraps these; the clip approach works identically for both fragments and full documents.
+`height:fit-content` on body prevents it from stretching to viewport height (800px).
+Body background is NOT overridden — the LLM may place the widget gradient directly on `<body>`.
 
 **Feature flag:** `ENABLE_HTML_RENDERER=true` in `.env` or Cloud Run env vars.
 When disabled: `html_renderer=None` → `html_card` is silently skipped (agent's
 `full_response` text already conveyed the content).
+
+**Shared singleton:** One `PlaywrightHtmlRenderer` instance is created per worker process
+and passed to both Slack and Telegram `ConversationHandler` instances. Both platforms
+share the same Chromium browser.
 
 ---
 
@@ -167,15 +176,28 @@ async def _deliver_rich_content(self, content, response_channel, thread_id):
 
 ---
 
-## 8. Telegram (Deferred)
+## 8. Composition: Factories
 
-Telegram `ConversationHandler` is wired with `rich_content_service=None`.
-`_deliver_rich_content()` falls back to `send_rich_content()` → delivers `fallback_text`
-as a plain text message.
+Both platform adapters are assembled in their respective factories in `composition/`:
 
-To enable Telegram media: implement `TelegramMediaAdapter(PlatformMediaPort)` and
-wire it into the Telegram `ConversationHandler` in `main.py`.
-`HtmlRendererPort` is platform-agnostic — same renderer works for both Slack and Telegram.
+**Slack** (`src/composition/slack_adapter_factory.py`):
+```
+SlackMediaAdapter(app.client)
+  → RichContentService(media_port, storage_port, html_renderer)
+  → ConversationHandler(..., rich_content_service)
+  → SlackAdapter
+```
+
+**Telegram** (`src/composition/telegram_adapter_factory.py`):
+```
+Bot(token)
+  → TelegramMediaAdapter(bot)
+  → RichContentService(media_port, html_renderer)  ← no GCS storage
+  → ConversationHandler(..., rich_content_service)
+  → TelegramWebhookAdapter
+```
+
+Both factories receive the same `html_renderer` singleton from `main.py`.
 
 ---
 
@@ -189,6 +211,9 @@ wire it into the Telegram `ConversationHandler` in `main.py`.
 | `src/services/rich_content_service.py` | Conversion + dispatch + html_card handler |
 | `src/adapters/playwright_html_renderer.py` | `PlaywrightHtmlRenderer` (Chromium singleton) |
 | `src/adapters/slack/media_adapter.py` | `SlackMediaAdapter` (`files_upload_v2`) |
+| `src/adapters/telegram/media_adapter.py` | `TelegramMediaAdapter` (`send_photo` / `send_document`) |
+| `src/composition/slack_adapter_factory.py` | Slack composition root (wires RichContentService) |
+| `src/composition/telegram_adapter_factory.py` | Telegram composition root (wires RichContentService) |
 | `src/handlers/conversation_handler.py` | `_deliver_rich_content()` routing |
 | `src/config/settings.py` | `ENABLE_HTML_RENDERER` flag |
 | `main.py` | Renderer lifecycle (lazy init, graceful stop) |
@@ -199,17 +224,20 @@ wire it into the Telegram `ConversationHandler` in `main.py`.
 
 ## 10. Status
 
-**V2 — Production Ready (2026-02-26)**
+**V3 — Production Ready (2026-02-26)**
 
 Delivered:
 - File delivery (md, html, txt, xlsx, docx) via direct Slack upload
-- `html_card` — agent-generated HTML → Playwright PNG → inline Slack image
+- `html_card` — agent-generated HTML → Playwright PNG → inline image on Slack and Telegram
+- `TelegramMediaAdapter` — `send_photo` (images) + `send_document` (files)
+- `TelegramAdapterFactory` — Telegram composition root, mirrors Slack factory
+- Playwright renderer v2 — `element.screenshot()` with smart widget detection (fragment vs full page)
 
 Not yet:
 - GCS storage path (map images — M3)
-- Telegram adapter (M6)
 - PDF rendering (M5)
 
 History:
 - Added: 2026-02-25 (M1 weather_image + M2 file delivery)
 - Updated: 2026-02-26 — `html_card` type + `HtmlRendererPort` + `PlaywrightHtmlRenderer`
+- Updated: 2026-02-26 — `TelegramMediaAdapter` + `TelegramAdapterFactory` + Playwright v2

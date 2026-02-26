@@ -473,10 +473,9 @@ async def main():
                 if telegram_config:
                     logger.info("🤖 Initializing Telegram adapter...")
                     try:
-                        from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
                         from src.adapters.firestore_dedup_store import FirestoreDedupStore
                         from src.adapters.platform.factory import PlatformAdapterFactory
-                        from src.handlers.conversation_handler import ConversationHandler
+                        from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 
                         # Initialize dedup store for Telegram
                         dedup_store = FirestoreDedupStore(
@@ -484,33 +483,28 @@ async def main():
                             collection_name=env_config.event_dedup_collection
                         )
 
-                        # Create ConversationHandler for Telegram (composition root)
-                        telegram_conversation_handler = ConversationHandler(
-                            coordinator=coordinator,
-                            agent_factory=agent_factory,
-                            file_service=file_service,
-                            consolidation_queue=consolidation_queue,
-                            global_config=config.get("CONSOLIDATION"),
-                            audio_service=None,
-                        )
-
-                        # Initialize Telegram adapter
-                        telegram_adapter = TelegramWebhookAdapter(
+                        # Create adapter via factory (wires RichContentService + html_renderer)
+                        telegram_adapter = TelegramAdapterFactory.create_adapter(
                             token=telegram_config["token"],
                             webhook_secret=telegram_config["webhook_secret"],
                             dedup_store=dedup_store,
                             session_store=session_store,
-                            conversation_handler=telegram_conversation_handler,
+                            coordinator=coordinator,
+                            agent_factory=agent_factory,
                             iam_service=iam_service,
+                            file_service=file_service,
+                            consolidation_queue=consolidation_queue,
+                            consolidation_config=config.get("CONSOLIDATION"),
+                            html_renderer=html_renderer,
                         )
-                        
+
                         # Register Telegram blueprint
                         telegram_bp = telegram_adapter.get_blueprint()
                         main_app.register_blueprint(telegram_bp, url_prefix="/telegram")
-                        
+
                         # Register in factory
                         PlatformAdapterFactory.register("telegram", telegram_adapter)
-                        
+
                         logger.info("✅ Telegram adapter registered at /telegram/webhook")
                     except Exception as e:
                         logger.error(f"❌ Failed to initialize Telegram adapter: {e}", exc_info=True)

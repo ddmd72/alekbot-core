@@ -63,23 +63,21 @@ class PlaywrightHtmlRenderer(HtmlRendererPort):
                 device_scale_factor=_DEVICE_SCALE_FACTOR,
             )
             await page.set_content(html, wait_until="networkidle", timeout=_RENDER_TIMEOUT_MS)
-            # Measure actual content height via JS — body.getBoundingClientRect() returns
-            # the full viewport rect in Chrome, so we walk the children to find the real bottom.
-            content_height = await page.evaluate("""
-                (() => {
-                    const children = document.body.children;
-                    if (!children.length) return 100;
-                    let maxBottom = 0;
-                    for (const el of children) {
-                        const r = el.getBoundingClientRect();
-                        if (r.bottom > maxBottom) maxBottom = r.bottom;
-                    }
-                    return Math.ceil(maxBottom) || 100;
-                })()
-            """)
-            png = await page.screenshot(
-                clip={"x": 0, "y": 0, "width": width, "height": content_height}
-            )
+            # Reset browser default margins. Keep body height as fit-content so it wraps the
+            # widget without stretching to viewport height. Do NOT override background — the
+            # LLM may place the widget background on <body> itself (full-page layout).
+            await page.add_style_tag(content="html,body{margin:0;padding:0;height:fit-content!important}")
+            # Detect widget structure:
+            #   Fragment (LLM returns bare <div>): body has 1 child → screenshot that child.
+            #   Full page (LLM uses <body> as widget root with 2+ children): screenshot body.
+            child_count = await page.evaluate("document.body.children.length")
+            if child_count == 1:
+                element = await page.query_selector("body > *:first-child")
+            else:
+                element = await page.query_selector("body")
+            if element is None:
+                element = await page.query_selector("body")
+            png = await element.screenshot(omit_background=True)
             logger.debug("PlaywrightHtmlRenderer: rendered %d bytes PNG", len(png))
             return png
         except Exception as e:

@@ -152,7 +152,10 @@ The system is composed of 11 core building blocks, each documented in detail:
 **Infrastructure & Ops**
 
 - Slack dual-mode
-- Telegram integration
+- Telegram integration (webhook, MarkdownV2, rich content delivery)
+- Rich Content Protocol — `html_card`, `file` (md/html/txt/xlsx/docx) via `PlatformMediaPort`
+- `PlaywrightHtmlRenderer` — headless Chromium, widget detection, element.screenshot
+- `TelegramMediaAdapter` + `TelegramAdapterFactory` (composition root)
 - Dev/Prod environment isolation
 - Structured logging (LogSink)
 - Async task queue (TaskQueue)
@@ -197,8 +200,9 @@ main.py
   ├─> ProviderRegistry (Gemini, Claude, Grok)
   ├─> UserAgentFactory (per-user agents, receives ports via DI)
   ├─> AgentCoordinator
-  ├─> ConversationHandler (implements ConversationHandlerPort)
-  ├─> SlackAdapterFactory (composition/ — creates adapter with ports injected)
+  ├─> PlaywrightHtmlRenderer (lazy init; shared singleton for all platforms)
+  ├─> SlackAdapterFactory (composition/ — creates SlackMediaAdapter + RichContentService + ConversationHandler)
+  ├─> TelegramAdapterFactory (composition/ — creates TelegramMediaAdapter + RichContentService + ConversationHandler)
   └─> adapter.start()
 ```
 

@@ -148,14 +148,24 @@ class HtmlRendererPort(ABC):
 - **`--no-sandbox`** — required in Cloud Run non-root containers. Detected automatically
   via `K_SERVICE` env var. Not applied locally.
 
-**Content height fix:**
+**Widget structure detection (v2):**
 
-`body.getBoundingClientRect()` in Chrome always returns the viewport rectangle (e.g.,
-0,0,480,800), not the content height. Using `body.screenshot()` would capture the full
-800px viewport regardless of actual content (300–400px typically), producing large white
-space below the card.
+LLMs produce two distinct HTML output patterns:
 
-Fix: measure actual content height via JS, then use `page.screenshot(clip=...)`:
+1. **Bare fragment** — LLM returns a single widget element:
+   `<div style="background:...padding:16px">...</div>`
+   Body has exactly 1 child. Screenshot that child with `omit_background=True` → clean
+   widget with transparent outside.
+
+2. **Full page layout** — LLM places the widget background on `<body>` with multiple
+   children (e.g., header div + grid div):
+   `<body style="background:linear-gradient(...)"><div class="header">...</div><div class="grid">...</div></body>`
+   Body has 2+ children. Screenshot `body` itself — the gradient background is an
+   element-level style, preserved by the render. Area outside the body is transparent.
+
+`body.getBoundingClientRect()` returns the viewport rectangle, not content height.
+`height:fit-content` on `body` prevents it from stretching to the 800px viewport height.
+`body` background is never overridden — the LLM may place the widget gradient on `<body>`.
 
 ```python
 async def render(self, html: str, width: int = 480) -> bytes:
@@ -165,21 +175,21 @@ async def render(self, html: str, width: int = 480) -> bytes:
     )
     try:
         await page.set_content(html, wait_until="networkidle", timeout=_RENDER_TIMEOUT_MS)
-        content_height = await page.evaluate("""
-            (() => {
-                const children = document.body.children;
-                if (!children.length) return 100;
-                let maxBottom = 0;
-                for (const el of children) {
-                    const r = el.getBoundingClientRect();
-                    if (r.bottom > maxBottom) maxBottom = r.bottom;
-                }
-                return Math.ceil(maxBottom) || 100;
-            })()
-        """)
-        png = await page.screenshot(
-            clip={"x": 0, "y": 0, "width": width, "height": content_height}
-        )
+        # Reset browser default margins. Keep body height as fit-content so it wraps the
+        # widget without stretching to viewport height. Do NOT override background — the
+        # LLM may place the widget background on <body> itself (full-page layout).
+        await page.add_style_tag(content="html,body{margin:0;padding:0;height:fit-content!important}")
+        # Detect widget structure:
+        #   Fragment (LLM returns bare <div>): body has 1 child → screenshot that child.
+        #   Full page (LLM uses <body> as widget root with 2+ children): screenshot body.
+        child_count = await page.evaluate("document.body.children.length")
+        if child_count == 1:
+            element = await page.query_selector("body > *:first-child")
+        else:
+            element = await page.query_selector("body")
+        if element is None:
+            element = await page.query_selector("body")
+        png = await element.screenshot(omit_background=True)
         return png
     except Exception as e:
         raise HtmlRenderError(f"render failed: {e}") from e
@@ -187,8 +197,9 @@ async def render(self, html: str, width: int = 480) -> bytes:
         await page.close()
 ```
 
-This works for both bare fragments (`<div>...`) and full `<html>` documents: the JS
-walks `document.body.children` and finds the actual bottom of rendered content.
+`element.screenshot(omit_background=True)` replaces the previous `page.screenshot(clip=...)`
+approach. Benefits: no JS height measurement needed, transparent area outside the element
+(not white), works correctly for both layout patterns.
 
 ---
 
@@ -344,20 +355,24 @@ open /tmp/html_card_test.png
 | File | Action | Status |
 |---|---|---|
 | `src/ports/html_renderer_port.py` | **Created** — `HtmlRendererPort` ABC + `HtmlRenderError` | ✅ |
-| `src/adapters/playwright_html_renderer.py` | **Created** — `PlaywrightHtmlRenderer` | ✅ |
+| `src/ports/platform_media_port.py` | **Created** — `PlatformMediaPort` ABC | ✅ |
+| `src/adapters/playwright_html_renderer.py` | **Created** — `PlaywrightHtmlRenderer` (v2: element.screenshot) | ✅ |
+| `src/adapters/slack/media_adapter.py` | **Created** — `SlackMediaAdapter` (`files_upload_v2`) | ✅ |
+| `src/adapters/telegram/media_adapter.py` | **Created** — `TelegramMediaAdapter` (`send_photo` / `send_document`) | ✅ |
 | `src/services/rich_content_service.py` | **Modified** — `_html_renderer`, `_handle_html_card()` | ✅ |
 | `src/handlers/conversation_handler.py` | **Modified** — `"html_card"` in `_MEDIA_CONTENT_TYPES` | ✅ |
-| `src/composition/slack_adapter_factory.py` | **Modified** — wire `html_renderer` param | ✅ |
+| `src/composition/slack_adapter_factory.py` | **Modified** — wire `html_renderer` param, `SlackMediaAdapter` | ✅ |
+| `src/composition/telegram_adapter_factory.py` | **Created** — `TelegramAdapterFactory` (composition root) | ✅ |
 | `src/config/settings.py` | **Modified** — `ENABLE_HTML_RENDERER` setting | ✅ |
-| `main.py` | **Modified** — renderer lifecycle | ✅ |
+| `main.py` | **Modified** — renderer lifecycle, `TelegramAdapterFactory` | ✅ |
 | `Dockerfile` | **Modified** — Playwright + Chromium install | ✅ |
 | `requirements.txt` | **Modified** — `playwright>=1.40.0` | ✅ |
 | `tests/unit/ports/test_html_renderer_port.py` | **Created** — port contract tests | ✅ |
 | `tests/unit/services/test_rich_content_html_card.py` | **Created** — service tests | ✅ |
 | `scripts/test_html_render.py` | **Created** — local smoke test | ✅ |
-| `firestore_utils/uploads/OUTPUT_FORMAT_JSON.groovy` | **Modified** — `html_card` type added | ✅ |
+| `firestore_utils/uploads/OUTPUT_FORMAT_JSON.groovy` | **Modified** — `html_card` type + iOS widget style + grid layout | ✅ |
 | `firestore_utils/uploads/COGNITIVE_PROCESS_SMART.groovy` | **Modified** — FORMAT step added | ✅ |
-| `firestore_utils/uploads/COGNITIVE_PROCESS_QUICK.groovy` | **Rewritten** — aligned with SMART, FORMAT step | ✅ |
+| `firestore_utils/uploads/COGNITIVE_PROCESS_QUICK.groovy` | **Rewritten** — aligned with SMART, FORMAT step, grid constraints | ✅ |
 
 ---
 
@@ -370,4 +385,6 @@ open /tmp/html_card_test.png
 | Q3 | Browser restart on crash — auto or manual? | Auto — `is_connected()` guard + `_launch_browser()` reconnect |
 | Q4 | Multiple `html_card` per response (future)? | Not in V1 — single `rich_content`. Extend later if needed. |
 | Q5 | Sandbox Chromium (`--no-sandbox`)? | Auto-detected via `K_SERVICE` env var (Cloud Run only) |
-| Q6 | Content height — `body.screenshot()` or `full_page`? | `page.screenshot(clip=content_height)` — JS measures real bottom |
+| Q6 | Content height — `body.screenshot()` or `full_page`? | `element.screenshot(omit_background=True)` — child count determines target element (body > :first-child for bare fragment, body for full-page layout) |
+| Q7 | Two Bot instances for Telegram (media + webhook)? | Acceptable — `Bot` is a stateless HTTP client. `TelegramMediaAdapter` creates its own instance with the same token. |
+| Q8 | Shared `html_renderer` singleton across platforms? | Yes — `main.py` creates one `PlaywrightHtmlRenderer`; both factories receive the same instance. One Chromium browser per process. |

@@ -30,14 +30,17 @@ background process extracts new facts from the conversation → bot gets smarter
 ## Key Mechanisms
 
 **Multi-agent network** — not one LLM for everything, but specialists:
-- Router (Gemini Flash) — classifies requests, performs semantic memory search,
-  passes enriched context downstream
-- Quick (Flash) — simple answers, <2s, 70% of requests, 10x cheaper
-- Smart (Claude Opus) — complex tasks, tool orchestration
-- WebSearch (Flash + Grounding) — separate agent, because Gemini API cannot
-  combine Google Search grounding and function calling in one request
-- Memory (no LLM) — pure vector search, free
-- Consolidation (Opus) — background "memory consolidation"
+- Router (Gemini Flash) — classifies requests (complexity 1-5 → Quick, 6-10 → Smart),
+  performs semantic memory search, passes enriched context downstream
+- Quick (Flash, BALANCED) — fast responses with bounded delegation (MAX_TURNS=2):
+  `search_memory` + `search_web_light`. 70% of requests, 10x cheaper than Thinking.
+- Smart (Gemini Pro / Claude Opus, PERFORMANCE) — complex tasks, multi-turn tool orchestration
+- WebSearchLight (Flash Lite, ECO) — single-pass Google grounding, called by Quick only.
+  Separate agent because Gemini cannot combine grounding + function calling in one request.
+- WebSearch (Flash, BALANCED) — full-depth search with synthesis, called by Smart only.
+- Memory (LLM key formulation + vector search) — MemorySearchAgent: ECO-tier LLM extracts
+  search keys, then multi-vector RRF search. Shared between Quick and Smart paths.
+- Consolidation (Opus/Thinking) — background "memory consolidation"
 
 **Consolidation** — analogous to long-term memory formation:
 - Sliding window (100-200 messages) fills up → batch goes to queue
