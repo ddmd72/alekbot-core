@@ -128,6 +128,11 @@ class GeminiAdapter(LLMService):
             types.SafetySetting(category="HARM_CATEGORY_CIVIC_INTEGRITY", threshold=safety_threshold),
         ]
 
+        # SDK 1.64+: response_json_schema (standard JSON Schema, lowercase types) is preferred
+        # over response_schema (Gemini proprietary uppercase types) which silently returns empty
+        # responses in newer SDK versions when passed as a plain dict.
+        # Route dict schemas → response_json_schema; typed/class schemas → response_schema.
+        use_json_schema = response_schema is not None and isinstance(response_schema, dict)
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=temperature,
@@ -136,7 +141,8 @@ class GeminiAdapter(LLMService):
             tool_config=tool_config,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=not afc_enabled),
             response_mime_type=response_mime_type,
-            response_schema=response_schema,
+            response_json_schema=self._to_json_schema(response_schema) if use_json_schema else None,
+            response_schema=None if use_json_schema else response_schema,
             safety_settings=safety_settings,
         )
 
@@ -315,6 +321,17 @@ class GeminiAdapter(LLMService):
             )
 
         return tool_declarations
+
+    def _to_json_schema(self, schema: Any) -> Any:
+        """Recursively lowercase type names for standard JSON Schema (response_json_schema)."""
+        if isinstance(schema, dict):
+            return {
+                k: (v.lower() if k == "type" and isinstance(v, str) else self._to_json_schema(v))
+                for k, v in schema.items()
+            }
+        if isinstance(schema, list):
+            return [self._to_json_schema(item) for item in schema]
+        return schema
 
     def _extract_text(self, response) -> str:
         try:
