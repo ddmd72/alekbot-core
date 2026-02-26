@@ -35,6 +35,7 @@ This document MUST be updated when:
 - Multi-Agent System: [multi_agent_system/README.md](./multi_agent_system/README.md)
 - Agent Registry (ACP v2): [agent_registry/README.md](./agent_registry/README.md)
 - Hybrid Router: [hybrid_router/README.md](./hybrid_router/README.md)
+- Quick Agent Delegation: [quick_agent_delegation/README.md](./quick_agent_delegation/README.md)
 
 ### Memory & Context
 

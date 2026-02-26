@@ -64,8 +64,9 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── agents/             # 🆕 Multi-Agent System (Specialized Task Handlers)
 │   ├── __init__.py
 │   ├── base_agent.py   # BaseAgent + CircuitBreaker
-│   ├── memory_search_agent.py    # RAG specialist (vector search)
-│   ├── web_search_agent.py       # Web search specialist (Gemini Grounding)
+│   ├── memory_search_agent.py    # RAG specialist (vector search, shared Quick+Smart)
+│   ├── web_search_agent.py       # Full web search specialist (Smart path, Gemini Grounding)
+│   ├── web_search_light_agent.py # Lightweight grounding specialist (Quick path, ECO tier)
 │   ├── observation_agent.py      # ⚠️ LEGACY (replaced by session-based consolidation)
 │   ├── consolidation_agent.py    # Knowledge synthesis specialist ("Life Chronicler")
 │   ├── infrastructure/ # 🆕 Infrastructure Support Agents
@@ -234,7 +235,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`platform_auth_port.py`**: `PlatformAuthPort` ABC + `IAMDecision` dataclass — injected into all platform adapters for centralized authorization. Implemented by `IAMService`.
 
 **Agent & Service Ports:**
--   **`prompt_builder_port.py`**: `PromptBuilderPort` ABC — injected into all 5 agents (RouterAgent, QuickResponseAgent, SmartResponseAgent, WebSearchAgent, ConsolidationAgent). Implemented by `PromptBuilder`.
+-   **`prompt_builder_port.py`**: `PromptBuilderPort` ABC — injected into all 6 agents (RouterAgent, QuickResponseAgent, SmartResponseAgent, WebSearchAgent, WebSearchLightAgent, ConsolidationAgent). Implemented by `PromptBuilder`.
 -   **`fact_write_port.py`**: `FactWritePort` ABC — injected into `ConsolidationAgent`, `FactManagementAdapter`, and `UserAgentFactory`. Implemented by `FactWriteService`.
 -   **`search_enrichment_port.py`**: `SearchEnrichmentPort` ABC — injected into `RouterAgent`, `MemorySearchAgent`, and `FactManagementAdapter`. Implemented by `SearchEnrichmentService`.
 -   **`fact_management_port.py`**: `FactManagementPort` ABC. Deliberate fact management (search, create, merge, discard). Adapter: `FactManagementAdapter`.
@@ -282,12 +283,13 @@ The multi-agent system enables specialized task handling with different LLM mode
 
 **Core Agents (`agents/core/`):**
 -   **`router_agent.py`**: LLM triage + rule-based fallback routing (complexity threshold=5).
--   **`quick_response_agent.py`**: Fast responses using `gemini-3-flash-preview`.
+-   **`quick_response_agent.py`**: Fast responses (BALANCED tier). Has a delegation loop (`MAX_DELEGATION_TURNS=2`) for `QUICK_INTENTS = {"search_memory", "search_web_light"}`. Memory-first parallel scheduling. `_clean_history_for_quick` strips tool turns from history. Outputs JSON (`full_response`, `response_summary`, `rich_content`) via `parse_llm_response`.
 -   **`smart_response_agent.py`**: Complex reasoning + specialist delegation via `delegate_to_specialist(intent, query)` — generic ACP v2 tool. Available intents injected dynamically from `AgentRegistry`. Memory-first parallel scheduling for `search_memory` intent.
 
 **Specialized Agents:**
--   **`memory_search_agent.py`**: Two-phase memory retrieval: (1) LLM key formulation — Gemini Flash converts the delegation query into 3 optimized search keys (keywords, primary_query, alternative_query) + optional domains using `COGNITIVE_PROCESS_MEMORY_SEARCH` Firestore token; (2) multi-vector RRF search via `SearchEnrichmentService`. Schema enforced at API level: 3–5 keywords, 2 domains max (enum), 50-char query limit.
--   **`web_search_agent.py`**: Web search specialist using Gemini Grounding.
+-   **`memory_search_agent.py`**: Two-phase memory retrieval: (1) LLM key formulation — Gemini Flash converts the delegation query into 3 optimized search keys (keywords, primary_query, alternative_query) + optional domains using `COGNITIVE_PROCESS_MEMORY_SEARCH` Firestore token; (2) multi-vector RRF search via `SearchEnrichmentService`. Schema enforced at API level: 3–5 keywords, 2 domains max (enum), 50-char query limit. Shared specialist — called from both Quick (`search_memory`) and Smart (`search_memory`).
+-   **`web_search_light_agent.py`**: Lightweight single-pass grounding specialist (ECO tier). Called exclusively by QuickResponseAgent via `search_web_light` intent. Single Gemini + Google Search grounding call. Returns plain Slack mrkdwn. Prompt via PromptBuilder v3 (`agent_type="websearch_light"`).
+-   **`web_search_agent.py`**: Full-depth web search specialist using Gemini Grounding (BALANCED tier). Called exclusively by SmartResponseAgent via `search_web` intent.
 -   **`consolidation_agent.py`**: Knowledge synthesis specialist ("Life Chronicler"). Uses biographical context caching and vector-based deduplication.
 -   **`observation_agent.py`**: ⚠️ LEGACY (kept for reference).
 

@@ -85,8 +85,9 @@ The central hub for all agent interactions.
 
 1. **Ingress:** `ConversationHandler` creates an `AgentMessage` and routes it to the `RouterAgent`.
 2. **Triage:** `RouterAgent` classifies the intent and delegates to `Quick` or `Smart` agents.
-3. **Specialization:** `SmartResponseAgent` calls `delegate_to_specialist(intent, query)` → coordinator resolves via `AgentRegistry` → routes to the appropriate specialist.
-4. **Aggregation:** Results are synthesized and returned to the user.
+3. **Specialization (Smart path):** `SmartResponseAgent` calls `delegate_to_specialist(intent, query)` → coordinator resolves via `AgentRegistry` → routes to specialist (`search_memory` or `search_web`).
+4. **Specialization (Quick path):** `QuickResponseAgent` has its own delegation loop (`MAX_DELEGATION_TURNS=2`) with a separate intent set (`search_memory`, `search_web_light`). `search_web_light` routes to `WebSearchLightAgent` — a lightweight single-pass grounding specialist. See [Quick Agent Delegation](../quick_agent_delegation/README.md).
+5. **Aggregation:** Results are synthesized and returned to the user.
 
 ### 3.3 ACP v2: Agent Registry Pattern
 
@@ -126,13 +127,14 @@ Agents are instantiated and managed per user to ensure strict data isolation and
 ### 5.1 Core Agents (Reasoning)
 
 - **Router Agent:** Intent classification and triage.
-- **Quick Agent:** Fast, low-cost responses (Gemini Flash). Outputs JSON (`full_response` + `response_summary`) parsed by `llm_response_parser`.
-- **Smart Agent:** Deep reasoning and specialist delegation (Gemini Pro / Claude). Uses 1 generic `delegate_to_specialist(intent, query)` tool — intents resolved via AgentRegistry. After generating a response, fires async `response_summary_task` (via `HistorySummaryService`) so history compression never blocks Slack delivery. Timeout: `240s`, `max_retries=0`.
+- **Quick Agent:** Fast responses (BALANCED tier = Gemini Flash). Has a delegation loop (`MAX_DELEGATION_TURNS=2`) for `search_memory` and `search_web_light` intents. Prompt token `PROTOCOL_QUICK_AGENT_SELECTION` defines when and how to delegate. Outputs JSON (`full_response`, `response_summary`, `rich_content`) parsed by `parse_llm_response`. `HistorySummaryService` used only as fallback for the plain-text path. `_clean_history_for_quick` strips tool interactions from history before each LLM call.
+- **Smart Agent:** Deep reasoning and specialist delegation (PERFORMANCE tier = Gemini Pro / Claude). Uses 1 generic `delegate_to_specialist(intent, query)` tool — intents resolved via AgentRegistry. After generating a response, fires async `response_summary_task` (via `HistorySummaryService`) so history compression never blocks Slack delivery. Timeout: `240s`, `max_retries=0`.
 
 ### 5.2 Specialist Agents (Tools)
 
-- **Memory Search Agent:** Two-phase: (1) LLM key formulation via `COGNITIVE_PROCESS_MEMORY_SEARCH` Firestore token — Gemini Flash extracts `keywords`, `primary_query`, `alternative_query`, `domains` from the delegation query; (2) multi-vector RRF search via `SearchEnrichmentService`. Schema-enforced: 3–5 keywords, 2 domains max, 50-char query limit.
-- **Web Search Agent:** Real-time information retrieval via Google Search grounding.
+- **Memory Search Agent:** Two-phase: (1) LLM key formulation via `COGNITIVE_PROCESS_MEMORY_SEARCH` Firestore token — Gemini Flash extracts `keywords`, `primary_query`, `alternative_query`, `domains` from the delegation query; (2) multi-vector RRF search via `SearchEnrichmentService`. Schema-enforced: 3–5 keywords, 2 domains max, 50-char query limit. Reachable from both Quick (`search_memory`) and Smart (`search_memory`).
+- **Web Search Light Agent:** Lightweight single-pass grounding agent called exclusively by `QuickResponseAgent` via the `search_web_light` intent. ECO tier (Gemini Flash Lite), single LLM call with Google Search grounding tool, returns plain Slack mrkdwn. No multi-turn refinement. Prompt via PromptBuilder v3 (`agent_type="websearch_light"`) with inline Groovy fallback.
+- **Web Search Agent:** Full-depth real-time information retrieval via Google Search grounding. Called exclusively by `SmartResponseAgent` via `search_web` intent. BALANCED tier.
 - **Consolidation Agent:** Background synthesis of conversation history into facts.
 
 ### 5.3 Infrastructure Agents
@@ -234,19 +236,22 @@ ConversationHandler.handle_message()
 - `src/infrastructure/agent_coordinator.py`: Routing, parallel execution, and `handle_delegation()` (ACP v2).
 - `src/infrastructure/agent_registry.py`: AgentRegistry, AgentManifest, ExecutionMode (ACP v2).
 - `src/agents/base_agent.py`: Base class with resilience primitives.
+- `src/agents/core/quick_response_agent.py`: Delegation loop, `QUICK_INTENTS`, memory-first parallel scheduling, JSON output.
 - `src/agents/core/smart_response_agent.py`: `delegate_to_specialist` tool + memory-first parallel scheduling.
+- `src/agents/web_search_light_agent.py`: Lightweight grounding specialist (Quick path).
 - `src/agents/memory_search_agent.py`: LLM key formulation + `MEMORY_SEARCH_RESPONSE_SCHEMA`.
 - `src/handlers/agent_worker_handler.py`: ASYNC task execution from Cloud Tasks.
 - `src/services/user_agent_factory.py`: Lifecycle and DI management.
 - `src/services/history_summary_service.py`: LLM-based response compression (Gemini-locked, fail-fast).
-- `src/utils/llm_response_parser.py`: Unified JSON parser for `full_response` + `response_summary`. Guards against mistaking embedded JSON examples for response envelopes.
+- `src/utils/llm_response_parser.py`: Unified JSON parser for `full_response` + `response_summary` + `rich_content`. Guards against mistaking embedded JSON examples for response envelopes.
 - `src/handlers/conversation_handler.py`: Fire-and-forget summary task + graceful degradation fallback.
+- Building Block: [Quick Agent Delegation](../quick_agent_delegation/README.md)
 
 ---
 
 ## 10. Status
 
 **Status:** ✅ Production Ready
-**Last Updated:** 2026-02-21
+**Last Updated:** 2026-02-26
 
 ---

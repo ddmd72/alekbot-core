@@ -11,6 +11,7 @@ Ported from BrainService.generate_quick_response()
 import os
 import re
 import asyncio
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from ..base_agent import BaseAgent
@@ -24,10 +25,10 @@ from ...domain.agent import (
 )
 from ...domain.tone import UserTone
 from ...ports.llm_service import (
-    LLMService, 
-    LLMResponse, 
-    ToolCall, 
-    Message, 
+    LLMService,
+    LLMResponse,
+    ToolCall,
+    Message,
     MessagePart,
     AutomaticFunctionCallingConfig,
     LLMRequest
@@ -41,6 +42,13 @@ from ...utils.debug_logger import get_debug_logger
 from ...utils.llm_response_parser import parse_llm_response
 from ...domain.messaging import SmartResponse
 from ...services.history_summary_service import HistorySummaryService
+
+
+@dataclass
+class _QuickLoopResult:
+    smart_response: SmartResponse
+    total_tokens: int
+    history_summary: Optional[str] = None
 
 
 class QuickResponseAgent(BaseAgent):
@@ -65,9 +73,17 @@ class QuickResponseAgent(BaseAgent):
     
     # LEGACY Provider Refactor Session 11: Default model handled by AgentExecutionContext
     # DEFAULT_MODEL = "gemini-3-flash-preview"
-    
+
     # Context window for quick responses (smaller = faster)
     CONTEXT_WINDOW = 20
+
+    # Delegation loop limits
+    MAX_DELEGATION_TURNS = 2
+    MAX_AGENT_RETRIES = 1
+    RETRY_BACKOFF_SECONDS = 0.5
+
+    # Intents exposed to Quick (subset of all registered intents)
+    QUICK_INTENTS = {"search_memory", "search_web_light"}
     
     def __init__(
         self,
@@ -212,10 +228,9 @@ class QuickResponseAgent(BaseAgent):
             
             # DEBUG: Log prompt before LLM call
             debug_logger = get_debug_logger()
-            # Convert history to readable format for logging
             history_str = "\n".join([
                 f"{msg.role}: {' | '.join([p.text[:100] if p.text else f'[{type(p).__name__}]' for p in msg.parts])}"
-                for msg in clean_history[-5:]  # Last 5 messages
+                for msg in clean_history[-5:]
             ])
             debug_logger.log_prompt(
                 agent_name="quick_response",
@@ -223,34 +238,23 @@ class QuickResponseAgent(BaseAgent):
                 system_instruction=system_prompt,
                 metadata={"user_id": user_id[:8] if user_id else "unknown"}
             )
-            
-            # 4. Generate LLM response (native tools + grounding where supported)
-            caps = self.execution_context.capabilities
-            afc = AutomaticFunctionCallingConfig(enabled=True) if caps.native_tools else None
-            request = LLMRequest(
-                model_name=self.model_name,
-                system_instruction=system_prompt,
-                messages=clean_history,
-                tools=None,
-                temperature=0.7,
-                automatic_function_calling=afc,
-                use_grounding=caps.native_grounding,
-            )
-            response = await self.llm.generate_content(request=request)
-            
-            # DEBUG: Log response
-            debug_logger.log_response(
-                agent_name="quick_response",
-                response=response.text or "",
-                metadata={
-                    "user_id": user_id[:8] if user_id else "unknown",
-                    "tokens": response.usage_metadata.total_tokens if response.usage_metadata else 0
-                }
+
+            # 4. Run delegation loop (tool calling replaces raw grounding)
+            tool_declarations = self._get_quick_tool_declarations()
+            loop_result = await self._execute_quick_delegation_loop(
+                session_id=session_id,
+                user_id=user_id,
+                system_prompt=system_prompt,
+                history=clean_history,
+                tool_declarations=tool_declarations,
+                account_id=account_id,
             )
 
-            # 6. Parse response (Unified Protocol)
-            user_text, history_summary, rich_content = parse_llm_response(response.text or "")
-            
+            user_text = loop_result.smart_response.text
+            rich_content = loop_result.smart_response.structured_data
+            history_summary = loop_result.history_summary
+            total_tokens = loop_result.total_tokens
+
             # Sanitize user text if present
             if user_text:
                 user_text = self._sanitize_response(user_text)
@@ -259,13 +263,21 @@ class QuickResponseAgent(BaseAgent):
             if not user_text and not rich_content:
                 user_text = ""  # Let ConversationHandler handle fallback
 
-            # 8. Track usage (fire-and-forget)
-            await self._track_usage(user_id, response)
+            # 8. Track usage via a synthetic response object (total_tokens from loop)
+            class _FakeUsage:
+                def __init__(self, tokens):
+                    self.total_tokens = tokens
+                    self.prompt_tokens = 0
+                    self.completion_tokens = 0
+
+            class _FakeResponse:
+                def __init__(self, tokens):
+                    self.usage_metadata = _FakeUsage(tokens)
+                    self.metadata = {}
+
+            await self._track_usage(user_id, _FakeResponse(total_tokens))
 
             # 9. Post-processing: fire-and-forget history summary (plain-text path).
-            # When OUTPUT_FORMAT_JSON is active and the LLM returns JSON, history_summary
-            # is already extracted by parse_llm_response. For grounding responses (plain text),
-            # launch HistorySummaryService as background task — identical to SmartAgent.
             enable_history_optimization = os.getenv("ENABLE_HISTORY_OPTIMIZATION", "false").lower() in ("true", "1", "yes")
             summary_task = None
             if not history_summary and enable_history_optimization and user_text and self.history_summary_service:
@@ -278,8 +290,6 @@ class QuickResponseAgent(BaseAgent):
                 text=user_text or "",
                 structured_data=rich_content
             )
-
-            total_tokens = response.usage_metadata.total_tokens if response.usage_metadata else 0
 
             logger.info(
                 f"✅ [QuickResponseAgent] Response generated "
@@ -374,13 +384,246 @@ class QuickResponseAgent(BaseAgent):
         return [
             msg for msg in history
             if not any(
-                part.tool_call or part.tool_response 
+                part.tool_call or part.tool_response
                 for part in msg.parts
             )
         ]
 
+    def _get_quick_tool_declarations(self) -> List[Dict[str, Any]]:
+        """Build tool declarations restricted to Quick-allowed intents."""
+        available_intents = []
+        if self.coordinator:
+            for intent in self.coordinator.get_available_intents():
+                if intent["name"] in self.QUICK_INTENTS:
+                    available_intents.append(intent)
 
-    
+        intents_description = "\n".join(
+            f"- {i['name']}: {i['description']}" for i in available_intents
+        ) or "(no specialist agents registered)"
+
+        return [
+            {
+                "name": "delegate_to_specialist",
+                "description": (
+                    "Delegate a task to a specialist agent.\n\n"
+                    f"Available intents:\n{intents_description}\n\n"
+                    "Parameters:\n"
+                    "- intent: intent name from the list above\n"
+                    "- query: the user's question or command"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "intent": {
+                            "type": "string",
+                            "description": "Intent name (from available intents list)"
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "User question or command"
+                        }
+                    },
+                    "required": ["intent", "query"]
+                }
+            },
+        ]
+
+    async def _execute_quick_delegation_loop(
+        self,
+        session_id: str,
+        user_id: str,
+        system_prompt: str,
+        history: List[Message],
+        tool_declarations: List[Dict[str, Any]],
+        account_id: Optional[str] = None,
+    ) -> _QuickLoopResult:
+        """Agent delegation loop for Quick: max 2 turns, memory-first ordering."""
+        total_tokens = 0
+
+        for turn in range(self.MAX_DELEGATION_TURNS):
+            debug_history = history[-self.CONTEXT_WINDOW:]
+
+            logger.info(
+                "⚡ [QuickResponseAgent] Turn %s/%s - LLM call (history=%s)",
+                turn + 1, self.MAX_DELEGATION_TURNS, len(debug_history)
+            )
+
+            request = LLMRequest(
+                model_name=self.model_name,
+                system_instruction=system_prompt,
+                messages=debug_history,
+                tools=tool_declarations,
+                temperature=0.7,
+            )
+            response = await self.llm.generate_content(request=request)
+
+            if response.usage_metadata:
+                total_tokens += response.usage_metadata.total_tokens
+
+            if not response.tool_calls:
+                # Final answer — parse and return
+                user_text, summary, rich = parse_llm_response(response.text or "")
+                debug_logger = get_debug_logger()
+                debug_logger.log_response(
+                    agent_name="quick_response",
+                    response=response.text or "",
+                    metadata={
+                        "user_id": user_id[:8] if user_id else "unknown",
+                        "turn": turn + 1,
+                        "tokens": response.usage_metadata.total_tokens if response.usage_metadata else 0
+                    }
+                )
+                history.append(Message(
+                    role="model",
+                    parts=[MessagePart(text=(summary or user_text or ""))]
+                ))
+                return _QuickLoopResult(
+                    smart_response=SmartResponse(text=user_text or "", structured_data=rich),
+                    total_tokens=total_tokens,
+                    history_summary=summary,
+                )
+
+            # Append model tool calls to history
+            if response.raw_content:
+                history.append(Message(role="model", parts=[], raw_content=response.raw_content))
+            else:
+                history.append(Message(
+                    role="model",
+                    parts=[MessagePart(tool_call=tc) for tc in response.tool_calls]
+                ))
+
+            logger.info(
+                "⚡ [QuickResponseAgent] Turn %s - delegating to %s agents",
+                turn + 1, len(response.tool_calls)
+            )
+
+            tool_responses = await self._execute_quick_parallel(
+                tool_calls=response.tool_calls,
+                user_id=user_id,
+                session_id=session_id,
+                account_id=account_id,
+            )
+
+            history.append(Message(
+                role="user",
+                parts=[
+                    MessagePart(tool_response={
+                        "name": tr.name,
+                        "response": {"result": tr.result_str}
+                    })
+                    for tr in tool_responses
+                ]
+            ))
+
+        # Max turns exhausted — return empty response
+        return _QuickLoopResult(
+            smart_response=SmartResponse(text=""),
+            total_tokens=total_tokens,
+        )
+
+    async def _execute_quick_parallel(
+        self,
+        tool_calls: List[ToolCall],
+        user_id: str,
+        session_id: str,
+        account_id: Optional[str] = None,
+    ) -> List[Any]:
+        """Execute tool calls: memory-first, others in parallel."""
+        from dataclasses import dataclass as _dc
+
+        @_dc
+        class ToolResponse:
+            name: str
+            result_str: str
+
+        results: List[Optional[ToolResponse]] = [None] * len(tool_calls)
+        memory_context: List[str] = []
+
+        def _is_memory(tc: ToolCall) -> bool:
+            return (
+                tc.name == "delegate_to_specialist"
+                and (tc.args or {}).get("intent") == "search_memory"
+            )
+
+        memory_calls = [(i, tc) for i, tc in enumerate(tool_calls) if _is_memory(tc)]
+        other_calls = [(i, tc) for i, tc in enumerate(tool_calls) if not _is_memory(tc)]
+
+        for idx, tc in memory_calls:
+            result_str = await self._delegate_quick(
+                tc, user_id, session_id, account_id
+            )
+            results[idx] = ToolResponse(name=tc.name, result_str=result_str)
+            if result_str:
+                memory_context.append(result_str)
+
+        if other_calls:
+            tasks = [
+                self._delegate_quick(tc, user_id, session_id, account_id)
+                for _, tc in other_calls
+            ]
+            parallel_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for (idx, tc), result in zip(other_calls, parallel_results):
+                if isinstance(result, Exception):
+                    results[idx] = ToolResponse(name=tc.name, result_str=f"AGENT ERROR: {result}")
+                else:
+                    results[idx] = ToolResponse(name=tc.name, result_str=result)
+
+        return [r for r in results if r is not None]
+
+    async def _delegate_quick(
+        self,
+        tool_call: ToolCall,
+        user_id: str,
+        session_id: str,
+        account_id: Optional[str] = None,
+    ) -> str:
+        """Delegate a single tool call via coordinator, with retry."""
+        if not self.coordinator:
+            return "SYSTEM ERROR: AgentCoordinator not configured."
+
+        args = tool_call.args or {}
+        intent = args.get("intent", "")
+        query = args.get("query", "")
+
+        if not intent:
+            return f"SYSTEM ERROR: delegate_to_specialist called without 'intent'. args={args}"
+
+        delegation_context: Dict[str, Any] = {
+            "user_id": user_id,
+            "account_id": account_id,
+            "session_id": session_id,
+        }
+
+        logger.info("⚡ [QuickResponseAgent] delegate: intent=%s query='%s'", intent, query[:60])
+
+        for attempt in range(self.MAX_AGENT_RETRIES + 1):
+            response = await self.coordinator.handle_delegation(
+                intent=intent,
+                query=query,
+                context=delegation_context,
+                calling_agent_id=self.agent_id,
+            )
+            if response.status == AgentStatus.SUCCESS:
+                result = response.result
+                result_str = (
+                    result.text if isinstance(result, SmartResponse)
+                    else "\n".join(str(i) for i in result) if isinstance(result, list)
+                    else str(result)
+                )
+                logger.info(
+                    "✅ [QuickResponseAgent] delegation result: intent=%s, %s chars",
+                    intent, len(result_str)
+                )
+                return result_str
+
+            if attempt < self.MAX_AGENT_RETRIES:
+                await asyncio.sleep(self.RETRY_BACKOFF_SECONDS)
+                continue
+
+            return f"AGENT ERROR: {response.error}"
+
+        return "AGENT ERROR: Max retries exceeded"
+
     def _sanitize_response(self, text: str) -> str:
         """
         Sanitize LLM response text.

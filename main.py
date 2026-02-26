@@ -185,6 +185,11 @@ async def main():
             intents={"search_web": ExecutionMode.SYNC},
             description="Real-time web search for current information",
         ))
+        agent_registry.register(AgentManifest(
+            agent_id="web_search_light_agent",
+            intents={"search_web_light": ExecutionMode.SYNC},
+            description="Lightweight single-pass web search for quick answers",
+        ))
 
         # Task queue: only in HTTP mode where Cloud Tasks is available
         agent_task_queue = None

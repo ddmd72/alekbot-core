@@ -55,6 +55,7 @@ sequenceDiagram
     participant S as SmartResponseAgent
     participant M as MemorySearchAgent
     participant W as WebSearchAgent
+    participant WSL as WebSearchLightAgent
     participant SS as SessionStore
 
     U->>A: message (text + attachments)
@@ -76,8 +77,25 @@ sequenceDiagram
         R->>C: delegate to quick_response
         C->>Q: process(message)
         Q->>SS: load session history
-        SS-->>Q: last N messages
-        Q->>Q: build prompt + LLM call
+        SS-->>Q: last N messages (tool turns stripped)
+        Q->>Q: build prompt + delegation loop (MAX_TURNS=2)
+
+        opt LLM calls search_memory
+            Q->>C: route to memory_search
+            C->>M: process(search query)
+            M-->>C: facts
+            C-->>Q: facts
+        end
+
+        opt LLM calls search_web_light
+            Q->>C: route to web_search_light
+            C->>WSL: process(search query)
+            WSL->>WSL: single grounding call (ECO tier)
+            WSL-->>C: plain mrkdwn result
+            C-->>Q: result
+        end
+
+        Q->>Q: parse JSON response (full_response + response_summary)
         Q-->>C: AgentResponse
     else Complex Query
         R->>C: delegate to smart_response
@@ -156,18 +174,29 @@ See: [Hybrid Router Building Block](../05_building_blocks/hybrid_router/README.m
 #### Step 5: Response Agents
 
 **Quick Response Agent** (`src/agents/core/quick_response_agent.py`)
-- Model: `gemini-2.0-flash` (fast, cheap)
-- Use case: Simple queries, greetings, factual questions
-- No tool access, no delegation
+- Tier: BALANCED (Gemini Flash)
+- Use case: Simple queries, greetings, factual questions with optional lightweight lookup
+- Delegation loop (`MAX_DELEGATION_TURNS=2`) via `QUICK_INTENTS`:
+  - `search_memory` → `MemorySearchAgent` (shared with Smart path)
+  - `search_web_light` → `WebSearchLightAgent` (single-pass ECO grounding)
+- `_clean_history_for_quick` strips prior tool turns from history context
+- Outputs JSON: `full_response`, `response_summary`, `rich_content` (parsed by `parse_llm_response`)
+
+**Web Search Light Agent** (`src/agents/web_search_light_agent.py`)
+- Tier: ECO (Gemini Flash Lite)
+- Use case: Single-fact external lookups delegated from QuickAgent
+- Single Gemini grounding call, returns plain Slack mrkdwn
+- No delegation, no JSON envelope
 
 **Smart Response Agent** (`src/agents/core/smart_response_agent.py`)
-- Model: `gemini-2.0-flash-thinking` (complex reasoning)
+- Tier: PERFORMANCE (Gemini Pro / Claude Opus)
 - Use case: Analysis, research, multi-step tasks
-- **Can delegate** to specialist agents:
+- **Delegates** to specialist agents via ACP v2 registry:
   - `memory_search_agent` → RAG from user's memory
-  - `web_search_agent` → Gemini Grounding for external info
+  - `web_search_agent` → Full Gemini Grounding synthesis
 
 See: [Multi-Agent System Building Block](../05_building_blocks/multi_agent_system/README.md)
+See: [Quick Agent Delegation](../05_building_blocks/quick_agent_delegation/README.md)
 
 #### Step 6: Session Persistence
 **Code:** `src/adapters/firestore_session_store.py`
@@ -448,5 +477,5 @@ See: [Observability Strategy](../05_building_blocks/observability_strategy/READM
 
 ---
 
-**Last Updated:** 2026-02-18
-**Status:** ✅ Complete (v6.0 implementation documented)
+**Last Updated:** 2026-02-26
+**Status:** ✅ Complete (v6.1 — Quick delegation + WebSearchLightAgent)

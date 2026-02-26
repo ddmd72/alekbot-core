@@ -97,6 +97,7 @@ The system is composed of 11 core building blocks, each documented in detail:
 
 - **[Multi-Agent System](../../05_building_blocks/multi_agent_system/README.md)** — Actor Model, ACP, UserAgentFactory, AgentCoordinator
 - **[Hybrid Router](../../05_building_blocks/hybrid_router/README.md)** — LLM triage + rule-based routing, tone awareness
+- **[Quick Agent Delegation](../../05_building_blocks/quick_agent_delegation/README.md)** — QuickAgent delegation loop, WebSearchLightAgent, QUICK_INTENTS
 
 ### 6.2 Memory & Context
 
@@ -128,8 +129,8 @@ The system is composed of 11 core building blocks, each documented in detail:
 
 - AgentCoordinator (routing hub)
 - UserAgentFactory (per-user agents)
-- Core agents: Router, Quick, Smart
-- Specialist agents: MemorySearch, WebSearch, Consolidation
+- Core agents: Router, Quick (with delegation loop), Smart
+- Specialist agents: MemorySearch, WebSearch, WebSearchLight, Consolidation
 - Async message queue (infrastructure layer)
 
 **Session Lifecycle**

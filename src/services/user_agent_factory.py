@@ -40,6 +40,7 @@ from ..services.history_summary_service import HistorySummaryService
 from ..agents.core.router_agent import create_router_agent
 from ..agents.memory_search_agent import MemorySearchAgent
 from ..agents.web_search_agent import WebSearchAgent
+from ..agents.web_search_light_agent import WebSearchLightAgent
 from ..agents.consolidation_agent import ConsolidationAgent
 from ..utils.logger import logger
 
@@ -261,6 +262,20 @@ class UserAgentFactory:
             user_id=user_id,
         )
 
+        web_search_light_context = self.context_builder.build("web_search_light", user_profile.config)
+        web_search_light_agent = WebSearchLightAgent(
+            config=AgentConfig(
+                agent_id=f"web_search_light_agent_{user_id}",
+                agent_type="web_search_light",
+                timeout_ms=30000,
+                capabilities=["web_search", "current_events"],
+            ),
+            execution_context=web_search_light_context,
+            grounding_tool=grounding_tool,
+            prompt_builder=prompt_builder,
+            user_id=user_id,
+        )
+
         fact_management_adapter = self.fact_management_adapter_factory(search_enrichment_service)
 
         consolidation_agent = ConsolidationAgent(
@@ -287,6 +302,7 @@ class UserAgentFactory:
             smart_agent,
             memory_agent,
             web_agent,
+            web_search_light_agent,
             consolidation_agent,
         ])
 
@@ -308,6 +324,7 @@ class UserAgentFactory:
             "smart_agent": smart_agent,
             "memory_agent": memory_agent,
             "web_agent": web_agent,
+            "web_search_light_agent": web_search_light_agent,
             "consolidation_agent": consolidation_agent,
         }
         self._cache[user_id] = cached
@@ -359,7 +376,8 @@ class UserAgentFactory:
                 if entry is None:
                     continue
                 for key in ("router_agent", "quick_agent", "smart_agent",
-                            "memory_agent", "web_agent", "consolidation_agent"):
+                            "memory_agent", "web_agent", "web_search_light_agent",
+                            "consolidation_agent"):
                     agent = entry.get(key)
                     if agent and hasattr(agent, "agent_id"):
                         self.coordinator.unregister_agent(agent.agent_id)

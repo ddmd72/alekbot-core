@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from src.agents.core.quick_response_agent import QuickResponseAgent
-from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
+from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus, AgentResponse
 from src.services.prompt_builder import PromptBuilder
 from src.ports.llm_service import LLMService, LLMResponse, UsageMetadata, ToolCall, ProviderCapabilities
 from src.ports.session_store import SessionStore
@@ -60,6 +60,18 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
     )
     coordinator = MagicMock()
     coordinator.route_message = AsyncMock()
+    coordinator.get_available_intents = MagicMock(return_value=[
+        {"name": "search_memory", "description": "Search biographical facts"},
+        {"name": "search_web_light", "description": "Lightweight web search"},
+    ])
+    coordinator.handle_delegation = AsyncMock(
+        return_value=AgentResponse.success(
+            task_id="t1",
+            agent_id="memory_search_agent",
+            result="glove size: M",
+            confidence=1.0,
+        )
+    )
     agent = QuickResponseAgent(
         config=config,
         execution_context=execution_context,
@@ -68,7 +80,11 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
         coordinator=coordinator
     )
 
-    tool_call = ToolCall(name="search_memory", args={"query": "glove size"})
+    # Quick uses delegate_to_specialist with intent/query args
+    tool_call = ToolCall(
+        name="delegate_to_specialist",
+        args={"intent": "search_memory", "query": "glove size"}
+    )
 
     llm.generate_content = AsyncMock(side_effect=[
         LLMResponse(
@@ -83,11 +99,6 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
         )
     ])
 
-    agent._delegate_to_agent = AsyncMock(return_value={
-        "name": "search_memory",
-        "result": "glove size: M"
-    })
-
     msg = AgentMessage.create(
         sender="user",
         recipient="test",
@@ -99,8 +110,14 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
     response = await agent.execute(msg)
 
     assert response.status == AgentStatus.SUCCESS
-    assert response.result.text == ""  # SmartResponse wrapper; AFC handled by adapter mock
-    assert llm.generate_content.call_count == 1
+    assert response.result.text == "Glove size is M"  # delegation loop returns final LLM text
+    assert llm.generate_content.call_count == 2  # turn 1 (tool call) + turn 2 (final answer)
+    coordinator.handle_delegation.assert_called_once_with(
+        intent="search_memory",
+        query="glove size",
+        context={"user_id": user_id, "account_id": None, "session_id": "s1"},
+        calling_agent_id="test",
+    )
 
 @pytest.mark.asyncio
 async def test_quick_agent_stores_and_passes_user_id(mock_deps):

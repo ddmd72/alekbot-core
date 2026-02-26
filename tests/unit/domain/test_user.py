@@ -20,14 +20,33 @@ def test_get_tier_for_agent_returns_specific_tier():
     assert config.get_tier_for_agent("smart") == PerformanceTier.PERFORMANCE
 
 
-def test_get_tier_for_agent_returns_default_when_missing():
+def test_get_tier_for_agent_falls_back_to_class_defaults_when_key_missing():
+    # Simulates a user with stale stored agent_tiers that lacks a new agent type.
     config = UserBotConfig(agent_tiers={})
-    assert config.get_tier_for_agent("quick") == PerformanceTier.ECO
+    # "quick" has a class-level default of BALANCED, not default_tier (ECO).
+    assert config.get_tier_for_agent("quick") == PerformanceTier.BALANCED
+
+
+def test_get_tier_for_agent_returns_default_tier_for_unknown_agent():
+    config = UserBotConfig(agent_tiers=None)
+    assert config.get_tier_for_agent("unknown_agent_xyz") == PerformanceTier.ECO
 
 
 def test_get_tier_for_agent_returns_default_when_none():
     config = UserBotConfig(agent_tiers=None)
+    # "router" is in _DEFAULT_AGENT_TIERS as ECO — result is the same but via class default
     assert config.get_tier_for_agent("router") == PerformanceTier.ECO
+
+
+def test_web_search_light_default_tier_is_eco():
+    config = UserBotConfig()
+    assert config.get_tier_for_agent("web_search_light") == PerformanceTier.ECO
+
+
+def test_web_search_light_tier_override_works_with_stale_stored_config():
+    # Simulates old stored config without web_search_light key — class default should apply.
+    config = UserBotConfig(agent_tiers={"router": PerformanceTier.ECO, "quick": PerformanceTier.BALANCED})
+    assert config.get_tier_for_agent("web_search_light") == PerformanceTier.ECO
 
 
 def test_user_bot_config_provider_defaults_intact():

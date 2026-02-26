@@ -47,6 +47,22 @@ class PromptPreferences(BaseModel):
     language: str = "uk"
     vibe: str = "friendly"  # friendly, professional, witty
 
+# Default per-agent tiers used as a fallback in get_tier_for_agent.
+# Kept outside the class so it can be referenced by both default_factory and the method
+# without a forward reference. Add new agent types here; existing users with stale
+# stored agent_tiers dicts will pick up the new defaults automatically.
+_DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
+    "router": PerformanceTier.ECO,
+    "quick": PerformanceTier.BALANCED,
+    "smart": PerformanceTier.PERFORMANCE,
+    "consolidation": PerformanceTier.PERFORMANCE,
+    "web_search": PerformanceTier.BALANCED,
+    "web_search_light": PerformanceTier.ECO,
+    "memory_search": PerformanceTier.ECO,
+    "postprocessing": PerformanceTier.BALANCED,
+}
+
+
 class UserBotConfig(BaseModel):
     """Configuration for the user's personalized bot."""
     # ========================================================================
@@ -78,15 +94,9 @@ class UserBotConfig(BaseModel):
     # Purpose: Abstract performance tier from provider-specific model strings
     # ========================================================================
     default_tier: PerformanceTier = PerformanceTier.ECO
-    agent_tiers: Optional[Dict[str, PerformanceTier]] = Field(default_factory=lambda: {
-        "router": PerformanceTier.ECO,
-        "quick": PerformanceTier.BALANCED,
-        "smart": PerformanceTier.PERFORMANCE,
-        "consolidation": PerformanceTier.PERFORMANCE,
-        "web_search": PerformanceTier.BALANCED,
-        "memory_search": PerformanceTier.ECO,
-        "postprocessing": PerformanceTier.BALANCED
-    })
+    agent_tiers: Optional[Dict[str, PerformanceTier]] = Field(
+        default_factory=lambda: dict(_DEFAULT_AGENT_TIERS)
+    )
 
     # ========================================================================
     # NEW Provider Refactor Session 9: Provider preference & model overrides
@@ -173,11 +183,23 @@ class UserBotConfig(BaseModel):
     # ========================================================================
     prompt_preferences: PromptPreferences = Field(default_factory=PromptPreferences)
 
-    def get_tier_for_agent(self, agent_type: str) -> Optional[PerformanceTier]:
-        """Return the configured performance tier for a given agent type."""
-        if not self.agent_tiers:
-            return self.default_tier
-        return self.agent_tiers.get(agent_type, self.default_tier)
+    def get_tier_for_agent(self, agent_type: str) -> PerformanceTier:
+        """Return the configured performance tier for a given agent type.
+
+        Resolution order:
+        1. Per-agent override from self.agent_tiers (user/account stored config)
+        2. Class-level default from _DEFAULT_AGENT_TIERS (for known agent types)
+        3. self.default_tier (for unknown agent types)
+
+        The class-level fallback ensures that new agent types added to
+        _DEFAULT_AGENT_TIERS are picked up even for users whose stored
+        agent_tiers dict predates the addition of that agent.
+        """
+        stored = self.agent_tiers or {}
+        return stored.get(
+            agent_type,
+            _DEFAULT_AGENT_TIERS.get(agent_type, self.default_tier),
+        )
 
     def get_model_override(self, agent_type: str) -> Optional[str]:
         """Return model override for agent type if exists."""

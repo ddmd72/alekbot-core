@@ -21,9 +21,10 @@ This document MUST be updated when:
 - [ ] A new specialist agent is registered in `main.py`.
 - [ ] `AgentManifest` or `AgentRegistry` interface changes.
 - [ ] `coordinator.handle_delegation()` routing logic is modified.
-- [ ] The Firestore token `PROTOCOL_SMART_AGENT_SELECTION` changes.
+- [ ] The Firestore token `PROTOCOL_SMART_AGENT_SELECTION` or `PROTOCOL_QUICK_AGENT_SELECTION` changes.
 - [ ] An intent's execution mode changes (SYNC ↔ ASYNC).
 - [ ] MemorySearchAgent output format token (`OUTPUT_FORMAT_MEMORY_SEARCH`) or key formulation changes.
+- [ ] `QuickResponseAgent` `QUICK_INTENTS` or `MAX_DELEGATION_TURNS` constants change.
 
 ### Cross-References
 
@@ -46,6 +47,8 @@ SmartAgent has 1 fixed delegation tool forever; the registry grows, SmartAgent n
 
 **Core Principle:** SmartAgent knows *what* (intent names), not *how* (implementations). The
 registry translates intent → agent manifest → execution path.
+
+**Important:** There are two separate delegation trees in the system. The `AgentRegistry` + `PROTOCOL_SMART_AGENT_SELECTION` token governs SmartAgent delegation. QuickAgent has its own simpler delegation mechanism (`QUICK_INTENTS` constant, `PROTOCOL_QUICK_AGENT_SELECTION` Firestore token) that bypasses the AgentRegistry entirely. Both trees share the same `MemorySearchAgent`. See [Section 5.3](#53-quick-delegation-path-protocol_quick_agent_selection) and [Quick Agent Delegation](../quick_agent_delegation/README.md).
 
 ---
 
@@ -98,15 +101,23 @@ class ExecutionMode(str, Enum):
     ASYNC = "async"  # Background — Cloud Tasks + user notification (long-running tasks)
 ```
 
-### 3.3 Current Registry (as of 2026-02-21)
+### 3.3 Current Registry (as of 2026-02-26)
+
+**SmartAgent delegation registry** (via `AgentRegistry` + `PROTOCOL_SMART_AGENT_SELECTION`):
+
+| Agent ID | Intent | Mode | Caller | Description |
+|----------|--------|------|--------|-------------|
+| `memory_search_agent` | `search_memory` | SYNC | SmartAgent, QuickAgent | Semantic search through biographical facts and personal knowledge |
+| `web_search_agent` | `search_web` | SYNC | SmartAgent | Real-time web search for current information |
+
+**QuickAgent delegation** (via `QUICK_INTENTS` constant + `PROTOCOL_QUICK_AGENT_SELECTION`):
 
 | Agent ID | Intent | Mode | Description |
 |----------|--------|------|-------------|
-| `memory_search_agent` | `search_memory` | SYNC | Semantic search through biographical facts and personal knowledge |
-| `web_search_agent` | `search_web` | SYNC | Real-time web search for current information |
+| `memory_search_agent` | `search_memory` | SYNC (direct route) | Same agent as above, shared specialist |
+| `web_search_light_agent` | `search_web_light` | SYNC (direct route) | Lightweight single-pass grounding (ECO tier) |
 
-Both registered in `main.py` at startup. GcpTaskQueue is only instantiated in HTTP mode when
-`GOOGLE_CLOUD_PROJECT` is present; otherwise coordinator operates SYNC-only.
+SmartAgent's registry is registered in `main.py` at startup. QuickAgent's `QUICK_INTENTS` is a constant in `quick_response_agent.py` — no separate registry object. GcpTaskQueue is only instantiated in HTTP mode when `GOOGLE_CLOUD_PROJECT` is present; otherwise coordinator operates SYNC-only.
 
 ---
 
@@ -154,6 +165,18 @@ delegation protocol — the code tool definition is generic; the Firestore token
 - **When:** External, current, or real-time information (news, prices, world facts, documentation).
 - **How:** Pass the user's question naturally, preserving their language.
 - **Anti-patterns:** Using for personal data questions; changing the query language unnecessarily.
+
+### 5.3 Quick Delegation Path: PROTOCOL_QUICK_AGENT_SELECTION
+
+QuickAgent uses a **separate Firestore token** (`PROTOCOL_QUICK_AGENT_SELECTION`) to control when it calls `delegate_to_specialist`. The intent set is smaller and scoped to what Quick can meaningfully handle:
+
+- `search_memory` — same rules as SmartAgent: self-contained query, no raw user message verbatim.
+- `search_web_light` — **When:** Quick, factual external lookup (current date/time, price, weather, single fact). Simple single-answer queries. **How:** Pass a short, precise question. **Anti-patterns:** Complex multi-part research; queries that benefit from full synthesis (route those to Smart instead); personal data (use `search_memory`).
+
+**Key behavioral constraints for Quick delegation:**
+- `MAX_DELEGATION_TURNS = 2` — if the LLM hasn't responded after 2 tool rounds, stop.
+- Memory calls execute first (sequential); other calls run in parallel (`asyncio.gather`).
+- `_clean_history_for_quick` strips all `tool_call`/`tool_response` turns from session history before injecting it into the LLM — Quick's history context is always clean text, never polluted with prior tool scaffolding.
 
 ---
 
@@ -313,14 +336,18 @@ Per-user instances registered via `coordinator.register_agent()` from `UserAgent
 - `src/infrastructure/agent_registry.py` — AgentRegistry, AgentManifest, ExecutionMode
 - `src/infrastructure/agent_coordinator.py` — handle_delegation(), _execute_sync(), _execute_async(), get_available_intents()
 - `src/agents/core/smart_response_agent.py` — delegate_to_specialist tool, memory-first parallel scheduling
+- `src/agents/core/quick_response_agent.py` — `QUICK_INTENTS`, `MAX_DELEGATION_TURNS`, `_execute_quick_delegation_loop`, `_execute_quick_parallel`, `_clean_history_for_quick`
 - `src/agents/memory_search_agent.py` — LLM key formulation (`response_mime_type` only, no `response_schema`)
+- `src/agents/web_search_light_agent.py` — Lightweight grounding specialist (Quick path only)
 - `src/handlers/agent_worker_handler.py` — ASYNC task execution handler
 - `src/ports/task_queue.py` — enqueue_agent_task() protocol method
 - `src/adapters/gcp_task_queue.py` — Cloud Tasks enqueuing implementation
 - `main.py` — registry instantiation, manifest registration, /worker route extension
 - Firestore token: `PROTOCOL_SMART_AGENT_SELECTION` — delegation rules for SmartAgent
+- Firestore token: `PROTOCOL_QUICK_AGENT_SELECTION` — delegation rules for QuickAgent
 - Firestore token: `OUTPUT_FORMAT_MEMORY_SEARCH` — key formulation output constraints (prompt-level)
 - Firestore profile: `universal_agent_v1_SYSTEM_memorysearch` (collection: `development_domain_prompt_profiles_v3`)
+- Building Block: [Quick Agent Delegation](../quick_agent_delegation/README.md)
 
 ---
 

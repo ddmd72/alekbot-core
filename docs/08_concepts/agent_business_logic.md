@@ -41,9 +41,11 @@ AgentCoordinator (Central Router)
     ↓
 RouterAgent (Triage & Classification)
     ├─ Simple Query → QuickResponseAgent
+    │       ├─ (optional) Delegates to MemorySearchAgent
+    │       └─ (optional) Delegates to WebSearchLightAgent  ← lightweight grounding
     └─ Complex Query → SmartResponseAgent
-        ├─ Delegates to MemorySearchAgent
-        └─ Delegates to WebSearchAgent
+            ├─ Delegates to MemorySearchAgent
+            └─ Delegates to WebSearchAgent
     ↓
 Response Synthesis
     ↓
@@ -115,33 +117,110 @@ See: [Hybrid Router](../05_building_blocks/hybrid_router/README.md)
 
 ### 2. QuickResponseAgent - "The Fast Responder"
 
-**Business Purpose:** Handle simple queries with minimal cost
+**Business Purpose:** Handle simple queries with minimal cost, with optional lightweight delegation for memory or web lookup.
 
 **When Activated:** Router classifies query as simple (complexity ≤5)
 
 **Process Flow:**
 ```
-1. Load session history (last 20 messages)
-2. Build lightweight prompt (kernel + user query)
-3. Call Gemini Flash (fast, cheap model)
-4. Return response (no tool access)
+1. Load biographical context (get_biographical_context_cached)
+2. Merge with Router semantic enrichment (facts, semantic_lens)
+3. Build system prompt via PromptBuilder v3 (agent_type="quick")
+   — includes PROTOCOL_QUICK_AGENT_SELECTION delegation token
+4. Load conversation history (last 20 messages, tiered compression)
+5. Clean history: _clean_history_for_quick()
+   — strips all tool_call / tool_response turns (clean text only)
+6. _execute_quick_delegation_loop() [MAX_DELEGATION_TURNS=2]
+   Turn N:
+     a. LLM call with delegate_to_specialist tool (QUICK_INTENTS only)
+     b. No tool_calls? → parse_llm_response(text) → return JSON response
+     c. Has tool_calls? → _execute_quick_parallel():
+           - memory calls: sequential first
+           - other calls: asyncio.gather (parallel)
+     Append tool results → next turn
+7. Output: JSON envelope { full_response, response_summary, rich_content }
+   — response_summary used directly as history text (no HistorySummaryService)
+   — HistorySummaryService fires only as fallback for plain-text (non-JSON) path
+```
+
+**Available intents (QUICK_INTENTS):**
+- `search_memory` — semantic search through user's biographical facts
+- `search_web_light` → routed to `WebSearchLightAgent` (ECO tier, single grounding call)
+
+**Output format:**
+```json
+{
+  "full_response":    "complete Slack mrkdwn answer for the user",
+  "response_summary": "≤300 chars for session history",
+  "rich_content":    { "type": "html_card", "data": {...}, "fallback": "..." } | null
+}
+```
+
+**Example (no delegation):**
+```
+User: "Good morning!"
+  ↓
+QuickResponseAgent: Load history + bio context
+  ↓
+LLM: no tool call → parse JSON → return full_response
+```
+
+**Example (with web search):**
+```
+User: "What's today's weather in Valencia?"
+  ↓
+QuickResponseAgent: Turn 1 — LLM calls search_web_light("Valencia weather today")
+  ↓
+WebSearchLightAgent: Gemini grounding → "22°C, sunny" (plain mrkdwn)
+  ↓
+Turn 2: LLM synthesizes → JSON response → return
+```
+
+**Why Separate Agent:**
+- Uses BALANCED tier Flash (10x cheaper than Thinking)
+- Bounded delegation: max 2 turns, small intent set
+- Optimized for <3s latency even with one tool round-trip
+- Clean history = no tool-call noise in context window
+
+**Code:** `src/agents/core/quick_response_agent.py`
+
+---
+
+### 2a. WebSearchLightAgent - "The Quick Lookup"
+
+**Business Purpose:** Provide fast, single-fact web answers for QuickResponseAgent without the latency overhead of the full WebSearchAgent.
+
+**When Activated:** QuickResponseAgent delegates `search_web_light` intent.
+
+**Process Flow:**
+```
+1. Build prompt via PromptBuilder v3 (agent_type="websearch_light")
+   — or inline Groovy cognitive_process fallback if no PromptBuilder
+2. Inject current_date + user_query into augmented query string
+3. Single LLMRequest:
+   - model: ECO tier (gemini-flash-lite-latest)
+   - tools: [grounding_tool]
+   - temperature: 0.5
+4. Return response.text as plain Slack mrkdwn (no JSON, no markdown headers)
 ```
 
 **Example:**
 ```
-User: "Good morning!"
+Delegation query: "What is the current EUR/USD exchange rate?"
   ↓
-QuickResponseAgent: Load last 20 messages
+WebSearchLightAgent: grounding call
   ↓
-Flash model: "Good morning! How are you?"
+Returns: "1 EUR = 1.08 USD (as of 12:00 UTC)" (plain mrkdwn, single pass)
 ```
 
 **Why Separate Agent:**
-- Uses Flash model (10x cheaper than Thinking)
-- No tool overhead
-- Optimized for <2s latency
+- Cannot combine Google Search grounding + function calling in one Gemini request
+  (Gemini API limitation — grounding requires separate request)
+- ECO tier = cheapest possible model (Flash Lite)
+- Single pass: no synthesis loop, no JSON envelope overhead
+- Alternative fallback: `["memory_search_agent"]` if grounding unavailable
 
-**Code:** `src/agents/core/quick_response_agent.py`
+**Code:** `src/agents/web_search_light_agent.py`
 
 ---
 
@@ -468,13 +547,14 @@ Response delivered
 
 ### Model Selection by Task Complexity (v6.0)
 
-| Task | Agent | Model | Cost/1K tokens | Justification |
-|------|-------|-------|----------------|---------------|
-| **Vector Search** | Memory | None | FREE | Pure math, no LLM |
-| **Simple Responses** | Quick | Flash | $0.0001 | Fast queries, no tools |
-| **Complex Responses** | Smart | Thinking | $0.001 | Multi-step reasoning |
-| **Web Search** | Web | Flash | $0.0001 | Search + synthesis |
-| **Consolidation** | Consolidation | Thinking | $0.001 | Knowledge synthesis |
+| Task | Agent | Tier | Model | Cost/1K tokens | Justification |
+|------|-------|------|-------|----------------|---------------|
+| **Vector Search** | Memory | — | None | FREE | Pure math, no LLM |
+| **Simple Responses** | Quick | BALANCED | Flash | $0.0001 | Fast queries, bounded delegation |
+| **Quick Web Lookup** | WebSearchLight | ECO | Flash Lite | ~$0.00002 | Single-pass grounding, cheapest tier |
+| **Complex Responses** | Smart | PERFORMANCE | Thinking | $0.001 | Multi-step reasoning |
+| **Full Web Search** | Web | BALANCED | Flash | $0.0001 | Deep search + synthesis |
+| **Consolidation** | Consolidation | PERFORMANCE | Thinking | $0.001 | Knowledge synthesis |
 
 **Cost Savings Example (100 messages/day):**
 - **Old System:** All messages → Pro model → $10/day
@@ -576,5 +656,5 @@ See: [Observability Strategy](../05_building_blocks/observability_strategy/READM
 
 ---
 
-**Last Updated:** 2026-02-18
-**Version:** 2.1
+**Last Updated:** 2026-02-26
+**Version:** 2.2
