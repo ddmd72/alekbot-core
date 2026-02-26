@@ -173,7 +173,6 @@ class MemorySearchAgent(BaseAgent):
                 max_tokens=150,
                 disable_safety=True,
                 response_mime_type="application/json",
-                response_schema=self.MEMORY_SEARCH_RESPONSE_SCHEMA,
             )
 
             debug_logger = get_debug_logger()

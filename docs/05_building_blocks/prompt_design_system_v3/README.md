@@ -44,7 +44,7 @@ This document MUST be updated when:
 
 Immutable, pre-approved prompt fragments validated at creation time.
 
-- **Categories:** `humor_engine`, `archetype`, `voice`, `response_style`, `vibe`.
+- **Categories:** `humor_engine`, `archetype`, `voice`, `response_style`, `vibe`, `cognitive_process`, `output_format`, `protocol`, `policy`, `final_directive`, `motto`, `behavior_guide`, `few_shot_examples`.
 - **Validation:** Every token must pass `SecurityPort` checks before being saved to the library.
 
 ### 2.2 Blueprints
@@ -130,5 +130,5 @@ All repository calls (profiles, tokens) are parallelized using `asyncio.gather`,
 
 ---
 
-**Last Updated:** 2026-02-25
+**Last Updated:** 2026-02-26
 **Status:** ✅ Production Ready

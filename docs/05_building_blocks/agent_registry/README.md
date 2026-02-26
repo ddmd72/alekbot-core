@@ -23,7 +23,7 @@ This document MUST be updated when:
 - [ ] `coordinator.handle_delegation()` routing logic is modified.
 - [ ] The Firestore token `PROTOCOL_SMART_AGENT_SELECTION` changes.
 - [ ] An intent's execution mode changes (SYNC ↔ ASYNC).
-- [ ] MemorySearchAgent key formulation schema (`MEMORY_SEARCH_RESPONSE_SCHEMA`) changes.
+- [ ] MemorySearchAgent output format token (`OUTPUT_FORMAT_MEMORY_SEARCH`) or key formulation changes.
 
 ### Cross-References
 
@@ -188,18 +188,26 @@ Extractor" and produce a structured JSON output:
 `work`, `network`, `preference`, `skill`, `project`, `finance`, `education`, `legal`,
 `entertainment`, `communication`.
 
-### 6.3 Schema Enforcement (API-Level)
+### 6.3 Output Format Enforcement (Prompt-Level)
 
-`MEMORY_SEARCH_RESPONSE_SCHEMA` in `memory_search_agent.py` enforces constraints at the Gemini API
-level via `response_schema` (structured output):
+Constraints are described in the `OUTPUT_FORMAT_MEMORY_SEARCH` Firestore token (category:
+`output_format`), which is included in the `memorysearch` agent profile
+(`universal_agent_v1_SYSTEM_memorysearch`). The token replaces the former `response_schema`
+API-level constraint.
 
-| Field | Constraint | Level |
-|-------|-----------|-------|
-| `keywords` | minItems=3, maxItems=5 | API |
-| `domains` items | enum of 15 values | API |
-| `domains` | maxItems=2 | API |
-| `primary_query` | maxLength=50 chars | API |
-| `alternative_query` | maxLength=50 chars | API |
+**Why prompt-level instead of `response_schema`:** Gemini Flash Lite returns empty responses
+when `response_schema` (structured output) is combined with Groovy DSL system instructions.
+`response_mime_type="application/json"` alone is sufficient — the model follows the JSON
+structure described in the prompt without API-level enforcement. This was confirmed by
+22+ diagnostic tests in `scripts/debug/test_gemini_json_schema.py`.
+
+| Field | Constraint | Enforced by |
+|-------|-----------|-------------|
+| `keywords` | 3–5 short English terms (1–2 words) | Prompt |
+| `domains` items | enum of 15 values | Prompt |
+| `domains` | 1–2 values | Prompt |
+| `primary_query` | max 50 chars | Prompt |
+| `alternative_query` | max 50 chars, no overlap with primary | Prompt |
 
 ### 6.4 Key → SearchEnrichmentService Mapping
 
@@ -305,13 +313,14 @@ Per-user instances registered via `coordinator.register_agent()` from `UserAgent
 - `src/infrastructure/agent_registry.py` — AgentRegistry, AgentManifest, ExecutionMode
 - `src/infrastructure/agent_coordinator.py` — handle_delegation(), _execute_sync(), _execute_async(), get_available_intents()
 - `src/agents/core/smart_response_agent.py` — delegate_to_specialist tool, memory-first parallel scheduling
-- `src/agents/memory_search_agent.py` — LLM key formulation, MEMORY_SEARCH_RESPONSE_SCHEMA
+- `src/agents/memory_search_agent.py` — LLM key formulation (`response_mime_type` only, no `response_schema`)
 - `src/handlers/agent_worker_handler.py` — ASYNC task execution handler
 - `src/ports/task_queue.py` — enqueue_agent_task() protocol method
 - `src/adapters/gcp_task_queue.py` — Cloud Tasks enqueuing implementation
 - `main.py` — registry instantiation, manifest registration, /worker route extension
 - Firestore token: `PROTOCOL_SMART_AGENT_SELECTION` — delegation rules for SmartAgent
-- Firestore token: `COGNITIVE_PROCESS_MEMORY_SEARCH` — key formulation prompt for MemorySearchAgent
+- Firestore token: `OUTPUT_FORMAT_MEMORY_SEARCH` — key formulation output constraints (prompt-level)
+- Firestore profile: `universal_agent_v1_SYSTEM_memorysearch` (collection: `development_domain_prompt_profiles_v3`)
 
 ---
 
@@ -319,5 +328,5 @@ Per-user instances registered via `coordinator.register_agent()` from `UserAgent
 
 **Status:** ✅ Production Ready (SYNC path)
 **ASYNC path:** Infrastructure complete; activated with the first ASYNC agent (Gmail indexing).
-**Last Updated:** 2026-02-21
+**Last Updated:** 2026-02-26
 **Implemented via:** [ACP v2 Simplified RFC](../../10_rfcs/ACP_V2_SIMPLIFIED_RFC.md)
