@@ -8,6 +8,7 @@ No tool/agent delegation - just direct LLM response.
 Ported from BrainService.generate_quick_response()
 """
 
+import os
 import re
 import asyncio
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ from ...utils.logger import logger
 from ...utils.debug_logger import get_debug_logger
 from ...utils.llm_response_parser import parse_llm_response
 from ...domain.messaging import SmartResponse
+from ...services.history_summary_service import HistorySummaryService
 
 
 class QuickResponseAgent(BaseAgent):
@@ -76,11 +78,12 @@ class QuickResponseAgent(BaseAgent):
         repository: Optional[Any] = None,
         embedding_service: Optional[Any] = None,
         coordinator: "AgentCoordinator" = None,  # type: ignore
-        model_name: Optional[str] = None
+        model_name: Optional[str] = None,
+        history_summary_service: Optional[HistorySummaryService] = None
     ):
         """
         Initialize Quick Response Agent.
-        
+
         Args:
             config: Agent configuration
             execution_context: Resolved provider/model context
@@ -90,6 +93,7 @@ class QuickResponseAgent(BaseAgent):
             embedding_service: EmbeddingService for semantic search
             coordinator: AgentCoordinator for billing/logging (optional)
             model_name: LEGACY override (kept for backwards compatibility)
+            history_summary_service: Optional service for generating compact history summaries
         """
         super().__init__(config)
         self.execution_context = execution_context
@@ -100,6 +104,7 @@ class QuickResponseAgent(BaseAgent):
         self.embedding_service = embedding_service
         self.coordinator = coordinator
         self.model_name = model_name or execution_context.model_name
+        self.history_summary_service = history_summary_service
         
         # Extract user_id from config metadata
         self.user_id = config.metadata.get("user_id")
@@ -256,20 +261,31 @@ class QuickResponseAgent(BaseAgent):
 
             # 8. Track usage (fire-and-forget)
             await self._track_usage(user_id, response)
-            
+
+            # 9. Post-processing: fire-and-forget history summary (plain-text path).
+            # When OUTPUT_FORMAT_JSON is active and the LLM returns JSON, history_summary
+            # is already extracted by parse_llm_response. For grounding responses (plain text),
+            # launch HistorySummaryService as background task — identical to SmartAgent.
+            enable_history_optimization = os.getenv("ENABLE_HISTORY_OPTIMIZATION", "false").lower() in ("true", "1", "yes")
+            summary_task = None
+            if not history_summary and enable_history_optimization and user_text and self.history_summary_service:
+                summary_task = asyncio.create_task(
+                    self.history_summary_service.summarize_model_response(user_text)
+                )
+
             # Build SmartResponse (Unified Protocol)
             smart_response = SmartResponse(
                 text=user_text or "",
                 structured_data=rich_content
             )
-            
+
             total_tokens = response.usage_metadata.total_tokens if response.usage_metadata else 0
 
             logger.info(
                 f"✅ [QuickResponseAgent] Response generated "
                 f"({len(user_text or '')} chars, {total_tokens} tokens)"
             )
-            
+
             # Prepare metadata with history summary
             metadata = {
                 "model": self.model_name,
@@ -278,6 +294,8 @@ class QuickResponseAgent(BaseAgent):
             }
             if history_summary:
                 metadata["response_summary"] = history_summary
+            if summary_task:
+                metadata["response_summary_task"] = summary_task
 
             return AgentResponse.success(
                 task_id=message.task_id,
@@ -469,7 +487,8 @@ def create_quick_response_agent(
     embedding_service: Optional[Any] = None,
     coordinator: "AgentCoordinator" = None,  # type: ignore
     user_id: Optional[str] = None,
-    model_name: Optional[str] = None
+    model_name: Optional[str] = None,
+    history_summary_service: Optional[HistorySummaryService] = None
 ) -> QuickResponseAgent:
     """
     Factory function to create QuickResponseAgent.
@@ -510,5 +529,6 @@ def create_quick_response_agent(
         repository=repository,
         embedding_service=embedding_service,
         coordinator=coordinator,
-        model_name=model_name
+        model_name=model_name,
+        history_summary_service=history_summary_service
     )

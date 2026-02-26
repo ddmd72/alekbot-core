@@ -198,6 +198,7 @@ class UserAgentFactory:
             coordinator=self.coordinator,
             user_id=user_id,
             model_name=quick_context.model_name,
+            history_summary_service=history_summary_service,
         )
 
         smart_agent = create_smart_response_agent(
