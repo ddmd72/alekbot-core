@@ -48,7 +48,8 @@ class ClaudeAdapter(LLMService):
         native_tools=False,
         context_caching=True,
         vision=True,
-        max_context_window=200000
+        max_context_window=200000,
+        native_grounding=True,  # web_search_20250305 built-in tool
     )
 
     def __init__(self, api_key: str):
@@ -75,6 +76,7 @@ class ClaudeAdapter(LLMService):
         automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None
     ) -> LLMResponse:
         force_tool_use = False
+        use_grounding = False
         if request:
             model_name = request.model_name
             system_instruction = request.system_instruction
@@ -86,6 +88,7 @@ class ClaudeAdapter(LLMService):
             cache_config = request.cache_config
             automatic_function_calling = request.automatic_function_calling
             force_tool_use = request.force_tool_use
+            use_grounding = request.use_grounding
             stream_callback = None
 
         # Transform Groovy to Markdown if enabled
@@ -130,7 +133,11 @@ class ClaudeAdapter(LLMService):
         claude_messages = await self._convert_messages(messages)
 
         # Convert tools to Anthropic format
-        claude_tools = self._convert_tools(tools) if tools else None
+        claude_tools = self._convert_tools(tools) if tools else []
+        # Inject built-in web search when requested; must prepend (not via _convert_tools —
+        # built-in tools use {type, name} format, not {name, description, input_schema})
+        if use_grounding:
+            claude_tools = [{"type": "web_search_20250305", "name": "web_search"}] + claude_tools
 
         if stream_callback:
             # Note: Prompt caching in streaming is supported but handled slightly differently in usage stats
@@ -152,9 +159,12 @@ class ClaudeAdapter(LLMService):
 
         # Regular request
         # Claude API rejects tool_choice=null — must be omitted entirely when not forcing a tool
+        beta_headers = ["prompt-caching-2024-07-31"]
+        if use_grounding:
+            beta_headers.append("web-search-2025-03-05")
         create_kwargs: dict = dict(
             model=model_name,
-            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+            extra_headers={"anthropic-beta": ",".join(beta_headers)},
             max_tokens=8192,
             system=system_parts,
             messages=claude_messages,
