@@ -14,7 +14,7 @@ Usage:
 Default behavior:
   - format=groovy
   - output file name = firestore_utils/downloads/<document_id>.groovy
-  - reads only the "content" field for groovy
+  - reads "content" field for tokens, "template" field for blueprints (auto-detected)
 
 JSON format:
   - output file name = firestore_utils/downloads/<document_id>.json
@@ -126,11 +126,12 @@ def download_document(collection: str, document_id: str, output_format: str, out
         print(f"🔍 [DEBUG] Document fields: {list(data.keys())}")
 
     if output_format == "groovy":
-        content = data.get("content")
+        field_name = "template" if "blueprint_id" in data else "content"
+        content = data.get(field_name)
         if content is None:
-            print(f"\n⚠️  Document missing 'content' field")
+            print(f"\n⚠️  Document missing '{field_name}' field")
             print(f"📋 Available fields: {list(data.keys())}")
-            raise ValueError("Document missing 'content' field (required for groovy format)")
+            raise ValueError(f"Document missing '{field_name}' field (required for groovy format)")
         output_path.write_text(content, encoding="utf-8")
     else:
         output_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")

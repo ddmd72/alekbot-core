@@ -17,6 +17,7 @@ from src.ports.prompt_v3.blueprint_repository import BlueprintRepository
 from src.ports.prompt_v3.token_repository import TokenRepository
 from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.token import TokenId, TokenCategory, TokenClass
+from src.domain.prompt_v3.agent_profile import AgentProfile
 
 
 # =============================================================================
@@ -33,29 +34,37 @@ class TestAgentProfileRepositoryContract:
         with pytest.raises(TypeError):
             AgentProfileRepository()
 
-    def test_has_get_profile_slots(self):
-        assert getattr(AgentProfileRepository.get_profile_slots, "__isabstractmethod__", False)
+    def test_has_get_agent_profile(self):
+        assert getattr(AgentProfileRepository.get_agent_profile, "__isabstractmethod__", False)
+
+    def test_has_get_override_tokens(self):
+        assert getattr(AgentProfileRepository.get_override_tokens, "__isabstractmethod__", False)
 
     def test_has_delete_profile(self):
         assert getattr(AgentProfileRepository.delete_profile, "__isabstractmethod__", False)
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 2 abstract methods."""
+        """Port should have exactly 3 abstract methods."""
         abstract_methods = {
             name for name, method in inspect.getmembers(AgentProfileRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 2, f"Expected 2 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 3, f"Expected 3 abstract methods, got {abstract_methods}"
 
-    def test_get_profile_slots_signature(self):
-        sig = inspect.signature(AgentProfileRepository.get_profile_slots)
+    def test_get_agent_profile_signature(self):
+        sig = inspect.signature(AgentProfileRepository.get_agent_profile)
         params = list(sig.parameters.keys())
-        assert params == ["self", "blueprint_id", "owner_type", "owner_value"]
+        assert params == ["self", "agent_id"]
+
+    def test_get_override_tokens_signature(self):
+        sig = inspect.signature(AgentProfileRepository.get_override_tokens)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "owner_type", "owner_id"]
 
     def test_delete_profile_signature(self):
         sig = inspect.signature(AgentProfileRepository.delete_profile)
         params = list(sig.parameters.keys())
-        assert params == ["self", "blueprint_id", "owner_type", "owner_value"]
+        assert params == ["self", "owner_type", "owner_value"]
 
 
 class TestAgentProfileRepositoryMockImplementation:
@@ -65,14 +74,20 @@ class TestAgentProfileRepositoryMockImplementation:
     def mock_repo(self):
         return AsyncMock(spec=AgentProfileRepository)
 
-    async def test_get_profile_slots_returns_list(self, mock_repo):
-        mock_repo.get_profile_slots.return_value = []
-        result = await mock_repo.get_profile_slots("smart_v1", OwnerType.USER, "user1")
-        assert isinstance(result, list)
+    async def test_get_agent_profile_returns_agent_profile(self, mock_repo):
+        profile = AgentProfile(blueprint_id="universal_agent_v1")
+        mock_repo.get_agent_profile.return_value = profile
+        result = await mock_repo.get_agent_profile("quick")
+        assert result is profile
+
+    async def test_get_override_tokens_returns_dict(self, mock_repo):
+        mock_repo.get_override_tokens.return_value = {}
+        result = await mock_repo.get_override_tokens(OwnerType.USER, "user1")
+        assert isinstance(result, dict)
 
     async def test_delete_profile(self, mock_repo):
-        await mock_repo.delete_profile("smart_v1", OwnerType.USER, "user1")
-        mock_repo.delete_profile.assert_called_once_with("smart_v1", OwnerType.USER, "user1")
+        await mock_repo.delete_profile(OwnerType.USER, "user1")
+        mock_repo.delete_profile.assert_called_once_with(OwnerType.USER, "user1")
 
 
 # =============================================================================

@@ -80,6 +80,8 @@ python firestore_utils/download.py development_domain_prompt_tokens_v3_system FE
 python firestore_utils/download.py development_domain_prompt_tokens_v3_system OUTPUT_FORMAT_JSON
 python firestore_utils/download.py development_domain_prompt_tokens_v3_system OUTPUT_FORMAT_STANDARD
 python firestore_utils/download.py development_domain_prompt_tokens_v3_system PROTOCOL_SMART_AGENT_SELECTION
+python firestore_utils/download.py development_domain_prompt_tokens_v3_system PROTOCOL_QUICK_AGENT_SELECTION
+
 
 
 ```
@@ -95,6 +97,7 @@ python firestore_utils/download.py domain_prompt_blueprints_v3 universal_agent_v
 python firestore_utils/download.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_smart --format json
 python firestore_utils/download.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_router --format json
 python firestore_utils/download.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_memorysearch --format json
+
 ```
 
 Specify output file name:
@@ -121,6 +124,8 @@ python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGN
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system PROTOCOL_SMART_AGENT_SELECTION
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_MEMORY_SEARCH
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_WEBSEARCH
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_QUICK
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_WEBSEARCH_LIGHT
 
 
 
@@ -144,6 +149,11 @@ python firestore_utils/upload.py domain_prompt_blueprints_v3 universal_agent_v1 
 # Profiles (SYSTEM level)
 python firestore_utils/upload.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_memorysearch --format json
 python firestore_utils/upload.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_smart --format json
+python firestore_utils/upload.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_websearch_light --format json
+
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_WEBSEARCH_LIGHT --format json
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system PROTOCOL_QUICK_AGENT_SELECTION --format json
+
 
 ```
 
@@ -156,6 +166,12 @@ python firestore_utils/download.py domain_prompt_tokens_v3_system COGNITIVE_PROC
   --database us-production
 
 python firestore_utils/upload.py domain_prompt_tokens_v3_system COGNITIVE_PROCESS_ROUTER \
+  --database us-production
+
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_WEBSEARCH_LIGHT \
+  --database us-production
+
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system PROTOCOL_QUICK_AGENT_SELECTION \
   --database us-production
 ```
 

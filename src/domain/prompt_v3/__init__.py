@@ -1,13 +1,14 @@
 """
-Prompt Design System v3 - Domain Models
+Prompt Design System v4 — Domain Models
 
-Token-based prompt architecture with security by design.
+Token-based prompt architecture with class-collection assembly.
+RFC: docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md
 """
 
 from src.domain.prompt_v3.token import Token, TokenId, TokenCategory
-from src.domain.prompt_v3.slot import BlueprintClass, OwnerType
+from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.blueprint import Blueprint
-from src.domain.prompt_v3.section import SectionType
+from src.domain.prompt_v3.profile_slot import ProfileToken
 from src.domain.prompt_v3.security import (
     SecurityPort,
     ValidationResult,
@@ -19,10 +20,9 @@ __all__ = [
     "Token",
     "TokenId",
     "TokenCategory",
-    "BlueprintClass",
     "OwnerType",
     "Blueprint",
-    "SectionType",
+    "ProfileToken",
     "SecurityPort",
     "ValidationResult",
     "RiskLevel",

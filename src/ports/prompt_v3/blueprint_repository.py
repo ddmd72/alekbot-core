@@ -1,7 +1,7 @@
 """
-BlueprintRepository - Port interface for blueprint storage.
+BlueprintRepository — port interface for blueprint storage.
 
-Part of Prompt Design System v3 (RFC).
+Part of Prompt Design System v4 (RFC: docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md).
 """
 
 from abc import ABC, abstractmethod
@@ -20,9 +20,10 @@ class BlueprintRepository(ABC):
         - FirestoreBlueprintRepository: Firestore adapter (Phase 2)
 
     Examples:
-        >>> repo = FirestoreBlueprintRepository(db, "dev_prompt_blueprints_v3")
-        >>> blueprint = await repo.get("smart_agent_v1")
-        >>> assert "HUMOR_ENGINE" in blueprint.classes
+        >>> repo = FirestoreBlueprintRepository(db, "development_domain_prompt_blueprints_v3")
+        >>> blueprint = await repo.get("universal_agent_v1")
+        >>> blueprint.class_order
+        ['properties', 'cognitive_process', ...]
     """
 
     @abstractmethod

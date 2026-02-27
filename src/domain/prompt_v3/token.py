@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 TokenId = NewType('TokenId', str)  # e.g., "HUMOR_PRESET_RANEVSKAYA"
 TokenCategory = NewType('TokenCategory', str)  # e.g., "humor_engine", "cognitive_process"
-TokenClass = NewType('TokenClass', str)  # e.g., "properties", "policies"
+TokenClass = NewType('TokenClass', str)  # Groovy section name, e.g., "properties", "policies"
 
 
 @dataclass(frozen=True)
@@ -42,10 +42,10 @@ class Token:
     """
 
     id: TokenId
-    category: TokenCategory
-    class_: TokenClass
-    content: str  # Groovy code block
-    metadata: dict  # version, author, description, validation results
+    category: TokenCategory  # semantic group, used as dedup key during override resolution
+    class_: TokenClass       # Groovy section this token renders into (e.g., "properties")
+    content: str             # bare Groovy block content, WITHOUT the outer section wrapper
+    metadata: dict           # version, author, description, validation results
 
     @classmethod
     async def create(

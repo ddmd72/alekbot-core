@@ -11,8 +11,9 @@ from src.adapters.prompt_v3.firestore_token_repository import FirestoreTokenRepo
 from src.adapters.prompt_v3.firestore_blueprint_repository import FirestoreBlueprintRepository
 from src.adapters.prompt_v3.firestore_agent_profile_repository import FirestoreAgentProfileRepository
 from src.domain.prompt_v3.token import Token, TokenId, TokenCategory, TokenClass
-from src.domain.prompt_v3.slot import BlueprintClass, OwnerType
+from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.blueprint import Blueprint
+from src.domain.prompt_v3.agent_profile import AgentProfile
 from src.domain.prompt_v3.security import SecurityPort, ValidationResult, RiskLevel, TrustZone
 
 
@@ -103,7 +104,7 @@ async def test_token_repository_save():
 
 @pytest.mark.asyncio
 async def test_blueprint_repository_get():
-    """Test FirestoreBlueprintRepository.get()"""
+    """Test FirestoreBlueprintRepository.get() with v4 data model."""
     db = Mock()
     repo = FirestoreBlueprintRepository(db, "test_blueprints")
 
@@ -111,14 +112,8 @@ async def test_blueprint_repository_get():
     mock_doc.exists = True
     mock_doc.to_dict.return_value = {
         "blueprint_id": "test_blueprint",
-        "template": "{{SLOT1}}",
-        "classes": {
-            "SLOT1": {
-                "allowed_token_categories": ["category1"],
-                "overridable_by": ["user"],
-                "default_token": "TOKEN1"
-            }
-        }
+        "outer_class": "Alek extends Agent",
+        "class_order": ["properties", "cognitive_process", "policies"],
     }
 
     db.collection.return_value.document.return_value.get = AsyncMock(return_value=mock_doc)
@@ -126,26 +121,20 @@ async def test_blueprint_repository_get():
     blueprint = await repo.get("test_blueprint")
 
     assert blueprint.id == "test_blueprint"
-    assert "SLOT1" in blueprint.classes
-    assert blueprint.template == "{{SLOT1}}"
+    assert blueprint.outer_class == "Alek extends Agent"
+    assert blueprint.class_order == ["properties", "cognitive_process", "policies"]
 
 
 @pytest.mark.asyncio
 async def test_blueprint_repository_save():
-    """Test FirestoreBlueprintRepository.save()"""
+    """Test FirestoreBlueprintRepository.save() with v4 data model."""
     db = Mock()
     repo = FirestoreBlueprintRepository(db, "test_blueprints")
 
     blueprint = Blueprint(
         id="test_blueprint",
-        classes={
-            "SLOT1": BlueprintClass(
-                allowed_token_categories={TokenCategory("category1")},
-                overridable_by={OwnerType.USER},
-                default_token=TokenId("TOKEN1")
-            )
-        },
-        template="{{SLOT1}}"
+        outer_class="Alek extends Agent",
+        class_order=["properties", "cognitive_process"],
     )
 
     await repo.save(blueprint)
@@ -157,32 +146,73 @@ async def test_blueprint_repository_save():
 # ========== FirestoreAgentProfileRepository Tests ==========
 
 @pytest.mark.asyncio
-async def test_agent_profile_repository_get_profile_slots():
-    """Test FirestoreAgentProfileRepository.get_profile_slots()"""
+async def test_agent_profile_repository_get_agent_profile():
+    """Test FirestoreAgentProfileRepository.get_agent_profile() reads blueprint_id + tokens."""
     db = Mock()
     repo = FirestoreAgentProfileRepository(db, "test_profiles", "test_overrides")
 
     mock_doc = Mock()
     mock_doc.exists = True
     mock_doc.to_dict.return_value = {
-        "slots": [
-            {"type": "token", "value": "TOKEN1", "non_overridable": False},
-            {"type": "token", "value": "TOKEN2", "non_overridable": False}
-        ]
+        "blueprint_id": "universal_agent_v1",
+        "agent_id": "quick",
+        "tokens": {
+            "TOKEN1": {"order": 10},
+            "TOKEN2": {"order": 20, "non_overridable": True},
+        }
     }
 
     db.collection.return_value.document.return_value.get = AsyncMock(return_value=mock_doc)
 
-    slots = await repo.get_profile_slots(
-        "test_blueprint",
-        OwnerType.USER,
-        "user_123"
-    )
+    profile = await repo.get_agent_profile("quick")
 
-    assert len(slots) == 2
-    assert slots[0].value == "TOKEN1"
-    assert slots[1].value == "TOKEN2"
+    assert isinstance(profile, AgentProfile)
+    assert profile.blueprint_id == "universal_agent_v1"
+    assert len(profile.tokens) == 2
+    assert profile.tokens["TOKEN1"].order == 10
+    assert profile.tokens["TOKEN1"].non_overridable is False
+    assert profile.tokens["TOKEN2"].order == 20
+    assert profile.tokens["TOKEN2"].non_overridable is True
+    # Document lookup uses agent_id as document ID (no blueprint_id prefix)
+    db.collection.return_value.document.assert_called_with("quick")
 
 
-# Test removed - resolve_slot_assignments() deprecated in favor of get_profile_slots()
-# 4-level resolution now handled by PromptAssemblyService._resolve_profile_slots()
+@pytest.mark.asyncio
+async def test_agent_profile_repository_get_override_tokens():
+    """Test FirestoreAgentProfileRepository.get_override_tokens() reads tokens map."""
+    db = Mock()
+    repo = FirestoreAgentProfileRepository(db, "test_profiles", "test_overrides")
+
+    mock_doc = Mock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {
+        "blueprint_id": "test_blueprint",
+        "owner_type": "USER",
+        "owner_id": "user_123",
+        "tokens": {
+            "HUMOR_PRESET_OFF": {"order": 40},
+        }
+    }
+
+    db.collection.return_value.document.return_value.get = AsyncMock(return_value=mock_doc)
+
+    tokens = await repo.get_override_tokens(OwnerType.USER, "user_123")
+
+    assert len(tokens) == 1
+    assert tokens["HUMOR_PRESET_OFF"].order == 40
+
+
+@pytest.mark.asyncio
+async def test_agent_profile_repository_returns_empty_when_not_found():
+    """Test FirestoreAgentProfileRepository returns empty profile when not found."""
+    db = Mock()
+    repo = FirestoreAgentProfileRepository(db, "test_profiles", "test_overrides")
+
+    mock_doc = Mock()
+    mock_doc.exists = False
+
+    db.collection.return_value.document.return_value.get = AsyncMock(return_value=mock_doc)
+
+    profile = await repo.get_agent_profile("quick")
+    assert profile.tokens == {}
+    assert profile.blueprint_id == "quick_agent_v1"  # derived fallback

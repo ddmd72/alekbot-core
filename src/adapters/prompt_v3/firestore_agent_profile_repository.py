@@ -1,176 +1,138 @@
 """
-FirestoreAgentProfileRepository - Firestore adapter for agent profile storage.
+FirestoreAgentProfileRepository — Firestore adapter for agent profile storage.
 
-Implements 4-level priority resolution: USER > ACCOUNT > AGENT > SYSTEM
-
-Part of Prompt Design System v3 (RFC).
+Part of Prompt Design System v4 (RFC: docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md).
 """
 
 import logging
-from typing import Dict, Optional, List, Union
+from typing import Dict
 
 from google.cloud import firestore
 
 from src.ports.prompt_v3.agent_profile_repository import AgentProfileRepository
 from src.domain.prompt_v3.slot import OwnerType
-from src.domain.prompt_v3.token import TokenId
-from src.domain.prompt_v3.profile_slot import ProfileSlot
+from src.domain.prompt_v3.profile_slot import ProfileToken
+from src.domain.prompt_v3.agent_profile import AgentProfile
 
 logger = logging.getLogger(__name__)
 
 
 class FirestoreAgentProfileRepository(AgentProfileRepository):
-    """Firestore adapter for agent profile storage with dual-collection architecture.
+    """Firestore adapter for agent profile and override storage.
 
-    Collections (Phase 5-1):
-        1. agent_profiles: SYSTEM/AGENT level profiles (admin-controlled)
-        2. user_token_overrides: USER/ACCOUNT level overrides (user-modifiable)
+    Collections:
+        profiles_collection  — agent base profiles (AGENT level)
+            Document ID: {agent_id}  (e.g. "quick", "router")
+        overrides_collection — account/user overrides (ACCOUNT/USER levels)
+            Document ID: {OWNER_TYPE}_{owner_id}
+                         (e.g. "ACCOUNT_acc_123", "USER_user_456")
 
-    Data Model (agent_profiles):
+    Data Model (profiles):
         {
-            "profile_id": "system_smart",  # Simplified: {owner_type}_{owner_value}
             "blueprint_id": "universal_agent_v1",
-            "owner_type": "SYSTEM",
-            "owner_value": "smart",  # Agent type
-            "slots": [...]
+            "agent_id": "quick",
+            "tokens": {
+                "COGNITIVE_PROCESS_QUICK":        {"order": 10, "non_overridable": true},
+                "HUMOR_PRESET_LIGHT":             {"order": 40},
+                "VOICE_CONVERSATIONAL":           {"order": 60}
+            }
         }
 
-    Data Model (user_token_overrides):
+    Data Model (overrides):
         {
-            "override_id": "user_user_123",  # {owner_type}_{owner_value}
-            "owner_type": "USER",
-            "owner_value": "user_123",
-            "slots": [...]
+            "owner_type": "ACCOUNT",
+            "owner_id": "acc_123",
+            "tokens": {
+                "VOICE_CONVERSATIONAL": {"order": 60}
+            }
         }
-
-    Resolution Priority: USER > ACCOUNT > AGENT > SYSTEM
-
-    Examples:
-        >>> from google.cloud import firestore
-        >>> db = firestore.Client()
-        >>> repo = FirestoreAgentProfileRepository(
-        ...     db,
-        ...     profiles_collection="dev_agent_profiles",
-        ...     overrides_collection="dev_user_token_overrides"
-        ... )
-        >>>
-        >>> # Resolve with 4-level priority
-        >>> slots = await repo.get_profile_slots(
-        ...     blueprint_id="universal_agent_v1",
-        ...     owner_type=OwnerType.SYSTEM,
-        ...     owner_value="smart"
-        ... )
     """
 
     def __init__(
         self,
         db: firestore.Client,
         profiles_collection: str,
-        overrides_collection: str
+        overrides_collection: str,
     ):
-        """Initialize Firestore agent profile repository with dual-collection support.
-
-        Args:
-            db: Firestore client instance
-            profiles_collection: Agent profiles collection (SYSTEM/AGENT levels)
-            overrides_collection: User overrides collection (USER/ACCOUNT levels)
-        """
         self.db = db
         self.profiles_collection = profiles_collection
         self.overrides_collection = overrides_collection
 
-    def _make_profile_id(
+    async def get_agent_profile(
         self,
-        blueprint_id: str,
-        owner_type: OwnerType,
-        owner_value: str
-    ) -> str:
-        """Generate profile/override ID.
-
-        Format: {blueprint_id}_{owner_type}_{owner_value}
-        Matches format used by create_default_profiles.py
-
-        Examples:
-            >>> repo._make_profile_id("universal_agent_v1", OwnerType.SYSTEM, "smart")
-            "universal_agent_v1_SYSTEM_smart"
-            >>> repo._make_profile_id("universal_agent_v1", OwnerType.USER, "user_123")
-            "universal_agent_v1_USER_user_123"
-        """
-        return f"{blueprint_id}_{owner_type.value.upper()}_{owner_value}"
-
-    def _get_collection(self, owner_type: OwnerType) -> str:
-        """Route to correct collection based on owner_type.
-
-        Args:
-            owner_type: SYSTEM/AGENT → profiles, USER/ACCOUNT → overrides
-
-        Returns:
-            Collection name
-        """
-        if owner_type in [OwnerType.SYSTEM, OwnerType.AGENT]:
-            return self.profiles_collection
-        else:  # USER, ACCOUNT
-            return self.overrides_collection
-
-    async def get_profile_slots(
-        self,
-        blueprint_id: str,
-        owner_type: OwnerType,
-        owner_value: str
-    ) -> List[ProfileSlot]:
-        """Get unified slot entries for a profile.
-
-        Args:
-            blueprint_id: Blueprint identifier
-            owner_type: Owner type
-            owner_value: Owner-specific value
-
-        Returns:
-            List of ProfileSlot entries (empty if none)
-        """
-        profile_id = self._make_profile_id(blueprint_id, owner_type, owner_value)
-        collection_name = self._get_collection(owner_type)
-        doc_ref = self.db.collection(collection_name).document(profile_id)
+        agent_id: str,
+    ) -> AgentProfile:
+        """Get agent profile (blueprint_id + token map) from profiles collection."""
+        doc_ref = self.db.collection(self.profiles_collection).document(agent_id)
         doc = await doc_ref.get()
 
         if not doc.exists:
-            logger.debug(f"Profile not found: {profile_id} in {collection_name}")
-            return []
+            logger.debug(f"Agent profile not found: {agent_id}, returning empty profile")
+            return AgentProfile(
+                blueprint_id=f"{agent_id}_agent_v1",
+                tokens={},
+            )
 
         data = doc.to_dict()
-        raw_slots = data.get("slots", [])
+        blueprint_id = data.get("blueprint_id", f"{agent_id}_agent_v1")
+        tokens_raw = data.get("tokens", {})
 
-        slots: List[ProfileSlot] = []
-        for item in raw_slots:
-            if isinstance(item, dict):
-                slots.append(ProfileSlot.from_dict(item))
-            else:
-                logger.warning(f"Unknown slot entry format: {item}, skipping")
+        tokens: Dict[str, ProfileToken] = {}
+        for token_id, slot_data in tokens_raw.items():
+            if not isinstance(slot_data, dict):
+                logger.warning(f"Unexpected token entry for {token_id}: {slot_data}, skipping")
+                continue
+            tokens[token_id] = ProfileToken.from_dict(token_id, slot_data)
 
-        logger.info(f"Loaded {len(slots)} slots from {profile_id}")
-        return slots
+        logger.debug(f"Loaded profile for {agent_id}: blueprint={blueprint_id}, tokens={len(tokens)}")
+        return AgentProfile(blueprint_id=blueprint_id, tokens=tokens)
+
+    async def get_override_tokens(
+        self,
+        owner_type: OwnerType,
+        owner_id: str,
+    ) -> Dict[str, ProfileToken]:
+        """Get account or user override tokens from overrides collection."""
+        override_id = f"{owner_type.value.upper()}_{owner_id}"
+        doc_ref = self.db.collection(self.overrides_collection).document(override_id)
+        doc = await doc_ref.get()
+
+        if not doc.exists:
+            logger.debug(f"No overrides found: {override_id}")
+            return {}
+
+        data = doc.to_dict()
+        tokens_raw = data.get("tokens", {})
+
+        result = {}
+        for token_id, slot_data in tokens_raw.items():
+            if not isinstance(slot_data, dict):
+                logger.warning(f"Unexpected override entry for {token_id}: {slot_data}, skipping")
+                continue
+            result[token_id] = ProfileToken.from_dict(token_id, slot_data)
+
+        logger.debug(f"Loaded {len(result)} override tokens from {override_id}")
+        return result
 
     async def delete_profile(
         self,
-        blueprint_id: str,
         owner_type: OwnerType,
-        owner_value: str
+        owner_value: str,
     ) -> None:
-        """Delete agent profile or user override from appropriate collection.
+        """Delete a profile or override document."""
+        if owner_type == OwnerType.AGENT:
+            profile_id = owner_value
+            collection = self.profiles_collection
+        else:
+            profile_id = f"{owner_type.value.upper()}_{owner_value}"
+            collection = self.overrides_collection
 
-        Args:
-            blueprint_id: Blueprint identifier
-            owner_type: Owner type (determines which collection)
-            owner_value: Owner-specific value
-        """
-        profile_id = self._make_profile_id(blueprint_id, owner_type, owner_value)
-        collection_name = self._get_collection(owner_type)
-        doc_ref = self.db.collection(collection_name).document(profile_id)
+        doc_ref = self.db.collection(collection).document(profile_id)
         doc = await doc_ref.get()
 
         if not doc.exists:
-            logger.warning(f"Profile not found for deletion in {collection_name}: {profile_id}")
+            logger.warning(f"Profile not found for deletion: {profile_id} in {collection}")
             return
 
         doc_ref.delete()
-        logger.info(f"Deleted from {collection_name}: {profile_id}")
+        logger.info(f"Deleted profile: {profile_id} from {collection}")

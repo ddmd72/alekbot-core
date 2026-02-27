@@ -75,9 +75,10 @@ def upload_document(collection: str, document_name: str, file_format: str, datab
     if file_format == "groovy":
         content = file_path.read_text(encoding="utf-8")
         
-        # Check if document exists and has token_id (Token v3)
+        # Check if document exists and has token_id (Token v3) or blueprint_id (Blueprint v3)
         existing_doc = doc_ref.get()
-        if existing_doc.exists and existing_doc.to_dict().get("token_id"):
+        existing_data = existing_doc.to_dict() if existing_doc.exists else {}
+        if existing_doc.exists and existing_data.get("token_id"):
             # Token v3 document - only update content field (merge behavior)
             payload = {
                 "content": content,
@@ -85,6 +86,14 @@ def upload_document(collection: str, document_name: str, file_format: str, datab
             }
             doc_ref.update(payload)
             print(f"  ℹ️  Updated content field only (Token v3 document)")
+        elif existing_doc.exists and existing_data.get("blueprint_id"):
+            # Blueprint v3 document - only update template field (merge behavior)
+            payload = {
+                "template": content,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+            doc_ref.update(payload)
+            print(f"  ℹ️  Updated template field only (Blueprint v3 document)")
         else:
             # Legacy document or new document - full overwrite
             payload = {

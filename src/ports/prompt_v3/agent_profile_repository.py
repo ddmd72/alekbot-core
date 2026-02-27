@@ -1,87 +1,78 @@
 """
-AgentProfileRepository - Port interface for agent profile storage.
+AgentProfileRepository — port interface for agent profile and override storage.
 
-Agent profiles store slot assignments with 4-level priority:
-USER > ACCOUNT > AGENT > SYSTEM
-
-Part of Prompt Design System v3 (RFC).
+Part of Prompt Design System v4 (RFC: docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md).
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, List
+from typing import Dict
 
 from src.domain.prompt_v3.slot import OwnerType
-from src.domain.prompt_v3.token import TokenId
-from src.domain.prompt_v3.profile_slot import ProfileSlot
+from src.domain.prompt_v3.profile_slot import ProfileToken
+from src.domain.prompt_v3.agent_profile import AgentProfile
 
 
 class AgentProfileRepository(ABC):
-    """Port interface for agent profile storage (hexagonal architecture).
+    """Port interface for agent profile and override storage.
 
-    Agent profiles map slots to tokens with 4-level priority hierarchy.
-    Resolution order: USER > ACCOUNT > AGENT > SYSTEM
+    Agent profiles are stored with document ID = agent_id (e.g. "quick").
+    The profile document declares which blueprint_id to use — the assembly
+    service reads blueprint_id from the profile, not from hardcoded config.
 
-    Implementations:
-        - FirestoreAgentProfileRepository: Firestore adapter (Phase 2)
-
-    Data Model:
-        {
-            "owner_type": "USER",  # SYSTEM / AGENT / ACCOUNT / USER
-            "owner_value": "user_123",  # Agent type, account ID, or user ID
-            "blueprint_id": "smart_agent_v1",
-            "slots": [
-                {"type": "class", "value": "properties", "non_overridable": False},
-                {"type": "token", "value": "HUMOR_PRESET_OFF", "non_overridable": False},
-                {"type": "token", "value": "POLICY_OUTPUT_LANGUAGE", "non_overridable": True}
-            ]
-        }
+    Override semantics: account/user tokens replace agent tokens matched
+    by class + category. Cannot add tokens to classes the agent has not activated.
+    non_overridable=True on an agent token blocks replacement.
 
     Examples:
-        >>> repo = FirestoreAgentProfileRepository(
-        ...     db,
-        ...     profiles_collection="dev_prompt_agent_profiles",
-        ...     overrides_collection="dev_prompt_user_token_overrides"
-        ... )
+        >>> profile = await repo.get_agent_profile("quick")
+        >>> blueprint_id = profile.blueprint_id  # "universal_agent_v1"
+        >>> account_tokens = await repo.get_override_tokens(OwnerType.ACCOUNT, "acc_123")
     """
 
     @abstractmethod
-    async def get_profile_slots(
+    async def get_agent_profile(
         self,
-        blueprint_id: str,
-        owner_type: OwnerType,
-        owner_value: str
-    ) -> List[ProfileSlot]:
-        """Get unified slot entries for a profile.
+        agent_id: str,
+    ) -> AgentProfile:
+        """Get the agent's profile (blueprint_id + token map).
 
         Args:
-            blueprint_id: Blueprint identifier
-            owner_type: Owner type
-            owner_value: Owner-specific value
+            agent_id: Agent type identifier (e.g. "quick", "router")
 
         Returns:
-            List of ProfileSlot entries (empty if none)
+            AgentProfile with blueprint_id and tokens dict.
+            If no profile found, returns AgentProfile with derived blueprint_id
+            and empty tokens.
+        """
+        pass
+
+    @abstractmethod
+    async def get_override_tokens(
+        self,
+        owner_type: OwnerType,
+        owner_id: str,
+    ) -> Dict[str, ProfileToken]:
+        """Get account or user override tokens.
+
+        Args:
+            owner_type: OwnerType.ACCOUNT or OwnerType.USER
+            owner_id: Account ID or user ID
+
+        Returns:
+            Dict mapping token_id -> ProfileToken. Empty dict if no overrides found.
         """
         pass
 
     @abstractmethod
     async def delete_profile(
         self,
-        blueprint_id: str,
         owner_type: OwnerType,
-        owner_value: str
+        owner_value: str,
     ) -> None:
-        """Delete agent profile.
+        """Delete a profile or override document.
 
         Args:
-            blueprint_id: Blueprint identifier
-            owner_type: Owner type
-            owner_value: Owner-specific value
-
-        Examples:
-            >>> await repo.delete_profile(
-            ...     "smart_agent_v1",
-            ...     OwnerType.USER,
-            ...     "user_123"
-            ... )
+            owner_type: AGENT -> profiles collection; ACCOUNT/USER -> overrides collection
+            owner_value: agent_id, account_id, or user_id
         """
         pass

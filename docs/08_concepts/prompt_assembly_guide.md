@@ -1,11 +1,14 @@
 # Prompt Assembly Guide
 
 **Status:** ✅ Active
-**Last Updated:** 2026-02-25
+**Last Updated:** 2026-02-27
 
 ## Overview
 
-Explains how prompts are assembled in Alek Core using the **v3 token-based system**. The central service is `PromptAssemblyService`. Agents never touch prompt construction directly — they call `PromptBuilderPort.build_for_agent()`.
+Explains how prompts are assembled in Alek Core using the **class-collection assembly model (v4)**. The central service is `PromptAssemblyService`. Agents never touch prompt construction directly — they call `PromptBuilderPort.build_for_agent()`.
+
+For the full data model (Blueprint, Token, AgentProfile, Override) see
+[../05_building_blocks/prompt_design_system_v3/README.md](../05_building_blocks/prompt_design_system_v3/README.md).
 
 ## Table of Contents
 
@@ -25,7 +28,7 @@ Explains how prompts are assembled in Alek Core using the **v3 token-based syste
 ## 1. Assembly Chain
 
 ```
-Agent (SmartAgent, QuickAgent, ConsolidationAgent)
+Agent (SmartAgent, QuickAgent, ConsolidationAgent, RouterAgent, ...)
   └─ build_system_prompt()
        ↓
 PromptBuilderPort (port interface)
@@ -35,12 +38,23 @@ PromptBuilderPort (port interface)
             └─ PromptAssemblyService.assemble(agent_type, user_id, account_id,
                                                biographical_facts, conversation_history)
                  ├─ PHASE 1: _assemble_static_template()  ← cached 24h
-                 │    ├─ Load blueprint (universal_agent_v1) from Firestore
-                 │    ├─ Load 4-level profiles in parallel (SYSTEM, AGENT, ACCOUNT, USER)
-                 │    ├─ Resolve slot assignments (priority: USER > ACCOUNT > AGENT > SYSTEM)
-                 │    ├─ Fetch all assigned tokens in parallel
-                 │    ├─ Substitute {{CLASS_NAME}} placeholders
-                 │    └─ _normalize_whitespace(): remove empty blocks, collapse blank lines
+                 │    │
+                 │    │  ── sequential (profile must be fetched first to get blueprint_id) ──
+                 │    ├─ get_agent_profile(agent_type)
+                 │    │    → AgentProfile(blueprint_id, tokens: Dict[str, ProfileToken])
+                 │    │
+                 │    │  ── parallel (asyncio.gather) ──
+                 │    ├─ blueprint_repo.get(profile.blueprint_id)
+                 │    ├─ get_override_tokens(ACCOUNT, account_id)   (if account_id)
+                 │    ├─ get_override_tokens(USER,    user_id)       (if user_id)
+                 │    │
+                 │    ├─ Apply account overrides (class+category match, respect non_overridable)
+                 │    ├─ Apply user overrides on top (same rules)
+                 │    ├─ Fetch all active token documents in parallel
+                 │    ├─ Group tokens by class, sort by ProfileToken.order within each class
+                 │    ├─ Render sections: "    {class} {\n\n{content}\n\n    }"
+                 │    └─ Wrap: "class {outer_class} {\n\n{sections}\n\n}"
+                 │
                  └─ PHASE 2: _inject_runtime_context()  ← every request
                       ├─ Split biographical_facts: static vs semantic_lens (Q-S)
                       ├─ Format + validate both via SecurityPort (UNTRUSTED zone)
@@ -55,28 +69,42 @@ PromptBuilderPort (port interface)
 
 ### Phase 1: Static Template (Cached 24h)
 
-Resolves tokens from Firestore and builds the Groovy DSL class definition. The result is stored in an in-memory dict with a 24-hour TTL. Cache key: `prompt:{agent_type}:acc:{account_id}:usr:{user_id}`.
+Loads the agent profile from Firestore, then resolves tokens and builds the Groovy DSL class.
+The result is stored in an in-memory dict with a 24-hour TTL.
+Cache key: `prompt:{agent_type}:acc:{account_id}:usr:{user_id}`.
 
-**Cold start:** ~110ms (4 parallel Firestore queries)
+**Cold start:** ~110ms (sequential profile fetch + parallel blueprint/token fetches)
 **Cache hit:** ~5ms
 
 After Phase 1, the template is a complete Groovy DSL class like:
 ```groovy
 class Alek extends Agent {
-  personality {
-    archetype { ... }
-    vibe { ... }
-    humor_engine { ... }
-  }
-  knowledge_base {
+
+    properties {
+        archetype { ... }
+        vibe { ... }
+        voice { ... }
+        humor_engine { ... }
+        response { ... }
+        motto { ... }
+    }
+
+    cognitive_process { ... }
+
+    policies { ... }
+
+    protocols { ... }
+
     few_shot_examples { ... }
-  }
-  policies { ... }
-  protocols { ... }
-  cognitive_process { ... }
-  output_format { ... }
+
+    output_format { ... }
+
+    final_directives { ... }
 }
 ```
+
+The section names and their order come from `blueprint.class_order`. Empty sections
+(no tokens assigned) are silently omitted.
 
 ### Phase 2: Runtime Injection (Every Request)
 
@@ -265,14 +293,20 @@ See [HEXAGONAL_PROMPT_CACHING_RFC.md](../10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md
 |------|---------|
 | `src/ports/prompt_builder_port.py` | `PromptBuilderPort` ABC — what agents call |
 | `src/services/user_prompt_builder.py` | Concrete implementation: fetches bio context, calls assembly service |
-| `src/services/prompt_v3/prompt_assembly_service.py` | Two-phase assembly, 4-level token resolution, 24h cache |
+| `src/services/prompt_v3/prompt_assembly_service.py` | Two-phase assembly, class-collection model, 24h cache |
 | `src/services/prompt_v3/biographical_formatter.py` | Domain-grouped Markdown formatting of biographical facts |
 | `src/services/prompt_v3/context_formatter.py` | Conversation history formatting |
 | `src/ports/llm_service.py` | `PROMPT_CACHE_BOUNDARY` constant |
 | `src/adapters/claude_adapter.py` | Splits at boundary, applies `cache_control: ephemeral` |
-| `src/domain/prompt_v3/` | Domain models: Token, Blueprint, ProfileSlot, OwnerType |
-| `src/adapters/prompt_v3/` | Firestore repositories for tokens, blueprints, profiles |
-| `scripts/migration/update_blueprint_template.py` | Remove `[[...]]` placeholders from blueprint in Firestore |
+| `src/domain/prompt_v3/blueprint.py` | `Blueprint(id, outer_class, class_order)` |
+| `src/domain/prompt_v3/token.py` | `Token(id, category, class_, content)` |
+| `src/domain/prompt_v3/profile_slot.py` | `ProfileToken(token_id, order, non_overridable)` |
+| `src/domain/prompt_v3/agent_profile.py` | `AgentProfile(blueprint_id, tokens)` — returned by `get_agent_profile()` |
+| `src/domain/prompt_v3/slot.py` | `OwnerType` enum: AGENT / ACCOUNT / USER |
+| `src/ports/prompt_v3/agent_profile_repository.py` | `get_agent_profile(agent_id)`, `get_override_tokens(owner_type, owner_id)` |
+| `src/adapters/prompt_v3/firestore_agent_profile_repository.py` | Profile doc ID = `agent_id`; override doc ID = `{OWNER_TYPE}_{owner_id}` |
+| `src/adapters/prompt_v3/firestore_token_repository.py` | Dual-collection lookup: `_system` first, then `_user` |
+| `src/adapters/prompt_v3/firestore_blueprint_repository.py` | Reads `outer_class` + `class_order` |
 
 **Agent files:**
 
@@ -320,21 +354,26 @@ assembly_service.invalidate_cache()
 
 | Issue | Cause | Solution |
 |-------|-------|---------|
-| `KeyError: Blueprint not found` | Blueprint not in Firestore | Run `scripts/migration/create_blueprints.py --upload` |
-| `Prompt has {{PLACEHOLDERS}}` | Token not resolved | Check token exists + profile has assignment for that class |
-| Empty `policies` / `protocols` sections | `_normalize_whitespace()` removed them | Token missing from assignment → check SYSTEM profile in Firestore |
-| `knowledge_base` block missing | No biographical facts | Check `BiographicalContextService` returns facts and cache is warm |
-| No `<!-- CACHE_BOUNDARY -->` in prompt | Assembly service bug | Run `test_prompt_assembly_service.py` — `test_boundary_marker_always_appended` |
+| `KeyError: Blueprint not found` | Blueprint doc missing in Firestore | Upload via `python firestore_utils/upload.py development_domain_prompt_blueprints_v3 {blueprint_id} --format json` |
+| Section absent from prompt | No tokens assigned for that class in agent profile | Check agent profile in Firestore; verify tokens exist in `_system` or `_user` collection |
+| Override not taking effect | Agent token has `non_overridable: true` | Check agent profile in Firestore; if locked, it cannot be overridden |
+| Override ignored silently | Override token's `class + category` has no match in agent profile | Overrides can only REPLACE, not ADD. Agent profile must have a token with the same class+category. |
+| Wrong section order | Blueprint `class_order` mismatch | Check blueprint doc in Firestore; `class_order` controls section sequence |
+| `knowledge_base` block missing | No biographical facts returned | Check `BiographicalContextService` returns facts; verify cache is warm |
+| No `<!-- CACHE_BOUNDARY -->` in prompt | Assembly service bug | Run `tests/unit/services/prompt_v3/test_prompt_assembly_service.py` |
 | Q-S context in static section | Facts not tagged `semantic_lens` | Check `merge_enriched_context_with_biographical()` sets the tag |
-| Stale prompts after token change | 24h assembly cache | Run `$admin_cache_reset` or redeploy |
-| Duplicate `datetime` in prompt | Old agent code adds it manually | Remove the manual addition — assembler adds `current_date_time` automatically |
+| Stale prompts after token/profile change | 24h assembly cache | Run `$admin_cache_reset` via Slack or call `assembly_service.invalidate_cache()` |
+| `AgentProfile` has empty tokens | Agent profile doc missing in Firestore | Upload via `python firestore_utils/upload.py development_domain_prompt_profiles_v3 {agent_id} --format json` |
+| Wrong `blueprint_id` used | Stale code or wrong profile doc | The `blueprint_id` must be in the Firestore profile document, not hardcoded in application code |
 
 ---
 
 ## Summary
 
-1. **Two phases:** Static template (cached 24h, token resolution) + runtime injection (every request, appended not replaced)
-2. **No runtime placeholders in blueprint:** Blueprint is purely static `{{TOKEN_SLOT}}` only
-3. **One `knowledge_base` block:** Bio + history share a single block; neither emits empty wrappers
-4. **Cache boundary:** Static prefix (blueprint + bio + history for consolidation) cached by Anthropic; dynamic suffix (datetime + Q-S context) sent fresh
-5. **Agent differences:** Smart/Quick → bio in static, history in messages; Consolidation → history in static (gets cached), history not in messages
+1. **Two phases:** Static template (cached 24h, class-collection assembly) + runtime injection (every request, appended not replaced)
+2. **Blueprint = structure only:** `outer_class` + `class_order`. No template string, no placeholders, no default tokens.
+3. **Profile drives everything:** Which blueprint to use, which tokens to include, in what order — all in the agent profile document. `blueprint_id` lives in the profile, not in application code.
+4. **Override by class+category:** Account/user can only replace tokens with matching `class + category`. Cannot add new sections. `non_overridable: true` blocks replacement entirely.
+5. **One `knowledge_base` block:** Bio + history share a single block; neither emits empty wrappers.
+6. **Cache boundary:** Static prefix (blueprint + bio + history for consolidation) cached by Anthropic; dynamic suffix (datetime + Q-S context) sent fresh.
+7. **Agent differences:** Smart/Quick → bio in static, history in messages; Consolidation → history in static (gets cached), history not in messages; Router/MemorySearch → no biographical context at all.
