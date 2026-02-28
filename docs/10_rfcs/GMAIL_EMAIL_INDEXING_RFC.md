@@ -1528,15 +1528,15 @@ Bot: "Your PZU insurance renewal is in 2 weeks based on your email."
 Critical path to first production run. Cabinet and search deferred until core pipeline works.
 Mark items `✅` as completed.
 
-### Блок 1 — Фундамент (domain + ports + тесты контрактов)
+### Блок 1 — Фундамент (domain + ports + тесты контрактов) ✅
 
-- [ ] `src/domain/email.py` — все domain models (OAuthCredentials, EmailMetadata, EmailFullContent, IndexedEmail, IndexingState, IndexingJob, EmailExclusion)
-- [ ] `src/ports/email_provider_port.py` — ABC (list_emails, batch_get_full_content, refresh_token)
-- [ ] `src/ports/oauth_credentials_port.py` — ABC (get/save/revoke credentials, is_connected, list_connected_providers)
-- [ ] `src/ports/indexed_email_repository.py` — ABC (save_batch, find_nearest, indexing state, consolidation batch, repair batch, vector update)
-- [ ] `src/ports/email_exclusions_port.py` — ABC (get/add/delete/list exclusions)
-- [ ] `src/ports/email_indexing_job_repository.py` — ABC (create/update/get/get_latest/list jobs)
-- [ ] `tests/unit/ports/test_email_ports.py` — port contract tests для всех 5 портов
+- ✅ `src/domain/email.py` — все domain models (OAuthCredentials, EmailMetadata, EmailFullContent, EmailClassificationResult, IndexedEmail, IndexingState, IndexingJob, EmailExclusion)
+- ✅ `src/ports/email_provider_port.py` — ABC (list_emails, batch_get_full_content, refresh_token)
+- ✅ `src/ports/oauth_credentials_port.py` — ABC (get/save/revoke credentials, is_connected, list_connected_providers)
+- ✅ `src/ports/indexed_email_repository.py` — ABC (save_batch, find_nearest, indexing state, consolidation batch, repair batch, vector update)
+- ✅ `src/ports/email_exclusions_port.py` — ABC (get/add/delete/list exclusions)
+- ✅ `src/ports/email_indexing_job_repository.py` — ABC (create/update/get/get_latest/list jobs)
+- ✅ `tests/unit/ports/test_email_ports.py` — 35 port contract tests, all passing
 
 ### Блок 2 — Адаптеры + индексы Firestore
 
