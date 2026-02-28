@@ -1,0 +1,74 @@
+"""
+FirestoreEmailJobRepository — job journal for resume, retry, and Cabinet history.
+See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §2.1.2.
+
+Collection: {env}_email_indexing_jobs_v1
+Doc ID: job_id (UUID set by caller)
+"""
+
+from typing import Any, Dict, List, Optional
+
+from google.cloud import firestore
+from google.cloud.firestore import FieldFilter
+
+from ..config.environment import EnvironmentConfig
+from ..domain.email import IndexingJob
+from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
+from ..utils.logger import logger
+
+
+class FirestoreEmailJobRepository(EmailIndexingJobRepository):
+
+    def __init__(self, db_client, env_config: EnvironmentConfig):
+        self.db = db_client
+        collection_name = env_config.email_indexing_jobs_collection
+        self.collection = self.db.collection(collection_name)
+        logger.info(
+            f"📂 EmailIndexingJob repository initialized. Collection: {collection_name}"
+        )
+
+    async def create_job(self, job: IndexingJob) -> None:
+        data = job.model_dump()
+        await self.collection.document(job.job_id).set(data)
+        logger.info(
+            f"📋 Job created: {job.job_id} user={job.user_id[:8]} "
+            f"provider={job.provider} triggered_by={job.triggered_by}"
+        )
+
+    async def update_job(self, job_id: str, updates: Dict[str, Any]) -> None:
+        """Partial update called after each successful chunk."""
+        await self.collection.document(job_id).update(updates)
+        logger.debug(f"📋 Job updated: {job_id} fields={list(updates.keys())}")
+
+    async def get_job(self, job_id: str) -> Optional[IndexingJob]:
+        doc = await self.collection.document(job_id).get()
+        if not doc.exists:
+            return None
+        return IndexingJob(**doc.to_dict())
+
+    async def get_latest_job(
+        self, user_id: str, provider: str
+    ) -> Optional[IndexingJob]:
+        """Last job for user+provider ordered by started_at DESC."""
+        query = (
+            self.collection
+            .where(filter=FieldFilter("user_id", "==", user_id))
+            .where(filter=FieldFilter("provider", "==", provider))
+            .order_by("started_at", direction=firestore.Query.DESCENDING)
+            .limit(1)
+        )
+        docs = await query.get()
+        if not docs:
+            return None
+        return IndexingJob(**docs[0].to_dict())
+
+    async def list_jobs(self, user_id: str, limit: int = 10) -> List[IndexingJob]:
+        """Last N jobs across all providers, ordered by started_at DESC."""
+        query = (
+            self.collection
+            .where(filter=FieldFilter("user_id", "==", user_id))
+            .order_by("started_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        docs = await query.get()
+        return [IndexingJob(**doc.to_dict()) for doc in docs]

@@ -277,5 +277,132 @@
       { "fieldPath": "created_at", "order": "DESCENDING" },
       { "fieldPath": "__name__", "order": "DESCENDING" }
     ]
+  },
+
+  {
+    "collectionGroup": "development_domain_email_facts_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "domain_email_facts_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_email_facts_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "tags_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "domain_email_facts_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "tags_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_email_facts_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "metadata_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "domain_email_facts_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "metadata_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_email_facts_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "attachments_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "domain_email_facts_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "attachments_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+
+  {
+    "collectionGroup": "development_domain_email_facts_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "consolidated_at", "order": "ASCENDING" },
+      { "fieldPath": "indexed_at", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "domain_email_facts_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "consolidated_at", "order": "ASCENDING" },
+      { "fieldPath": "indexed_at", "order": "ASCENDING" }
+    ]
+  },
+
+  {
+    "collectionGroup": "development_email_indexing_jobs_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "started_at", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "email_indexing_jobs_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "started_at", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_email_indexing_jobs_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "provider", "order": "ASCENDING" },
+      { "fieldPath": "started_at", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "email_indexing_jobs_v1",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "provider", "order": "ASCENDING" },
+      { "fieldPath": "started_at", "order": "DESCENDING" }
+    ]
   }
 ]

@@ -172,8 +172,9 @@ class EmailExclusion(BaseModel):
     """
     Sender/domain/subject pattern to skip before LLM classification.
     Auto-populated when classifier detects recurring low-value senders.
-    Stored in {env}_email_exclusions.
+    Stored in {env}_email_exclusions. Doc ID = exclusion_id.
     """
+    exclusion_id: str = ""  # Populated by adapter from Firestore doc.id; set before save
     user_id: str
     pattern_type: str   # "sender_email" | "sender_domain" | "subject_pattern"
     pattern: str

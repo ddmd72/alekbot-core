@@ -213,6 +213,58 @@ class EnvironmentConfig:
         prefix = self.firestore_collection_prefix
         return f"{prefix}domain_whitelist_v1"
 
+    # --- Email Indexing Collections ---
+
+    @property
+    def domain_email_facts_collection(self) -> str:
+        """
+        Get domain email facts collection (v1 schema).
+        Dev: development_domain_email_facts_v1
+        Prod: domain_email_facts_v1
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}domain_email_facts_v1"
+
+    @property
+    def oauth_credentials_collection(self) -> str:
+        """
+        Get OAuth credentials collection.
+        Dev: development_oauth_credentials
+        Prod: oauth_credentials
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}oauth_credentials"
+
+    @property
+    def email_indexing_state_collection(self) -> str:
+        """
+        Get email indexing state collection (cursor tracking per user/provider).
+        Dev: development_email_indexing_state
+        Prod: email_indexing_state
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}email_indexing_state"
+
+    @property
+    def email_exclusions_collection(self) -> str:
+        """
+        Get email exclusions collection (sender/domain/subject skip patterns).
+        Dev: development_email_exclusions
+        Prod: email_exclusions
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}email_exclusions"
+
+    @property
+    def email_indexing_jobs_collection(self) -> str:
+        """
+        Get email indexing jobs collection (job journal per indexing run).
+        Dev: development_email_indexing_jobs_v1
+        Prod: email_indexing_jobs_v1
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}email_indexing_jobs_v1"
+
     # --- Infrastructure Collections (Stable) ---
 
     @property
