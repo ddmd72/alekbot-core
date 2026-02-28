@@ -1523,6 +1523,70 @@ Bot: "Your PZU insurance renewal is in 2 weeks based on your email."
 
 ---
 
+## 18. Implementation Plan
+
+Critical path to first production run. Cabinet and search deferred until core pipeline works.
+Mark items `✅` as completed.
+
+### Блок 1 — Фундамент (domain + ports + тесты контрактов)
+
+- [ ] `src/domain/email.py` — все domain models (OAuthCredentials, EmailMetadata, EmailFullContent, IndexedEmail, IndexingState, IndexingJob, EmailExclusion)
+- [ ] `src/ports/email_provider_port.py` — ABC (list_emails, batch_get_full_content, refresh_token)
+- [ ] `src/ports/oauth_credentials_port.py` — ABC (get/save/revoke credentials, is_connected, list_connected_providers)
+- [ ] `src/ports/indexed_email_repository.py` — ABC (save_batch, find_nearest, indexing state, consolidation batch, repair batch, vector update)
+- [ ] `src/ports/email_exclusions_port.py` — ABC (get/add/delete/list exclusions)
+- [ ] `src/ports/email_indexing_job_repository.py` — ABC (create/update/get/get_latest/list jobs)
+- [ ] `tests/unit/ports/test_email_ports.py` — port contract tests для всех 5 портов
+
+### Блок 2 — Адаптеры + индексы Firestore
+
+- [ ] `src/adapters/gmail_provider_adapter.py` — aiohttp Gmail REST; metadata + full content (deep flag); token refresh
+- [ ] `src/adapters/firestore_oauth_credentials_adapter.py` — upsert/get/delete; doc ID: `{user_id}_{provider}`
+- [ ] `src/adapters/firestore_indexed_email_repo.py` — save_batch (500/batch); 4-vector RRF search; consolidation query; repair query
+- [ ] `src/adapters/firestore_email_exclusions_adapter.py` — exclusion patterns per user
+- [ ] `src/adapters/firestore_email_job_repo.py` — job journal; partial updates; resume cursor
+- [ ] `firestore.indexes.json` — composite + vector indexes для `{env}_domain_email_facts_v1` и `{env}_email_indexing_jobs_v1`
+
+### Блок 3 — Сервисы pipeline
+
+- [ ] `src/services/email_classification_service.py` — agentic Gemini Flash; `get_email_details` tool; per-chunk 100 emails; exclusion candidate detection
+- [ ] `src/services/email_indexing_service.py` — per-chunk loop; resume от indexed_through; batch_get_full_content parallel (semaphore=10); advances cursor only on success
+- [ ] `src/services/email_embedding_repair_service.py` — query embedding_pending=True → re-embed → update_vectors
+- [ ] `tests/unit/services/test_email_classification_service.py`
+- [ ] `tests/unit/services/test_email_indexing_service.py`
+
+### Блок 4 — Скрипт + первый production прогон
+
+- [ ] `scripts/email/run_indexing.py` — ручной wireset (паттерн как test_consolidation_dryrun.py); запуск на реальном Gmail без Cabinet
+- [ ] Первый прогон: проверить качество классификации, attachment fetch, Firestore запись
+
+### Блок 5 — ConsolidationAgent hook
+
+- [ ] Расширить ConsolidationAgent: после обычного батча → `get_unconsolidated_batch(user_id, limit=200)` → email тридж → `mark_consolidated`
+- [ ] Обогащённый кандидат: `email_id + attachments + metadata.subject/from` в system_alert prompt
+- [ ] Добавить тег `email` в инструкцию промпта консолидатора
+- [ ] Тест на результате прогона из блока 4
+
+### Блок 6 — EmailAgent + EmailSearchAgent
+
+- [ ] `src/agents/email_agent.py` — `_handle_indexing()` (Flow 1 + 2); multi-provider fan-out; Slack notification
+- [ ] `src/agents/email_search_agent.py` — Mode A (vector RRF) + Mode B (markitdown, deep=True)
+- [ ] `tests/unit/agents/test_email_agent.py`
+- [ ] `tests/unit/agents/test_email_search_agent.py`
+
+### Блок 7 — Web + Cabinet (последним)
+
+- [ ] `src/adapters/firebase_auth_adapter.py` — `additional_scopes` param (backward-compatible)
+- [ ] `src/web/oauth_app.py` — `/auth/connect-gmail` + callback + `DELETE /auth/disconnect-gmail`
+- [ ] `src/web/user_cabinet_app.py` — `/api/gmail/status` + `/api/gmail/index` + `/api/gmail/disconnect` + email_daily_summary toggle
+- [ ] `src/handlers/agent_worker_handler.py` — Slack notification on async task completion
+- [ ] `src/composition/service_container.py` — wire all email components (see §2.1.4)
+- [ ] `main.py` — register EmailAgent (intent: index_email ASYNC) + EmailSearchAgent (intent: search_email SYNC)
+- [ ] `requirements.txt` — `google-auth>=2.0.0`, `google-auth-oauthlib>=1.0.0`
+- [ ] `tests/e2e/test_email_agent_flow.py`
+
+---
+
 ## 17. References
 
 - **Gmail API:** https://developers.google.com/gmail/api/guides
