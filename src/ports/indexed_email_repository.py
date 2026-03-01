@@ -27,12 +27,15 @@ class IndexedEmailRepository(ABC):
         vectors: Dict[str, List[float]],
         limit: int = 10,
         state: str = "current",
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
     ) -> List[IndexedEmail]:
         """
         Multi-vector RRF search across provided vector fields.
         vectors keys: "vector" | "tags_vector" | "metadata_vector" | "attachments_vector"
         Absent keys are skipped (e.g., attachments_vector absent → skip that query).
         Returns top-N by RRF score, filtered by user_id and state.
+        date_from / date_to: optional pre-filter on email_date (Firestore FieldFilter).
         """
 
     @abstractmethod

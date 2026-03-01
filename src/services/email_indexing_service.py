@@ -65,22 +65,36 @@ class EmailIndexingService:
     # Public API
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def completion_alert(job: IndexingJob) -> str:
+        """System alert text for UserNotificationService after a job completes."""
+        msg = f"Email indexing complete: {job.emails_stored} emails indexed"
+        if job.emails_failed:
+            msg += f", {job.emails_failed} failed"
+        return msg + "."
+
     def create_job(
         self,
         user_id: str,
         provider: str,
         triggered_by: str,
+        mode: str = "incremental",
+        account_id: str = "",
         resume_token: Optional[str] = None,
+        backfill_until: Optional[datetime] = None,
     ) -> IndexingJob:
         """Build a new IndexingJob (caller must persist via job_repo.create_job)."""
         now = datetime.utcnow()
         return IndexingJob(
             job_id=str(uuid.uuid4()),
             user_id=user_id,
+            account_id=account_id,
             provider=provider,
             triggered_by=triggered_by,
             status="running",
+            mode=mode,
             next_page_token=resume_token,
+            backfill_until=backfill_until,
             started_at=now,
             updated_at=now,
         )
@@ -105,7 +119,14 @@ class EmailIndexingService:
           "reindex"     — clear state, re-process all emails from now back 3 years (overwrites)
           "backfill"    — fetch emails older than oldest_indexed_through, down to backfill_until
         """
-        job = self.create_job(user_id=user_id, provider=provider, triggered_by=triggered_by)
+        job = self.create_job(
+            user_id=user_id,
+            provider=provider,
+            triggered_by=triggered_by,
+            mode=mode,
+            account_id=account_id,
+            backfill_until=backfill_until,
+        )
         await self._job_repo.create_job(job)
         return await self.run_indexing_job(
             job=job,
@@ -150,40 +171,63 @@ class EmailIndexingService:
         date_to: Optional[datetime] = None
 
         if mode == "reindex":
-            await self._email_repo.clear_indexing_state(job.user_id, job.provider)
-            existing_state = None
+            # indexed_through is owned by incremental only — never clear it.
             if date_from is None:
                 date_from = datetime.utcnow() - timedelta(days=3 * 365)
             logger.info(
-                f"📧 Job {job.job_id[:8]} [reindex]: resetting cursor, "
-                f"from={date_from.strftime('%Y-%m-%d')}"
+                f"📧 Job {job.job_id[:8]} [reindex]: from={date_from.strftime('%Y-%m-%d')}"
             )
 
         elif mode == "backfill":
-            if existing_state and existing_state.oldest_indexed_through:
-                # Upper bound: day before what we already have
-                date_to = existing_state.oldest_indexed_through - timedelta(days=1)
             if backfill_until is not None:
                 date_from = backfill_until
             elif date_from is None:
                 date_from = datetime.utcnow() - timedelta(days=5 * 365)
             logger.info(
-                f"📧 Job {job.job_id[:8]} [backfill]: "
-                f"from={date_from.strftime('%Y-%m-%d')} "
-                f"to={date_to.strftime('%Y-%m-%d') if date_to else 'open'}"
+                f"📧 Job {job.job_id[:8]} [backfill]: from={date_from.strftime('%Y-%m-%d')}"
             )
 
         else:  # incremental (default)
             if date_from is None:
                 if existing_state and existing_state.indexed_through:
-                    # after: is inclusive — advance by 1 day to skip already-indexed
-                    date_from = existing_state.indexed_through + timedelta(days=1)
-            if date_from is None:
-                date_from = datetime.utcnow() - timedelta(days=3 * 365)
-                logger.info(
-                    f"📧 Job {job.job_id[:8]} [incremental]: no cursor, "
-                    f"defaulting to 3yr ago ({date_from.strftime('%Y-%m-%d')})"
-                )
+                    date_from = existing_state.indexed_through
+                    logger.info(
+                        f"📧 Job {job.job_id[:8]} [incremental]: "
+                        f"cursor_max={date_from.strftime('%Y-%m-%d %H:%M')}"
+                    )
+                else:
+                    # cursor_max is null — bootstrap from max(cursor_backfill, cursor_reindex)
+                    candidates = [
+                        d for d in [
+                            existing_state.oldest_indexed_through if existing_state else None,
+                            existing_state.cursor_reindex if existing_state else None,
+                        ]
+                        if d is not None
+                    ]
+                    if candidates:
+                        date_from = max(candidates)
+                        logger.info(
+                            f"📧 Job {job.job_id[:8]} [incremental]: no cursor_max, "
+                            f"bootstrapping from confirmed cursors → date_from={date_from.strftime('%Y-%m-%d')}"
+                        )
+                    else:
+                        now = datetime.utcnow()
+                        date_from = datetime(now.year, now.month, now.day)
+                        logger.info(
+                            f"📧 Job {job.job_id[:8]} [incremental]: no cursors, "
+                            f"today only → date_from={date_from.strftime('%Y-%m-%d')}"
+                        )
+
+        # ----------------------------------------------------------------
+        # Normalize timezone-aware datetimes loaded from Firestore on resume.
+        # job.max_email_date / job.min_email_date are written as naive UTC but
+        # Firestore returns DatetimeWithNanoseconds (tz-aware) on Cloud Tasks
+        # re-invocations, causing TypeError when compared with naive chunk_max/min.
+        # ----------------------------------------------------------------
+        if job.max_email_date is not None and job.max_email_date.tzinfo is not None:
+            job.max_email_date = job.max_email_date.replace(tzinfo=None)
+        if job.min_email_date is not None and job.min_email_date.tzinfo is not None:
+            job.min_email_date = job.min_email_date.replace(tzinfo=None)
 
         # ----------------------------------------------------------------
         # Load exclusions once per job (fast pre-filter, no LLM)
@@ -196,9 +240,6 @@ class EmailIndexingService:
         )
 
         page_token = job.next_page_token
-        # Running max/min seen across all pages (used to advance cursors)
-        job_latest_date: Optional[datetime] = None
-        job_oldest_date: Optional[datetime] = None
         pages_processed = 0
 
         try:
@@ -295,15 +336,16 @@ class EmailIndexingService:
                 if indexed_emails:
                     saved = await self._email_repo.save_batch(indexed_emails)
 
-                # 7. Track max/min email dates across all pages
+                # 7. Track max/min email dates across all Cloud Tasks invocations.
+                #    Persisted to job doc — cursors in IndexingState written ONLY at completion.
                 chunk_dates = [e.date for e in emails_page if e.date]
                 if chunk_dates:
                     chunk_max = max(chunk_dates)
                     chunk_min = min(chunk_dates)
-                    if job_latest_date is None or chunk_max > job_latest_date:
-                        job_latest_date = chunk_max
-                    if job_oldest_date is None or chunk_min < job_oldest_date:
-                        job_oldest_date = chunk_min
+                    if job.max_email_date is None or chunk_max > job.max_email_date:
+                        job.max_email_date = chunk_max
+                    if job.min_email_date is None or chunk_min < job.min_email_date:
+                        job.min_email_date = chunk_min
 
                 # 8. Update job progress (persisted — Cloud Tasks resume point)
                 job.emails_fetched += len(emails_page)
@@ -319,17 +361,9 @@ class EmailIndexingService:
                         "embedding_pending": job.embedding_pending,
                         "next_page_token": next_page_token,
                         "updated_at": job.updated_at,
+                        "max_email_date": job.max_email_date,
+                        "min_email_date": job.min_email_date,
                     },
-                )
-
-                # 9. Advance indexing cursor only after successful batch write.
-                #    Mode controls which cursor(s) move and in which direction.
-                await self._advance_cursor(
-                    job=job,
-                    mode=mode,
-                    existing_state=existing_state,
-                    job_latest_date=job_latest_date,
-                    job_oldest_date=job_oldest_date,
                 )
 
                 logger.info(
@@ -346,22 +380,31 @@ class EmailIndexingService:
                     break
                 page_token = next_page_token
 
-            # Mark job completed
-            job.status = "completed"
-            job.completed_at = datetime.utcnow()
-            job.updated_at = job.completed_at
-            await self._job_repo.update_job(
-                job.job_id,
-                {
-                    "status": "completed",
-                    "completed_at": job.completed_at,
-                    "updated_at": job.updated_at,
-                },
-            )
-            logger.info(
-                f"🎉 Job {job.job_id[:8]} completed: "
-                f"fetched={job.emails_fetched} stored={job.emails_stored}"
-            )
+            if job.next_page_token:
+                # More pages remain — status stays "running"; worker will re-enqueue.
+                logger.info(
+                    f"📧 Job {job.job_id[:8]} page done: "
+                    f"fetched={job.emails_fetched} stored={job.emails_stored} "
+                    f"— next_page_token set, re-enqueue pending"
+                )
+            else:
+                # All pages consumed — finalize cursor THEN mark completed.
+                await self._finalize_cursor(job=job, mode=mode, date_from=date_from)
+                job.status = "completed"
+                job.completed_at = datetime.utcnow()
+                job.updated_at = job.completed_at
+                await self._job_repo.update_job(
+                    job.job_id,
+                    {
+                        "status": "completed",
+                        "completed_at": job.completed_at,
+                        "updated_at": job.updated_at,
+                    },
+                )
+                logger.info(
+                    f"🎉 Job {job.job_id[:8]} completed: "
+                    f"fetched={job.emails_fetched} stored={job.emails_stored}"
+                )
 
         except Exception as exc:
             error_msg = str(exc).lower()
@@ -385,41 +428,75 @@ class EmailIndexingService:
     # Private helpers
     # ------------------------------------------------------------------
 
-    async def _advance_cursor(
+    async def _finalize_cursor(
         self,
         job: IndexingJob,
         mode: str,
-        existing_state: Optional[IndexingState],
-        job_latest_date: Optional[datetime],
-        job_oldest_date: Optional[datetime],
+        date_from: Optional[datetime],
     ) -> None:
         """
-        Write updated IndexingState after a successful chunk.
+        Write cursor fields only after job reaches completed status.
+        Each mode writes only its own cursor; others are preserved.
 
-        Mode rules:
-          incremental: indexed_through moves forward; oldest_indexed_through preserved
-          reindex:     both cursors updated (full re-process from scratch)
-          backfill:    oldest_indexed_through moves backward; indexed_through preserved
+        backfill:    oldest_indexed_through = date_from (lower bound queried)
+        reindex:     cursor_reindex         = date_from (lower bound queried, ~now-3yr)
+        incremental: indexed_through        = max(current_db, job.max_email_date)
         """
-        if mode == "backfill":
-            new_indexed_through = existing_state.indexed_through if existing_state else None
-            new_oldest = job_oldest_date  # moves backward as we process older pages
-        elif mode == "reindex":
-            new_indexed_through = job_latest_date
-            new_oldest = job_oldest_date
-        else:  # incremental
-            new_indexed_through = job_latest_date
-            new_oldest = existing_state.oldest_indexed_through if existing_state else None
+        current_state = await self._email_repo.get_indexing_state(job.user_id, job.provider)
+        existing_indexed_through = current_state.indexed_through if current_state else None
+        existing_oldest = current_state.oldest_indexed_through if current_state else None
+        existing_reindex = current_state.cursor_reindex if current_state else None
 
-        if new_indexed_through is not None or new_oldest is not None:
-            await self._email_repo.update_indexing_state(
-                IndexingState(
-                    user_id=job.user_id,
-                    provider=job.provider,
-                    indexed_through=new_indexed_through,
-                    oldest_indexed_through=new_oldest,
-                )
+        if mode == "backfill":
+            if date_from is None:
+                return
+            new_state = IndexingState(
+                user_id=job.user_id,
+                provider=job.provider,
+                indexed_through=existing_indexed_through,
+                oldest_indexed_through=date_from,
+                cursor_reindex=existing_reindex,
             )
+            logger.info(
+                f"📌 Job {job.job_id[:8]} [backfill] cursor finalized: "
+                f"oldest_indexed_through={date_from.strftime('%Y-%m-%d')}"
+            )
+
+        elif mode == "reindex":
+            if date_from is None:
+                return
+            new_state = IndexingState(
+                user_id=job.user_id,
+                provider=job.provider,
+                indexed_through=existing_indexed_through,
+                oldest_indexed_through=existing_oldest,
+                cursor_reindex=date_from,
+            )
+            logger.info(
+                f"📌 Job {job.job_id[:8]} [reindex] cursor finalized: "
+                f"cursor_reindex={date_from.strftime('%Y-%m-%d')}"
+            )
+
+        else:  # incremental
+            if job.max_email_date is None:
+                return
+            candidates = [d for d in [existing_indexed_through, job.max_email_date] if d is not None]
+            new_indexed_through = max(candidates) if candidates else None
+            if new_indexed_through is None:
+                return
+            new_state = IndexingState(
+                user_id=job.user_id,
+                provider=job.provider,
+                indexed_through=new_indexed_through,
+                oldest_indexed_through=existing_oldest,
+                cursor_reindex=existing_reindex,
+            )
+            logger.info(
+                f"📌 Job {job.job_id[:8]} [incremental] cursor finalized: "
+                f"indexed_through={new_indexed_through.strftime('%Y-%m-%d')}"
+            )
+
+        await self._email_repo.update_indexing_state(new_state)
 
     @staticmethod
     def _apply_exclusions(

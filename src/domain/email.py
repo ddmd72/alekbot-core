@@ -137,15 +137,21 @@ class IndexingState:
     """
     Cursor tracking per user per provider.
     Stored in {env}_email_indexing_state. Doc ID: {user_id}_{provider}.
-    Advances only after each chunk completes successfully (idempotent retry).
+    Each cursor written ONLY by its owning mode, ONLY at job completion.
 
-    indexed_through:        newest email date seen (incremental upper frontier)
-    oldest_indexed_through: oldest email date seen (backfill lower frontier)
+    indexed_through:        incremental — newest email date seen (forward frontier)
+    oldest_indexed_through: backfill   — date_from used (oldest date queried)
+    cursor_reindex:         reindex    — date_from used (oldest date queried, ~now-3yr)
+
+    Incremental bootstrap (when indexed_through is null):
+        date_from = max(oldest_indexed_through, cursor_reindex)
+        or today if all three are null.
     """
     user_id: str
     provider: str
-    indexed_through: Optional[datetime] = None          # None = never indexed forward
+    indexed_through: Optional[datetime] = None          # None = incremental never run
     oldest_indexed_through: Optional[datetime] = None   # None = backfill never run
+    cursor_reindex: Optional[datetime] = None           # None = reindex never run
 
 
 class IndexingJob(BaseModel):
@@ -156,11 +162,18 @@ class IndexingJob(BaseModel):
     """
     job_id: str
     user_id: str
+    account_id: str = ""                    # needed by worker to build IndexedEmail
     provider: str
     triggered_by: str                       # "cabinet" | "scheduler" | "script"
     status: str                             # "running"|"completed"|"failed"|"failed_auth"
-    next_page_token: Optional[str] = None   # primary resume cursor
+    mode: str = "incremental"              # "incremental" | "reindex" | "backfill"
+    next_page_token: Optional[str] = None   # primary resume cursor; set → job not yet complete
     last_email_date: Optional[datetime] = None  # fallback cursor if page token expired
+    backfill_until: Optional[datetime] = None   # stop date for backfill (stored for worker resume)
+    # Running max/min email dates across all Cloud Tasks invocations.
+    # indexed_through in IndexingState is ONLY written at job completion using these values.
+    max_email_date: Optional[datetime] = None   # newest email date seen across all pages
+    min_email_date: Optional[datetime] = None   # oldest email date seen across all pages
     emails_fetched: int = 0
     emails_stored: int = 0
     emails_failed: int = 0

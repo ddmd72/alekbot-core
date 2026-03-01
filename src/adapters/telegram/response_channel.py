@@ -35,6 +35,8 @@ class TelegramResponseChannel(ResponseChannel):
         """
         self.bot = bot
         self.chat_id = chat_id
+        self.channel_id = str(chat_id)
+        self.platform = "telegram"
         self.chunker = MessageChunker(max_length=TELEGRAM_CHUNK_SIZE)
         logger.info(f"✅ TelegramResponseChannel initialized for chat {chat_id}")
 

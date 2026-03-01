@@ -73,15 +73,21 @@ class EmailSearchService:
         tags: List[str],
         user_id: str,
         limit: int = 10,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
     ) -> str:
         """
         Embed primary, alternative, and tags → 2 parallel find_nearest calls →
         7 search streams → second-level RRF merge → formatted text.
+        date_from / date_to: optional pre-filter on email_date passed through to find_nearest.
+        Results are filtered server-side by cosine distance 0.4; all passing results returned.
+        `limit` controls per-adapter-call fetch size (Firestore headroom).
         """
         logger.info(
             f"📧 EmailSearchService.vector_search: "
             f"primary='{primary_query[:50]}' alt='{alternative_query[:50]}' "
-            f"tags={tags} user={user_id[:8]}"
+            f"tags={tags} user={user_id[:8]} "
+            f"date_from={date_from} date_to={date_to}"
         )
 
         tags_text = " ".join(tags) if tags else primary_query
@@ -92,6 +98,8 @@ class EmailSearchService:
             self._embedding.get_embedding(alternative_query, task_type="RETRIEVAL_QUERY"),
             self._embedding.get_embedding(tags_text, task_type="RETRIEVAL_QUERY"),
         )
+
+        date_kwargs = {"date_from": date_from, "date_to": date_to}
 
         # Step 2: 2 find_nearest calls in parallel
         # Call A: 3 streams (primary content + tags category + primary metadata)
@@ -105,6 +113,7 @@ class EmailSearchService:
                     "metadata_vector": e_primary,
                 },
                 limit=limit * 2,
+                **date_kwargs,
             ),
             self._email_repo.find_nearest(
                 user_id=user_id,
@@ -115,11 +124,17 @@ class EmailSearchService:
                     "attachments_vector": e_tags,
                 },
                 limit=limit * 2,
+                **date_kwargs,
             ),
         )
 
-        # Step 3: second-level RRF merge
-        merged = self._rrf_merge([results_a, results_b], limit=limit)
+        # Step 3: second-level RRF merge — no output cap, return all similarity-passing results
+        merged = self._rrf_merge([results_a, results_b])
+
+        logger.info(
+            f"📧 EmailSearchService.vector_search done: "
+            f"A={len(results_a)} B={len(results_b)} → merged={len(merged)}"
+        )
 
         if not merged:
             return json.dumps({"count": 0, "emails": []}, ensure_ascii=False)
@@ -241,11 +256,11 @@ class EmailSearchService:
     def _rrf_merge(
         lists: List[List[IndexedEmail]],
         k: int = _RRF_K,
-        limit: int = 10,
     ) -> List[IndexedEmail]:
         """
         Second-level RRF across multiple find_nearest result lists.
         Each list is already RRF-ranked internally by the adapter.
+        Returns all results — no output cap; server-side distance filter applies.
         """
         seen: Dict[str, IndexedEmail] = {}
         scores: Dict[str, float] = {}
@@ -258,7 +273,7 @@ class EmailSearchService:
                     scores.get(email.email_id, 0.0) + 1.0 / (k + rank + 1)
                 )
 
-        top_ids = sorted(scores, key=lambda x: scores[x], reverse=True)[:limit]
+        top_ids = sorted(scores, key=lambda x: scores[x], reverse=True)
         return [seen[eid] for eid in top_ids]
 
     async def _maybe_refresh(self, creds):

@@ -4,6 +4,7 @@ See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §2.1.2.
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.domain.email import IndexingJob
@@ -44,4 +45,11 @@ class EmailIndexingJobRepository(ABC):
         """
         Last N jobs across all providers, ordered by started_at DESC.
         Displayed in Cabinet job history panel.
+        """
+
+    @abstractmethod
+    async def get_stale_running_jobs(self, updated_before: datetime) -> List[IndexingJob]:
+        """
+        Return all jobs with status=running and updated_at older than updated_before.
+        Used by the watchdog to detect and mark zombie jobs as failed.
         """

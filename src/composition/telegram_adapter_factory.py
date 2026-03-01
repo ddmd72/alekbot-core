@@ -15,6 +15,7 @@ from ..handlers.conversation_handler import ConversationHandler
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..services.user_agent_factory import UserAgentFactory
 from ..services.rich_content_service import RichContentService
+from ..services.user_notification_service import UserNotificationService
 from ..ports.html_renderer_port import HtmlRendererPort
 from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..ports.platform_auth_port import PlatformAuthPort
@@ -44,6 +45,7 @@ class TelegramAdapterFactory:
         consolidation_config=None,
         audio_service=None,
         html_renderer: Optional[HtmlRendererPort] = None,
+        notification_service: Optional[UserNotificationService] = None,
     ) -> TelegramWebhookAdapter:
         """
         Create TelegramWebhookAdapter with RichContentService wired in.
@@ -84,6 +86,7 @@ class TelegramAdapterFactory:
             global_config=consolidation_config,
             audio_service=audio_service,
             rich_content_service=rich_content_service,
+            notification_service=notification_service,
         )
 
         logger.info("TelegramAdapterFactory: wiring complete (html_renderer=%s)", html_renderer is not None)

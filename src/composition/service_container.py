@@ -177,6 +177,7 @@ class ServiceContainer:
             "fact_write_service": self.fact_write_service,
             "fact_management_adapter_factory": self.create_fact_management_adapter,
             "email_search_service": self.email_search_service,
+            "indexed_email_repo": self.indexed_email_repo,
         }
 
     def create_fact_management_adapter(

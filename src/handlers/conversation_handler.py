@@ -26,6 +26,7 @@ from ..utils.telemetry import start_span
 from ..utils.logging_context import set_log_context
 from ..config.settings import ConsolidationSettings
 from ..services.rich_content_service import RichContentService
+from ..services.user_notification_service import UserNotificationService
 
 # Content types that require external fetch + platform upload (not Block Kit)
 _MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file", "html_card"})
@@ -77,6 +78,7 @@ class ConversationHandler(ConversationHandlerPort):
         security_port: Optional[Any] = None,
         audio_service: Optional[AudioTranscriptionPort] = None,
         rich_content_service: Optional[RichContentService] = None,
+        notification_service: Optional[UserNotificationService] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -86,6 +88,7 @@ class ConversationHandler(ConversationHandlerPort):
         self.security_port = security_port  # Phase 4: v3 OUTPUT validation
         self.audio_service = audio_service
         self._rich_content_service = rich_content_service
+        self._notification_service = notification_service
 
     async def _deliver_rich_content(
         self,
@@ -200,6 +203,16 @@ class ConversationHandler(ConversationHandlerPort):
         if context.text:
             logger.info(f"📥 Received text ({len(context.text)} chars)")
         start_time = time.time()
+
+        # Persist last active channel for background notifications (best-effort).
+        if self._notification_service and hasattr(response_channel, "platform"):
+            asyncio.create_task(
+                self._notification_service.save_channel(
+                    user_id=context.user_id,
+                    platform=response_channel.platform,
+                    channel_id=response_channel.channel_id,
+                )
+            )
 
         message_parts: List[MessagePart] = []
         temp_files = []
@@ -493,16 +506,13 @@ class ConversationHandler(ConversationHandlerPort):
             # Save to History (without temporary file paths)
             # text = summary (compressed) or full (when optimization disabled)
             # full_text = always the full response, for tiered history loading
-            await session_store.append_messages_batch(
-                context.session_id,
-                [
-                    Message(role="user", parts=clean_message_parts),
-                    Message(role="model", parts=[MessagePart(
-                        text=history_text,
-                        full_text=response_text
-                    )])
-                ],
-                owner_id=context.user_id
+            await self._save_history_with_retry(
+                session_store=session_store,
+                session_id=context.session_id,
+                user_parts=clean_message_parts,
+                history_text=history_text,
+                response_text=response_text,
+                owner_id=context.user_id,
             )
 
             logger.info(f"🏁 END ConversationHandler.handle_message ({time.time() - start_time:.2f}s)")
@@ -523,6 +533,40 @@ class ConversationHandler(ConversationHandlerPort):
                     os.remove(path)
                 except Exception:
                     pass
+
+    async def _save_history_with_retry(
+        self,
+        session_store,
+        session_id: str,
+        user_parts: list,
+        history_text: str,
+        response_text: str,
+        owner_id: str,
+        max_attempts: int = 3,
+    ) -> None:
+        """Append conversation turn to history with retry for transient gRPC errors."""
+        _TRANSIENT = ("RST_STREAM", "UNAVAILABLE", "INTERNAL")
+        messages = [
+            Message(role="user", parts=user_parts),
+            Message(role="model", parts=[MessagePart(text=history_text, full_text=response_text)]),
+        ]
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await session_store.append_messages_batch(session_id, messages, owner_id=owner_id)
+                if attempt > 1:
+                    logger.info(f"✅ History saved after {attempt} attempts")
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_attempts and any(t in str(exc) for t in _TRANSIENT):
+                    delay = 0.5 * attempt
+                    logger.warning(f"⚠️ History save attempt {attempt} failed ({exc}), retrying in {delay}s…")
+                    await asyncio.sleep(delay)
+                else:
+                    raise
+
+        raise last_exc  # unreachable, but satisfies type checker
 
     async def handle_command(
         self,
@@ -620,10 +664,21 @@ class ConversationHandler(ConversationHandlerPort):
                     queue=self.consolidation_queue
                 )
 
-                await response_channel.send_message(
-                    f"✅ Консолідація завершена: оброблено {len(serialized)} повідомлень.",
-                    thread_id=context.thread_id
+                system_alert = (
+                    f"Consolidation of conversation history is complete. "
+                    f"{len(serialized)} messages were processed and new facts extracted into memory."
                 )
+                if self._notification_service:
+                    await self._notification_service.notify(
+                        user_id=context.user_id,
+                        account_id=context.account_id,
+                        system_alert=system_alert,
+                    )
+                else:
+                    await response_channel.send_message(
+                        f"✅ Consolidation complete: {len(serialized)} messages processed.",
+                        thread_id=context.thread_id
+                    )
             else:
                 await response_channel.send_message(
                     f"Невідома команда: `{command}`",

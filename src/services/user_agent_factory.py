@@ -44,6 +44,7 @@ from ..agents.web_search_light_agent import WebSearchLightAgent
 from ..agents.email_search_agent import EmailSearchAgent
 from ..agents.consolidation_agent import ConsolidationAgent
 from ..services.email_search_service import EmailSearchService
+from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -82,6 +83,7 @@ class UserAgentFactory:
         fact_write_service: FactWritePort,
         fact_management_adapter_factory: Callable,
         email_search_service: EmailSearchService,
+        indexed_email_repo: Optional[IndexedEmailRepository] = None,
     ) -> None:
         self.config = config
         self.env_config = env_config
@@ -103,6 +105,7 @@ class UserAgentFactory:
         self.fact_write_service = fact_write_service
         self.fact_management_adapter_factory = fact_management_adapter_factory
         self.email_search_service = email_search_service
+        self.indexed_email_repo = indexed_email_repo
 
         self._cache: Dict[str, Dict[str, object]] = {}
         self._cache_ttl = 3600

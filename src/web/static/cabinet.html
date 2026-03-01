@@ -331,6 +331,7 @@
 
           loadPlatforms();
           loadGmailStatus();
+          window._gmailPollInterval = setInterval(loadGmailStatus, 60000);
         } catch (e) {
           showToast("Please log in first", "error");
           setTimeout(() => (window.location.href = "/auth/login"), 2000);
@@ -451,6 +452,10 @@
       async function loadGmailStatus() {
         try {
           const res = await fetch(`${API}/api/gmail/status`, { credentials: "include" });
+          if (res.status === 401) {
+            clearInterval(window._gmailPollInterval);
+            return;
+          }
           if (!res.ok) throw new Error();
           renderGmailStatus(await res.json());
         } catch {
@@ -470,9 +475,16 @@
         }
 
         const email = data.email_address || "(unknown email)";
-        const indexedThrough = data.indexed_through
-          ? new Date(data.indexed_through).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+        const fmtDate = iso => iso
+          ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
           : null;
+        const coverageFrom = fmtDate(data.oldest_indexed_through);
+        const coverageTo   = fmtDate(data.indexed_through);
+        const coverageText = coverageFrom && coverageTo
+          ? `Coverage: <span class="font-medium text-gray-600">${coverageFrom} – ${coverageTo}</span>`
+          : coverageTo
+            ? `Indexed through: <span class="font-medium text-gray-600">${coverageTo}</span>`
+            : null;
 
         // State B/C: connected
         body.innerHTML = `
@@ -481,17 +493,23 @@
             <span class="font-medium text-gray-800 text-sm">${escapeHtml(email)}</span>
           </div>
           <p class="text-xs text-gray-400 mt-1">
-            ${indexedThrough ? `Indexed through: <span class="font-medium text-gray-600">${indexedThrough}</span>` : "Not indexed yet."}
+            ${coverageText ?? "Not indexed yet."}
           </p>
-          ${indexedThrough ? `<p class="text-xs mt-2"><button onclick="deleteGmailData(this)" class="text-red-400 hover:text-red-600 transition-colors">Delete email data</button></p>` : ""}
+          ${coverageTo ? `<p class="text-xs mt-2"><button onclick="deleteGmailData(this)" class="text-red-400 hover:text-red-600 transition-colors">Delete email data</button></p>` : ""}
         `;
 
+        const indexActive = !!data.indexing_active;
+        const activeJobId = data.active_job_id || null;
         headerBtn.innerHTML = `
           <div class="flex items-center gap-2">
             <button
-              onclick="triggerGmailIndex(this)"
-              class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors"
-            >Index</button>
+              ${indexActive ? "disabled" : "onclick=\"triggerGmailIndex(this)\""}
+              class="text-sm px-3 py-1.5 rounded-md transition-colors ${indexActive ? "bg-gray-200 text-gray-400 cursor-not-allowed" : "bg-indigo-500 text-white hover:bg-indigo-600"}"
+            >${indexActive ? "Indexing…" : "Index"}</button>
+            ${indexActive && activeJobId ? `<button
+              onclick="cancelGmailIndex('${activeJobId}', this)"
+              class="text-sm px-3 py-1.5 rounded-md transition-colors bg-red-100 text-red-600 hover:bg-red-200"
+            >Cancel</button>` : ""}
             <button
               onclick="disconnectGmail(this)"
               class="text-sm px-3 py-1.5 rounded-md transition-colors"
@@ -520,8 +538,9 @@
         const mode = document.querySelector('input[name="index-mode"]:checked').value;
         document.getElementById("backfill-date-row").classList.toggle("hidden", mode !== "backfill");
         document.getElementById("index-pages-row").classList.toggle("hidden", mode === "reindex");
-        // backfill: пусто = все страницы; incremental: сбрасываем в 1
+        // backfill/reindex: пусто = все страницы; incremental: сбрасываем в 1
         if (mode === "backfill") document.getElementById("index-pages-input").value = "";
+        if (mode === "reindex") document.getElementById("index-pages-input").value = "";
         if (mode === "incremental") document.getElementById("index-pages-input").value = "1";
       }
 
@@ -564,6 +583,9 @@
           document.getElementById("gmail-index-overlay").classList.add("hidden");
           if (res.status === 501) {
             showToast("Indexing not configured on server", "error");
+          } else if (res.status === 202) {
+            showToast("Indexing started in background. You'll be notified when done.", "success");
+            loadGmailStatus();
           } else if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             showToast(`Indexing failed: ${err.error || res.status}`, "error");
@@ -577,6 +599,31 @@
         } catch (e) {
           showToast(`Error: ${e.message}`, "error");
           btn.textContent = "Start";
+          btn.disabled = false;
+        }
+      }
+
+      async function cancelGmailIndex(jobId, btn) {
+        if (!confirm("Cancel indexing?\n\nThe current page will finish, then the job will stop.")) return;
+        btn.textContent = "Cancelling…";
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/api/gmail/jobs/${jobId}/cancel`, {
+            method: "POST",
+            credentials: "include",
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Cancel failed: ${err.error || res.status}`, "error");
+            btn.textContent = "Cancel";
+            btn.disabled = false;
+            return;
+          }
+          showToast("Indexing cancelled.", "success");
+          loadGmailStatus();
+        } catch (e) {
+          showToast(`Error: ${e.message}`, "error");
+          btn.textContent = "Cancel";
           btn.disabled = false;
         }
       }

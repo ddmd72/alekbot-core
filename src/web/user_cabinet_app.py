@@ -13,6 +13,8 @@ from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
+from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
+from ..ports.task_queue import TaskQueue
 from ..utils.logger import logger
 
 # Documentation owner (loaded from environment variable - Secret Manager)
@@ -29,6 +31,8 @@ def create_user_cabinet_blueprint(
     gmail_oauth_service: Optional[GmailOAuthService] = None,
     indexed_email_repo: Optional[IndexedEmailRepository] = None,
     email_indexing_service: Optional[EmailIndexingService] = None,
+    email_job_repo: Optional[EmailIndexingJobRepository] = None,
+    task_queue: Optional[TaskQueue] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -501,15 +505,28 @@ def create_user_cabinet_blueprint(
                 return jsonify({"connected": False}), 200
 
             indexed_through = None
+            oldest_indexed_through = None
             if indexed_email_repo:
                 state = await indexed_email_repo.get_indexing_state(g.user_id, "gmail")
                 if state:
                     indexed_through = state.indexed_through.isoformat() if state.indexed_through else None
+                    oldest_indexed_through = state.oldest_indexed_through.isoformat() if state.oldest_indexed_through else None
+
+            indexing_active = False
+            active_job_id = None
+            if email_job_repo:
+                latest_job = await email_job_repo.get_latest_job(g.user_id, "gmail")
+                if latest_job and latest_job.status == "running":
+                    indexing_active = True
+                    active_job_id = latest_job.job_id
 
             return jsonify({
                 "connected": True,
                 "email_address": creds.email_address or None,
                 "indexed_through": indexed_through,
+                "oldest_indexed_through": oldest_indexed_through,
+                "indexing_active": indexing_active,
+                "active_job_id": active_job_id,
             }), 200
         except Exception as exc:
             logger.error(f"Error fetching Gmail status: {exc}", exc_info=True)
@@ -519,32 +536,24 @@ def create_user_cabinet_blueprint(
     @auth_required
     async def gmail_index():
         """
-        Trigger synchronous Gmail indexing for the current user.
+        Trigger Gmail indexing for the current user.
 
         Request body (optional JSON):
           mode:           "incremental" | "reindex" | "backfill"  (default: "incremental")
-          max_pages:      int  — pages to fetch (1 page ≈ 100 emails). Default: 1.
-                                 Hard cap: GMAIL_INDEX_MAX_PAGES env var (default 50).
           backfill_until: str  — "YYYY-MM-DD" stop date for backfill mode.
+          max_pages:      int  — sync-only; ignored in async (Cloud Tasks) mode.
 
-        Runs synchronously — expect 30-120s per page. Use max_pages=1 for test runs.
+        Async path (production): returns 202 immediately with job_id.
+        Sync fallback (local dev): runs one page, returns job summary.
         """
         if not email_indexing_service or not oauth_credentials_port:
             return jsonify({"error": "Gmail indexing not configured"}), 501
 
-        # Parse request body
         body = await request.get_json(silent=True) or {}
-        server_cap = int(os.getenv("GMAIL_INDEX_MAX_PAGES", "50"))
 
         mode = body.get("mode", "incremental")
         if mode not in ("incremental", "reindex", "backfill"):
             return jsonify({"error": f"Invalid mode '{mode}'. Must be incremental, reindex, or backfill"}), 400
-
-        # reindex/backfill without explicit max_pages → no limit (process all pages)
-        if mode in ("reindex", "backfill") and "max_pages" not in body:
-            max_pages = None
-        else:
-            max_pages = min(int(body.get("max_pages", 1)), server_cap)
 
         backfill_until = None
         if raw_until := body.get("backfill_until"):
@@ -558,23 +567,44 @@ def create_user_cabinet_blueprint(
             if not creds:
                 return jsonify({"error": "Gmail not connected"}), 404
 
-            account_id = g.account_id
+            # Async path: Cloud Tasks (production)
+            if task_queue and email_job_repo:
+                job = email_indexing_service.create_job(
+                    user_id=g.user_id,
+                    provider="gmail",
+                    triggered_by="cabinet",
+                    mode=mode,
+                    account_id=g.account_id,
+                    backfill_until=backfill_until,
+                )
+                await task_queue.enqueue_email_indexing_task(job.job_id)
+                await email_job_repo.create_job(job)
+                logger.info(
+                    f"📧 Cabinet async indexing enqueued: user={g.user_id[:8]} "
+                    f"mode={mode} job={job.job_id[:8]}"
+                )
+                return jsonify({"job_id": job.job_id, "status": "running"}), 202
+
+            # Sync fallback: local dev (no task_queue configured)
+            server_cap = int(os.getenv("GMAIL_INDEX_MAX_PAGES", "50"))
+            if mode in ("reindex", "backfill") and "max_pages" not in body:
+                max_pages = None
+            else:
+                max_pages = min(int(body.get("max_pages", 1)), server_cap)
 
             logger.info(
-                f"📧 Cabinet indexing started: user={g.user_id[:8]} "
-                f"mode={mode} max_pages={max_pages} backfill_until={backfill_until}"
+                f"📧 Cabinet sync indexing: user={g.user_id[:8]} "
+                f"mode={mode} max_pages={max_pages}"
             )
-
             job = await email_indexing_service.start_job(
                 user_id=g.user_id,
-                account_id=account_id,
+                account_id=g.account_id,
                 credentials=creds,
                 triggered_by="cabinet",
                 max_pages=max_pages,
                 mode=mode,
                 backfill_until=backfill_until,
             )
-
             return jsonify({
                 "job_id": job.job_id,
                 "status": job.status,
@@ -587,6 +617,54 @@ def create_user_cabinet_blueprint(
         except Exception as exc:
             logger.error(f"Error running Gmail indexing: {exc}", exc_info=True)
             return jsonify({"error": "Indexing failed", "detail": str(exc)}), 500
+
+    @bp.route("/api/gmail/jobs/<job_id>", methods=["GET"])
+    @auth_required
+    async def gmail_job_status(job_id: str):
+        """Return current status and progress counters for a specific indexing job."""
+        if not email_job_repo:
+            return jsonify({"error": "Gmail integration not configured"}), 501
+        try:
+            job = await email_job_repo.get_job(job_id)
+            if not job or job.user_id != g.user_id:
+                return jsonify({"error": "Job not found"}), 404
+            return jsonify({
+                "job_id": job.job_id,
+                "status": job.status,
+                "mode": job.mode,
+                "emails_fetched": job.emails_fetched,
+                "emails_stored": job.emails_stored,
+                "emails_failed": job.emails_failed,
+                "has_more": bool(job.next_page_token),
+                "started_at": job.started_at.isoformat(),
+                "updated_at": job.updated_at.isoformat(),
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            }), 200
+        except Exception as exc:
+            logger.error(f"Error fetching job {job_id}: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/gmail/jobs/<job_id>/cancel", methods=["POST"])
+    @auth_required
+    async def gmail_cancel_job(job_id: str):
+        """Cancel a running indexing job. Worker will stop chaining on the next task."""
+        if not email_job_repo:
+            return jsonify({"error": "Gmail integration not configured"}), 501
+        try:
+            job = await email_job_repo.get_job(job_id)
+            if not job or job.user_id != g.user_id:
+                return jsonify({"error": "Job not found"}), 404
+            if job.status != "running":
+                return jsonify({"error": f"Job is not running (status: {job.status})"}), 409
+            await email_job_repo.update_job(job_id, {
+                "status": "cancelled",
+                "updated_at": __import__("datetime").datetime.utcnow(),
+            })
+            logger.info(f"📧 Job {job_id[:8]} cancelled by user {g.user_id[:8]}")
+            return jsonify({"status": "cancelled"}), 200
+        except Exception as exc:
+            logger.error(f"Error cancelling job {job_id}: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
 
     @bp.route("/api/gmail/disconnect", methods=["DELETE"])
     @auth_required

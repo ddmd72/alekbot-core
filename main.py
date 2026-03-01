@@ -47,6 +47,9 @@ from src.agents.email_classification_agent import EmailClassificationAgent
 from src.services.email_indexing_service import EmailIndexingService
 from src.services.prompt_builder import PromptBuilder
 from src.domain.user import UserBotConfig
+from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
+from src.adapters.notification_channel_factory import NotificationChannelFactory
+from src.services.user_notification_service import UserNotificationService
 
 
 async def main():
@@ -225,11 +228,12 @@ async def main():
             service_url = config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
             agent_task_queue = GcpTaskQueue(
                 project_id=config["GOOGLE_CLOUD_PROJECT"],
-                location="europe-west1",
+                location="us-central1",
                 queue_name=f"agent-tasks-{queue_suffix}",
                 service_url=service_url,
                 service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
             )
+            await agent_task_queue.create_queue_if_not_exists()
             logger.info(f"📬 Agent task queue initialized: agent-tasks-{queue_suffix}")
         else:
             logger.info("📬 Agent task queue: disabled (socket mode or no GCP project)")
@@ -425,6 +429,15 @@ async def main():
             embedding=container.embedding_service,
         )
 
+        # Notification service: stores last active channel, sends background alerts via QuickAgent
+        notification_state_repo = FirestoreNotificationStateAdapter(db_client=db_client, env_config=env_config)
+        notification_channel_factory = NotificationChannelFactory()  # adapters wired after creation below
+        notification_service = UserNotificationService(
+            state_repo=notification_state_repo,
+            channel_factory=notification_channel_factory,
+            coordinator=coordinator,
+        )
+
         # Create blueprints (will be registered on slack_adapter.quart_app)
         oauth_bp = create_oauth_blueprint(
             auth_service=auth_service,
@@ -446,6 +459,8 @@ async def main():
             gmail_oauth_service=gmail_oauth_service,
             indexed_email_repo=indexed_email_repo,
             email_indexing_service=email_indexing_service,
+            email_job_repo=email_job_repo,
+            task_queue=agent_task_queue,
         )
 
         logger.info("✅ OAuth + Cabinet services initialized")
@@ -499,7 +514,9 @@ async def main():
             consolidation_config=config.get("CONSOLIDATION"),
             audio_service=None,
             html_renderer=html_renderer,
+            notification_service=notification_service,
         )
+        notification_channel_factory.set_slack_adapter(slack_adapter)
 
         slack_adapter.register_handlers()
 
@@ -560,7 +577,9 @@ async def main():
                             consolidation_queue=consolidation_queue,
                             consolidation_config=config.get("CONSOLIDATION"),
                             html_renderer=html_renderer,
+                            notification_service=notification_service,
                         )
+                        notification_channel_factory.set_telegram_adapter(telegram_adapter)
 
                         # Register Telegram blueprint
                         telegram_bp = telegram_adapter.get_blueprint()
@@ -631,6 +650,56 @@ async def main():
                     if payload.get("task_type") == "agent_execution":
                         result = await agent_worker_handler.handle_task(payload)
                         return jsonify(result), 200
+                    elif payload.get("task_type") == "email_indexing":
+                        job_id = payload.get("job_id")
+                        logger.info(f"📧 [Worker] email_indexing received: job_id={job_id}")
+                        if not job_id:
+                            return jsonify({"error": "missing job_id"}), 400
+                        job = await email_job_repo.get_job(job_id)
+                        if not job:
+                            return jsonify({"error": "job not found"}), 404
+                        if job.status != "running":
+                            logger.info(f"📧 [Worker] Job {job_id[:8]} is {job.status}, skipping")
+                            return jsonify({"status": "skipped", "reason": job.status}), 200
+                        creds = await oauth_credentials_port.get_credentials(job.user_id, job.provider)
+                        if not creds:
+                            await email_job_repo.update_job(job_id, {"status": "failed_auth", "updated_at": __import__("datetime").datetime.utcnow()})
+                            return jsonify({"error": "oauth credentials missing"}), 400
+                        job = await email_indexing_service.run_indexing_job(
+                            job=job,
+                            credentials=creds,
+                            account_id=job.account_id,
+                            max_pages=1,
+                            mode=job.mode,
+                            backfill_until=job.backfill_until,
+                        )
+                        if job.next_page_token and agent_task_queue:
+                            await agent_task_queue.enqueue_email_indexing_task(job.job_id)
+                            logger.info(f"📬 [Worker] Re-enqueued email indexing page for job {job.job_id[:8]}")
+                        elif not job.next_page_token:
+                            try:
+                                await notification_service.notify(
+                                    user_id=job.user_id,
+                                    account_id=job.account_id,
+                                    system_alert=email_indexing_service.completion_alert(job),
+                                )
+                            except Exception as notify_exc:
+                                logger.warning(f"⚠️ [Worker] Notification failed (non-critical): {notify_exc}")
+                        return jsonify({"status": "ok", "has_more": bool(job.next_page_token)}), 200
+                    elif payload.get("task_type") == "email_indexing_watchdog":
+                        # Marks stale "running" jobs as failed. Triggered by Cloud Scheduler.
+                        import datetime as _dt
+                        stale_threshold = _dt.datetime.utcnow() - _dt.timedelta(hours=2)
+                        stale_jobs = await email_job_repo.get_stale_running_jobs(stale_threshold)
+                        marked = 0
+                        for stale_job in stale_jobs:
+                            await email_job_repo.update_job(stale_job.job_id, {
+                                "status": "failed",
+                                "updated_at": _dt.datetime.utcnow(),
+                            })
+                            marked += 1
+                            logger.warning(f"⏰ [Watchdog] Marked stale job {stale_job.job_id[:8]} as failed")
+                        return jsonify({"status": "ok", "marked_failed": marked}), 200
                     elif payload.get("task_type") == "consolidation":
                         user_id = payload.get("user_id")
                         factory = _agent_factory_ref[0]

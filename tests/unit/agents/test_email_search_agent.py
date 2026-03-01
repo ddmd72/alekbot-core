@@ -151,6 +151,8 @@ class TestExecuteSuccess:
             alternative_query=VALID_KEYS["alternative_query"],
             tags=VALID_KEYS["tags"],
             user_id="user123",
+            date_from=None,
+            date_to=None,
         )
 
     async def test_uses_raw_query_when_extract_returns_empty(

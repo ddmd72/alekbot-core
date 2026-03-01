@@ -30,6 +30,7 @@ DEV_USER_ID ?= $(USER_ID)
 PROD_USER_ID ?= $(USER_ID)
 
 
+
 # ============================================================================
 # PHONY TARGETS (targets that don't create files)
 # ============================================================================
@@ -38,6 +39,7 @@ PROD_USER_ID ?= $(USER_ID)
 .PHONY: install install-dev clean
 .PHONY: dev dev-emulator run test lint format kill-local
 .PHONY: deploy deploy-dev deploy-indexes
+.PHONY: create-debug-bucket
 .PHONY: start stop restart start-dev stop-dev
 .PHONY: logs logs-dev logs-tail logs-perf logs-dev-tail
 .PHONY: services status auth
@@ -216,12 +218,12 @@ deploy-dev: ## Build + deploy to Cloud Run (development)
 	@echo "🚀 Build + deploy to Cloud Run (DEVELOPMENT)..."
 	@echo "Using cloudbuild-dev.yaml configuration"
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(OAUTH_REDIRECT_URI_DEV) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(OAUTH_REDIRECT_URI_DEV),_DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET) .
 	@echo "✅ Development deployment complete!"
 
-deploy-indexes: ## Deploy Firestore indexes from firestore.indexes.json
+deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json
 	@echo "🚀 Deploying Firestore indexes..."
-	$(PYTHON) scripts/infrastructure/deploy_firestore_indexes.py firestore.indexes.json $(PROJECT_ID)
+	$(PYTHON) scripts/infrastructure/deploy_firestore_indexes.py config/firestore.indexes.json $(PROJECT_ID)
 	@echo "✅ Indexes deployment process completed!"
 
 # ============================================================================
@@ -405,3 +407,23 @@ delete-all: ## Delete ALL services (DANGEROUS)
 	@gcloud run services delete $(SERVICE_NAME) --region=$(REGION) --quiet 2>/dev/null || echo "Production service not found"
 	@gcloud run services delete $(SERVICE_NAME_DEV) --region=$(REGION) --quiet 2>/dev/null || echo "Development service not found"
 	@echo "✅ All services deleted"
+
+# ============================================================================
+# DEBUG INFRASTRUCTURE
+# ============================================================================
+
+create-debug-bucket: ## Create private GCS bucket for agent prompt/response debug logs
+	@[ -n "$(DEBUG_PROMPTS_BUCKET)" ] || (echo "❌ DEBUG_PROMPTS_BUCKET is not set in .env" && exit 1)
+	@echo "🪣 Creating debug bucket: $(DEBUG_PROMPTS_BUCKET)"
+	gcloud storage buckets create gs://$(DEBUG_PROMPTS_BUCKET) \
+		--project=$(PROJECT_ID) \
+		--location=$(REGION) \
+		--uniform-bucket-level-access \
+		--no-public-access-prevention
+	@echo "🔒 Granting Cloud Run SA write access..."
+	$(eval PROJECT_NUMBER := $(shell gcloud projects describe $(PROJECT_ID) --format="value(projectNumber)"))
+	gcloud storage buckets add-iam-policy-binding gs://$(DEBUG_PROMPTS_BUCKET) \
+		--member="serviceAccount:$(PROJECT_NUMBER)-compute@developer.gserviceaccount.com" \
+		--role="roles/storage.objectCreator"
+	@echo "✅ Bucket ready. Add to .env: DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET)"
+	@echo "   Add to Cloud Build trigger substitutions: _DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET)"

@@ -63,10 +63,13 @@ class ResponseChannel(Protocol):
     """
     Interface for sending responses back to the user.
     Each adapter implements this protocol for their specific platform.
-    
+
     This abstraction allows ConversationHandler to be completely platform-agnostic.
     """
-    
+
+    platform: str       # "slack" | "telegram" — used by UserNotificationService
+    channel_id: str     # platform channel identifier — used by UserNotificationService
+
     @property
     @abstractmethod
     def max_message_length(self) -> int:

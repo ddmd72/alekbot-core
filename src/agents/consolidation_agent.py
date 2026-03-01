@@ -409,7 +409,8 @@ class ConsolidationAgent(BaseAgent):
                     system_instruction=system_prompt,
                     messages=history,
                     tools=self._get_tool_declarations(),
-                    temperature=0.7
+                    temperature=0.7,
+                    timeout=500,
                 )
 
                 # Call LLM
@@ -905,7 +906,8 @@ class ConsolidationAgent(BaseAgent):
             model_name=self.model_name,
             system_instruction="You are Life Chronicler. Return only valid JSON.",
             messages=[Message(role="user", parts=[MessagePart(text=prompt)])],
-            temperature=0.7
+            temperature=0.7,
+            timeout=500,
         )
         response = await self._llm.generate_content(request=request)
 

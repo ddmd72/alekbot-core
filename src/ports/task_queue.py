@@ -55,3 +55,14 @@ class TaskQueue(Protocol):
         Worker receives payload with task_type="consolidation".
         """
         ...
+
+    async def enqueue_email_indexing_task(self, job_id: str) -> str:
+        """
+        Enqueue one email indexing page for a running job.
+
+        Returns task name (Cloud Tasks task ID).
+        Worker receives payload with task_type="email_indexing" + job_id.
+        One Cloud Tasks request = one Gmail page (~300 emails) = full CPU allocation.
+        Worker re-enqueues if job.next_page_token is set after processing.
+        """
+        ...

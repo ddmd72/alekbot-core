@@ -29,6 +29,10 @@ _VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector", "attachments_vecto
 # RRF constant — standard value used throughout the codebase
 _RRF_K = 60
 
+# Cosine distance threshold: results farther than this are discarded by Firestore
+# before RRF scoring. Cosine distance: 0.0 = identical, 1.0 = orthogonal.
+_MAX_COSINE_DISTANCE = 0.4
+
 
 class FirestoreIndexedEmailRepository(IndexedEmailRepository):
 
@@ -122,10 +126,13 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
         vectors: Dict[str, List[float]],
         limit: int = 10,
         state: str = "current",
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
     ) -> List[IndexedEmail]:
         """
         Multi-vector RRF search. For each key in `vectors`, fires a separate
         Firestore find_nearest query then combines results via RRF.
+        date_from / date_to: optional pre-filter on email_date field.
         """
         active_vectors = {k: v for k, v in vectors.items() if v is not None}
         if not active_vectors:
@@ -134,17 +141,22 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
         async def _query_one(
             field_name: str, query_vector: List[float]
         ) -> List:
-            vq = (
+            base = (
                 self.collection
                 .where(filter=FieldFilter("user_id", "==", user_id))
                 .where(filter=FieldFilter("state", "==", state))
-                .find_nearest(
+            )
+            if date_from is not None:
+                base = base.where(filter=FieldFilter("email_date", ">=", date_from))
+            if date_to is not None:
+                base = base.where(filter=FieldFilter("email_date", "<=", date_to))
+            vq = base.find_nearest(
                     vector_field=field_name,
                     query_vector=query_vector,
                     distance_measure=DistanceMeasure.COSINE,
                     limit=limit * 2,  # Extra headroom for RRF merging
+                    distance_threshold=_MAX_COSINE_DISTANCE,
                 )
-            )
             t0 = asyncio.get_event_loop().time()
             async with _EMAIL_FIND_NEAREST_SEMAPHORE:
                 docs = await vq.get()
@@ -202,13 +214,12 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
         if not doc.exists:
             return None
         data = doc.to_dict()
-        indexed_through = self._strip_tz(data.get("indexed_through"))
-        oldest_indexed_through = self._strip_tz(data.get("oldest_indexed_through"))
         return IndexingState(
             user_id=data["user_id"],
             provider=data["provider"],
-            indexed_through=indexed_through,
-            oldest_indexed_through=oldest_indexed_through,
+            indexed_through=self._strip_tz(data.get("indexed_through")),
+            oldest_indexed_through=self._strip_tz(data.get("oldest_indexed_through")),
+            cursor_reindex=self._strip_tz(data.get("cursor_reindex")),
         )
 
     async def update_indexing_state(self, state: IndexingState) -> None:
@@ -218,11 +229,14 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
             "provider": state.provider,
             "indexed_through": state.indexed_through,
             "oldest_indexed_through": state.oldest_indexed_through,
+            "cursor_reindex": state.cursor_reindex,
         })
         logger.debug(
             f"📌 Indexing state updated: user={state.user_id[:8]} "
-            f"provider={state.provider} through={state.indexed_through} "
-            f"oldest={state.oldest_indexed_through}"
+            f"provider={state.provider} "
+            f"indexed_through={state.indexed_through} "
+            f"oldest={state.oldest_indexed_through} "
+            f"cursor_reindex={state.cursor_reindex}"
         )
 
     async def clear_indexing_state(self, user_id: str, provider: str) -> None:

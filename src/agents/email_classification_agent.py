@@ -28,6 +28,7 @@ from ..ports.email_classifier_port import EmailClassifierPort
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.llm_service import AgentExecutionContext, LLMRequest, LLMResponse, LLMService, Message, MessagePart, PROMPT_CACHE_BOUNDARY, ToolCall
 from ..ports.prompt_builder_port import PromptBuilderPort
+from ..utils.debug_logger import get_debug_logger
 from ..utils.logger import logger
 
 MAX_TURNS = 4
@@ -132,6 +133,14 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
             f"system_instruction ({len(system_instruction)} chars):\n{system_instruction}"
         )
 
+        debug_logger = get_debug_logger()
+        debug_logger.log_prompt(
+            agent_name="email_classification",
+            prompt=emails_json,
+            metadata={"model": self._model_name, "emails": len(emails), "tool_calling": has_tools},
+            system_instruction=system_instruction,
+        )
+
         parse_retries = 0
 
         try:
@@ -142,7 +151,7 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
                     messages=history,
                     tools=tool_declarations,
                     temperature=0.0,
-                    max_tokens=32000,
+                    max_tokens=65535,
                     response_mime_type="application/json" if not has_tools else None,
                     disable_safety=True,
                     enable_reasoning=True,
@@ -162,6 +171,16 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
                     raw = response.text or ""
                     logger.debug(
                         f"classify_batch: final response turn {turn} ({len(raw)} chars):\n{raw}"
+                    )
+                    debug_logger.log_response(
+                        agent_name="email_classification",
+                        response=raw,
+                        metadata={
+                            "model": self._model_name,
+                            "turn": turn,
+                            "emails": len(emails),
+                            **({"tokens": {"in": response.usage_metadata.prompt_tokens, "out": response.usage_metadata.completion_tokens}} if response.usage_metadata else {}),
+                        },
                     )
                     try:
                         results = self._parse_response(raw, emails)

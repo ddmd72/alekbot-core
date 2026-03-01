@@ -81,6 +81,7 @@ class LLMRequest(BaseModel):
     disable_safety: bool = False
     use_grounding: bool = False  # Request native search grounding; adapter decides how to implement
     enable_reasoning: bool = False  # Enable extended reasoning/thinking; ignored if provider doesn't support it
+    timeout: Optional[int] = None  # Request timeout in seconds; None = no limit
 
 
 class LLMResponse(BaseModel):

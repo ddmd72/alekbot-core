@@ -6,6 +6,7 @@ Collection: {env}_email_indexing_jobs_v1
 Doc ID: job_id (UUID set by caller)
 """
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from google.cloud import firestore
@@ -37,7 +38,15 @@ class FirestoreEmailJobRepository(EmailIndexingJobRepository):
 
     async def update_job(self, job_id: str, updates: Dict[str, Any]) -> None:
         """Partial update called after each successful chunk."""
-        await self.collection.document(job_id).update(updates)
+        # DatetimeWithNanoseconds is a datetime subclass returned by Firestore reads.
+        # Writing it back fails in some SDK versions: '_nanosecond' attribute missing.
+        # Normalize any datetime subclass to a plain datetime before the write.
+        sanitized = {
+            k: datetime(v.year, v.month, v.day, v.hour, v.minute, v.second, v.microsecond, v.tzinfo)
+            if isinstance(v, datetime) and type(v) is not datetime else v
+            for k, v in updates.items()
+        }
+        await self.collection.document(job_id).update(sanitized)
         logger.debug(f"📋 Job updated: {job_id} fields={list(updates.keys())}")
 
     async def get_job(self, job_id: str) -> Optional[IndexingJob]:
@@ -69,6 +78,16 @@ class FirestoreEmailJobRepository(EmailIndexingJobRepository):
             .where(filter=FieldFilter("user_id", "==", user_id))
             .order_by("started_at", direction=firestore.Query.DESCENDING)
             .limit(limit)
+        )
+        docs = await query.get()
+        return [IndexingJob(**doc.to_dict()) for doc in docs]
+
+    async def get_stale_running_jobs(self, updated_before: datetime) -> List[IndexingJob]:
+        """Return running jobs not updated since updated_before (zombie detection)."""
+        query = (
+            self.collection
+            .where(filter=FieldFilter("status", "==", "running"))
+            .where(filter=FieldFilter("updated_at", "<", updated_before))
         )
         docs = await query.get()
         return [IndexingJob(**doc.to_dict()) for doc in docs]

@@ -25,6 +25,7 @@ Routing: execute() dispatches on payload keys:
 
 import json
 import time
+from datetime import datetime
 from typing import List, Optional
 
 from ..agents.base_agent import BaseAgent
@@ -207,10 +208,13 @@ class EmailSearchAgent(BaseAgent):
         primary_query = keys.get("primary_query") or query
         alternative_query = keys.get("alternative_query") or query
         tags: List[str] = keys.get("tags") or []
+        date_from = self._parse_date(keys.get("date_from"))
+        date_to = self._parse_date(keys.get("date_to"))
 
         logger.info(
             f"📬 EmailSearchAgent: primary='{primary_query[:50]}' "
-            f"alt='{alternative_query[:50]}' tags={tags}"
+            f"alt='{alternative_query[:50]}' tags={tags} "
+            f"date_from={date_from} date_to={date_to}"
         )
 
         # Step 2: 7-stream multi-vector RRF search
@@ -220,6 +224,8 @@ class EmailSearchAgent(BaseAgent):
                 alternative_query=alternative_query,
                 tags=tags,
                 user_id=user_id,
+                date_from=date_from,
+                date_to=date_to,
             )
         except Exception as exc:
             logger.error(f"📬 EmailSearchAgent: vector_search failed: {exc}", exc_info=True)
@@ -256,6 +262,21 @@ class EmailSearchAgent(BaseAgent):
                 "tags": tags,
             },
         )
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_date(value: object) -> Optional[datetime]:
+        """Parse a YYYY-MM-DD string from the LLM output into a datetime. Returns None on any error."""
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            logger.warning(f"📬 EmailSearchAgent: could not parse date '{value}', ignoring")
+            return None
 
     # ------------------------------------------------------------------
     # Query extraction (used by search_emails only)

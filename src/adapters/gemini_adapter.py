@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Any, Optional, Dict
 from google import genai
 from google.genai import types
@@ -70,6 +71,7 @@ class GeminiAdapter(LLMService):
         disable_safety: bool = False
         use_grounding: bool = False
         enable_reasoning: bool = False
+        request_timeout: Optional[int] = None
         if request:
             model_name = request.model_name
             system_instruction = request.system_instruction
@@ -85,6 +87,7 @@ class GeminiAdapter(LLMService):
             disable_safety = request.disable_safety
             use_grounding = request.use_grounding
             enable_reasoning = request.enable_reasoning
+            request_timeout = request.timeout
             stream_callback = None
 
         # Gemini does not support prompt caching — strip the boundary marker transparently.
@@ -154,7 +157,13 @@ class GeminiAdapter(LLMService):
             response_json_schema=self._to_json_schema(response_schema) if use_json_schema else None,
             response_schema=None if use_json_schema else response_schema,
             safety_settings=safety_settings,
-            thinking_config=types.ThinkingConfig(thinking_budget=-1) if enable_reasoning else None,
+            thinking_config=(
+                types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH)
+                if enable_reasoning and model_name == "gemini-flash-latest"
+                else types.ThinkingConfig(thinking_budget=-1)
+                if enable_reasoning
+                else None
+            ),
         )
 
         if stream_callback:
@@ -171,9 +180,10 @@ class GeminiAdapter(LLMService):
                 ]
             )
             full_text = ""
-            stream = await self.client.aio.models.generate_content_stream(
+            _stream_coro = self.client.aio.models.generate_content_stream(
                 model=model_name, contents=contents, config=config
             )
+            stream = await (asyncio.wait_for(_stream_coro, timeout=request_timeout) if request_timeout else _stream_coro)
             async for chunk in stream:
                 chunk_text = self._extract_text(chunk)
                 full_text += chunk_text
@@ -192,9 +202,10 @@ class GeminiAdapter(LLMService):
                 for content in contents
             ]
         )
-        response = await self.client.aio.models.generate_content(
+        _gen_coro = self.client.aio.models.generate_content(
             model=model_name, contents=contents, config=config
         )
+        response = await (asyncio.wait_for(_gen_coro, timeout=request_timeout) if request_timeout else _gen_coro)
         candidate_count = len(getattr(response, "candidates", []) or [])
         raw_parts_count = None
         if response.candidates:

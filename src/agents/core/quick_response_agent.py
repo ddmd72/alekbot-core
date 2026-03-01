@@ -146,7 +146,8 @@ class QuickResponseAgent(BaseAgent):
             return False
 
         text = message.payload.get("text", "")
-        return bool(text)
+        parts = message.context.get("current_message_parts", [])
+        return bool(text) or bool(parts)
     
     async def execute(self, message: AgentMessage) -> AgentResponse:
         """

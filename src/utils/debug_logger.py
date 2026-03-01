@@ -7,11 +7,14 @@ Controlled via DEBUG_PROMPTS environment variable.
 
 Features:
 - Environment-controlled (off by default in production)
-- Automatic file rotation (keeps last N files)
+- GCS backend when DEBUG_PROMPTS_BUCKET is set (Cloud Run mode)
+- Local filesystem fallback for local development
+- Automatic file rotation (local mode only, keeps last N files)
 - Structured output with metadata
 - Safe for concurrent use
 
 Session 2026-02-16: Added tool call logging for Deliberate Fact Management
+Session 2026-03-01: Added GCS backend (DEBUG_PROMPTS_BUCKET env var)
 """
 
 import os
@@ -25,13 +28,16 @@ from .logger import logger
 class PromptDebugLogger:
     """
     Debug logger for agent prompts and LLM responses.
-    
+
+    When DEBUG_PROMPTS_BUCKET is set → writes to GCS (Cloud Run mode).
+    When not set → writes to local filesystem (local dev mode).
+
     Usage:
         debug_logger = PromptDebugLogger()
         debug_logger.log_prompt("smart_agent", prompt, metadata={"user": "123"})
         debug_logger.log_response("smart_agent", response, metadata={"tokens": 1000})
     """
-    
+
     def __init__(
         self,
         enabled: Optional[bool] = None,
@@ -40,24 +46,44 @@ class PromptDebugLogger:
     ):
         """
         Initialize debug logger.
-        
+
         Args:
             enabled: Override for DEBUG_PROMPTS env var (None = read from env)
-            base_dir: Directory to store debug files
-            max_files: Maximum number of files to keep per agent
+            base_dir: Directory to store debug files (local mode only)
+            max_files: Maximum number of files to keep per agent (local mode only)
         """
         if enabled is None:
             enabled = os.getenv("DEBUG_PROMPTS", "false").lower() == "true"
-        
+
         self.enabled = enabled
         self.base_dir = Path(base_dir)
         self.max_files = max_files
-        
+        self._gcs_bucket_name: Optional[str] = os.getenv("DEBUG_PROMPTS_BUCKET")
+        self._gcs_client = None
+
         if self.enabled:
-            self.base_dir.mkdir(exist_ok=True)
-            logger.info(
-                f"🔍 [PromptDebugLogger] Enabled (max_files={max_files}, dir={base_dir})"
-            )
+            if self._gcs_bucket_name:
+                logger.info(
+                    f"🔍 [PromptDebugLogger] Enabled → GCS bucket: {self._gcs_bucket_name}"
+                )
+            else:
+                self.base_dir.mkdir(exist_ok=True)
+                logger.info(
+                    f"🔍 [PromptDebugLogger] Enabled → local dir: {base_dir} (max_files={max_files})"
+                )
+
+    def _gcs_upload(self, content: str, blob_name: str) -> None:
+        """Upload content to GCS. Failures are non-fatal (warning only)."""
+        try:
+            from google.cloud import storage  # lazy import
+            if self._gcs_client is None:
+                self._gcs_client = storage.Client()
+            bucket = self._gcs_client.bucket(self._gcs_bucket_name)
+            blob = bucket.blob(blob_name)
+            blob.upload_from_string(content, content_type="text/plain; charset=utf-8")
+            logger.info(f"🔍 [PromptDebugLogger] GCS upload: gs://{self._gcs_bucket_name}/{blob_name}")
+        except Exception as e:
+            logger.warning(f"⚠️ [PromptDebugLogger] GCS upload failed ({blob_name}): {e}")
     
     def log_prompt(
         self,
@@ -80,41 +106,45 @@ class PromptDebugLogger:
         """
         if not self.enabled:
             return None
-        
+
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            now = datetime.now()
+            timestamp = now.strftime("%Y%m%d_%H%M%S")
             filename = f"{agent_name}_prompt_{timestamp}.txt"
-            filepath = self.base_dir / filename
-            
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write("=" * 80 + "\n")
-                f.write(f"AGENT: {agent_name}\n")
-                f.write(f"TIMESTAMP: {datetime.now().isoformat()}\n")
 
-                if metadata:
-                    if "model" in metadata:
-                        f.write(f"MODEL: {metadata['model']}\n")
-                    rest = {k: v for k, v in metadata.items() if k != "model"}
-                    if rest:
-                        f.write(f"METADATA: {rest}\n")
+            lines = []
+            lines.append("=" * 80)
+            lines.append(f"AGENT: {agent_name}")
+            lines.append(f"TIMESTAMP: {now.isoformat()}")
+            if metadata:
+                if "model" in metadata:
+                    lines.append(f"MODEL: {metadata['model']}")
+                rest = {k: v for k, v in metadata.items() if k != "model"}
+                if rest:
+                    lines.append(f"METADATA: {rest}")
+            lines.append("=" * 80)
+            lines.append("")
+            if system_instruction:
+                lines.append("=== SYSTEM INSTRUCTION ===")
+                lines.append(system_instruction)
+                lines.append("")
+            lines.append("=== PROMPT ===")
+            lines.append(prompt)
+            content = "\n".join(lines)
 
-                f.write("=" * 80 + "\n\n")
+            if self._gcs_bucket_name:
+                blob_name = f"{agent_name}/{now.strftime('%Y-%m-%d')}/prompt_{timestamp}.txt"
+                self._gcs_upload(content, blob_name)
+                return f"gs://{self._gcs_bucket_name}/{blob_name}"
+            else:
+                filepath = self.base_dir / filename
+                filepath.write_text(content, encoding="utf-8")
+                self._rotate_files(agent_name, "prompt")
+                logger.info(f"🔍 [PromptDebugLogger] Saved prompt: {filepath}")
+                return str(filepath)
 
-                if system_instruction:
-                    f.write("=== SYSTEM INSTRUCTION ===\n")
-                    f.write(system_instruction)
-                    f.write("\n\n")
-
-                f.write("=== PROMPT ===\n")
-                f.write(prompt)
-            
-            self._rotate_files(agent_name, "prompt")
-            
-            logger.info(f"🔍 [PromptDebugLogger] Saved prompt: {filepath}")
-            return str(filepath)
-            
         except Exception as e:
-            logger.warning(f"⚠️  [PromptDebugLogger] Failed to log prompt: {e}")
+            logger.warning(f"⚠️ [PromptDebugLogger] Failed to log prompt: {e}")
             return None
     
     def log_response(
@@ -136,37 +166,43 @@ class PromptDebugLogger:
         """
         if not self.enabled:
             return None
-        
+
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            now = datetime.now()
+            timestamp = now.strftime("%Y%m%d_%H%M%S")
             filename = f"{agent_name}_response_{timestamp}.txt"
-            filepath = self.base_dir / filename
-            
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write("=" * 80 + "\n")
-                f.write(f"AGENT: {agent_name}\n")
-                f.write(f"TIMESTAMP: {datetime.now().isoformat()}\n")
 
-                if metadata:
-                    if "model" in metadata:
-                        f.write(f"MODEL: {metadata['model']}\n")
-                    if "tokens" in metadata:
-                        f.write(f"TOKENS: {metadata['tokens']}\n")
-                    rest = {k: v for k, v in metadata.items() if k not in ("model", "tokens")}
-                    if rest:
-                        f.write(f"METADATA: {rest}\n")
+            lines = []
+            lines.append("=" * 80)
+            lines.append(f"AGENT: {agent_name}")
+            lines.append(f"TIMESTAMP: {now.isoformat()}")
+            if metadata:
+                if "model" in metadata:
+                    lines.append(f"MODEL: {metadata['model']}")
+                if "tokens" in metadata:
+                    lines.append(f"TOKENS: {metadata['tokens']}")
+                rest = {k: v for k, v in metadata.items() if k not in ("model", "tokens")}
+                if rest:
+                    lines.append(f"METADATA: {rest}")
+            lines.append("=" * 80)
+            lines.append("")
+            lines.append("=== LLM RESPONSE ===")
+            lines.append(response)
+            content = "\n".join(lines)
 
-                f.write("=" * 80 + "\n\n")
-                f.write("=== LLM RESPONSE ===\n")
-                f.write(response)
-            
-            self._rotate_files(agent_name, "response")
-            
-            logger.info(f"🔍 [PromptDebugLogger] Saved response: {filepath}")
-            return str(filepath)
-            
+            if self._gcs_bucket_name:
+                blob_name = f"{agent_name}/{now.strftime('%Y-%m-%d')}/response_{timestamp}.txt"
+                self._gcs_upload(content, blob_name)
+                return f"gs://{self._gcs_bucket_name}/{blob_name}"
+            else:
+                filepath = self.base_dir / filename
+                filepath.write_text(content, encoding="utf-8")
+                self._rotate_files(agent_name, "response")
+                logger.info(f"🔍 [PromptDebugLogger] Saved response: {filepath}")
+                return str(filepath)
+
         except Exception as e:
-            logger.warning(f"⚠️  [PromptDebugLogger] Failed to log response: {e}")
+            logger.warning(f"⚠️ [PromptDebugLogger] Failed to log response: {e}")
             return None
     
     def log_tool_calls(
@@ -198,31 +234,35 @@ class PromptDebugLogger:
         """
         if not self.enabled:
             return None
-        
+
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{agent_name}_tools_{timestamp}.json"
-            filepath = self.base_dir / filename
-            
+            now = datetime.now()
+            timestamp = now.strftime("%Y%m%d_%H%M%S")
+
             log_data = {
                 "agent": agent_name,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now.isoformat(),
                 "metadata": metadata or {},
                 "tool_calls": tool_calls,
                 "tool_results": tool_results
             }
-            
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(log_data, f, indent=2, ensure_ascii=False)
-            
-            self._rotate_files(agent_name, "tools")
-            
-            logger.info(
-                f"🔍 [PromptDebugLogger] Saved tool calls: {filepath} "
-                f"({len(tool_calls)} calls, {len(tool_results)} results)"
-            )
-            return str(filepath)
-            
+
+            if self._gcs_bucket_name:
+                blob_name = f"{agent_name}/{now.strftime('%Y-%m-%d')}/tools_{timestamp}.json"
+                self._gcs_upload(json.dumps(log_data, indent=2, ensure_ascii=False), blob_name)
+                return f"gs://{self._gcs_bucket_name}/{blob_name}"
+            else:
+                filename = f"{agent_name}_tools_{timestamp}.json"
+                filepath = self.base_dir / filename
+                with open(filepath, "w", encoding="utf-8") as f:
+                    json.dump(log_data, f, indent=2, ensure_ascii=False)
+                self._rotate_files(agent_name, "tools")
+                logger.info(
+                    f"🔍 [PromptDebugLogger] Saved tool calls: {filepath} "
+                    f"({len(tool_calls)} calls, {len(tool_results)} results)"
+                )
+                return str(filepath)
+
         except Exception as e:
             logger.warning(f"⚠️  [PromptDebugLogger] Failed to log tool calls: {e}")
             return None
@@ -256,15 +296,14 @@ class PromptDebugLogger:
         """
         if not self.enabled:
             return None
-        
+
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{agent_name}_summary_{timestamp}.json"
-            filepath = self.base_dir / filename
-            
+            now = datetime.now()
+            timestamp = now.strftime("%Y%m%d_%H%M%S")
+
             summary_data = {
                 "agent": agent_name,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now.isoformat(),
                 "metadata": metadata or {},
                 "operations": operations,
                 "summary": {
@@ -272,18 +311,23 @@ class PromptDebugLogger:
                     "by_action": self._count_by_action(operations)
                 }
             }
-            
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(summary_data, f, indent=2, ensure_ascii=False)
-            
-            self._rotate_files(agent_name, "summary")
-            
-            logger.info(
-                f"🔍 [PromptDebugLogger] Saved consolidation summary: {filepath} "
-                f"({len(operations)} operations)"
-            )
-            return str(filepath)
-            
+
+            if self._gcs_bucket_name:
+                blob_name = f"{agent_name}/{now.strftime('%Y-%m-%d')}/summary_{timestamp}.json"
+                self._gcs_upload(json.dumps(summary_data, indent=2, ensure_ascii=False), blob_name)
+                return f"gs://{self._gcs_bucket_name}/{blob_name}"
+            else:
+                filename = f"{agent_name}_summary_{timestamp}.json"
+                filepath = self.base_dir / filename
+                with open(filepath, "w", encoding="utf-8") as f:
+                    json.dump(summary_data, f, indent=2, ensure_ascii=False)
+                self._rotate_files(agent_name, "summary")
+                logger.info(
+                    f"🔍 [PromptDebugLogger] Saved consolidation summary: {filepath} "
+                    f"({len(operations)} operations)"
+                )
+                return str(filepath)
+
         except Exception as e:
             logger.warning(f"⚠️  [PromptDebugLogger] Failed to log summary: {e}")
             return None

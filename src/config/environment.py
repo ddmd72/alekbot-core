@@ -265,6 +265,16 @@ class EnvironmentConfig:
         prefix = self.firestore_collection_prefix
         return f"{prefix}email_indexing_jobs_v1"
 
+    @property
+    def user_notification_state_collection(self) -> str:
+        """
+        Last active messaging channel per user (platform + channel_id).
+        Dev: development_user_notification_state
+        Prod: user_notification_state
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}user_notification_state"
+
     # --- Infrastructure Collections (Stable) ---
 
     @property

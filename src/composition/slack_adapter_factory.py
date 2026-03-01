@@ -23,6 +23,7 @@ from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..services.user_agent_factory import UserAgentFactory
 from ..services.iam_service import IAMService
 from ..services.rich_content_service import RichContentService
+from ..services.user_notification_service import UserNotificationService
 from ..ports.file_service import FileService
 from ..ports.html_renderer_port import HtmlRendererPort
 from ..utils.logger import logger
@@ -52,6 +53,7 @@ class SlackAdapterFactory:
         consolidation_config=None,
         audio_service=None,
         html_renderer: Optional[HtmlRendererPort] = None,
+        notification_service: Optional[UserNotificationService] = None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -98,6 +100,7 @@ class SlackAdapterFactory:
             global_config=consolidation_config,
             audio_service=audio_service,
             rich_content_service=rich_content_service,
+            notification_service=notification_service,
         )
 
         if env_config.is_socket_mode:

@@ -1,6 +1,6 @@
 # RFC: Email Indexing System (Gmail + Future Providers)
 
-**Status:** Phases 1–4 Complete
+**Status:** Phases 1–7 Complete
 **Date:** 2026-02-11
 **Updated:** 2026-03-01
 **Owner:** AI Engineering
@@ -203,12 +203,16 @@ class IndexedEmailRepository(ABC):
         vectors: Dict[str, List[float]],
         limit: int = 10,
         state: str = "current",
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
     ) -> List[IndexedEmail]:
         """
         Multi-vector RRF search across provided vector fields.
         vectors keys: "vector" | "tags_vector" | "metadata_vector" | "attachments_vector"
         Absent keys are skipped (e.g., attachments_vector absent → skip that query).
         Returns top-N by RRF score, filtered by user_id and state.
+        date_from / date_to: optional Firestore pre-filter on email_date field.
+        Requires dedicated vector indexes that include email_date — see §3.7.
         """
 
     @abstractmethod
@@ -219,7 +223,9 @@ class IndexedEmailRepository(ABC):
 
     @abstractmethod
     async def update_indexing_state(self, state: IndexingState) -> None:
-        """Advance indexed_through cursor. Called only after each batch completes successfully."""
+        """Write indexing cursors. Called once per job at completion by _finalize_cursor().
+        Each mode writes exactly one cursor field; all others are read from current state
+        and preserved unchanged (read-modify-write pattern)."""
 
     @abstractmethod
     async def count_by_user(
@@ -335,6 +341,13 @@ class EmailIndexingJobRepository(ABC):
         """
         Last N jobs across all providers, ordered by started_at DESC.
         Displayed in Cabinet job history panel.
+        """
+
+    @abstractmethod
+    async def get_stale_running_jobs(self, updated_before: datetime) -> List[IndexingJob]:
+        """
+        Return all jobs with status=running and updated_at older than updated_before.
+        Used by the watchdog to detect and mark zombie jobs as failed.
         """
 ```
 
@@ -492,11 +505,16 @@ Triggered by Cabinet button. Executed via Cloud Tasks (can run 1–2 hours for l
 │                                                                      │
 │  IndexedEmailRepository.save_batch(~15 docs)   ← idempotent        │
 │  EmailExclusionsPort.add_exclusions(detected patterns)              │
-│  IndexedEmailRepository.update_indexing_state(batch_max_date)       │
-│       ↑ advances ONLY after batch fully written (resume cursor)     │
 │                                                                      │
 └──────────────────────────────────────────────────────────────────────┘
        ↓ next_page_token → repeat until None
+
+When `next_page_token` is None (all pages consumed):
+  _finalize_cursor(mode, date_from) — writes the appropriate cursor once:
+    backfill → oldest_indexed_through = date_from
+    reindex  → cursor_reindex         = date_from
+    incremental → indexed_through    = max(existing, job.max_email_date)
+  Each branch reads current state first and preserves all other cursor fields.
 
 Slack notification: "✅ Gmail indexed: N total, M stored"
 ```
@@ -505,10 +523,21 @@ Slack notification: "✅ Gmail indexed: N total, M stored"
 chunk. On retry, job reads `next_page_token` from Firestore and continues where it left off.
 No emails re-fetched, no emails lost.
 
+**Cursor write is terminal-only:** cursors (`indexed_through`, `oldest_indexed_through`,
+`cursor_reindex`) are written exactly once — at job completion in `_finalize_cursor()`.
+There are no per-batch cursor writes. Ownership is exclusive: each mode writes exactly one
+cursor field and preserves the other two from current Firestore state.
+
 ### 2.3 Flow 2: Daily Incremental + Proactive Digest (ASYNC, scheduled)
 
-Triggered by Cloud Scheduler (daily). Indexes only new emails since `indexed_through`,
-then sends a proactive digest to the user via SmartAgent.
+Triggered by Cloud Scheduler (daily). Indexes only new emails since `indexed_through`
+(cursor_max), then sends a proactive digest to the user via SmartAgent.
+
+**Incremental bootstrap (when cursor_max is null):**
+If `indexed_through` is null (incremental has never run), the service derives `date_from`
+from other confirmed cursors: `max(oldest_indexed_through, cursor_reindex)`.
+If all three cursors are null — today-only (single-day run).
+No pre-write to Firestore: `_finalize_cursor` writes `indexed_through` at completion.
 
 Controlled by per-user setting: `email_daily_summary: bool` (default: false).
 
@@ -567,16 +596,23 @@ payload: { query: "..." }
 Step 1 — Query key extraction (ECO-tier LLM, ~0.5s):
   LLM with EmailSearchAgent prompt (PromptBuilder, agent_type="email_search")
   Input:  EMAIL_SEARCH_REQUEST "user query" + last 3 history turns + biographical context
-  Output: { primary_query, alternative_query, tags }  ← JSON, no code block
-  Fallback: if LLM fails → uses raw query string for all three fields
+  Output: { primary_query, alternative_query, tags, date_from, date_to }  ← JSON, no code block
+    date_from / date_to: YYYY-MM-DD strings extracted from any time signal in the query
+    ("in 2023", "last 3 months", "since January") — null if no time signal present.
+    LLM uses current_date_time to resolve relative expressions.
+  Fallback: if LLM fails → uses raw query string for primary/alt/tags, dates=null
 
 Step 2 — 7-stream multi-vector RRF (EmailSearchService, ~1–2s):
   3 embed calls in parallel (primary, alternative, tags_text)
-  2 find_nearest calls in parallel:
+  2 find_nearest calls in parallel (date_from/date_to passed as Firestore pre-filter):
     Call A (3 streams): vector:embed(primary)     + tags_vector:embed(tags)     + metadata_vector:embed(primary)
     Call B (4 streams): vector:embed(alternative) + tags_vector:embed(primary)  + metadata_vector:embed(tags)
                         + attachments_vector:embed(tags)
-  Second-level RRF merge (k=60) → top 10 IndexedEmail
+  Pre-filter applied only when dates are present; otherwise no date constraint.
+  Cosine distance threshold: 0.4 — results farther than this are discarded by Firestore before RRF.
+  Second-level RRF merge (k=60) → all IndexedEmail that passed the cosine distance filter.
+  No artificial output cap — Firestore server-side threshold (0.4 = similarity ≥ 0.6) is the only gate.
+  Logged: "A={n} B={n} → merged={n}"
 
 Step 3 — Return to delegating agent:
   JSON string: { "count": N, "emails": [{ email_id, from, date, text, attachments }] }
@@ -638,6 +674,8 @@ Returns: converted text string to delegating agent.
 | OAuth token expired | Job stops, cannot auto-fix | "Gmail disconnected. Reconnect: /cabinet" |
 | >10% batches failed | Job completes but flagged | "✅ Done with warnings. N emails skipped. Retry in Cabinet." |
 | Firestore persistent failure | Job fails | "❌ Indexing failed. Details in Cabinet." |
+| User cancels via Cabinet | `status=cancelled` written to Firestore → next worker task reads it → returns 200 (skip) → Cloud Tasks marks task done → chain stops naturally | Cancel button in Cabinet; takes effect within 1 task (~60s max) |
+| Job stuck in `running` (crash / deploy) | Watchdog (Cloud Scheduler, every 30 min) checks `updated_at < now - 2h` → marks as `failed` | Cabinet shows "❌ Failed" with Retry |
 
 **Repair Job** (Cloud Scheduler, every 6h — lightweight, no user interaction):
 ```
@@ -755,11 +793,25 @@ Doc ID: `{user_id}_{provider}`
 ```yaml
 user_id: "user_abc"
 provider: "gmail"
-indexed_through: 2026-02-21T23:59:59Z   # null = never indexed
+indexed_through:         2026-02-21T23:59:59Z   # null = incremental never completed
+oldest_indexed_through:  2023-02-15T00:00:00Z   # null = backfill never completed
+cursor_reindex:          2023-02-15T00:00:00Z   # null = reindex never completed
 updated_at: 2026-02-22T10:00Z
 ```
 
-Advances only on complete batch success. Next indexing run uses `indexed_through` as `after:` filter.
+**Three independent cursors — exclusive ownership:**
+| Cursor | Written by | Value at write |
+|--------|-----------|----------------|
+| `indexed_through` | incremental only | `max(existing, job.max_email_date)` |
+| `oldest_indexed_through` | backfill only | `date_from` (job start date) |
+| `cursor_reindex` | reindex only | `date_from` (job start date) |
+
+Each cursor is written exactly once per job at completion (`_finalize_cursor`).
+The writer reads current Firestore state first and preserves the other two cursors unchanged.
+Reindex and backfill never touch `indexed_through`. Overlapping ranges are intentional and allowed.
+
+**Incremental bootstrap:** if `indexed_through` is null, `date_from = max(oldest_indexed_through, cursor_reindex)`.
+All null → today-only run. No pre-write; `_finalize_cursor` writes `indexed_through` at completion.
 
 ### 3.4 Collection: `{env}_email_exclusions`
 
@@ -776,7 +828,24 @@ created_at: 2026-02-22T10:00Z
 Populated automatically when LLM detects recurring low-value senders during indexing.
 Fetched once per indexing job; applied as pre-filter before LLM classification.
 
-### 3.5 Email Categories
+### 3.5 Collection: `{env}_user_notification_state`
+
+Doc ID: `{user_id}`
+
+```yaml
+user_id: "user_abc"
+platform: "slack"        # "slack" | "telegram"
+channel_id: "C0123456"   # Slack channel ID or Telegram chat ID
+updated_at: 2026-03-01T12:00Z
+```
+
+Written on every incoming user message (best-effort). Used by `UserNotificationService` to know
+where to deliver background notifications. Document is created at first user interaction and
+overwritten on every subsequent message — always reflects the most recent active channel.
+
+No index required (doc ID = user_id → direct lookup).
+
+### 3.6 Email Categories
 
 ```
 travel       — flights, hotels, car rentals, train bookings
@@ -788,7 +857,7 @@ personal     — family, friends, personal correspondence
 subscription — recurring service notifications (low value, often excluded)
 ```
 
-### 3.6 Firestore Index Configuration
+### 3.7 Firestore Index Configuration
 
 ```json
 [
@@ -828,6 +897,13 @@ subscription — recurring service notifications (low value, often excluded)
     "collectionGroup": "{env}_domain_email_facts_v1",
     "fields": [
       {"fieldPath": "attachments_vector", "vectorConfig": {"dimension": 768, "flat": {}}}
+    ]
+  },
+  {
+    "collectionGroup": "{env}_email_indexing_jobs_v1",
+    "fields": [
+      {"fieldPath": "status", "order": "ASCENDING"},
+      {"fieldPath": "updated_at", "order": "ASCENDING"}
     ]
   }
 ]
@@ -916,7 +992,7 @@ All tokens uploaded to `{env}_domain_prompt_tokens_v3_system` via `firestore_uti
 | `emailsearch_agent_v1` | `{env}_domain_prompt_blueprints_v3` | Blueprint: `outer_class="EmailSearchAgent extends Agent"`, `class_order=["properties","cognitive_process","output_format"]` |
 | `email_search` | `{env}_domain_prompt_profiles_v3` | Agent profile: 3 tokens (orders 10/20/30, all `non_overridable=true`) |
 | `EMAILSEARCH_PROPERTIES` | `{env}_domain_prompt_tokens_v3_system` | `class="properties"`, archetype string |
-| `EMAILSEARCH_COGNITIVE_PROCESS` | `{env}_domain_prompt_tokens_v3_system` | `class="cognitive_process"`, 5-step Groovy DSL |
+| `EMAILSEARCH_COGNITIVE_PROCESS` | `{env}_domain_prompt_tokens_v3_system` | `class="cognitive_process"`, 6-step Groovy DSL (steps 1–4: subject/primary/alt/tags; step 5: DATE RANGE → date_from/date_to; step 6: OUTPUT) |
 | `EMAILSEARCH_OUTPUT_FORMAT` | `{env}_domain_prompt_tokens_v3_system` | `class="output_format"`, JSON schema + field guidelines |
 
 **Critical:** profile document ID must match `agent_type="email_search"` passed to
@@ -1040,7 +1116,9 @@ class IndexedEmail(BaseModel):
 class IndexingState:
     user_id: str
     provider: str
-    indexed_through: Optional[datetime]   # None = never indexed
+    indexed_through: Optional[datetime] = None          # None = incremental never completed
+    oldest_indexed_through: Optional[datetime] = None   # None = backfill never completed
+    cursor_reindex: Optional[datetime] = None           # None = reindex never completed
 
 class IndexingJob(BaseModel):
     """One record per indexing run — used for resume, retry, and Cabinet history."""
@@ -1048,7 +1126,7 @@ class IndexingJob(BaseModel):
     user_id: str
     provider: str
     triggered_by: str              # "cabinet" | "scheduler" | "manual_script"
-    status: str                    # "running"|"completed"|"failed"|"failed_auth"
+    status: str                    # "running"|"completed"|"failed"|"failed_auth"|"cancelled"
     next_page_token: Optional[str] # primary resume cursor
     last_email_date: Optional[datetime]  # fallback cursor if page token expired
     emails_fetched: int = 0
@@ -1079,7 +1157,7 @@ class EmailExclusion(BaseModel):
 | `src/ports/email_provider_port.py` | ABC: `list_emails(credentials, date_from, page_token)`, `batch_get_full_content(credentials, email_ids)`, `refresh_token` |
 | `src/ports/indexed_email_repository.py` | ABC: `save_batch`, `search_by_vector`, `get_indexing_state`, `update_indexing_state`, `count_by_user`, `delete_by_user` |
 | `src/ports/email_exclusions_port.py` | ABC: `get_exclusions`, `add_exclusions`, `delete_exclusion`, `list_exclusions` |
-| `src/ports/email_indexing_job_repository.py` | ABC: `create_job`, `update_job`, `get_job`, `get_latest_job`, `list_jobs` |
+| `src/ports/email_indexing_job_repository.py` | ABC: `create_job`, `update_job`, `get_job`, `get_latest_job`, `list_jobs`, `get_stale_running_jobs` |
 | `src/adapters/firestore_oauth_credentials_adapter.py` | Firestore impl. Doc ID: `{user_id}_{provider}` |
 | `src/adapters/gmail_provider_adapter.py` | `aiohttp` Gmail REST. Pagination via `pageToken`. Token refresh via `oauth2.googleapis.com/token`. `batch_get_full_content`: `format=full` → body + attachment filenames; `deep=True` → also attachment binaries. |
 | `src/adapters/firestore_indexed_email_repo.py` | Batch writes (500/batch). 4-vector RRF search. Indexing state. Repair query (`embedding_pending=True`). Consolidation query (`consolidated_at IS NULL`). |
@@ -1091,6 +1169,11 @@ class EmailExclusion(BaseModel):
 | `src/agents/email_agent.py` | `EmailAgent(BaseAgent)`. `_handle_indexing()` (Flow 1 + 2). Multi-provider fan-out. Slack notification on completion. |
 | `src/services/email_search_service.py` | `EmailSearchService`. Three methods: `vector_search()` (7-stream RRF, returns JSON), `get_details()` (Gmail full body ≤5000 chars), `get_attachment()` (markitdown conversion, 3 MB / 10 MB limits). Called by EmailSearchAgent — no infrastructure imports (all ports injected). |
 | `src/agents/email_search_agent.py` | `EmailSearchAgent(BaseAgent)`. MemorySearchAgent-like: 1 ECO-tier LLM call extracts `{primary_query, alternative_query, tags}` from request → `EmailSearchService.vector_search()` → JSON result to delegating agent. intent=`search_emails`. Fully logged: 3 debug files per request. |
+| `src/ports/notification_state_port.py` | `NotificationStatePort` ABC: `save(user_id, platform, channel_id)` + `get(user_id) -> Optional[NotificationChannel]` |
+| `src/ports/notification_channel_factory_port.py` | `NotificationChannelFactoryPort` ABC: `create(platform, channel_id) -> Optional[ResponseChannel]` |
+| `src/adapters/firestore_notification_state_adapter.py` | Persists last active channel per user. Collection `{env}_user_notification_state`, doc ID = `user_id`. Written on every user message. |
+| `src/adapters/notification_channel_factory.py` | `NotificationChannelFactory(NotificationChannelFactoryPort)`. Late-binding: `set_slack_adapter()` + `set_telegram_adapter()` called after each platform adapter is instantiated in `main.py`. Only component that knows both adapters — correct hexagonal boundary. |
+| `src/services/user_notification_service.py` | `UserNotificationService`: load channel → create `ResponseChannel` → route `AgentMessage` through `AgentCoordinator` (QuickAgent) → deliver formatted text to channel. `save_channel()` called best-effort from `ConversationHandler`. |
 
 ---
 
@@ -1100,15 +1183,21 @@ class EmailExclusion(BaseModel):
 |------|--------|
 | `src/adapters/firebase_auth_adapter.py` | Add `additional_scopes: Optional[List[str]] = None` to `get_authorization_url()` — backward-compatible |
 | `src/web/oauth_app.py` | Blueprint factory gains `oauth_credentials: OAuthCredentialsPort`. New endpoints: `/auth/connect-gmail`, `/auth/connect-gmail/callback`, `DELETE /auth/disconnect-gmail` |
-| `src/web/user_cabinet_app.py` | New endpoints: `GET /api/gmail/status`, `POST /api/gmail/index`, `DELETE /api/gmail/disconnect`. Setting: `email_daily_summary` toggle. |
-| `src/handlers/agent_worker_handler.py` | Slack notification on async task completion (TODO already exists). `__init__` gains `slack_client: Optional[AsyncWebClient]` |
+| `src/web/user_cabinet_app.py` | Endpoints: `GET /api/gmail/status` (gains `indexing_active` bool + `active_job_id`), `POST /api/gmail/index` (async 202 → Cloud Tasks), `POST /api/gmail/jobs/<job_id>/cancel` (sets `status=cancelled`), `GET /api/gmail/jobs/<job_id>` (polling), `DELETE /api/gmail/disconnect`. Factory gains `email_job_repo` + `task_queue` params. |
+| `src/handlers/conversation_handler.py` | Gains `notification_service: Optional[UserNotificationService]`. Calls `notification_service.save_channel()` on every incoming message (`asyncio.create_task`, best-effort). `_save_history_with_retry()`: 3-attempt retry with 0.5s/1.0s backoff for transient gRPC errors on `append_messages_batch`. |
+| `src/composition/slack_adapter_factory.py` | `create_adapter()` gains `notification_service` param; passes to `ConversationHandler`. |
+| `src/composition/telegram_adapter_factory.py` | Same as SlackAdapterFactory. |
+| `src/services/email_indexing_service.py` | `completion_alert(job: IndexingJob) -> str` static method added. Three-cursor model: `_finalize_cursor` writes one cursor per mode (read-modify-write); `_advance_cursor` removed; incremental bootstrap from other cursors when cursor_max is null; tz normalization for Firestore-returned datetimes. |
+| `main.py` | `/worker` route: `email_indexing` task type handler (Cloud Tasks chain). Status guard: `if job.status != "running": return 200 (skipped)` — prevents zombie chains on cancel/crash. `email_indexing_watchdog` task type: marks stale jobs as failed. Notification infrastructure wired: `FirestoreNotificationStateAdapter` + `NotificationChannelFactory` + `UserNotificationService`. `notification_channel_factory.set_slack_adapter()` / `set_telegram_adapter()` after each platform adapter. |
 | `src/composition/service_container.py` | Wire all new services and adapters. `EmailSearchService` instantiated here; passed to `UserAgentFactory.agent_services()` dict. |
 | `src/services/user_agent_factory.py` | `EmailSearchAgent` constructed per-user (like `WebSearchAgent`). `EmailSearchService` injected from `ServiceContainer`. |
 | `src/services/agent_context_builder.py` | `"email_search"` strategy: ECO tier, `allowed_providers: ["gemini", "claude"]`. |
 | `src/domain/user.py` | `_DEFAULT_AGENT_TIERS`: added `"email_search": PerformanceTier.ECO`. |
 | `src/agents/core/quick_response_agent.py` | `QUICK_INTENTS` expanded: `{"search_memory", "search_web_light", "search_emails"}`. |
 | `main.py` | Register `EmailAgent` (intents: `index_email` ASYNC) + `EmailSearchAgent` (intents: `search_emails` SYNC) |
-| `firestore.indexes.json` | Add composite + vector indexes for `{env}_domain_email_facts_v1` and `{env}_email_indexing_jobs_v1` |
+| `config/firestore.indexes.json` | Add composite + vector indexes for `{env}_domain_email_facts_v1` and `{env}_email_indexing_jobs_v1`. Added watchdog index: `status ASC + updated_at ASC` on jobs collection. |
+| `src/adapters/gmail_provider_adapter.py` | `list_emails()`: when `page_token` is provided, skip `q=` parameter entirely. Gmail resumes from token's embedded query (includes original `after:` filter). Passing `q` alongside `pageToken` caused Gmail to restart search without date filter — full inbox scans on every resume page. |
+| `src/adapters/firestore_email_job_repo.py` | `get_stale_running_jobs(updated_before)`: Firestore query `status==running AND updated_at < threshold`. |
 | `requirements.txt` | Add `google-auth>=2.0.0`, `google-auth-oauthlib>=1.0.0` |
 
 ---
@@ -1152,9 +1241,106 @@ class EmailExclusion(BaseModel):
 27. ✅ `src/services/agent_context_builder.py` + `src/domain/user.py` — `email_search` strategy (ECO, gemini+claude)
 28. ✅ Firestore prompt tokens: `EMAILSEARCH_PROPERTIES`, `EMAILSEARCH_COGNITIVE_PROCESS`, `EMAILSEARCH_OUTPUT_FORMAT` + blueprint `emailsearch_agent_v1` + profile `email_search`
 29. ✅ Firestore vector indexes: all 4 vector fields on `development_domain_email_facts_v1` created via gcloud CLI
+60. ✅ `src/ports/indexed_email_repository.py` — `find_nearest` gains `date_from: Optional[datetime]` and `date_to: Optional[datetime]` parameters. Pre-filter on `email_date` field applied when present.
+61. ✅ `src/adapters/firestore_indexed_email_repo.py` — implements date pre-filter: `FieldFilter("email_date", ">=", date_from)` / `FieldFilter("email_date", "<=", date_to)` chained before `find_nearest()`.
+62. ✅ `src/services/email_search_service.py` — `vector_search()` accepts `date_from`/`date_to`, passes them via `**date_kwargs` to both `find_nearest` calls.
+63. ✅ `src/agents/email_search_agent.py` — `_parse_date()` converts YYYY-MM-DD string from LLM output to `datetime`; result passed to `vector_search`.
+64. ✅ `firestore_utils/uploads/EMAILSEARCH_COGNITIVE_PROCESS.groovy` — step 5 "DATE RANGE" added: LLM extracts `date_from`/`date_to` from time signals; uses `current_date_time` for relative expressions; null if no signal.
+65. ✅ `firestore_utils/uploads/EMAILSEARCH_OUTPUT_FORMAT.groovy` — `date_from` and `date_to` added as nullable string fields with `YYYY-MM-DD` pattern to JSON schema.
+66. ✅ `config/firestore.indexes.json` — 8 new vector indexes (4 vector fields × 2 collections) with `email_date` pre-filter field: `user_id + state + email_date + {vector_field}`.
+67. ✅ `src/adapters/firestore_indexed_email_repo.py` — `_MAX_COSINE_DISTANCE = 0.4` (cosine similarity ≥ 0.6 required); results beyond threshold discarded server-side by Firestore before RRF scoring.
+68. ✅ `src/services/email_search_service.py` — `output_limit` cap removed; Firestore cosine distance threshold 0.4 (similarity ≥ 0.6) is the only gate; logs `A={n} B={n} → merged={n}` after RRF merge.
 30. ✅ Debug logging: 3 files per request (`email_search_prompt_*`, `email_search_response_*`, `email_search_to_smart_response_*`)
 31. ✅ Tests: `tests/unit/agents/test_email_search_agent.py` (31 tests), `tests/unit/services/test_email_search_service.py` (23 tests)
-32. ⬜ `src/handlers/agent_worker_handler.py` — Slack notification on indexing job completion
+32. ✅ Completion notification — `UserNotificationService` (see Phase 5)
+
+### Phase 5 — Async Cloud Tasks Pipeline + Notifications ✅ Complete (2026-03-01)
+
+The indexing pipeline runs as a Cloud Tasks chain to avoid Cloud Run CPU throttling:
+one HTTP request per Gmail page, each enqueuing the next until `next_page_token` is exhausted.
+`UserNotificationService` delivers completion messages via the user's last active channel (Slack or Telegram),
+routing through QuickAgent so the message is formatted in the user's communication style.
+
+**Why Cloud Tasks chain and not a single long-running request:**
+Cloud Run throttles CPU to ~5% when no HTTP requests are in-flight. `asyncio.create_task()` for
+background work suffers this starvation — Firestore grpc.aio calls take 74–180s instead of ~700ms.
+Each Cloud Tasks delivery is its own HTTP request with full CPU allocation.
+
+**Why route through QuickAgent:**
+The completion alert is a fact string; the formatting decision (tone, language, structure) belongs
+to the LLM with user context loaded, not to the infrastructure layer.
+
+38. ✅ `main.py` — `/worker` handler: `email_indexing` task type
+    - `get_job(job_id)` + `get_credentials(user_id, "gmail")` → `run_indexing_job(max_pages=1)`
+    - if `next_page_token` → `enqueue_email_indexing_task(job_id)` (chain continues)
+    - if done → `notification_service.notify(user_id, account_id, completion_alert(job))`
+39. ✅ `src/services/email_indexing_service.py` — `completion_alert(job: IndexingJob) -> str` (`@staticmethod`)
+    - Returns: `"Email indexing complete: N emails indexed[, M failed]."` — fact only, no formatting
+    - Owned by the service that does the work — not by the worker or notification layer
+40. ✅ `src/ports/notification_state_port.py` — `NotificationStatePort` ABC: `save(user_id, platform, channel_id)` + `get(user_id) -> Optional[NotificationChannel]`
+41. ✅ `src/ports/notification_channel_factory_port.py` — `NotificationChannelFactoryPort` ABC: `create(platform, channel_id) -> Optional[ResponseChannel]`
+42. ✅ `src/adapters/firestore_notification_state_adapter.py` — persists last active channel per user. Collection: `{env}_user_notification_state`, doc ID = `user_id`
+43. ✅ `src/adapters/notification_channel_factory.py` — `NotificationChannelFactory`: late-binding `set_slack_adapter()` / `set_telegram_adapter()`. Only component that knows both platform adapters — correct boundary.
+44. ✅ `src/services/user_notification_service.py` — `notify(user_id, account_id, system_alert)`:
+    - Load last channel from `NotificationStatePort`
+    - Create `ResponseChannel` via `NotificationChannelFactoryPort`
+    - Build `AgentMessage` with `current_message_parts=[MessagePart(text=f"[System: {alert} Your response to this message will be read by the user. Inform them of the event details in your usual manner of communication.]")]`
+    - Route to `quick_response_agent_{user_id}` via `AgentCoordinator`
+    - Deliver result via `ResponseChannel`
+45. ✅ `src/handlers/conversation_handler.py` — `save_channel()` called on every incoming message (best-effort `asyncio.create_task`)
+46. ✅ `src/composition/slack_adapter_factory.py` + `src/composition/telegram_adapter_factory.py` — `notification_service` param passed to `ConversationHandler`
+47. ✅ `src/web/user_cabinet_app.py` — `POST /api/gmail/index` async path: create job → `job_repo.create_job(job)` → `task_queue.enqueue_email_indexing_task(job_id)` → 202 `{"job_id", "status": "running"}`; `GET /api/gmail/jobs/<job_id>` for status polling; `GET /api/gmail/status` gains `indexing_active` boolean
+48. ✅ `src/web/static/cabinet.html` — `setInterval(loadGmailStatus, 5000)` for live status; button disabled with "Indexing…" text when `indexing_active=true`; 202 handler shows toast + reloads status
+
+### Phase 6 — Graceful Degradation ✅ Complete (2026-03-01)
+
+**Problem:** A running indexing chain (Cloud Tasks) had no graceful stop mechanism. Changing job status
+in Firestore had no effect — the worker didn't check it. Stuck jobs remained `running` forever
+after crashes or manual stops. The only options were purging the Cloud Tasks queue or deleting the service.
+
+**Root causes fixed:**
+1. Worker did not check job status before executing → zombie chains on cancel/crash/deploy
+2. `list_emails()` passed `q=` alongside `pageToken` → Gmail restarted search without `after:` → full inbox scans on resume pages
+
+49. ✅ `src/adapters/gmail_provider_adapter.py` — `list_emails()`: skip `q=` when `page_token` provided.
+    Gmail's `pageToken` carries the original query including `after:` filter. Passing `q` alongside it
+    caused Gmail to restart the search from scratch without date constraints on every resume page.
+50. ✅ `main.py` — Worker status guard: `if job.status != "running": return jsonify({"status": "skipped"}), 200`.
+    Cloud Tasks marks a 200 response as success (no retry). Chain stops within 1 task (≤60s).
+51. ✅ `src/web/user_cabinet_app.py` — `POST /api/gmail/jobs/<job_id>/cancel`:
+    - Validates ownership (`job.user_id == g.user_id`)
+    - Validates state (`status == "running"` → else 409)
+    - Writes `status=cancelled, updated_at=now`
+    - Returns 200 `{"status": "cancelled"}`
+52. ✅ `GET /api/gmail/status` — gains `active_job_id: Optional[str]` and `oldest_indexed_through: Optional[str]` in response.
+    `active_job_id` is needed by Cabinet to call the cancel endpoint.
+    `oldest_indexed_through` is the earliest date successfully indexed (set once on first full backfill completion).
+53. ✅ `src/web/static/cabinet.html` — Cancel button: visible only when `indexing_active=true && active_job_id`.
+    Calls cancel endpoint → `loadGmailStatus()` on success. Button label "Cancelling…" while in-flight.
+    Coverage period display: when both `oldest_indexed_through` and `indexed_through` are present, shows
+    `Coverage: 11 Feb 2020 – 1 Mar 2026` (full date, en-GB locale). If only `indexed_through` is set, falls
+    back to `Indexed through: DATE`. If neither — "Not indexed yet."
+54. ✅ `src/ports/email_indexing_job_repository.py` — `get_stale_running_jobs(updated_before: datetime)` added.
+55. ✅ `src/adapters/firestore_email_job_repo.py` — implements `get_stale_running_jobs`:
+    query `status==running AND updated_at < threshold`. Requires composite index.
+56. ✅ `main.py` — `task_type=email_indexing_watchdog` handler:
+    - Calls `get_stale_running_jobs(now - 2h)`
+    - Marks each stale job `status=failed, updated_at=now`
+    - Returns `{"status": "ok", "marked_failed": N}`
+    - Triggered by Cloud Scheduler every 30 min (see item 57)
+57. ✅ `scripts/infrastructure/setup-email-watchdog-scheduler.sh` — creates Cloud Scheduler job
+    `alek-email-watchdog-{env}` (30 min schedule, OIDC auth, POST to `/worker`).
+    One-time setup per environment.
+58. ✅ `config/firestore.indexes.json` — composite index `status ASC + updated_at ASC` on
+    `{env}_email_indexing_jobs_v1` for the watchdog query.
+59. ✅ `src/web/user_cabinet_app.py` — enqueue-before-save order:
+    `enqueue_email_indexing_task(job_id)` runs BEFORE `create_job(job)`.
+    If enqueue fails → job is never written → no orphaned "running" job in Firestore.
+    Edge case: Cloud Tasks may call `/worker` before Firestore write completes (~ms window) →
+    worker returns 404 → Cloud Tasks retries → by retry, job is saved. Acceptable.
+
+**Domain model update:** `IndexingJob.status` now accepts `"cancelled"` as a valid terminal state.
+Cabinet treats `cancelled` identically to idle — shows "Index new emails" button.
 
 ### Phase 4 — Live Email Access Intents ✅ Complete (2026-03-01)
 
@@ -1168,6 +1354,41 @@ class EmailExclusion(BaseModel):
     - `search_memory`, `search_web` (single intent name), `email_search_agent.intents { search_emails, get_email_details, get_email_attachment }`
     - Replaces separate `PROTOCOL_QUICK_AGENT_SELECTION` and `PROTOCOL_SMART_AGENT_SELECTION` tokens
 37. ✅ Tests: `test_email_search_agent.py` extended with `TestGetEmailDetails` (5 tests), `TestGetEmailAttachment` (6 tests), `TestCanHandleEmailId` (3 tests)
+
+### Phase 7 — Cursor Model + Reliability Fixes ✅ Complete (2026-03-01)
+
+**Three-cursor model:** replaced the single `indexed_through` cursor with three independent,
+mode-exclusive cursors. Each mode writes exactly one cursor at job completion only (no per-batch writes).
+
+69. ✅ `src/domain/email.py` — `IndexingState`: added `oldest_indexed_through` and `cursor_reindex`
+    fields (both `Optional[datetime] = None`). All three cursors default to None.
+70. ✅ `src/adapters/firestore_indexed_email_repo.py` — reads/writes all three cursor fields;
+    `get_indexing_state` reads `cursor_reindex` from Firestore; `update_indexing_state` writes it.
+71. ✅ `src/services/email_indexing_service.py` — `_finalize_cursor(mode, date_from)` rewritten:
+    - Reads current Firestore state first (read-modify-write)
+    - `backfill` branch: writes `oldest_indexed_through = date_from`, preserves others unchanged
+    - `reindex` branch: writes `cursor_reindex = date_from`, preserves others unchanged
+    - `incremental` branch: writes `indexed_through = max(existing, job.max_email_date)`, preserves others unchanged
+    - Removed `_advance_cursor` (was writing `oldest_indexed_through` per-batch; incompatible with Cloud Tasks chain where older pages could overwrite newer ones)
+72. ✅ `src/services/email_indexing_service.py` — incremental bootstrap:
+    if `indexed_through` is null → `date_from = max(oldest_indexed_through, cursor_reindex)`;
+    all null → today-only run. No pre-write to Firestore before job execution.
+73. ✅ `src/services/email_indexing_service.py` — timezone normalization at job load time:
+    Firestore returns `DatetimeWithNanoseconds` (tz-aware) for `max_email_date`/`min_email_date`
+    on Cloud Tasks re-invocation. Fix: `replace(tzinfo=None)` when `tzinfo is not None` before
+    entering the main batch loop. Prevents `TypeError` on timezone-aware vs naive comparison.
+74. ✅ `src/services/email_indexing_service.py` — reindex mode no longer calls `clear_indexing_state`
+    (was wiping `indexed_through`; reindex must never touch the incremental cursor).
+
+**ConversationHandler gRPC retry:**
+
+75. ✅ `src/handlers/conversation_handler.py` — `_save_history_with_retry()` replaces bare
+    `append_messages_batch()` call. 3 attempts with 0.5s/1.0s exponential backoff for transient
+    gRPC errors (`RST_STREAM`, `UNAVAILABLE`, `INTERNAL`). Non-transient errors and all final
+    failures propagate normally to the outer `except` handler.
+    Root cause: Firestore gRPC connection resets after long agent runs (~27k tokens); the grpc.aio
+    channel expires during the response, causing `RST_STREAM error code 2` on the first Firestore
+    write post-agent. Retry resolves it within 1–2 attempts in practice.
 
 ---
 
@@ -1313,8 +1534,7 @@ The Gmail section in Cabinet has two states depending on whether the user has co
 ┌─────────────────────────────────────────────────┐
 │  📧 Gmail — user@gmail.com ✓                     │
 │                                                  │
-│  Last indexed: Feb 28, 2026                      │
-│  Stored: 1,287 emails  │  Coverage: Nov 2023 – Feb 2026 │
+│  Coverage: 11 Nov 2023 – 28 Feb 2026             │
 │                                                  │
 │  [Index new emails]     [Disconnect]             │
 │                                                  │
@@ -1386,35 +1606,36 @@ Cabinet: refreshes job status on next visit
 **Button states:**
 - `idle (never indexed)` → "Index emails (last 3 years)"
 - `idle (indexed before)` → "Index new emails"
-- `running` → "🔄 Indexing..." (disabled, no double-submit)
+- `running` → "🔄 Indexing..." (disabled) + **"Cancel"** (red, calls `POST /api/gmail/jobs/<id>/cancel`)
+- `cancelled` → "Index new emails" (treated as idle; user-initiated stop)
 - `failed` → "Retry indexing" (re-enqueues same job)
 
 **Endpoint:** `POST /api/gmail/index` — no body required. Server computes `date_from`.
-Returns `{job_id, status: "enqueued"}`. Cabinet polls `GET /api/gmail/status` for updates
-(or user manually refreshes — no websocket needed).
+Returns HTTP 202 `{job_id, status: "running"}`. Cabinet shows toast "Indexing started in background.
+You'll be notified when done." and immediately polls `GET /api/gmail/status`. Cabinet polls every
+5 seconds via `setInterval(loadGmailStatus, 5000)` — button stays disabled while `indexing_active=true`.
+No websocket needed; the Slack/Telegram notification is the authoritative completion signal for the user.
 
-### 12.4 Indexing Completion (Slack notification)
+### 12.4 Indexing Completion Notification
 
+Delivery path:
 ```
-[Job completes — Cloud Tasks worker sends Slack message]
-
-Bot: "✅ Gmail indexed
-      New this run: 151 emails processed → 19 stored
-      Total in index: 1,287 emails
-        ✈️ Travel: 89   💰 Finance: 341   🏥 Healthcare: 63
-        💼 Work: 512    ⚖️ Legal: 28      👤 Personal: 254
-      Excluded senders: 12 patterns auto-detected
-      Coverage: Nov 2023 – Feb 2026"
-
-[If warnings:]
-Bot: "⚠️ Gmail indexed with warnings
-      3 emails skipped (rate limit retries exhausted).
-      Everything else stored. Retry available in Cabinet."
-
-[If failed:]
-Bot: "❌ Gmail indexing failed — token expired.
-      Reconnect Gmail: /cabinet"
+EmailIndexingService.completion_alert(job) → str
+  ↓ "Email indexing complete: N emails indexed[, M failed]."   ← fact only, no formatting
+UserNotificationService.notify(user_id, account_id, alert)
+  ↓ load last active channel (Slack/Telegram) from NotificationStatePort
+  ↓ build AgentMessage: [System: {alert} Your response to this message will be read by the user.
+                          Inform them of the event details in your usual manner of communication.]
+  ↓ route to quick_response_agent_{user_id} via AgentCoordinator
+  ↓ QuickAgent formats in user's communication style (tone, language, emojis — LLM decision)
+  ↓ deliver via ResponseChannel (Slack or Telegram)
 ```
+
+**Design rationale:**
+- `completion_alert()` lives on `EmailIndexingService` — the service that does the work owns the summary
+- Framing in `UserNotificationService` carries fact + WHAT to do, not HOW to say it — tone is QuickAgent's decision based on user profile
+- Delivery channel = last active platform (saved on every user message); if user switches from Slack to Telegram, next notification goes to Telegram automatically
+- Channel not yet known (no prior messages) → notification silently skipped; user sees job result in Cabinet on next visit
 
 ### 12.5 Disconnect Gmail
 
@@ -1465,9 +1686,12 @@ Bot: (~4–6s total)
 
 User: "покажи детали мартовского анализа"
 
-Bot: (Phase 4 — get_email_details + get_email_attachment intents not yet registered.
-     These are implemented in EmailSearchService but require Phase 4 to be exposed
-     as agent intents. See §14.2 for attachment deep-parse UX design.)
+SmartAgent → delegate_to_specialist(intent="get_email_details", email_id="msg_mar28")
+  → EmailSearchAgent._handle_get_details()
+  → GmailProviderAdapter.batch_get_full_content([email_id], deep=False)
+  → returns subject, from, date, body_text[:5000], attachment filenames
+
+Bot: "Март 28 — Синево. ..." (full body text formatted by SmartAgent)
 ```
 
 **Production example** (2026-03-01, ~5.9s, query: "family and France last two months"):
@@ -1823,6 +2047,151 @@ Mark items `✅` as completed.
 ---
 
 ## Changelog
+
+### 2026-03-01 (session 2) — Classifier output truncation, DatetimeWithNanoseconds, GCS debug logging, smart completion message
+
+**1. JSON truncation in `classify_batch` — root cause and fix**
+
+Root cause: `enable_reasoning=True` + `max_tokens=32000` on Gemini Flash (which resolves to
+Gemini 3 Flash via `gemini-flash-latest`). Gemini 3 Flash uses a combined token budget for
+thinking + text output. With `thinking_budget=-1` (unlimited), the model allocated ~30K tokens
+to internal reasoning, leaving only ~1.3K for text → JSON array truncated mid-item.
+
+Token trace confirming the root cause:
+```
+in=62407 (input) + thinking=30719 + out=1277 (text) = total=94403
+max_tokens=32000 → 32000 - 30719 = 1281 left for text → truncation
+```
+
+Fixes applied:
+- `max_tokens=32000` → `max_tokens=65535` in `email_classification_agent.py`.
+  Gemini 3 Flash max output: 65,536 tokens. After fix: 30K thinking + 35K text = 65K fits.
+- `enable_reasoning=True` restored (was incorrectly removed in a draft — reasoning is intentional
+  for classification quality).
+
+**2. Gemini 3 Flash — `thinking_level` API**
+
+`gemini-flash-latest` now resolves to Gemini 3 Flash, which uses `thinking_level`
+(MINIMAL/LOW/MEDIUM/HIGH) instead of the numeric `thinking_budget` used in Gemini 2.5 Flash.
+The two parameters cannot be combined in the same request.
+
+Change in `src/adapters/gemini_adapter.py`:
+```python
+# Before (Gemini 2.5 Flash):
+thinking_config=types.ThinkingConfig(thinking_budget=-1) if enable_reasoning else None
+
+# After (model-aware):
+thinking_config=(
+    types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH)
+    if enable_reasoning and model_name == "gemini-flash-latest"
+    else types.ThinkingConfig(thinking_budget=-1)
+    if enable_reasoning
+    else None
+)
+```
+
+Only `gemini-flash-latest` uses the new `thinking_level=HIGH` API. Any other model with
+`enable_reasoning=True` falls back to `thinking_budget=-1` (legacy Gemini 2.5 behavior).
+Currently only `EmailClassificationAgent` sets `enable_reasoning=True` (BALANCED tier = Flash).
+
+**3. `DatetimeWithNanoseconds._nanosecond` AttributeError — fix**
+
+Root cause: `max_email_date` / `min_email_date` are read from Firestore as
+`DatetimeWithNanoseconds` (a `datetime` subclass). When written back via `update_job()`,
+the Firestore SDK calls `.timestamp_pb()` → accesses `._nanosecond` → AttributeError
+(attribute missing in the SDK version installed in Cloud Run).
+
+Fix in `src/adapters/firestore_email_job_repo.py` — `update_job` normalizes before write:
+```python
+sanitized = {
+    k: datetime(v.year, v.month, v.day, v.hour, v.minute, v.second, v.microsecond, v.tzinfo)
+    if isinstance(v, datetime) and type(v) is not datetime else v
+    for k, v in updates.items()
+}
+await self.collection.document(job_id).update(sanitized)
+```
+
+Only activates for datetime subclasses; plain `datetime` (e.g., `datetime.utcnow()`) passes through unchanged.
+
+**4. GCS debug logging for LLM prompts/responses**
+
+`src/utils/debug_logger.py` extended with GCS backend:
+- When `DEBUG_PROMPTS_BUCKET` env var is set → writes to GCS (Cloud Run mode)
+- When not set → existing local filesystem behavior (unchanged)
+- GCS client lazy-initialized, failures are non-fatal (warning only)
+
+**GCS path structure:** `gs://{bucket}/{agent_name}/YYYY-MM-DD/{type}_{timestamp}.{ext}`
+
+Example:
+```
+email_classification/2026-03-01/prompt_20260301_143022.txt
+email_classification/2026-03-01/response_20260301_143045.txt
+consolidation_v3/2026-03-01/prompt_20260301_150001.txt
+router_agent/2026-03-01/response_20260301_150010.txt
+```
+
+Root level = stable set of agent names (~8). Date folders are inside each agent directory.
+`{type}`: `prompt`, `response` → `.txt`; `tools`, `summary` → `.json`.
+
+**Agents that write debug logs:** `router_agent`, `quick_response_agent`, `smart_response_agent`,
+`memory_search_agent`, `consolidation_v2`, `consolidation_v3`, `email_search`, `email_classification`.
+
+**`email_classification` logging (added in this session):**
+- `log_prompt` — once before the tool-calling loop; captures `emails_json` + full `system_instruction`
+- `log_response` — on the final turn (when `tool_calls` is empty); captures raw JSON output + token counts
+
+**Bug fixed:** `log_tool_calls` and `log_consolidation_summary` previously only wrote to local
+filesystem even when `DEBUG_PROMPTS_BUCKET` was set. Fixed to use the same `{agent}/date/type.json`
+GCS path. Both methods are currently not called by any agent (available for future use).
+
+`cloudbuild-dev.yaml` — `DEBUG_PROMPTS=true,DEBUG_PROMPTS_BUCKET=$_DEBUG_PROMPTS_BUCKET`
+in `--set-env-vars`. Bucket value passed via Cloud Build substitution variable; Makefile
+`deploy-dev` passes `_DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET)` from `.env`.
+Prod (`cloudbuild-prod.yaml`) — no debug logging (intentional).
+
+**5. Consolidation completion — smart notification via UserNotificationService**
+
+Replaced raw `response_channel.send_message("✅ Консолідація завершена...")` in `conversation_handler.py`
+with `self._notification_service.notify(user_id, account_id, system_alert)`. The completion
+message now routes through QuickAgent and is formatted in the user's communication style,
+consistent with the email indexer notification pattern.
+
+Fallback: if `_notification_service` is None (not wired), plain `send_message` is used.
+
+Dead code removed: `run_consolidation_process()` in `consolidation_handler.py` was never called
+from any external file. Also removed unused `ResponseChannel` import from that file.
+
+---
+
+### 2026-03-01 — Email triage stability: Cloud Run timeout, LLM timeout, gRPC retry
+
+**Root cause of silent email triage hang (e54980e4):**
+- Two concurrent `$consolidate` commands ran simultaneously. One Gemini Pro call with 200-email
+  prompt (~215K chars) never returned — no error logged, process killed silently by Cloud Run.
+- Cloud Run default request timeout is 300s. The `$consolidate` path keeps the HTTP request alive
+  (`await _execute_consolidation_background()`), so any LLM call approaching 300s causes Cloud Run
+  to terminate the process before Python can log or recover.
+
+**Fixes applied:**
+
+1. **Cloud Run `--timeout=900`** — added to both `cloudbuild-dev.yaml` and `cloudbuild-prod.yaml`.
+   Gives the consolidation worker up to 15 minutes before Cloud Run kills the HTTP request.
+   This ensures our Python-level timeout fires and logs before Cloud Run terminates.
+
+2. **`LLMRequest.timeout: Optional[int] = None`** — new field in `src/ports/llm_service.py`.
+   Passed through to `GeminiAdapter.generate_content()` via `asyncio.wait_for(..., timeout=N)`.
+   When timeout fires → `asyncio.TimeoutError` is raised, propagates up, caught by outer
+   `except Exception` in `process_user_batches_on_overflow` → logged with full context.
+
+3. **`ConsolidationAgent` LLM calls: `timeout=500`** — both the main tool-calling loop and the
+   summarization call in `src/agents/consolidation_agent.py`. 500s < 900s Cloud Run timeout,
+   ensuring we always get a logged error instead of a silent kill.
+
+4. **`_EMAIL_TRIAGE_BATCH_SIZE = 200`** — unchanged (200 is correct for cross-email pattern
+   detection; the hang was timeout-related, not batch-size-related).
+
+**Not yet root-caused:** Whether the Gemini Pro call genuinely exceeded 500s or was killed by
+Cloud Run at 300s before this fix. Next occurrence will have a clear `TimeoutError` log entry.
 
 ### 2026-02-28 — biographical_signal, page_size=300, AgentExecutionContext wiring
 

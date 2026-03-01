@@ -38,6 +38,7 @@ class SlackResponseChannel(ResponseChannel):
         self.client = app_client
         self.channel_id = channel_id
         self.bot_token = bot_token
+        self.platform = "slack"
     
     @property
     def max_message_length(self) -> int:

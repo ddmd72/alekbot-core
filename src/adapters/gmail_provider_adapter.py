@@ -16,7 +16,7 @@ Gmail API endpoints used:
 import asyncio
 import base64
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -76,18 +76,24 @@ class GmailProviderAdapter(EmailProviderPort):
         async with aiohttp.ClientSession() as session:
             # Step 1: List message IDs
             params: Dict = {"maxResults": max_results}
-            # Combine caller query with date filters into a single q= parameter
-            q_parts = []
-            if query:
-                q_parts.append(query)
-            if date_from:
-                q_parts.append(f"after:{date_from.strftime('%Y/%m/%d')}")
-            if date_to:
-                q_parts.append(f"before:{date_to.strftime('%Y/%m/%d')}")
-            if q_parts:
-                params["q"] = " ".join(q_parts)
             if page_token:
+                # When resuming via pageToken, Gmail continues the original query
+                # embedded in the token. Passing q= alongside pageToken may override
+                # the token's date filter and return emails outside the original range.
                 params["pageToken"] = page_token
+                logger.debug(f"📬 Gmail list_emails: resuming via pageToken (no q=)")
+            else:
+                # First page: build q= from caller query + date filters
+                q_parts = []
+                if query:
+                    q_parts.append(query)
+                if date_from:
+                    q_parts.append(f"after:{date_from.strftime('%Y/%m/%d')}")
+                if date_to:
+                    q_parts.append(f"before:{date_to.strftime('%Y/%m/%d')}")
+                if q_parts:
+                    params["q"] = " ".join(q_parts)
+                logger.info(f"📬 Gmail list_emails: q={params.get('q')!r} date_from={date_from} date_to={date_to}")
 
             async with session.get(
                 f"{_GMAIL_BASE}/messages", headers=headers, params=params
@@ -254,7 +260,7 @@ class GmailProviderAdapter(EmailProviderPort):
 
         date_str = headers_map.get("date", "")
         try:
-            email_date = parsedate_to_datetime(date_str).replace(tzinfo=None)
+            email_date = parsedate_to_datetime(date_str).astimezone(timezone.utc).replace(tzinfo=None)
         except Exception:
             email_date = datetime.utcnow()
 
