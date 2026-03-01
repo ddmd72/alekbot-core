@@ -133,6 +133,8 @@ Every agent that produces structured LLM output MUST follow these rules — no e
 
 - **No regex fallbacks.** `_parse_response()` calls `json.loads()` directly on the raw LLM output.
   On `JSONDecodeError` → raise `ValueError`. Never extract partial output via `re.search`.
+  Exception: `EmailClassificationAgent._parse_response()` — markdown code block extraction
+  allowed due to cost/latency trade-off in tool-calling mode. See inline comment for rationale.
 
 - **Retry on invalid output, not silent degradation.** When `_parse_response()` raises `ValueError`:
   append the bad model response + a user correction message to history, then continue the loop.

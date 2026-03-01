@@ -64,7 +64,7 @@ def _conversion_alert(filename: str, mime_type: str = "") -> str:
     )
 
 
-def _truncate_with_alert(text: str, filename: str) -> str:
+def truncate_with_alert(text: str, filename: str) -> str:
     """Truncate text to MAX_CONVERTED_CHARS and append a system alert if needed."""
     if len(text) <= MAX_CONVERTED_CHARS:
         return text
@@ -182,5 +182,5 @@ async def convert_file_to_text(
         logger.warning(f"[FileConversion] Empty output for '{filename}'")
         return _conversion_alert(filename, mime_type)
 
-    text = _truncate_with_alert(text, filename)
+    text = truncate_with_alert(text, filename)
     return f"[File: {filename}]\n{text}\n[/File: {filename}]"

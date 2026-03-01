@@ -169,6 +169,8 @@ class WorkerHandler:
             agent_factory=self._agent_factory,
             queue=self._consolidation_queue,
             max_batches=1,
+            indexed_email_repo=self._indexed_email_repo,
+            user_repo=self._user_repo,
         )
         if has_more and self._task_queue:
             await self._task_queue.enqueue_consolidation_task(user_id=user_id)

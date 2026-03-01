@@ -337,7 +337,7 @@ class TestGetAttachment:
 
         with (
             patch("src.services.email_search_service.convert_file_to_text", new_callable=AsyncMock) as mock_convert,
-            patch("src.services.email_search_service._truncate_with_alert") as mock_truncate,
+            patch("src.services.email_search_service.truncate_with_alert") as mock_truncate,
         ):
             mock_convert.return_value = "Parsed document text"
             mock_truncate.return_value = "Parsed document text"

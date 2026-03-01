@@ -330,7 +330,9 @@ async def main():
                             user_id=user_id,
                             coordinator=coordinator,
                             agent_factory=factory,
-                            queue=consolidation_queue
+                            queue=consolidation_queue,
+                            indexed_email_repo=container.indexed_email_repo,
+                            user_repo=user_repo,
                         ))
                 else:
                     logger.warning("⚠️ Consolidation queue not initialized, overflow batch lost!")

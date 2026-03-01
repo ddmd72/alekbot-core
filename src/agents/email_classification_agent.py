@@ -374,7 +374,17 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
     ) -> List[EmailClassificationResult]:
         """Parse LLM JSON array output. Raises ValueError if output is not a valid JSON array."""
         text = raw.strip()
-        # Extract JSON from inside a markdown code block (with optional preamble text).
+        # ⚠️ EXCEPTION TO "No regex fallbacks" RULE (CLAUDE.md) ⚠️
+        # This is the ONLY place in the codebase where code block extraction is allowed.
+        #
+        # Why: In tool-calling mode, response_mime_type=None (Gemini cannot combine
+        # JSON mode with function calling). Without JSON mode, Gemini sometimes wraps
+        # valid JSON output in markdown code blocks. The retry loop (lines 187-213)
+        # would fix this, but at the cost of an extra LLM call for a batch of up to
+        # 100 emails — unacceptable cost/latency trade-off.
+        #
+        # DO NOT copy this pattern to other agents. All other agents must follow the
+        # standard: json.loads() directly → ValueError → retry loop.
         if "```" in text:
             start = text.index("```")
             end = text.rfind("```")

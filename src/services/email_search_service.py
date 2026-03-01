@@ -32,7 +32,7 @@ from ..ports.embedding_service import EmbeddingService
 from ..domain.email import IndexedEmail
 from ..services.file_conversion_service import (
     convert_file_to_text,
-    _truncate_with_alert,
+    truncate_with_alert,
 )
 from ..utils.logger import logger
 
@@ -246,7 +246,7 @@ class EmailSearchService:
         finally:
             os.unlink(tmp_path)
 
-        return _truncate_with_alert(text, filename)
+        return truncate_with_alert(text, filename)
 
     # ------------------------------------------------------------------
     # Internal helpers

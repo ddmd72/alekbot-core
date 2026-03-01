@@ -10,15 +10,20 @@ Flow:
 Callers: email indexing worker (batch progress), future background tasks.
 """
 import uuid
-from typing import Optional
+from typing import Optional, Protocol
 
-from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
+from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus
 from ..domain.llm import MessagePart
 from ..domain.messaging import SmartResponse
-from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from ..ports.notification_state_port import NotificationStatePort
 from ..utils.logger import logger
+
+
+class MessageRouter(Protocol):
+    """Protocol for routing agent messages. Implemented by AgentCoordinator."""
+
+    async def route_message(self, message: AgentMessage) -> AgentResponse: ...
 
 
 class UserNotificationService:
@@ -27,7 +32,7 @@ class UserNotificationService:
         self,
         state_repo: NotificationStatePort,
         channel_factory: NotificationChannelFactoryPort,
-        coordinator: AgentCoordinator,
+        coordinator: MessageRouter,
     ):
         self._state_repo = state_repo
         self._channel_factory = channel_factory
