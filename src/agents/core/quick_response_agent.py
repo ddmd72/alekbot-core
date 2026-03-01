@@ -413,7 +413,8 @@ class QuickResponseAgent(BaseAgent):
                     f"Available intents:\n{intents_description}\n\n"
                     "Parameters:\n"
                     "- intent: intent name from the list above\n"
-                    "- query: the user's question or command"
+                    "- query: the user's question or command\n"
+                    "- context: optional dict with extra parameters for the specialist"
                 ),
                 "parameters": {
                     "type": "object",
@@ -425,6 +426,10 @@ class QuickResponseAgent(BaseAgent):
                         "query": {
                             "type": "string",
                             "description": "User question or command"
+                        },
+                        "context": {
+                            "type": "object",
+                            "description": "Optional extra parameters for the specialist agent"
                         }
                     },
                     "required": ["intent", "query"]
@@ -563,7 +568,7 @@ class QuickResponseAgent(BaseAgent):
 
         if other_calls:
             tasks = [
-                self._delegate_quick(tc, user_id, session_id, account_id)
+                self._delegate_quick(tc, user_id, session_id, account_id, memory_context)
                 for _, tc in other_calls
             ]
             parallel_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -581,6 +586,7 @@ class QuickResponseAgent(BaseAgent):
         user_id: str,
         session_id: str,
         account_id: Optional[str] = None,
+        memory_context: Optional[List[str]] = None,
     ) -> str:
         """Delegate a single tool call via coordinator, with retry."""
         if not self.coordinator:
@@ -589,6 +595,7 @@ class QuickResponseAgent(BaseAgent):
         args = tool_call.args or {}
         intent = args.get("intent", "")
         query = args.get("query", "")
+        context_params = args.get("context", {})
 
         if not intent:
             return f"SYSTEM ERROR: delegate_to_specialist called without 'intent'. args={args}"
@@ -599,6 +606,8 @@ class QuickResponseAgent(BaseAgent):
             "user_id": user_id,
             "account_id": account_id,
             "session_id": session_id,
+            "memory_context": memory_context or [],
+            "params": context_params,
         }
 
         logger.info("⚡ [QuickResponseAgent] delegate: intent=%s query='%s'", intent, query[:60])

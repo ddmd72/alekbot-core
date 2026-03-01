@@ -137,7 +137,7 @@ class EmailSearchService:
         )
 
         if not merged:
-            return json.dumps({"count": 0, "emails": []}, ensure_ascii=False)
+            return "No emails found matching your query."
 
         emails = []
         for email in merged:

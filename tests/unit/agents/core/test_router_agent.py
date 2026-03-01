@@ -454,7 +454,7 @@ class TestRouterAgentLlmTriage:
     @pytest.mark.asyncio
     async def test_llm_routes_to_smart_on_high_complexity(self, router_with_llm, mock_llm):
         mock_llm.generate_content.return_value = MagicMock(
-            text='{"needs_memory_search":true,"confidence":0.9,"reasoning":"multi-fact query","search_intent":"topic","relevant_domains":["possession"],"semantic_lens":["car","vehicle"],"search_phrase":"user vehicles list","metadata":{"user_tone":"casual","complexity_score":6}}'
+            text='{"needs_memory_search":true,"confidence":0.9,"reasoning":"multi-fact query","search_intent":"topic","relevant_domains":["possession"],"semantic_lens":["car","vehicle"],"search_phrase":"user vehicles list","metadata":{"user_tone":"casual","complexity_score":7}}'
         )
 
         message = create_query_message("Які у мене машини?")

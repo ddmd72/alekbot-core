@@ -471,7 +471,7 @@ class RouterAgent(BaseAgent):
         raise ValueError("No valid JSON found in triage response")
 
     def _apply_routing_rules(self, routing_metadata: RoutingMetadata) -> str:
-        """Route based on two signals: needs_memory_search and complexity_score.
+        """Route based on complexity_score.
 
         Complexity scale: 1-5 → QuickAgent, 6-10 → SmartAgent.
         Safety net: low confidence always falls back to Smart.
@@ -479,7 +479,7 @@ class RouterAgent(BaseAgent):
         if routing_metadata.confidence < 0.75:
             return self.smart_agent_id
 
-        if routing_metadata.needs_memory_search or routing_metadata.complexity_score > 5:
+        if routing_metadata.complexity_score > 6:
             return self.smart_agent_id
 
         return self.quick_agent_id

@@ -141,13 +141,12 @@ class TestVectorSearch:
         assert data["emails"][0]["email_id"] == "e1"
         assert data["emails"][0]["text"] == "flight to Paris"
 
-    async def test_empty_results_returns_zero_count(self, service, mock_email_repo):
+    async def test_empty_results_returns_no_results_message(self, service, mock_email_repo):
         mock_email_repo.find_nearest.return_value = []
 
-        raw = await service.vector_search("nothing", "nothing", [], "user123")
+        result = await service.vector_search("nothing", "nothing", [], "user123")
 
-        data = json.loads(raw)
-        assert data == {"count": 0, "emails": []}
+        assert result == "No emails found matching your query."
 
     async def test_calls_three_embeddings(self, service, mock_email_repo, mock_embedding):
         mock_email_repo.find_nearest.return_value = []

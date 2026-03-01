@@ -115,7 +115,7 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
     coordinator.handle_delegation.assert_called_once_with(
         intent="search_memory",
         query="glove size",
-        context={"user_id": user_id, "account_id": None, "session_id": "s1"},
+        context={"user_id": user_id, "account_id": None, "session_id": "s1", "memory_context": [], "params": {}},
         calling_agent_id="test",
     )
 
