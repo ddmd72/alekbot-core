@@ -2048,6 +2048,59 @@ Mark items `✅` as completed.
 
 ## Changelog
 
+### 2026-03-02 — QuickAgent delegation parity, router threshold, email 0-results fix
+
+**1. QuickResponseAgent — delegation context parity with SmartResponseAgent**
+
+Root cause of wrong dispatch in EmailSearchAgent: Quick's `delegate_to_specialist` tool schema
+had no `context` field, so the LLM could not pass structured parameters (e.g. `email_id`,
+`filename`). The coordinator's `params` mechanism (`extra_payload = context.get("params", {})`)
+existed but was never populated by Quick, causing EmailSearchAgent to always fall through to
+`_handle_search_emails` instead of `_handle_get_details` / `_handle_get_attachment`.
+
+Three changes in `src/agents/core/quick_response_agent.py`:
+- `delegate_to_specialist` schema: added `context: object` optional field with description
+  "Optional extra parameters for the specialist agent".
+- `_delegate_quick`: extract `context_params = args.get("context", {})` and forward as
+  `"params": context_params` in `delegation_context`.
+- `_execute_quick_parallel`: pass `memory_context` to parallel `other_calls` so specialist
+  agents receive memory context regardless of call order.
+
+**2. RouterAgent — routing condition simplified**
+
+`needs_memory_search` signal removed from routing decision. Quick handles memory search
+internally via its delegation loop (`search_memory` intent), so the signal was redundant
+and was routing an unnecessary share of queries to Smart.
+
+Threshold raised from `complexity_score > 5` to `complexity_score > 6`, routing more
+routine queries to the cheaper Quick tier.
+
+```python
+# Before:
+if routing_metadata.needs_memory_search or routing_metadata.complexity_score > 5:
+    return self.smart_agent_id
+# After:
+if routing_metadata.complexity_score > 6:
+    return self.smart_agent_id
+```
+
+**3. EmailSearchService — 0-results response**
+
+`vector_search()` returned `{"count": 0, "emails": []}` (26 chars) when no results were found.
+The calling LLM (Quick or Smart) received this ambiguous JSON and produced an empty `full_response`.
+
+Fix in `src/services/email_search_service.py`:
+```python
+# Before:
+return json.dumps({"count": 0, "emails": []}, ensure_ascii=False)
+# After:
+return "No emails found matching your query."
+```
+
+The plain string gives the LLM explicit content to synthesize a user-facing message from.
+
+---
+
 ### 2026-03-01 (session 2) — Classifier output truncation, DatetimeWithNanoseconds, GCS debug logging, smart completion message
 
 **1. JSON truncation in `classify_batch` — root cause and fix**
