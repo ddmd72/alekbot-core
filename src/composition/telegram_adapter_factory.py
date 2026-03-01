@@ -46,6 +46,8 @@ class TelegramAdapterFactory:
         audio_service=None,
         html_renderer: Optional[HtmlRendererPort] = None,
         notification_service: Optional[UserNotificationService] = None,
+        indexed_email_repo=None,
+        user_repo=None,
     ) -> TelegramWebhookAdapter:
         """
         Create TelegramWebhookAdapter with RichContentService wired in.
@@ -87,6 +89,8 @@ class TelegramAdapterFactory:
             audio_service=audio_service,
             rich_content_service=rich_content_service,
             notification_service=notification_service,
+            indexed_email_repo=indexed_email_repo,
+            user_repo=user_repo,
         )
 
         logger.info("TelegramAdapterFactory: wiring complete (html_renderer=%s)", html_renderer is not None)

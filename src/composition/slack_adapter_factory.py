@@ -54,6 +54,8 @@ class SlackAdapterFactory:
         audio_service=None,
         html_renderer: Optional[HtmlRendererPort] = None,
         notification_service: Optional[UserNotificationService] = None,
+        indexed_email_repo=None,
+        user_repo=None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -101,6 +103,8 @@ class SlackAdapterFactory:
             audio_service=audio_service,
             rich_content_service=rich_content_service,
             notification_service=notification_service,
+            indexed_email_repo=indexed_email_repo,
+            user_repo=user_repo,
         )
 
         if env_config.is_socket_mode:

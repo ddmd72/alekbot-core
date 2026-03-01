@@ -79,6 +79,8 @@ class ConversationHandler(ConversationHandlerPort):
         audio_service: Optional[AudioTranscriptionPort] = None,
         rich_content_service: Optional[RichContentService] = None,
         notification_service: Optional[UserNotificationService] = None,
+        indexed_email_repo: Optional[Any] = None,
+        user_repo: Optional[Any] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -89,6 +91,8 @@ class ConversationHandler(ConversationHandlerPort):
         self.audio_service = audio_service
         self._rich_content_service = rich_content_service
         self._notification_service = notification_service
+        self._indexed_email_repo = indexed_email_repo
+        self._user_repo = user_repo
 
     async def _deliver_rich_content(
         self,
@@ -661,7 +665,9 @@ class ConversationHandler(ConversationHandlerPort):
                     user_id=context.user_id,
                     coordinator=self.coordinator,
                     agent_factory=self.agent_factory,
-                    queue=self.consolidation_queue
+                    queue=self.consolidation_queue,
+                    indexed_email_repo=self._indexed_email_repo,
+                    user_repo=self._user_repo,
                 )
 
                 system_alert = (

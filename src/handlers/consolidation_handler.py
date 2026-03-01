@@ -189,8 +189,7 @@ async def process_user_batches_on_overflow(
         await agent_factory.ensure_agents_for_user(user_id)
 
         # SESSION_27: Get account_id for RequestContext
-        _user_repo = user_repo or agent_factory.user_repo
-        user_profile = await _user_repo.get_user(user_id)
+        user_profile = await user_repo.get_user(user_id)
         account_id = user_profile.account_id if user_profile else user_id
 
         # SESSION_27: Establish RequestContext for all consolidation operations
@@ -274,12 +273,11 @@ async def process_user_batches_on_overflow(
                     break
 
             # Email triage: up to _EMAIL_TRIAGE_PASSES passes after conversation batches
-            _email_repo = indexed_email_repo or getattr(agent_factory, "indexed_email_repo", None)
             await _run_email_triage(
                 user_id=user_id,
                 account_id=account_id,
                 coordinator=coordinator,
-                indexed_email_repo=_email_repo,
+                indexed_email_repo=indexed_email_repo,
             )
 
         # Check whether there are still pending batches (used by caller to decide re-enqueue)
@@ -312,8 +310,7 @@ async def _execute_consolidation_background(
         await agent_factory.ensure_agents_for_user(user_id)
 
         # SESSION 2026-02-07: Get account_id for RequestContext
-        _user_repo = user_repo or agent_factory.user_repo
-        user_profile = await _user_repo.get_user(user_id)
+        user_profile = await user_repo.get_user(user_id)
         account_id = user_profile.account_id if user_profile else user_id
 
         # SESSION 2026-02-07: Establish RequestContext for all consolidation operations
@@ -345,12 +342,11 @@ async def _execute_consolidation_background(
                 )
 
             # Email triage: up to _EMAIL_TRIAGE_PASSES passes after conversation consolidation
-            _email_repo = indexed_email_repo or getattr(agent_factory, "indexed_email_repo", None)
             await _run_email_triage(
                 user_id=user_id,
                 account_id=account_id,
                 coordinator=coordinator,
-                indexed_email_repo=_email_repo,
+                indexed_email_repo=indexed_email_repo,
             )
 
     except Exception as e:

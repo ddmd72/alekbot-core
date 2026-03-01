@@ -505,6 +505,8 @@ async def main():
             audio_service=None,
             html_renderer=html_renderer,
             notification_service=notification_service,
+            indexed_email_repo=container.indexed_email_repo,
+            user_repo=user_repo,
         )
         notification_channel_factory.set_slack_adapter(slack_adapter)
 
@@ -568,6 +570,8 @@ async def main():
                             consolidation_config=config.get("CONSOLIDATION"),
                             html_renderer=html_renderer,
                             notification_service=notification_service,
+                            indexed_email_repo=container.indexed_email_repo,
+                            user_repo=user_repo,
                         )
                         notification_channel_factory.set_telegram_adapter(telegram_adapter)
 
