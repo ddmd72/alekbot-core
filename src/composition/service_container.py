@@ -33,9 +33,16 @@ from ..services.prompt_cache_strategy import PromptCacheStrategy
 from ..services.prompt_component_service import PromptComponentService
 from ..services.search_enrichment_service import SearchEnrichmentService
 from ..services.email_search_service import EmailSearchService
+from ..services.email_indexing_service import EmailIndexingService
+from ..services.prompt_builder import PromptBuilder
 from ..adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from ..adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
 from ..adapters.gmail_provider_adapter import GmailProviderAdapter
+from ..adapters.firestore_email_job_repo import FirestoreEmailJobRepository
+from ..adapters.firestore_email_exclusions_adapter import FirestoreEmailExclusionsAdapter
+from ..agents.email_classification_agent import EmailClassificationAgent
+from ..domain.agent import AgentConfig
+from ..domain.user import UserBotConfig
 from ..utils.logger import logger
 
 
@@ -81,6 +88,10 @@ class ServiceContainer:
             gmail_provider=self.gmail_provider,
             embedding_service=self.embedding_service,
         )
+
+        # Email indexing adapters (shared, stateless)
+        self.email_job_repo = FirestoreEmailJobRepository(db_client, env_config)
+        self.email_exclusions_repo = FirestoreEmailExclusionsAdapter(db_client, env_config)
 
         # ------------------------------------------------------------------
         # Config + biographical context (shared; per-user limits resolved later)
@@ -144,6 +155,33 @@ class ServiceContainer:
         self.assembly_service = self._init_assembly_service(config, db_client, env_config)
 
         # ------------------------------------------------------------------
+        # Email classification + indexing pipeline
+        # ------------------------------------------------------------------
+        _email_classifier_context = self.context_builder.build(
+            "email_classifier", UserBotConfig()
+        )
+        _email_prompt_builder = PromptBuilder(
+            repo=None, assembly_service=self.assembly_service
+        )
+        self.email_classifier = EmailClassificationAgent(
+            config=AgentConfig(
+                agent_id="email_classifier",
+                agent_type="email_classifier",
+            ),
+            execution_context=_email_classifier_context,
+            prompt_builder=_email_prompt_builder,
+            gmail=self.gmail_provider,
+        )
+        self.email_indexing_service = EmailIndexingService(
+            gmail=self.gmail_provider,
+            email_repo=self.indexed_email_repo,
+            job_repo=self.email_job_repo,
+            exclusions_repo=self.email_exclusions_repo,
+            classifier=self.email_classifier,
+            embedding=self.embedding_service,
+        )
+
+        # ------------------------------------------------------------------
         # Session store
         # ------------------------------------------------------------------
         consolidation_settings = config["CONSOLIDATION"]
@@ -178,6 +216,7 @@ class ServiceContainer:
             "fact_management_adapter_factory": self.create_fact_management_adapter,
             "email_search_service": self.email_search_service,
             "indexed_email_repo": self.indexed_email_repo,
+            "email_job_repo": self.email_job_repo,
         }
 
     def create_fact_management_adapter(

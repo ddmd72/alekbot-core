@@ -38,15 +38,6 @@ from src.config.auth import AuthConfig
 from src.adapters.firebase_auth_adapter import FirebaseAuthAdapter
 from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
 from src.services.gmail_oauth_service import GmailOAuthService
-from src.adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
-from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
-from src.adapters.firestore_email_job_repo import FirestoreEmailJobRepository
-from src.adapters.firestore_email_exclusions_adapter import FirestoreEmailExclusionsAdapter
-from src.adapters.gmail_provider_adapter import GmailProviderAdapter
-from src.agents.email_classification_agent import EmailClassificationAgent
-from src.services.email_indexing_service import EmailIndexingService
-from src.services.prompt_builder import PromptBuilder
-from src.domain.user import UserBotConfig
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
 from src.adapters.notification_channel_factory import NotificationChannelFactory
 from src.services.user_notification_service import UserNotificationService
@@ -398,36 +389,17 @@ async def main():
             refresh_token_ttl=auth_config.refresh_token_ttl
         )
 
-        # Gmail OAuth + email adapters
+        # Gmail OAuth (web-only service for OAuth flow, not part of indexing pipeline)
         gmail_oauth_service = GmailOAuthService(
             client_id=auth_config.google_oauth_client_id,
             client_secret=auth_config.google_oauth_client_secret,
         )
-        oauth_credentials_port = FirestoreOAuthCredentialsAdapter(db_client=db_client, env_config=env_config)
-        indexed_email_repo = FirestoreIndexedEmailRepository(db_client=db_client, env_config=env_config)
 
-        # Email indexing pipeline (shared, stateless; user_id passed per-request)
-        gmail_provider = GmailProviderAdapter(
-            client_id=auth_config.google_oauth_client_id,
-            client_secret=auth_config.google_oauth_client_secret,
-        )
-        email_job_repo = FirestoreEmailJobRepository(db_client=db_client, env_config=env_config)
-        email_exclusions_repo = FirestoreEmailExclusionsAdapter(db_client=db_client, env_config=env_config)
-        email_prompt_builder = PromptBuilder(repo=None, assembly_service=container.assembly_service)
-        email_classifier = EmailClassificationAgent(
-            config=AgentConfig(agent_id="email_classifier", agent_type="email_classifier"),
-            execution_context=container.context_builder.build("email_classifier", UserBotConfig()),
-            prompt_builder=email_prompt_builder,
-            gmail=gmail_provider,
-        )
-        email_indexing_service = EmailIndexingService(
-            gmail=gmail_provider,
-            email_repo=indexed_email_repo,
-            job_repo=email_job_repo,
-            exclusions_repo=email_exclusions_repo,
-            classifier=email_classifier,
-            embedding=container.embedding_service,
-        )
+        # Email adapters — reuse from ServiceContainer (no duplicate instantiation)
+        oauth_credentials_port = container.oauth_credentials
+        indexed_email_repo = container.indexed_email_repo
+        email_job_repo = container.email_job_repo
+        email_indexing_service = container.email_indexing_service
 
         # Notification service: stores last active channel, sends background alerts via QuickAgent
         notification_state_repo = FirestoreNotificationStateAdapter(db_client=db_client, env_config=env_config)
