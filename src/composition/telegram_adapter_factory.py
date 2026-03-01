@@ -13,7 +13,7 @@ from ..adapters.telegram.webhook_adapter import TelegramWebhookAdapter
 from ..adapters.telegram.media_adapter import TelegramMediaAdapter
 from ..handlers.conversation_handler import ConversationHandler
 from ..infrastructure.agent_coordinator import AgentCoordinator
-from ..services.user_agent_factory import UserAgentFactory
+from .user_agent_factory import UserAgentFactory
 from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService
 from ..ports.html_renderer_port import HtmlRendererPort

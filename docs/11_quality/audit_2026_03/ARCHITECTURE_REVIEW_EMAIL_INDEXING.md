@@ -83,7 +83,7 @@ Services layer rule: import only from `domain/`, `ports/`, stdlib. `infrastructu
 
 ### P1-2: UserAgentFactory Misplaced in services/
 
-**Location**: `src/services/user_agent_factory.py`
+**Location**: `src/composition/user_agent_factory.py` (moved from `src/services/`)
 
 Imports:
 - 8 agent classes directly (lines 37-45)

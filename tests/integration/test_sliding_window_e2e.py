@@ -24,7 +24,7 @@ from src.services.embedding_service import EmbeddingService
 from src.services.file_upload_service import FileUploadService
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.handlers.conversation_handler import ConversationHandler
-from src.services.user_agent_factory import UserAgentFactory
+from src.composition.user_agent_factory import UserAgentFactory
 from src.utils.logger import logger
 
 # Constants

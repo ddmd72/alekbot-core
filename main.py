@@ -12,7 +12,7 @@ from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_quota_service import FirestoreQuotaService
 from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
 from src.services.iam_service import IAMService
-from src.services.user_agent_factory import UserAgentFactory
+from src.composition.user_agent_factory import UserAgentFactory
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.utils.server import run_dummy_server
 from src.utils.logger import logger

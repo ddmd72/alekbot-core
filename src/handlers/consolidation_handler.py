@@ -13,7 +13,7 @@ from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
 from ..domain.consolidation import BatchStatus
 from ..domain.email import IndexedEmail
 from ..infrastructure.agent_coordinator import AgentCoordinator
-from ..services.user_agent_factory import UserAgentFactory
+from ..composition.user_agent_factory import UserAgentFactory
 from ..ports.consolidation_queue import ConsolidationQueue
 from ..utils.logger import logger
 

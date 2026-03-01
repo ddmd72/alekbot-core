@@ -15,7 +15,7 @@ from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
 from ..ports.llm_service import Message, MessagePart
 from ..ports.file_service import FileService
 from ..infrastructure.agent_coordinator import AgentCoordinator
-from ..services.user_agent_factory import UserAgentFactory
+from ..composition.user_agent_factory import UserAgentFactory
 from ..services.file_conversion_service import (
     convert_file_to_text, is_native_binary, make_history_stub,
 )

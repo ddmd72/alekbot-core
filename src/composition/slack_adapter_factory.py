@@ -20,7 +20,7 @@ from ..adapters.firestore_dedup_store import FirestoreEventDedupStore
 from ..config.environment import EnvironmentConfig
 from ..handlers.conversation_handler import ConversationHandler
 from ..infrastructure.agent_coordinator import AgentCoordinator
-from ..services.user_agent_factory import UserAgentFactory
+from .user_agent_factory import UserAgentFactory
 from ..services.iam_service import IAMService
 from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService

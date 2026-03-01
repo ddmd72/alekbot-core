@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 def _make_factory():
     """Create a UserAgentFactory with all external dependencies mocked."""
-    from src.services.user_agent_factory import UserAgentFactory
+    from src.composition.user_agent_factory import UserAgentFactory
 
     return UserAgentFactory(
         config={"GEMINI_API_KEY": "k", "ANTHROPIC_API_KEY": "k"},

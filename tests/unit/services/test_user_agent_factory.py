@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import Mock, AsyncMock
-from src.services.user_agent_factory import UserAgentFactory
+from src.composition.user_agent_factory import UserAgentFactory
 from src.domain.user import UserProfile, UserBotConfig, PerformanceTier
 from src.services.agent_context_builder import AgentExecutionContext
 from src.ports.llm_service import ProviderCapabilities, LLMService

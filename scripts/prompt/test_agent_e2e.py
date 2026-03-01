@@ -35,7 +35,7 @@ from src.config.settings import load_settings
 from src.config.environment import EnvironmentConfig
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
-from src.services.user_agent_factory import UserAgentFactory
+from src.composition.user_agent_factory import UserAgentFactory
 from src.composition.service_container import ServiceContainer
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.domain.agent import AgentMessage, AgentIntent

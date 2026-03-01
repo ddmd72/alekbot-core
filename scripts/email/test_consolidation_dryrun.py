@@ -47,7 +47,7 @@ from src.domain.agent import AgentIntent, AgentMessage
 from src.domain.request_context import RequestContext
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.ports.fact_management_port import FactManagementPort
-from src.services.user_agent_factory import UserAgentFactory
+from src.composition.user_agent_factory import UserAgentFactory
 
 # Default facts file — most recent POC output
 DEFAULT_FACTS_FILE = Path("scripts/memory/email_facts_20260228_002314.json")
