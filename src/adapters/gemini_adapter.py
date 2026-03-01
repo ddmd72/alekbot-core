@@ -158,7 +158,7 @@ class GeminiAdapter(LLMService):
             response_schema=None if use_json_schema else response_schema,
             safety_settings=safety_settings,
             thinking_config=(
-                types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH)
+                types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW)
                 if enable_reasoning and model_name == "gemini-flash-latest"
                 else types.ThinkingConfig(thinking_budget=-1)
                 if enable_reasoning

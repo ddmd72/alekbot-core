@@ -49,11 +49,27 @@ class FirestoreEmailJobRepository(EmailIndexingJobRepository):
         await self.collection.document(job_id).update(sanitized)
         logger.debug(f"📋 Job updated: {job_id} fields={list(updates.keys())}")
 
+    # Datetime fields that may carry DatetimeWithNanoseconds from Firestore.
+    _DATETIME_FIELDS = (
+        "last_email_date", "backfill_until",
+        "max_email_date", "min_email_date",
+        "started_at", "updated_at", "completed_at",
+    )
+
+    @classmethod
+    def _to_job(cls, data: dict) -> IndexingJob:
+        """Normalize Firestore datetime subclasses to plain naive datetimes."""
+        for field in cls._DATETIME_FIELDS:
+            v = data.get(field)
+            if v is not None and type(v) is not datetime:
+                data[field] = datetime(v.year, v.month, v.day, v.hour, v.minute, v.second, v.microsecond)
+        return IndexingJob(**data)
+
     async def get_job(self, job_id: str) -> Optional[IndexingJob]:
         doc = await self.collection.document(job_id).get()
         if not doc.exists:
             return None
-        return IndexingJob(**doc.to_dict())
+        return self._to_job(doc.to_dict())
 
     async def get_latest_job(
         self, user_id: str, provider: str
@@ -69,7 +85,7 @@ class FirestoreEmailJobRepository(EmailIndexingJobRepository):
         docs = await query.get()
         if not docs:
             return None
-        return IndexingJob(**docs[0].to_dict())
+        return self._to_job(docs[0].to_dict())
 
     async def list_jobs(self, user_id: str, limit: int = 10) -> List[IndexingJob]:
         """Last N jobs across all providers, ordered by started_at DESC."""
@@ -80,7 +96,7 @@ class FirestoreEmailJobRepository(EmailIndexingJobRepository):
             .limit(limit)
         )
         docs = await query.get()
-        return [IndexingJob(**doc.to_dict()) for doc in docs]
+        return [self._to_job(doc.to_dict()) for doc in docs]
 
     async def get_stale_running_jobs(self, updated_before: datetime) -> List[IndexingJob]:
         """Return running jobs not updated since updated_before (zombie detection)."""
@@ -90,4 +106,4 @@ class FirestoreEmailJobRepository(EmailIndexingJobRepository):
             .where(filter=FieldFilter("updated_at", "<", updated_before))
         )
         docs = await query.get()
-        return [IndexingJob(**doc.to_dict()) for doc in docs]
+        return [self._to_job(doc.to_dict()) for doc in docs]

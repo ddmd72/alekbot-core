@@ -148,7 +148,7 @@ class EmailIndexingService:
         gmail_query: Optional[str] = GMAIL_DEFAULT_QUERY,
         mode: str = "incremental",
         backfill_until: Optional[datetime] = None,
-        page_size: int = 300,
+        page_size: int = 150,
     ) -> IndexingJob:
         """
         Execute the indexing pipeline until all pages are exhausted or an error occurs.
@@ -219,17 +219,6 @@ class EmailIndexingService:
                         )
 
         # ----------------------------------------------------------------
-        # Normalize timezone-aware datetimes loaded from Firestore on resume.
-        # job.max_email_date / job.min_email_date are written as naive UTC but
-        # Firestore returns DatetimeWithNanoseconds (tz-aware) on Cloud Tasks
-        # re-invocations, causing TypeError when compared with naive chunk_max/min.
-        # ----------------------------------------------------------------
-        if job.max_email_date is not None and job.max_email_date.tzinfo is not None:
-            job.max_email_date = job.max_email_date.replace(tzinfo=None)
-        if job.min_email_date is not None and job.min_email_date.tzinfo is not None:
-            job.min_email_date = job.min_email_date.replace(tzinfo=None)
-
-        # ----------------------------------------------------------------
         # Load exclusions once per job (fast pre-filter, no LLM)
         # ----------------------------------------------------------------
         exclusions = await self._exclusions_repo.get_exclusions(job.user_id)
@@ -260,6 +249,21 @@ class EmailIndexingService:
 
                 if not emails_page:
                     break
+
+                # Boundary guard: each Cloud Task worker independently reads the lower-bound
+                # cursor (indexed_through / backfill_until / reindex start); the one whose
+                # page dips below date_from is terminal.  next_page_token is nulled so
+                # finalization runs and re-enqueue is skipped.
+                # Deduplication handles any overlap — no emails are dropped.
+                if date_from is not None:
+                    page_dates = [e.date for e in emails_page if e.date]
+                    if page_dates and min(page_dates) < date_from:
+                        logger.info(
+                            f"📧 Job {job.job_id[:8]} [{mode}]: boundary reached "
+                            f"(oldest_in_page={min(page_dates).strftime('%Y-%m-%d')} < "
+                            f"date_from={date_from.strftime('%Y-%m-%d')}) — terminal page"
+                        )
+                        next_page_token = None
 
                 # 2. Pre-filter via exclusions (no LLM cost)
                 filtered = self._apply_exclusions(emails_page, exclusions)

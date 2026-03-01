@@ -11,6 +11,7 @@ import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from google.api_core.exceptions import NotFound
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
@@ -224,13 +225,18 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
 
     async def update_indexing_state(self, state: IndexingState) -> None:
         doc_id = f"{state.user_id}_{state.provider}"
-        await self.indexing_state_col.document(doc_id).set({
+        doc_ref = self.indexing_state_col.document(doc_id)
+        data = {
             "user_id": state.user_id,
             "provider": state.provider,
             "indexed_through": state.indexed_through,
             "oldest_indexed_through": state.oldest_indexed_through,
             "cursor_reindex": state.cursor_reindex,
-        })
+        }
+        try:
+            await doc_ref.update(data)
+        except NotFound:
+            await doc_ref.set(data)
         logger.debug(
             f"📌 Indexing state updated: user={state.user_id[:8]} "
             f"provider={state.provider} "
