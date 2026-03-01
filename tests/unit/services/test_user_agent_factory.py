@@ -28,6 +28,7 @@ def mock_dependencies():
         "assembly_service": None,
         "fact_write_service": Mock(),
         "fact_management_adapter_factory": Mock(return_value=Mock()),
+        "email_search_service": Mock(),
     }
 
 

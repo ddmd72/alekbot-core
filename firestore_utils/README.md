@@ -91,7 +91,11 @@ Download full document as JSON:
 ```bash
 # Blueprints
 python firestore_utils/download.py development_domain_prompt_blueprints_v3 universal_agent_v1 --format json
-python firestore_utils/download.py domain_prompt_blueprints_v3 universal_agent_v1 --format json
+python firestore_utils/download.py development_domain_prompt_blueprints_v3 universal_agent_v1
+python firestore_utils/upload.py development_domain_prompt_blueprints_v3 universal_agent_v1
+
+
+
 
 # Profiles (SYSTEM level)
 python firestore_utils/download.py development_domain_prompt_profiles_v3 universal_agent_v1_SYSTEM_smart --format json
@@ -153,6 +157,12 @@ python firestore_utils/upload.py development_domain_prompt_profiles_v3 universal
 
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_WEBSEARCH_LIGHT --format json
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system PROTOCOL_QUICK_AGENT_SELECTION --format json
+
+# Email Classifier agent (blueprint + profile + tokens)
+python firestore_utils/upload.py development_domain_prompt_blueprints_v3 email_classifier_v1 --format json
+python firestore_utils/upload.py development_domain_prompt_profiles_v3 email_classifier --format json
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system EMAIL_CLASSIFIER_TAXONOMY --format json
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system EMAIL_CLASSIFIER_COGNITIVE_PROCESS --format json
 
 
 ```

@@ -90,17 +90,21 @@ class PromptDebugLogger:
                 f.write("=" * 80 + "\n")
                 f.write(f"AGENT: {agent_name}\n")
                 f.write(f"TIMESTAMP: {datetime.now().isoformat()}\n")
-                
+
                 if metadata:
-                    f.write(f"METADATA: {metadata}\n")
-                
+                    if "model" in metadata:
+                        f.write(f"MODEL: {metadata['model']}\n")
+                    rest = {k: v for k, v in metadata.items() if k != "model"}
+                    if rest:
+                        f.write(f"METADATA: {rest}\n")
+
                 f.write("=" * 80 + "\n\n")
-                
+
                 if system_instruction:
                     f.write("=== SYSTEM INSTRUCTION ===\n")
                     f.write(system_instruction)
                     f.write("\n\n")
-                
+
                 f.write("=== PROMPT ===\n")
                 f.write(prompt)
             
@@ -142,10 +146,16 @@ class PromptDebugLogger:
                 f.write("=" * 80 + "\n")
                 f.write(f"AGENT: {agent_name}\n")
                 f.write(f"TIMESTAMP: {datetime.now().isoformat()}\n")
-                
+
                 if metadata:
-                    f.write(f"METADATA: {metadata}\n")
-                
+                    if "model" in metadata:
+                        f.write(f"MODEL: {metadata['model']}\n")
+                    if "tokens" in metadata:
+                        f.write(f"TOKENS: {metadata['tokens']}\n")
+                    rest = {k: v for k, v in metadata.items() if k not in ("model", "tokens")}
+                    if rest:
+                        f.write(f"METADATA: {rest}\n")
+
                 f.write("=" * 80 + "\n\n")
                 f.write("=== LLM RESPONSE ===\n")
                 f.write(response)

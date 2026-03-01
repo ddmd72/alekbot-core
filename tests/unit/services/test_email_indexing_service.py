@@ -15,12 +15,12 @@ from src.domain.email import (
     IndexingJob,
     OAuthCredentials,
 )
+from src.ports.email_classifier_port import EmailClassifierPort
 from src.ports.email_exclusions_port import EmailExclusionsPort
 from src.ports.email_indexing_job_repository import EmailIndexingJobRepository
 from src.ports.email_provider_port import EmailProviderPort
 from src.ports.embedding_service import EmbeddingService
 from src.ports.indexed_email_repository import IndexedEmailRepository
-from src.services.email_classification_service import EmailClassificationService
 from src.services.email_indexing_service import EmailIndexingService
 
 
@@ -58,7 +58,7 @@ def mock_exclusions_repo():
 
 @pytest.fixture
 def mock_classifier():
-    return AsyncMock(spec=EmailClassificationService)
+    return AsyncMock(spec=EmailClassifierPort)
 
 
 @pytest.fixture
@@ -133,7 +133,6 @@ def _make_classification(email_id: str, valuable: bool = True) -> EmailClassific
         category="travel" if valuable else None,
         fact="User booked flight BCN-KBP" if valuable else None,
         tags=["flight", "ryanair"] if valuable else [],
-        reason="booking confirmation" if valuable else "noise",
     )
 
 

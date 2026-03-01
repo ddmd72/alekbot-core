@@ -1,13 +1,14 @@
 # RFC: Native Tools Integration & Router-Centric Enrichment (v2)
 
-**Status:** Active (Partial Implemented)
+**Status:** Partial (SearchEnrichmentService implemented; Quick delegation refactored; biographical cache → HEXAGONAL_PROMPT_CACHING_RFC)
 **Date:** 2026-01-27
-**Owner:** AI Engineering (Cline)
+**Updated:** 2026-02-28
+**Owner:** AI Engineering
 **Milestone:** M4 (Multi-Agent Integration)
 
 **Related ADR:** ADR-005 (Router-Centric Enrichment)
 **Related Building Block:** Search Enrichment
-**Implemented Sections:** 3.2 (Router-Centric Enrichment), 4 (SearchEnrichmentService)
+**Implemented Sections:** 3.2 (Router-Centric Enrichment), 4 (SearchEnrichmentService), 5 (Biographical Cache — see HEXAGONAL_PROMPT_CACHING_RFC.md)
 
 ---
 
@@ -52,7 +53,7 @@ User → RouterAgent → QuickResponseAgent | SmartResponseAgent
 ### 3.1 Principle: Separation by Responsibility & Speed
 
 ```
-RouterAgent (Gemini 3 Flash)
+RouterAgent (Gemini Flash)
   ├─ LLM Triage (tone, keywords, phrases, complexity)
   ├─ Delegates enrichment to SearchEnrichmentService
   └─ Route → Quick or Smart
@@ -63,7 +64,7 @@ SearchEnrichmentService (Application Service)
   ├─ Double Dedup vs Biographical Cache
   └─ Returns EnrichedContext
 
-QuickResponseAgent (Gemini 3 Flash)
+QuickResponseAgent (Gemini Flash)
   ├─ Receives enriched_context from Router
   └─ Uses native provider tools only
 
@@ -245,7 +246,7 @@ llm_smart = GeminiAdapter(api_key=GEMINI_KEY)
 
 | Path | Model | Tooling | Expected Latency | Use Case |
 |------|-------|---------|------------------|----------|
-| Quick | Gemini 3 Flash | Native tools | ~2–4s | 70–80% of queries |
+| Quick | Gemini Flash | Native tools | ~2–4s | 70–80% of queries |
 | Smart | Claude Sonnet | Custom tools | ~8–15s | Complex / sensitive |
 
 Cost optimization:
@@ -348,76 +349,43 @@ Provider selection and billing overrides per user are deferred to a later milest
 ✅ Weighted merge strategy approved.
 ✅ Biographical cache is prompt-cached only for Smart + active conversation.
 ✅ Cache protocol is provider-agnostic and stored in session_store.
-✅ Smart uses Claude Sonnet; Quick uses Gemini 3 Flash native tools.
+✅ Smart uses Claude Sonnet; Quick uses Gemini Flash native tools.
 ✅ Fallback: Smart unavailable → Quick.
 
 ---
 
-## 13. Discovery & Baseline (2026-01-27)
+## 13. Discovery & Baseline (2026-01-27) — Historical Context
 
-### 13.1 Infrastructure: Prompt Management
-- **Location**: System prompts (kernels) are stored in Firestore as "Facts" under the `SYSTEM` owner.
-- **Components**:
-    - `kernel`: Full prompt for complex agents (Smart).
-    - `kernel_light`: Lightweight prompt for fast agents (Quick).
-- **Tooling**:
-    - `scripts/memory/ops/download_component.py`: Used to pull prompts from Firestore to local `.groovy` files.
-    - `scripts/memory/ops/upload_kernel.py`: Used to upload modified prompts back to Firestore with version tracking.
-- **Finding**: Discovery in this session revealed that `kernel_light` in dev was outdated and duplicated much of the `kernel` logic, including manual tool protocols that conflict with native provider tools.
+> **Note:** §13–14 describe the state and plan as of 2026-01-27. The system has since evolved significantly.
+> Key changes: prompt system migrated from monolithic `kernel`/`kernel_light` facts in Firestore to
+> **PromptBuilder v3/v4** (token-based, blueprint-driven, per-agent profiles). Old upload/download scripts
+> (`scripts/memory/ops/`) do not exist. Quick agent delegation is now function-calling based (not grounding);
+> `WebSearchLightAgent` (ECO tier) handles light web search for Quick separately (session 7, commit c38191e).
 
-### 13.2 Real Prompt Analysis & Baseline
-- **Current State**: Both `QuickResponseAgent` and `SmartResponseAgent` currently use manual reasoning chains for tool calls.
-- **Quick Agent Baseline**: `kernel_light.groovy` (v1.3) contains a `Tool_Usage_Protocol` rule that manually instructs the model to call `search_memory` or `ask_web_search_agent` via `AgentCoordinator`.
-- **Finding**: Actual prompts in Firestore dev environment confirmed that both agents are configured as custom tool executors, creating high latency for simple queries.
+### 13.1 Prompt System (as of 2026-01-27)
+- System prompts stored in Firestore as `kernel` / `kernel_light` Facts under `SYSTEM` owner.
+- **Replaced by:** PromptBuilder v3 (token system) and v4 (blueprint + ProfileToken) — see PROMPT_BUILDER_V4_RFC.md.
 
-### 13.3 Refined Plan for Quick Agent (M4.1)
-- **Source Sync**: `kernel_light` v2.0 is derived from the latest `kernel` (P.9.2) to maintain personality but is stripped of all `protocols` (manual tools).
-- **Cognitive Process Enhancement**:
-    - A new step `ESCALATION_CHECK` is added to the `cognitive_process` block.
-    - This check happens early (Step 4) to ensure fast exit if a query is too complex.
-- **Escalation Protocol (English for consistency)**:
-    - Defines `trigger_conditions` (deep data analysis, multi-step planning, specialized agents).
-    - Instruction: `IF any trigger_condition is met: STOP reasoning -> Generate brief witty response -> Recommend Smart Agent`.
-- **Native Transition**: `QuickResponseAgent` will switch to Gemini native tools (grounding) via `automatic_function_calling=True` in the `GeminiAdapter`.
+### 13.2 Quick Agent Tool Delegation (Resolved)
+- Original plan: native Gemini grounding (`automatic_function_calling=True`).
+- **Actual implementation:** Quick uses explicit function-calling (`search_memory`, `search_web_light`) with `MAX_DELEGATION_TURNS=2`. `WebSearchLightAgent` (ECO, Flash Lite + Google grounding) handles web search in isolation because Gemini cannot combine grounding + function-calling in one request.
 
-### 13.4 Refined Plan for Smart Agent (M4.2)
-- **Custom Orchestration**: Smart Agent remains the manual tool loop orchestrator using specialist agents.
-- **Model Migration**: Migrating from Gemini Pro to Claude Sonnet for complex reasoning turns.
-- **Prompt Caching**: Implementation of `PromptCacheConfig` to optimize costs and latency for biographical context.
+### 13.3 Smart Agent (Resolved)
+- Smart uses Claude (Opus/Sonnet via PERFORMANCE tier). Custom tool loop: `search_memory`, `search_web`, `search_email` (planned).
+- Prompt caching implemented via `HEXAGONAL_PROMPT_CACHING_RFC` (CachingLLMProxy + CACHE_BOUNDARY).
 
 ---
 
-## 14. Detailed Implementation Workflow (2026-01-27)
+## 14. Detailed Implementation Workflow (2026-01-27) — Superseded
 
-### Step 1: Port Extensions (Hexagonal Foundation)
-1.  **File**: `src/ports/llm_service.py`
-2.  **Add**: `AutomaticFunctionCallingConfig` (enabled, mode).
-3.  **Update**: `generate_content` signature to accept this config.
+> Steps 1–5 below reflect the original plan. All steps are either implemented differently or superseded.
+> See current architecture in `docs/04_solution_strategy/current_implementation/STRUCTURE.md`.
 
-### Step 2: Adapter Updates (Native Grounding)
-1.  **File**: `src/adapters/gemini_adapter.py`
-2.  **Action**: Support `AutomaticFunctionCallingConfig`. If enabled, set `automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=False)` in Google AI SDK.
-3.  **Action**: Ensure grounding tool is properly initialized when requested.
-
-### Step 3: Prompt Migration (Cloud Ops)
-1.  **Action**: Use `memory/kernel_light_v2_final_proposal.groovy` (approved).
-2.  **Command**: `python scripts/memory/ops/upload_kernel.py --file memory/kernel_light_v2_final_proposal.groovy --component kernel_light --environment dev`.
-3.  **Verification**: Pull it back and verify the `version: "L.2.0 (Native Tools Integration)"`.
-
-### Step 4: QuickResponseAgent Refactoring
-1.  **File**: `src/agents/core/quick_response_agent.py`
-2.  **Remove**: Custom tool loop logic (`_get_tool_declarations`, `_handle_tool_calls`, etc.).
-3.  **Enable**: Native tools in `execute()` call.
-4.  **Update**: Message history handling to be compatible with native grounding responses.
-
-### Step 5: Claude Adapter Implementation
-1.  **File**: `src/adapters/claude_adapter.py`
-2.  **Feature**: Prompt caching support via breakpoints.
-3.  **Integration**: Map usage metadata and cache hits.
-
----
-
-**Next Step:** Execute Phase 1 (Port Extension).
+- Step 1 (Port Extensions): `AgentExecutionContext` + `ProviderCapabilities` implemented (supersedes `AutomaticFunctionCallingConfig`).
+- Step 2 (Native Grounding): Implemented for WebSearchAgent and WebSearchLightAgent only. Quick uses function calling.
+- Step 3 (Prompt Migration): Superseded by PromptBuilder v3/v4 — token upload via `firestore_utils/upload.py`.
+- Step 4 (Quick Refactoring): Done (session 7). Quick has `MAX_DELEGATION_TURNS=2`, function-calling, no grounding.
+- Step 5 (Claude Adapter): Implemented (`src/adapters/claude_adapter.py`), with prompt caching.
 
 ---
 

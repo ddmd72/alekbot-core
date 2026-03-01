@@ -54,6 +54,7 @@ class TestEmailProviderPort:
         assert "date_from" in params
         assert "page_token" in params
         assert "max_results" in params
+        assert "query" in params
 
     def test_batch_get_full_content_signature(self):
         params = _params(EmailProviderPort, "batch_get_full_content")
@@ -125,8 +126,8 @@ class TestIndexedEmailRepository:
     def test_abstract_method_count(self):
         assert _abstract_methods(IndexedEmailRepository) == {
             "save_batch", "find_nearest", "get_indexing_state",
-            "update_indexing_state", "count_by_user", "delete_by_user",
-            "get_unconsolidated_batch", "mark_consolidated",
+            "update_indexing_state", "clear_indexing_state", "count_by_user",
+            "delete_by_user", "get_unconsolidated_batch", "mark_consolidated",
             "get_pending_embeddings", "update_vectors",
         }
 

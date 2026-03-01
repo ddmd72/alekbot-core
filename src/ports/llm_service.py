@@ -56,6 +56,7 @@ class ProviderCapabilities(BaseModel):
     supports_system_prompt: bool = True
     supports_json_mode: bool = False
     native_grounding: bool = False  # Google Search grounding injected at API level (Gemini only)
+    supports_reasoning: bool = False  # Extended reasoning / thinking mode
 
 
 # ============================================================================
@@ -79,6 +80,7 @@ class LLMRequest(BaseModel):
     force_tool_use: bool = False
     disable_safety: bool = False
     use_grounding: bool = False  # Request native search grounding; adapter decides how to implement
+    enable_reasoning: bool = False  # Enable extended reasoning/thinking; ignored if provider doesn't support it
 
 
 class LLMResponse(BaseModel):

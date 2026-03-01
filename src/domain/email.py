@@ -75,13 +75,16 @@ class EmailClassificationResult:
     """
     Output of EmailClassificationService per email.
     valuable=False → email discarded, not written to Firestore.
+    valuable_type:
+      "confirmed_event"    — email directly confirms a real-world event (booking, receipt, etc.)
+      "biographical_signal" — email reveals biographical context about the user (school, family, etc.)
     """
     email_id: str
     valuable: bool
     category: Optional[str]   # travel|finance|healthcare|work|legal|personal|subscription
     fact: Optional[str]        # Self-contained fact sentence; becomes IndexedEmail.text
     tags: List[str]
-    reason: str                # Brief explanation (~15 words) — for debug/audit only
+    valuable_type: str = "confirmed_event"  # "confirmed_event" | "biographical_signal"
 
 
 # ---------------------------------------------------------------------------
@@ -135,10 +138,14 @@ class IndexingState:
     Cursor tracking per user per provider.
     Stored in {env}_email_indexing_state. Doc ID: {user_id}_{provider}.
     Advances only after each chunk completes successfully (idempotent retry).
+
+    indexed_through:        newest email date seen (incremental upper frontier)
+    oldest_indexed_through: oldest email date seen (backfill lower frontier)
     """
     user_id: str
     provider: str
-    indexed_through: Optional[datetime]  # None = never indexed
+    indexed_through: Optional[datetime] = None          # None = never indexed forward
+    oldest_indexed_through: Optional[datetime] = None   # None = backfill never run
 
 
 class IndexingJob(BaseModel):

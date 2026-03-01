@@ -123,6 +123,25 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
 - **SCD2 versioning** — FactEntity uses valid_from/valid_to/is_current.
 - **Multi-tenant** — always pass account_id. Collections with env prefix.
 
+## Agent Output Format Standards
+
+Every agent that produces structured LLM output MUST follow these rules — no exceptions:
+
+- **OUTPUT_FORMAT token is mandatory.** Every agent with structured output must have a dedicated
+  `OUTPUT_FORMAT_{AGENT}` token in its blueprint. Never embed format instructions inside
+  `cognitive_process` or any other token.
+
+- **No regex fallbacks.** `_parse_response()` calls `json.loads()` directly on the raw LLM output.
+  On `JSONDecodeError` → raise `ValueError`. Never extract partial output via `re.search`.
+
+- **Retry on invalid output, not silent degradation.** When `_parse_response()` raises `ValueError`:
+  append the bad model response + a user correction message to history, then continue the loop.
+  After `MAX_PARSE_RETRIES` exhausted → `_all_failed(..., "parse_error")` + log error.
+  Never post-process malformed output in Python.
+
+- **`response_mime_type="application/json"` for single-pass only.** Gemini cannot combine JSON mode
+  with function calling. When tools are active, rely on the OUTPUT_FORMAT token + retry logic.
+
 ## Tests
 
 - pytest + pytest-asyncio (asyncio_mode=auto).
@@ -130,6 +149,60 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
 - Mocks via `AsyncMock(spec=PortClass)`.
 - Markers: `@pytest.mark.requirement("REQ-XXX")`, `@pytest.mark.performance`.
 - Structure: `tests/unit/`, `tests/integration/`, `tests/performance/`.
+
+## Decision-Making Protocol (CRITICAL — apply before every non-trivial task)
+
+Every implementation decision must pass through four sequential gates.
+Skip any gate only when the task is unambiguous, isolated, and trivial (typo / rename / single line).
+
+### Gate 1 — Orient: find the authoritative source
+
+```
+Is there a relevant RFC in docs/10_rfcs/?
+  YES → Read it fully before writing a single line of code.
+        Does the RFC reference a POC script in scripts/?
+          YES → Read the POC fully. The POC is the authoritative implementation spec.
+                POC = ground truth. It encodes validated, debugged logic.
+                Only POCs explicitly referenced from an RFC qualify as authoritative.
+          NO  → RFC alone is the spec.
+  NO  → Existing production code is the spec. Read it before proposing changes.
+```
+
+### Gate 2 — Gap analysis: compare intent vs. reality
+
+Before writing code, explicitly answer:
+1. What exactly does the RFC/POC prescribe for this step?
+2. What am I about to implement?
+3. Is there any difference? (missing filter, different algorithm, different data structure, altered flow)
+
+If there is ANY difference → do not proceed to Gate 3. Go to Gate 4 first.
+
+### Gate 3 — Uncertainty check: stop or go?
+
+Ask yourself: "Am I fully certain about every detail of this implementation?"
+
+Signals that mean STOP and ask:
+- The RFC/POC covers this case but my reading is ambiguous
+- I found a "simpler" approach than what the POC uses — this is a red flag, not a win
+- I am about to make an assumption about a parameter, a filter, a threshold, or a flow
+- The implementation touches more than one subsystem and I haven't read all relevant code
+- Something feels "obvious" but I haven't verified it against the source
+
+Asking questions is efficient. One clarifying question costs 30 seconds.
+A wrong autonomous assumption costs hours of debugging and rework.
+
+### Gate 4 — Explicit delta declaration
+
+If your implementation differs from the RFC/POC in any way:
+- State the difference explicitly before writing any code
+- Explain the reason
+- Wait for user confirmation
+
+Do NOT implement first and explain later. Do NOT silently simplify.
+Autonomous decisions that diverge from the spec without notification are bugs in the process,
+regardless of whether the code itself works.
+
+---
 
 ## Project Documentation
 

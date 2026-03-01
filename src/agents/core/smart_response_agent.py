@@ -360,7 +360,7 @@ class SmartResponseAgent(BaseAgent):
                     agent_name="smart_response",
                     prompt=history_str,
                     system_instruction=system_prompt,
-                    metadata={"user_id": user_id[:8] if user_id else "unknown", "turn": turn + 1}
+                    metadata={"model": self.model_name, "user_id": user_id[:8] if user_id else "unknown", "turn": turn + 1}
                 )
             
             llm_start = time.time()
@@ -381,6 +381,7 @@ class SmartResponseAgent(BaseAgent):
                         agent_name="smart_response",
                         response=response.text or "",
                         metadata={
+                            "model": self.model_name,
                             "user_id": user_id[:8] if user_id else "unknown",
                             "turn": turn + 1,
                             "tokens": response.usage_metadata.total_tokens if response.usage_metadata else 0
@@ -446,6 +447,7 @@ class SmartResponseAgent(BaseAgent):
                     agent_name="smart_response",
                     response=user_text,
                     metadata={
+                        "model": self.model_name,
                         "user_id": user_id[:8] if user_id else "unknown",
                         "turn": turn + 1,
                         "tokens": response.usage_metadata.total_tokens if response.usage_metadata else 0,

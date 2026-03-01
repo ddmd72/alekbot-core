@@ -74,6 +74,20 @@
       </section>
 
       <!-- ────────────────────────────────────────────── -->
+      <!-- Gmail Integration                             -->
+      <!-- ────────────────────────────────────────────── -->
+      <section id="gmail-section" class="card rounded-xl overflow-hidden">
+        <div class="section-header px-5 py-4 flex items-center justify-between">
+          <div>
+            <h2 class="font-semibold text-gray-800">Gmail Integration</h2>
+            <p class="text-sm text-gray-500 mt-0.5">Index your emails as biographical facts</p>
+          </div>
+          <div id="gmail-header-btn"></div>
+        </div>
+        <div id="gmail-body" class="px-5 py-4 text-sm text-gray-400">Loading...</div>
+      </section>
+
+      <!-- ────────────────────────────────────────────── -->
       <!-- My Memory (Facts)                             -->
       <!-- ────────────────────────────────────────────── -->
       <section class="card rounded-xl overflow-hidden">
@@ -207,6 +221,60 @@
 
     </div>
 
+    <!-- Gmail Indexing Modal -->
+    <div id="gmail-index-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center" style="background:rgba(44,36,32,0.5);" onclick="closeIndexModal(event)">
+      <div class="card rounded-xl w-full max-w-sm mx-4 p-6" onclick="event.stopPropagation()">
+        <h3 class="font-semibold text-gray-800 mb-1">Index Gmail</h3>
+        <p class="text-xs text-gray-500 mb-4">Choose how to index your email history.</p>
+
+        <!-- Mode selector -->
+        <div class="space-y-2 mb-4">
+          <label class="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors" style="border:1px solid #d4cdc4;" id="mode-incremental-label">
+            <input type="radio" name="index-mode" value="incremental" checked class="mt-0.5 accent-indigo-500" onchange="updateIndexModal()">
+            <div>
+              <div class="text-sm font-medium text-gray-700">Incremental</div>
+              <div class="text-xs text-gray-400">Fetch emails newer than the last indexed date.</div>
+            </div>
+          </label>
+          <label class="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors" style="border:1px solid #d4cdc4;" id="mode-reindex-label">
+            <input type="radio" name="index-mode" value="reindex" class="mt-0.5 accent-indigo-500" onchange="updateIndexModal()">
+            <div>
+              <div class="text-sm font-medium text-gray-700">Re-index</div>
+              <div class="text-xs text-gray-400">Reset and re-process the last 3 years. Overwrites existing records.</div>
+            </div>
+          </label>
+          <label class="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors" style="border:1px solid #d4cdc4;" id="mode-backfill-label">
+            <input type="radio" name="index-mode" value="backfill" class="mt-0.5 accent-indigo-500" onchange="updateIndexModal()">
+            <div>
+              <div class="text-sm font-medium text-gray-700">Backfill</div>
+              <div class="text-xs text-gray-400">Index emails older than the earliest already indexed, back to a date you choose.</div>
+            </div>
+          </label>
+        </div>
+
+        <!-- Backfill date (hidden unless backfill selected) -->
+        <div id="backfill-date-row" class="hidden mb-4">
+          <label class="text-xs font-medium text-gray-400 uppercase tracking-wide">Stop date (go back to)</label>
+          <input type="date" id="backfill-until-input"
+            class="mt-1.5 w-full text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            style="border:1px solid #d4cdc4; background:#faf8f5;" />
+        </div>
+
+        <!-- Pages (hidden for reindex — full mailbox is always processed) -->
+        <div id="index-pages-row" class="mb-5">
+          <label class="text-xs font-medium text-gray-400 uppercase tracking-wide">Pages (1 page ≈ 300 emails)</label>
+          <input type="number" id="index-pages-input" value="1" min="1" max="50" placeholder="blank = all"
+            class="mt-1.5 w-full text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            style="border:1px solid #d4cdc4; background:#faf8f5;" />
+        </div>
+
+        <div class="flex gap-2 justify-end">
+          <button onclick="closeIndexModal()" class="text-sm px-3 py-1.5 rounded-md transition-colors" style="border:1px solid #d4cdc4; color:#6b7280;" onmouseover="this.style.background='#f0ece6'" onmouseout="this.style.background='transparent'">Cancel</button>
+          <button id="index-start-btn" onclick="submitIndexModal()" class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">Start</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       const API = "";
       let currentUser = null;
@@ -249,11 +317,20 @@
           }
 
           // Joined via invite?
-          if (new URLSearchParams(window.location.search).get("joined") === "true") {
+          const qs = new URLSearchParams(window.location.search);
+          if (qs.get("joined") === "true") {
             showToast("✅ Successfully joined the team!", "success");
+          }
+          if (qs.get("gmail_connected") === "1") {
+            showToast("✅ Gmail connected!", "success");
+          }
+          if (qs.get("gmail_error")) {
+            const errMap = { denied: "Gmail access was denied", state: "OAuth error (state mismatch)", no_code: "OAuth error (no code)", exchange: "Failed to connect Gmail" };
+            showToast("❌ " + (errMap[qs.get("gmail_error")] || "Gmail connection failed"), "error");
           }
 
           loadPlatforms();
+          loadGmailStatus();
         } catch (e) {
           showToast("Please log in first", "error");
           setTimeout(() => (window.location.href = "/auth/login"), 2000);
@@ -367,6 +444,172 @@
           loadPlatforms();
         } catch (e) {
           showToast(e.message, "error");
+        }
+      }
+
+      // ─── Gmail ───────────────────────────────────────────────
+      async function loadGmailStatus() {
+        try {
+          const res = await fetch(`${API}/api/gmail/status`, { credentials: "include" });
+          if (!res.ok) throw new Error();
+          renderGmailStatus(await res.json());
+        } catch {
+          document.getElementById("gmail-body").textContent = "Unable to load Gmail status.";
+        }
+      }
+
+      function renderGmailStatus(data) {
+        const body = document.getElementById("gmail-body");
+        const headerBtn = document.getElementById("gmail-header-btn");
+
+        if (!data.connected) {
+          // State A: not connected
+          body.innerHTML = `<span class="text-gray-400">Not connected. Connect Gmail to let Alek index your email history as biographical facts.</span>`;
+          headerBtn.innerHTML = `<a href="/auth/connect-gmail" class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors inline-block">Connect Gmail</a>`;
+          return;
+        }
+
+        const email = data.email_address || "(unknown email)";
+        const indexedThrough = data.indexed_through
+          ? new Date(data.indexed_through).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+          : null;
+
+        // State B/C: connected
+        body.innerHTML = `
+          <div class="flex items-center gap-2 mb-1">
+            <span class="w-2.5 h-2.5 rounded-full bg-green-400 flex-shrink-0"></span>
+            <span class="font-medium text-gray-800 text-sm">${escapeHtml(email)}</span>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">
+            ${indexedThrough ? `Indexed through: <span class="font-medium text-gray-600">${indexedThrough}</span>` : "Not indexed yet."}
+          </p>
+          ${indexedThrough ? `<p class="text-xs mt-2"><button onclick="deleteGmailData(this)" class="text-red-400 hover:text-red-600 transition-colors">Delete email data</button></p>` : ""}
+        `;
+
+        headerBtn.innerHTML = `
+          <div class="flex items-center gap-2">
+            <button
+              onclick="triggerGmailIndex(this)"
+              class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors"
+            >Index</button>
+            <button
+              onclick="disconnectGmail(this)"
+              class="text-sm px-3 py-1.5 rounded-md transition-colors"
+              style="border:1px solid #d4cdc4; color:#6b7280; background:transparent;"
+              onmouseover="this.style.background='#f0ece6'" onmouseout="this.style.background='transparent'"
+            >Disconnect</button>
+          </div>
+        `;
+      }
+
+      let _indexTriggerBtn = null;
+
+      function triggerGmailIndex(btn) {
+        _indexTriggerBtn = btn;
+        // Reset modal state
+        document.querySelector('input[name="index-mode"][value="incremental"]').checked = true;
+        document.getElementById("backfill-date-row").classList.add("hidden");
+        document.getElementById("index-pages-row").classList.remove("hidden");
+        document.getElementById("index-pages-input").value = "1";
+        document.getElementById("index-start-btn").textContent = "Start";
+        document.getElementById("index-start-btn").disabled = false;
+        document.getElementById("gmail-index-overlay").classList.remove("hidden");
+      }
+
+      function updateIndexModal() {
+        const mode = document.querySelector('input[name="index-mode"]:checked').value;
+        document.getElementById("backfill-date-row").classList.toggle("hidden", mode !== "backfill");
+        document.getElementById("index-pages-row").classList.toggle("hidden", mode === "reindex");
+        // backfill: пусто = все страницы; incremental: сбрасываем в 1
+        if (mode === "backfill") document.getElementById("index-pages-input").value = "";
+        if (mode === "incremental") document.getElementById("index-pages-input").value = "1";
+      }
+
+      function closeIndexModal(e) {
+        if (e && e.target !== document.getElementById("gmail-index-overlay")) return;
+        document.getElementById("gmail-index-overlay").classList.add("hidden");
+      }
+
+      document.addEventListener("keydown", e => {
+        if (e.key === "Escape") document.getElementById("gmail-index-overlay").classList.add("hidden");
+      });
+
+      async function submitIndexModal() {
+        const mode = document.querySelector('input[name="index-mode"]:checked').value;
+        const maxPages = Math.max(1, parseInt(document.getElementById("index-pages-input").value) || 1);
+        const backfillUntil = document.getElementById("backfill-until-input").value || null;
+
+        if (mode === "backfill" && !backfillUntil) {
+          showToast("Please select a stop date for backfill", "error");
+          return;
+        }
+
+        const btn = document.getElementById("index-start-btn");
+        btn.textContent = "Indexing…";
+        btn.disabled = true;
+
+        // reindex/backfill без значения → не отправляем max_pages → backend = unlimited
+        const body = { mode };
+        if (mode === "incremental" || document.getElementById("index-pages-input").value.trim())
+          body.max_pages = maxPages;
+        if (mode === "backfill" && backfillUntil) body.backfill_until = backfillUntil;
+
+        try {
+          const res = await fetch(`${API}/api/gmail/index`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          document.getElementById("gmail-index-overlay").classList.add("hidden");
+          if (res.status === 501) {
+            showToast("Indexing not configured on server", "error");
+          } else if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Indexing failed: ${err.error || res.status}`, "error");
+          } else {
+            const data = await res.json();
+            const msg = `Done: ${data.emails_stored} stored / ${data.emails_fetched} fetched` +
+              (data.has_more ? " · more pages available" : "");
+            showToast(msg, "success");
+            loadGmailStatus();
+          }
+        } catch (e) {
+          showToast(`Error: ${e.message}`, "error");
+          btn.textContent = "Start";
+          btn.disabled = false;
+        }
+      }
+
+      async function disconnectGmail(btn) {
+        if (!confirm("Disconnect Gmail?\n\nYour indexed email data will be preserved. You can re-connect at any time.")) return;
+        btn.textContent = "Disconnecting...";
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/api/gmail/disconnect`, { method: "DELETE", credentials: "include" });
+          if (!res.ok) throw new Error();
+          showToast("Gmail disconnected. Indexed data preserved.", "success");
+          loadGmailStatus();
+        } catch {
+          showToast("Failed to disconnect Gmail", "error");
+          btn.textContent = "Disconnect";
+          btn.disabled = false;
+        }
+      }
+
+      async function deleteGmailData(btn) {
+        if (!confirm("Delete all indexed email data?\n\nThis cannot be undone. You will need to re-index from scratch.")) return;
+        btn.textContent = "Deleting...";
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/api/gmail/data`, { method: "DELETE", credentials: "include" });
+          if (!res.ok) throw new Error();
+          showToast("Email data deleted.", "success");
+          loadGmailStatus();
+        } catch {
+          showToast("Failed to delete email data", "error");
+          btn.textContent = "Delete email data";
+          btn.disabled = false;
         }
       }
 

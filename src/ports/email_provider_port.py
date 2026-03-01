@@ -17,13 +17,16 @@ class EmailProviderPort(ABC):
         self,
         credentials: OAuthCredentials,
         date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
         page_token: Optional[str] = None,
         max_results: int = 100,
+        query: Optional[str] = None,
     ) -> Tuple[List[EmailMetadata], Optional[str]]:
         """
         Fetch one page of email metadata (subject, from, date, snippet, labels).
         Returns (emails, next_page_token). next_page_token=None means last page.
-        date_from=None means no lower bound (full history).
+        date_from=None means no lower bound. date_to=None means no upper bound.
+        query=None means no Gmail search filter (full mailbox).
         max_results=100 aligns with one LLM classification batch.
         """
 

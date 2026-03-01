@@ -42,6 +42,7 @@ def _make_factory():
         assembly_service=None,
         fact_write_service=MagicMock(),
         fact_management_adapter_factory=MagicMock(return_value=MagicMock()),
+        email_search_service=MagicMock(),
     )
 
 

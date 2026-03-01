@@ -64,6 +64,11 @@ class AuthConfig:
             "http://localhost:8080/auth/callback",  # Dev default
             config
         )
+        self.gmail_oauth_redirect_uri = self._get(
+            "GMAIL_OAUTH_REDIRECT_URI",
+            "http://localhost:5001/auth/connect-gmail/callback",  # Dev default
+            config
+        )
         # CRITICAL: Load from config (Secret Manager) or fallback
         self.oauth_session_secret = self._get(
             "OAUTH_SESSION_SECRET",

@@ -57,9 +57,11 @@ class GmailProviderAdapter(EmailProviderPort):
     async def list_emails(
         self,
         credentials: OAuthCredentials,
-        date_from: Optional[datetime],
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
         page_token: Optional[str] = None,
         max_results: int = 100,
+        query: Optional[str] = None,
     ) -> Tuple[List[EmailMetadata], Optional[str]]:
         """
         Fetches up to max_results email metadata for one page.
@@ -74,9 +76,16 @@ class GmailProviderAdapter(EmailProviderPort):
         async with aiohttp.ClientSession() as session:
             # Step 1: List message IDs
             params: Dict = {"maxResults": max_results}
+            # Combine caller query with date filters into a single q= parameter
+            q_parts = []
+            if query:
+                q_parts.append(query)
             if date_from:
-                # Gmail q= filter: after:YYYY/MM/DD (inclusive)
-                params["q"] = f"after:{date_from.strftime('%Y/%m/%d')}"
+                q_parts.append(f"after:{date_from.strftime('%Y/%m/%d')}")
+            if date_to:
+                q_parts.append(f"before:{date_to.strftime('%Y/%m/%d')}")
+            if q_parts:
+                params["q"] = " ".join(q_parts)
             if page_token:
                 params["pageToken"] = page_token
 

@@ -9,7 +9,7 @@ Pipeline per chunk (100 emails/page):
 
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from ..domain.email import (
@@ -26,9 +26,14 @@ from ..ports.email_exclusions_port import EmailExclusionsPort
 from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.embedding_service import EmbeddingService
+from ..ports.email_classifier_port import EmailClassifierPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
-from ..services.email_classification_service import EmailClassificationService
 from ..utils.logger import logger
+
+# Gmail search filter applied to every indexing job.
+# Restricts fetch to Primary + Updates tabs and excludes spam — matches POC LABEL_FILTER.
+# Pass gmail_query=None to override (full mailbox, for debugging only).
+GMAIL_DEFAULT_QUERY = "{category:primary category:updates} -in:spam -in:trash"
 
 
 class EmailIndexingService:
@@ -45,7 +50,7 @@ class EmailIndexingService:
         email_repo: IndexedEmailRepository,
         job_repo: EmailIndexingJobRepository,
         exclusions_repo: EmailExclusionsPort,
-        classifier: EmailClassificationService,
+        classifier: EmailClassifierPort,
         embedding: EmbeddingService,
     ):
         self._gmail = gmail
@@ -80,35 +85,121 @@ class EmailIndexingService:
             updated_at=now,
         )
 
+    async def start_job(
+        self,
+        user_id: str,
+        account_id: str,
+        credentials: OAuthCredentials,
+        provider: str = "gmail",
+        triggered_by: str = "cabinet",
+        max_pages: Optional[int] = None,
+        date_from: Optional[datetime] = None,
+        mode: str = "incremental",
+        backfill_until: Optional[datetime] = None,
+    ) -> IndexingJob:
+        """
+        Create, persist, and run a new indexing job. Convenience wrapper for cabinet/API callers.
+
+        mode:
+          "incremental" — fetch emails newer than indexed_through (default)
+          "reindex"     — clear state, re-process all emails from now back 3 years (overwrites)
+          "backfill"    — fetch emails older than oldest_indexed_through, down to backfill_until
+        """
+        job = self.create_job(user_id=user_id, provider=provider, triggered_by=triggered_by)
+        await self._job_repo.create_job(job)
+        return await self.run_indexing_job(
+            job=job,
+            credentials=credentials,
+            account_id=account_id,
+            max_pages=max_pages,
+            date_from=date_from,
+            mode=mode,
+            backfill_until=backfill_until,
+        )
+
     async def run_indexing_job(
         self,
         job: IndexingJob,
         credentials: OAuthCredentials,
         account_id: str,
+        max_pages: Optional[int] = None,
+        date_from: Optional[datetime] = None,
+        gmail_query: Optional[str] = GMAIL_DEFAULT_QUERY,
+        mode: str = "incremental",
+        backfill_until: Optional[datetime] = None,
+        page_size: int = 300,
     ) -> IndexingJob:
         """
         Execute the indexing pipeline until all pages are exhausted or an error occurs.
 
+        mode controls cursor logic:
+          "incremental": fetch after indexed_through+1d; advance indexed_through forward
+          "reindex":     clear state; fetch without upper bound; update both cursors
+          "backfill":    fetch between backfill_until and oldest_indexed_through-1d;
+                         advance oldest_indexed_through backward
+
         Resume: if job.next_page_token is set, resumes from that cursor.
         Idempotent: uses email_id as Firestore doc ID; duplicate writes are no-ops.
         """
-        # Determine date range for the fetch
-        date_from: Optional[datetime] = None
-        if state := await self._email_repo.get_indexing_state(
+        # ----------------------------------------------------------------
+        # Mode-specific cursor setup
+        # ----------------------------------------------------------------
+        existing_state = await self._email_repo.get_indexing_state(
             job.user_id, job.provider
-        ):
-            date_from = state.indexed_through
+        )
+        date_to: Optional[datetime] = None
 
+        if mode == "reindex":
+            await self._email_repo.clear_indexing_state(job.user_id, job.provider)
+            existing_state = None
+            if date_from is None:
+                date_from = datetime.utcnow() - timedelta(days=3 * 365)
+            logger.info(
+                f"📧 Job {job.job_id[:8]} [reindex]: resetting cursor, "
+                f"from={date_from.strftime('%Y-%m-%d')}"
+            )
+
+        elif mode == "backfill":
+            if existing_state and existing_state.oldest_indexed_through:
+                # Upper bound: day before what we already have
+                date_to = existing_state.oldest_indexed_through - timedelta(days=1)
+            if backfill_until is not None:
+                date_from = backfill_until
+            elif date_from is None:
+                date_from = datetime.utcnow() - timedelta(days=5 * 365)
+            logger.info(
+                f"📧 Job {job.job_id[:8]} [backfill]: "
+                f"from={date_from.strftime('%Y-%m-%d')} "
+                f"to={date_to.strftime('%Y-%m-%d') if date_to else 'open'}"
+            )
+
+        else:  # incremental (default)
+            if date_from is None:
+                if existing_state and existing_state.indexed_through:
+                    # after: is inclusive — advance by 1 day to skip already-indexed
+                    date_from = existing_state.indexed_through + timedelta(days=1)
+            if date_from is None:
+                date_from = datetime.utcnow() - timedelta(days=3 * 365)
+                logger.info(
+                    f"📧 Job {job.job_id[:8]} [incremental]: no cursor, "
+                    f"defaulting to 3yr ago ({date_from.strftime('%Y-%m-%d')})"
+                )
+
+        # ----------------------------------------------------------------
         # Load exclusions once per job (fast pre-filter, no LLM)
+        # ----------------------------------------------------------------
         exclusions = await self._exclusions_repo.get_exclusions(job.user_id)
         logger.info(
-            f"📧 Job {job.job_id[:8]} starting: user={job.user_id[:8]} "
+            f"📧 Job {job.job_id[:8]} [{mode}] starting: user={job.user_id[:8]} "
             f"provider={job.provider} exclusions={len(exclusions)} "
-            f"resume={bool(job.next_page_token)}"
+            f"resume={bool(job.next_page_token)} query={gmail_query!r}"
         )
 
         page_token = job.next_page_token
-        latest_email_date: Optional[datetime] = None
+        # Running max/min seen across all pages (used to advance cursors)
+        job_latest_date: Optional[datetime] = None
+        job_oldest_date: Optional[datetime] = None
+        pages_processed = 0
 
         try:
             while True:
@@ -120,8 +211,10 @@ class EmailIndexingService:
                 emails_page, next_page_token = await self._gmail.list_emails(
                     credentials=credentials,
                     date_from=date_from,
+                    date_to=date_to,
                     page_token=page_token,
-                    max_results=100,
+                    max_results=page_size,
+                    query=gmail_query,
                 )
 
                 if not emails_page:
@@ -135,17 +228,20 @@ class EmailIndexingService:
                         f"🚫 Excluded {excluded_count} emails via patterns"
                     )
 
-                # 3. Classify remaining emails (single LLM call, Gemini Flash)
+                # 3. Classify remaining emails (agentic loop, Gemini Flash + tool calling)
                 classifications: List[EmailClassificationResult] = []
                 if filtered:
                     classifications = await self._classifier.classify_batch(
-                        filtered, job.user_id
+                        filtered, job.user_id, credentials=credentials
                     )
                 valuable = [
                     c for c in classifications if c.valuable and c.fact
                 ]
 
-                # 4. Fetch full content for valuable emails (attachment filenames)
+                # 4. Fetch full content for ALL valuable emails (attachment filenames).
+                #    Always re-fetches regardless of what was already fetched during
+                #    tool calling — storage needs authoritative data, not the truncated
+                #    3000-char snippets sent to the LLM.
                 email_meta_map: Dict[str, EmailMetadata] = {
                     e.email_id: e for e in filtered
                 }
@@ -161,6 +257,17 @@ class EmailIndexingService:
                     except Exception as exc:
                         logger.warning(
                             f"⚠️ batch_get_full_content partial failure: {exc}"
+                        )
+
+                    # Log final candidates with attachments for inspection
+                    for c in valuable:
+                        meta = email_meta_map.get(c.email_id)
+                        content = full_content_map.get(c.email_id)
+                        attachments = content.attachments if content else []
+                        logger.info(
+                            f"  📧 {c.email_id[:8]} | [{c.category}] {c.fact} "
+                            f"| from={meta.from_address if meta else '?'} "
+                            f"| attachments={attachments if attachments else '—'}"
                         )
 
                 # 5. Build IndexedEmail objects with embeddings (parallel)
@@ -188,12 +295,15 @@ class EmailIndexingService:
                 if indexed_emails:
                     saved = await self._email_repo.save_batch(indexed_emails)
 
-                # 7. Track latest email date for cursor advance
+                # 7. Track max/min email dates across all pages
                 chunk_dates = [e.date for e in emails_page if e.date]
                 if chunk_dates:
                     chunk_max = max(chunk_dates)
-                    if latest_email_date is None or chunk_max > latest_email_date:
-                        latest_email_date = chunk_max
+                    chunk_min = min(chunk_dates)
+                    if job_latest_date is None or chunk_max > job_latest_date:
+                        job_latest_date = chunk_max
+                    if job_oldest_date is None or chunk_min < job_oldest_date:
+                        job_oldest_date = chunk_min
 
                 # 8. Update job progress (persisted — Cloud Tasks resume point)
                 job.emails_fetched += len(emails_page)
@@ -212,15 +322,15 @@ class EmailIndexingService:
                     },
                 )
 
-                # 9. Advance indexing cursor only after successful batch write
-                if latest_email_date:
-                    await self._email_repo.update_indexing_state(
-                        IndexingState(
-                            user_id=job.user_id,
-                            provider=job.provider,
-                            indexed_through=latest_email_date,
-                        )
-                    )
+                # 9. Advance indexing cursor only after successful batch write.
+                #    Mode controls which cursor(s) move and in which direction.
+                await self._advance_cursor(
+                    job=job,
+                    mode=mode,
+                    existing_state=existing_state,
+                    job_latest_date=job_latest_date,
+                    job_oldest_date=job_oldest_date,
+                )
 
                 logger.info(
                     f"✅ Chunk done: fetched={len(emails_page)} "
@@ -228,7 +338,11 @@ class EmailIndexingService:
                     f"next={'yes' if next_page_token else 'no'}"
                 )
 
+                pages_processed += 1
                 if not next_page_token:
+                    break
+                if max_pages is not None and pages_processed >= max_pages:
+                    logger.info(f"📧 Reached max_pages={max_pages}, stopping (resume_token saved)")
                     break
                 page_token = next_page_token
 
@@ -270,6 +384,42 @@ class EmailIndexingService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    async def _advance_cursor(
+        self,
+        job: IndexingJob,
+        mode: str,
+        existing_state: Optional[IndexingState],
+        job_latest_date: Optional[datetime],
+        job_oldest_date: Optional[datetime],
+    ) -> None:
+        """
+        Write updated IndexingState after a successful chunk.
+
+        Mode rules:
+          incremental: indexed_through moves forward; oldest_indexed_through preserved
+          reindex:     both cursors updated (full re-process from scratch)
+          backfill:    oldest_indexed_through moves backward; indexed_through preserved
+        """
+        if mode == "backfill":
+            new_indexed_through = existing_state.indexed_through if existing_state else None
+            new_oldest = job_oldest_date  # moves backward as we process older pages
+        elif mode == "reindex":
+            new_indexed_through = job_latest_date
+            new_oldest = job_oldest_date
+        else:  # incremental
+            new_indexed_through = job_latest_date
+            new_oldest = existing_state.oldest_indexed_through if existing_state else None
+
+        if new_indexed_through is not None or new_oldest is not None:
+            await self._email_repo.update_indexing_state(
+                IndexingState(
+                    user_id=job.user_id,
+                    provider=job.provider,
+                    indexed_through=new_indexed_through,
+                    oldest_indexed_through=new_oldest,
+                )
+            )
 
     @staticmethod
     def _apply_exclusions(

@@ -51,7 +51,7 @@ class EmailEmbeddingRepairService:
         for email in pending:
             try:
                 vectors = await self._generate_vectors(email)
-                await self._email_repo.update_vectors(email.email_id, vectors)
+                await self._email_repo.update_vectors(email.user_id, email.email_id, vectors)
                 repaired += 1
             except Exception as exc:
                 logger.error(

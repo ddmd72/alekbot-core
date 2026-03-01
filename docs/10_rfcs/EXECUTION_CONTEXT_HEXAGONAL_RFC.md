@@ -1,8 +1,13 @@
 # RFC: Execution Context & Hexagonal Architecture Cleanup
 
-**Status:** DRAFT (for future)
+**Status:** POSTPONED
 **Created:** 2026-02-01
 **Scope:** Domain layer, Service layer, Dependency Injection
+
+> **Note:** This RFC is distinct from `AgentExecutionContext` (LLM provider/model/tier context in `ports/llm_service.py`),
+> which IS implemented and used by all agents. This RFC is about a separate domain-level `ExecutionContext`
+> value object for wrapping user_id/account_id/session_id. Decision: POSTPONED until 5+ context parameters needed.
+
 
 ---
 
@@ -333,8 +338,8 @@ prompt = await service.get_assembled_prompt(
 
 **Related RFCs:**
 - Multi-Tenant OAuth (Session 1) - introduced `account_id`
-- Prompt Component Architecture (Session 23-25) - 3→4 level system
+- Prompt Builder v4 (Session 8) - 4-level token/override system (see PROMPT_BUILDER_V4_RFC.md)
 
 **See also:**
-- `docs/architecture/TARGET_ARCHITECTURE_v6.md` - Hexagonal principles
-- `docs/guides/PROMPT_COMPONENTS_GUIDE.md` - Current prompt system
+- `docs/04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md` - Hexagonal principles
+- `docs/05_building_blocks/prompt_design_system_v3/README.md` - Prompt token system (current)

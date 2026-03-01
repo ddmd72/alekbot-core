@@ -28,8 +28,8 @@ def test_gemini_model_for_tier():
     adapter = GeminiAdapter(api_key="test-key")
 
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gemini-flash-lite-latest"
-    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gemini-3-flash-preview"
-    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gemini-3-pro-preview"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gemini-flash-latest"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gemini-pro-latest"
 
 
 # ============================================================================

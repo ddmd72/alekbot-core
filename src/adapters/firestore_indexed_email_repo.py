@@ -3,7 +3,7 @@ FirestoreIndexedEmailRepository — stores and searches indexed email facts.
 See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §2.1.2.
 
 Collections:
-  {env}_domain_email_facts_v1  — email fact documents (doc ID = email_id)
+  {env}_domain_email_facts_v1  — email fact documents (doc ID = {user_id}_{email_id})
   {env}_email_indexing_state   — per-user/provider cursor (doc ID = {user_id}_{provider})
 """
 
@@ -67,8 +67,24 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
                 data[field] = list(v)
         return data
 
+    @staticmethod
+    def _strip_tz(dt):
+        """Convert a Firestore datetime to a plain naive datetime.
+
+        Firestore returns DatetimeWithNanoseconds (a datetime subclass).
+        Calling .replace(tzinfo=None) on it bypasses __init__ and leaves
+        ._nanosecond unset, which crashes Firestore serialization on write-back.
+        Always construct a fresh plain datetime to avoid this.
+        """
+        if dt is None:
+            return None
+        return datetime(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, dt.microsecond)
+
     def _to_domain(self, data: dict) -> IndexedEmail:
         self._unwrap_vectors(data)
+        for field in ("indexed_at", "email_date", "consolidated_at"):
+            if field in data:
+                data[field] = self._strip_tz(data[field])
         return IndexedEmail(**data)
 
     # ------------------------------------------------------------------
@@ -88,7 +104,7 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
             for email in chunk:
                 data = email.model_dump()
                 self._wrap_vectors(data)
-                doc_ref = self.collection.document(email.email_id)
+                doc_ref = self.collection.document(f"{email.user_id}_{email.email_id}")
                 batch.set(doc_ref, data)
                 written += 1
             await batch.commit()
@@ -155,13 +171,12 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
                 logger.error(f"💥 [email.find_nearest] query failed: {query_results}")
                 continue
             for rank, doc in enumerate(query_results):
-                email_id = doc.id
-                if email_id not in docs_by_id:
-                    data = doc.to_dict()
-                    data["email_id"] = doc.id  # ensure email_id is set
-                    docs_by_id[email_id] = data
-                scores[email_id] = (
-                    scores.get(email_id, 0.0) + 1.0 / (_RRF_K + rank + 1)
+                doc_id = doc.id  # composite: {user_id}_{email_id}
+                if doc_id not in docs_by_id:
+                    data = doc.to_dict()  # email_id field already correct in document
+                    docs_by_id[doc_id] = data
+                scores[doc_id] = (
+                    scores.get(doc_id, 0.0) + 1.0 / (_RRF_K + rank + 1)
                 )
 
         top_ids = sorted(scores, key=lambda x: scores[x], reverse=True)[:limit]
@@ -187,10 +202,13 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
         if not doc.exists:
             return None
         data = doc.to_dict()
+        indexed_through = self._strip_tz(data.get("indexed_through"))
+        oldest_indexed_through = self._strip_tz(data.get("oldest_indexed_through"))
         return IndexingState(
             user_id=data["user_id"],
             provider=data["provider"],
-            indexed_through=data.get("indexed_through"),
+            indexed_through=indexed_through,
+            oldest_indexed_through=oldest_indexed_through,
         )
 
     async def update_indexing_state(self, state: IndexingState) -> None:
@@ -199,10 +217,19 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
             "user_id": state.user_id,
             "provider": state.provider,
             "indexed_through": state.indexed_through,
+            "oldest_indexed_through": state.oldest_indexed_through,
         })
         logger.debug(
             f"📌 Indexing state updated: user={state.user_id[:8]} "
-            f"provider={state.provider} through={state.indexed_through}"
+            f"provider={state.provider} through={state.indexed_through} "
+            f"oldest={state.oldest_indexed_through}"
+        )
+
+    async def clear_indexing_state(self, user_id: str, provider: str) -> None:
+        doc_id = f"{user_id}_{provider}"
+        await self.indexing_state_col.document(doc_id).delete()
+        logger.info(
+            f"🗑️ Indexing state cleared: user={user_id[:8]} provider={provider}"
         )
 
     # ------------------------------------------------------------------
@@ -257,8 +284,7 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
         docs = await query.get()
         emails = []
         for doc in docs:
-            data = doc.to_dict()
-            data["email_id"] = doc.id
+            data = doc.to_dict()  # email_id field already correct in document
             try:
                 emails.append(self._to_domain(data))
             except Exception as exc:
@@ -268,7 +294,7 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
         return emails
 
     async def mark_consolidated(
-        self, email_ids: List[str], consolidated_at: datetime
+        self, user_id: str, email_ids: List[str], consolidated_at: datetime
     ) -> None:
         """Batch-updates consolidated_at on processed IDs. Chunks at 500."""
         chunk_size = 500
@@ -276,7 +302,7 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
             chunk = email_ids[i : i + chunk_size]
             batch = self.db.batch()
             for email_id in chunk:
-                doc_ref = self.collection.document(email_id)
+                doc_ref = self.collection.document(f"{user_id}_{email_id}")
                 batch.update(doc_ref, {"consolidated_at": consolidated_at})
             await batch.commit()
         logger.debug(
@@ -297,8 +323,7 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
         docs = await query.get()
         emails = []
         for doc in docs:
-            data = doc.to_dict()
-            data["email_id"] = doc.id
+            data = doc.to_dict()  # email_id field already correct in document
             try:
                 emails.append(self._to_domain(data))
             except Exception as exc:
@@ -308,12 +333,12 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
         return emails
 
     async def update_vectors(
-        self, email_id: str, vectors: Dict[str, List[float]]
+        self, user_id: str, email_id: str, vectors: Dict[str, List[float]]
     ) -> None:
         """Partial update: write computed vectors and clear embedding_pending flag."""
         data: dict = {"embedding_pending": False}
         for field, vec in vectors.items():
             if vec is not None:
                 data[field] = Vector(vec)
-        await self.collection.document(email_id).update(data)
+        await self.collection.document(f"{user_id}_{email_id}").update(data)
         logger.debug(f"📐 Vectors updated for email {email_id}")

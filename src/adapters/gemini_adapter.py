@@ -30,8 +30,8 @@ class GeminiAdapter(LLMService):
     # ========================================================================
     MODEL_TIERS = {
         PerformanceTier.ECO: "gemini-flash-lite-latest",
-        PerformanceTier.BALANCED: "gemini-3-flash-preview",
-        PerformanceTier.PERFORMANCE: "gemini-3-pro-preview"
+        PerformanceTier.BALANCED: "gemini-flash-latest",
+        PerformanceTier.PERFORMANCE: "gemini-pro-latest"
     }
 
     # ========================================================================
@@ -45,6 +45,7 @@ class GeminiAdapter(LLMService):
         vision=True,
         max_context_window=1000000,
         native_grounding=True,
+        supports_reasoning=True,
     )
 
     def __init__(self, api_key: str):
@@ -68,6 +69,7 @@ class GeminiAdapter(LLMService):
         max_tokens: Optional[int] = None
         disable_safety: bool = False
         use_grounding: bool = False
+        enable_reasoning: bool = False
         if request:
             model_name = request.model_name
             system_instruction = request.system_instruction
@@ -82,6 +84,7 @@ class GeminiAdapter(LLMService):
             max_tokens = request.max_tokens
             disable_safety = request.disable_safety
             use_grounding = request.use_grounding
+            enable_reasoning = request.enable_reasoning
             stream_callback = None
 
         # Gemini does not support prompt caching — strip the boundary marker transparently.
@@ -151,6 +154,7 @@ class GeminiAdapter(LLMService):
             response_json_schema=self._to_json_schema(response_schema) if use_json_schema else None,
             response_schema=None if use_json_schema else response_schema,
             safety_settings=safety_settings,
+            thinking_config=types.ThinkingConfig(thinking_budget=-1) if enable_reasoning else None,
         )
 
         if stream_callback:

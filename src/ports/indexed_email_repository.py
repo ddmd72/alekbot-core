@@ -15,9 +15,9 @@ class IndexedEmailRepository(ABC):
     @abstractmethod
     async def save_batch(self, emails: List[IndexedEmail]) -> int:
         """
-        Upsert batch. email_id is document ID — idempotent on retry.
-        Returns count of documents written.
-        Firestore max: 500 writes per batch transaction.
+        Upsert batch. Document ID = {user_id}_{email_id} for global uniqueness.
+        email_id field in the document retains the provider's original message ID.
+        Idempotent on retry. Firestore max: 500 writes per batch transaction.
         """
 
     @abstractmethod
@@ -49,6 +49,13 @@ class IndexedEmailRepository(ABC):
         """
 
     @abstractmethod
+    async def clear_indexing_state(self, user_id: str, provider: str) -> None:
+        """
+        Delete the indexing state document for this user+provider.
+        Called by re-index mode to reset both cursors before a full re-process.
+        """
+
+    @abstractmethod
     async def count_by_user(
         self, user_id: str, provider: Optional[str] = None
     ) -> int:
@@ -73,10 +80,11 @@ class IndexedEmailRepository(ABC):
 
     @abstractmethod
     async def mark_consolidated(
-        self, email_ids: List[str], consolidated_at: datetime
+        self, user_id: str, email_ids: List[str], consolidated_at: datetime
     ) -> None:
         """
         Batch update: set consolidated_at = now() on processed IDs.
+        user_id required to reconstruct the composite document ID ({user_id}_{email_id}).
         Called after ConsolidationAgent completes email triage.
         Re-runs are safe — deduplication in ConsolidationAgent prevents double-writes.
         """
@@ -90,9 +98,10 @@ class IndexedEmailRepository(ABC):
 
     @abstractmethod
     async def update_vectors(
-        self, email_id: str, vectors: Dict[str, List[float]]
+        self, user_id: str, email_id: str, vectors: Dict[str, List[float]]
     ) -> None:
         """
         Partial update: write computed vectors dict, set embedding_pending=False.
+        user_id required to reconstruct the composite document ID ({user_id}_{email_id}).
         Called by repair service after successful re-embedding.
         """

@@ -1,13 +1,18 @@
 from quart import Blueprint, request, jsonify, g, send_file, redirect, abort, send_from_directory
 from functools import wraps
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+from datetime import datetime
 import os
 
 from ..services.invite_code_service import InviteCodeService
 from ..services.session_service import SessionService
+from ..services.gmail_oauth_service import GmailOAuthService
+from ..services.email_indexing_service import EmailIndexingService
 from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
+from ..ports.oauth_credentials_port import OAuthCredentialsPort
+from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..utils.logger import logger
 
 # Documentation owner (loaded from environment variable - Secret Manager)
@@ -20,6 +25,10 @@ def create_user_cabinet_blueprint(
     user_repo: UserRepository,
     fact_repo: FactRepository,
     embedding_service: EmbeddingService,
+    oauth_credentials_port: Optional[OAuthCredentialsPort] = None,
+    gmail_oauth_service: Optional[GmailOAuthService] = None,
+    indexed_email_repo: Optional[IndexedEmailRepository] = None,
+    email_indexing_service: Optional[EmailIndexingService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -467,13 +476,154 @@ def create_user_cabinet_blueprint(
                 return jsonify({"error": "code is required"}), 400
 
             await invite_service.consume_team_invite(code, g.user_id)
-            
+
             return jsonify({"success": True, "message": "Joined team successfully"}), 200
 
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         except Exception as e:
             logger.error(f"Error joining team: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    # ========================================================================
+    # Gmail integration API
+    # ========================================================================
+
+    @bp.route("/api/gmail/status", methods=["GET"])
+    @auth_required
+    async def gmail_status():
+        """Return Gmail connection state for the authenticated user."""
+        if not oauth_credentials_port:
+            return jsonify({"connected": False}), 200
+        try:
+            creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
+            if not creds:
+                return jsonify({"connected": False}), 200
+
+            indexed_through = None
+            if indexed_email_repo:
+                state = await indexed_email_repo.get_indexing_state(g.user_id, "gmail")
+                if state:
+                    indexed_through = state.indexed_through.isoformat() if state.indexed_through else None
+
+            return jsonify({
+                "connected": True,
+                "email_address": creds.email_address or None,
+                "indexed_through": indexed_through,
+            }), 200
+        except Exception as exc:
+            logger.error(f"Error fetching Gmail status: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/gmail/index", methods=["POST"])
+    @auth_required
+    async def gmail_index():
+        """
+        Trigger synchronous Gmail indexing for the current user.
+
+        Request body (optional JSON):
+          mode:           "incremental" | "reindex" | "backfill"  (default: "incremental")
+          max_pages:      int  — pages to fetch (1 page ≈ 100 emails). Default: 1.
+                                 Hard cap: GMAIL_INDEX_MAX_PAGES env var (default 50).
+          backfill_until: str  — "YYYY-MM-DD" stop date for backfill mode.
+
+        Runs synchronously — expect 30-120s per page. Use max_pages=1 for test runs.
+        """
+        if not email_indexing_service or not oauth_credentials_port:
+            return jsonify({"error": "Gmail indexing not configured"}), 501
+
+        # Parse request body
+        body = await request.get_json(silent=True) or {}
+        server_cap = int(os.getenv("GMAIL_INDEX_MAX_PAGES", "50"))
+
+        mode = body.get("mode", "incremental")
+        if mode not in ("incremental", "reindex", "backfill"):
+            return jsonify({"error": f"Invalid mode '{mode}'. Must be incremental, reindex, or backfill"}), 400
+
+        # reindex/backfill without explicit max_pages → no limit (process all pages)
+        if mode in ("reindex", "backfill") and "max_pages" not in body:
+            max_pages = None
+        else:
+            max_pages = min(int(body.get("max_pages", 1)), server_cap)
+
+        backfill_until = None
+        if raw_until := body.get("backfill_until"):
+            try:
+                backfill_until = datetime.strptime(raw_until, "%Y-%m-%d")
+            except ValueError:
+                return jsonify({"error": "Invalid backfill_until format, expected YYYY-MM-DD"}), 400
+
+        try:
+            creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
+            if not creds:
+                return jsonify({"error": "Gmail not connected"}), 404
+
+            account_id = g.account_id
+
+            logger.info(
+                f"📧 Cabinet indexing started: user={g.user_id[:8]} "
+                f"mode={mode} max_pages={max_pages} backfill_until={backfill_until}"
+            )
+
+            job = await email_indexing_service.start_job(
+                user_id=g.user_id,
+                account_id=account_id,
+                credentials=creds,
+                triggered_by="cabinet",
+                max_pages=max_pages,
+                mode=mode,
+                backfill_until=backfill_until,
+            )
+
+            return jsonify({
+                "job_id": job.job_id,
+                "status": job.status,
+                "emails_fetched": job.emails_fetched,
+                "emails_stored": job.emails_stored,
+                "emails_failed": job.emails_failed,
+                "has_more": bool(job.next_page_token),
+            }), 200
+
+        except Exception as exc:
+            logger.error(f"Error running Gmail indexing: {exc}", exc_info=True)
+            return jsonify({"error": "Indexing failed", "detail": str(exc)}), 500
+
+    @bp.route("/api/gmail/disconnect", methods=["DELETE"])
+    @auth_required
+    async def gmail_disconnect():
+        """Revoke Gmail access token and delete credentials. Indexed data is preserved."""
+        if not oauth_credentials_port:
+            return jsonify({"error": "Gmail integration not configured"}), 501
+        try:
+            creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
+            if not creds:
+                return jsonify({"error": "Gmail not connected"}), 404
+
+            # Best-effort token revocation at Google
+            if gmail_oauth_service:
+                await gmail_oauth_service.revoke_token(creds.access_token)
+
+            # Delete credentials only — indexed data stays intact
+            await oauth_credentials_port.revoke_credentials(g.user_id, "gmail")
+
+            logger.info(f"🔌 Gmail disconnected for user={g.user_id[:8]} (indexed data preserved)")
+            return jsonify({"success": True}), 200
+        except Exception as exc:
+            logger.error(f"Error disconnecting Gmail: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/gmail/data", methods=["DELETE"])
+    @auth_required
+    async def gmail_delete_data():
+        """Delete all indexed email facts. Irreversible — requires re-indexing."""
+        if not indexed_email_repo:
+            return jsonify({"error": "Gmail integration not configured"}), 501
+        try:
+            await indexed_email_repo.delete_by_user(g.user_id)
+            logger.info(f"🗑️ Gmail indexed data deleted for user={g.user_id[:8]}")
+            return jsonify({"success": True}), 200
+        except Exception as exc:
+            logger.error(f"Error deleting Gmail data: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
     return bp

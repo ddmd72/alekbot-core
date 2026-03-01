@@ -37,6 +37,16 @@ from src.services.auth_provider_registry import AuthProviderRegistry
 from src.config.auth import AuthConfig
 from src.adapters.firebase_auth_adapter import FirebaseAuthAdapter
 from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
+from src.services.gmail_oauth_service import GmailOAuthService
+from src.adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
+from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
+from src.adapters.firestore_email_job_repo import FirestoreEmailJobRepository
+from src.adapters.firestore_email_exclusions_adapter import FirestoreEmailExclusionsAdapter
+from src.adapters.gmail_provider_adapter import GmailProviderAdapter
+from src.agents.email_classification_agent import EmailClassificationAgent
+from src.services.email_indexing_service import EmailIndexingService
+from src.services.prompt_builder import PromptBuilder
+from src.domain.user import UserBotConfig
 
 
 async def main():
@@ -189,6 +199,23 @@ async def main():
             agent_id="web_search_light_agent",
             intents={"search_web_light": ExecutionMode.SYNC},
             description="Lightweight single-pass web search for quick answers",
+        ))
+        agent_registry.register(AgentManifest(
+            agent_id="email_search_agent",
+            intents={
+                "search_emails": ExecutionMode.SYNC,
+                "get_email_details": ExecutionMode.SYNC,
+                "get_email_attachment": ExecutionMode.SYNC,
+            },
+            description=(
+                "Email archive specialist. Three intents:\n"
+                "• search_emails — semantic search across indexed emails. "
+                "Pass query = user's question as-is.\n"
+                "• get_email_details — fetch full body of a known email. "
+                "Pass context={\"email_id\": \"<id>\"}.\n"
+                "• get_email_attachment — read attachment as text. "
+                "Pass context={\"email_id\": \"<id>\", \"filename\": \"file.pdf\"}."
+            ),
         ))
 
         # Task queue: only in HTTP mode where Cloud Tasks is available
@@ -367,21 +394,58 @@ async def main():
             refresh_token_ttl=auth_config.refresh_token_ttl
         )
 
+        # Gmail OAuth + email adapters
+        gmail_oauth_service = GmailOAuthService(
+            client_id=auth_config.google_oauth_client_id,
+            client_secret=auth_config.google_oauth_client_secret,
+        )
+        oauth_credentials_port = FirestoreOAuthCredentialsAdapter(db_client=db_client, env_config=env_config)
+        indexed_email_repo = FirestoreIndexedEmailRepository(db_client=db_client, env_config=env_config)
+
+        # Email indexing pipeline (shared, stateless; user_id passed per-request)
+        gmail_provider = GmailProviderAdapter(
+            client_id=auth_config.google_oauth_client_id,
+            client_secret=auth_config.google_oauth_client_secret,
+        )
+        email_job_repo = FirestoreEmailJobRepository(db_client=db_client, env_config=env_config)
+        email_exclusions_repo = FirestoreEmailExclusionsAdapter(db_client=db_client, env_config=env_config)
+        email_prompt_builder = PromptBuilder(repo=None, assembly_service=container.assembly_service)
+        email_classifier = EmailClassificationAgent(
+            config=AgentConfig(agent_id="email_classifier", agent_type="email_classifier"),
+            execution_context=container.context_builder.build("email_classifier", UserBotConfig()),
+            prompt_builder=email_prompt_builder,
+            gmail=gmail_provider,
+        )
+        email_indexing_service = EmailIndexingService(
+            gmail=gmail_provider,
+            email_repo=indexed_email_repo,
+            job_repo=email_job_repo,
+            exclusions_repo=email_exclusions_repo,
+            classifier=email_classifier,
+            embedding=container.embedding_service,
+        )
+
         # Create blueprints (will be registered on slack_adapter.quart_app)
         oauth_bp = create_oauth_blueprint(
             auth_service=auth_service,
             session_service=session_service,
             auth_registry=auth_registry,
             auth_config=auth_config,
-            invite_service=invite_service  # For auto-consuming codes
+            invite_service=invite_service,
+            gmail_oauth_service=gmail_oauth_service,
+            oauth_credentials_port=oauth_credentials_port,
         )
-        
+
         cabinet_bp = create_user_cabinet_blueprint(
             invite_service=invite_service,
             session_service=session_service,
             user_repo=user_repo,
             fact_repo=FirestoreFactRepository(db_client=db_client, env_config=env_config),
             embedding_service=container.embedding_service,
+            oauth_credentials_port=oauth_credentials_port,
+            gmail_oauth_service=gmail_oauth_service,
+            indexed_email_repo=indexed_email_repo,
+            email_indexing_service=email_indexing_service,
         )
 
         logger.info("✅ OAuth + Cabinet services initialized")

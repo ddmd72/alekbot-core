@@ -83,7 +83,10 @@ class QuickResponseAgent(BaseAgent):
     RETRY_BACKOFF_SECONDS = 0.5
 
     # Intents exposed to Quick (subset of all registered intents)
-    QUICK_INTENTS = {"search_memory", "search_web_light"}
+    QUICK_INTENTS = {"search_memory", "search_web", "search_emails", "get_email_details", "get_email_attachment"}
+
+    # Remap intents before passing to coordinator — Quick uses lightweight implementations
+    _INTENT_REMAP = {"search_web": "search_web_light"}
     
     def __init__(
         self,
@@ -236,7 +239,7 @@ class QuickResponseAgent(BaseAgent):
                 agent_name="quick_response",
                 prompt=history_str,
                 system_instruction=system_prompt,
-                metadata={"user_id": user_id[:8] if user_id else "unknown"}
+                metadata={"model": self.model_name, "user_id": user_id[:8] if user_id else "unknown"}
             )
 
             # 4. Run delegation loop (tool calling replaces raw grounding)
@@ -468,6 +471,7 @@ class QuickResponseAgent(BaseAgent):
                     agent_name="quick_response",
                     response=response.text or "",
                     metadata={
+                        "model": self.model_name,
                         "user_id": user_id[:8] if user_id else "unknown",
                         "turn": turn + 1,
                         "tokens": response.usage_metadata.total_tokens if response.usage_metadata else 0
@@ -587,6 +591,8 @@ class QuickResponseAgent(BaseAgent):
 
         if not intent:
             return f"SYSTEM ERROR: delegate_to_specialist called without 'intent'. args={args}"
+
+        intent = self._INTENT_REMAP.get(intent, intent)
 
         delegation_context: Dict[str, Any] = {
             "user_id": user_id,

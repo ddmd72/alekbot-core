@@ -1,14 +1,16 @@
 # RFC: Adaptive Routing & Cache Strategy (Gemini + Claude Hybrid)
 
-**Status:** Active (Partial Implemented)
+**Status:** Partial (Routing + Enrichment implemented; Cache §8 superseded by HEXAGONAL_PROMPT_CACHING_RFC)
 **Date:** 2026-01-27
+**Updated:** 2026-02-28
 **Owner:** AI Engineering
 **Scope:** RouterAgent, QuickResponseAgent, SmartResponseAgent, WebSearchAgent
 **Goal:** Scalable hybrid architecture with native tools, adaptive caching, and continuity-aware routing.
 
 **Related ADR:** ADR-005 (Router-Centric Enrichment)
 **Related Building Block:** Search Enrichment
-**Implemented Sections:** 3.2 (Triple Search), 7 (Dedup Strategy)
+**Implemented Sections:** 3.2 (Triple Search), 7 (Dedup Strategy), 3.1–3.5 (Router), 4 (Quick), 5 (Smart)
+**Superseded Section:** §8 (Adaptive Cache Strategy) → see HEXAGONAL_PROMPT_CACHING_RFC.md
 
 ---
 
@@ -28,13 +30,13 @@ We need a durable, scalable architecture that:
 ## 2. Proposed Architecture (Final)
 
 ```
-RouterAgent (Gemini 3 Flash)
+RouterAgent (Gemini Flash)
   ├─ LLM triage: tone, keywords, search phrase, complexity
   ├─ Memory search: keyword + phrase_1 + phrase_2 (weighted merge + dedup)
   ├─ Anthropic cache: cache keyword_context (TTL 5m)
   └─ Route decision: quick vs smart (continuity-aware)
 
-QuickResponseAgent (Gemini 3 Flash)
+QuickResponseAgent (Gemini Flash)
   ├─ Native Gemini tools enabled
   ├─ Inject keyword_context + phrase_context
   └─ No custom tool declarations
@@ -45,14 +47,14 @@ SmartResponseAgent (Claude Sonnet 4.5)
   ├─ Custom tools orchestration (manual loop)
   └─ Complex + sensitive requests
 
-WebSearchAgent (Gemini 3 Flash)
+WebSearchAgent (Gemini Flash)
   ├─ Native Google Search tool
   └─ Returns raw results (Smart formats)
 ```
 
 ---
 
-## 3. RouterAgent Responsibilities (Gemini 3 Flash)
+## 3. RouterAgent Responsibilities (Gemini Flash)
 
 ### 3.1 LLM Output Fields
 
@@ -117,7 +119,7 @@ Router escalates to Smart if:
 
 ---
 
-## 4. QuickResponseAgent (Gemini 3 Flash)
+## 4. QuickResponseAgent (Gemini Flash)
 
 ### 4.1 Input Context & Injection
 
@@ -167,7 +169,7 @@ Smart handles complex/sensitive tasks, using deeper reasoning and richer context
 
 ---
 
-## 6. WebSearchAgent (Gemini 3 Flash)
+## 6. WebSearchAgent (Gemini Flash)
 
 ### 6.1 Simplified Behavior
 
@@ -200,23 +202,17 @@ Expected token sizes:
 
 ---
 
-## 8. Adaptive Cache Strategy (Anthropic)
+## 8. Cache Strategy (Superseded)
 
-### 8.1 When to Create Cache
-
-Create cache only if:
-- 2+ messages within 5 minutes
-
-### 8.2 TTL Policy
-
-- Default: **5 minutes (ephemeral)**
-- Optional: upgrade to 1h TTL if 5+ messages in 5 minutes
-
-### 8.3 Cache Lifecycle
-
-- Router writes cache on burst detection
-- Cache is reused by Smart agent during burst
-- Cache expires automatically; Router recreates if burst continues
+> **This section is superseded by [HEXAGONAL_PROMPT_CACHING_RFC.md](./HEXAGONAL_PROMPT_CACHING_RFC.md).**
+>
+> Summary of actual implementation:
+> - Caching is applied transparently via `CachingLLMProxy` wrapping `LLMService`.
+> - `PromptCacheStrategy` maps agent_type → cache config based on provider capabilities.
+> - Claude (Anthropic) caches the static system prompt prefix; the dynamic suffix (datetime + Q-S context)
+>   is split off by `PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"` in `PromptAssemblyService`.
+> - Gemini does not support API-level prompt caching; Router and WebSearch are not cached.
+> - No burst-session detection gate. Cache applied on every eligible Claude request (provider decides TTL = 5 min ephemeral).
 
 ---
 
@@ -325,30 +321,11 @@ knowledge_base {
 
 Without this placeholder, enriched context injection will silently fail. Custom kernels must be audited and aligned to the default structure.
 
-### 10.7 Smart Provider Selection (Hexagonal Integrity)
+### 10.7 Smart Provider Selection (Resolved)
 
-**Issue discovered:** Smart agent was intended to use Claude when available, but the system attempted
-to call Gemini models via the Claude adapter. Root cause:
-
-- `UserAgentFactory` ignored `UserBotConfig.llm_provider`
-- Provider selection was inferred from the model string using `startswith("gemini")`
-- Default `smart_model` was set to `models/gemini-gemini-3-flash-preview`, so `startswith("gemini")` failed
-- When `ANTHROPIC_API_KEY` existed, the adapter switched to Claude, but `model_name` stayed Gemini → 404
-
-**Hexagonal requirement:** adapter selection MUST be driven by **domain configuration**
-(`UserBotConfig.llm_provider`) rather than infrastructure heuristics.
-
-**Canonical selection policy:**
-
-1. Read `UserBotConfig.llm_provider`.
-2. Select LLM adapter based on provider:
-   - `GEMINI` → `GeminiAdapter`
-   - `ANTHROPIC` → `ClaudeAdapter` (requires ANTHROPIC_API_KEY)
-   - (Optional future) `OPENAI` → OpenAI adapter
-3. Use `UserBotConfig.smart_model` for model name, unless provider requires a fixed Claude model.
-4. If provider requires an API key that is missing, fail fast with a clear error.
-
-This ensures the Smart agent routing respects user configuration and remains hexagonally clean.
+> **Status: Resolved.** Provider selection is now driven by `AgentContextBuilder` and `AgentProviderStrategy`
+> which map `agent_type → PerformanceTier → provider`. `UserBotConfig.agent_tiers` allows per-user overrides.
+> The `startswith("gemini")` heuristic bug described here was eliminated when `AgentExecutionContext` was introduced.
 
 ---
 
@@ -396,8 +373,8 @@ This ensures the Smart agent routing respects user configuration and remains hex
 
 ## 14. Decision Summary
 
-✅ Gemini 3 Flash Router for triage & enrichment
-✅ Gemini 3 Flash Quick for most requests (native tools)
+✅ Gemini Flash Router for triage & enrichment
+✅ Gemini Flash Quick for most requests (native tools)
 ✅ Claude Sonnet Smart for deep reasoning & custom tools
 ✅ Anthropic 5m cache for keyword_context
 ✅ Continuity-aware routing rules

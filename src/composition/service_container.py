@@ -32,6 +32,10 @@ from ..services.agent_context_builder import AgentContextBuilder
 from ..services.prompt_cache_strategy import PromptCacheStrategy
 from ..services.prompt_component_service import PromptComponentService
 from ..services.search_enrichment_service import SearchEnrichmentService
+from ..services.email_search_service import EmailSearchService
+from ..adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
+from ..adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
+from ..adapters.gmail_provider_adapter import GmailProviderAdapter
 from ..utils.logger import logger
 
 
@@ -61,6 +65,22 @@ class ServiceContainer:
         )
         self.grok_service: Optional[LLMService] = self._init_grok(config)
         self.embedding_service = GeminiEmbeddingAdapter(api_key=config["GEMINI_API_KEY"])
+
+        # ------------------------------------------------------------------
+        # Email search adapters (shared, stateless)
+        # ------------------------------------------------------------------
+        self.indexed_email_repo = FirestoreIndexedEmailRepository(db_client, env_config)
+        self.oauth_credentials = FirestoreOAuthCredentialsAdapter(db_client, env_config)
+        self.gmail_provider = GmailProviderAdapter(
+            client_id=config.get("GOOGLE_OAUTH_CLIENT_ID", ""),
+            client_secret=config.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
+        )
+        self.email_search_service = EmailSearchService(
+            indexed_email_repo=self.indexed_email_repo,
+            oauth_credentials=self.oauth_credentials,
+            gmail_provider=self.gmail_provider,
+            embedding_service=self.embedding_service,
+        )
 
         # ------------------------------------------------------------------
         # Config + biographical context (shared; per-user limits resolved later)
@@ -156,6 +176,7 @@ class ServiceContainer:
             "assembly_service": self.assembly_service,
             "fact_write_service": self.fact_write_service,
             "fact_management_adapter_factory": self.create_fact_management_adapter,
+            "email_search_service": self.email_search_service,
         }
 
     def create_fact_management_adapter(

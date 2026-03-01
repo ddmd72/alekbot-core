@@ -6,6 +6,7 @@ Doc ID: {user_id}_{provider}
 Collection: {env}_oauth_credentials
 """
 
+from datetime import datetime
 from typing import List, Optional
 
 from google.cloud.firestore import FieldFilter
@@ -42,12 +43,17 @@ class FirestoreOAuthCredentialsAdapter(OAuthCredentialsPort):
 
     @staticmethod
     def _from_firestore(data: dict) -> OAuthCredentials:
+        raw = data["token_expiry"]
+        # Always construct a plain datetime — DatetimeWithNanoseconds.replace(tzinfo=None)
+        # bypasses __init__ and leaves ._nanosecond unset, breaking write-back to Firestore.
+        expiry = datetime(raw.year, raw.month, raw.day,
+                          raw.hour, raw.minute, raw.second, raw.microsecond)
         return OAuthCredentials(
             user_id=data["user_id"],
             provider=data["provider"],
             access_token=data["access_token"],
             refresh_token=data["refresh_token"],
-            token_expiry=data["token_expiry"],
+            token_expiry=expiry,
             scopes=data["scopes"],
             email_address=data["email_address"],
         )

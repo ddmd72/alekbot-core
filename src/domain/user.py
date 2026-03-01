@@ -59,7 +59,9 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "web_search": PerformanceTier.BALANCED,
     "web_search_light": PerformanceTier.ECO,
     "memory_search": PerformanceTier.ECO,
+    "email_search": PerformanceTier.ECO,
     "postprocessing": PerformanceTier.BALANCED,
+    "email_classifier": PerformanceTier.BALANCED,
 }
 
 

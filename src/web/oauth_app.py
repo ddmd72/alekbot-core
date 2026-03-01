@@ -21,6 +21,8 @@ import jwt
 from ..services.authentication_service import AuthenticationService
 from ..services.session_service import SessionService
 from ..services.auth_provider_registry import AuthProviderRegistry
+from ..services.gmail_oauth_service import GmailOAuthService
+from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..config.auth import AuthConfig
 from ..utils.logger import logger
 
@@ -33,7 +35,9 @@ def create_oauth_blueprint(
     session_service: SessionService,
     auth_registry: AuthProviderRegistry,
     auth_config: AuthConfig,
-    invite_service: Optional['InviteCodeService'] = None
+    invite_service: Optional['InviteCodeService'] = None,
+    gmail_oauth_service: Optional[GmailOAuthService] = None,
+    oauth_credentials_port: Optional[OAuthCredentialsPort] = None,
 ) -> Blueprint:
     """
     Create Quart Blueprint with OAuth endpoints.
@@ -465,5 +469,91 @@ def create_oauth_blueprint(
                 "error": "Failed to link OAuth identity",
                 "message": str(e)
             }), 500
+
+    # ========================================================================
+    # GET /auth/connect-gmail - Initiate incremental Gmail OAuth
+    # ========================================================================
+    @bp.route("/auth/connect-gmail", methods=["GET"])
+    async def connect_gmail():
+        """
+        Initiate incremental Gmail OAuth (gmail.readonly scope).
+
+        Requires: authenticated session (access_token cookie).
+        Sets cookies: gmail_oauth_state, gmail_connect_user_id.
+        Redirects to Google consent page.
+        """
+        if not gmail_oauth_service or not oauth_credentials_port:
+            return jsonify({"error": "Gmail integration not configured"}), 501
+
+        access_token = request.cookies.get("access_token")
+        if not access_token:
+            return redirect("/auth/login?next=/cabinet")
+
+        try:
+            payload = session_service.verify_access_token(access_token)
+            user_id = payload["sub"]
+        except jwt.InvalidTokenError:
+            return redirect("/auth/login?next=/cabinet")
+
+        state = secrets.token_urlsafe(32)
+        auth_url = gmail_oauth_service.get_authorization_url(
+            state=state,
+            redirect_uri=auth_config.gmail_oauth_redirect_uri,
+        )
+        logger.info(f"📧 Gmail OAuth initiated for user={user_id[:8]}")
+
+        response = await make_response(redirect(auth_url))
+        response.set_cookie("gmail_oauth_state", state, max_age=600, httponly=True, secure=True, samesite="lax")
+        response.set_cookie("gmail_connect_user_id", user_id, max_age=600, httponly=True, secure=True, samesite="lax")
+        return response
+
+    # ========================================================================
+    # GET /auth/connect-gmail/callback - Gmail OAuth callback
+    # ========================================================================
+    @bp.route("/auth/connect-gmail/callback", methods=["GET"])
+    async def connect_gmail_callback():
+        """
+        Handle Gmail OAuth callback: exchange code, persist credentials, redirect.
+
+        Verifies CSRF state cookie. Saves OAuthCredentials to Firestore.
+        Redirects to /cabinet on success, or /cabinet?gmail_error=1 on failure.
+        """
+        if not gmail_oauth_service or not oauth_credentials_port:
+            return jsonify({"error": "Gmail integration not configured"}), 501
+
+        code = request.args.get("code")
+        state = request.args.get("state")
+        error = request.args.get("error")
+
+        if error:
+            logger.warning(f"⚠️ Gmail OAuth denied by user: {error}")
+            return redirect("/cabinet?gmail_error=denied")
+
+        stored_state = request.cookies.get("gmail_oauth_state")
+        user_id = request.cookies.get("gmail_connect_user_id")
+
+        if not stored_state or stored_state != state or not user_id:
+            logger.warning("⚠️ Gmail OAuth callback CSRF validation failed")
+            return redirect("/cabinet?gmail_error=state")
+
+        if not code:
+            return redirect("/cabinet?gmail_error=no_code")
+
+        try:
+            credentials = await gmail_oauth_service.exchange_code(
+                code=code,
+                redirect_uri=auth_config.gmail_oauth_redirect_uri,
+                user_id=user_id,
+            )
+            await oauth_credentials_port.save_credentials(credentials)
+            logger.info(f"✅ Gmail connected for user={user_id[:8]}")
+        except Exception as exc:
+            logger.error(f"💥 Gmail OAuth callback failed: {exc}")
+            return redirect("/cabinet?gmail_error=exchange")
+
+        response = await make_response(redirect("/cabinet?gmail_connected=1"))
+        response.delete_cookie("gmail_oauth_state")
+        response.delete_cookie("gmail_connect_user_id")
+        return response
 
     return bp

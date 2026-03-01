@@ -41,7 +41,9 @@ from ..agents.core.router_agent import create_router_agent
 from ..agents.memory_search_agent import MemorySearchAgent
 from ..agents.web_search_agent import WebSearchAgent
 from ..agents.web_search_light_agent import WebSearchLightAgent
+from ..agents.email_search_agent import EmailSearchAgent
 from ..agents.consolidation_agent import ConsolidationAgent
+from ..services.email_search_service import EmailSearchService
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -79,6 +81,7 @@ class UserAgentFactory:
         assembly_service,
         fact_write_service: FactWritePort,
         fact_management_adapter_factory: Callable,
+        email_search_service: EmailSearchService,
     ) -> None:
         self.config = config
         self.env_config = env_config
@@ -99,6 +102,7 @@ class UserAgentFactory:
         self.assembly_service = assembly_service
         self.fact_write_service = fact_write_service
         self.fact_management_adapter_factory = fact_management_adapter_factory
+        self.email_search_service = email_search_service
 
         self._cache: Dict[str, Dict[str, object]] = {}
         self._cache_ttl = 3600
@@ -276,6 +280,20 @@ class UserAgentFactory:
             user_id=user_id,
         )
 
+        email_search_context = self.context_builder.build("email_search", user_profile.config)
+        email_search_agent = EmailSearchAgent(
+            config=AgentConfig(
+                agent_id=f"email_search_agent_{user_id}",
+                agent_type="email_search",
+                timeout_ms=30000,
+                capabilities=["email_search", "email_retrieval"],
+            ),
+            execution_context=email_search_context,
+            prompt_builder=prompt_builder,
+            email_search_service=self.email_search_service,
+            user_id=user_id,
+        )
+
         fact_management_adapter = self.fact_management_adapter_factory(search_enrichment_service)
 
         consolidation_agent = ConsolidationAgent(
@@ -303,6 +321,7 @@ class UserAgentFactory:
             memory_agent,
             web_agent,
             web_search_light_agent,
+            email_search_agent,
             consolidation_agent,
         ])
 
@@ -325,6 +344,7 @@ class UserAgentFactory:
             "memory_agent": memory_agent,
             "web_agent": web_agent,
             "web_search_light_agent": web_search_light_agent,
+            "email_search_agent": email_search_agent,
             "consolidation_agent": consolidation_agent,
         }
         self._cache[user_id] = cached
@@ -377,7 +397,7 @@ class UserAgentFactory:
                     continue
                 for key in ("router_agent", "quick_agent", "smart_agent",
                             "memory_agent", "web_agent", "web_search_light_agent",
-                            "consolidation_agent"):
+                            "email_search_agent", "consolidation_agent"):
                     agent = entry.get(key)
                     if agent and hasattr(agent, "agent_id"):
                         self.coordinator.unregister_agent(agent.agent_id)

@@ -69,7 +69,19 @@ class AgentProviderStrategy:
             "allowed_providers": ["gemini"],   # locked: response_schema is Gemini-only
             "required_capabilities": ["fast_inference"],
             "fallback": "gemini"
-        }
+        },
+        "email_classifier": {
+            "default_provider": "gemini",
+            "allowed_providers": ["gemini", "claude"],
+            "required_capabilities": ["native_tools"],
+            "fallback": "gemini"
+        },
+        "email_search": {
+            "default_provider": "gemini",
+            "allowed_providers": ["gemini", "claude"],
+            "required_capabilities": ["native_tools"],
+            "fallback": "gemini"
+        },
     }
 
     @classmethod
