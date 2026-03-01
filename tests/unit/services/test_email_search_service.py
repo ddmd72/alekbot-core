@@ -93,34 +93,34 @@ class TestRrfMerge:
 
     def test_single_list_preserves_order(self):
         emails = [_make_email(f"e{i}") for i in range(5)]
-        result = EmailSearchService._rrf_merge([emails], limit=3)
-        assert [e.email_id for e in result] == ["e0", "e1", "e2"]
+        result = EmailSearchService._rrf_merge([emails])
+        assert [e.email_id for e in result] == ["e0", "e1", "e2", "e3", "e4"]
 
     def test_empty_list_returns_empty(self):
-        assert EmailSearchService._rrf_merge([], limit=10) == []
+        assert EmailSearchService._rrf_merge([]) == []
 
     def test_empty_sublists_returns_empty(self):
-        assert EmailSearchService._rrf_merge([[], []], limit=10) == []
+        assert EmailSearchService._rrf_merge([[], []]) == []
 
     def test_duplicate_in_two_lists_gets_higher_score(self):
         # e1 appears in both lists at rank 0 → should beat e2 that's only in one
         e1 = _make_email("e1")
         e2 = _make_email("e2")
         e3 = _make_email("e3")
-        result = EmailSearchService._rrf_merge([[e1, e2], [e1, e3]], limit=3)
+        result = EmailSearchService._rrf_merge([[e1, e2], [e1, e3]])
         # e1 has double score — must be first
         assert result[0].email_id == "e1"
 
-    def test_limit_applied(self):
+    def test_all_items_returned(self):
         emails = [_make_email(f"e{i}") for i in range(10)]
-        result = EmailSearchService._rrf_merge([emails], limit=3)
-        assert len(result) == 3
+        result = EmailSearchService._rrf_merge([emails])
+        assert len(result) == 10
 
     def test_rrf_score_formula(self):
         # rank 0 in a list of k=60 → score = 1/(60+0+1) = 1/61 ≈ 0.01639
         e1 = _make_email("e1")
         e2 = _make_email("e2")
-        result = EmailSearchService._rrf_merge([[e1, e2]], limit=2)
+        result = EmailSearchService._rrf_merge([[e1, e2]])
         assert result[0].email_id == "e1"
 
 
