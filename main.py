@@ -41,6 +41,7 @@ from src.services.gmail_oauth_service import GmailOAuthService
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
 from src.adapters.notification_channel_factory import NotificationChannelFactory
 from src.services.user_notification_service import UserNotificationService
+from src.handlers.worker_handler import WorkerHandler
 
 
 async def main():
@@ -435,6 +436,21 @@ async def main():
             task_queue=agent_task_queue,
         )
 
+        # Worker handler — dispatches Cloud Tasks to appropriate handlers
+        worker_handler = WorkerHandler(
+            agent_worker_handler=agent_worker_handler,
+            email_indexing_service=email_indexing_service,
+            email_job_repo=email_job_repo,
+            oauth_credentials=oauth_credentials_port,
+            notification_service=notification_service,
+            consolidation_queue=consolidation_queue,
+            coordinator=coordinator,
+            agent_factory=agent_factory,
+            indexed_email_repo=indexed_email_repo,
+            user_repo=user_repo,
+            task_queue=agent_task_queue,
+        )
+
         logger.info("✅ OAuth + Cabinet services initialized")
 
     except Exception as e:
@@ -614,83 +630,16 @@ async def main():
                     from quart import jsonify
                     return jsonify({"status": "healthy", "mode": "http"}), 200
                 
-                # Add /worker endpoint (moved from adapter to shared app)
+                # Add /worker endpoint — delegates to WorkerHandler
                 @main_app.route("/worker", methods=["POST"])
                 async def worker():
                     from quart import request, jsonify
                     payload = await request.get_json(silent=True) or {}
-                    if payload.get("task_type") == "agent_execution":
-                        result = await agent_worker_handler.handle_task(payload)
-                        return jsonify(result), 200
-                    elif payload.get("task_type") == "email_indexing":
-                        job_id = payload.get("job_id")
-                        logger.info(f"📧 [Worker] email_indexing received: job_id={job_id}")
-                        if not job_id:
-                            return jsonify({"error": "missing job_id"}), 400
-                        job = await email_job_repo.get_job(job_id)
-                        if not job:
-                            return jsonify({"error": "job not found"}), 404
-                        if job.status != "running":
-                            logger.info(f"📧 [Worker] Job {job_id[:8]} is {job.status}, skipping")
-                            return jsonify({"status": "skipped", "reason": job.status}), 200
-                        creds = await oauth_credentials_port.get_credentials(job.user_id, job.provider)
-                        if not creds:
-                            await email_job_repo.update_job(job_id, {"status": "failed_auth", "updated_at": __import__("datetime").datetime.utcnow()})
-                            return jsonify({"error": "oauth credentials missing"}), 400
-                        job = await email_indexing_service.run_indexing_job(
-                            job=job,
-                            credentials=creds,
-                            account_id=job.account_id,
-                            max_pages=1,
-                            mode=job.mode,
-                            backfill_until=job.backfill_until,
-                        )
-                        if job.next_page_token and agent_task_queue:
-                            await agent_task_queue.enqueue_email_indexing_task(job.job_id)
-                            logger.info(f"📬 [Worker] Re-enqueued email indexing page for job {job.job_id[:8]}")
-                        elif not job.next_page_token:
-                            try:
-                                await notification_service.notify(
-                                    user_id=job.user_id,
-                                    account_id=job.account_id,
-                                    system_alert=email_indexing_service.completion_alert(job),
-                                )
-                            except Exception as notify_exc:
-                                logger.warning(f"⚠️ [Worker] Notification failed (non-critical): {notify_exc}")
-                        return jsonify({"status": "ok", "has_more": bool(job.next_page_token)}), 200
-                    elif payload.get("task_type") == "email_indexing_watchdog":
-                        # Marks stale "running" jobs as failed. Triggered by Cloud Scheduler.
-                        import datetime as _dt
-                        stale_threshold = _dt.datetime.utcnow() - _dt.timedelta(hours=2)
-                        stale_jobs = await email_job_repo.get_stale_running_jobs(stale_threshold)
-                        marked = 0
-                        for stale_job in stale_jobs:
-                            await email_job_repo.update_job(stale_job.job_id, {
-                                "status": "failed",
-                                "updated_at": _dt.datetime.utcnow(),
-                            })
-                            marked += 1
-                            logger.warning(f"⏰ [Watchdog] Marked stale job {stale_job.job_id[:8]} as failed")
-                        return jsonify({"status": "ok", "marked_failed": marked}), 200
-                    elif payload.get("task_type") == "consolidation":
-                        user_id = payload.get("user_id")
-                        factory = _agent_factory_ref[0]
-                        if not user_id or factory is None:
-                            return jsonify({"error": "missing user_id or factory not ready"}), 400
-                        from src.handlers.consolidation_handler import process_user_batches_on_overflow
-                        # Process one batch per HTTP request → each task keeps full CPU on Cloud Run.
-                        # Re-enqueue if more batches remain so Cloud Tasks chains them naturally.
-                        has_more = await process_user_batches_on_overflow(
-                            user_id=user_id,
-                            coordinator=coordinator,
-                            agent_factory=factory,
-                            queue=consolidation_queue,
-                            max_batches=1,
-                        )
-                        if has_more and agent_task_queue:
-                            await agent_task_queue.enqueue_consolidation_task(user_id=user_id)
-                            logger.info(f"📬 [Worker] Re-enqueued next consolidation task for user {user_id[:8]}")
-                        return jsonify({"status": "ok"}), 200
+                    result = await worker_handler.handle(payload)
+                    if result is not None:
+                        body, status = result
+                        return jsonify(body), status
+                    # Unknown task_type — fall back to slack adapter handler
                     return await slack_adapter._handle_worker_task()
                 
                 logger.info("✅ All blueprints registered on shared app (port 8080)")
