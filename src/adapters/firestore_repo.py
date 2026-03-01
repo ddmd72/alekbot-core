@@ -102,11 +102,15 @@ class FirestoreFactRepository(FactRepository):
 
     async def initialize(self) -> None:
         """Initialize async components and pre-compute embeddings."""
+        # ARCHITECTURE FIX: Removed self-creation of GeminiEmbeddingAdapter.
+        # DI must happen in composition/, not inside adapters.
+        # Previously this fallback masked missing injection — broke testability
+        # and violated hexagonal DI rule. Pass embedding_service via constructor.
         if not self._embedding_service:
-            from ..config.settings import load_settings
-            settings = load_settings()
-            api_key = settings.get("GEMINI_API_KEY")
-            self._embedding_service = GeminiEmbeddingAdapter(api_key=api_key)
+            raise RuntimeError(
+                "FirestoreFactRepository requires embedding_service via constructor. "
+                "Wire it in composition/ (ServiceContainer) — do not self-create adapters."
+            )
 
         if not self._bio_query_vector:
             query = "name bio family assets relationships beliefs"
@@ -611,7 +615,7 @@ class FirestoreFactRepository(FactRepository):
                     data['archived_at'] = archived_at
                     observations_to_archive.append((obs_id, data))
                 else:
-                    print(f"⚠️ Skipping archive for observation {obs_id}: Owner mismatch")
+                    logger.warning(f"⚠️ Skipping archive for observation {obs_id}: Owner mismatch")
 
         # Batch write: copy to archive + delete from observations
         for obs_id, data in observations_to_archive:
@@ -621,7 +625,7 @@ class FirestoreFactRepository(FactRepository):
         # Commit all operations atomically
         if observations_to_archive:
             await batch.commit()
-            print(f"✅ Archived {len(observations_to_archive)} observations in batch")
+            logger.info(f"✅ Archived {len(observations_to_archive)} observations in batch")
 
     async def add_fact_if_unique(
         self, 

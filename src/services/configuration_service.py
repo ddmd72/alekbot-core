@@ -290,7 +290,7 @@ class ConfigurationService:
             # System default
             no overrides  # → 30
         """
-        from ..config.settings import SearchConfig
+        from ..domain.settings import SearchConfig
 
         # Level 1: User override
         if user_config.semantic_search_limit is not None:
@@ -341,7 +341,7 @@ class ConfigurationService:
             # FREE tier: 30, FAMILY: 50, PRO: 70, ENTERPRISE: 100
             # User can override to any value
         """
-        from ..config.settings import SearchConfig
+        from ..domain.settings import SearchConfig
 
         # Level 1: User override
         if user_config.biographical_cache_limit is not None:
@@ -392,7 +392,7 @@ class ConfigurationService:
             # FREE tier: 10, FAMILY: 15, PRO: 20, ENTERPRISE: 25
             # User can override to any value
         """
-        from ..config.settings import SearchConfig
+        from ..domain.settings import SearchConfig
 
         # Level 1: User override
         if user_config.principles_cache_limit is not None:
@@ -431,7 +431,7 @@ class ConfigurationService:
         Controls how many recent model turns use full_text instead of summary.
         Older turns beyond this window use the compressed text field.
         """
-        from ..config.settings import SearchConfig
+        from ..domain.settings import SearchConfig
 
         # Level 1: User override
         if user_config.history_recent_full_turns is not None:
@@ -476,7 +476,7 @@ class ConfigurationService:
         Returns:
             Resolved biographical keywords for query 1
         """
-        from ..config.settings import SearchConfig
+        from ..domain.settings import SearchConfig
 
         # Level 1: User override
         if user_config.bio_keywords_query1:
@@ -516,7 +516,7 @@ class ConfigurationService:
         Returns:
             Resolved biographical keywords for query 2
         """
-        from ..config.settings import SearchConfig
+        from ..domain.settings import SearchConfig
 
         # Level 1: User override
         if user_config.bio_keywords_query2:
@@ -556,7 +556,7 @@ class ConfigurationService:
         Returns:
             Resolved biographical keywords for query 3
         """
-        from ..config.settings import SearchConfig
+        from ..domain.settings import SearchConfig
 
         # Level 1: User override
         if user_config.bio_keywords_query3:

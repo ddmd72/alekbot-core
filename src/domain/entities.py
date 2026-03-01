@@ -69,6 +69,30 @@ class FactVisibility(str, Enum):
     ACCOUNT_SHARED = "account_shared"  # Visible to all account members
     USER_PRIVATE = "user_private"      # Visible only to creator
 
+
+# ========================================================================
+# ARCHITECTURE FIX: Domain-level normalization for LLM → enum mapping.
+# LLM sometimes returns "CURRENT" / "BIOGRAPHICAL" instead of lowercase.
+# This is a DOMAIN concern (mapping raw output to FactDomain/FactState/etc.),
+# not an adapter concern. Previously duplicated 6 times across 2 adapters.
+# ========================================================================
+_FACT_TAXONOMY_FIELDS = ("domain", "temporal_class", "state", "context_priority")
+
+
+def normalize_fact_taxonomy(metadata: dict) -> dict:
+    """Normalize 4D taxonomy fields to lowercase for enum compatibility.
+
+    Call this BEFORE constructing FactEntity from LLM output.
+    Returns a new dict — does not mutate the input.
+    """
+    result = dict(metadata)
+    for field in _FACT_TAXONOMY_FIELDS:
+        value = result.get(field)
+        if value and isinstance(value, str):
+            result[field] = value.lower()
+    return result
+
+
 class FactEntity(BaseModel):
     # --- Identifiers ---
     id: str = Field(default_factory=lambda: str(uuid4()))

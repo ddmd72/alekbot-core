@@ -12,6 +12,7 @@ from telegram import Bot
 from ..adapters.telegram.webhook_adapter import TelegramWebhookAdapter
 from ..adapters.telegram.media_adapter import TelegramMediaAdapter
 from ..handlers.conversation_handler import ConversationHandler
+from ..handlers.consolidation_handler import process_user_batches_on_overflow
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from .user_agent_factory import UserAgentFactory
 from ..services.rich_content_service import RichContentService
@@ -91,6 +92,7 @@ class TelegramAdapterFactory:
             notification_service=notification_service,
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
+            overflow_callback=process_user_batches_on_overflow,
         )
 
         logger.info("TelegramAdapterFactory: wiring complete (html_renderer=%s)", html_renderer is not None)

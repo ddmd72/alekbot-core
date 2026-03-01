@@ -19,6 +19,7 @@ from ..adapters.firestore_session_store import FirestoreSessionStore
 from ..adapters.firestore_dedup_store import FirestoreEventDedupStore
 from ..config.environment import EnvironmentConfig
 from ..handlers.conversation_handler import ConversationHandler
+from ..handlers.consolidation_handler import process_user_batches_on_overflow
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from .user_agent_factory import UserAgentFactory
 from ..services.iam_service import IAMService
@@ -105,6 +106,7 @@ class SlackAdapterFactory:
             notification_service=notification_service,
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
+            overflow_callback=process_user_batches_on_overflow,
         )
 
         if env_config.is_socket_mode:

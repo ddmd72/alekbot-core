@@ -18,7 +18,7 @@ from typing import List, Dict, Optional, Any
 
 from ..ports.repository import FactRepository
 from ..domain.entities import FactType, FactState, ContextPriority, FactDomain
-from ..config.settings import SearchConfig
+from ..domain.settings import SearchConfig
 from ..utils.logger import logger
 
 

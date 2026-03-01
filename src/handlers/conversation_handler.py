@@ -7,7 +7,7 @@ import json
 import asyncio
 import time
 import dataclasses
-from typing import List, Optional, Any
+from typing import Callable, Coroutine, List, Optional, Any
 
 from ..domain.messaging import MessageContext, ResponseChannel, SmartResponse
 from ..domain.ui_messages import StatusType
@@ -81,6 +81,10 @@ class ConversationHandler(ConversationHandlerPort):
         notification_service: Optional[UserNotificationService] = None,
         indexed_email_repo: Optional[Any] = None,
         user_repo: Optional[Any] = None,
+        # ARCHITECTURE FIX: Injected callback replaces direct import of consolidation_handler.
+        # Previously: `from src.handlers.consolidation_handler import process_user_batches_on_overflow`
+        # That was a horizontal coupling between two handlers. Now wired in composition/.
+        overflow_callback: Optional[Callable[..., Coroutine]] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -93,6 +97,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._notification_service = notification_service
         self._indexed_email_repo = indexed_email_repo
         self._user_repo = user_repo
+        self._overflow_callback = overflow_callback
 
     async def _deliver_rich_content(
         self,
@@ -585,28 +590,22 @@ class ConversationHandler(ConversationHandlerPort):
             if command == "admin_cache_reset":
                 logger.warning(f"🔥 ADMIN: Cache reset command received from user {context.user_id[:8]}")
                 
-                # Access assembly_service via agent_factory
-                if self.agent_factory.assembly_service and hasattr(self.agent_factory.assembly_service, 'invalidate_cache'):
-                    try:
-                        self.agent_factory.assembly_service.invalidate_cache()
-                        await response_channel.send_message(
-                            "✅ **Cache reset complete**\n\n"
-                            "All prompt assembly caches have been cleared. "
-                            "Next requests will rebuild prompts from Firestore.\n\n"
-                            "_Note: This is a global operation affecting all users in this worker process._",
-                            thread_id=context.thread_id
-                        )
-                        logger.info(f"✅ ADMIN: Cache reset successful (user {context.user_id[:8]})")
-                    except Exception as e:
-                        logger.error(f"❌ ADMIN: Cache reset failed: {e}")
-                        await response_channel.send_message(
-                            f"❌ **Cache reset failed:** `{str(e)}`",
-                            thread_id=context.thread_id
-                        )
-                else:
+                # ARCHITECTURE FIX: Use facade instead of reaching into factory internals.
+                # Was: self.agent_factory.assembly_service.invalidate_cache() (Law of Demeter violation)
+                try:
+                    self.agent_factory.invalidate_prompt_cache()
                     await response_channel.send_message(
-                        "⚠️ **Assembly service not available**\n\n"
-                        "Prompt assembly caching is not enabled in this environment.",
+                        "✅ **Cache reset complete**\n\n"
+                        "All prompt assembly caches have been cleared. "
+                        "Next requests will rebuild prompts from Firestore.\n\n"
+                        "_Note: This is a global operation affecting all users in this worker process._",
+                        thread_id=context.thread_id
+                    )
+                    logger.info(f"✅ ADMIN: Cache reset successful (user {context.user_id[:8]})")
+                except Exception as e:
+                    logger.error(f"❌ ADMIN: Cache reset failed: {e}")
+                    await response_channel.send_message(
+                        f"❌ **Cache reset failed:** `{str(e)}`",
                         thread_id=context.thread_id
                     )
                     
@@ -660,15 +659,15 @@ class ConversationHandler(ConversationHandlerPort):
                 await session_store.save_session(session.session_id, session)
                 
                 # Process — await keeps HTTP request alive → full CPU on Cloud Run
-                from src.handlers.consolidation_handler import process_user_batches_on_overflow
-                await process_user_batches_on_overflow(
-                    user_id=context.user_id,
-                    coordinator=self.coordinator,
-                    agent_factory=self.agent_factory,
-                    queue=self.consolidation_queue,
-                    indexed_email_repo=self._indexed_email_repo,
-                    user_repo=self._user_repo,
-                )
+                if self._overflow_callback:
+                    await self._overflow_callback(
+                        user_id=context.user_id,
+                        coordinator=self.coordinator,
+                        agent_factory=self.agent_factory,
+                        queue=self.consolidation_queue,
+                        indexed_email_repo=self._indexed_email_repo,
+                        user_repo=self._user_repo,
+                    )
 
                 system_alert = (
                     f"Consolidation of conversation history is complete. "

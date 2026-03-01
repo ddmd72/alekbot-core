@@ -112,6 +112,16 @@ class UserAgentFactory:
         self._creation_locks: Dict[str, asyncio.Lock] = {}  # Per-user locks
         self._sweep_task: Optional[asyncio.Task] = None
 
+    # ------------------------------------------------------------------
+    # ARCHITECTURE FIX: Law of Demeter facade
+    # Previously ConversationHandler accessed self.agent_factory.assembly_service.invalidate_cache()
+    # — two levels deep + hasattr() guard. Now callers use this single method.
+    # ------------------------------------------------------------------
+    def invalidate_prompt_cache(self) -> None:
+        """Invalidate prompt assembly caches. Facade hiding assembly_service internals."""
+        if self.assembly_service and hasattr(self.assembly_service, "invalidate_cache"):
+            self.assembly_service.invalidate_cache()
+
     async def ensure_agents_for_user(self, user_id: str) -> Dict[str, object]:
         # Fast path: check cache without acquiring a lock
         cached = self._cache.get(user_id)
@@ -185,7 +195,7 @@ class UserAgentFactory:
             f"(account_tier={account.tier if account else 'N/A'})"
         )
 
-        from ..config.settings import SearchConfig
+        from ..domain.settings import SearchConfig
         search_config = SearchConfig()
 
         search_enrichment_service = SearchEnrichmentService(

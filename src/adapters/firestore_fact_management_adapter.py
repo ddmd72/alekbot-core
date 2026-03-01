@@ -9,6 +9,7 @@ from ..domain.entities import (
     TemporalClass,
     FactState,
     ContextPriority,
+    normalize_fact_taxonomy,
 )
 from ..domain.search import SearchLimits
 from ..ports.fact_management_port import FactManagementPort
@@ -166,32 +167,18 @@ class FirestoreFactManagementAdapter(FactManagementPort):
                     "message": f"Missing required fields: {missing}"
                 }
             
-            # Normalize metadata values to lowercase (LLM returns UPPERCASE, enums expect lowercase)
-            domain = metadata.get("domain")
-            if domain:
-                domain = domain.lower()
-            
-            temporal_class = metadata.get("temporal_class")
-            if temporal_class:
-                temporal_class = temporal_class.lower()
-            
-            state = metadata.get("state")
-            if state:
-                state = state.lower()
-            
-            context_priority = metadata.get("context_priority")
-            if context_priority:
-                context_priority = context_priority.lower()
-            
+            # Domain-level normalization (was duplicated here — now in domain/entities.py)
+            metadata = normalize_fact_taxonomy(metadata)
+
             fact_data = {
                 "content": content,
                 "tags": metadata.get("tags", []),
                 "type": metadata.get("type", "event"),
                 "metadata": metadata.get("metadata", {}),
-                "domain": domain,
-                "temporal_class": temporal_class,
-                "state": state,
-                "context_priority": context_priority,
+                "domain": metadata.get("domain"),
+                "temporal_class": metadata.get("temporal_class"),
+                "state": metadata.get("state"),
+                "context_priority": metadata.get("context_priority"),
                 "ttl_days": metadata.get("ttl_days"),
                 "context": metadata.get("context"),
                 "reported_date": metadata.get("reported_date") or datetime.now(timezone.utc).isoformat(),
@@ -332,32 +319,18 @@ class FirestoreFactManagementAdapter(FactManagementPort):
                     "message": "Failed to supersede any facts"
                 }
 
-            # Normalize metadata values to lowercase
-            domain = metadata.get("domain")
-            if domain:
-                domain = domain.lower()
-            
-            temporal_class = metadata.get("temporal_class")
-            if temporal_class:
-                temporal_class = temporal_class.lower()
-            
-            state = metadata.get("state")
-            if state:
-                state = state.lower()
-            
-            context_priority = metadata.get("context_priority")
-            if context_priority:
-                context_priority = context_priority.lower()
-            
+            # Domain-level normalization (was duplicated here — now in domain/entities.py)
+            metadata = normalize_fact_taxonomy(metadata)
+
             fact_data = {
                 "content": merged_content,
                 "tags": metadata.get("tags", []),
                 "type": metadata.get("type", "event"),
                 "metadata": metadata.get("metadata", {}),
-                "domain": domain,
-                "temporal_class": temporal_class,
-                "state": state,
-                "context_priority": context_priority,
+                "domain": metadata.get("domain"),
+                "temporal_class": metadata.get("temporal_class"),
+                "state": metadata.get("state"),
+                "context_priority": metadata.get("context_priority"),
                 "ttl_days": metadata.get("ttl_days"),
                 "context": metadata.get("context"),
                 "reported_date": metadata.get("reported_date") or datetime.now(timezone.utc).isoformat(),
