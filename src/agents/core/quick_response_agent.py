@@ -409,28 +409,34 @@ class QuickResponseAgent(BaseAgent):
             {
                 "name": "delegate_to_specialist",
                 "description": (
-                    "Delegate a task to a specialist agent.\n\n"
+                    "Send a task to a specialist agent in the network. "
+                    "The specialist executes autonomously and returns results.\n\n"
                     f"Available intents:\n{intents_description}\n\n"
-                    "Parameters:\n"
-                    "- intent: intent name from the list above\n"
-                    "- query: the user's question or command\n"
-                    "- context: optional dict with extra parameters for the specialist"
+                    "See agents_registry in your system prompt for per-intent "
+                    "query formulation rules and required context fields."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "intent": {
                             "type": "string",
-                            "description": "Intent name (from available intents list)"
+                            "description": "Target agent intent (from available intents list)"
                         },
                         "query": {
                             "type": "string",
-                            "description": "User question or command"
+                            "description": (
+                                "Task for the specialist. "
+                                "Formulate per agents_registry rules for the chosen intent."
+                            )
                         },
                         "context": {
                             "type": "object",
-                            "description": "Optional extra parameters for the specialist agent"
-                        }
+                            "description": (
+                                "Structured parameters for intents that require them "
+                                "(e.g. email_id, filename). "
+                                "See agents_registry for required fields per intent."
+                            )
+                        },
                     },
                     "required": ["intent", "query"]
                 }

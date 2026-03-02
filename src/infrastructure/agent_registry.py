@@ -30,6 +30,9 @@ class AgentManifest:
     delegate_to_specialist tool calls from SmartResponseAgent.
 
     intents: mapping of intent name → execution mode.
+    intent_descriptions: optional per-intent descriptions injected into the
+        delegate_to_specialist tool declaration. Falls back to agent-level
+        description when not provided.
     Example:
         AgentManifest(
             agent_id="gmail_agent",
@@ -37,12 +40,17 @@ class AgentManifest:
                 "search_email": ExecutionMode.SYNC,
                 "index_gmail": ExecutionMode.ASYNC,
             },
+            intent_descriptions={
+                "search_email": "Semantic search across indexed emails",
+                "index_gmail": "Trigger background Gmail indexing job",
+            },
             description="Gmail integration specialist",
         )
     """
     agent_id: str
     intents: Dict[str, ExecutionMode]
     description: str
+    intent_descriptions: Dict[str, str] = field(default_factory=dict)
     requires_auth: bool = False
 
 
@@ -98,18 +106,20 @@ class AgentRegistry:
 
     def get_available_intents(self) -> List[Dict[str, str]]:
         """
-        Return all registered intents formatted for SmartAgent prompt injection.
+        Return all registered intents formatted for agent tool declarations.
 
-        Format: [{"name": "search_memory", "description": "...agent description..."}, ...]
+        Format: [{"name": "search_memory", "description": "..."}, ...]
+        Uses per-intent description when available, falls back to agent description.
         Auto-updates whenever new agents are registered.
         """
         result = []
         for agent_id, manifest in self._agents.items():
             for intent in manifest.intents:
-                result.append({
-                    "name": intent,
-                    "description": manifest.description,
-                })
+                description = (
+                    manifest.intent_descriptions.get(intent)
+                    or manifest.description
+                )
+                result.append({"name": intent, "description": description})
         return result
 
     def list_agents(self) -> List[AgentManifest]:

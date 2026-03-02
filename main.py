@@ -183,17 +183,35 @@ async def main():
         agent_registry.register(AgentManifest(
             agent_id="memory_search_agent",
             intents={"search_memory": ExecutionMode.SYNC},
-            description="Semantic search through biographical facts and personal knowledge",
+            description="Personal knowledge base search",
+            intent_descriptions={
+                "search_memory": (
+                    "Semantic search across the personal knowledge base — "
+                    "biographical facts, projects, health, family, possessions, preferences"
+                ),
+            },
         ))
         agent_registry.register(AgentManifest(
             agent_id="web_search_agent",
             intents={"search_web": ExecutionMode.SYNC},
-            description="Real-time web search for current information",
+            description="Real-time web search",
+            intent_descriptions={
+                "search_web": (
+                    "Real-time web search — "
+                    "news, prices, weather, world facts, public events, documentation"
+                ),
+            },
         ))
         agent_registry.register(AgentManifest(
             agent_id="web_search_light_agent",
             intents={"search_web_light": ExecutionMode.SYNC},
-            description="Lightweight single-pass web search for quick answers",
+            description="Real-time web search",
+            intent_descriptions={
+                "search_web_light": (
+                    "Real-time web search — "
+                    "news, prices, weather, world facts, public events, documentation"
+                ),
+            },
         ))
         agent_registry.register(AgentManifest(
             agent_id="email_search_agent",
@@ -202,15 +220,21 @@ async def main():
                 "get_email_details": ExecutionMode.SYNC,
                 "get_email_attachment": ExecutionMode.SYNC,
             },
-            description=(
-                "Email archive specialist. Three intents:\n"
-                "• search_emails — semantic search across indexed emails. "
-                "Pass query = user's question as-is.\n"
-                "• get_email_details — fetch full body of a known email. "
-                "Pass context={\"email_id\": \"<id>\"}.\n"
-                "• get_email_attachment — read attachment as text. "
-                "Pass context={\"email_id\": \"<id>\", \"filename\": \"file.pdf\"}."
-            ),
+            description="Email archive specialist",
+            intent_descriptions={
+                "search_emails": (
+                    "Semantic search across the user's indexed email archive "
+                    "by topic, sender, date, or document type"
+                ),
+                "get_email_details": (
+                    "Fetch full body of a specific email. "
+                    "Requires email_id in context (from prior search result)"
+                ),
+                "get_email_attachment": (
+                    "Extract and read an email attachment as text. "
+                    "Requires email_id and filename in context (from prior search result)"
+                ),
+            },
         ))
 
         # Task queue: only in HTTP mode where Cloud Tasks is available
