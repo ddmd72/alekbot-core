@@ -257,6 +257,56 @@ self.context_builder = AgentContextBuilder(
 
 ---
 
+## 7b. CACHE_BOUNDARY: Splitting Static vs Dynamic Prompt Content
+
+Agents like `smart` and `consolidation` have prompts that mix static content (token assembly, biography, history) with dynamic content (current datetime, query-specific context). Caching the entire prompt would be incorrect — the dynamic part changes every request.
+
+The **CACHE_BOUNDARY** mechanism handles this split transparently inside `ClaudeAdapter`.
+
+### How It Works
+
+```
+PromptAssemblyService._inject_runtime_context()
+  │
+  ├─ Assembles full system instruction (token sections + runtime context)
+  ├─ Separates biographical facts by tag:
+  │    facts WITHOUT "semantic_lens" tag → static section (before boundary)
+  │    facts WITH "semantic_lens" tag   → dynamic section (after boundary)
+  ├─ Removes [[CURRENT_DATE_TIME]] from static section (placeholder removed, not replaced)
+  └─ Appends: "\n\n<!-- CACHE_BOUNDARY -->\n" + current_datetime [+ query-specific context]
+
+ClaudeAdapter.generate_content()
+  │
+  ├─ Receives system_instruction as a single string
+  ├─ Splits on PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
+  ├─ Block 1 (static prefix) → added to messages with cache_control: ephemeral
+  └─ Block 2 (dynamic suffix) → added without cache_control (never cached)
+```
+
+If no boundary marker is present in the instruction (legacy agents, edge cases), the entire instruction is sent as a single block with `cache_control: ephemeral`.
+
+### Why This Matters
+
+Without the split, adding `cache_control` to the entire system instruction would cache the datetime and query-specific context — causing stale responses on cache hit. The boundary ensures:
+
+- **Cached:** Token assembly (5–10 kB), biography, conversation history summary — stable across requests.
+- **Not cached:** Current datetime, semantic-lens query-specific facts — changes every request.
+
+### Constants and Ownership
+
+| Item | Location |
+|---|---|
+| `PROMPT_CACHE_BOUNDARY` constant | `src/ports/llm_service.py` |
+| Boundary injection logic | `src/services/prompt_v3/prompt_assembly_service.py` — `_inject_runtime_context()` |
+| Boundary split + `cache_control` injection | `src/adapters/claude_adapter.py` — `generate_content()` |
+| GeminiAdapter | Strips the boundary marker before sending (Gemini ignores `cache_control`) |
+
+### RFC Reference
+
+Full specification: `docs/10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md` Section 13.
+
+---
+
 ## 8. Status & Roadmap
 
 **Status:** Implemented — commit ae280f2, 2026-02-24
@@ -270,4 +320,4 @@ self.context_builder = AgentContextBuilder(
 
 ---
 
-**Last Updated:** 2026-02-24
+**Last Updated:** 2026-03-02

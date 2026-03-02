@@ -43,12 +43,22 @@ The system follows **Hexagonal Architecture (Ports & Adapters)** with explicit p
 3. **Domain Layer:** Multi-agent network (Router, Quick, Smart, Specialist agents).
 4. **Driven Adapters:** Provider-specific implementations of ports.
 
-**Port Examples (28 ports total):**
+**Port Examples (~36 ports total):**
 
 Core:
 - `LLMService` → `GeminiAdapter`, `ClaudeAdapter`, `GrokAdapter`
 - `FactRepository` → `FirestoreFactRepository`
 - `SessionStore` → `FirestoreSessionStore`
+
+Email & Notification (added 2026-02-28):
+- `EmailProviderPort` → `GmailProviderAdapter`
+- `EmailClassifierPort` → `EmailClassificationAgent`
+- `IndexedEmailRepository` → `FirestoreIndexedEmailRepository`
+- `EmailIndexingJobRepository` → `FirestoreEmailJobRepository`
+- `OAuthCredentialsPort` → `FirestoreOAuthCredentialsAdapter`
+- `EmailExclusionsPort` → `FirestoreEmailExclusionsAdapter`
+- `NotificationStatePort` → `FirestoreNotificationStateAdapter`
+- `NotificationChannelFactoryPort` → `NotificationChannelFactory`
 
 Platform decoupling (added 2026-02-21):
 - `ConversationHandlerPort` → `ConversationHandler`

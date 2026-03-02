@@ -59,12 +59,16 @@ Conversation history is stored in Firestore as a list of messages.
 
 ### 2.3 Step 3: Synthesis (The Librarian)
 
-The `ConsolidationAgent` (Librarian) processes the batch:
+The `ConsolidationAgent` (Librarian) processes the batch using an 8-step deliberate cognitive process (EXTRACT → CLASSIFY → SEARCH → ANALYZE → DECIDE → EXECUTE → VERIFY → REPORT):
 
 1. **Context Loading:** Loads existing biographical facts and principles to avoid duplicates.
-2. **LLM Analysis:** Uses a powerful model (PERFORMANCE tier) with the **Life Chronicler** prompt (v3).
+2. **LLM Analysis:** Uses a powerful model (PERFORMANCE tier) with the **Life Chronicler** prompt (v3) via `COGNITIVE_PROCESS_CONSOLIDATION` Firestore token.
 3. **Extraction:** Identifies new facts, events, and guiding principles (anchors).
-4. **Deduplication:** LLM compares new findings with existing context to ensure uniqueness.
+4. **Deduplication & Decomposition:** LLM compares new findings with existing context. If an existing fact has `word_count > 40` and the planned operation is `UPDATE`, the `Size_Triggers_Review` rule fires:
+   - The LLM runs a co-location test: do all sub-claims belong together, or should they be split?
+   - If split: creates atomic replacement facts (`CREATE` with `reason` including `"Decomposed from <id>"`) + marks the original as `SUPERSEDED`.
+   - If co-located: proceeds with `UPDATE` as planned.
+5. **Fact management via tools:** Multi-turn loop — the LLM uses `search_facts`, `create_fact`, `update_fact`, `merge_facts`, `discard_fact` tools via `FactManagementPort`.
 
 ### 2.4 Step 4: Fact Writing
 
@@ -226,6 +230,6 @@ Firestore FLAT vector indexes are loaded into memory lazily — the first `find_
 
 ---
 
-**Last Updated:** 2026-02-24
-**Status:** ✅ Complete
-**Phase:** Documentation Audit Phase 3.2
+**Last Updated:** 2026-03-02
+**Status:** ✅ Production Ready
+**Phase:** Decomposition rule + fact management tools (2026-02-25)

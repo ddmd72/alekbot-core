@@ -135,6 +135,11 @@ Agents are instantiated and managed per user to ensure strict data isolation and
 - **Memory Search Agent:** Two-phase: (1) LLM key formulation via `COGNITIVE_PROCESS_MEMORY_SEARCH` Firestore token — Gemini Flash extracts `keywords`, `primary_query`, `alternative_query`, `domains` from the delegation query; (2) multi-vector RRF search via `SearchEnrichmentService`. Schema-enforced: 3–5 keywords, 2 domains max, 50-char query limit. Reachable from both Quick (`search_memory`) and Smart (`search_memory`).
 - **Web Search Light Agent:** Lightweight single-pass grounding agent called exclusively by `QuickResponseAgent` via the `search_web_light` intent. ECO tier (Gemini Flash Lite), single LLM call with Google Search grounding tool, returns plain Slack mrkdwn. No multi-turn refinement. Prompt via PromptBuilder v3 (`agent_type="websearch_light"`) with inline Groovy fallback.
 - **Web Search Agent:** Full-depth real-time information retrieval via Google Search grounding. Called exclusively by `SmartResponseAgent` via `search_web` intent. BALANCED tier.
+- **Email Search Agent:** 🆕 Email archive specialist (BALANCED tier). Called exclusively by `SmartResponseAgent` via 3 intents registered in `AgentRegistry`:
+  - `search_emails` — semantic 4-vector RRF search in `domain_email_facts_v1`. Pass `query` = user's question as-is.
+  - `get_email_details` — fetch full email body from Gmail API. Pass `context={"email_id": "<id>"}`.
+  - `get_email_attachment` — parse attachment as text via markitdown. Pass `context={"email_id": "<id>", "filename": "file.pdf"}`.
+  Delegates to `EmailSearchService` (indexed search) or `GmailProviderAdapter` (live fetch).
 - **Consolidation Agent:** Background synthesis of conversation history into facts.
 
 ### 5.3 Infrastructure Agents
@@ -252,6 +257,6 @@ ConversationHandler.handle_message()
 ## 10. Status
 
 **Status:** ✅ Production Ready
-**Last Updated:** 2026-02-26
+**Last Updated:** 2026-03-02
 
 ---

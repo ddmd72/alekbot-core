@@ -19,6 +19,8 @@ All user-facing endpoints require authentication unless noted. Invalid/expired t
 | `POST` | `/auth/logout` | cookie | Revoke tokens, clear cookies |
 | `GET` | `/auth/me` | ✅ | Current user + account info |
 | `POST` | `/auth/link-oauth` | ✅ | Link additional OAuth provider |
+| `GET` | `/auth/connect-gmail` | ✅ | Redirect to Google Gmail OAuth consent (gmail.readonly scope) |
+| `GET` | `/auth/connect-gmail/callback` | ❌ | Gmail OAuth callback; stores credentials in `oauth_credentials` |
 
 ---
 
@@ -39,6 +41,7 @@ All user-facing endpoints require authentication unless noted. Invalid/expired t
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/api/user/facts` | Latest facts (simple list, no cursor) |
 | `GET` | `/api/user/facts/browse` | Cursor-paginated facts (`limit`, `cursor`, `domain`) |
 | `POST` | `/api/user/facts/search` | Semantic vector search (`{ "query": "..." }`) |
 | `POST` | `/api/user/facts/{fact_id}/invalidate` | Mark fact as invalid — immediate, no LLM |
@@ -50,6 +53,23 @@ All user-facing endpoints require authentication unless noted. Invalid/expired t
 | `GET` | `/api/user/invite-codes` | ✅ | List active codes |
 | `POST` | `/api/user/invite-codes` | owner | Generate new invite |
 | `POST` | `/api/user/join-team` | ✅ | Consume invite code |
+
+---
+
+## Gmail Email Indexing (`/api/gmail/*`)
+
+All Gmail endpoints require authentication. Gmail must be connected first via `/auth/connect-gmail`.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/gmail/status` | ✅ | Connected Gmail account info + `IndexingState` cursor |
+| `POST` | `/api/gmail/index` | ✅ | Trigger new indexing job (`{ "mode": "incremental" \| "backfill" \| "reindex" }`) |
+| `GET` | `/api/gmail/jobs/{job_id}` | ✅ | Get indexing job status and stats |
+| `POST` | `/api/gmail/jobs/{job_id}/cancel` | ✅ | Cancel a running indexing job |
+| `DELETE` | `/api/gmail/disconnect` | ✅ | Revoke Gmail OAuth tokens and remove credentials |
+| `DELETE` | `/api/gmail/data` | ✅ | Delete all indexed email data for this user |
+
+**Job lifecycle:** Cabinet triggers `POST /api/gmail/index` → job created → Cloud Tasks dispatches paginated `email_indexing` tasks → each page processed by `WorkerHandler` → re-enqueued if `next_page_token` present → on completion: `UserNotificationService` sends Slack/Telegram alert.
 
 ---
 

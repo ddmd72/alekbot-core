@@ -44,15 +44,21 @@ This document MUST be updated when:
 - Search Enrichment: [search_enrichment/README.md](./search_enrichment/README.md)
 - Embedding System: [embedding_system/README.md](./embedding_system/README.md)
 
+### Platform Integration
+
+- Gmail Email Indexing: [gmail_email_indexing/README.md](./gmail_email_indexing/README.md)
+- OAuth Web API: [oauth_web_api/README.md](./oauth_web_api/README.md)
+- Slack Dual Mode: [slack_dual_mode/README.md](./slack_dual_mode/README.md)
+- Telegram Integration: [telegram_integration/README.md](./telegram_integration/README.md)
+- Rich Content Protocol: [rich_content_protocol/README.md](./rich_content_protocol/README.md)
+- File Conversion Service: [file_conversion/README.md](./file_conversion/README.md)
+
 ### Infrastructure
 
 - Provider Resolution: [provider_resolution/README.md](./provider_resolution/README.md)
-- Slack Dual Mode: [slack_dual_mode/README.md](./slack_dual_mode/README.md)
-- Telegram Integration: [telegram_integration/README.md](./telegram_integration/README.md)
+- Prompt Cache Strategy: [prompt_cache_strategy/README.md](./prompt_cache_strategy/README.md)
 - Observability Strategy: [observability_strategy/README.md](./observability_strategy/README.md)
-- Rich Content Protocol: [rich_content_protocol/README.md](./rich_content_protocol/README.md)
 - Localization System: [localization_system/README.md](./localization_system/README.md)
-- File Conversion Service: [file_conversion/README.md](./file_conversion/README.md)
 
 ### Legacy
 

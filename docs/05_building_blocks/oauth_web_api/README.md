@@ -353,6 +353,44 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
 
 ---
 
+### 7. `GET /auth/connect-gmail`
+
+**Purpose:** Initiate incremental Gmail OAuth to grant `gmail.readonly` scope.
+
+**Authentication:** Requires valid `access_token` (cookie or `Authorization: Bearer`).
+
+**Flow:** Redirects user to Google's OAuth consent screen. On return, the callback stores credentials in Firestore and triggers a background email indexing job via Cloud Tasks.
+
+**Response:**
+- `302 Found` → Google OAuth URL (with `gmail.readonly` scope + CSRF state cookie).
+- `401` — Not authenticated.
+
+**Implementation:** `src/web/oauth_app.py` — `connect_gmail()`
+
+---
+
+### 8. `GET /auth/connect-gmail/callback`
+
+**Purpose:** Handle Gmail OAuth callback — exchange authorization code for tokens and persist credentials.
+
+**Authentication:** CSRF state cookie (set by `GET /auth/connect-gmail`).
+
+**Flow:**
+1. Validate CSRF state.
+2. Exchange `code` for Gmail OAuth tokens via `GmailOAuthService`.
+3. Persist `OAuthCredentials` to `oauth_credentials` Firestore collection (keyed by `user_id`).
+4. Enqueue `email_indexing` Cloud Tasks job via `WorkerHandler`.
+5. Redirect user to Cabinet UI with success indicator.
+
+**Response:**
+- `302 Found` → Cabinet UI URL.
+- `400` — Invalid or missing state / code.
+- `401` — Not authenticated.
+
+**Implementation:** `src/web/oauth_app.py` — `connect_gmail_callback()`
+
+---
+
 ## Technology Stack
 
 ### Framework
@@ -650,5 +688,5 @@ Update this document when:
 
 ---
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-03-02
 **Status:** ✅ Implemented and verified

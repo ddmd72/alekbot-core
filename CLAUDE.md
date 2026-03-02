@@ -40,7 +40,27 @@ background process extracts new facts from the conversation → bot gets smarter
 - WebSearch (Flash, BALANCED) — full-depth search with synthesis, called by Smart only.
 - Memory (LLM key formulation + vector search) — MemorySearchAgent: ECO-tier LLM extracts
   search keys, then multi-vector RRF search. Shared between Quick and Smart paths.
+- EmailSearch — EmailSearchAgent: email archive specialist (BALANCED tier, called by Smart).
+  Three intents: `search_emails` (vector search in indexed archive), `get_email_details`
+  (fetch full email body), `get_email_attachment` (parse attachment via markitdown).
+- EmailClassification — EmailClassificationAgent: shared singleton in ServiceContainer.
+  Called by EmailIndexingService (not by agents). Classifies raw emails via tool-calling
+  mode; extracts fact sentences for Firestore storage. Exception to OUTPUT_FORMAT rule:
+  uses markdown code block extraction in `_parse_response()` — see inline comment.
 - Consolidation (Opus/Thinking) — background "memory consolidation"
+
+**Gmail Email Indexing** — passive inbox-as-memory pipeline:
+- User connects Gmail via OAuth (`/auth/connect-gmail`); credentials stored in `oauth_credentials`
+- Indexing job triggered from Cabinet UI or Cloud Scheduler; runs as paginated Cloud Tasks
+- `EmailIndexingService` → `GmailProviderAdapter` → `EmailClassificationAgent` (LLM triage)
+- Valuable emails → `IndexedEmail` stored in `domain_email_facts_v1` (4-vector schema, mirrors FactEntity)
+- `EmailEmbeddingRepairService` — async repair job for emails stored without vectors
+- `UserNotificationService` — sends Slack/Telegram alert on job completion; stores last
+  active channel per user in `user_notification_state`
+- `WorkerHandler` — dispatches `/worker` Cloud Tasks by `task_type`:
+  `email_indexing`, `email_indexing_watchdog`, `consolidation`, `agent_execution`
+- Watchdog: Cloud Scheduler fires `email_indexing_watchdog` every 2h; marks stale `running`
+  jobs as `failed`
 
 **Consolidation** — analogous to long-term memory formation:
 - Sliding window (100-200 messages) fills up → batch goes to queue
@@ -75,18 +95,33 @@ Hexagonal Architecture (Ports & Adapters).
 ```
 src/
   domain/       — Models, enums, value objects. ZERO external dependencies.
-  ports/        — 28 ABC interfaces. Import only domain/ and stdlib.
-  adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, Slack, Telegram).
+  ports/        — ~36 ABC interfaces. Import only domain/ and stdlib.
+                  Email ports: EmailProviderPort, EmailClassifierPort, EmailExclusionsPort,
+                  IndexedEmailRepository, EmailIndexingJobRepository, OAuthCredentialsPort,
+                  NotificationStatePort, NotificationChannelFactoryPort.
+  adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, Slack, Telegram,
+                  Gmail). Email adapters: GmailProviderAdapter, FirestoreIndexedEmailRepository,
+                  FirestoreEmailJobRepository, FirestoreEmailExclusionsAdapter,
+                  FirestoreOAuthCredentialsAdapter, FirestoreNotificationStateAdapter,
+                  NotificationChannelFactory.
   services/     — Business logic. Receive ports via DI.
+                  Email services: EmailIndexingService, EmailSearchService,
+                  EmailEmbeddingRepairService, GmailOAuthService, UserNotificationService.
   agents/       — Multi-agent system. core/ — agents, infrastructure/ — billing/logging.
-  handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler).
+                  Email agents: EmailSearchAgent, EmailClassificationAgent.
+  handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler, WorkerHandler).
+                  WorkerHandler dispatches /worker Cloud Tasks by task_type.
   infrastructure/ — AgentCoordinator, queues.
-  composition/  — ServiceContainer + SlackAdapterFactory: wires ports to adapters.
+  composition/  — ServiceContainer + UserAgentFactory + SlackAdapterFactory + TelegramAdapterFactory.
+                  UserAgentFactory lives in composition/ (NOT services/).
   config/       — EnvironmentConfig, Settings, AuthConfig.
   utils/        — Logger, telemetry.
   web/          — Quart web app (OAuth + Cabinet UI). Endpoints: /auth/login, /auth/callback,
-                  /auth/link-oauth, /auth/me, /auth/refresh, /auth/logout.
-                  Runs as a separate Quart app alongside the Slack/Telegram bot.
+                  /auth/link-oauth, /auth/me, /auth/refresh, /auth/logout,
+                  /auth/connect-gmail, /auth/connect-gmail/callback,
+                  /api/gmail/status, /api/gmail/index, /api/gmail/jobs/<id>,
+                  /api/gmail/jobs/<id>/cancel, /api/gmail/disconnect, /api/gmail/data.
+                  Runs as a shared Quart app (all blueprints on port 8080).
 main.py         — Bootstrap: creates ServiceContainer + UserAgentFactory, graceful shutdown.
 ```
 

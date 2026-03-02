@@ -8,7 +8,7 @@ Describes the high-speed caching system for user-specific biographical facts and
 
 ### When to Read
 
-- **For AI Agents:** Before modifying cache refresh logic, keyword resolution, or context formatting.
+- **For AI Agents:** Before modifying cache refresh logic, priority classification, or context formatting.
 - **For Developers:** When troubleshooting stale context, missing principles, or slow prompt assembly.
 
 ### When to Update
@@ -16,10 +16,10 @@ Describes the high-speed caching system for user-specific biographical facts and
 This document MUST be updated when:
 
 - [ ] The cache storage mechanism (Firestore collection) changes.
-- [ ] The 3-level configuration resolution for keywords or limits is modified.
+- [ ] The 3-level configuration resolution for limits is modified.
 - [ ] The logic for separating facts and principles changes.
 - [ ] The cache refresh trigger (e.g., after consolidation) is updated.
-- [ ] New technical tags for filtering are introduced.
+- [ ] The priority-rank ordering or domain-first strategy changes.
 
 ### Cross-References
 
@@ -33,7 +33,9 @@ This document MUST be updated when:
 
 The **Biographical Context Cache** provides agents with instant access to a user's most important personal information and behavioral anchors. It eliminates the need for expensive vector searches during every prompt assembly by maintaining a pre-ranked, deduplicated set of facts in a high-speed storage layer.
 
-**Core Principle:** Fast reads for prompt assembly, background updates for knowledge evolution.
+**Core Principle:** Fast reads for prompt assembly, background updates after consolidation.
+
+**Architecture note:** The cache is built via **direct priority-ordered repository queries** — no semantic search at cache-build time. Consolidation already classified and tagged all facts; the cache layer simply selects and orders them. `SearchEnrichmentService` is used only at query time (MemorySearchAgent), not here.
 
 ---
 
@@ -44,34 +46,46 @@ The cache is stored in the `user_context` collection and is split into two disti
 ### 2.1 Biographical Facts (`facts`)
 
 - **Content:** Episodic memories, personal details, and historical events.
-- **Limit:** Default 50 facts (configurable).
+- **Limit:** Default 50 facts (configurable via `biographical_cache_limit`).
 - **Source:** Extracted from conversation history during consolidation.
+- **Ordering:** Priority-first (`CRITICAL` → `HIGH` → `MEDIUM` → `LOW`), then by `created_at DESC` within each tier.
 
 ### 2.2 Guiding Principles (`principles`)
 
 - **Content:** Behavioral anchors, core beliefs, and interaction preferences (mindset).
-- **Limit:** Default 15 principles (configurable).
-- **Source:** Facts with tag `"mindset"` (any domain) - classified by consolidation v3.
+- **Limit:** Default 15 principles (configurable via `principles_cache_limit`).
+- **Source:** Facts with tag `"mindset"` (any domain) — classified by consolidation.
 - **Rule:** Principle = any fact containing `"mindset"` tag, regardless of domain.
 
 ---
 
-## 3. Dynamic Configuration
+## 3. Priority-Based Selection
 
-The cache behavior is governed by a **3-level resolution strategy** (USER > ACCOUNT > SYSTEM), managed by the `ConfigurationService`.
+Facts are ranked by `context_priority_rank` — an adapter-internal integer field written to Firestore by `FirestoreFactRepository` on every `add_fact` / `update_fact`. **It is not part of `FactEntity`** (domain model is unaware).
 
-### 3.1 Search Keywords
+| `ContextPriority` | `context_priority_rank` |
+|---|---|
+| `CRITICAL` | 1 |
+| `HIGH` | 2 |
+| `MEDIUM` | 3 |
+| `LOW` | 4 |
+| `ARCHIVAL` | 5 |
 
-To refresh the cache, the system resolves three sets of keywords:
+### 3.1 Domain-First Selection
 
-1. **Query 1:** Focuses on tags and metadata (e.g., "identity", "bio").
-2. **Query 2:** Focuses on text and tags (e.g., "health", "preferences").
-3. **Query 3:** Focuses on text and metadata (e.g., "assets", "history").
+Biographical domain facts are preferred over all others at equal priority:
+
+1. **Query 1:** `domain=BIOGRAPHICAL, ORDER BY rank ASC, created_at DESC, LIMIT K`
+2. **Query 2 (fill):** If Q1 returns fewer than K facts — fetch all domains (same ordering), exclude IDs from Q1, append until limit reached.
+
+This ensures biographical identity facts (name, age, relationships) always appear in context before professional or health facts of the same priority tier.
 
 ### 3.2 Context Limits
 
-- `biographical_cache_limit`: Controls the size of the `facts` section.
-- `principles_cache_limit`: Controls the size of the `principles` section.
+Resolved dynamically via `ConfigurationService` (USER > ACCOUNT > SYSTEM):
+
+- `biographical_cache_limit`: Controls the size of the `facts` section (default: 50).
+- `principles_cache_limit`: Controls the size of the `principles` section (default: 15).
 
 ---
 
@@ -81,39 +95,43 @@ The cache is refreshed automatically after every successful consolidation batch.
 
 ### 4.1 Refresh Pipeline
 
-1. **Trigger:** `ConsolidationAgent` completes a batch and calls `refresh_biographical_context_cache()`.
-2. **Resolution:** `BiographicalContextService` resolves the current keywords and limits for the account.
-3. **Retrieval:** Delegates to `SearchEnrichmentService` to perform a multi-vector RRF search using the resolved keywords.
-   - **Deduplication:** Uses smart semantic deduplication (2026-02-08 update)
-   - **Threshold:** Default 0.98 (balanced filtering)
-   - **Number-Aware:** Different numbers = different facts (time-series support)
-4. **Processing:**
-   - Fetches full `FactEntity` objects for metadata.
-   - Filters out technical tags (e.g., `#consolidated`, `#test`).
-   - Separates facts by type (`PRINCIPLE` vs others).
-5. **Persistence:** Saves the processed lists back to the Firestore cache.
+1. **Trigger:** `ConsolidationAgent` completes a batch and calls `BiographicalContextService.refresh_context()`.
+2. **Resolution:** Resolves `biographical_cache_limit` and `principles_cache_limit` for the account.
+3. **Retrieval (domain-first):**
+   - Q1: `get_active_facts_ordered(account_id, domain=BIOGRAPHICAL, limit=K)` — biographical facts ordered by `context_priority_rank`.
+   - Q2 (fill): if `len(Q1) < K`, fetch all domains ordered by rank, filter out Q1 IDs, append up to `K - len(Q1)`.
+4. **Separation:** Facts with `"mindset"` tag → `principles` list (up to `principles_limit`). Others → `facts` list.
+5. **Persistence:** Saves processed lists back to the `user_context` Firestore collection.
+
+### 4.2 No Semantic Search at Cache Time
+
+The old implementation used `SearchEnrichmentService` + keyword queries for cache building. This was replaced (2026-02-24):
+
+- Consolidation already classifies and assigns `context_priority` to every fact.
+- Priority-ordered repository queries are deterministic, 2–5× faster, and require no embedding calls.
+- `SearchEnrichmentService` is now used only at query time (by `MemorySearchAgent`), not here.
 
 ---
 
-## 5. Integration with Prompt v3
+## 5. Integration with Prompt Assembly
 
-During prompt assembly, the `PromptAssemblyService` retrieves the cached context:
+During prompt assembly, `PromptAssemblyService._inject_runtime_context()` retrieves the cached context:
 
 - **Formatting:** `BiographicalFactsFormatter` converts facts into domain-grouped Markdown sections.
-  - **Session 2026-02-17:** Domain-based structure (biographical, health, preference, etc.)
-  - **Hashtags removed:** Clean output (except `[MINDSET]` prefix for behavioral anchors)
-  - **Dual sorting:** biographical (oldest→newest), others (newest→oldest)
-  - **Semantic facts:** Preserved as separate "Query-Specific Context" section
-- **Validation:** The context is treated as `UNTRUSTED` and passed through the `SecurityPort` before injection.
+  - Domain-based structure (biographical, health, preference, etc.)
+  - Hashtags removed from output (except `[MINDSET]` prefix for behavioral anchors)
+  - Dual sorting: biographical (oldest→newest), others (newest→oldest)
+- **Cache Boundary split:** Facts with `"semantic_lens"` tag go to the dynamic (post-boundary) section; all others are in the static (pre-boundary, cached) section.
+- **Validation:** Context is treated as `UNTRUSTED` and passed through `SecurityPort` before injection.
 
 ---
 
 ## 6. Code References
 
-- `src/services/biographical_context_service.py`: Main refresh orchestration.
+- `src/services/biographical_context_service.py`: Refresh orchestration, domain-first selection.
+- `src/adapters/firestore_repo.py`: `get_active_facts_ordered()` — Firestore query with `context_priority_rank` ordering. `_PRIORITY_RANK` mapping dict.
 - `src/services/prompt_v3/biographical_formatter.py`: Formatting for prompts.
-- `src/services/configuration_service.py`: 3-level limit and keyword resolution.
-- `src/adapters/firestore_repo.py`: Cache persistence methods.
+- `src/services/configuration_service.py`: 3-level limit resolution.
 
 ---
 
@@ -129,6 +147,6 @@ During prompt assembly, the `PromptAssemblyService` retrieves the cached context
 
 ---
 
-**Last Updated:** 2026-02-17  
-**Status:** ✅ Complete  
-**Phase:** Updated for Mindset-based principles & state=CURRENT filtering
+**Last Updated:** 2026-03-02
+**Status:** ✅ Production Ready
+**Phase:** Priority-based selection + domain-first bio cache (2026-02-24)
