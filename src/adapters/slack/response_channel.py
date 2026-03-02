@@ -10,7 +10,6 @@ from ...domain.messaging import ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType
 from ...locales.uk import get_message as get_uk_message, get_entertainment_intros
 from ...utils.logger import logger
-from ...utils.weather_locales import CONDITION_LABELS_UK, DAY_NAMES_UK
 
 
 # Slack-specific constraints
@@ -163,7 +162,7 @@ class SlackResponseChannel(ResponseChannel):
         - Do NOT leak platform logic into domain
         """
         if content.content_type == "table":
-            blocks = self._build_weather_cards(content.data)
+            blocks = self._build_generic_table_blocks(content.data)
             return await self.client.chat_postMessage(
                 channel=self.channel_id,
                 text=content.fallback_text,
@@ -200,25 +199,13 @@ class SlackResponseChannel(ResponseChannel):
 
         return chunks
     
-    def _build_weather_cards(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Render weather data with cards (single day) or table (multi-day)."""
+    def _build_generic_table_blocks(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Render generic tabular data (headers + rows) using Slack table block."""
         title = data.get("title")
+        headers = data.get("headers", [])
         rows = data.get("rows", [])
         footer = data.get("footer")
 
-        if len(rows) > 1:
-            return self._build_weather_table_blocks(title, rows, footer)
-
-        emoji_map = {
-            "sunny": "☀️",
-            "cloudy": "☁️",
-            "rainy": "🌧️",
-            "snowy": "❄️",
-            "storm": "⛈️",
-            "fog": "🌫️",
-            "unknown": "🌤️"
-        }
-
         blocks: List[Dict[str, Any]] = []
         if title:
             blocks.append({
@@ -226,117 +213,21 @@ class SlackResponseChannel(ResponseChannel):
                 "text": {"type": "mrkdwn", "text": f"*{title}*"}
             })
 
+        if not rows:
+            return blocks
+
+        table_rows = []
+        if headers:
+            table_rows.append([{"type": "raw_text", "text": str(h)} for h in headers])
         for row in rows:
             if isinstance(row, list):
-                cells = row
-                condition_key = cells[3].lower() if len(cells) > 3 and isinstance(cells[3], str) else "unknown"
-            else:
-                cells = row.get("cells", [])
-                condition_key = row.get("metadata", {}).get("condition", "unknown")
-            emoji = emoji_map.get(condition_key, "🌤️")
-            condition_label = CONDITION_LABELS_UK.get(condition_key, "Мінливо")
+                table_rows.append([{"type": "raw_text", "text": str(cell)} for cell in row])
 
-            day_raw = cells[0] if len(cells) > 0 else "—"
-            day_label = DAY_NAMES_UK.get(day_raw, day_raw)
-            night = cells[1] if len(cells) > 1 else "—"
-            daytime = cells[2] if len(cells) > 2 else "—"
-            humidity = cells[4] if len(cells) > 4 else "—"
-            wind = cells[5] if len(cells) > 5 else "—"
-
-            blocks.append({"type": "divider"})
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"*📅 {day_label}* {emoji} {condition_label}"
-                }
-            })
-
-            blocks.append({
-                "type": "section",
-                "fields": [
-                    {"type": "mrkdwn", "text": f"*День:*\n{daytime}"},
-                    {"type": "mrkdwn", "text": f"*Ніч:*\n{night}"},
-                    {"type": "mrkdwn", "text": f"*Вологість:*\n{humidity}"},
-                    {"type": "mrkdwn", "text": f"*Вітер:*\n{wind}"}
-                ]
-            })
-
-        if footer:
-            blocks.append({
-                "type": "context",
-                "elements": [{"type": "mrkdwn", "text": footer}]
-            })
-
-        return blocks
-
-    def _build_weather_table_blocks(self, title: Optional[str], rows: List[Dict[str, Any]], footer: Optional[str]) -> List[Dict[str, Any]]:
-        """Render multi-day forecast using Slack table block."""
-        emoji_map = {
-            "sunny": "☀️",
-            "cloudy": "☁️",
-            "rainy": "🌧️",
-            "snowy": "❄️",
-            "storm": "⛈️",
-            "fog": "🌫️",
-            "unknown": "🌤️"
-        }
-
-        blocks: List[Dict[str, Any]] = []
-        if title:
-            blocks.append({
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f"*{title}*"}
-            })
-
-        header_row = [
-            {"type": "raw_text", "text": "День"},
-            {"type": "raw_text", "text": "Ніч"},
-            {"type": "raw_text", "text": "День"},
-            {"type": "raw_text", "text": "Кондиція"},
-            {"type": "raw_text", "text": "Вологість"},
-            {"type": "raw_text", "text": "Вітер"}
-        ]
-
-        table_rows = [header_row]
-        for row in rows:
-            if isinstance(row, list):
-                cells = row
-                condition_key = cells[3].lower() if len(cells) > 3 and isinstance(cells[3], str) else "unknown"
-            else:
-                cells = row.get("cells", [])
-                condition_key = row.get("metadata", {}).get("condition", "unknown")
-            emoji = emoji_map.get(condition_key, "🌤️")
-            condition_label = CONDITION_LABELS_UK.get(condition_key, "Мінливо")
-
-            day_raw = cells[0] if len(cells) > 0 else "—"
-            day_label = DAY_NAMES_UK.get(day_raw, day_raw)
-            night = cells[1] if len(cells) > 1 else "—"
-            daytime = cells[2] if len(cells) > 2 else "—"
-            humidity = cells[4] if len(cells) > 4 else "—"
-            wind = cells[5] if len(cells) > 5 else "—"
-
-            table_rows.append([
-                {"type": "raw_text", "text": f"{day_label} {emoji} {condition_label}"},
-                {"type": "raw_text", "text": night},
-                {"type": "raw_text", "text": daytime},
-                {"type": "raw_text", "text": condition_label},
-                {"type": "raw_text", "text": humidity},
-                {"type": "raw_text", "text": wind}
-            ])
-
+        col_count = len(headers) if headers else (len(rows[0]) if rows and isinstance(rows[0], list) else 1)
         blocks.append({
             "type": "table",
-            "block_id": "weather_table",
             "rows": table_rows,
-            "column_settings": [
-                {"align": "left", "is_wrapped": True},
-                {"align": "center"},
-                {"align": "center"},
-                {"align": "left", "is_wrapped": True},
-                {"align": "center"},
-                {"align": "center"}
-            ]
+            "column_settings": [{"align": "left"} for _ in range(col_count)]
         })
 
         if footer:

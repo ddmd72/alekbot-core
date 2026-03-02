@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List, Iterable
 
 from ..base_agent import BaseAgent
+from ...infrastructure.agent_intents import DEFAULT_INTENTS
 from ...domain.agent import (
     AgentMessage,
     AgentResponse,
@@ -743,7 +744,7 @@ class SmartResponseAgent(BaseAgent):
         prompt tokens — user will craft final prompt copy.
         """
         available_intents = (
-            self.coordinator.get_available_intents()
+            [i for i in self.coordinator.get_available_intents() if i["name"] in DEFAULT_INTENTS]
             if self.coordinator else []
         )
 

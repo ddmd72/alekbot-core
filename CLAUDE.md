@@ -32,17 +32,21 @@ background process extracts new facts from the conversation → bot gets smarter
 **Multi-agent network** — not one LLM for everything, but specialists:
 - Router (Gemini Flash) — classifies requests (complexity 1-5 → Quick, 6-10 → Smart),
   performs semantic memory search, passes enriched context downstream
-- Quick (Flash, BALANCED) — fast responses with bounded delegation (MAX_TURNS=2):
-  `search_memory` + `search_web_light`. 70% of requests, 10x cheaper than Thinking.
-- Smart (Gemini Pro / Claude Opus, PERFORMANCE) — complex tasks, multi-turn tool orchestration
+- Quick (Flash, BALANCED) — functionally equivalent to Smart in tool access and intents.
+  Two differences only: (1) no refinement loop in cognitive process — single pass: INTENT → delegate → FORMAT;
+  (2) tool remapping: `search_web` → `search_web_light` (ECO-tier web search instead of full).
+  Handles complexity 1–5 (≈70% of requests), significantly cheaper than Smart.
+- Smart (Gemini Pro / Claude Opus, PERFORMANCE) — called only for complexity 6–10 requests.
+  Adds a multi-turn refinement loop: after tool results, re-evaluates for follow-up delegation.
 - WebSearchLight (Flash Lite, ECO) — single-pass Google grounding, called by Quick only.
   Separate agent because Gemini cannot combine grounding + function calling in one request.
 - WebSearch (Flash, BALANCED) — full-depth search with synthesis, called by Smart only.
 - Memory (LLM key formulation + vector search) — MemorySearchAgent: ECO-tier LLM extracts
   search keys, then multi-vector RRF search. Shared between Quick and Smart paths.
-- EmailSearch — EmailSearchAgent: email archive specialist (BALANCED tier, called by Smart).
-  Three intents: `search_emails` (vector search in indexed archive), `get_email_details`
-  (fetch full email body), `get_email_attachment` (parse attachment via markitdown).
+- EmailSearch — EmailSearchAgent: email archive specialist (BALANCED tier). Accessible to both
+  Quick and Smart via `DEFAULT_INTENTS`. Three intents: `search_emails` (vector search in indexed
+  archive), `get_email_details` (fetch full email body), `get_email_attachment` (parse attachment
+  via markitdown).
 - EmailClassification — EmailClassificationAgent: shared singleton in ServiceContainer.
   Called by EmailIndexingService (not by agents). Classifies raw emails via tool-calling
   mode; extracts fact sentences for Firestore storage. Exception to OUTPUT_FORMAT rule:

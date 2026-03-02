@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from ..base_agent import BaseAgent
+from ...infrastructure.agent_intents import DEFAULT_INTENTS
 from ...domain.agent import (
     AgentMessage,
     AgentResponse,
@@ -58,7 +59,7 @@ class QuickResponseAgent(BaseAgent):
     Characteristics:
     - Uses lightweight LLM model (gemini-flash)
     - Small context window (20 messages)
-    - Single-turn tool delegation (memory/web)
+    - Bounded tool delegation (max 3 turns: supports search → detail → answer flows)
     - Fast response time (<2s target)
     
     Use Cases:
@@ -78,12 +79,12 @@ class QuickResponseAgent(BaseAgent):
     CONTEXT_WINDOW = 20
 
     # Delegation loop limits
-    MAX_DELEGATION_TURNS = 2
+    MAX_DELEGATION_TURNS = 8
     MAX_AGENT_RETRIES = 1
     RETRY_BACKOFF_SECONDS = 0.5
 
-    # Intents exposed to Quick (subset of all registered intents)
-    QUICK_INTENTS = {"search_memory", "search_web", "search_emails", "get_email_details", "get_email_attachment"}
+    # Intents exposed to Quick — shared with Smart; see src/infrastructure/agent_intents.py
+    QUICK_INTENTS = DEFAULT_INTENTS
 
     # Remap intents before passing to coordinator — Quick uses lightweight implementations
     _INTENT_REMAP = {"search_web": "search_web_light"}
@@ -375,15 +376,15 @@ class QuickResponseAgent(BaseAgent):
     def _clean_history_for_quick(self, history: List[Message]) -> List[Message]:
         """
         Remove tool interactions from history.
-        
-        Quick responses should not see tool_call/tool_response
-        to avoid confusing the model.
-        
-        Args:
-            history: Original message history
-            
-        Returns:
-            Cleaned history without tool interactions
+
+        !! CURRENTLY A NO-OP IN PRACTICE !!
+        ConversationHandler saves only 2 messages per turn (user text + model text).
+        Tool call/response pairs from the delegation loop are NEVER written to the session store,
+        so this filter never finds anything to remove.
+
+        DO NOT DELETE — reserved for Brainstorm Mode (future feature):
+        In that mode, multi-turn reasoning traces will be stored in session for continuity
+        across requests, and this filter will need to decide what to expose to the model.
         """
         return [
             msg for msg in history
