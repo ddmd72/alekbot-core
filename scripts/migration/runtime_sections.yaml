@@ -1,0 +1,286 @@
+# Runtime Sections Analysis - Prompt Design System v3 Migration
+# These sections are injected at request time (validated before injection)
+# Date: 2026-02-02
+# Phase: 5.1 (Migration - Section Classification)
+
+runtime_sections:
+  # ========================================================================
+  # RUNTIME Section 1: Biographical Context
+  # ========================================================================
+
+  - section_name: "BIOGRAPHICAL_CONTEXT"
+    current_implementation: "Already handled by PromptBuilder._get_biographical_component()"
+    current_location: "Injected dynamically from Firestore facts (owner_id=user_id)"
+
+    data_source: |
+      - Firestore collection: `{prefix}facts`
+      - Query: facts where owner_id=user_id and category="biographical"
+      - Current retrieval: semantic search with embedding similarity
+      - Consolidation: ConsolidationAgent creates biographical summaries
+
+    example_content: |
+      Biographical facts:
+      - Lives in Warsaw, Ukraine
+      - Software engineer specializing in Python and distributed systems
+      - Interested in AI, philosophy, productivity systems
+      - Prefers direct communication, values logic and clarity
+      - Learning Spanish, travels frequently
+
+    v3_integration: |
+      Template placeholder: {{BIOGRAPHICAL_CONTEXT}}
+
+      Security validation:
+      - Zone: TrustZone.UNTRUSTED (user data)
+      - Validation: SecurityPort.validate() before injection
+      - Risk patterns: Check for injection attempts in biographical facts
+      - Action: Block HIGH/CRITICAL, sanitize MEDIUM, pass SAFE/LOW
+
+      PromptAssemblyService.assemble():
+        biographical_facts = await self._get_biographical_facts(user_id)
+        validated = await self.security_port.validate(
+            text="\n".join(biographical_facts),
+            context="biographical_context",
+            zone=TrustZone.UNTRUSTED
+        )
+        prompt = prompt.replace("{{BIOGRAPHICAL_CONTEXT}}", validated.sanitized_text)
+
+    formatting: |
+      Current format (ContextFormatter):
+      - List format: "- Fact 1\n- Fact 2\n- Fact 3"
+      - Or paragraph format: "User is X. They Y. They Z."
+
+    trust_level: "UNTRUSTED (user-provided data)"
+    validation_required: true
+
+  # ========================================================================
+  # RUNTIME Section 2: Conversation History
+  # ========================================================================
+
+  - section_name: "CONVERSATION_HISTORY"
+    current_implementation: "Already handled by SessionStore / PromptBuilder"
+    current_location: "Injected dynamically from Firestore session_store"
+
+    data_source: |
+      - Firestore collection: `{prefix}sessions`
+      - Query: messages for session_id, limited by threshold
+      - Current retrieval: Last N messages (configurable)
+      - Consolidation: Overflow messages trigger ConsolidationAgent
+
+    example_content: |
+      Recent conversation:
+      User: Як справи з проєктом?
+      Assistant: Проєкт рухається. Вчора фіналізував архітектуру, сьогодні пишу тести.
+      User: А дедлайн не горить?
+      Assistant: Горить, але контрольовано. Це не пожежа, а плановий вогонь.
+
+    v3_integration: |
+      Template placeholder: {{CONVERSATION_HISTORY}}
+
+      Security validation:
+      - Zone: TrustZone.UNTRUSTED (user input + model output)
+      - Validation: SecurityPort.validate() before injection
+      - Risk patterns: Check for injection in both user messages and assistant responses
+      - Action: Block HIGH/CRITICAL, sanitize MEDIUM, pass SAFE/LOW
+
+      PromptAssemblyService.assemble():
+        conversation = await self._get_conversation_history(session_id)
+        formatted = self.formatter.format(conversation)
+        validated = await self.security_port.validate(
+            text=formatted,
+            context="conversation_history",
+            zone=TrustZone.UNTRUSTED
+        )
+        prompt = prompt.replace("{{CONVERSATION_HISTORY}}", validated.sanitized_text)
+
+    formatting: |
+      Current format (ContextFormatter):
+      - Role-based format:
+          "User: <message>
+           Assistant: <response>
+           User: <next message>
+           Assistant: <next response>"
+
+      Options:
+      - format(): Basic formatting
+      - format_with_limit(limit): Limit message count
+      - format_with_token_limit(limit): Limit by approximate tokens
+
+    trust_level: "UNTRUSTED (user messages + model responses)"
+    validation_required: true
+
+    note: |
+      CRITICAL: Model responses (assistant messages) must be validated BEFORE
+      storing in conversation history to prevent indirect injection.
+      This is handled by ConversationHandler.validate_model_output() (Phase 4).
+
+  # ========================================================================
+  # RUNTIME Section 3: Knowledge Base (RAG Content)
+  # ========================================================================
+
+  - section_name: "KNOWLEDGE_BASE_RAG"
+    current_implementation: "SearchEnrichmentService / MemorySearchAgent"
+    current_location: "Injected dynamically from semantic search results"
+
+    data_source: |
+      - Firestore collection: `{prefix}facts`
+      - Query: semantic search with embedding similarity
+      - Current retrieval: Top K facts matching query embedding
+      - Scope: Facts from multiple sources (user facts, consolidated memories, etc.)
+
+    example_content: |
+      Relevant facts from knowledge base:
+      - User completed Python course on Coursera (2024-01-15)
+      - User mentioned interest in distributed systems architecture (2024-01-20)
+      - User working on authentication refactor for alek-core (2024-02-01)
+
+    v3_integration: |
+      Template placeholder: {{KNOWLEDGE_BASE_RAG}} (optional, not in all prompts)
+
+      Security validation:
+      - Zone: TrustZone.SEMI_TRUSTED (RAG content - trusted source but untrusted storage)
+      - Validation: SecurityPort.validate() before injection (FUTURE - Phase 6+)
+      - Risk patterns: Check for poisoned RAG content
+      - Action: Block HIGH/CRITICAL, pass LOW/SAFE
+
+      SearchEnrichmentService.enrich_context():
+        facts = await self.repository.search_facts(query, user_id)
+        if self.security_port:  # Phase 6+
+            validated_facts = []
+            for fact in facts:
+                result = await self.security_port.validate(
+                    fact.text,
+                    context=f"rag_fact_{fact.id}",
+                    zone=TrustZone.SEMI_TRUSTED
+                )
+                if result.risk_level not in [RiskLevel.HIGH, RiskLevel.CRITICAL]:
+                    validated_facts.append(result.sanitized_text)
+            return validated_facts
+        return [f.text for f in facts]  # MVP: No validation
+
+    formatting: |
+      Current format:
+      - List format: "- Fact 1\n- Fact 2\n- Fact 3"
+      - With timestamps: "- [2024-01-15] Fact 1\n- [2024-01-20] Fact 2"
+
+    trust_level: "SEMI_TRUSTED (trusted source, untrusted storage)"
+    validation_required: false  # MVP (Phase 5), true in Phase 6+
+
+    note: |
+      RAG validation is FUTURE work (Phase 6+). For MVP (Phase 5), SearchEnrichmentService
+      has security_port parameter but doesn't use it yet. This prevents breaking changes later.
+
+  # ========================================================================
+  # RUNTIME Section 4: Routing Metadata (System-Generated)
+  # ========================================================================
+
+  - section_name: "ROUTING_METADATA"
+    current_implementation: "Generated by RouterAgent"
+    current_location: "Passed as parameter to PromptBuilder.build_for_agent()"
+
+    data_source: |
+      - Generated by: RouterAgent.route()
+      - Contains: user_tone (URGENT, CASUAL, TECHNICAL, etc.)
+      - Purpose: Help agent adapt response style to user's current state
+
+    example_content: |
+      routing_metadata {
+          user_tone: URGENT
+          complexity: HIGH
+          requires_tools: ["memory_search"]
+      }
+
+    v3_integration: |
+      Template placeholder: {{ROUTING_METADATA}} (optional, for advanced use)
+
+      Security validation:
+      - Zone: TrustZone.TRUSTED (system-generated data)
+      - Validation: NOT required (trusted source)
+      - No SecurityPort validation needed
+
+      PromptBuilder.build_for_agent_v3():
+        if routing_metadata:
+            prompt = prompt.replace("{{ROUTING_METADATA}}", str(routing_metadata))
+
+    trust_level: "TRUSTED (system-generated)"
+    validation_required: false
+
+  # ========================================================================
+  # RUNTIME Section 5: Semantic Context (Search Results, External Data)
+  # ========================================================================
+
+  - section_name: "SEMANTIC_CONTEXT"
+    current_implementation: "WebSearchAgent results, external API data"
+    current_location: "Passed as parameter to PromptBuilder.build_for_agent()"
+
+    data_source: |
+      - Generated by: WebSearchAgent.search()
+      - Contains: search results, external API responses
+      - Purpose: Provide external context for answering questions
+
+    example_content: |
+      Web search results for "Python 3.13 new features":
+      - Improved error messages with color-coded tracebacks
+      - Experimental JIT compiler (PEP 744)
+      - Better performance for dictionary operations
+
+    v3_integration: |
+      Template placeholder: {{SEMANTIC_CONTEXT}} (optional)
+
+      Security validation:
+      - Zone: TrustZone.SEMI_TRUSTED (external data - trusted source, untrusted content)
+      - Validation: SHOULD validate (FUTURE - Phase 6+)
+      - Risk patterns: Check for web content injection
+      - Action: MVP passes through, Phase 6+ adds validation
+
+    trust_level: "SEMI_TRUSTED (external data)"
+    validation_required: false  # MVP (Phase 5), true in Phase 6+
+
+# ========================================================================
+# VALIDATION MATRIX
+# ========================================================================
+validation_matrix:
+  - section: BIOGRAPHICAL_CONTEXT
+    zone: UNTRUSTED
+    validate: true  # Phase 4
+    reason: "User-provided data, high injection risk"
+
+  - section: CONVERSATION_HISTORY
+    zone: UNTRUSTED
+    validate: true  # Phase 4
+    reason: "User input + model output, indirect injection risk"
+
+  - section: KNOWLEDGE_BASE_RAG
+    zone: SEMI_TRUSTED
+    validate: false  # MVP (Phase 5), true in Phase 6+
+    reason: "RAG content poisoning (future threat model)"
+
+  - section: ROUTING_METADATA
+    zone: TRUSTED
+    validate: false
+    reason: "System-generated, no injection risk"
+
+  - section: SEMANTIC_CONTEXT
+    zone: SEMI_TRUSTED
+    validate: false  # MVP (Phase 5), true in Phase 6+
+    reason: "External data, but lower priority than user input"
+
+# ========================================================================
+# SUMMARY
+# ========================================================================
+summary:
+  total_runtime_sections: 5
+  validated_in_mvp: 2  # BIOGRAPHICAL_CONTEXT, CONVERSATION_HISTORY
+  validated_in_phase_6: 5  # All sections
+
+  injection_points:
+    - "{{BIOGRAPHICAL_CONTEXT}}" - validated ✅
+    - "{{CONVERSATION_HISTORY}}" - validated ✅
+    - "{{KNOWLEDGE_BASE_RAG}}" - not validated (Phase 6+)
+    - "{{ROUTING_METADATA}}" - trusted, no validation needed
+    - "{{SEMANTIC_CONTEXT}}" - not validated (Phase 6+)
+
+  notes: |
+    - BIOGRAPHICAL_CONTEXT and CONVERSATION_HISTORY are the primary attack vectors
+    - Both are validated via SecurityPort in Phase 4
+    - RAG and SEMANTIC_CONTEXT validation deferred to Phase 6+ (lower priority)
+    - ROUTING_METADATA is system-generated, no validation needed
