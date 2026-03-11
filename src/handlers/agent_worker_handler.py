@@ -1,0 +1,163 @@
+"""
+Agent Worker Handler
+====================
+
+Handles async agent task execution triggered by Cloud Tasks.
+Receives payloads with task_type="agent_execution", executes the
+specified agent, and handles result delivery.
+
+Deep research delivery:
+  When intent == "execute_deep_research_claude", the runner agent returns
+  the research text in AgentResponse.result. This handler delivers it
+  via two parallel notifications: SmartAgent summary + direct report link.
+"""
+
+from typing import Dict, Any, Optional
+
+from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
+from ..services.deep_research_delivery import (
+    NotificationPort, deliver_deep_research,
+)
+from ..infrastructure.agent_coordinator import AgentCoordinator
+from ..infrastructure.agent_manifest import Intent
+from ..ports.media_storage_port import MediaStoragePort
+from ..utils.logger import logger
+
+
+class AgentWorkerHandler:
+    """
+    Background task executor for async agent intents.
+
+    Invoked by the /worker HTTP endpoint when Cloud Tasks delivers a
+    payload with task_type="agent_execution".
+
+    Responsibilities:
+    - Resolve agent instance from coordinator
+    - Execute agent with the original query + context
+    - Deliver result via notification service (SmartAgent summary + report link)
+    - Log result (success or failure)
+    """
+
+    def __init__(
+        self,
+        coordinator: AgentCoordinator,
+        notification_service: Optional[NotificationPort] = None,
+        media_storage: Optional[MediaStoragePort] = None,
+    ) -> None:
+        self._coordinator = coordinator
+        self._notification = notification_service
+        self._media_storage = media_storage
+
+    async def handle_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute an async agent task.
+
+        Expected payload shape:
+        {
+            "task_type": "agent_execution",
+            "agent_id": "claude_deep_research_runner",
+            "intent":   "execute_deep_research_claude",
+            "query":    "...",
+            "context":  {"user_id": "...", "account_id": "...", ...}
+        }
+
+        Returns a result dict (used by the HTTP endpoint for the response body).
+        """
+        agent_id = payload.get("agent_id", "unknown")
+        intent = payload.get("intent", "unknown")
+        query = payload.get("query", "")
+        context = payload.get("context", {})
+
+        user_id = context.get("user_id", "")
+        resolved_agent_id = f"{agent_id}_{user_id}" if user_id else agent_id
+
+        logger.info(
+            f"[AgentWorkerHandler] Executing: agent={resolved_agent_id}, "
+            f"intent={intent}, user={user_id}"
+        )
+
+        message = AgentMessage.create(
+            sender="worker",
+            recipient=resolved_agent_id,
+            intent=AgentIntent.DELEGATE,
+            payload={"query": query, "intent": intent},
+            context=context,
+        )
+
+        try:
+            response = await self._coordinator.route_message(message)
+
+            if response.status == AgentStatus.SUCCESS:
+                logger.info(
+                    f"[AgentWorkerHandler] Task completed: agent={resolved_agent_id}, "
+                    f"intent={intent}"
+                )
+                # Deep research delivery — runner returns result text, we deliver it.
+                if intent == Intent.EXECUTE_DEEP_RESEARCH_CLAUDE:
+                    await self._deliver_deep_research_result(response, context)
+
+                return {"status": "success", "agent_id": resolved_agent_id, "intent": intent}
+
+            else:
+                logger.error(
+                    f"[AgentWorkerHandler] Task failed: agent={resolved_agent_id}, "
+                    f"intent={intent}, status={response.status}, error={response.error}"
+                )
+                # Notify user of deep research failure.
+                if intent == Intent.EXECUTE_DEEP_RESEARCH_CLAUDE:
+                    await self._notify_failure(context)
+
+                return {
+                    "status": "failed",
+                    "agent_id": resolved_agent_id,
+                    "intent": intent,
+                    "error": response.error,
+                }
+
+        except Exception as e:
+            logger.error(
+                f"[AgentWorkerHandler] Unexpected error: agent={resolved_agent_id}, "
+                f"intent={intent}, error={e}",
+                exc_info=True,
+            )
+            # Notify user of deep research failure on unexpected errors.
+            if intent == Intent.EXECUTE_DEEP_RESEARCH_CLAUDE:
+                await self._notify_failure(context)
+            raise
+
+    async def _deliver_deep_research_result(
+        self, response: Any, context: Dict[str, Any]
+    ) -> None:
+        """Deliver deep research result: SmartAgent summary + direct report link."""
+        if not self._notification:
+            logger.warning("[AgentWorkerHandler] No notification service configured for deep research")
+            return
+
+        result = response.result
+        if not isinstance(result, dict) or not result.get("text"):
+            logger.warning("[AgentWorkerHandler] Deep research result has no text — skipping delivery")
+            return
+
+        await deliver_deep_research(
+            result_text=result["text"],
+            user_id=context.get("user_id", ""),
+            account_id=context.get("account_id", ""),
+            query=result.get("query", context.get("original_query", "")),
+            notification=self._notification,
+            media_storage=self._media_storage,
+            session_id=context.get("session_id", ""),
+        )
+
+    async def _notify_failure(self, context: Dict[str, Any]) -> None:
+        """Notify user that deep research failed."""
+        if not self._notification:
+            return
+
+        await self._notification.notify(
+            user_id=context.get("user_id", ""),
+            account_id=context.get("account_id", ""),
+            system_alert=(
+                "Deep research did not complete — "
+                "the Claude research loop encountered an error."
+            ),
+        )

@@ -1,0 +1,69 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "gcr.io/$PROJECT_ID/alek-bot-dev:latest", "."]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/alek-bot-dev:latest"]
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "python3"
+    args:
+      - "scripts/infrastructure/deploy_firestore_indexes.py"
+      - "config/firestore.indexes.json"
+      - "$PROJECT_ID"
+      - "us-production"
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "alek-bot-dev"
+      - "--image=gcr.io/$PROJECT_ID/alek-bot-dev:latest"
+      - "--region=us-central1"
+      - "--set-env-vars=APP_ENV=development,SLACK_MODE=http,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,FIRESTORE_DATABASE=us-production,OAUTH_REDIRECT_URI=$_OAUTH_REDIRECT_URI,ENABLE_HISTORY_OPTIMIZATION=true,ENABLE_HTML_RENDERER=true,ENABLE_GROUNDING_ATTRIBUTION=false,DEBUG_PROMPTS=true,DEBUG_PROMPTS_BUCKET=$_DEBUG_PROMPTS_BUCKET,GCS_MEDIA_BUCKET=alek-media-dev"
+      - "--min-instances=0"
+      - "--max-instances=1"
+      - "--memory=1024Mi"
+      - "--cpu=2"
+      - "--timeout=900"
+      - "--port=8080" # Required for HTTP mode
+      - "--allow-unauthenticated" # For dev testing
+      - "--set-secrets=SLACK_BOT_TOKEN=SLACK_BOT_TOKEN_DEV:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET_DEV:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_OAUTH_CLIENT_ID=GOOGLE_OAUTH_CLIENT_ID:latest,GOOGLE_OAUTH_CLIENT_SECRET=GOOGLE_OAUTH_CLIENT_SECRET:latest,FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY:latest,OAUTH_SESSION_SECRET=OAUTH_SESSION_SECRET:latest,TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN_DEV:latest,TELEGRAM_WEBHOOK_SECRET=TELEGRAM_WEBHOOK_SECRET_DEV:latest,DOCS_OWNER_USER_ID=docs-owner-user-id:latest,GMAIL_OAUTH_REDIRECT_URI=GMAIL_OAUTH_REDIRECT_URI_DEV:latest,GOOGLE_TASKS_OAUTH_REDIRECT_URI=GOOGLE_TASKS_OAUTH_REDIRECT_URI_DEV:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,OPENAI_DEEP_RESEARCH_WEBHOOK_URL=OPENAI_DEEP_RESEARCH_WEBHOOK_URL_DEV:latest,OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET=OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET_DEV:latest,GOOGLE_SEARCH_API_KEY=GOOGLE_SEARCH_API_KEY:latest"
+
+  # Explicitly grant public access — --allow-unauthenticated alone is not
+  # reliable if the Cloud Build SA lacks roles/iam.securityAdmin.
+  # This step is idempotent and ensures every deployment leaves the service
+  # publicly accessible.
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "services"
+      - "add-iam-policy-binding"
+      - "alek-bot-dev"
+      - "--region=us-central1"
+      - "--member=allUsers"
+      - "--role=roles/run.invoker"
+
+  # Keep the dev container warm to avoid ~30s cold starts (min-instances=0).
+  # update falls through to create on first deploy.
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        gcloud scheduler jobs update http alek-bot-dev-keep-alive \
+          --schedule="*/10 * * * *" \
+          --uri="$_DEV_SERVICE_URL/health" \
+          --http-method=GET \
+          --location=us-central1 \
+          --attempt-deadline=30s \
+          --project=$PROJECT_ID 2>/dev/null \
+        || gcloud scheduler jobs create http alek-bot-dev-keep-alive \
+          --schedule="*/10 * * * *" \
+          --uri="$_DEV_SERVICE_URL/health" \
+          --http-method=GET \
+          --location=us-central1 \
+          --attempt-deadline=30s \
+          --project=$PROJECT_ID
