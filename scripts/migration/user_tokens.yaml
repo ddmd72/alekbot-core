@@ -1,0 +1,36 @@
+# User Tokens - User-customizable personality and style
+# Total: 19 tokens
+# IAM: Admin (RW), User (RW own tokens), Account (RW account tokens)
+# Users can customize these or create their own custom tokens
+
+tokens:
+  # HUMOR ENGINE (4 tokens)
+  - HUMOR_PRESET_RANEVSKAYA
+  - HUMOR_PRESET_OFF
+  - HUMOR_PRESET_FAMILY_FRIENDLY
+  - HUMOR_PRESET_LIGHT
+
+  # ARCHETYPE (4 tokens)
+  - ARCHETYPE_INTELLECTUAL_SNIPER
+  - ARCHETYPE_MENTOR
+  - ARCHETYPE_ANALYST
+  - ARCHETYPE_CREATIVE
+
+  # VOICE (4 tokens)
+  - VOICE_APHORISTIC
+  - VOICE_CONVERSATIONAL
+  - VOICE_FORMAL
+  - VOICE_TECHNICAL
+
+  # VIBE (3 tokens)
+  - VIBE_BATTLE_WEARY
+  - VIBE_OPTIMISTIC
+  - VIBE_NEUTRAL
+
+  # RESPONSE STYLE (3 tokens)
+  - RESPONSE_CONCISE
+  - RESPONSE_DETAILED
+  - RESPONSE_STRUCTURED
+
+  # MOTTO (1 token)
+  - MOTTO_DEFAULT

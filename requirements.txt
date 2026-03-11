@@ -1,0 +1,37 @@
+slack_bolt
+google-cloud-firestore
+google-cloud-storage
+google-cloud-logging
+google-genai
+anthropic
+openai>=1.0.0  # xAI Grok (OpenAI-compatible API)
+python-dotenv
+aiohttp
+aiofiles  # Async file I/O for Claude vision support
+markitdown[all]  # File-to-text conversion: DOCX, XLSX, YouTube, audio + image description in docs
+openpyxl>=3.1.0  # CSV → xlsx conversion in RichContentService
+python-docx>=1.1.0  # Markdown → docx conversion in RichContentService
+playwright>=1.40.0  # HTML → PNG rendering for widget rich content (ENABLE_HTML_RENDERER)
+google-cloud-secret-manager
+firebase-admin>=6.0.0  # OAuth Multi-Tenant Session 3: Firebase Auth adapter
+PyJWT>=2.8.0  # OAuth Multi-Tenant Session 4: JWT session management
+hypercorn>=0.14.0
+quart>=0.18.0
+google-cloud-tasks>=2.13.0
+numpy>=1.24.0
+lark>=1.1.9
+
+# Observability
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-gcp-trace
+opentelemetry-instrumentation
+structlog
+
+# Testing
+pytest
+pytest-asyncio
+pytest-mock
+
+# Telegram SDK
+python-telegram-bot==21.0

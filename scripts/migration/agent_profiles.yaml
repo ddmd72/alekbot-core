@@ -1,0 +1,312 @@
+- id: system_router
+  owner_type: SYSTEM
+  owner_value: router
+  agent_type: router
+  blueprint_id: universal_agent_v1
+  metadata:
+    description: Router agent - classification only, no personality
+    use_case: Routes queries to quick or smart agent
+    created_at: '2026-02-02'
+  slots:
+  - type: token
+    value: COGNITIVE_PROCESS_ROUTER
+    non_overridable: false
+  - type: token
+    value: OUTPUT_FORMAT_JSON
+    non_overridable: false
+  - type: token
+    value: DIRECTIVE_BREVITY
+    non_overridable: false
+  - type: token
+    value: POLICY_OUTPUT_LANGUAGE
+    non_overridable: false
+  - type: token
+    value: POLICY_PRIVACY
+    non_overridable: false
+  - type: slot
+    value: HUMOR_ENGINE
+    non_overridable: true
+  - type: slot
+    value: ARCHETYPE
+    non_overridable: true
+  - type: slot
+    value: VOICE
+    non_overridable: true
+  - type: slot
+    value: VIBE
+    non_overridable: true
+  - type: slot
+    value: RESPONSE_STYLE
+    non_overridable: true
+  - type: slot
+    value: MOTTO_DEFAULT
+    non_overridable: true
+  - type: slot
+    value: BEHAVIOR_GUIDE_RANEVSKAYA_MODE
+    non_overridable: true
+  - type: slot
+    value: FEW_SHOT_EXAMPLES_DEFAULT
+    non_overridable: true
+  - type: slot
+    value: PROTOCOL_SEARCH_MEMORY
+    non_overridable: true
+  - type: slot
+    value: PROTOCOL_WEB_SEARCH
+    non_overridable: true
+  - type: slot
+    value: DIRECTIVE_SLACK_FORMATTING
+    non_overridable: true
+  - type: slot
+    value: POLICY_NO_OPEN_LOOPS
+    non_overridable: true
+  - type: slot
+    value: POLICY_ANTI_GUARDIAN
+    non_overridable: true
+  - type: slot
+    value: POLICY_WITTY_ACCENTUATION
+    non_overridable: true
+  - type: slot
+    value: POLICY_ALIGN_WITH_ANCHORS
+    non_overridable: true
+- id: system_quick
+  owner_type: SYSTEM
+  owner_value: quick
+  agent_type: quick
+  blueprint_id: universal_agent_v1
+  metadata:
+    description: Quick agent - fast responses with light personality
+    use_case: Simple queries, escalates complex ones to smart agent
+    created_at: '2026-02-02'
+  slots:
+  - type: class
+    value: cognitive_process
+    non_overridable: false
+  - type: class
+    value: properties
+    non_overridable: false
+  - type: class
+    value: protocols
+    non_overridable: false
+  - type: class
+    value: policies
+    non_overridable: false
+  - type: class
+    value: output_format
+    non_overridable: false
+  - type: class
+    value: final_directives
+    non_overridable: false
+  - type: slot
+    value: ARCHETYPE
+    non_overridable: true
+  - type: slot
+    value: VIBE
+    non_overridable: true
+  - type: slot
+    value: PROTOCOL_WEB_SEARCH
+    non_overridable: true
+- id: system_smart
+  owner_type: SYSTEM
+  owner_value: smart
+  agent_type: smart
+  blueprint_id: universal_agent_v1
+  metadata:
+    description: Smart agent - full personality with all reasoning
+    use_case: Complex queries requiring analysis and tools
+    created_at: '2026-02-02'
+  slots:
+  - type: class
+    value: cognitive_process
+    non_overridable: false
+  - type: class
+    value: properties
+    non_overridable: false
+  - type: class
+    value: protocols
+    non_overridable: false
+  - type: class
+    value: policies
+    non_overridable: false
+  - type: class
+    value: output_format
+    non_overridable: false
+  - type: class
+    value: final_directives
+    non_overridable: false
+- id: system_websearch
+  owner_type: SYSTEM
+  owner_value: websearch
+  agent_type: websearch
+  blueprint_id: universal_agent_v1
+  metadata:
+    description: WebSearch agent - search execution, structured output
+    use_case: External information retrieval, weather forecasts
+    created_at: '2026-02-02'
+  slots:
+  - type: class
+    value: cognitive_process
+    non_overridable: false
+  - type: class
+    value: output_format
+    non_overridable: false
+  - type: class
+    value: final_directives
+    non_overridable: false
+  - type: class
+    value: policies
+    non_overridable: false
+  - type: slot
+    value: HUMOR_ENGINE
+    non_overridable: true
+  - type: slot
+    value: ARCHETYPE
+    non_overridable: true
+  - type: slot
+    value: VOICE
+    non_overridable: true
+  - type: slot
+    value: VIBE
+    non_overridable: true
+  - type: slot
+    value: RESPONSE_STYLE
+    non_overridable: true
+  - type: slot
+    value: MOTTO_DEFAULT
+    non_overridable: true
+  - type: slot
+    value: BEHAVIOR_GUIDE_RANEVSKAYA_MODE
+    non_overridable: true
+  - type: slot
+    value: FEW_SHOT_EXAMPLES_DEFAULT
+    non_overridable: true
+  - type: slot
+    value: PROTOCOL_SEARCH_MEMORY
+    non_overridable: true
+  - type: slot
+    value: PROTOCOL_WEB_SEARCH
+    non_overridable: true
+  - type: slot
+    value: DIRECTIVE_BREVITY
+    non_overridable: true
+  - type: slot
+    value: POLICY_NO_OPEN_LOOPS
+    non_overridable: true
+  - type: slot
+    value: POLICY_ANTI_GUARDIAN
+    non_overridable: true
+  - type: slot
+    value: POLICY_WITTY_ACCENTUATION
+    non_overridable: true
+  - type: slot
+    value: POLICY_ALIGN_WITH_ANCHORS
+    non_overridable: true
+- id: system_consolidation
+  owner_type: SYSTEM
+  owner_value: consolidation
+  agent_type: consolidation
+  blueprint_id: universal_agent_v1
+  metadata:
+    description: Consolidation agent - fact extraction from conversations
+    use_case: Processes conversation history to extract biographical facts
+    note: This agent receives conversation_history in knowledge_base
+    created_at: '2026-02-02'
+  slots:
+  - type: class
+    value: cognitive_process
+    non_overridable: false
+  - type: class
+    value: output_format
+    non_overridable: false
+  - type: class
+    value: policies
+    non_overridable: false
+  - type: slot
+    value: HUMOR_ENGINE
+    non_overridable: true
+  - type: slot
+    value: ARCHETYPE
+    non_overridable: true
+  - type: slot
+    value: VOICE
+    non_overridable: true
+  - type: slot
+    value: VIBE
+    non_overridable: true
+  - type: slot
+    value: RESPONSE_STYLE
+    non_overridable: true
+  - type: slot
+    value: MOTTO_DEFAULT
+    non_overridable: true
+  - type: slot
+    value: BEHAVIOR_GUIDE_RANEVSKAYA_MODE
+    non_overridable: true
+  - type: slot
+    value: FEW_SHOT_EXAMPLES_DEFAULT
+    non_overridable: true
+  - type: slot
+    value: PROTOCOL_SEARCH_MEMORY
+    non_overridable: true
+  - type: slot
+    value: PROTOCOL_WEB_SEARCH
+    non_overridable: true
+  - type: slot
+    value: DIRECTIVE_SLACK_FORMATTING
+    non_overridable: true
+  - type: slot
+    value: DIRECTIVE_BREVITY
+    non_overridable: true
+  - type: slot
+    value: POLICY_NO_OPEN_LOOPS
+    non_overridable: true
+  - type: slot
+    value: POLICY_ANTI_GUARDIAN
+    non_overridable: true
+  - type: slot
+    value: POLICY_WITTY_ACCENTUATION
+    non_overridable: true
+  - type: slot
+    value: POLICY_ALIGN_WITH_ANCHORS
+    non_overridable: true
+- id: account_account_abc123
+  owner_type: ACCOUNT
+  owner_value: account_abc123
+  blueprint_id: universal_agent_v1
+  metadata:
+    description: Account-level override for family-friendly humor
+    use_case: Applied to smart/quick agents for this account
+    note: Overrides SYSTEM default humor_engine setting
+    created_at: '2026-02-02'
+  slots:
+  - type: token
+    value: HUMOR_PRESET_FAMILY_FRIENDLY
+    non_overridable: false
+- id: user_user_xyz789
+  owner_type: USER
+  owner_value: user_xyz789
+  blueprint_id: universal_agent_v1
+  metadata:
+    description: User-level override for no humor
+    use_case: User preference for professional communication
+    note: Overrides ACCOUNT and SYSTEM humor settings
+    created_at: '2026-02-02'
+  slots:
+  - type: token
+    value: HUMOR_PRESET_OFF
+    non_overridable: false
+- id: user_user_learn456
+  owner_type: USER
+  owner_value: user_learn456
+  blueprint_id: universal_agent_v1
+  metadata:
+    description: User preference for detailed explanations with mentor archetype
+    use_case: Learning context, skill development
+    note: Overrides default concise responses
+    created_at: '2026-02-02'
+  slots:
+  - type: token
+    value: RESPONSE_DETAILED
+    non_overridable: false
+  - type: token
+    value: ARCHETYPE_MENTOR
+    non_overridable: false

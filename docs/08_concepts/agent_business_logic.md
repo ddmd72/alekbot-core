@@ -1,0 +1,659 @@
+
+
+
+
+
+
+
+## 📖 HowTo: Using This Document
+
+### Purpose
+Describes the business logic of the multi-agent system: how agents work together to process requests, learn, and synthesize knowledge.
+
+### When to Read
+- **For AI Agents:** When understanding agent workflows or delegation patterns.
+- **For Developers:** When designing new agents or debugging agent interactions.
+
+### When to Update
+This document MUST be updated when:
+- [ ] New agents are added to the system.
+- [ ] Agent communication patterns change.
+- [ ] Business rules for agent selection evolve.
+
+### Cross-References
+- **Multi-Agent System:** [../05_building_blocks/multi_agent_system/README.md](../05_building_blocks/multi_agent_system/README.md)
+- **Hybrid Router:** [../05_building_blocks/hybrid_router/README.md](../05_building_blocks/hybrid_router/README.md)
+- **Sliding Window Consolidation:** [../05_building_blocks/sliding_window_consolidation/README.md](../05_building_blocks/sliding_window_consolidation/README.md)
+- **Runtime View:** [../06_runtime/README.md](../06_runtime/README.md)
+
+---
+
+
+
+
+
+```
+
+    ↓
+
+    ↓
+
+    ↓
+
+    ├─ Simple Query → QuickResponseAgent
+    
+    
+    └─ Complex Query → SmartResponseAgent
+            
+            
+            
+            
+            
+    ↓
+
+    ↓
+
+```
+
+
+
+
+
+
+
+
+
+
+**Flow:**
+```
+
+
+
+
+```
+
+
+
+
+
+
+---
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+   
+   
+
+```
+
+**Example:**
+```
+User: "Hi"
+  ↓
+
+  ↓
+
+```
+
+
+
+
+
+
+
+
+
+
+---
+
+
+
+
+
+
+
+
+```
+
+
+
+   
+
+
+   
+
+   Turn N:
+     
+        
+     
+     
+           
+           
+     
+
+   
+   
+```
+
+
+
+
+  
+
+
+
+```json
+{
+  
+  
+  
+}
+```
+
+
+```
+
+  ↓
+
+  ↓
+
+```
+
+
+```
+User: "What's today's weather in Valencia?"
+  ↓
+QuickResponseAgent: Turn 1 — LLM calls search_web_light("Valencia weather today")
+  ↓
+
+  ↓
+
+```
+
+
+
+
+
+
+
+
+
+---
+
+
+
+
+
+
+
+
+```
+
+   
+
+
+   
+   
+   
+
+```
+
+**Example:**
+```
+
+  ↓
+
+  ↓
+
+```
+
+
+
+  
+
+
+
+
+
+
+---
+
+
+
+
+
+
+
+
+```
+
+   
+   
+   
+
+
+
+   
+   
+   
+
+   
+   
+   
+```
+
+
+```
+
+
+```
+
+**Example:**
+```
+
+  ↓
+
+  ↓
+
+  → MemorySearchAgent returns: "Honda Civic 2019"
+Turn 2: LLM calls ask_web_search_agent("gas prices Valencia")
+  
+
+    full_response="You have a Honda Civic 2019...",
+    history_summary="Q: car+gas. A: Civic 2019, €1.45/l. 🚗⛽"
+  )
+  
+```
+
+
+
+
+
+
+
+
+---
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+
+```
+
+**Example:**
+```
+
+  ↓
+
+  ↓
+Finds: "User owns a Honda Civic 2019" (score: 0.92)
+  ↓
+
+```
+
+
+
+
+
+
+
+
+---
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+
+```
+
+**Example:**
+```
+User: "What's the weather in Valencia today?"
+  ↓
+WebSearchAgent: Gemini Grounding search("Valencia weather")
+  ↓
+
+  ↓
+Returns: "Valencia: 22°C, sunny, light breeze"
+```
+
+
+
+
+
+
+
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+  
+  
+  
+  
+
+
+  
+  
+  
+
+
+  
+  
+  
+```
+
+
+
+| Intent | Trigger |
+|--------|---------|
+
+
+
+
+
+
+
+  
+  
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+---
+
+
+
+
+
+```
+
+    ↓
+
+    ↓
+
+    ↓
+
+    ↓
+┌──────────────────────┐  ┌───────────────────────┐
+
+
+└──────────────────────┘  └───────────────────────┘
+    ↓                          ↓
+"Honda Civic 2019"       "€1.45/liter in Valencia"
+    ↓──────────────┬────────────↓
+                   ↓
+           
+                   ↓
+           
+                   ↓
+User: "You have a Honda Civic 2019. Current gas prices
+       in Valencia are around €1.45 per liter."
+```
+
+
+
+```
+User: "I moved to Valencia last month"
+    ↓
+
+    ↓
+
+    ↓
+
+    ↓
+
+    ↓
+
+    ↓
+
+    ↓
+ConsolidationAgent:
+    Extracts: "User lives in Valencia" (high conf)
+    
+    ↓
+
+Updates old fact: "User lived in Warsaw" → is_current=False
+    ↓
+
+```
+
+
+---
+
+
+
+
+
+
+```python
+
+    
+    
+    messages (reminders, daily email review, job results) go out through `UserNotificationService`.
+    
+
+    
+    """
+)
+
+
+```
+
+
+```python
+
+    
+
+
+    
+```
+
+
+```python
+
+    config = AgentConfig(
+        
+    )
+
+    async def can_handle(self, message: AgentMessage) -> bool:
+        
+        return (
+            message.intent == AgentIntent.DELEGATE
+            
+        )
+```
+
+
+```
+
+  ↓
+
+  ↓
+
+  ↓
+
+  ↓
+
+
+  ↓
+
+```
+
+---
+
+
+
+
+
+
+|------|-------|------|-------|----------------|---------------|
+
+
+
+
+
+
+
+
+
+
+  
+  
+  
+  
+
+
+---
+
+
+
+
+
+
+
+
+```
+
+  
+
+
+  
+  
+  
+
+Recovery:
+  
+  
+```
+
+
+
+
+
+
+
+
+
+
+
+
+**Pattern:**
+```
+
+
+
+```
+
+
+
+
+
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+**Implementation:**
+
+
+
+
+
+
+---
+
+---
+
+
+
+
+
+
+
+
+
+
+---
+
+
+

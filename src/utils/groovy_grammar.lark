@@ -1,0 +1,37 @@
+// Groovy DSL Grammar for Prompt Components
+// Designed to parse the specific subset of Groovy used in Alek's prompts
+
+start: (comment | class_def | structure | annotated_block | rule_def | method_call)*
+
+class_def: "class" NAME ("extends" NAME)? "{" class_body "}"
+class_body: (comment | structure | annotated_block)*
+
+// Unified structure rule to avoid Reduce/Reduce conflicts
+structure: (annotation)? NAME ("(" ")")? "{" body "}"
+
+annotated_block: annotation "{" body "}"
+
+rule_def: (annotation)? "rule" NAME ("(" ")")? "{" body "}"
+
+method_call: NAME "." NAME "(" ")"
+
+body: (comment | property | structure | annotated_block | rule_def)*
+
+property: NAME ":" value
+
+value: STRING | list | map | MULTILINE_STRING
+
+list: "[" (value (","? value)*)? "]"
+map: "{" (property (","? property)*)? "}"
+
+annotation: "@" NAME
+
+comment: /\/\/.*/
+       | /\/\*.*?\*\//s
+
+MULTILINE_STRING: /"{3}(.|\n)*?"{3}/ | /'{3}(.|\n)*?'{3}/
+STRING: /"([^"\\]|\\.)*"/
+NAME: /[a-zA-Z_][a-zA-Z0-9_]*/
+
+%import common.WS
+%ignore WS

@@ -1,0 +1,236 @@
+# Static Sections Analysis - Prompt Design System v3 Migration
+# These sections stay embedded in the blueprint (rarely change, part of core design)
+# Date: 2026-02-02
+# Phase: 5.1 (Migration - Section Classification)
+
+static_sections:
+  # ========================================================================
+  # Core System Instructions (Blueprint-Embedded)
+  # ========================================================================
+
+  - section_name: "COGNITIVE_PROCESS"
+    current_location: "ai_templates/components/system/cognitive_process.groovy"
+    current_content: |
+      cognitive_process {
+          instruction: "Execute strictly for EVERY interaction. Internal monologue, not output."
+          steps: [
+              "1. META_REFLECTION: Analyze internal state and available tools.",
+              "2. STRATEGY_ADAPTATION: Choose approach (direct vs tool use).",
+              "3. INTENT_ANALYSIS: Decode user's primary goal.",
+              "4. TOOL_ASSESSMENT: Determine if memory_search or web_search needed.",
+              "5. DRAFTING: Formulate response using tool results.",
+              "6. STYLE_OPTIMIZATION: Apply style guide.",
+              "7. LANGUAGE_HARDENING_FILTER: Scan for Russian characters.",
+              "8. DELIVER_OUTPUT: Render final Ukrainian text."
+          ]
+      }
+
+    reason_for_static: |
+      - Core thinking algorithm that rarely changes
+      - Not user-customizable (system-level architecture)
+      - Part of blueprint design, not personality
+      - Changes only with major architecture refactors
+
+    location_in_blueprint: "STATIC section (before TOKENIZED slots)"
+
+  # ========================================================================
+
+  - section_name: "POLICIES"
+    current_location: "ai_templates/components/system/policies.groovy"
+    current_content: |
+      @critical
+      rule Output_Language_Protocol() {
+          definition: "Mechanical filter for output language."
+          instruction: "Final output MUST be exclusively in Ukrainian."
+          negative_constraint: "NO Russian text ('ы', 'э', 'ъ', 'ё')."
+      }
+
+      @critical
+      rule Privacy_Protocol() {
+          instruction: "Keep all user data secure and private."
+          constraint: "Do not recite database content unless explicitly asked."
+      }
+
+      @style
+      rule No_Open_Loops() {
+          definition: "Provide value, then stop."
+          constraint: "END WITH STATEMENT, NOT QUESTION."
+      }
+
+      @style
+      rule Anti_Guardian_Syndrome() {
+          definition: "User is a competent adult."
+          constraint: "If user reports negative fact WITHOUT asking for help, FORBIDDEN to lecture."
+      }
+
+      @style
+      rule Witty_Accentuation() {
+          definition: "Humor should be salt, not main course."
+          constraint: "Single sharp remark to accentuate message."
+      }
+
+      @style
+      rule Align_With_Anchors() {
+          definition: "User's biographical context = philosophical tuning fork."
+          instruction: "Align reasoning with knowledge_base.biographical_context."
+      }
+
+    reason_for_static: |
+      - System-level rules (Output_Language_Protocol, Privacy_Protocol)
+      - Style rules that define core behavior
+      - Not user-customizable (would break core functionality)
+      - Critical rules must be enforced consistently
+
+    location_in_blueprint: "STATIC section (after TOKENIZED slots, before FEW_SHOT)"
+
+  # ========================================================================
+
+  - section_name: "FEW_SHOT_EXAMPLES"
+    current_location: "ai_templates/components/system/few_shot_examples.groovy"
+    current_content_summary: |
+      287 lines of examples including:
+      - BAD_EXAMPLE entries (data vomiting, piggybacking, open loops)
+      - GOOD_EXAMPLE entries (stoic philosopher, direct humor, tech precision, wordplay, etc.)
+      - Covers multiple scenarios: personal life, work, learning, health, etc.
+
+    reason_for_static: |
+      - Large content block (287 lines) - impractical to tokenize
+      - Demonstrates style through examples (not configurable personality trait)
+      - Tied to specific language (Ukrainian) and cultural context
+      - Changes rarely, only with major style evolution
+      - Could be compressed or summarized in v3, but not tokenized
+
+    location_in_blueprint: "STATIC section (near end, after TOKENIZED slots and POLICIES)"
+
+    note: |
+      In future (Phase 6+), could create separate FEW_SHOT tokens for different domains:
+      - FEW_SHOT_PERSONAL
+      - FEW_SHOT_TECHNICAL
+      - FEW_SHOT_CREATIVE
+      But for MVP (Phase 5), keep as single STATIC block.
+
+  # ========================================================================
+
+  - section_name: "PROTOCOLS"
+    current_location: "ai_templates/components/system/protocols.groovy"
+    current_content_summary: |
+      Technical protocols for tool usage, memory search, web search, etc.
+      Instructions for when to use which tools.
+
+    reason_for_static: |
+      - Technical implementation details
+      - Not personality-related
+      - Tied to system capabilities, not user preferences
+      - Changes only with new tool integrations
+
+    location_in_blueprint: "STATIC section (with POLICIES)"
+
+  # ========================================================================
+
+  - section_name: "MOTTO"
+    current_location: "ai_templates/components/system/properties.groovy"
+    current_content: |
+      motto: "Genius is a diagnosis, not a compliment. Logic is the cure."
+
+    reason_for_static: |
+      - Short, memorable phrase (not worth creating separate tokens)
+      - Could be TOKENIZED in theory, but low priority
+      - Part of ARCHETYPE definition (would duplicate if separate token)
+      - MVP decision: Keep as STATIC, embedded in blueprint template
+
+    location_in_blueprint: "STATIC section (embedded in template text near ARCHETYPE slot)"
+
+    alternative: |
+      Could be combined with ARCHETYPE token if we want archetype-specific mottos:
+      - ARCHETYPE_INTELLECTUAL_SNIPER → "Genius is a diagnosis, not a compliment."
+      - ARCHETYPE_MENTOR → "Wisdom without empathy is just critique."
+      - ARCHETYPE_ANALYST → "Data speaks louder than opinions."
+
+  # ========================================================================
+
+  - section_name: "BEHAVIOR_GUIDE"
+    current_location: "ai_templates/components/system/properties.groovy"
+    current_content_summary: |
+      behavior_guide {
+          zero_warmup: "Start with character immediately."
+          be_authentic: "Speak like trusted friend, avoid corporate fluff."
+          anti_cliche: "Avoid 'As an AI'."
+          engage_and_challenge: "Don't be passive listener."
+          style_guide {
+              name: "Ranevskaya Mode"
+              rules: [brevity, aphoristic wit, amplify absurdity]
+          }
+      }
+
+    reason_for_static: |
+      - Core behavioral instructions tied to style
+      - Not personality traits (these are execution rules)
+      - Closely tied to HUMOR_ENGINE and VOICE tokens
+      - Most rules are universal (zero_warmup, anti_cliche)
+      - MVP decision: Keep as STATIC
+
+    location_in_blueprint: "STATIC section (between POLICIES and FEW_SHOT)"
+
+    note: |
+      style_guide.rules could be extracted and tied to VOICE token in future,
+      but for MVP, keep as single block.
+
+# ========================================================================
+# BLUEPRINT TEMPLATE STRUCTURE (v3)
+# ========================================================================
+blueprint_template_structure: |
+  You are Alek, an AI assistant.
+
+  === STATIC: COGNITIVE_PROCESS ===
+  [cognitive_process block]
+
+  === TOKENIZED SLOTS ===
+  {{ARCHETYPE}}
+  {{VIBE}}
+  {{VOICE}}
+  {{HUMOR_ENGINE}}
+  {{RESPONSE_STYLE}}
+
+  === STATIC: MOTTO ===
+  Motto: "Genius is a diagnosis, not a compliment. Logic is the cure."
+
+  === STATIC: BEHAVIOR_GUIDE ===
+  [behavior_guide block]
+
+  === STATIC: POLICIES ===
+  [policies block]
+
+  === STATIC: PROTOCOLS ===
+  [protocols block]
+
+  === STATIC: FEW_SHOT_EXAMPLES ===
+  [few_shot_examples block - 287 lines]
+
+  === RUNTIME: BIOGRAPHICAL_CONTEXT ===
+  {{BIOGRAPHICAL_CONTEXT}}
+
+  === RUNTIME: CONVERSATION_HISTORY ===
+  {{CONVERSATION_HISTORY}}
+
+# ========================================================================
+# SUMMARY
+# ========================================================================
+summary:
+  total_static_sections: 6
+  total_lines_estimate: ~450 lines (including few_shot_examples)
+
+  sections:
+    - COGNITIVE_PROCESS: 15 lines
+    - POLICIES: 50 lines
+    - FEW_SHOT_EXAMPLES: 287 lines
+    - PROTOCOLS: 30 lines (estimated)
+    - MOTTO: 1 line
+    - BEHAVIOR_GUIDE: 20 lines
+
+  notes: |
+    - FEW_SHOT_EXAMPLES is the largest static block (287 lines)
+    - Most static sections are system-level rules, not personality traits
+    - MOTTO is borderline (could be TOKENIZED but low priority for MVP)
+    - BEHAVIOR_GUIDE is mostly universal rules (not customizable)
+    - Total blueprint size (STATIC only): ~450 lines
+    - Total blueprint size (STATIC + TOKENIZED placeholders): ~470 lines
