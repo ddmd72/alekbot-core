@@ -42,6 +42,7 @@ from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepositor
 from src.services.google_oauth_service import GoogleOAuthService, GMAIL_SCOPES
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
 from src.adapters.notification_channel_factory import NotificationChannelFactory
+from src.adapters.slack.media_adapter import SlackMediaAdapter
 from src.adapters.slack.response_channel import SlackResponseChannel
 from src.adapters.telegram.response_channel import TelegramResponseChannel
 from src.services.user_notification_service import UserNotificationService
@@ -517,6 +518,12 @@ async def main():
                 channel_id=channel_id,
                 bot_token=slack_adapter.slack_bot_token,
             ),
+        )
+
+        # Wire Slack media adapter into notification service for async file delivery (DOCX).
+        notification_service._platform_media = SlackMediaAdapter(
+            app_client=slack_adapter.app.client,
+            bot_token=config.get("SLACK_BOT_TOKEN", ""),
         )
 
         slack_adapter.register_handlers()

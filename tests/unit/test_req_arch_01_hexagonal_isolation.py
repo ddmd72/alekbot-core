@@ -857,6 +857,46 @@ def test_no_collection_names_in_core_layers():
 
 
 # ---------------------------------------------------------------------------
+# REQ-ARCH-24 — agents/ must not import other agents/ (cross-agent coupling)
+#
+# Each agent is an independent specialist registered in the coordinator.
+# Cross-agent runtime imports create hidden coupling and bypass the
+# coordinator's routing, circuit-breaker, and registration model.
+# The correct mechanism for agent→agent calls is coordinator.handle_delegation().
+#
+# Only src.agents.base_agent is allowed — it provides the common BaseAgent ABC.
+# TYPE_CHECKING imports are excluded (handled by _collect_imports).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("REQ-ARCH-24")
+def test_agents_do_not_import_sibling_agents():
+    """Agent files must not import from other agent files at runtime.
+
+    The only allowed intra-agents import is src.agents.base_agent (BaseAgent ABC).
+    All agent→agent calls must go through coordinator.handle_delegation().
+    __init__.py re-exports are excluded.
+    TYPE_CHECKING imports are excluded (handled by _collect_imports).
+    """
+    violations = []
+    for fp, module, lineno in _collect_imports("src/agents"):
+        if not module.startswith("src.agents."):
+            continue
+        # base_agent is the common base class — always allowed
+        if module == "src.agents.base_agent" or module.startswith("src.agents.base_agent."):
+            continue
+        fp_norm = fp.replace(os.sep, "/")
+        # __init__.py re-exports are allowed
+        if os.path.basename(fp_norm) == "__init__.py":
+            continue
+        violations.append(f"  {fp}:{lineno} imports {module}")
+    assert not violations, (
+        "Agent-to-agent import — use coordinator.handle_delegation() "
+        "instead of importing other agents directly:\n"
+        + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
 # REQ-ARCH-22 — services/ must not import other services/ (cross-service coupling)
 #
 # Each service receives its dependencies via constructor injection from the

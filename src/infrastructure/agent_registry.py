@@ -83,6 +83,9 @@ class AgentDescriptor:
     allowed_intents: Optional[frozenset] = None
     intent_remap: Dict[str, str] = field(default_factory=dict)
 
+    # Cloud Tasks dispatch deadline for ASYNC intents (seconds). None = Cloud Tasks default (600s).
+    dispatch_deadline_s: Optional[int] = None
+
 
 # Backward-compatible alias — existing callers using AgentManifest continue to work.
 AgentManifest = AgentDescriptor

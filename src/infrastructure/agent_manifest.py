@@ -60,6 +60,10 @@ class Intent:
     CREATE_NOTE = "create_note"
     DELETE_NOTE = "delete_note"
     UPDATE_NOTE = "update_note"
+    # Document creation — produces a DOCX file attachment
+    CREATE_DOCUMENT = "create_document"
+    # Internal: LLM writes Node.js docx script, Python executes it. Called by DocPlannerAgent only.
+    GENERATE_DOCX_CODE = "generate_docx_code"
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +333,35 @@ NOTES = AgentDescriptor(
 )
 
 
+DOC_PLANNER = AgentDescriptor(
+    agent_id="doc_planner_agent",
+    agent_type="doc_planner",
+    capabilities={Intent.CREATE_DOCUMENT: ExecutionMode.ASYNC},
+    description="Creates structured Word documents (DOCX) from natural language requests",
+    capability_descriptions={
+        Intent.CREATE_DOCUMENT: (
+            "Creates a professional Word document (DOCX) — proposals, reports, memos, briefs, "
+            "summaries, contracts, manuals, or any other formal document. "
+            "The result is delivered as a DOCX file attachment in the chat. "
+            "Use when the user explicitly requests a document, report, or formatted file. "
+            "payload: {\"query\": \"<document creation request with all relevant context>\"}"
+        ),
+    },
+    internal=False,
+    dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
+)
+
+# internal=True: never shown to LLMs. Called only by DocPlannerAgent via coordinator.
+DOC_GENERATOR = AgentDescriptor(
+    agent_id="doc_generator_agent",
+    agent_type="doc_generator",
+    capabilities={Intent.GENERATE_DOCX_CODE: ExecutionMode.ASYNC},
+    description="LLM-driven DOCX code generation via Node.js subprocess",
+    internal=True,
+    dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
+)
+
+
 ALL_DESCRIPTORS = [
     MEMORY_SEARCH,
     WEB_SEARCH,
@@ -339,4 +372,6 @@ ALL_DESCRIPTORS = [
     DEEP_RESEARCH_AGENT,
     TASKS,
     NOTES,
+    DOC_PLANNER,
+    DOC_GENERATOR,
 ]

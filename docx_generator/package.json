@@ -1,0 +1,9 @@
+{
+  "name": "docx-generator",
+  "version": "1.0.0",
+  "description": "Node.js runtime for LLM-generated DOCX scripts",
+  "private": true,
+  "dependencies": {
+    "docx": "^8.5.0"
+  }
+}

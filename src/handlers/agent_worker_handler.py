@@ -12,6 +12,7 @@ Deep research delivery:
   via two parallel notifications: SmartAgent summary + direct report link.
 """
 
+import base64
 from typing import Dict, Any, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
@@ -95,6 +96,9 @@ class AgentWorkerHandler:
                 # Deep research delivery — runner returns result text, we deliver it.
                 if intent == Intent.EXECUTE_DEEP_RESEARCH_CLAUDE:
                     await self._deliver_deep_research_result(response, context)
+                # DOCX delivery — generator runs as its own Cloud Task and delivers directly.
+                elif intent in (Intent.CREATE_DOCUMENT, Intent.GENERATE_DOCX_CODE):
+                    await self._deliver_docx_result(response, context)
 
                 return {"status": "success", "agent_id": resolved_agent_id, "intent": intent}
 
@@ -106,6 +110,8 @@ class AgentWorkerHandler:
                 # Notify user of deep research failure.
                 if intent == Intent.EXECUTE_DEEP_RESEARCH_CLAUDE:
                     await self._notify_failure(context)
+                elif intent in (Intent.CREATE_DOCUMENT, Intent.GENERATE_DOCX_CODE):
+                    await self._notify_docx_failure(context, response.error)
 
                 return {
                     "status": "failed",
@@ -146,6 +152,45 @@ class AgentWorkerHandler:
             notification=self._notification,
             media_storage=self._media_storage,
             session_id=context.get("session_id", ""),
+        )
+
+    async def _deliver_docx_result(self, response: Any, context: Dict[str, Any]) -> None:
+        """Upload DOCX file(s) from delivery_items to the user's last active channel."""
+        if not self._notification:
+            logger.warning("[AgentWorkerHandler] No notification service configured for DOCX delivery")
+            return
+
+        user_id = context.get("user_id", "")
+        account_id = context.get("account_id", "")
+
+        for item in getattr(response, "delivery_items", []):
+            if item.type != "file_upload":
+                continue
+            try:
+                file_bytes = base64.b64decode(item.data["file_bytes_b64"])
+                await self._notification.notify_file_bytes(
+                    user_id=user_id,
+                    account_id=account_id,
+                    file_bytes=file_bytes,
+                    filename=item.data.get("filename", "document.docx"),
+                    title=item.data.get("title", "Document"),
+                )
+            except Exception as exc:
+                logger.error(
+                    "[AgentWorkerHandler] DOCX delivery failed for user=%s: %s",
+                    user_id[:8], exc, exc_info=True,
+                )
+
+    async def _notify_docx_failure(self, context: Dict[str, Any], error: Optional[str]) -> None:
+        """Notify user that document creation failed."""
+        if not self._notification:
+            return
+        await self._notification.notify(
+            user_id=context.get("user_id", ""),
+            account_id=context.get("account_id", ""),
+            system_alert=(
+                f"Document creation did not complete — {error or 'an error occurred'}."
+            ),
         )
 
     async def _notify_failure(self, context: Dict[str, Any]) -> None:

@@ -2,6 +2,7 @@
 Platform-agnostic conversation handler.
 Contains all business logic for processing messages from any platform.
 """
+import base64
 import os
 import json
 import asyncio
@@ -164,6 +165,30 @@ class ConversationHandler(ConversationHandlerPort):
             await self._deliver_rich_content(content, response_channel, thread_id)
         elif item.type == "message":
             await response_channel.send_message(item.data["text"], thread_id)
+        elif item.type == "file_upload":
+            if not self._rich_content_service:
+                logger.warning(
+                    "⚠️ [ConversationHandler] file_upload item but no RichContentService configured"
+                )
+                return
+            channel_id = getattr(response_channel, "channel_id", None)
+            if not channel_id:
+                logger.warning(
+                    "⚠️ [ConversationHandler] file_upload: response_channel has no channel_id — skipping"
+                )
+                return
+            try:
+                file_bytes = base64.b64decode(item.data["file_bytes_b64"])
+                await self._rich_content_service.upload_file_bytes(
+                    file_bytes=file_bytes,
+                    filename=item.data["filename"],
+                    title=item.data["title"],
+                    channel_id=channel_id,
+                )
+            except Exception as e:
+                logger.error(
+                    "⚠️ [ConversationHandler] file_upload failed: %s", e, exc_info=True
+                )
         else:
             logger.warning("⚠️ [ConversationHandler] Unknown DeliveryItem type: %s — skipping", item.type)
 

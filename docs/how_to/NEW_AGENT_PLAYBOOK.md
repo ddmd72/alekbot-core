@@ -174,6 +174,80 @@ class FooAgent(BaseAgent):
 - `use_code_execution=True` — Gemini sandbox Python execution (`ComputeAgent` reference)
 - `use_grounding=True` — Google Search grounding (`WebSearchAgent` reference)
 
+### Structured JSON Output — `response_mime_type` and `response_schema`
+
+Pick exactly one of three modes. Mixing them incorrectly causes silent failures.
+
+#### Mode 1 — Single-pass JSON (no custom tools)
+
+Use when the agent makes one LLM call and expects a structured JSON response back.
+
+```python
+_RESPONSE_SCHEMA = {
+    "type": "object",
+    "required": ["status", "summary", "data"],
+    "properties": {
+        "status":  {"type": "string"},
+        "summary": {"type": "string"},
+        "data":    {"type": "object"},   # ← flat, no nested properties
+    },
+}
+
+request = LLMRequest(
+    ...
+    response_mime_type="application/json",
+    response_schema=self._RESPONSE_SCHEMA,
+)
+```
+
+**Gemini:** GeminiAdapter passes `response_mime_type` directly and routes the dict schema to
+`response_json_schema` (standard JSON Schema, SDK 1.64+). Both enforce JSON output.
+
+**Claude:** both fields are **silently ignored** when there are no delegation tools present.
+Claude relies entirely on the OUTPUT_FORMAT token in the system prompt. This is expected —
+make sure the blueprint includes an OUTPUT_FORMAT class.
+
+**Gemini nesting limit:** Gemini returns `400 INVALID_ARGUMENT` if the schema nests deeper
+than ~2 levels. Declare any field that is itself an object as `{"type": "object"}` with no
+further `properties`. Never go deeper in the schema definition.
+
+#### Mode 2 — Tool-using agent (custom `tools=`)
+
+Use when the agent has its own tool loop (e.g. `generate_docx`, code execution).
+Do **not** set `response_mime_type` or `response_schema`.
+
+```python
+request = LLMRequest(
+    ...
+    tools=MY_TOOL_DEFINITIONS,   # no response_mime_type, no response_schema
+)
+```
+
+**Gemini:** combining `response_mime_type` with custom tools causes silent empty responses
+or API errors — they are mutually exclusive in Gemini.
+
+**Claude:** when BOTH `response_schema: dict` AND `tools` are present, ClaudeAdapter injects
+a `respond` tool to force structured output (Smart/Quick pattern). For specialist agents
+with their own tools, this pattern is not used — output format is enforced by the prompt.
+
+#### Mode 3 — Free-text output
+
+No `response_mime_type`, no `response_schema`, no custom tools. Agent returns natural language.
+Output format is handled entirely by the prompt. Use for most simple agents.
+
+#### Adapter behaviour at a glance
+
+| Field | GeminiAdapter | ClaudeAdapter |
+|-------|--------------|---------------|
+| `response_mime_type` | Passed to `GenerateContentConfig` directly | **Ignored entirely** |
+| `response_schema: dict` | Routed to `response_json_schema` | Injected as `respond` tool **only when `tools` are also present** |
+| `response_schema: dict` + no tools | Enforces structure | **Ignored** |
+
+**Fallback prompt for failed PromptBuilder** is not a valid pattern for agents that produce
+structured JSON. Without the correct OUTPUT_FORMAT token, Claude will not produce the right
+structure. If `build_for_agent()` fails, return `AgentResponse.failure` — do not use a
+hardcoded string fallback.
+
 ### Step 5 — `src/composition/user_agent_factory.py`
 
 Four touch points (search for an existing agent like `compute_agent` and mirror the pattern):

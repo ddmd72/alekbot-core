@@ -164,6 +164,8 @@ Agents are instantiated and managed per user to ensure strict data isolation and
   - **Parallel delegation:** When the orchestrator receives multiple task-related requests in one message, it issues multiple parallel `delegate_to_specialist` calls — each `TasksAgent` executes its own tool loop independently.
   - Registered as `internal=False` so both Quick and Smart can discover it. BALANCED tier (Gemini Flash default).
 - **Notes Agent:** Orchestrator notepad — no LLM. Pure Firestore I/O via `AgentNotePort`. Called by both Quick and Smart via three intents: `create_note`, `delete_note`, `update_note`. Notes are the orchestrator's own working memory — short-lived anchors (≤25 words each, max 20 active) written by the LLM to itself to carry patterns, intentions, and mid-session constraints across turns without the user repeating them. Notes are invisible to the user; they are injected into every subsequent prompt turn as `working_memory_for_conversational_anchors {}` block (after `PROMPT_CACHE_BOUNDARY`) by `PromptAssemblyService`. RouterAgent fetches active notes via `AgentNotePort.list_active_notes()` at the start of each turn and passes them in `agent_notes` context. Persistence: `{env_prefix}_orchestrator_notes` Firestore collection, document ID = epoch milliseconds (time-sortable, 1ms collision window). Adapter: `FirestoreAgentNoteAdapter`. Port: `AgentNotePort` (4 abstract methods: `create_note`, `delete_note`, `update_note`, `list_active_notes`). `delete_note` returns `False` (ownership mismatch / not found) or `True` (deleted) — agent propagates `False` as `AgentResponse.failure()` so the LLM knows. `list_active_notes` filters in-Python: excludes `visible_after > as_of` and `expires_after ≤ as_of`; returns sorted by `created_at ASC`.
+- **Document Planner Agent:** Two-phase DOCX creation entry point. Called by both Quick and Smart via `create_document` intent (`ExecutionMode.ASYNC` → Cloud Task dispatch). PERFORMANCE tier (Claude default). Phase 1: LLM generates a structured JSON layout spec (`{status, task_summary, doc_spec}`), enforced via `_RESPONSE_SCHEMA` (Gemini) or `OUTPUT_FORMAT` token (Claude). Phase 2: delegates to `DocGeneratorAgent` via `coordinator.handle_delegation(Intent.GENERATE_DOCX_CODE, ...)`. Retry loop (max `MAX_RETRIES=3`): `JSONDecodeError` → LLM self-corrects JSON; generator failure → LLM patches the spec; `status != "ready"` → immediate failure (unrecoverable planner refusal). On success: forwards `DocGeneratorAgent`'s `DeliveryItem("file_upload", {...})` up to `AgentWorkerHandler` which calls `notify_file_bytes()`. Registered `internal=False`. System prompt: PromptBuilder profile `doc_planner`. Accepts both `QUERY` (sync / test path) and `DELEGATE` (normal async Cloud Task path) intents in `can_handle()`.
+- **Document Generator Agent:** Internal DOCX code generation specialist (`internal=True` — never shown to LLMs). Called exclusively by `DocPlannerAgent` via `generate_docx_code` intent. PERFORMANCE tier (Claude default). Receives a JSON layout spec in `payload["query"]`; LLM writes a Node.js script using the `docx` npm library and calls the `generate_docx` tool. Script is executed via `DocxRunnerPort` (system boundary — subprocess isolation). Retry loop (max `MAX_TURNS=5`): on `DocxRunnerError` → `stderr` returned as tool response, LLM retries with a corrected script; no tool call → immediate failure. On success: returns `DeliveryItem("file_upload", {"file_bytes_b64": ..., "filename": ..., "title": ...})`. `DocxRunnerPort` has one implementation: `NodeDocxRunner` (writes temp script to `docx_generator/` so `node_modules/docx` resolves, reads DOCX bytes from stdout). Future implementations (Cloud Function, remote runner) require no agent changes. System prompt: PromptBuilder profile `doc_generator`. See [Document Generation Building Block](../document_generation/README.md).
 - **Consolidation Agent:** Background synthesis of conversation history into facts.
 
 ### 5.3 Infrastructure Agents
@@ -390,6 +392,7 @@ class DeliveryItem:
 | `"message"` | Any specialist | `{"text": str}` — Slack mrkdwn, may contain `<url\|label>` links | `response_channel.send_message(data["text"], thread_id)` |
 | `"rich_content"` | Any specialist | `{"content_type": str, "data": dict, "fallback": str}` — same schema as `RichContent` domain object | Constructs `RichContent` → `_deliver_rich_content(...)` |
 | `"html_gcs_link"` | DeepResearchAgent | `{"html": str, "filename": str, "link_text": str}` | Uploads HTML to GCS → sends public URL as Slack link |
+| `"file_upload"` | DocGeneratorAgent | `{"file_bytes_b64": str, "filename": str, "title": str}` — base64-encoded binary, name with extension (e.g. `report-2026-03-12.docx`), human-readable title | **ASYNC path** (Cloud Task): `AgentWorkerHandler._deliver_docx_result()` decodes bytes → `notify_file_bytes()` → resolves channel ID → `PlatformMediaPort.upload_file()`. **SYNC path** (ConversationHandler `_deliver_item()`): decodes bytes → `RichContentService.upload_file_bytes()` via current `response_channel.channel_id`. |
 
 ### 10.4 Aggregation Path
 
@@ -424,14 +427,27 @@ async def _deliver_item(self, item: DeliveryItem, response_channel, thread_id):
         await self._deliver_rich_content(content, response_channel, thread_id)
     elif item.type == "message":
         await response_channel.send_message(item.data["text"], thread_id)
+    elif item.type == "file_upload":
+        # Sync delivery path (non-ASYNC agents). ASYNC agents (DocPlannerAgent) are
+        # delivered by AgentWorkerHandler._deliver_docx_result() → notify_file_bytes() instead.
+        file_bytes = base64.b64decode(item.data["file_bytes_b64"])
+        await self._rich_content_service.upload_file_bytes(
+            file_bytes=file_bytes,
+            filename=item.data["filename"],
+            title=item.data["title"],
+            channel_id=response_channel.channel_id,
+        )
 ```
 
 Multiple `DeliveryItem`s are dispatched in order after the main text response.
 
 ### 10.6 Current Usage
 
-`DeliveryItem` is currently used by `DeepResearchAgent` (`html_gcs_link` type) for delivering
-HTML research reports via GCS.
+`DeliveryItem` is used by two specialist agents:
+
+- **`DeepResearchAgent`** — `html_gcs_link` type. Delivers HTML research report URLs uploaded to GCS. Dispatched synchronously by `ConversationHandler._deliver_item()` (the agent is SYNC ACK — it acknowledges immediately; actual delivery happens via webhook/polling adapters, not through `delivery_items`).
+
+- **`DocGeneratorAgent`** — `file_upload` type. Carries base64-encoded DOCX bytes. Delivery path: `AgentWorkerHandler._deliver_docx_result()` (ASYNC Cloud Task) → decodes bytes → `UserNotificationService.notify_file_bytes()` → `response_channel.send_message("📎")` (resolves Slack user ID → DM channel ID) → `PlatformMediaPort.upload_file()`. `ConversationHandler._deliver_item()` also handles `file_upload` via `RichContentService.upload_file_bytes()` for any future sync usage.
 
 `MapsSearchAgent` does not use `DeliveryItem` — place links are embedded directly in the LLM
 response text as Slack mrkdwn `<placeUrl|Name>` links. The `_SYSTEM_INSTRUCTION` in the agent
@@ -458,7 +474,11 @@ formatting. `places[i]` in the tool result corresponds to the i-th place cited i
 - `src/agents/core/smart_response_agent.py`: `delegate_to_specialist` tool + memory-first parallel scheduling.
 - `src/agents/web_search_light_agent.py`: Lightweight grounding specialist (`internal=True`, Quick path via remap).
 - `src/agents/memory_search_agent.py`: LLM key formulation + `MEMORY_SEARCH_RESPONSE_SCHEMA`.
-- `src/handlers/agent_worker_handler.py`: ASYNC task execution from Cloud Tasks.
+- `src/handlers/agent_worker_handler.py`: ASYNC task execution from Cloud Tasks. `_deliver_docx_result()` dispatches `file_upload` delivery items from DocPlannerAgent.
+- `src/agents/doc_planner_agent.py`: Two-phase DOCX creation specialist (intent: `create_document`, ASYNC).
+- `src/agents/doc_generator_agent.py`: Internal Node.js DOCX code generation specialist (intent: `generate_docx_code`, SYNC, `internal=True`).
+- `src/ports/docx_runner_port.py`: `DocxRunnerPort` ABC + `DocxRunnerError` — system boundary for subprocess execution.
+- `src/adapters/node_docx_runner.py`: `NodeDocxRunner` — runs Node.js scripts in `docx_generator/`, captures stdout as DOCX bytes.
 - `src/composition/user_agent_factory.py`: Lifecycle and DI management.
 - `src/services/history_summary_service.py`: LLM-based response compression (Gemini-locked, fail-fast).
 - `src/utils/llm_response_parser.py`: Unified JSON parser for `full_response` + `response_summary` + `rich_content`. Guards against mistaking embedded JSON examples for response envelopes.
@@ -472,6 +492,6 @@ formatting. `places[i]` in the tool result corresponds to the i-th place cited i
 ## 12. Status
 
 **Status:** ✅ Production Ready
-**Last Updated:** 2026-03-09
+**Last Updated:** 2026-03-12
 
 ---

@@ -51,6 +51,12 @@ background process extracts new facts from the conversation → bot gets smarter
   Called by EmailIndexingService (not by agents). Classifies raw emails via tool-calling
   mode; extracts fact sentences for Firestore storage. Exception to OUTPUT_FORMAT rule:
   uses markdown code block extraction in `_parse_response()` — see inline comment.
+- DocPlanner (ASYNC, PERFORMANCE tier) — DOCX creation entry point (intent: `create_document`).
+  Two-phase: LLM → JSON layout spec → delegates to DocGenerator via coordinator. Retry loop
+  (max 3). Result: DeliveryItem("file_upload") delivered by AgentWorkerHandler → notify_file_bytes.
+- DocGenerator (internal, PERFORMANCE tier) — Node.js DOCX code generation (intent:
+  `generate_docx_code`, `internal=True`). LLM writes Node.js script → DocxRunnerPort executes
+  subprocess → DOCX bytes returned. See docs/05_building_blocks/document_generation/README.md.
 - Consolidation — background "memory consolidation" (PERFORMANCE tier, runs via Cloud Tasks)
 - DeepResearch (async, provider-agnostic) — long-running research jobs. Agent calls
   `DeepResearchPort.create_interaction()` → returns ACK (job_id) immediately. Result delivered
@@ -106,9 +112,11 @@ src/
                   Includes: auth.py (TokenClaims, OAuthTokens, OAuthUserInfo, IAMDecision),
                   llm.py (LLMRequest, LLMResponse, Message, MessagePart, ToolCall, ProviderCapabilities,
                   UsageMetadata, PromptCacheConfig, CacheMetadata, PROMPT_CACHE_BOUNDARY).
-  ports/        — ~41 ABC interfaces. Import only domain/ and stdlib.
+  ports/        — ~42 ABC interfaces. Import only domain/ and stdlib.
                   New (2026-03-08): SecurityPort (security_port.py), PlatformPort (platform_port.py),
                   DedupStore (dedup_store.py).
+                  New (2026-03-12): DocxRunnerPort (docx_runner_port.py) — system boundary for
+                  Node.js subprocess execution; DocxRunnerError public exception.
                   Email ports: EmailProviderPort, EmailClassifierPort, EmailExclusionsPort,
                   IndexedEmailRepository, EmailIndexingJobRepository, OAuthCredentialsPort,
                   NotificationStatePort, NotificationChannelFactoryPort.
@@ -117,6 +125,9 @@ src/
                   FirestoreEmailJobRepository, FirestoreEmailExclusionsAdapter,
                   FirestoreOAuthCredentialsAdapter, FirestoreNotificationStateAdapter,
                   NotificationChannelFactory.
+                  DOCX adapter: NodeDocxRunner (node_docx_runner.py) — DocxRunnerPort
+                  implementation; writes temp script to docx_generator/ dir, executes via
+                  subprocess, captures stdout as DOCX bytes.
   services/     — Business logic. Receive ports via DI.
                   prompt_builder.py includes both PromptBuilder and UserPromptBuilder
                   (merged from former user_prompt_builder.py).
@@ -124,6 +135,9 @@ src/
                   EmailEmbeddingRepairService, GmailOAuthService, UserNotificationService.
   agents/       — Multi-agent system. core/ — agents, infrastructure/ — billing/logging.
                   Email agents: EmailSearchAgent, EmailClassificationAgent.
+                  Document agents: DocPlannerAgent (doc_planner_agent.py, intent create_document,
+                  ASYNC), DocGeneratorAgent (doc_generator_agent.py, intent generate_docx_code,
+                  internal=True, called only by DocPlannerAgent via coordinator).
   handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler, WorkerHandler).
                   WorkerHandler dispatches /worker Cloud Tasks by task_type.
   infrastructure/ — AgentCoordinator, queues, agent_config.py (central behavior params),
@@ -147,6 +161,8 @@ src/
                   Other: /health, deep_research_webhooks (OpenAI async results).
                   Runs as a shared Quart app (all blueprints on port 8080).
 main.py         — Bootstrap: creates ServiceContainer + UserAgentFactory, graceful shutdown.
+docx_generator/ — Node.js project with docx npm library. NodeDocxRunner writes temp scripts
+                  here so node_modules/docx resolves at execution time. Not a Python package.
 ```
 
 ## Import Rules (CRITICAL)

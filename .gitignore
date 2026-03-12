@@ -229,3 +229,4 @@ debug_prompts/
 presentation/
 firestore_utils/uploads/
 tmp/
+docx_generator/node_modules/
