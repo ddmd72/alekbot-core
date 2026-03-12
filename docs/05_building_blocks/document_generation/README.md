@@ -180,6 +180,16 @@ All failure paths call `_on_agent_error(exc, context_tag)` before returning:
 `payload["query"]` is the raw LLM text output from DocPlannerAgent. It is included verbatim in
 the LLM user message and piped to the Node.js script's stdin.
 
+### 4.0 can_handle
+
+```python
+message.intent in (AgentIntent.QUERY, AgentIntent.DELEGATE)
+and bool(message.payload.get("query"))
+```
+
+Accepts both `QUERY` (coordinator's direct call, tests) and `DELEGATE`
+(`AgentWorkerHandler` Cloud Task path). Same pattern as `DocPlannerAgent`.
+
 ### 4.1 Execution — Phase 2: Code Generation
 
 Tool-calling loop (max `MAX_TURNS = 5`) with a single tool `generate_docx`:
