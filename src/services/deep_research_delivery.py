@@ -37,6 +37,15 @@ class NotificationPort(Protocol):
         text: str,
     ) -> None: ...
 
+    async def notify_file_bytes(
+        self,
+        user_id: str,
+        account_id: str,
+        file_bytes: bytes,
+        filename: str,
+        title: str,
+    ) -> None: ...
+
 
 async def upload_html_report(
     markdown_text: str,

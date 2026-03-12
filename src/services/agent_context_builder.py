@@ -105,6 +105,21 @@ class AgentProviderStrategy:
             "required_capabilities": [],
             "fallback": None
         },
+        # Claude is best for structured JSON layout with complex document content.
+        # No tool calling needed — single LLM call, pure JSON output.
+        "doc_planner": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "gemini", "openai"],
+            "required_capabilities": [],
+            "fallback": "gemini"
+        },
+        # Claude is best for code generation (docx npm JS script).
+        "doc_generator": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "gemini", "openai"],
+            "required_capabilities": [],
+            "fallback": "gemini"
+        },
     }
 
     @classmethod

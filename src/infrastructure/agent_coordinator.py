@@ -351,7 +351,7 @@ class AgentCoordinator:
         if mode == ExecutionMode.SYNC:
             return await self._execute_sync(manifest.agent_id, intent, query, context)
         else:
-            return await self._execute_async(manifest.agent_id, intent, query, context)
+            return await self._execute_async(manifest.agent_id, intent, query, context, manifest.dispatch_deadline_s)
 
     async def _execute_sync(
         self,
@@ -382,6 +382,7 @@ class AgentCoordinator:
         intent: str,
         query: str,
         context: Dict[str, Any],
+        deadline_seconds: Optional[int] = None,
     ) -> AgentResponse:
         """Enqueue ASYNC intent to Cloud Tasks, return immediate ack."""
         if self._task_queue is None:
@@ -399,6 +400,7 @@ class AgentCoordinator:
             intent=intent,
             query=query,
             context=context,
+            deadline_seconds=deadline_seconds,
         )
 
         return AgentResponse.success(
