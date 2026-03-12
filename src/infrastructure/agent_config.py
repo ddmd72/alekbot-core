@@ -283,3 +283,34 @@ class TasksAgentConfig:
 
 
 TASKS = TasksAgentConfig()
+
+
+# ---------------------------------------------------------------------------
+# DocPlannerAgent (src/agents/doc_planner_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DocPlannerAgentConfig:
+    temperature: float = 1.0      # Required when thinking is enabled (Claude hard constraint)
+    max_tokens: int = 16_000      # JSON spec for a full document can be large
+    timeout_ms: int = 600_000     # Background async task — allow 10 min for thinking + spec generation
+    thinking_effort: Optional[str] = "medium"
+
+
+DOC_PLANNER = DocPlannerAgentConfig()
+
+
+# ---------------------------------------------------------------------------
+# DocGeneratorAgent (src/agents/doc_generator_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DocGeneratorAgentConfig:
+    temperature: float = 0.5      # Balanced: code precision + rendering simulation reasoning
+    max_tokens: int = 16_000      # Full Node.js script can be large
+    timeout_ms: int = 600_000     # Background async task — allow 10 min for thinking + code generation
+    node_timeout_s: int = 60      # Subprocess timeout
+    thinking_effort: Optional[str] = "medium"
+
+
+DOC_GENERATOR = DocGeneratorAgentConfig()

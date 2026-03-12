@@ -15,3 +15,4 @@ class LLMRateLimitError(LLMError):
 
 class LLMUnavailableError(LLMError):
     """Provider returned 503 Service Unavailable — provider is temporarily down."""
+
