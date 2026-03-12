@@ -102,7 +102,10 @@ class DocGeneratorAgent(BaseAgent):
         self.user_id = user_id
 
     async def can_handle(self, message: AgentMessage) -> bool:
-        return message.intent == AgentIntent.QUERY and bool(message.payload.get("query"))
+        return (
+            message.intent in (AgentIntent.QUERY, AgentIntent.DELEGATE)
+            and bool(message.payload.get("query"))
+        )
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
         raw_query = message.payload.get("query", "")

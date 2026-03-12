@@ -119,6 +119,10 @@ class TestCanHandle:
         msg = _make_message()
         assert await agent.can_handle(msg) is True
 
+    async def test_returns_true_with_delegate_intent(self, agent):
+        # AgentWorkerHandler sends DELEGATE when executing Cloud Tasks.
+        assert await agent.can_handle(_make_message(intent=AgentIntent.DELEGATE)) is True
+
     async def test_returns_false_empty_query(self, agent):
         msg = _make_message(query="")
         assert await agent.can_handle(msg) is False
