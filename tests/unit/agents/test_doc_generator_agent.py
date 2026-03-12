@@ -142,6 +142,13 @@ class TestExecuteSuccess:
         response = await agent.execute(_make_message())
         assert response.status == AgentStatus.SUCCESS
 
+    async def test_execute_with_delegate_intent_succeeds(self, agent):
+        # Regression: AgentWorkerHandler dispatches Cloud Tasks with DELEGATE intent.
+        # Generator must execute successfully — not return CANNOT_HANDLE.
+        response = await agent.execute(_make_message(intent=AgentIntent.DELEGATE))
+        assert response.status == AgentStatus.SUCCESS
+        assert len(response.delivery_items) == 1
+
     async def test_response_has_delivery_items(self, agent):
         response = await agent.execute(_make_message())
         assert len(response.delivery_items) == 1
