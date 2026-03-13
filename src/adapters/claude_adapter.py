@@ -59,7 +59,14 @@ class ClaudeAdapter(LLMPort):
     )
 
     def __init__(self, api_key: str):
-        self.client = AsyncAnthropic(api_key=api_key)
+        # read=120s: timeout between individual SSE chunks during streaming.
+        # Anthropic stalls mid-stream on long responses (e.g. DocGenerator max_tokens=64k)
+        # without ever raising — get_final_message() waits indefinitely by default (600s).
+        # connect/write/pool kept tight; read kept at 120s so a stalled stream fails fast.
+        self.client = AsyncAnthropic(
+            api_key=api_key,
+            timeout=anthropic.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
+        )
         if self.USE_MARKDOWN_PROMPT:
             try:
                 self.prompt_converter = GroovyToMarkdownConverter()
@@ -160,8 +167,10 @@ class ClaudeAdapter(LLMPort):
         # returned as plain LLMResponse.text. Agents see no difference.
         # force_tool_use=True (tool_choice: any) is required: with tool_choice=auto, Haiku
         # ignores the respond tool and returns plain text, bypassing schema enforcement.
+        # Note: condition does NOT require claude_tools — schema enforcement applies even
+        # when the agent has no delegation tools (e.g. DocPlannerAgent).
         _schema_tool_active = False
-        if response_schema and isinstance(response_schema, dict) and claude_tools:
+        if response_schema and isinstance(response_schema, dict):
             respond_tool_schema = {k: v for k, v in response_schema.items() if k != "nullable"}
             claude_tools = claude_tools + [{
                 "name": "respond",
@@ -231,7 +240,8 @@ class ClaudeAdapter(LLMPort):
         if effort:
             create_kwargs["output_config"] = {"effort": effort}
         if force_tool_use and claude_tools:
-            create_kwargs["tool_choice"] = {"type": "any"}
+            # thinking is incompatible with tool_choice="any" — fall back to "auto"
+            create_kwargs["tool_choice"] = {"type": "auto" if thinking_param else "any"}
         # Always stream: Anthropic SDK requires streaming for requests >10 min
         # (multi-turn tool loops like consolidation regularly exceed this threshold).
         try:

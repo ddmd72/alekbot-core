@@ -93,7 +93,9 @@ class DeepResearchAgent(BaseAgent):
             except Exception as e:
                 logger.warning("[DeepResearchAgent] PromptBuilder failed, proceeding without system prompt: %s", e)
 
-        full_query = f"{query}\n\nPlease write the entire response in {language}."
+        full_query = (
+            f"{query}"
+        )
         logger.info(
             "[DeepResearch] Submitting job (%d chars): %s...",
             len(full_query), full_query[:80],

@@ -5,16 +5,17 @@ Deep Research Delivery Helpers
 Shared by WorkerHandler, AgentWorkerHandler, and deep_research_webhooks.
 
 - upload_html_report()    — wrap markdown in HTML, upload to GCS via MediaStoragePort
-- deliver_deep_research() — two parallel notifications: SmartAgent summary + direct report link
+                            (kept for debugging; not called from deliver_deep_research)
+- deliver_deep_research() — enqueue DocPlanner Cloud Task → DocGenerator → DOCX file to user
 - NotificationPort        — structural Protocol for UserNotificationService
 """
 
-import asyncio
 import html as html_lib
 from datetime import datetime
 from typing import Optional, Protocol
 
 from ..ports.media_storage_port import MediaStoragePort
+from ..ports.task_queue import TaskQueue
 from ..utils.logger import logger
 
 
@@ -52,7 +53,10 @@ async def upload_html_report(
     user_id: str,
     media_storage: Optional[MediaStoragePort],
 ) -> Optional[str]:
-    """Wrap markdown in HTML and upload to GCS. Returns public URL or None."""
+    """Wrap markdown in HTML and upload to GCS. Returns public URL or None.
+
+    Kept for debugging purposes. Not called from deliver_deep_research().
+    """
     if not media_storage:
         return None
     try:
@@ -80,58 +84,60 @@ async def upload_html_report(
         return None
 
 
+def _build_doc_planner_query(original_query: str, result_text: str) -> str:
+    """Build the DocPlanner query from a completed research result."""
+    parts = [
+        "Create a professional research report document based on the following research findings.\n"
+        "\n"
+        "Apply document design best practices to ensure strong visual readability:\n"
+        "- Clear hierarchy with a title, section headings, and subheadings\n"
+        "- Tables for comparative data or multi-column information\n"
+        "- Bullet lists for enumerated items; prose paragraphs for narrative content\n"
+        "- An executive summary section at the top\n"
+        "- Consistent spacing and formatting throughout\n"
+    ]
+    if original_query:
+        parts.append(f"\nResearch topic: {original_query}\n")
+    parts.append(f"\nResearch findings:\n{result_text}")
+    return "".join(parts)
+
+
 async def deliver_deep_research(
     result_text: str,
     user_id: str,
     account_id: str,
     query: str,
-    notification: NotificationPort,
-    media_storage: Optional[MediaStoragePort],
+    task_queue: Optional[TaskQueue],
     session_id: str = "",
 ) -> None:
     """
-    Deliver deep research result via two parallel notifications:
-    1. SmartAgent formats the report summary for the user.
-    2. Direct link to the full HTML report (uploaded to GCS).
+    Deliver deep research result by creating a DOCX document via DocPlanner.
+
+    Enqueues a create_document Cloud Task for DocPlannerAgent. DocPlanner builds
+    a layout spec, delegates to DocGeneratorAgent, which produces DOCX bytes and
+    delivers them via notify_file_bytes to the user's last active channel.
     """
-    url = await upload_html_report(result_text, user_id, media_storage)
+    if not task_queue:
+        logger.warning("[DeepResearch] No task_queue configured — DOCX delivery skipped")
+        return
 
-    # Build alert text for SmartAgent
-    parts = [
-        "[system_alert] Deep Research Agent has completed the user's research request.\n\n"
-        "⚠️ CRITICAL DELIVERY INSTRUCTIONS — NO EXCEPTIONS:\n"
-        "- You MUST deliver the COMPLETE research report below to the user, word for word.\n"
-        "- Do NOT summarize, shorten, or paraphrase ANY part of the report.\n"
-        "- Do NOT omit sections, findings, or details.\n"
-        "- Your ONLY task is to reformat the text in the user's usual style (language, tone, markdown).\n"
-        "- The full content of every section must appear in your response.\n\n",
-    ]
-    if query:
-        parts.append(f"Original question:\n{query}\n\n")
-    parts.append(f"Research report (deliver in full):\n{result_text}\n\n")
-    if url:
-        parts.append(f"Full report URL: {url}\n\n")
-    parts.append(
-        "Reminder: reformat for the user's preferred style, but preserve every word of the report above."
-    )
-    alert = "".join(parts)
+    doc_query = _build_doc_planner_query(query, result_text)
 
-    # Two parallel deliveries: SmartAgent summary + direct link
-    coros = [
-        notification.notify(
-            user_id=user_id,
-            account_id=account_id,
-            system_alert=alert,
-            agent_id_override=f"smart_response_agent_{user_id}",
-            session_id=session_id or None,
-        ),
-    ]
-    if url:
-        coros.append(
-            notification.notify_raw(
-                user_id=user_id,
-                account_id=account_id,
-                text=f"📄 Full report: {url}",
-            ),
+    try:
+        await task_queue.enqueue_agent_task(
+            agent_id="doc_planner_agent",
+            intent="create_document",
+            query=doc_query,
+            context={
+                "user_id": user_id,
+                "account_id": account_id,
+                "session_id": session_id or "",
+            },
+            deadline_seconds=720,
         )
-    await asyncio.gather(*coros)
+        logger.info("[DeepResearch] DocPlanner task enqueued for user=%s", user_id[:8])
+    except Exception as exc:
+        logger.error(
+            "[DeepResearch] Failed to enqueue DocPlanner task for user=%s: %s",
+            user_id[:8], exc, exc_info=True,
+        )
