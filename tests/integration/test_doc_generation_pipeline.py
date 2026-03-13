@@ -1,14 +1,21 @@
 """
 Integration tests for the document generation pipeline.
 
-Tests the full chain:
-  orchestrator
-    → coordinator.handle_delegation(CREATE_DOCUMENT)          [ASYNC → task queue]
-    → AgentWorkerHandler.handle_task()                         [Cloud Task callback]
-    → coordinator.route_message(doc_planner_agent_{user_id})   [DELEGATE intent]
-    → DocPlannerAgent.execute()                                 [LLM → JSON spec]
-    → coordinator.handle_delegation(GENERATE_DOCX_CODE)        [SYNC → inline]
-    → DocGeneratorAgent.execute()                               [LLM tool loop + DocxRunnerPort]
+Tests the full two-Cloud-Task chain:
+
+  Phase 1 — DocPlanner Cloud Task:
+    orchestrator
+      → coordinator.handle_delegation(CREATE_DOCUMENT)          [ASYNC → task queue]
+      → AgentWorkerHandler.handle_task()                         [Cloud Task callback]
+      → coordinator.route_message(doc_planner_agent_{user_id})   [DELEGATE intent]
+      → DocPlannerAgent.execute()                                 [LLM → JSON spec]
+      → coordinator.handle_delegation(GENERATE_DOCX_CODE)        [ASYNC → task queue]
+      → returns SUCCESS immediately (empty delivery_items)
+
+  Phase 2 — DocGenerator Cloud Task:
+    → AgentWorkerHandler.handle_task()                           [Cloud Task callback]
+    → coordinator.route_message(doc_generator_agent_{user_id})   [DELEGATE intent]
+    → DocGeneratorAgent.execute()                                [LLM tool loop + DocxRunnerPort]
     → AgentResponse(delivery_items=[file_upload])
     → AgentWorkerHandler._deliver_docx_result()
     → notification.notify_file_bytes()
@@ -180,6 +187,7 @@ def pipeline(
         mock_docx_runner=mock_docx_runner,
         mock_notification=mock_notification,
         mock_task_queue=mock_task_queue,
+        mock_prompt_builder=mock_prompt_builder,
     )
 
 
@@ -193,6 +201,15 @@ def _worker_payload(query: str = "Create a quarterly sales report") -> dict:
         "agent_id": "doc_planner_agent",
         "intent": Intent.CREATE_DOCUMENT,
         "query": query,
+        "context": _CONTEXT,
+    }
+
+
+def _generator_worker_payload() -> dict:
+    return {
+        "agent_id": "doc_generator_agent",
+        "intent": Intent.GENERATE_DOCX_CODE,
+        "query": json.dumps(_VALID_SPEC),
         "context": _CONTEXT,
     }
 
@@ -261,17 +278,19 @@ class TestAsyncDispatch:
         assert response.status == AgentStatus.SUCCESS
         assert response.result["status"] == "started"
 
-    async def test_generator_intent_is_sync_not_enqueued(self, pipeline):
+    async def test_generator_intent_is_async_enqueued(self, pipeline):
         await pipeline.coordinator.handle_delegation(
             intent=Intent.GENERATE_DOCX_CODE,
             query=json.dumps(_VALID_SPEC),
             context=_CONTEXT,
         )
-        pipeline.mock_task_queue.enqueue_agent_task.assert_not_called()
+        pipeline.mock_task_queue.enqueue_agent_task.assert_called_once()
+        call_kwargs = pipeline.mock_task_queue.enqueue_agent_task.call_args.kwargs
+        assert call_kwargs["agent_id"] == "doc_generator_agent"
 
 
 # ---------------------------------------------------------------------------
-# Worker Handler → DocPlanner → DocGenerator (happy path)
+# Worker Handler — DocGenerator Cloud Task (happy path)
 # ---------------------------------------------------------------------------
 
 
@@ -282,21 +301,21 @@ class TestWorkerHandlerFullPipeline:
         assert result["status"] == "success"
 
     async def test_handle_task_calls_notify_file_bytes(self, pipeline):
-        await pipeline.worker.handle_task(_worker_payload())
+        await pipeline.worker.handle_task(_generator_worker_payload())
         pipeline.mock_notification.notify_file_bytes.assert_called_once()
 
     async def test_delivered_file_bytes_match_generator_output(self, pipeline):
-        await pipeline.worker.handle_task(_worker_payload())
+        await pipeline.worker.handle_task(_generator_worker_payload())
         kwargs = pipeline.mock_notification.notify_file_bytes.call_args.kwargs
         assert kwargs["file_bytes"] == _FAKE_DOCX_BYTES
 
     async def test_delivered_filename_ends_with_docx(self, pipeline):
-        await pipeline.worker.handle_task(_worker_payload())
+        await pipeline.worker.handle_task(_generator_worker_payload())
         kwargs = pipeline.mock_notification.notify_file_bytes.call_args.kwargs
         assert kwargs["filename"].endswith(".docx")
 
     async def test_delivered_user_id_from_context(self, pipeline):
-        await pipeline.worker.handle_task(_worker_payload())
+        await pipeline.worker.handle_task(_generator_worker_payload())
         kwargs = pipeline.mock_notification.notify_file_bytes.call_args.kwargs
         assert kwargs["user_id"] == _USER_ID
 
@@ -306,40 +325,38 @@ class TestWorkerHandlerFullPipeline:
 
 
 # ---------------------------------------------------------------------------
-# DocPlanner → DocGenerator SYNC coordination
+# DocPlanner ASYNC behavior
 # ---------------------------------------------------------------------------
 
 
 class TestPlannerGeneratorDelegation:
 
-    async def test_planner_response_has_delivery_items(self, pipeline):
+    async def test_planner_delivery_items_is_empty(self, pipeline):
         response = await pipeline.coordinator.route_message(_delegate_message())
         assert response.status == AgentStatus.SUCCESS
-        assert len(response.delivery_items) == 1
+        assert response.delivery_items == []
 
-    async def test_delivery_item_type_is_file_upload(self, pipeline):
-        response = await pipeline.coordinator.route_message(_delegate_message())
-        assert response.delivery_items[0].type == "file_upload"
-
-    async def test_delivery_item_contains_base64_bytes(self, pipeline):
-        response = await pipeline.coordinator.route_message(_delegate_message())
-        b64 = response.delivery_items[0].data["file_bytes_b64"]
-        assert base64.b64decode(b64) == _FAKE_DOCX_BYTES
-
-    async def test_result_contains_task_summary(self, pipeline):
-        response = await pipeline.coordinator.route_message(_delegate_message())
-        assert "Quarterly sales report" in response.result
-
-    async def test_generator_llm_called_exactly_once_on_success(self, pipeline):
+    async def test_planner_enqueues_generator_task(self, pipeline):
         await pipeline.coordinator.route_message(_delegate_message())
-        pipeline.mock_llm_generator.generate_content.assert_called_once()
+        call_kwargs = pipeline.mock_task_queue.enqueue_agent_task.call_args.kwargs
+        assert call_kwargs["intent"] == Intent.GENERATE_DOCX_CODE
 
-    async def test_docx_runner_called_with_js_code(self, pipeline):
+    async def test_enqueued_task_agent_id_is_doc_generator(self, pipeline):
         await pipeline.coordinator.route_message(_delegate_message())
-        pipeline.mock_docx_runner.run.assert_called_once()
-        call_args = pipeline.mock_docx_runner.run.call_args
-        js_code = call_args.args[0] if call_args.args else call_args.kwargs.get("js_code")
-        assert "console.log" in js_code
+        call_kwargs = pipeline.mock_task_queue.enqueue_agent_task.call_args.kwargs
+        assert call_kwargs["agent_id"] == "doc_generator_agent"
+
+    async def test_planner_result_indicates_generation_started(self, pipeline):
+        response = await pipeline.coordinator.route_message(_delegate_message())
+        assert "started" in response.result.lower() or "ready" in response.result.lower()
+
+    async def test_planner_llm_called_once(self, pipeline):
+        await pipeline.coordinator.route_message(_delegate_message())
+        pipeline.mock_llm_planner.generate_content.assert_called_once()
+
+    async def test_planner_does_not_call_docx_runner(self, pipeline):
+        await pipeline.coordinator.route_message(_delegate_message())
+        pipeline.mock_docx_runner.run.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -349,29 +366,28 @@ class TestPlannerGeneratorDelegation:
 
 class TestRetryBehavior:
 
-    async def test_json_parse_error_retried_then_succeeds(self, pipeline):
-        pipeline.mock_llm_planner.generate_content.side_effect = [
-            LLMResponse(text="not valid json {{{", tool_calls=[]),
-            LLMResponse(text=json.dumps(_VALID_SPEC), tool_calls=[]),
-        ]
+    async def test_planner_enqueues_raw_llm_output_without_validation(self, pipeline):
+        """DocPlanner passes raw LLM output to generator without JSON validation."""
+        pipeline.mock_llm_planner.generate_content.return_value = LLMResponse(
+            text="not valid json {{{", tool_calls=[]
+        )
         response = await pipeline.coordinator.route_message(_delegate_message())
         assert response.status == AgentStatus.SUCCESS
-        assert pipeline.mock_llm_planner.generate_content.call_count == 2
+        call_kwargs = pipeline.mock_task_queue.enqueue_agent_task.call_args.kwargs
+        assert call_kwargs["query"] == "not valid json {{{"
 
-    async def test_generator_failure_retried_max_times(self, pipeline):
-        pipeline.mock_llm_generator.generate_content.return_value = LLMResponse(
-            text="I cannot do this.", tool_calls=[]
-        )
-        response = await pipeline.coordinator.route_message(_delegate_message())
-        assert response.status == AgentStatus.FAILED
-        assert pipeline.mock_llm_generator.generate_content.call_count == DocPlannerAgent.MAX_RETRIES
+    async def test_generator_exhausts_max_turns_returns_failed(self, pipeline):
+        """DocGenerator returns FAILED when runner always errors out (MAX_TURNS exhausted)."""
+        pipeline.mock_docx_runner.run.side_effect = DocxRunnerError("always fails")
+        result = await pipeline.worker.handle_task(_generator_worker_payload())
+        assert result["status"] == "failed"
+        assert pipeline.mock_llm_generator.generate_content.call_count == DocGeneratorAgent.MAX_TURNS
 
-    async def test_generator_failure_planner_llm_retried_max_times(self, pipeline):
-        pipeline.mock_llm_generator.generate_content.return_value = LLMResponse(
-            text="I cannot do this.", tool_calls=[]
-        )
-        await pipeline.coordinator.route_message(_delegate_message())
-        assert pipeline.mock_llm_planner.generate_content.call_count == DocPlannerAgent.MAX_RETRIES
+    async def test_generator_calls_notify_on_max_turns_failure(self, pipeline):
+        """Worker notifies user when DocGenerator exhausts MAX_TURNS."""
+        pipeline.mock_docx_runner.run.side_effect = DocxRunnerError("always fails")
+        await pipeline.worker.handle_task(_generator_worker_payload())
+        pipeline.mock_notification.notify.assert_called_once()
 
     async def test_runner_error_triggers_llm_retry(self, pipeline):
         """DocxRunnerPort raises DocxRunnerError → LLM gets error feedback → retries."""
@@ -389,21 +405,29 @@ class TestRetryBehavior:
                 tool_calls=[ToolCall(name="generate_docx", args={"js_code": "good_script()"})],
             ),
         ]
-        response = await pipeline.coordinator.route_message(_delegate_message())
-        assert response.status == AgentStatus.SUCCESS
+        result = await pipeline.worker.handle_task(_generator_worker_payload())
+        assert result["status"] == "success"
         assert pipeline.mock_llm_generator.generate_content.call_count == 2
 
     async def test_generator_success_on_second_attempt(self, pipeline):
+        """DocGenerator succeeds after runner error on first attempt."""
+        pipeline.mock_docx_runner.run.side_effect = [
+            DocxRunnerError("first attempt failed"),
+            _FAKE_DOCX_BYTES,
+        ]
         pipeline.mock_llm_generator.generate_content.side_effect = [
-            LLMResponse(text="I cannot do this.", tool_calls=[]),
             LLMResponse(
                 text=None,
-                tool_calls=[ToolCall(name="generate_docx", args={"js_code": "ok"})],
+                tool_calls=[ToolCall(name="generate_docx", args={"js_code": "attempt_1()"})],
+            ),
+            LLMResponse(
+                text=None,
+                tool_calls=[ToolCall(name="generate_docx", args={"js_code": "attempt_2()"})],
             ),
         ]
-        response = await pipeline.coordinator.route_message(_delegate_message())
-        assert response.status == AgentStatus.SUCCESS
-        assert pipeline.mock_llm_generator.generate_content.call_count == 2
+        result = await pipeline.worker.handle_task(_generator_worker_payload())
+        assert result["status"] == "success"
+        pipeline.mock_notification.notify_file_bytes.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -414,32 +438,24 @@ class TestRetryBehavior:
 class TestFailureDelivery:
 
     async def test_all_retries_exhausted_returns_failed_status(self, pipeline):
-        pipeline.mock_llm_generator.generate_content.return_value = LLMResponse(
-            text="cannot", tool_calls=[]
-        )
-        result = await pipeline.worker.handle_task(_worker_payload())
+        pipeline.mock_docx_runner.run.side_effect = DocxRunnerError("always fails")
+        result = await pipeline.worker.handle_task(_generator_worker_payload())
         assert result["status"] == "failed"
 
     async def test_all_retries_exhausted_calls_notify(self, pipeline):
-        pipeline.mock_llm_generator.generate_content.return_value = LLMResponse(
-            text="cannot", tool_calls=[]
-        )
-        await pipeline.worker.handle_task(_worker_payload())
+        pipeline.mock_docx_runner.run.side_effect = DocxRunnerError("always fails")
+        await pipeline.worker.handle_task(_generator_worker_payload())
         pipeline.mock_notification.notify.assert_called_once()
 
     async def test_failure_notification_mentions_document(self, pipeline):
-        pipeline.mock_llm_generator.generate_content.return_value = LLMResponse(
-            text="cannot", tool_calls=[]
-        )
-        await pipeline.worker.handle_task(_worker_payload())
+        pipeline.mock_docx_runner.run.side_effect = DocxRunnerError("always fails")
+        await pipeline.worker.handle_task(_generator_worker_payload())
         kwargs = pipeline.mock_notification.notify.call_args.kwargs
         assert "Document" in kwargs["system_alert"] or "document" in kwargs["system_alert"]
 
     async def test_failure_notification_goes_to_correct_user(self, pipeline):
-        pipeline.mock_llm_generator.generate_content.return_value = LLMResponse(
-            text="cannot", tool_calls=[]
-        )
-        await pipeline.worker.handle_task(_worker_payload())
+        pipeline.mock_docx_runner.run.side_effect = DocxRunnerError("always fails")
+        await pipeline.worker.handle_task(_generator_worker_payload())
         kwargs = pipeline.mock_notification.notify.call_args.kwargs
         assert kwargs["user_id"] == _USER_ID
 
@@ -451,11 +467,8 @@ class TestFailureDelivery:
         await pipeline.worker.handle_task(_worker_payload())
         pipeline.mock_notification.notify_file_bytes.assert_not_called()
 
-    async def test_non_ready_spec_triggers_docx_failure_notification(self, pipeline):
-        pipeline.mock_llm_planner.generate_content.return_value = LLMResponse(
-            text=json.dumps({"status": "clarification_needed", "task_summary": "Need info"}),
-            tool_calls=[],
-        )
+    async def test_planner_prompt_failure_triggers_failure_notification(self, pipeline):
+        pipeline.mock_prompt_builder.build_for_agent.side_effect = RuntimeError("build failed")
         await pipeline.worker.handle_task(_worker_payload())
         pipeline.mock_notification.notify.assert_called_once()
 

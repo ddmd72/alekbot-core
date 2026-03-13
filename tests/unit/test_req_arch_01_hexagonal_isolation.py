@@ -147,11 +147,11 @@ def _get_adapter_subpackage(file_path: str) -> str | None:
 
 @pytest.mark.requirement("REQ-ARCH-01")
 def test_domain_layer_isolation():
-    """domain/ → stdlib + pydantic only."""
+    """domain/ → stdlib + pydantic only. No src.* imports permitted."""
     _assert_no_forbidden("src/domain", [
         "src.adapters", "src.services", "src.handlers", "src.agents",
         "src.infrastructure", "src.composition", "src.config", "src.utils",
-        "src.ports",
+        "src.ports", "src.web",
     ])
 
 
@@ -161,6 +161,7 @@ def test_ports_layer_isolation():
     _assert_no_forbidden("src/ports", [
         "src.adapters", "src.services", "src.handlers", "src.agents",
         "src.infrastructure", "src.composition", "src.config", "src.utils",
+        "src.web",
     ])
 
 
@@ -169,12 +170,14 @@ def test_services_layer_isolation():
     """services/ → domain/ + ports/ + utils/ only.
 
     Forbidden: adapters (concrete implementations), handlers (orchestrators),
-    composition (wiring layer), agents (must be decoupled), web (delivery layer).
+    composition (wiring layer), agents (must be decoupled), web (delivery layer),
+    infrastructure (coordinator/registry — business logic must not know about routing),
+    config (env-level settings must be injected, not imported directly).
     utils/ (logger, telemetry) is allowed as cross-cutting infrastructure.
     """
     _assert_no_forbidden("src/services", [
         "src.adapters", "src.handlers", "src.composition",
-        "src.agents", "src.web",
+        "src.agents", "src.web", "src.infrastructure", "src.config",
     ])
 
 

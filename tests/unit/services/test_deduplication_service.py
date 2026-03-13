@@ -291,7 +291,7 @@ class TestSmartDeduplicationService:
     def test_extract_integers(self, service):
         """Extract integer numbers."""
         numbers = service._extract_and_sort_numbers("Weight 80 kg")
-        assert numbers == [83.0]
+        assert numbers == [80.0]
     
     def test_extract_floats(self, service):
         """Extract float numbers."""
