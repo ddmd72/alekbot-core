@@ -14,6 +14,7 @@ from src.domain.agent import (
     AgentMessage,
     AgentResponse,
     AgentStatus,
+    DeliveryItem,
 )
 from src.domain.llm import LLMResponse
 from src.domain.user import PerformanceTier
@@ -26,6 +27,12 @@ from src.ports.llm_port import (
     ProviderCapabilities,
 )
 from src.ports.prompt_builder_port import PromptBuilderPort
+
+
+_FAKE_DELIVERY_ITEM = DeliveryItem(
+    type="file_upload",
+    data={"file_bytes_b64": "AAEC", "filename": "report-2026-01-01.docx", "title": "Report"},
+)
 
 
 # ---------------------------------------------------------------------------
@@ -89,8 +96,13 @@ def mock_prompt_builder():
 @pytest.fixture
 def mock_coordinator():
     c = AsyncMock(spec=AgentCoordinator)
-    # Planner enqueues generator fire-and-forget; return value is not used.
-    c.handle_delegation.return_value = None
+    # Planner enqueues DocGenerator as a separate ASYNC Cloud Task (fire and forget).
+    # Coordinator returns an ack — DocPlanner does not wait for or propagate delivery_items.
+    c.handle_delegation.return_value = AgentResponse.success(
+        task_id="gen_task",
+        agent_id="coordinator",
+        result={"status": "started"},
+    )
     return c
 
 
@@ -136,12 +148,14 @@ class TestExecuteSuccess:
         response = await agent.execute(_make_message())
         assert response.status == AgentStatus.SUCCESS
 
-    async def test_result_indicates_generation_started(self, agent):
+    async def test_result_is_ack_message(self, agent):
+        # Planner returns a fixed ack — DocGenerator delivers the file independently.
         response = await agent.execute(_make_message())
-        assert "generation started" in response.result.lower()
+        assert "Document spec ready" in response.result
 
-    async def test_no_delivery_items(self, agent):
-        # Planner returns immediately — DOCX delivery comes from generator Cloud Task.
+    async def test_delivery_items_empty(self, agent):
+        # Fire-and-forget: DocPlanner does not return delivery_items.
+        # DocGenerator delivers the DOCX directly via notify_file_bytes.
         response = await agent.execute(_make_message())
         assert response.delivery_items == []
 
@@ -252,3 +266,78 @@ class TestLLMCall:
         req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
                           mock_llm.generate_content.call_args.args[0]
         assert req.system_instruction == "You are a DOC Layout Planner..."
+
+    async def test_max_tokens_matches_config(self, agent, mock_llm):
+        # Regression: field was named max_output_tokens (not a LLMRequest field) →
+        # Pydantic silently ignored it → adapter defaulted to 16_000 → output truncated.
+        from src.infrastructure.agent_config import DOC_PLANNER
+        await agent.execute(_make_message())
+        req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
+                          mock_llm.generate_content.call_args.args[0]
+        assert req.max_tokens == DOC_PLANNER.max_tokens
+        assert req.max_tokens > 16_000, "max_tokens must exceed the adapter default of 16_000"
+
+    async def test_thinking_matches_config(self, agent, mock_llm):
+        from src.infrastructure.agent_config import DOC_PLANNER
+        await agent.execute(_make_message())
+        req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
+                          mock_llm.generate_content.call_args.args[0]
+        assert req.thinking == (DOC_PLANNER.thinking_effort or None)
+
+    async def test_model_name_passed_to_llm(self, agent, mock_llm):
+        await agent.execute(_make_message())
+        req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
+                          mock_llm.generate_content.call_args.args[0]
+        assert req.model_name == "gemini-test"
+
+
+# ---------------------------------------------------------------------------
+# execute — payload merging (extra context fields → appended to query)
+# ---------------------------------------------------------------------------
+
+class TestPayloadMerging:
+
+    def _get_llm_query(self, mock_llm) -> str:
+        req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
+                          mock_llm.generate_content.call_args.args[0]
+        return req.messages[0].parts[0].text
+
+    def _make_message_with_extra(self, **extra_fields) -> AgentMessage:
+        return AgentMessage(
+            intent=AgentIntent.DELEGATE,
+            payload={"query": "Create a report", "intent": "create_document", **extra_fields},
+            sender="worker",
+            recipient="doc_planner_agent",
+            task_id="task_x",
+            context={"user_id": "user123", "account_id": "acc1"},
+        )
+
+    async def test_extra_payload_string_appended_to_query(self, agent, mock_llm):
+        # Regression: agent used to read hardcoded key "report_content" — any key from
+        # context["params"] spread by AgentWorkerHandler must be forwarded to DocPlanner.
+        msg = self._make_message_with_extra(report_content="Here is the research...")
+        await agent.execute(msg)
+        query = self._get_llm_query(mock_llm)
+        assert "Create a report" in query
+        assert "Here is the research..." in query
+
+    async def test_multiple_extra_fields_all_appended(self, agent, mock_llm):
+        msg = self._make_message_with_extra(section_a="Part A content", section_b="Part B content")
+        await agent.execute(msg)
+        query = self._get_llm_query(mock_llm)
+        assert "Part A content" in query
+        assert "Part B content" in query
+
+    async def test_non_string_extra_fields_ignored(self, agent, mock_llm):
+        # Only string values are safe to append; ints/dicts are silently skipped.
+        msg = self._make_message_with_extra(count=42, nested={"key": "val"})
+        await agent.execute(msg)
+        query = self._get_llm_query(mock_llm)
+        assert "42" not in query
+
+    async def test_intent_field_excluded_from_merge(self, agent, mock_llm):
+        # "intent" key must never be forwarded to the LLM as content.
+        msg = self._make_message_with_extra()
+        await agent.execute(msg)
+        query = self._get_llm_query(mock_llm)
+        assert "create_document" not in query

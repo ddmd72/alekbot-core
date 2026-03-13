@@ -125,11 +125,7 @@ def _make_claude_cm(sdk_response):
 
 @pytest.mark.asyncio
 async def test_force_tool_use_sends_tool_choice_any():
-    """force_tool_use=True + tools → tool_choice={'type':'any'} in SDK call.
-
-    Regression: this was changed to 'auto' which let Claude ignore tools and
-    return plain text — masked by the LLM post-processing fallback.
-    """
+    """force_tool_use=True + tools (no thinking) → tool_choice={'type':'any'} in SDK call."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     cm = _make_claude_cm(_make_sdk_tool_response("search_memory", {"q": "x"}))
@@ -152,6 +148,38 @@ async def test_force_tool_use_sends_tool_choice_any():
 
     assert captured.get("tool_choice") == {"type": "any"}, (
         f"Expected tool_choice={{'type':'any'}}, got {captured.get('tool_choice')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_force_tool_use_with_thinking_sends_tool_choice_auto():
+    """force_tool_use=True + tools + thinking → tool_choice={'type':'auto'}.
+
+    Claude API rejects tool_choice='any' when thinking is enabled.
+    """
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    cm = _make_claude_cm(_make_sdk_tool_response("search_memory", {"q": "x"}))
+
+    def capturing_stream(**kwargs):
+        captured.update(kwargs)
+        return cm
+
+    adapter.client.messages.stream = capturing_stream
+
+    await adapter.generate_content(
+        request=LLMRequest(
+            model_name="claude-sonnet-4-6",
+            system_instruction="test",
+            messages=_MESSAGES,
+            tools=_TOOLS,
+            force_tool_use=True,
+            thinking="medium",
+        )
+    )
+
+    assert captured.get("tool_choice") == {"type": "auto"}, (
+        f"Expected tool_choice={{'type':'auto'}}, got {captured.get('tool_choice')!r}"
     )
 
 
@@ -515,11 +543,11 @@ async def test_respond_tool_injected_when_schema_and_tools_present():
 
 
 @pytest.mark.asyncio
-async def test_respond_tool_not_injected_without_real_tools():
-    """respond tool is NOT injected when no real tools are present."""
+async def test_respond_tool_injected_without_real_tools():
+    """respond tool IS injected when response_schema is set even without delegation tools."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
-    cm = _make_claude_cm(_make_sdk_response())
+    cm = _make_claude_cm(_make_sdk_tool_response("respond", {"answer": "42"}))
 
     def capturing_stream(**kwargs):
         captured.update(kwargs)
@@ -537,7 +565,8 @@ async def test_respond_tool_not_injected_without_real_tools():
     )
 
     tools = captured.get("tools", [])
-    assert not any(t.get("name") == "respond" for t in tools)
+    assert len(tools) == 1
+    assert tools[0]["name"] == "respond"
 
 
 @pytest.mark.asyncio
