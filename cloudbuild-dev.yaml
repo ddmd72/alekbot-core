@@ -1,17 +1,15 @@
 steps:
+  # Pull previous image to use as build cache (|| true so first deploy doesn't fail)
   - name: "gcr.io/cloud-builders/docker"
-    args: ["build", "-t", "gcr.io/$PROJECT_ID/alek-bot-dev:latest", "."]
+    entrypoint: "bash"
+    args: ["-c", "docker pull gcr.io/$PROJECT_ID/alek-bot-dev:latest || true"]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "--cache-from", "gcr.io/$PROJECT_ID/alek-bot-dev:latest",
+           "-t", "gcr.io/$PROJECT_ID/alek-bot-dev:latest", "."]
 
   - name: "gcr.io/cloud-builders/docker"
     args: ["push", "gcr.io/$PROJECT_ID/alek-bot-dev:latest"]
-
-  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
-    entrypoint: "python3"
-    args:
-      - "scripts/infrastructure/deploy_firestore_indexes.py"
-      - "config/firestore.indexes.json"
-      - "$PROJECT_ID"
-      - "us-production"
 
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     entrypoint: "gcloud"
@@ -26,7 +24,7 @@ steps:
       - "--max-instances=1"
       - "--memory=1024Mi"
       - "--cpu=2"
-      - "--timeout=900"
+      - "--timeout=1800"
       - "--port=8080" # Required for HTTP mode
       - "--allow-unauthenticated" # For dev testing
       - "--set-secrets=SLACK_BOT_TOKEN=SLACK_BOT_TOKEN_DEV:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET_DEV:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_OAUTH_CLIENT_ID=GOOGLE_OAUTH_CLIENT_ID:latest,GOOGLE_OAUTH_CLIENT_SECRET=GOOGLE_OAUTH_CLIENT_SECRET:latest,FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY:latest,OAUTH_SESSION_SECRET=OAUTH_SESSION_SECRET:latest,TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN_DEV:latest,TELEGRAM_WEBHOOK_SECRET=TELEGRAM_WEBHOOK_SECRET_DEV:latest,DOCS_OWNER_USER_ID=docs-owner-user-id:latest,GMAIL_OAUTH_REDIRECT_URI=GMAIL_OAUTH_REDIRECT_URI_DEV:latest,GOOGLE_TASKS_OAUTH_REDIRECT_URI=GOOGLE_TASKS_OAUTH_REDIRECT_URI_DEV:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,OPENAI_DEEP_RESEARCH_WEBHOOK_URL=OPENAI_DEEP_RESEARCH_WEBHOOK_URL_DEV:latest,OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET=OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET_DEV:latest,GOOGLE_SEARCH_API_KEY=GOOGLE_SEARCH_API_KEY:latest"

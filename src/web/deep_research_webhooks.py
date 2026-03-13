@@ -39,6 +39,7 @@ from quart import Blueprint, request, jsonify
 
 from ..services.deep_research_delivery import NotificationPort, deliver_deep_research
 from ..ports.media_storage_port import MediaStoragePort
+from ..ports.task_queue import TaskQueue
 from ..utils.logger import logger
 from ..utils.debug_logger import get_debug_logger
 
@@ -49,6 +50,7 @@ def create_deep_research_webhooks_blueprint(
     notification_service: NotificationPort,
     webhook_secret: Optional[str] = None,
     media_storage: Optional[MediaStoragePort] = None,
+    task_queue: Optional[TaskQueue] = None,
 ) -> Blueprint:
     """
     Create Quart Blueprint for OpenAI Deep Research webhook delivery.
@@ -178,8 +180,7 @@ def create_deep_research_webhooks_blueprint(
                 user_id=user_id,
                 account_id=account_id,
                 query=query,
-                notification=notification_service,
-                media_storage=media_storage,
+                task_queue=task_queue,
                 session_id=session_id,
             )
 

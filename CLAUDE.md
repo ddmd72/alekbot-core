@@ -378,21 +378,51 @@ When in doubt: if it identifies or grants access to infrastructure, it goes in `
 
 ---
 
-## Tests — CRITICAL RULE
+## ⛔⛔⛔ Tests — ABSOLUTE RULE — READ BEFORE TOUCHING ANY TEST FILE ⛔⛔⛔
 
-**Never modify existing tests to make them pass.**
+**NEVER modify, delete, or rewrite any existing test without EXPLICIT per-test permission from the user.**
+
+This means: one test = one explicit approval. Blanket approval ("fix the tests") does NOT exist.
+You MUST name the specific test and wait for a "yes, fix that one" before touching it.
 
 If a code change causes a test to fail:
-1. Stop immediately.
-2. Report which test failed and why.
-3. Wait for explicit instruction from the user.
+1. STOP. Do not touch the test.
+2. Report EXACTLY which test failed and WHY (what assertion, what actual vs expected).
+3. Wait for explicit per-test instruction from the user.
 
-Allowed exceptions (only with explicit user instruction):
-- The test had a pre-existing bug unrelated to the current change.
-- The user is deliberately changing a requirement and asks to update the test.
+The ONLY self-authorized exceptions — no approval needed:
+- Fixing a broken import path caused by a module rename you just performed.
+- Nothing else.
 
-This applies to: test files, conftest.py fixtures, shared test helpers.
-Fixing an import path in a test after renaming a module is allowed — everything else requires explicit approval.
+This applies to: test files (`tests/`), conftest.py, shared test helpers, fixtures.
+
+Rationale: tests are the specification. Modifying them to make code pass destroys the specification.
+A failing test is signal — not an obstacle to remove.
+
+## ⛔⛔⛔ Debugging Cloud Run — MANDATORY PROTOCOL ⛔⛔⛔
+
+**When debugging any issue that manifests in Cloud Run, the FIRST action is ALWAYS to read the actual logs.**
+
+Do NOT:
+- Build theories about what might be failing
+- Speculate based on code reading alone
+- Propose fixes before seeing the actual error
+
+DO — in this exact order:
+1. **Read the logs first.** Use `gcloud logging read` or `gcloud beta logging tail`:
+   ```
+   gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=SERVICE_NAME" \
+     --limit=50 --format="value(textPayload)" --project=PROJECT_ID
+   ```
+2. Find the actual error message, traceback, or unexpected output in the logs.
+3. Only then diagnose and propose a fix.
+
+If the service writes debug files to GCS (e.g. `gs://...-debug-prompts/`), read the relevant
+request/response files with `gsutil cat` before theorizing about LLM behavior.
+
+**Reading logs costs 1 tool call. Building wrong theories costs 10+ turns and user patience.**
+
+---
 
 ## What NOT to Do
 

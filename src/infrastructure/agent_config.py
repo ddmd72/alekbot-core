@@ -291,10 +291,10 @@ TASKS = TasksAgentConfig()
 
 @dataclass
 class DocPlannerAgentConfig:
-    temperature: float = 1.0      # Required when thinking is enabled (Claude hard constraint)
-    max_tokens: int = 16_000      # JSON spec for a full document can be large
-    timeout_ms: int = 600_000     # Background async task — allow 10 min for thinking + spec generation
-    thinking_effort: Optional[str] = "medium"
+    temperature: float = 1.0      # Claude default for JSON generation without thinking
+    max_tokens: int = 54_000      # JSON spec for a full document can be large
+    timeout_ms: int = 600_000     # Background async task — allow 10 min for spec generation
+    thinking_effort: Optional[str] = None
 
 
 DOC_PLANNER = DocPlannerAgentConfig()
@@ -307,10 +307,10 @@ DOC_PLANNER = DocPlannerAgentConfig()
 @dataclass
 class DocGeneratorAgentConfig:
     temperature: float = 0.5      # Balanced: code precision + rendering simulation reasoning
-    max_tokens: int = 16_000      # Full Node.js script can be large
-    timeout_ms: int = 600_000     # Background async task — allow 10 min for thinking + code generation
+    max_tokens: int = 64_000      # Full Node.js script can be large
+    timeout_ms: int = 600_000     # Background async task — allow 10 min for code generation
     node_timeout_s: int = 60      # Subprocess timeout
-    thinking_effort: Optional[str] = "medium"
+    thinking_effort: Optional[str] = None
 
 
 DOC_GENERATOR = DocGeneratorAgentConfig()

@@ -1,8 +1,8 @@
 # RFC: Deep Research Integration
 
-**Status:** Gemini backend implemented ✅ | Hexagonal fix applied ✅ | OpenAI migration: Implemented ✅ | Provider-agnostic refactor: Implemented ✅
+**Status:** Gemini backend implemented ✅ | Hexagonal fix applied ✅ | OpenAI migration: Implemented ✅ | Provider-agnostic refactor: Implemented ✅ | Claude runner implemented ✅
 **Date:** 2026-03-03
-**Implemented:** 2026-03-03 (Gemini); hexagonal fix 2026-03-03; OpenAI + provider-agnostic refactor 2026-03-07
+**Implemented:** 2026-03-03 (Gemini); hexagonal fix 2026-03-03; OpenAI + provider-agnostic refactor 2026-03-07; Claude runner 2026-03-13
 **Owner:** AI Engineering
 **Milestone:** Phase 2 — Async Specialist Agents
 **Depends on:** ACP_V2_SIMPLIFIED_RFC.md (ASYNC infrastructure)
@@ -56,6 +56,40 @@ architecture fix applied after initial release, and the planned OpenAI migration
 - `resolve_async_context()` returns `(job_port, tier, provider_name)` — no model_name.
 - Polling interval increased: 30s → 120s (Gemini rate limit: 1 RPM).
   Max attempts: 120 → 30. Total window unchanged: 60 minutes.
+
+**Phase 5 — Claude runner (implemented 2026-03-13):**
+
+- `ClaudeDeepResearchRunnerAgent` — internal specialist agent that executes the full research
+  loop in a single Claude API session. Registered as `internal=True`, never exposed to LLMs.
+  Invoked via `agent_execution` Cloud Task from `ClaudeDeepResearchAdapter.create_interaction()`.
+- **Single-session architecture.** No multi-turn outer loop. All research happens in one
+  `messages.stream()` call. The API manages context and tool execution server-side.
+- **Native built-in tools (GA, no beta headers required):**
+  - `web_search_20260209` — web search with dynamic filtering.
+  - `web_fetch_20260209` — URL/PDF fetching with dynamic filtering.
+  - `code_execution_20250825` — auto-injected by the API for dynamic filtering. NOT declared.
+- **`pause_turn` continuation protocol.** When server-side `code_execution` is running, the API
+  returns `stop_reason=pause_turn`. The runner appends `accumulated_content` as an assistant
+  message and loops again. `container` (from `response.container.id`) must be passed back in
+  every continuation request — required when pending code_execution tool uses exist.
+- **Thinking:** `adaptive` mode with `output_config: {effort: high}` for Sonnet 4.6 / Opus 4.6.
+  `temperature=1.0` required when thinking is active. `max_tokens=32_000`.
+- **Prompt caching:** system prompt cached with `cache_control: ephemeral` (5 min TTL).
+  All `pause_turn` continuations get a cache HIT on the system prompt — cost efficient for long
+  research sessions (10–50+ pause cycles observed).
+- **`ClaudeDeepResearchAdapter`** — kick-off adapter only. `create_interaction()` enqueues an
+  `agent_execution` Cloud Task with `deadline_seconds=1800`. Returns UUID job_id immediately.
+  `get_status()` is a no-op stub — delivery is direct from the runner agent.
+  Tier → model mapping: ECO→Haiku 4.5, BALANCED→Sonnet 4.6, PERFORMANCE→Opus 4.6.
+- **Delivery chain:** runner returns `result["text"]` → `AgentWorkerHandler` →
+  `deliver_deep_research()` → enqueues `create_document` Cloud Task → `DocPlannerAgent` →
+  `DocGeneratorAgent` → DOCX bytes → `notify_file_bytes()` → user's last active channel.
+  (Replaces previous HTML/GCS delivery for Claude provider.)
+- **Cognitive process:** `DEEP_RESEARCH_COGNITIVE_PROCESS.groovy` — 4-phase protocol:
+  Phase 0 (topic map, 12–18 queries) → Phase 1 (execute by dimension) → Phase 2 (counter-search
+  verification) → Phase 3 (gap audit) → FINAL OUTPUT. No inter-phase summarization; all phases
+  run in a single uninterrupted session. Language instruction in query enforced by hard constraint.
+- **Cloud Run timeout:** increased to 1800s (was 900s) to match Cloud Tasks dispatch deadline.
 
 **No changes to SmartAgent code in any phase.** Preparation protocol is fully prompt-driven.
 
