@@ -8,8 +8,8 @@ specified agent, and handles result delivery.
 
 Deep research delivery:
   When intent == "execute_deep_research_claude", the runner agent returns
-  the research text in AgentResponse.result. This handler delivers it
-  via two parallel notifications: SmartAgent summary + direct report link.
+  the research text in AgentResponse.result. This handler enqueues a
+  DocPlanner Cloud Task, which generates a DOCX and delivers it to the user.
 """
 
 import base64
@@ -22,6 +22,7 @@ from ..services.deep_research_delivery import (
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..infrastructure.agent_manifest import Intent
 from ..ports.media_storage_port import MediaStoragePort
+from ..ports.task_queue import TaskQueue
 from ..utils.logger import logger
 
 
@@ -44,10 +45,12 @@ class AgentWorkerHandler:
         coordinator: AgentCoordinator,
         notification_service: Optional[NotificationPort] = None,
         media_storage: Optional[MediaStoragePort] = None,
+        task_queue: Optional[TaskQueue] = None,
     ) -> None:
         self._coordinator = coordinator
         self._notification = notification_service
         self._media_storage = media_storage
+        self._task_queue = task_queue
 
     async def handle_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -77,12 +80,15 @@ class AgentWorkerHandler:
             f"intent={intent}, user={user_id}"
         )
 
+        # Mirror _execute_sync: spread context["params"] into payload so agents
+        # receive extra fields (e.g. report_content) via message.payload.
+        extra_payload = context.get("params", {})
         message = AgentMessage.create(
             sender="worker",
             recipient=resolved_agent_id,
             intent=AgentIntent.DELEGATE,
-            payload={"query": query, "intent": intent},
-            context=context,
+            payload={"query": query, "intent": intent, **extra_payload},
+            context={k: v for k, v in context.items() if k != "params"},
         )
 
         try:
@@ -134,10 +140,7 @@ class AgentWorkerHandler:
     async def _deliver_deep_research_result(
         self, response: Any, context: Dict[str, Any]
     ) -> None:
-        """Deliver deep research result: SmartAgent summary + direct report link."""
-        if not self._notification:
-            logger.warning("[AgentWorkerHandler] No notification service configured for deep research")
-            return
+        """Deliver deep research result by enqueuing DocPlanner task."""
 
         result = response.result
         if not isinstance(result, dict) or not result.get("text"):
@@ -149,8 +152,7 @@ class AgentWorkerHandler:
             user_id=context.get("user_id", ""),
             account_id=context.get("account_id", ""),
             query=result.get("query", context.get("original_query", "")),
-            notification=self._notification,
-            media_storage=self._media_storage,
+            task_queue=self._task_queue,
             session_id=context.get("session_id", ""),
         )
 

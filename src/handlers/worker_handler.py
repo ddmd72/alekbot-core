@@ -81,6 +81,9 @@ class WorkerHandler:
         """
         task_type = payload.get("task_type")
         if task_type == "agent_execution":
+            user_id = payload.get("context", {}).get("user_id", "")
+            if user_id:
+                await self._agent_factory.ensure_agents_for_user(user_id)
             result = await self._agent_worker.handle_task(payload)
             return result, 200
         elif task_type == "email_indexing":
@@ -307,8 +310,7 @@ class WorkerHandler:
                 user_id=user_id,
                 account_id=account_id,
                 query=query,
-                notification=self._notification,
-                media_storage=self._media_storage,
+                task_queue=self._task_queue,
                 session_id=session_id,
             )
 

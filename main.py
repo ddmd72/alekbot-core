@@ -332,9 +332,10 @@ async def main():
             coordinator=coordinator,
         )
 
-        # Wire notification + media into AgentWorkerHandler (deferred — created before these).
+        # Wire notification + media + task_queue into AgentWorkerHandler (deferred — created before these).
         agent_worker_handler._notification = notification_service
         agent_worker_handler._media_storage = gcs_media_adapter
+        agent_worker_handler._task_queue = agent_task_queue
 
         # Anthropic client — created once, shared by ClaudeDeepResearchRunnerAgent instances.
         # The agent receives the client via constructor; does not import or instantiate the SDK.
@@ -453,7 +454,7 @@ async def main():
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
             notification_service=notification_service,
             webhook_secret=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET"),
-            media_storage=gcs_media_adapter,
+            task_queue=agent_task_queue,
         )
 
         logger.info("✅ OAuth + Cabinet services initialized")
