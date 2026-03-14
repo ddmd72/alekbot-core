@@ -41,7 +41,7 @@ PROD_USER_ID ?= $(USER_ID)
 .PHONY: deploy deploy-dev deploy-indexes
 .PHONY: create-debug-bucket
 .PHONY: start stop restart start-dev stop-dev
-.PHONY: logs logs-dev logs-tail logs-perf logs-dev-tail
+.PHONY: logs logs-dev logs-tail logs-perf logs-dev-tail logs-research-job-dev-tail
 .PHONY: services status auth
 .PHONY: check-models
 .PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
@@ -92,6 +92,7 @@ help: ## Show this help message
 	@echo "  make logs-tail       Live tail production logs"
 	@echo "  make logs-perf       Live tail production perf logs"
 	@echo "  make logs-dev-tail   Live tail development logs"
+	@echo "  make logs-research-job-dev-tail  Live tail research job logs"
 	@echo "  make logs-tail-clean      Tail prod logs (clean mode)"
 	@echo "  make logs-tail-full       Tail prod logs (full mode)"
 	@echo "  make logs-dev-tail-clean  Tail dev logs (clean mode)"
@@ -296,6 +297,12 @@ logs-dev-tail: ## Live tail development logs
 logs-dev-tail-clean: ## Live tail development logs (clean mode)
 	@echo "📡 Tailing development logs (clean mode, Ctrl+C to stop)..."
 	@LOG_TRACE_CONTEXT=clean gcloud beta logging tail "resource.type=cloud_run_revision AND resource.labels.service_name=$(SERVICE_NAME_DEV)" \
+	  --format="value(textPayload)" \
+	  --project=$(PROJECT_ID)
+
+logs-research-job-dev-tail: ## Live tail Cloud Run Job logs for alek-research-job-dev
+	@echo "📡 Tailing research job logs (Ctrl+C to stop)..."
+	@gcloud beta logging tail "resource.type=cloud_run_job AND resource.labels.job_name=alek-research-job-dev" \
 	  --format="value(textPayload)" \
 	  --project=$(PROJECT_ID)
 

@@ -38,6 +38,8 @@ Turn protocol (single loop):
                assistant message so the API can resume. Loop again.
   max_tokens → output budget exhausted; return whatever text was produced.
 """
+import asyncio
+import os
 from typing import Any, Optional
 
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
@@ -61,6 +63,15 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
     # Safety valve: maximum pause_turn continuations before giving up.
     # Each pause_turn = one server-side tool batch still executing. In practice 5-20 per session.
     _MAX_PAUSE_TURNS = 50
+
+    # Retry on overloaded_error: up to 3 attempts, 30s → 60s → 120s backoff.
+    _MAX_OVERLOAD_RETRIES = 3
+    _OVERLOAD_RETRY_BASE_DELAY = 30  # seconds; doubles each retry
+
+    # Second-pass critic: run a follow-up session with the first result, asking the model
+    # to find what was missed and produce a new, improved final report.
+    # Disable via DEEP_RESEARCH_SECOND_PASS=false env var (defaults to True).
+    _SECOND_PASS_ENABLED = True
 
     # Models that support adaptive thinking + output_config effort.
     _THINKING_MODELS = {"claude-sonnet-4-6", "claude-opus-4-6"}
@@ -115,6 +126,10 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
 
         self._on_agent_start(f"[{model}] {query[:60]}")
 
+        second_pass_enabled = self._SECOND_PASS_ENABLED and (
+            os.environ.get("DEEP_RESEARCH_SECOND_PASS", "true").lower() != "false"
+        )
+
         try:
             result_text, total_tokens = await self._research_loop(
                 query=query,
@@ -130,6 +145,22 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
                 error=str(exc),
             )
 
+        if second_pass_enabled:
+            logger.info("[DeepResearchRunner] Starting second-pass critic session")
+            critic_query = self._build_critic_query(original_query, result_text)
+            try:
+                result_text, extra_tokens = await self._research_loop(
+                    query=critic_query,
+                    system_prompt=system_prompt,
+                    model=model,
+                )
+                total_tokens += extra_tokens
+                logger.info("[DeepResearchRunner] Second-pass complete, extra_tokens=%d", extra_tokens)
+            except Exception as exc:
+                logger.warning(
+                    "[DeepResearchRunner] Second-pass failed (using first-pass result): %s", exc
+                )
+
         self._on_agent_success(
             char_count=len(result_text),
             token_count=total_tokens,
@@ -144,6 +175,118 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
                 "query": original_query,
             },
         )
+
+    @staticmethod
+    def _build_critic_query(original_query: str, first_pass_result: str) -> str:
+        """
+        Build the second-pass user message.
+
+        Framed as a personal plea: the user revisits the topic, shares what was found so far,
+        expresses concern it may not be complete, and asks the model to search for anything
+        missed and produce a new final report.
+        """
+        return (
+            f"Hello! I've been researching the following topic:\n\n"
+            f"{original_query}\n\n"
+            f"A different AI model produced the following research report, but I'm not fully "
+            f"satisfied with the depth and coverage:\n\n"
+            f"{first_pass_result}\n\n"
+            f"This topic is important to me and I want a thorough, well-supported analysis. "
+            f"Please identify what was missed or handled superficially — gaps in analysis, "
+            f"overlooked angles, weak evidence, or unsupported conclusions. "
+            f"I am especially concerned about false positives: claims that sound authoritative "
+            f"but rest on weak or unverified sources. Where evidence is genuinely uncertain, "
+            f"say so explicitly rather than presenting it as established fact. "
+            f"Then produce a new, complete, well-structured research report that covers "
+            f"everything properly."
+        )
+
+    @staticmethod
+    def _extract_container_id(response) -> Optional[str]:
+        """
+        Robustly extract container.id from an Anthropic Message response.
+
+        Handles three SDK variants:
+          - Typed attribute:    response.container.id  (newer SDK with Container model)
+          - Dict extra field:   response.model_extra["container"]["id"]  (Pydantic extra)
+          - Missing attribute:  returns None (older SDK; container not in response)
+        """
+        # 1. Typed attribute (preferred path)
+        container = getattr(response, "container", None)
+        # 2. Pydantic v2 extra fields fallback
+        if container is None:
+            model_extra = getattr(response, "model_extra", None) or {}
+            container = model_extra.get("container")
+        if container is None:
+            return None
+        # container may be a dict or a typed object
+        if isinstance(container, dict):
+            return container.get("id") or None
+        return getattr(container, "id", None) or None
+
+    async def _call_with_overload_retry(self, call_kwargs: dict) -> tuple:
+        """
+        Call the Anthropic streaming API, retrying on overloaded_error with exponential backoff.
+
+        Returns (message, container_id_or_none).
+
+        container_id is captured by scanning EVERY stream event — not just the final message.
+        The Anthropic API may include `container` in any SSE event (message_start, message_delta,
+        message_stop, or a custom event), and the SDK does not always propagate it to the
+        final Message snapshot.
+
+        Raises on the last attempt or on any non-overload error.
+        """
+        delay = self._OVERLOAD_RETRY_BASE_DELAY
+        for attempt in range(self._MAX_OVERLOAD_RETRIES + 1):
+            try:
+                container_id_found: Optional[str] = None
+                async with self._client.messages.stream(**call_kwargs) as stream:
+                    # Container arrives in message_delta as event.delta.container.id.
+                    # SDK does NOT propagate delta.container into the final Message snapshot —
+                    # must be captured here. This is the only reliable source for streaming.
+                    async for event in stream:
+                        if container_id_found is None and getattr(event, "type", None) == "message_delta":
+                            delta = getattr(event, "delta", None)
+                            delta_container = getattr(delta, "container", None) if delta else None
+                            if delta_container is not None:
+                                container_id_found = getattr(delta_container, "id", None) or None
+                                if container_id_found:
+                                    logger.info(
+                                        "[DeepResearchRunner] Container from message_delta: %s",
+                                        container_id_found[:16],
+                                    )
+                    response = await stream.get_final_message()
+
+                # Also check final message (belt-and-suspenders — covers typed SDK field).
+                if container_id_found is None:
+                    container_id_found = self._extract_container_id(response)
+                    if container_id_found:
+                        logger.info(
+                            "[DeepResearchRunner] Container captured from final message: %s",
+                            container_id_found[:16],
+                        )
+
+                if container_id_found is None and response.stop_reason == "pause_turn":
+                    logger.warning(
+                        "[DeepResearchRunner] pause_turn but no container found — "
+                        "next continuation will fail; response keys: %s",
+                        list(getattr(response, "model_extra", None) or {}),
+                    )
+
+                return response, container_id_found
+
+            except Exception as exc:
+                is_overload = "overloaded_error" in str(exc)
+                if is_overload and attempt < self._MAX_OVERLOAD_RETRIES:
+                    logger.warning(
+                        "[DeepResearchRunner] overloaded_error (attempt %d/%d) — retrying in %ds",
+                        attempt + 1, self._MAX_OVERLOAD_RETRIES, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+                raise
 
     async def _research_loop(self, query: str, system_prompt: str, model: str) -> tuple[str, int]:
         """
@@ -166,7 +309,7 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
         )
 
         if model in self._THINKING_MODELS:
-            max_tokens = 32_000
+            max_tokens = 64_000  # extended output beta supports up to 128K; 64K is safe ceiling
             extra_kwargs: dict = {
                 "thinking": {"type": "adaptive"},
                 "output_config": {"effort": "high"},
@@ -197,19 +340,14 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
                 system=system,
                 messages=messages,
                 tools=self._NATIVE_TOOLS,
-                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31,output-128k-2025-02-19"},
                 **extra_kwargs,
             )
             if container_id:
                 call_kwargs["container"] = container_id
 
-            async with self._client.messages.stream(**call_kwargs) as stream:
-                response = await stream.get_final_message()
-
-            # Extract container_id for code_execution continuations.
-            raw_container = getattr(response, "container", None)
-            if raw_container is not None:
-                container_id = getattr(raw_container, "id", None) or str(raw_container) or None
+            response, new_container_id = await self._call_with_overload_retry(call_kwargs)
+            container_id = new_container_id or container_id
 
             if hasattr(response, "usage") and response.usage:
                 turn_tokens = (response.usage.input_tokens or 0) + (response.usage.output_tokens or 0)
@@ -272,6 +410,14 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
                 b.text for b in accumulated_content if getattr(b, "type", None) == "text"
             )
             if partial:
+                self._debug_raw_turn(
+                    system_blocks=system,
+                    user_content=query,
+                    response_texts=[partial],
+                    tokens=total_tokens,
+                    turn=0,
+                    model=model,
+                )
                 return partial, total_tokens
             raise RuntimeError(
                 f"[ClaudeDeepResearchRunner] stop_reason={response.stop_reason!r} with no text"

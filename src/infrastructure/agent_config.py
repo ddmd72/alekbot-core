@@ -223,7 +223,9 @@ class ClaudeDeepResearchRunnerConfig:
     timeout_ms covers the full research execution (up to 30 min per Cloud Task deadline).
     max_retries=0 because a retry doubles wall time (10–25 min) and adds significant cost.
     """
-    timeout_ms: int = 1_800_000  # 30 min — matches Cloud Task dispatch_deadline
+    timeout_ms: int = 1_800_000  # 30 min — used only when invoked via coordinator (legacy path)
+    #                              In job_main.py the agent is created with timeout_ms=None
+    #                              so the Cloud Run Job task-timeout is the ceiling.
     max_retries: int = 0
 
 
