@@ -1,39 +1,37 @@
 """
 ClaudeDeepResearchAdapter — DeepResearchPort implementation backed by Anthropic Claude.
 
-Delivery model: AGENT TASK — create_interaction() enqueues a standard agent_execution
-Cloud Task targeting ClaudeDeepResearchRunnerAgent, and returns a UUID immediately.
-The runner agent executes the full multi-turn Claude loop and self-delivers the result.
+Delivery model: CLOUD RUN JOB — create_interaction() triggers a Cloud Run Job execution
+via JobRunnerPort and returns a UUID immediately. The job runs independently with no
+Cloud Tasks deadline (task-timeout configured at job level, up to 168 hours).
 
-No polling, no webhook, no new task_type. Uses the existing agent_execution mechanism.
+The job (job_main.py) owns the full research loop (ClaudeDeepResearchRunnerAgent)
+and result delivery (DocPlanner Cloud Task → DOCX → user notification).
 
 Tier → model mapping:
   ECO         → claude-haiku-4-5-20251001  (fast + cheap debugging / light tasks)
   BALANCED    → claude-sonnet-4-6          (research quality + cost efficiency)
   PERFORMANCE → claude-opus-4-6            (maximum quality)
 """
+import json
 import uuid
 from typing import Optional
 
 from ..domain.user import PerformanceTier
-from ..ports.deep_research_port import DeepResearchPort, RUNNER_INTENT
-from ..ports.task_queue import TaskQueue
+from ..ports.deep_research_port import DeepResearchPort
+from ..ports.job_runner_port import JobRunnerPort
 from ..utils.logger import logger
-
-_RUNNER_AGENT_ID = "claude_deep_research_runner"
-_RUNNER_INTENT = RUNNER_INTENT
-_TASK_DEADLINE_SECONDS = 1800  # 30 min — covers the longest Claude research loop
 
 
 class ClaudeDeepResearchAdapter(DeepResearchPort):
     """
     DeepResearchPort backed by Claude — kick-off adapter only.
 
-    create_interaction() enqueues an agent_execution Cloud Task for
+    create_interaction() triggers a Cloud Run Job execution for
     ClaudeDeepResearchRunnerAgent and returns a UUID job_id immediately.
-    The runner agent owns the research loop and result delivery.
+    The job owns the research loop and result delivery.
 
-    get_status() is not used — delivery is direct from the runner agent.
+    get_status() is not used — delivery is direct from the job.
     """
 
     MODEL_TIERS = {
@@ -44,18 +42,23 @@ class ClaudeDeepResearchAdapter(DeepResearchPort):
 
     def __init__(
         self,
-        task_queue: TaskQueue,
+        job_runner: JobRunnerPort,
+        job_name: str,
         model_override: Optional[str] = None,
     ) -> None:
         """
         Args:
-            task_queue:     Queue for enqueuing agent_execution Cloud Tasks.
+            job_runner:     Port for triggering Cloud Run Job executions.
+            job_name:       Cloud Run Job name (e.g. "alek-research-job-dev").
             model_override: Pin a specific Claude model regardless of tier.
                             Configure via CLAUDE_DEEP_RESEARCH_MODEL env var in main.py.
         """
-        self._task_queue = task_queue
+        self._job_runner = job_runner
+        self._job_name = job_name
         self._model_override = model_override
-        logger.info("✅ [ClaudeDeepResearchAdapter] Initialized")
+        logger.info(
+            "✅ [ClaudeDeepResearchAdapter] Initialized: job=%s", job_name
+        )
 
     def _resolve_model(self, tier: PerformanceTier) -> str:
         return self._model_override or self.MODEL_TIERS[tier]
@@ -71,30 +74,32 @@ class ClaudeDeepResearchAdapter(DeepResearchPort):
         session_id: Optional[str] = None,
     ) -> str:
         """
-        Enqueue an agent_execution Cloud Task for ClaudeDeepResearchRunnerAgent.
+        Trigger a Cloud Run Job execution for ClaudeDeepResearchRunnerAgent.
 
-        The resolved model name is passed in the task context so the runner agent
-        uses the same tier mapping without re-resolving from user config.
+        The query and context are passed as env var overrides to the job container.
+        The resolved model name is included so the job uses the same tier mapping
+        without re-resolving from user config.
         """
         job_id = str(uuid.uuid4())
-        await self._task_queue.enqueue_agent_task(
-            agent_id=_RUNNER_AGENT_ID,
-            intent=_RUNNER_INTENT,
-            query=query,
-            context={
-                "user_id": user_id,
-                "account_id": account_id,
-                "original_query": original_query,
-                "system_prompt": system_prompt or "",
-                "model": self._resolve_model(tier),
-                "job_id": job_id,
-                "session_id": session_id or "",
+        context = {
+            "user_id": user_id,
+            "account_id": account_id,
+            "original_query": original_query,
+            "system_prompt": system_prompt or "",
+            "model": self._resolve_model(tier),
+            "job_id": job_id,
+            "session_id": session_id or "",
+        }
+        await self._job_runner.run_job(
+            job_name=self._job_name,
+            env_overrides={
+                "JOB_QUERY": query,
+                "JOB_CONTEXT_JSON": json.dumps(context),
             },
-            deadline_seconds=_TASK_DEADLINE_SECONDS,
         )
-        logger.info("[DeepResearch][claude] Task enqueued: job=%s", job_id[:16])
+        logger.info("[DeepResearch][claude] Job triggered: job=%s", job_id[:16])
         return job_id
 
     async def get_status(self, job_id: str) -> tuple[str, str]:
-        """Not used — delivery is direct from the runner agent via notification_service."""
+        """Not used — delivery is direct from the job via notification_service."""
         return "in_progress", ""

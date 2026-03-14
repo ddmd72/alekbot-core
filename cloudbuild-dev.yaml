@@ -44,6 +44,28 @@ steps:
       - "--member=allUsers"
       - "--role=roles/run.invoker"
 
+  # Deploy Cloud Run Job for deep research (same image, different entrypoint).
+  # task-timeout: 3600s (1 hour) — covers first pass + second pass for large research.
+  # max-retries: 0 — no automatic retries; the research loop has its own overload retry.
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "jobs"
+      - "deploy"
+      - "alek-research-job-dev"
+      - "--image=gcr.io/$PROJECT_ID/alek-bot-dev:latest"
+      - "--region=us-central1"
+      - "--command=python"
+      - "--args=job_main.py"
+      - "--max-retries=0"
+      - "--task-timeout=18000"
+      - "--memory=1024Mi"
+      - "--cpu=2"
+      - "--set-env-vars=APP_ENV=development,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,DEBUG_PROMPTS=true,DEBUG_PROMPTS_BUCKET=$_DEBUG_PROMPTS_BUCKET"
+      - "--set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
+      - "--project=$PROJECT_ID"
+
   # Keep the dev container warm to avoid ~30s cold starts (min-instances=0).
   # update falls through to create on first deploy.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"

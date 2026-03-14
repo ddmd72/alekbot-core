@@ -1,8 +1,8 @@
 # RFC: Deep Research Integration
 
-**Status:** Gemini backend implemented ✅ | Hexagonal fix applied ✅ | OpenAI migration: Implemented ✅ | Provider-agnostic refactor: Implemented ✅ | Claude runner implemented ✅
+**Status:** Gemini backend implemented ✅ | Hexagonal fix applied ✅ | OpenAI migration: Implemented ✅ | Provider-agnostic refactor: Implemented ✅ | Claude runner implemented ✅ | Cloud Run Jobs migration: Implemented ✅
 **Date:** 2026-03-03
-**Implemented:** 2026-03-03 (Gemini); hexagonal fix 2026-03-03; OpenAI + provider-agnostic refactor 2026-03-07; Claude runner 2026-03-13
+**Implemented:** 2026-03-03 (Gemini); hexagonal fix 2026-03-03; OpenAI + provider-agnostic refactor 2026-03-07; Claude runner 2026-03-13; Cloud Run Jobs migration 2026-03-14
 **Owner:** AI Engineering
 **Milestone:** Phase 2 — Async Specialist Agents
 **Depends on:** ACP_V2_SIMPLIFIED_RFC.md (ASYNC infrastructure)
@@ -61,35 +61,67 @@ architecture fix applied after initial release, and the planned OpenAI migration
 
 - `ClaudeDeepResearchRunnerAgent` — internal specialist agent that executes the full research
   loop in a single Claude API session. Registered as `internal=True`, never exposed to LLMs.
-  Invoked via `agent_execution` Cloud Task from `ClaudeDeepResearchAdapter.create_interaction()`.
-- **Single-session architecture.** No multi-turn outer loop. All research happens in one
-  `messages.stream()` call. The API manages context and tool execution server-side.
-- **Native built-in tools (GA, no beta headers required):**
+- **Single-session architecture.** No multi-turn outer loop. All research happens via
+  `messages.stream()`. The API manages context and tool execution server-side.
+- **Native built-in tools:**
   - `web_search_20260209` — web search with dynamic filtering.
   - `web_fetch_20260209` — URL/PDF fetching with dynamic filtering.
-  - `code_execution_20250825` — auto-injected by the API for dynamic filtering. NOT declared.
+  - `code_execution_20250825` — auto-injected by the API. NOT declared explicitly.
 - **`pause_turn` continuation protocol.** When server-side `code_execution` is running, the API
   returns `stop_reason=pause_turn`. The runner appends `accumulated_content` as an assistant
-  message and loops again. `container` (from `response.container.id`) must be passed back in
-  every continuation request — required when pending code_execution tool uses exist.
+  message and loops again. `container_id` must be captured from `message_delta` SSE event
+  (NOT from the final Message snapshot — SDK does not propagate it there) and passed back
+  in every continuation request.
 - **Thinking:** `adaptive` mode with `output_config: {effort: high}` for Sonnet 4.6 / Opus 4.6.
-  `temperature=1.0` required when thinking is active. `max_tokens=32_000`.
+  `temperature=1.0` required when thinking is active.
 - **Prompt caching:** system prompt cached with `cache_control: ephemeral` (5 min TTL).
-  All `pause_turn` continuations get a cache HIT on the system prompt — cost efficient for long
-  research sessions (10–50+ pause cycles observed).
-- **`ClaudeDeepResearchAdapter`** — kick-off adapter only. `create_interaction()` enqueues an
-  `agent_execution` Cloud Task with `deadline_seconds=1800`. Returns UUID job_id immediately.
-  `get_status()` is a no-op stub — delivery is direct from the runner agent.
-  Tier → model mapping: ECO→Haiku 4.5, BALANCED→Sonnet 4.6, PERFORMANCE→Opus 4.6.
-- **Delivery chain:** runner returns `result["text"]` → `AgentWorkerHandler` →
-  `deliver_deep_research()` → enqueues `create_document` Cloud Task → `DocPlannerAgent` →
-  `DocGeneratorAgent` → DOCX bytes → `notify_file_bytes()` → user's last active channel.
-  (Replaces previous HTML/GCS delivery for Claude provider.)
+  All `pause_turn` continuations get a cache HIT on the system prompt.
+- **Delivery chain (original — via Cloud Tasks):** runner returns `result["text"]` →
+  `AgentWorkerHandler` → `deliver_deep_research()` → enqueues `create_document` Cloud Task →
+  `DocPlannerAgent` → `DocGeneratorAgent` → DOCX bytes → `notify_file_bytes()` → user channel.
 - **Cognitive process:** `DEEP_RESEARCH_COGNITIVE_PROCESS.groovy` — 4-phase protocol:
-  Phase 0 (topic map, 12–18 queries) → Phase 1 (execute by dimension) → Phase 2 (counter-search
-  verification) → Phase 3 (gap audit) → FINAL OUTPUT. No inter-phase summarization; all phases
-  run in a single uninterrupted session. Language instruction in query enforced by hard constraint.
-- **Cloud Run timeout:** increased to 1800s (was 900s) to match Cloud Tasks dispatch deadline.
+  Phase 0 (topic map) → Phase 1 (execute by dimension) → Phase 2 (counter-search verification)
+  → Phase 3 (gap audit) → FINAL OUTPUT. Single uninterrupted session.
+- **Note:** Phase 5 originally invoked via `agent_execution` Cloud Task with 1800s deadline.
+  Migrated to Cloud Run Jobs in Phase 6 (see below).
+
+**Phase 6 — Cloud Run Jobs migration (implemented 2026-03-14):**
+
+Root cause: two research passes (first pass + second-pass critic) can exceed 60–90 minutes.
+Cloud Tasks hard dispatch deadline = 1800s (30 min). Cloud Run service timeout = 3600s (1 hr).
+Both ceilings were hit in production. Solution: Cloud Run Jobs (task-timeout up to 168 hours).
+
+- **`JobRunnerPort`** (`src/ports/job_runner_port.py`) — new port. Single method:
+  `run_job(job_name, env_overrides) -> str`. Fire-and-forget; does not await job completion.
+- **`CloudRunJobsAdapter`** (`src/adapters/cloud_run_jobs_adapter.py`) — implements `JobRunnerPort`.
+  POST to Cloud Run Jobs REST API v2 (`jobs/{name}:run`) with `containerOverrides.env`.
+  Auth via `google.auth.default()` + `credentials.refresh()` in `asyncio.to_thread()` (sync ADC).
+  No new dependencies — uses `aiohttp` (already in requirements) + `google.auth` (transitive).
+- **`ClaudeDeepResearchAdapter`** (rewritten) — now receives `JobRunnerPort` + `job_name`.
+  `create_interaction()` encodes query as `JOB_QUERY` env var, context dict as `JOB_CONTEXT_JSON`.
+  Returns UUID job_id immediately. `get_status()` is a no-op stub.
+- **`job_main.py`** (new, root level) — Cloud Run Job entrypoint. Reads `JOB_QUERY` +
+  `JOB_CONTEXT_JSON` env vars, creates `ClaudeDeepResearchRunnerAgent` with `timeout_ms=None`
+  (no Python-level timeout — job task-timeout is the ceiling), runs the agent, calls
+  `deliver_deep_research()`. `sys.exit(1)` on failure.
+- **`task-timeout=18000`** (5 hours) — set in `cloudbuild-dev.yaml` and `cloudbuild-prod.yaml`.
+  Covers two full passes with overload retries and large research topics.
+- **`max_tokens=64_000`** for thinking models (Sonnet 4.6, Opus 4.6) + `output-128k-2025-02-19`
+  beta header. Previous 32K ceiling was hit in production (87K total tokens, output exhausted).
+- **Second-pass critic.** After first pass `end_turn`, runner calls `_research_loop()` again
+  with a critic query: includes first-pass report and asks model to find gaps and produce a new
+  complete report. Controlled by `DEEP_RESEARCH_SECOND_PASS` env var (default: `true`).
+  `result_text` is overwritten with second-pass output.
+- **`overloaded_error` retry.** `_call_with_overload_retry()`: up to 3 retries, 30s → 60s →
+  120s exponential backoff. Confirmed needed in production (observed at pause_turn #2, ~25 min in).
+- **Debug logging.** `_debug_raw_turn()` called at both `end_turn` and `max_tokens` paths.
+  Saves prompt + response to GCS (`DEBUG_PROMPTS_BUCKET` env var). Two files per pass:
+  `{agent_type}/{date}/{ts}_prompt.txt` + `{ts}_response.txt`.
+- **Cloud Run Job logs.** `resource.type=cloud_run_job`, NOT `cloud_run_revision`.
+  Use `make logs-research-job-dev-tail` (added to Makefile) to tail in real time.
+- **Deployment.** `make deploy-dev` passes `_DEBUG_PROMPTS_BUCKET` from `.env` to both
+  the service and the job via `gcloud builds submit --substitutions`. No manual trigger
+  configuration needed.
 
 **No changes to SmartAgent code in any phase.** Preparation protocol is fully prompt-driven.
 

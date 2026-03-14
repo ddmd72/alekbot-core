@@ -50,6 +50,7 @@ from src.handlers.worker_handler import WorkerHandler
 from src.adapters.gemini_deep_research_adapter import GeminiDeepResearchAdapter
 from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
+from src.adapters.cloud_run_jobs_adapter import CloudRunJobsAdapter
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.services.provider_registry import ProviderRegistry
 
@@ -310,12 +311,18 @@ async def main():
                 model_override=config.get("OPENAI_DEEP_RESEARCH_MODEL"),
             ))
             logger.info("🔬 Deep research adapter registered: provider=openai")
-        if config.get("ANTHROPIC_API_KEY"):
+        if config.get("ANTHROPIC_API_KEY") and config.get("GOOGLE_CLOUD_PROJECT") and env_config.is_http_mode:
+            queue_suffix = "dev" if env_config.is_development else "prod"
+            cloud_jobs_adapter = CloudRunJobsAdapter(
+                project=config["GOOGLE_CLOUD_PROJECT"],
+                region="us-central1",
+            )
             job_registry.register("claude", ClaudeDeepResearchAdapter(
-                task_queue=agent_task_queue,
+                job_runner=cloud_jobs_adapter,
+                job_name=f"alek-research-job-{queue_suffix}",
                 model_override=config.get("CLAUDE_DEEP_RESEARCH_MODEL"),
             ))
-            logger.info("🔬 Deep research adapter registered: provider=claude")
+            logger.info("🔬 Deep research adapter registered: provider=claude (Cloud Run Job)")
 
         # GCS media adapter for HTML report uploads (optional — requires GCS_MEDIA_BUCKET)
         gcs_bucket = config.get("GCS_MEDIA_BUCKET", "")

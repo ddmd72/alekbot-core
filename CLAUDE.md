@@ -61,7 +61,11 @@ background process extracts new facts from the conversation → bot gets smarter
 - DeepResearch (async, provider-agnostic) — long-running research jobs. Agent calls
   `DeepResearchPort.create_interaction()` → returns ACK (job_id) immediately. Result delivered
   by adapter: polling every 120s (Gemini), webhook (OpenAI). `ClaudeDeepResearchRunnerAgent`
-  wraps Claude's native extended thinking as a synchronous variant (separate agent, same port).
+  wraps Claude's native extended thinking; runs as a **Cloud Run Job** (not Cloud Task) via
+  `JobRunnerPort` + `CloudRunJobsAdapter`. Entrypoint: `job_main.py`. task-timeout=18000s (5h).
+  Two-pass: first pass → second-pass critic (controlled by `DEEP_RESEARCH_SECOND_PASS` env var).
+  max_tokens=64K + `output-128k-2025-02-19` beta. Logs: `resource.type=cloud_run_job`,
+  `make logs-research-job-dev-tail`. Debug prompts saved to GCS at `end_turn` and `max_tokens`.
 
 **Gmail Email Indexing** — passive inbox-as-memory pipeline:
 - User connects Gmail via OAuth (`/auth/connect-gmail`); credentials stored in `oauth_credentials`

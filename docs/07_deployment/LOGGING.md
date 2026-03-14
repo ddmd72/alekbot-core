@@ -169,6 +169,61 @@ gcloud logging read \
 
 ---
 
+## Cloud Run Jobs (Deep Research)
+
+Deep research runs in Cloud Run Jobs (`job_main.py`), not in the service. Job logs use a
+**different resource type** — `cloud_run_job` — and are NOT captured by `make logs-dev-tail`.
+
+### Make commands
+
+```bash
+# Tail research job logs (real-time)
+make logs-research-job-dev-tail
+```
+
+### gcloud queries
+
+```bash
+# Recent job logs
+gcloud logging read \
+  'resource.type="cloud_run_job" AND resource.labels.job_name="alek-research-job-dev"' \
+  --project=$PROJECT_ID --limit=50 --format="value(textPayload)"
+
+# Errors only
+gcloud logging read \
+  'resource.type="cloud_run_job" AND resource.labels.job_name="alek-research-job-dev" AND severity>=ERROR' \
+  --project=$PROJECT_ID --limit=20 --format="value(textPayload)"
+```
+
+### Cloud Logging Console filter
+
+```
+resource.type="cloud_run_job"
+resource.labels.job_name="alek-research-job-dev"
+```
+
+### Debug prompts (GCS)
+
+When `DEBUG_PROMPTS=true` and `DEBUG_PROMPTS_BUCKET` is set, the runner saves full prompts
+and responses to GCS after each research pass:
+
+```
+gs://{DEBUG_PROMPTS_BUCKET}/claude_deep_research_runner/{date}/{ts}_prompt.txt
+gs://{DEBUG_PROMPTS_BUCKET}/claude_deep_research_runner/{date}/{ts}_response.txt
+```
+
+Two pairs per execution (first pass + second-pass critic), saved at `end_turn` or `max_tokens`.
+
+```bash
+# List today's debug files
+gsutil ls gs://$(DEBUG_PROMPTS_BUCKET)/claude_deep_research_runner/$(date +%Y-%m-%d)/
+
+# Read a response
+gsutil cat gs://$(DEBUG_PROMPTS_BUCKET)/claude_deep_research_runner/$(date +%Y-%m-%d)/{ts}_response.txt
+```
+
+---
+
 ## Code Reference
 
 | File | Role |
