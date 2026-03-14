@@ -5,3 +5,7 @@ __pycache__
 *.pyc
 .DS_Store
 venv/
+# node_modules are installed inside the container (npm install in Dockerfile)
+node_modules/
+docx_generator/node_modules/
+pdf_generator/node_modules/

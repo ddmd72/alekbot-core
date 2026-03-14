@@ -28,6 +28,11 @@ RUN python -m playwright install chromium --with-deps
 COPY docx_generator/package.json docx_generator/
 RUN cd docx_generator && npm install --omit=dev
 
+# Install puppeteer for PDF generation.
+# Downloads bundled Chromium (~170MB) — required for PDF rendering in Cloud Run.
+COPY pdf_generator/package.json pdf_generator/
+RUN cd pdf_generator && npm install --omit=dev
+
 # Копіюємо решту коду
 COPY . .
 

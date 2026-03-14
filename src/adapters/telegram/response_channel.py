@@ -488,6 +488,30 @@ class TelegramResponseChannel(ResponseChannel):
             # Non-critical, animation can fail silently
             pass
 
+    async def send_document_link(self, url: str, label: str, thread_id: Optional[str] = None) -> None:
+        """Send a named document link using Telegram Markdown format."""
+        await self.send_message(f"[{label}]({url})", thread_id)
+
+    async def send_file(
+        self,
+        content: bytes,
+        filename: str,
+        title: str,
+        thread_id: Optional[str] = None,
+    ) -> None:
+        """Upload a binary file to the Telegram chat via sendDocument."""
+        try:
+            import io
+            await self.bot.send_document(
+                chat_id=self.chat_id,
+                document=io.BytesIO(content),
+                filename=filename,
+                caption=title,
+            )
+        except Exception as e:
+            logger.error("❌ [TelegramResponseChannel] send_file failed: %s", e)
+            raise
+
     async def download_file(
         self,
         url: str,

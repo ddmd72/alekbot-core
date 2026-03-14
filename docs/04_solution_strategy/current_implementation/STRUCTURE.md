@@ -37,6 +37,10 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── management/     # Process, sprint, and roadmap docs
 │   └── archive/        # 🗄️ Historical reference (RFCs, Plans, Sprints)
 │
+├── pdf_generator/      # Node.js project for PDF rendering via Puppeteer
+│   ├── package.json    # puppeteer ^24.x (downloads bundled Chromium ~170 MB during npm install)
+│   └── runner.js       # Puppeteer wrapper: reads HTML from stdin, writes PDF bytes to stdout
+│
 └── src/                # Core application source code
 ├── adapters/           # Infrastructure Adapters (Driven Adapters)
 │   ├── claude_adapter.py # 🆕 Anthropic Claude Implementation
@@ -65,6 +69,8 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── grok_adapter.py     # 🆕 Grok (xAI) LLMPort implementation
 │   ├── gmail_provider_adapter.py # 🆕 Gmail API — list_emails, batch_get_full_content, token refresh
 │   ├── groovy_prompt_assembler.py # 🆕 Groovy DSL prompt assembler
+│   ├── node_puppeteer_runner.py # 🆕 NodePuppeteerRunner — PuppeteerRunnerPort impl; pipes HTML to
+│   │                            #    pdf_generator/runner.js via stdin, captures PDF bytes from stdout
 │   ├── notification_channel_factory.py # 🆕 Wires Slack/Telegram adapters for UserNotificationService
 │   ├── openai_adapter.py  # 🆕 OpenAI Chat Completions LLMPort (gpt-5-nano/mini/full)
 │   ├── openai_deep_research_adapter.py # 🆕 OpenAI Responses API DeepResearchPort (webhook delivery)
@@ -100,6 +106,13 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                             #    calls DeepResearchPort.create_interaction(query, user_id, account_id,
 │   │                             #    original_query) and returns. Delivery mechanism (Cloud Task polling
 │   │                             #    or webhook) is adapter-internal. No task_queue in agent.
+│   ├── pdf_planner_agent.py      # 🆕 PDF creation entry point (intent: create_pdf, ASYNC, BALANCED tier).
+│   │                             #    LLM generates JSON layout spec (CSS units: mm/pt, filename field),
+│   │                             #    then delegates raw spec to PdfGeneratorAgent via GENERATE_PDF_CODE.
+│   ├── pdf_generator_agent.py    # 🆕 Internal PDF rendering specialist (intent: generate_pdf_code, ASYNC,
+│   │                             #    internal=True, BALANCED tier). LLM writes HTML+CSS via generate_html
+│   │                             #    tool; NodePuppeteerRunner renders to PDF. Returns two
+│   │                             #    DeliveryItem("document"): HTML (GCS only) + PDF (GCS + Slack upload).
 │   ├── observation_agent.py      # ⚠️ LEGACY (replaced by session-based consolidation)
 │   ├── consolidation_agent.py    # Knowledge synthesis specialist ("Life Chronicler")
 │   ├── infrastructure/ # 🆕 Infrastructure Support Agents
@@ -160,7 +173,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── agent_manifest.py    # 🆕 Single source of truth for agent declarations.
 │   │                        #    Intent — typed constants for all intent strings (no raw literals).
 │   │                        #    AgentDescriptor instances for ALL agents (specialists + orchestrators):
-│   │                        #      Specialists: MEMORY_SEARCH, WEB_SEARCH, WEB_SEARCH_LIGHT, EMAIL_SEARCH, MAPS_SEARCH, DEEP_RESEARCH_AGENT
+│   │                        #      Specialists: MEMORY_SEARCH, WEB_SEARCH, WEB_SEARCH_LIGHT, EMAIL_SEARCH, MAPS_SEARCH, DEEP_RESEARCH_AGENT, PDF_PLANNER, PDF_GENERATOR
 │   │                        #        → registered via ALL_DESCRIPTORS in main.py
 │   │                        #      Orchestrators: QUICK_RESPONSE, SMART_RESPONSE
 │   │                        #        → set as class-level _descriptor in agent classes
@@ -206,6 +219,8 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── platform_media_port.py # 🆕 PlatformMediaPort ABC (upload_image, upload_file)
 │   ├── maps_tools_port.py # 🆕 MapsToolsPort ABC (search_maps_places)
 │   ├── media_storage_port.py # 🆕 MediaStoragePort ABC (upload_bytes → public URL)
+│   ├── puppeteer_runner_port.py # 🆕 PuppeteerRunnerPort ABC + PuppeteerRunnerError — system
+│   │                            #    boundary for Node.js Puppeteer subprocess (HTML → PDF bytes)
 │   ├── prompt_assembler.py # Prompt assembly port
 │   ├── prompt_component_repository.py # Prompt component storage port
 │   ├── prompt_cache_strategy_port.py # 🆕 PromptCacheStrategyPort — resolve cache config for agent type
@@ -238,6 +253,8 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── email_indexing_service.py # 🆕 Paginated inbox-to-Firestore pipeline (fetch → classify → store)
 │   ├── email_search_service.py # 🆕 Semantic search in indexed email archive
 │   ├── gmail_oauth_service.py # 🆕 Gmail OAuth flow (authorization URL, token exchange)
+│   ├── document_delivery_service.py # 🆕 Stores document bytes (HTML, PDF) to GCS via MediaStoragePort.
+│   │                                #    Key format: docs/{uuid4()}-{filename}. Used by PdfGeneratorAgent.
 │   ├── rich_content_service.py # 🆕 File conversion + widget render + media dispatch
 │   ├── search_enrichment_service.py # 🆕 Triple search & weighted merge
 │   └── user_notification_service.py # 🆕 Sends Slack/Telegram alerts; stores last active channel
@@ -279,6 +296,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
     -   `factory.py`: `PlatformAdapterFactory` — registry of `PlatformPort` implementations; `create(platform, **kwargs)`. The `PlatformPort` ABC lives in `ports/platform_port.py`.
 -   **`openai_adapter.py`**: 🆕 `OpenAIAdapter(LLMPort)` — OpenAI Chat Completions API implementation. Supports function calling, JSON mode, streaming, and vision. Tier mapping: ECO→gpt-5-nano, BALANCED→gpt-5-mini, PERFORMANCE→gpt-5.
 -   **`openai_deep_research_adapter.py`**: 🆕 `OpenAIDeepResearchAdapter(DeepResearchPort)` — Responses API with background mode. Webhook-based push delivery (no polling Cloud Tasks). Metadata (user_id, account_id, query) embedded at submit time and echoed back by OpenAI in the webhook payload. Tier mapping: ECO/BALANCED→o4-mini-deep-research, PERFORMANCE→o3-deep-research.
+-   **`node_puppeteer_runner.py`**: 🆕 `NodePuppeteerRunner(PuppeteerRunnerPort)` — pipes HTML to `pdf_generator/runner.js` via stdin, captures raw PDF bytes from stdout. Error cases: non-zero exit code, timeout, or empty stdout → `PuppeteerRunnerError`. Temp file cleanup guaranteed in `finally` block.
 -   **`playwright_html_renderer.py`**: 🆕 `PlaywrightHtmlRenderer(HtmlRendererPort)` — headless Chromium singleton. Renders HTML to PNG via `element.screenshot(omit_background=True)`. Detects widget structure (bare fragment vs full-page) via `body.children.length`. Lazy init, auto-reconnect, `--no-sandbox` on Cloud Run.
 -   **`gcs_media_adapter.py`**: 🆕 `GcsMediaAdapter` — uploads bytes to GCS and returns a public URL. Used for `weather_image` / `map_image` types. Slack only (no GCS on Telegram).
 -   **`slack/`**: Slack integration subsystem with dual-mode support:
@@ -365,6 +383,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`audio_transcription_port.py`**: `AudioTranscriptionPort` ABC. Audio-to-text transcription (not yet active).
 -   **`platform_media_port.py`**: 🆕 `PlatformMediaPort` ABC — `upload_image(bytes, alt_text, channel_id)` and `upload_file(bytes, filename, title, channel_id)`. Implemented by `SlackMediaAdapter` and `TelegramMediaAdapter`.
 -   **`html_renderer_port.py`**: 🆕 `HtmlRendererPort` ABC + `HtmlRenderError`. `render(html, width=480) → bytes`. `HtmlRenderError` lives in ports/ so services can catch it without violating import rules. Implemented by `PlaywrightHtmlRenderer`.
+-   **`puppeteer_runner_port.py`**: 🆕 `PuppeteerRunnerPort` ABC + `PuppeteerRunnerError`. `run(html, timeout) → bytes`. System boundary for the Node.js Puppeteer subprocess. Implemented by `NodePuppeteerRunner`.
 
 **Email & Notification Ports:**
 -   **`email_provider_port.py`**: 🆕 `EmailProviderPort` ABC — `list_emails`, `batch_get_full_content`, `refresh_token`. Adapter: `GmailProviderAdapter`.
@@ -399,6 +418,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`email_search_service.py`**: 🆕 Semantic search in indexed email archive (4-vector RRF). Also delegates to `GmailProviderAdapter` for live email body / attachment fetch when `Mode B` (deep search) is needed.
 -   **`gmail_oauth_service.py`**: 🆕 Web-only service for Gmail OAuth flow (authorization URL generation, authorization code exchange). Not part of the indexing pipeline.
 -   **`rich_content_service.py`**: 🆕 `RichContentService` — converts agent `RichContent` DTOs into platform-specific media. Routes `file` types through format converters (openpyxl for xlsx, python-docx for docx). Routes `widget` through `HtmlRendererPort` → PNG bytes → `PlatformMediaPort.upload_image`. Routes GCS-based types through `GcsMediaAdapter`. Wired at composition root — never imported by agents or handlers.
+-   **`document_delivery_service.py`**: 🆕 `DocumentDeliveryService` — stores document bytes (HTML, PDF) to GCS via `MediaStoragePort`. Key format: `docs/{uuid4()}-{filename}`. Used by `PdfGeneratorAgent` to persist both HTML and PDF before delivery notifications are sent. Separate from `RichContentService` — handles document storage only, no rendering or platform upload logic.
 -   **`user_notification_service.py`**: 🆕 `UserNotificationService` — sends platform alerts (Slack/Telegram) for background events (e.g., email indexing complete, deep research finished). Stores/reads last active channel via `NotificationStatePort`; delegates send to coordinator via `MessageRouter` Protocol (not concrete `AgentCoordinator`).
 -   **`user_brain_factory.py`**: Creates per-user `BrainService` instances for multi-tenant isolation. (Legacy - replaced by UserAgentFactory)
 -   **`user_prompt_builder.py`**: Builds per-user system prompts with custom kernel/examples.
@@ -441,6 +461,8 @@ The multi-agent system enables specialized task handling with different LLM mode
 -   **`web_search_agent.py`**: Full-depth web search specialist using Gemini Grounding (BALANCED tier). Called exclusively by SmartResponseAgent via `search_web` intent.
 -   **`email_search_agent.py`**: 🆕 Email archive specialist (BALANCED tier). Accessible to both Quick and Smart (`internal=False` in AgentDescriptor). Three intents: `search_emails` (semantic search in `domain_email_facts_v1`), `get_email_details` (fetch full body from Gmail), `get_email_attachment` (parse attachment via markitdown). Registered via `AgentDescriptor` in `main.py` at startup.
 -   **`email_classification_agent.py`**: 🆕 Shared singleton agent (created in `ServiceContainer`, not per-user). Classifies raw `EmailMetadata` + snippets via tool-calling mode. Outputs `EmailClassificationResult` per email. Called by `EmailIndexingService` (not by the agent delegation chain). Exception to the OUTPUT_FORMAT rule: uses markdown code block extraction in `_parse_response()` due to tool-calling + JSON mode incompatibility — see inline comment.
+-   **`pdf_planner_agent.py`**: 🆕 PDF creation entry point. ASYNC, BALANCED tier (Claude, `agent_type="doc_planner_pdf"`). LLM generates a JSON layout spec with CSS dimension units (mm/pt) and a `filename` field. Forwards raw spec to `PdfGeneratorAgent` via `Intent.GENERATE_PDF_CODE`. Mirrors `DocPlannerAgent` pattern — does not parse its own output.
+-   **`pdf_generator_agent.py`**: 🆕 Internal PDF rendering specialist. ASYNC, BALANCED tier (Claude, `agent_type="pdf_generator"`, `internal=True`). LLM writes HTML+CSS and calls the `generate_html(html_code)` tool. HTML is rendered to PDF by `NodePuppeteerRunner`. Returns two `DeliveryItem("document", ...)` items — HTML (`file_upload=False`, GCS only) and PDF (`file_upload=True`, GCS + Slack upload). Stored via `DocumentDeliveryService`.
 -   **`consolidation_agent.py`**: Knowledge synthesis specialist ("Life Chronicler"). Uses biographical context caching and vector-based deduplication.
 -   **`observation_agent.py`**: ⚠️ LEGACY (kept for reference).
 

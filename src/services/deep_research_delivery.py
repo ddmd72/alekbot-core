@@ -47,6 +47,14 @@ class NotificationPort(Protocol):
         title: str,
     ) -> None: ...
 
+    async def notify_document_link(
+        self,
+        user_id: str,
+        account_id: str,
+        url: str,
+        label: str,
+    ) -> None: ...
+
 
 async def upload_html_report(
     markdown_text: str,

@@ -451,6 +451,30 @@ class SlackResponseChannel(ResponseChannel):
             logger.debug(f"Failed to update status animation: {e}")
             # Don't raise - animation is non-critical
     
+    async def send_document_link(self, url: str, label: str, thread_id: Optional[str] = None) -> None:
+        """Send a named document link using Slack mrkdwn format: <url|label>."""
+        await self.send_message(f"<{url}|{label}>", thread_id)
+
+    async def send_file(
+        self,
+        content: bytes,
+        filename: str,
+        title: str,
+        thread_id: Optional[str] = None,
+    ) -> None:
+        """Upload a binary file to the Slack channel via files_upload_v2."""
+        try:
+            await self.client.files_upload_v2(
+                channel=self.channel_id,
+                file=content,
+                filename=filename,
+                title=title,
+                thread_ts=thread_id,
+            )
+        except Exception as e:
+            logger.error("❌ [SlackResponseChannel] send_file failed: %s", e)
+            raise
+
     async def download_file(self, url: str, mime_type: str) -> Optional[str]:
         """
         Download a file from Slack.

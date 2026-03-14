@@ -109,6 +109,17 @@ python firestore_utils/download.py development_domain_prompt_tokens_v3_system CO
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_TASKS
 
 
+python firestore_utils/download.py development_domain_prompt_tokens_v3_system DOC_PLANNER_COGNITIVE_PROCESS_PDF
+python firestore_utils/download.py development_domain_prompt_tokens_v3_system PDF_GENERATOR_COGNITIVE_PROCESS
+
+
+python firestore_utils/download.py development_domain_prompt_tokens_v3_system OUTPUT_FORMAT_PDF_GENERATOR
+python firestore_utils/download.py development_domain_prompt_tokens_v3_system OUTPUT_FORMAT_DOC_PLANNER_PDF
+
+
+
+
+
 
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_user VOICE_APHORISTIC
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_user ARCHETYPE_INTELLECTUAL_SNIPER

@@ -4,9 +4,11 @@
 
 ### Purpose
 
-Describes the two-agent pipeline for generating professional DOCX files from natural language
-requests: **DocPlannerAgent** (layout planning) → **DocGeneratorAgent** (Node.js code generation
-and execution) → async delivery via Slack.
+Describes the two-agent pipelines for generating professional documents from natural language
+requests:
+
+- **DOCX pipeline:** DocPlannerAgent (layout planning) → DocGeneratorAgent (Node.js `docx` npm code generation) → async delivery via Slack.
+- **PDF pipeline:** PdfPlannerAgent (layout planning) → PdfGeneratorAgent (HTML+CSS generation + Puppeteer rendering) → GCS storage + async delivery via Slack.
 
 ### When to Read
 
@@ -25,6 +27,10 @@ This document MUST be updated when:
 - [ ] A new `DocxRunnerPort` implementation is added (Cloud Function, etc.).
 - [ ] `AgentWorkerHandler._deliver_docx_result()` delivery path changes.
 - [ ] `UserNotificationService.notify_file_bytes()` channel resolution logic changes.
+- [ ] PdfPlannerAgent or PdfGeneratorAgent execution logic changes.
+- [ ] `PuppeteerRunnerPort` interface or `NodePuppeteerRunner` implementation changes.
+- [ ] `DocumentDeliveryService` GCS storage logic or key format changes.
+- [ ] `pdf_generator/runner.js` stdin/stdout contract changes.
 
 ### Cross-References
 
@@ -429,29 +435,207 @@ by which time the circuit may have recovered.
 
 ---
 
-## 10. Code References
+## 10. PDF Generation Pipeline
 
+The PDF pipeline uses the same two-ASYNC-task pattern as the DOCX pipeline, with three key
+differences: (1) the generator writes HTML+CSS instead of Node.js code; (2) rendering is done
+by Puppeteer (headless Chromium) rather than the `docx` npm library; (3) both HTML and PDF are
+stored to GCS via `DocumentDeliveryService` before delivery, not streamed directly to Slack.
+
+### 10.1 Architecture
+
+```
+User → Smart/Quick → coordinator.handle_delegation(CREATE_PDF, ASYNC)
+                              │
+                              └─ Cloud Task #1 enqueued (PdfPlannerAgent)
+                                        │
+                              [background: /worker endpoint]
+                                        │
+                              AgentWorkerHandler.handle_task()
+                                        │
+                              PdfPlannerAgent.execute()
+                                  │
+                                  ├─ LLM: natural language → JSON layout spec
+                                  │        (CSS units: mm/pt, includes filename field)
+                                  │
+                                  └─ coordinator.handle_delegation(GENERATE_PDF_CODE, ASYNC)
+                                              │
+                                              └─ Cloud Task #2 enqueued (PdfGeneratorAgent)
+                                                        │
+                                              [background: /worker endpoint]
+                                                        │
+                                              AgentWorkerHandler.handle_task()
+                                                        │
+                                              PdfGeneratorAgent.execute()
+                                                        │
+                                                        ├─ LLM: spec → HTML+CSS via generate_html tool
+                                                        │
+                                                        └─ PuppeteerRunnerPort.run(html)
+                                                              │
+                                                        NodePuppeteerRunner
+                                                          (node pdf_generator/runner.js)
+                                                              │
+                                                        PDF bytes → DocumentDeliveryService
+                                                              │
+                                                        GCS: docs/{uuid}-{filename}
+                                                              │
+                                              AgentWorkerHandler._deliver_docx_result()
+                                                        │
+                                              UserNotificationService.notify_file_bytes()
+                                                        │
+                                              SlackMediaAdapter.upload_file(PDF bytes)
+```
+
+**Hexagonal boundaries:**
+
+- `PuppeteerRunnerPort` — system boundary between application and Node.js Puppeteer subprocess.
+- `MediaStoragePort` — system boundary between `DocumentDeliveryService` and GCS.
+- `PlatformMediaPort` — system boundary between notification service and Slack file API.
+
+### 10.2 PdfPlannerAgent
+
+**File:** `src/agents/pdf_planner_agent.py`
+**Intent:** `Intent.CREATE_PDF`
+**ExecutionMode:** `ASYNC` (always runs as Cloud Task)
+**Tier:** BALANCED (Claude default, `agent_type="doc_planner_pdf"`)
+
+Single LLM call → JSON layout spec. The spec must include CSS dimension units (mm or pt) and a
+`filename` field used to name the output file. The raw spec string is forwarded as-is to
+`PdfGeneratorAgent` via `coordinator.handle_delegation(GENERATE_PDF_CODE, raw, context)` — no
+parsing, matching the stateless pattern from `DocPlannerAgent`.
+
+**Prompt:** PromptBuilder profile `doc_planner_pdf`, blueprint `pdf_planner_agent_v1`.
+Tokens: `DOC_PLANNER_COGNITIVE_PROCESS_PDF`, `OUTPUT_FORMAT_DOC_PLANNER_PDF`.
+
+**Agent configuration** (from `agent_config.py`):
+
+| Parameter | Value |
+|-----------|-------|
+| `temperature` | `1.0` |
+| `max_tokens` | `54_000` |
+| `timeout_ms` | `600_000` (10 min) |
+
+### 10.3 PdfGeneratorAgent
+
+**File:** `src/agents/pdf_generator_agent.py`
+**Intent:** `Intent.GENERATE_PDF_CODE`
+**ExecutionMode:** `ASYNC` (independent Cloud Task dispatched by PdfPlannerAgent)
+**Registration:** `internal=True` — never shown to LLM tool selection
+**Tier:** BALANCED (Claude default, `agent_type="pdf_generator"`)
+
+Tool-calling loop with a single tool `generate_html(html_code: str)`. The LLM writes a complete
+HTML+CSS document and calls `generate_html`. The agent passes `html_code` to `PuppeteerRunnerPort`
+which runs `pdf_generator/runner.js` via subprocess. On success, two `DeliveryItem("document", ...)`
+items are returned:
+
+1. HTML source — `content_type="text/html"`, `file_upload=False` → stored to GCS only.
+2. PDF binary — `content_type="application/pdf"`, `file_upload=True` → stored to GCS + uploaded to Slack.
+
+**Known CSS rendering constraints:**
+- CSS Paged Media margin boxes (`@top-left`, `@bottom-center`, etc.) are silently ignored by headless Chromium. Headers and footers must use CSS `position: fixed` elements or `@page` rules for page numbers only.
+- `break-inside: avoid` is mandatory on sections, tables, and callouts to prevent bad page breaks.
+
+**Prompt:** PromptBuilder profile `pdf_generator`, blueprint `pdf_generator_agent_v1`.
+Tokens: `PDF_GENERATOR_COGNITIVE_PROCESS`, `OUTPUT_FORMAT_PDF_GENERATOR`.
+
+**Agent configuration** (from `agent_config.py`):
+
+| Parameter | Value |
+|-----------|-------|
+| `temperature` | `0.5` |
+| `max_tokens` | `64_000` (full HTML+CSS can be large) |
+| `timeout_ms` | `600_000` (10 min) |
+| `node_timeout_s` | `60` |
+
+### 10.4 PuppeteerRunnerPort — System Boundary
+
+**File:** `src/ports/puppeteer_runner_port.py`
+
+```python
+class PuppeteerRunnerError(Exception): ...
+
+class PuppeteerRunnerPort(ABC):
+    async def run(self, html: str, timeout: int) -> bytes: ...
+```
+
+**Why a port:** Subprocess execution is a system boundary. The interface is also testable in
+isolation — `PdfGeneratorAgent` receives a mock port in unit tests without spawning Node.js.
+
+**NodePuppeteerRunner** (`src/adapters/node_puppeteer_runner.py`): pipes `html` to stdin of
+`node pdf_generator/runner.js`, captures raw PDF bytes from stdout. Error cases match
+`NodeDocxRunner`: non-zero exit code, timeout, or empty stdout all raise `PuppeteerRunnerError`.
+
+**Why `pdf_generator/` is separate from `docx_generator/`:** Each is an independent Node.js
+project with its own `node_modules/`. `docx_generator/` has the `docx` npm library;
+`pdf_generator/` has `puppeteer ^24.x`, which downloads its own bundled Chromium (~170 MB)
+during `npm install`. Mixing them would couple two unrelated dependency trees.
+
+**`pdf_generator/runner.js` contract:** Reads HTML from stdin, renders via Puppeteer headless
+Chrome with `printBackground: true` and the page size/margins from the JSON spec, writes raw
+PDF bytes to stdout, exits 0. No intermediate files — stdin → stdout pipeline.
+
+### 10.5 DocumentDeliveryService
+
+**File:** `src/services/document_delivery_service.py`
+
+Stores document bytes to GCS via `MediaStoragePort`. Key format: `docs/{uuid4()}-{filename}`.
+Returns a signed URL or public GCS URL depending on bucket configuration. Used by
+`PdfGeneratorAgent` to persist both HTML and PDF before the delivery notification is sent.
+
+This service is separate from `RichContentService` — it handles document storage only, with no
+rendering or platform-specific upload logic.
+
+### 10.6 Comparison: DOCX vs PDF Pipeline
+
+| Concern | DOCX pipeline | PDF pipeline |
+|---------|--------------|-------------|
+| Generator LLM output | Node.js script (docx npm API calls) | HTML+CSS document |
+| Renderer | Node.js process runs `docx` library | Puppeteer (headless Chromium) |
+| Node.js project | `docx_generator/` (`docx` npm) | `pdf_generator/` (`puppeteer` npm) |
+| Port | `DocxRunnerPort` | `PuppeteerRunnerPort` |
+| Adapter | `NodeDocxRunner` | `NodePuppeteerRunner` |
+| GCS storage | Not used (bytes returned inline) | `DocumentDeliveryService` (both HTML + PDF) |
+| DeliveryItem type | `"file_upload"` | `"document"` (two items: HTML + PDF) |
+| Planner tier | PERFORMANCE | BALANCED |
+| Generator tier | PERFORMANCE | BALANCED |
+
+---
+
+## 11. Code References
+
+**DOCX pipeline:**
 - `src/agents/doc_planner_agent.py` — Phase 1: planning, raw forward to generator, fire-and-forget
 - `src/agents/doc_generator_agent.py` — Phase 2: tool-calling loop, `_make_filename`
 - `src/ports/docx_runner_port.py` — `DocxRunnerPort` ABC + `DocxRunnerError`
 - `src/adapters/node_docx_runner.py` — `NodeDocxRunner`: temp file, subprocess, timeout
-- `src/infrastructure/agent_manifest.py` — `Intent.CREATE_DOCUMENT`, `Intent.GENERATE_DOCX_CODE`, `DOC_PLANNER`, `DOC_GENERATOR` descriptors
-- `src/infrastructure/agent_config.py` — `DocPlannerAgentConfig`, `DocGeneratorAgentConfig`
+- `docx_generator/` — project root directory; `node_modules/docx` installed here
+
+**PDF pipeline:**
+- `src/agents/pdf_planner_agent.py` — JSON spec generation, forwards raw spec to PdfGeneratorAgent
+- `src/agents/pdf_generator_agent.py` — `generate_html` tool loop, Puppeteer rendering, two DeliveryItems
+- `src/ports/puppeteer_runner_port.py` — `PuppeteerRunnerPort` ABC + `PuppeteerRunnerError`
+- `src/adapters/node_puppeteer_runner.py` — `NodePuppeteerRunner`: stdin HTML → stdout PDF bytes
+- `src/services/document_delivery_service.py` — GCS storage via `MediaStoragePort` (key: `docs/{uuid}-{filename}`)
+- `pdf_generator/runner.js` — Puppeteer wrapper: stdin → headless Chrome → stdout PDF bytes
+- `pdf_generator/package.json` — `puppeteer ^24.x`
+
+**Shared infrastructure:**
+- `src/infrastructure/agent_manifest.py` — `Intent.CREATE_DOCUMENT`, `Intent.GENERATE_DOCX_CODE`, `Intent.CREATE_PDF`, `Intent.GENERATE_PDF_CODE` and corresponding descriptors
+- `src/infrastructure/agent_config.py` — `DocPlannerAgentConfig`, `DocGeneratorAgentConfig`, `PdfPlannerAgentConfig`, `PdfGeneratorAgentConfig`
 - `src/infrastructure/agent_coordinator.py` — `_execute_async` receives `deadline_seconds` from descriptor
-- `src/services/agent_context_builder.py` — `"doc_planner"` and `"doc_generator"` strategy entries
-- `src/composition/user_agent_factory.py` — `NodeDocxRunner()` injected into `DocGeneratorAgent`; both agents registered and cached per user
-- `src/handlers/agent_worker_handler.py` — `_deliver_docx_result()`, `_notify_docx_failure()`, handles both `CREATE_DOCUMENT` and `GENERATE_DOCX_CODE` intents
+- `src/services/agent_context_builder.py` — `"doc_planner"`, `"doc_generator"`, `"doc_planner_pdf"`, `"pdf_generator"` strategy entries
+- `src/composition/user_agent_factory.py` — all four agents registered and cached per user
+- `src/handlers/agent_worker_handler.py` — `_deliver_docx_result()`, `_notify_docx_failure()`, handles all four intents
 - `src/services/user_notification_service.py` — `notify_file_bytes()`, channel ID resolution via `send_message`
 - `src/adapters/slack/response_channel.py:155-160` — `send_message` normalises `U...` → `D...`
 - `src/adapters/slack/media_adapter.py` — `SlackMediaAdapter.upload_file()`
-- `docx_generator/` — project root directory; `node_modules/docx` installed here
 - `tests/unit/agents/test_doc_planner_agent.py` — 21 tests (can_handle, fire-and-forget delegation, failure paths, LLM call params)
 - `tests/unit/agents/test_doc_generator_agent.py` — 19 tests (port mock, tool loop, failure paths, raw query forwarding)
 - `tests/unit/adapters/test_slack_media_adapter.py` — upload_file contract tests
 
 ---
 
-## 11. Status
+## 12. Status
 
 **Status:** ✅ Production Ready
-**Last Updated:** 2026-03-12
+**Last Updated:** 2026-03-14

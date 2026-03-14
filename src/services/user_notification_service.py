@@ -191,6 +191,51 @@ class UserNotificationService:
                 exc_info=True,
             )
 
+    async def notify_document_link(
+        self,
+        user_id: str,
+        account_id: str,
+        url: str,
+        label: str,
+    ) -> None:
+        """
+        Send a named document link to the user's last active channel.
+        Used by AgentWorkerHandler to deliver async PDF/HTML results.
+        Platform-specific link formatting is delegated to ResponseChannel.send_document_link().
+        """
+        try:
+            channel_info = await self._state_repo.get(user_id)
+        except Exception as exc:
+            logger.warning(f"[Notification] Failed to load channel for {user_id[:8]}: {exc}")
+            return
+
+        if not channel_info:
+            logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping document link delivery")
+            return
+
+        response_channel = self._channel_factory.create(
+            platform=channel_info.platform,
+            channel_id=channel_info.channel_id,
+        )
+        if not response_channel:
+            logger.warning(
+                f"[Notification] Cannot create channel for document link: platform={channel_info.platform}"
+            )
+            return
+
+        try:
+            await response_channel.send_document_link(url=url, label=label)
+            logger.info(
+                f"📎 [Notification] Document link delivered to {channel_info.platform} "
+                f"channel={channel_info.channel_id} user={user_id[:8]} label={label}"
+            )
+        except Exception as exc:
+            logger.error(
+                f"[Notification] Document link delivery failed for {user_id[:8]} "
+                f"(platform={channel_info.platform}): {exc}",
+                exc_info=True,
+            )
+
     async def notify_file_bytes(
         self,
         user_id: str,

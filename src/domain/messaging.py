@@ -240,14 +240,45 @@ class ResponseChannel(Protocol):
         ...
     
     @abstractmethod
+    async def send_document_link(self, url: str, label: str, thread_id: Optional[str] = None) -> None:
+        """
+        Send a named document link. Format is platform-specific.
+
+        Args:
+            url:       Public document URL (e.g. GCS).
+            label:     Human-readable display name shown as link text.
+            thread_id: Optional thread identifier.
+        """
+        ...
+
+    @abstractmethod
+    async def send_file(
+        self,
+        content: bytes,
+        filename: str,
+        title: str,
+        thread_id: Optional[str] = None,
+    ) -> None:
+        """
+        Upload a binary file to the platform. Format is platform-specific.
+
+        Args:
+            content:   Raw file bytes.
+            filename:  Filename with extension (e.g. "report.pdf").
+            title:     Human-readable title shown in the platform UI.
+            thread_id: Optional thread identifier.
+        """
+        ...
+
+    @abstractmethod
     async def download_file(self, url: str, mime_type: str) -> Optional[str]:
         """
         Download a file attachment.
-        
+
         Args:
             url: File URL
             mime_type: File MIME type
-            
+
         Returns:
             Local file path or None if download failed
         """

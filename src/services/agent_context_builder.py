@@ -120,6 +120,20 @@ class AgentProviderStrategy:
             "required_capabilities": [],
             "fallback": "gemini"
         },
+        # PDF planner: Gemini PERFORMANCE for structured JSON layout spec.
+        "doc_planner_pdf": {
+            "default_provider": "gemini",
+            "allowed_providers": ["claude", "gemini", "openai"],
+            "required_capabilities": [],
+            "fallback": "claude"
+        },
+        # PDF generator: Gemini BALANCED for HTML+CSS code generation.
+        "pdf_generator": {
+            "default_provider": "gemini",
+            "allowed_providers": ["claude", "gemini", "openai"],
+            "required_capabilities": [],
+            "fallback": "claude"
+        },
     }
 
     @classmethod

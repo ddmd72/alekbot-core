@@ -139,7 +139,7 @@ def get_available_intents_for(self, descriptor: AgentDescriptor) -> List[Dict[st
     None → all non-internal; frozenset → only those matching the set."""
 ```
 
-### 3.4 Current Registry (as of 2026-03-05)
+### 3.4 Current Registry (as of 2026-03-14)
 
 All agents registered via `main.py` at startup. `GcpTaskQueue` only instantiated in HTTP mode.
 
@@ -152,9 +152,16 @@ All agents registered via `main.py` at startup. `GcpTaskQueue` only instantiated
 | `maps_search_agent` | `maps_query` | SYNC | False | Quick, Smart |
 | `compute_agent` | `compute_math`, `compute_datetime`, `compute_finance`, `compute` | SYNC | False | Quick, Smart |
 | `deep_research_agent` | `deep_research` | SYNC | False | Smart |
+| `doc_planner_agent` | `create_document` | ASYNC | False | Quick, Smart |
+| `doc_generator_agent` | `generate_docx_code` | ASYNC | **True** | DocPlannerAgent only |
+| `pdf_planner_agent` | `create_pdf` | ASYNC | False | Quick, Smart |
+| `pdf_generator_agent` | `generate_pdf_code` | ASYNC | **True** | PdfPlannerAgent only |
 
 `web_search_light_agent` is `internal=True` — it never appears in LLM tool lists. Quick reaches it
 via `intent_remap: {"search_web": "search_web_light"}` at dispatch time.
+
+`doc_generator_agent` and `pdf_generator_agent` are `internal=True` — never shown in LLM tool lists.
+Each is enqueued exclusively by its corresponding planner agent as a second ASYNC Cloud Task.
 
 ---
 
@@ -548,7 +555,7 @@ make test-e2e-all   # Quick and Smart delegate correctly to the new agent
 ## 10. Code References
 
 - `src/infrastructure/agent_manifest.py` — **Single source of truth** for all agent declarations: `Intent` constants, `AgentDescriptor` instances for every agent (specialists + orchestrators), `ALL_DESCRIPTORS` list. Start here when adding or understanding any agent.
-- `src/infrastructure/agent_config.py` — Central config registry: typed `@dataclass` per agent (`QUICK`, `SMART`, `ROUTER`, `MEMORY_SEARCH`, `WEB_SEARCH`, `WEB_SEARCH_LIGHT`, `CONSOLIDATION`, `EMAIL_SEARCH`, `EMAIL_CLASSIFICATION`, `MAPS_SEARCH`, `COMPUTE`). Holds all tunable behavior params: delegation turns, timeouts, temperatures, and thinking config. `MapsSearchAgentConfig.model_name` is pinned to `gemini-2.5-flash` (Maps grounding unsupported on Gemini 3.x). `ComputeAgentConfig.temperature=0.0` (deterministic computation). `ConsolidationAgentConfig.thinking_effort="high"` + `max_tokens=32_000` (complex multi-turn reasoning; Claude Sonnet 4.6).
+- `src/infrastructure/agent_config.py` — Central config registry: typed `@dataclass` per agent (`QUICK`, `SMART`, `ROUTER`, `MEMORY_SEARCH`, `WEB_SEARCH`, `WEB_SEARCH_LIGHT`, `CONSOLIDATION`, `EMAIL_SEARCH`, `EMAIL_CLASSIFICATION`, `MAPS_SEARCH`, `COMPUTE`, `PDF_PLANNER`, `PDF_GENERATOR`). Holds all tunable behavior params: delegation turns, timeouts, temperatures, and thinking config. `MapsSearchAgentConfig.model_name` is pinned to `gemini-2.5-flash` (Maps grounding unsupported on Gemini 3.x). `ComputeAgentConfig.temperature=0.0` (deterministic computation). `ConsolidationAgentConfig.thinking_effort="high"` + `max_tokens=32_000` (complex multi-turn reasoning; Claude Sonnet 4.6). `PdfGeneratorAgentConfig.max_tokens=64_000` (full HTML+CSS document can be large).
 - `src/infrastructure/agent_registry.py` — `AgentDescriptor` dataclass (alias: `AgentManifest`), `AgentRegistry` mechanics, `ExecutionMode`, `get_available_intents()`, `get_available_intents_for(descriptor)`. Descriptor instances live in `agent_manifest.py`.
 - `src/infrastructure/agent_coordinator.py` — handle_delegation(), _execute_sync(), _execute_async(), get_available_intents(), get_available_intents_for()
 - `src/agents/base_agent.py` — lifecycle hooks, `_debug_prompt`, `_debug_response`
@@ -577,5 +584,5 @@ make test-e2e-all   # Quick and Smart delegate correctly to the new agent
 
 **Status:** ✅ Production Ready (SYNC path)
 **ASYNC path:** Infrastructure complete; activated with the first ASYNC agent (Gmail indexing).
-**Last Updated:** 2026-03-07
+**Last Updated:** 2026-03-14
 **Implemented via:** [ACP v2 Simplified RFC](../../10_rfcs/ACP_V2_SIMPLIFIED_RFC.md)

@@ -166,6 +166,8 @@ Agents are instantiated and managed per user to ensure strict data isolation and
 - **Notes Agent:** Orchestrator notepad — no LLM. Pure Firestore I/O via `AgentNotePort`. Called by both Quick and Smart via three intents: `create_note`, `delete_note`, `update_note`. Notes are the orchestrator's own working memory — short-lived anchors (≤25 words each, max 20 active) written by the LLM to itself to carry patterns, intentions, and mid-session constraints across turns without the user repeating them. Notes are invisible to the user; they are injected into every subsequent prompt turn as `working_memory_for_conversational_anchors {}` block (after `PROMPT_CACHE_BOUNDARY`) by `PromptAssemblyService`. RouterAgent fetches active notes via `AgentNotePort.list_active_notes()` at the start of each turn and passes them in `agent_notes` context. Persistence: `{env_prefix}_orchestrator_notes` Firestore collection, document ID = epoch milliseconds (time-sortable, 1ms collision window). Adapter: `FirestoreAgentNoteAdapter`. Port: `AgentNotePort` (4 abstract methods: `create_note`, `delete_note`, `update_note`, `list_active_notes`). `delete_note` returns `False` (ownership mismatch / not found) or `True` (deleted) — agent propagates `False` as `AgentResponse.failure()` so the LLM knows. `list_active_notes` filters in-Python: excludes `visible_after > as_of` and `expires_after ≤ as_of`; returns sorted by `created_at ASC`.
 - **Document Planner Agent:** Two-phase DOCX creation entry point. Called by both Quick and Smart via `create_document` intent (`ExecutionMode.ASYNC` → Cloud Task dispatch). PERFORMANCE tier (Claude default). Phase 1: LLM generates a structured JSON layout spec (`{status, task_summary, doc_spec}`), enforced via `_RESPONSE_SCHEMA` (Gemini) or `OUTPUT_FORMAT` token (Claude). Phase 2: delegates to `DocGeneratorAgent` via `coordinator.handle_delegation(Intent.GENERATE_DOCX_CODE, ...)`. Retry loop (max `MAX_RETRIES=3`): `JSONDecodeError` → LLM self-corrects JSON; generator failure → LLM patches the spec; `status != "ready"` → immediate failure (unrecoverable planner refusal). On success: forwards `DocGeneratorAgent`'s `DeliveryItem("file_upload", {...})` up to `AgentWorkerHandler` which calls `notify_file_bytes()`. Registered `internal=False`. System prompt: PromptBuilder profile `doc_planner`. Accepts both `QUERY` (sync / test path) and `DELEGATE` (normal async Cloud Task path) intents in `can_handle()`.
 - **Document Generator Agent:** Internal DOCX code generation specialist (`internal=True` — never shown to LLMs). Called exclusively by `DocPlannerAgent` via `generate_docx_code` intent. PERFORMANCE tier (Claude default). Receives a JSON layout spec in `payload["query"]`; LLM writes a Node.js script using the `docx` npm library and calls the `generate_docx` tool. Script is executed via `DocxRunnerPort` (system boundary — subprocess isolation). Retry loop (max `MAX_TURNS=5`): on `DocxRunnerError` → `stderr` returned as tool response, LLM retries with a corrected script; no tool call → immediate failure. On success: returns `DeliveryItem("file_upload", {"file_bytes_b64": ..., "filename": ..., "title": ...})`. `DocxRunnerPort` has one implementation: `NodeDocxRunner` (writes temp script to `docx_generator/` so `node_modules/docx` resolves, reads DOCX bytes from stdout). Future implementations (Cloud Function, remote runner) require no agent changes. System prompt: PromptBuilder profile `doc_generator`. See [Document Generation Building Block](../document_generation/README.md).
+- **PDF Planner Agent:** Two-phase PDF creation entry point. Called by both Quick and Smart via `create_pdf` intent (`ExecutionMode.ASYNC` → Cloud Task dispatch). BALANCED tier (Claude default, agent_type `"doc_planner_pdf"`). Phase 1: LLM generates a JSON layout spec including CSS dimension units (mm/pt) and a `filename` field. Phase 2: delegates to `PdfGeneratorAgent` via `coordinator.handle_delegation(Intent.GENERATE_PDF_CODE, ...)`. The raw spec string is forwarded as-is — planner does not parse its own output. Registered `internal=False`. System prompt: PromptBuilder profile `doc_planner_pdf`. Accepts both `QUERY` and `DELEGATE` intents in `can_handle()`.
+- **PDF Generator Agent:** Internal PDF rendering specialist (`internal=True` — never shown to LLMs). Called exclusively by `PdfPlannerAgent` via `generate_pdf_code` intent. BALANCED tier (Claude default, agent_type `"pdf_generator"`). Receives the JSON layout spec in `payload["query"]`; LLM writes HTML+CSS and calls the `generate_html(html_code)` tool. HTML is rendered to PDF via `PuppeteerRunnerPort` (system boundary — Node.js subprocess running `pdf_generator/runner.js`). On success: returns two `DeliveryItem("document", ...)` items — one for the HTML source (`file_upload=False`, stored to GCS via `DocumentDeliveryService`) and one for the PDF binary (`file_upload=True`, also uploaded to Slack). CSS Paged Media margin boxes (`@top-left` etc.) are silently ignored by headless Chromium — headers/footers require CSS fixed positioning or `@page` rules. `break-inside: avoid` is mandatory on sections/tables/callouts. System prompt: PromptBuilder profile `pdf_generator`. See [Document Generation Building Block](../document_generation/README.md).
 - **Consolidation Agent:** Background synthesis of conversation history into facts.
 
 ### 5.3 Infrastructure Agents
@@ -393,6 +395,7 @@ class DeliveryItem:
 | `"rich_content"` | Any specialist | `{"content_type": str, "data": dict, "fallback": str}` — same schema as `RichContent` domain object | Constructs `RichContent` → `_deliver_rich_content(...)` |
 | `"html_gcs_link"` | DeepResearchAgent | `{"html": str, "filename": str, "link_text": str}` | Uploads HTML to GCS → sends public URL as Slack link |
 | `"file_upload"` | DocGeneratorAgent | `{"file_bytes_b64": str, "filename": str, "title": str}` — base64-encoded binary, name with extension (e.g. `report-2026-03-12.docx`), human-readable title | **ASYNC path** (Cloud Task): `AgentWorkerHandler._deliver_docx_result()` decodes bytes → `notify_file_bytes()` → resolves channel ID → `PlatformMediaPort.upload_file()`. **SYNC path** (ConversationHandler `_deliver_item()`): decodes bytes → `RichContentService.upload_file_bytes()` via current `response_channel.channel_id`. |
+| `"document"` | PdfGeneratorAgent | `{"content_b64": str, "filename": str, "content_type": str, "label": str, "file_upload": bool}` — base64-encoded content (HTML or PDF), MIME type, human-readable label, and a flag controlling whether to also upload binary to Slack (`True` for PDF, `False` for HTML). | `AgentWorkerHandler` decodes bytes → `DocumentDeliveryService.store(bytes, filename)` → GCS upload (key: `docs/{uuid}-{filename}`). If `file_upload=True`: additionally calls `notify_file_bytes()` to deliver the binary to the user's Slack channel. |
 
 ### 10.4 Aggregation Path
 
@@ -443,11 +446,13 @@ Multiple `DeliveryItem`s are dispatched in order after the main text response.
 
 ### 10.6 Current Usage
 
-`DeliveryItem` is used by two specialist agents:
+`DeliveryItem` is used by three specialist agents:
 
 - **`DeepResearchAgent`** — `html_gcs_link` type. Delivers HTML research report URLs uploaded to GCS. Dispatched synchronously by `ConversationHandler._deliver_item()` (the agent is SYNC ACK — it acknowledges immediately; actual delivery happens via webhook/polling adapters, not through `delivery_items`).
 
 - **`DocGeneratorAgent`** — `file_upload` type. Carries base64-encoded DOCX bytes. Delivery path: `AgentWorkerHandler._deliver_docx_result()` (ASYNC Cloud Task) → decodes bytes → `UserNotificationService.notify_file_bytes()` → `response_channel.send_message("📎")` (resolves Slack user ID → DM channel ID) → `PlatformMediaPort.upload_file()`. `ConversationHandler._deliver_item()` also handles `file_upload` via `RichContentService.upload_file_bytes()` for any future sync usage.
+
+- **`PdfGeneratorAgent`** — `document` type. Returns two items per successful generation: HTML source (`file_upload=False`) and PDF binary (`file_upload=True`). Both are stored to GCS via `DocumentDeliveryService` (key: `docs/{uuid4()}-{filename}`). The PDF item additionally triggers `notify_file_bytes()` to deliver the binary file to the user's Slack channel.
 
 `MapsSearchAgent` does not use `DeliveryItem` — place links are embedded directly in the LLM
 response text as Slack mrkdwn `<placeUrl|Name>` links. The `_SYSTEM_INSTRUCTION` in the agent
@@ -476,9 +481,14 @@ formatting. `places[i]` in the tool result corresponds to the i-th place cited i
 - `src/agents/memory_search_agent.py`: LLM key formulation + `MEMORY_SEARCH_RESPONSE_SCHEMA`.
 - `src/handlers/agent_worker_handler.py`: ASYNC task execution from Cloud Tasks. `_deliver_docx_result()` dispatches `file_upload` delivery items from DocPlannerAgent.
 - `src/agents/doc_planner_agent.py`: Two-phase DOCX creation specialist (intent: `create_document`, ASYNC).
-- `src/agents/doc_generator_agent.py`: Internal Node.js DOCX code generation specialist (intent: `generate_docx_code`, SYNC, `internal=True`).
+- `src/agents/doc_generator_agent.py`: Internal Node.js DOCX code generation specialist (intent: `generate_docx_code`, ASYNC, `internal=True`).
 - `src/ports/docx_runner_port.py`: `DocxRunnerPort` ABC + `DocxRunnerError` — system boundary for subprocess execution.
 - `src/adapters/node_docx_runner.py`: `NodeDocxRunner` — runs Node.js scripts in `docx_generator/`, captures stdout as DOCX bytes.
+- `src/agents/pdf_planner_agent.py`: PDF creation entry point (intent: `create_pdf`, ASYNC, BALANCED tier).
+- `src/agents/pdf_generator_agent.py`: Internal PDF rendering specialist (intent: `generate_pdf_code`, ASYNC, `internal=True`, BALANCED tier).
+- `src/ports/puppeteer_runner_port.py`: `PuppeteerRunnerPort` ABC — system boundary for Node.js Puppeteer subprocess.
+- `src/adapters/node_puppeteer_runner.py`: `NodePuppeteerRunner` — pipes HTML to `pdf_generator/runner.js` via stdin, captures PDF bytes from stdout.
+- `src/services/document_delivery_service.py`: `DocumentDeliveryService` — stores document bytes to GCS via `MediaStoragePort` (key: `docs/{uuid4()}-{filename}`).
 - `src/composition/user_agent_factory.py`: Lifecycle and DI management.
 - `src/services/history_summary_service.py`: LLM-based response compression (Gemini-locked, fail-fast).
 - `src/utils/llm_response_parser.py`: Unified JSON parser for `full_response` + `response_summary` + `rich_content`. Guards against mistaking embedded JSON examples for response envelopes.
@@ -492,6 +502,6 @@ formatting. `places[i]` in the tool result corresponds to the i-th place cited i
 ## 12. Status
 
 **Status:** ✅ Production Ready
-**Last Updated:** 2026-03-12
+**Last Updated:** 2026-03-14
 
 ---

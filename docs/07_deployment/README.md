@@ -68,6 +68,25 @@ gcloud logging read 'resource.type=cloud_run_revision' --limit=50
 
 ---
 
+## Node.js Dependencies in the Docker Image
+
+The image bundles two independent Node.js projects for document generation. Both are installed
+during the Docker build via `npm install --omit=dev`:
+
+| Directory | npm package | Purpose | Notes |
+|-----------|------------|---------|-------|
+| `docx_generator/` | `docx` | DOCX file generation (NodeDocxRunner) | Lightweight; no system-level dependencies |
+| `pdf_generator/` | `puppeteer ^24.x` | PDF rendering via headless Chromium (NodePuppeteerRunner) | Downloads bundled Chromium (~170 MB) during install |
+
+`pdf_generator/node_modules/` is excluded from the Docker build context via `.dockerignore` — the
+`npm install` step in the `Dockerfile` installs it fresh inside the image layer.
+
+Because Puppeteer downloads Chromium at install time, the first `docker build` (or Cloud Build)
+after a Puppeteer version change will be slow (~3–5 min for the download). Subsequent builds use
+the Docker layer cache as long as `pdf_generator/package.json` is unchanged.
+
+---
+
 ## Related Documentation
 
 - **[06_runtime/README.md](../06_runtime/README.md)** - Runtime architecture
@@ -76,4 +95,4 @@ gcloud logging read 'resource.type=cloud_run_revision' --limit=50
 
 ---
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-03-14

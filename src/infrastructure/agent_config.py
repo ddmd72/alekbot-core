@@ -316,3 +316,34 @@ class DocGeneratorAgentConfig:
 
 
 DOC_GENERATOR = DocGeneratorAgentConfig()
+
+
+# ---------------------------------------------------------------------------
+# PdfPlannerAgent (src/agents/pdf_planner_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PdfPlannerAgentConfig:
+    temperature: float = 1.0      # Claude default for JSON generation without thinking
+    max_tokens: int = 54_000      # JSON spec for a full document can be large
+    timeout_ms: int = 600_000     # Background async task — allow 10 min for spec generation
+    thinking_effort: Optional[str] = None
+
+
+PDF_PLANNER = PdfPlannerAgentConfig()
+
+
+# ---------------------------------------------------------------------------
+# PdfGeneratorAgent (src/agents/pdf_generator_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PdfGeneratorAgentConfig:
+    temperature: float = 0.5      # Balanced: HTML precision + styling reasoning
+    max_tokens: int = 64_000      # Full HTML+CSS document can be large
+    timeout_ms: int = 600_000     # Background async task — allow 10 min for generation
+    node_timeout_s: int = 60  # Subprocess timeout
+    thinking_effort: Optional[str] = None
+
+
+PDF_GENERATOR = PdfGeneratorAgentConfig()
