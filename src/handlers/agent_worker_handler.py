@@ -19,6 +19,7 @@ from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
 from ..services.deep_research_delivery import (
     NotificationPort, deliver_deep_research,
 )
+from ..services.document_delivery_service import DocumentDeliveryService
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..infrastructure.agent_manifest import Intent
 from ..ports.media_storage_port import MediaStoragePort
@@ -46,11 +47,13 @@ class AgentWorkerHandler:
         notification_service: Optional[NotificationPort] = None,
         media_storage: Optional[MediaStoragePort] = None,
         task_queue: Optional[TaskQueue] = None,
+        doc_delivery_service: Optional[DocumentDeliveryService] = None,
     ) -> None:
         self._coordinator = coordinator
         self._notification = notification_service
         self._media_storage = media_storage
         self._task_queue = task_queue
+        self._doc_delivery_service = doc_delivery_service
 
     async def handle_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -105,6 +108,9 @@ class AgentWorkerHandler:
                 # DOCX delivery — generator runs as its own Cloud Task and delivers directly.
                 elif intent in (Intent.CREATE_DOCUMENT, Intent.GENERATE_DOCX_CODE):
                     await self._deliver_docx_result(response, context)
+                # PDF delivery — generator produces "document" DeliveryItems.
+                elif intent in (Intent.CREATE_PDF, Intent.GENERATE_PDF_CODE):
+                    await self._deliver_document_result(response, context)
 
                 return {"status": "success", "agent_id": resolved_agent_id, "intent": intent}
 
@@ -117,6 +123,8 @@ class AgentWorkerHandler:
                 if intent == Intent.EXECUTE_DEEP_RESEARCH_CLAUDE:
                     await self._notify_failure(context)
                 elif intent in (Intent.CREATE_DOCUMENT, Intent.GENERATE_DOCX_CODE):
+                    await self._notify_docx_failure(context, response.error)
+                elif intent in (Intent.CREATE_PDF, Intent.GENERATE_PDF_CODE):
                     await self._notify_docx_failure(context, response.error)
 
                 return {
@@ -180,6 +188,45 @@ class AgentWorkerHandler:
             except Exception as exc:
                 logger.error(
                     "[AgentWorkerHandler] DOCX delivery failed for user=%s: %s",
+                    user_id[:8], exc, exc_info=True,
+                )
+
+    async def _deliver_document_result(self, response: Any, context: Dict[str, Any]) -> None:
+        """Deliver document DeliveryItems (PDF/HTML) from async generator tasks."""
+        if not self._notification:
+            logger.warning("[AgentWorkerHandler] No notification service configured for document delivery")
+            return
+        if not self._doc_delivery_service:
+            logger.warning("[AgentWorkerHandler] No DocumentDeliveryService configured for document delivery")
+            return
+
+        user_id = context.get("user_id", "")
+        account_id = context.get("account_id", "")
+
+        for item in getattr(response, "delivery_items", []):
+            if item.type != "document":
+                continue
+            try:
+                content = base64.b64decode(item.data["content_b64"])
+                filename = item.data["filename"]
+                label = item.data.get("label", filename)
+                url = await self._doc_delivery_service.store(
+                    content, filename, item.data["content_type"]
+                )
+                await self._notification.notify_document_link(
+                    user_id=user_id, account_id=account_id, url=url, label=label
+                )
+                if item.data.get("file_upload"):
+                    await self._notification.notify_file_bytes(
+                        user_id=user_id,
+                        account_id=account_id,
+                        file_bytes=content,
+                        filename=filename,
+                        title=label,
+                    )
+            except Exception as exc:
+                logger.error(
+                    "[AgentWorkerHandler] Document delivery failed for user=%s: %s",
                     user_id[:8], exc, exc_info=True,
                 )
 

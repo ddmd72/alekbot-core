@@ -32,6 +32,7 @@ from ..domain.settings import ConsolidationSettings
 from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService
 from ..services.agent_fallback_service import AgentFallbackService
+from ..services.document_delivery_service import DocumentDeliveryService
 
 # Content types that require external fetch + platform upload (not Block Kit)
 _MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file", "widget"})
@@ -84,6 +85,7 @@ class ConversationHandler(ConversationHandlerPort):
         audio_service: Optional[AudioTranscriptionPort] = None,
         rich_content_service: Optional[RichContentService] = None,
         notification_service: Optional[UserNotificationService] = None,
+        doc_delivery_service: Optional[DocumentDeliveryService] = None,
         indexed_email_repo: Optional[Any] = None,
         user_repo: Optional[Any] = None,
         # ARCHITECTURE FIX: Injected callback replaces direct import of consolidation_handler.
@@ -100,6 +102,7 @@ class ConversationHandler(ConversationHandlerPort):
         self.audio_service = audio_service
         self._rich_content_service = rich_content_service
         self._notification_service = notification_service
+        self._doc_delivery_service = doc_delivery_service
         self._indexed_email_repo = indexed_email_repo
         self._user_repo = user_repo
         self._overflow_callback = overflow_callback
@@ -189,6 +192,27 @@ class ConversationHandler(ConversationHandlerPort):
                 logger.error(
                     "⚠️ [ConversationHandler] file_upload failed: %s", e, exc_info=True
                 )
+        elif item.type == "document":
+            if not self._doc_delivery_service:
+                logger.warning("⚠️ [ConversationHandler] document item but no DocumentDeliveryService configured")
+                return
+            try:
+                content = base64.b64decode(item.data["content_b64"])
+                filename = item.data["filename"]
+                label = item.data.get("label", filename)
+                url = await self._doc_delivery_service.store(
+                    content, filename, item.data["content_type"]
+                )
+                await response_channel.send_document_link(url=url, label=label, thread_id=thread_id)
+                if item.data.get("file_upload"):
+                    await response_channel.send_file(
+                        content=content,
+                        filename=filename,
+                        title=label,
+                        thread_id=thread_id,
+                    )
+            except Exception as e:
+                logger.error("⚠️ [ConversationHandler] document delivery failed: %s", e, exc_info=True)
         else:
             logger.warning("⚠️ [ConversationHandler] Unknown DeliveryItem type: %s — skipping", item.type)
 
