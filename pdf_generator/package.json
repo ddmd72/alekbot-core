@@ -1,0 +1,9 @@
+{
+  "name": "pdf-generator",
+  "version": "1.0.0",
+  "description": "Puppeteer PDF renderer for LLM-generated HTML documents",
+  "private": true,
+  "dependencies": {
+    "puppeteer": "^24.15.0"
+  }
+}

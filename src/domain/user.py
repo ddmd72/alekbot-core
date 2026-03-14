@@ -63,8 +63,10 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "postprocessing": PerformanceTier.BALANCED,
     "email_classifier": PerformanceTier.BALANCED,
     "deep_research": PerformanceTier.BALANCED,  # BALANCED → o4-mini; PERFORMANCE → o3
-    "doc_planner": PerformanceTier.BALANCED,   # JSON layout spec
-    "doc_generator": PerformanceTier.BALANCED, # JS code generation + retries
+    "doc_planner": PerformanceTier.BALANCED,     # JSON layout spec
+    "doc_generator": PerformanceTier.BALANCED,   # JS code generation + retries
+    "doc_planner_pdf": PerformanceTier.PERFORMANCE, # PDF layout spec (CSS/HTML units)
+    "pdf_generator": PerformanceTier.BALANCED,      # HTML+CSS generation → Puppeteer
 }
 
 

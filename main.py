@@ -339,10 +339,21 @@ async def main():
             coordinator=coordinator,
         )
 
-        # Wire notification + media + task_queue into AgentWorkerHandler (deferred — created before these).
+        # DocumentDeliveryService — GCS-backed, used by both async (AgentWorkerHandler)
+        # and sync (ConversationHandler) document delivery paths.
+        doc_delivery_service = None
+        if gcs_media_adapter:
+            from src.services.document_delivery_service import DocumentDeliveryService
+            doc_delivery_service = DocumentDeliveryService(storage=gcs_media_adapter)
+            logger.info("✅ DocumentDeliveryService initialized")
+        else:
+            logger.info("ℹ️ DocumentDeliveryService disabled (GCS_MEDIA_BUCKET not set)")
+
+        # Wire notification + media + task_queue + doc_delivery into AgentWorkerHandler.
         agent_worker_handler._notification = notification_service
         agent_worker_handler._media_storage = gcs_media_adapter
         agent_worker_handler._task_queue = agent_task_queue
+        agent_worker_handler._doc_delivery_service = doc_delivery_service
 
         # Anthropic client — created once, shared by ClaudeDeepResearchRunnerAgent instances.
         # The agent receives the client via constructor; does not import or instantiate the SDK.

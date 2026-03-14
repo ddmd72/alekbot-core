@@ -48,6 +48,8 @@ from ..infrastructure.agent_config import (
     TASKS as TASKS_CFG,
     DOC_PLANNER as DOC_PLANNER_CFG,
     DOC_GENERATOR as DOC_GENERATOR_CFG,
+    PDF_PLANNER as PDF_PLANNER_CFG,
+    PDF_GENERATOR as PDF_GENERATOR_CFG,
 )
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
@@ -66,7 +68,10 @@ from ..agents.tasks_agent import TasksAgent
 from ..agents.notes_agent import NotesAgent
 from ..agents.doc_planner_agent import DocPlannerAgent
 from ..agents.doc_generator_agent import DocGeneratorAgent
+from ..agents.pdf_planner_agent import PdfPlannerAgent
+from ..agents.pdf_generator_agent import PdfGeneratorAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
+from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..ports.task_queue import TaskQueue
 from ..ports.tasks_provider_port import TasksProviderPort
 from ..ports.agent_note_port import AgentNotePort
@@ -433,6 +438,36 @@ class UserAgentFactory:
             user_id=user_id,
         )
 
+        pdf_generator_context = self.context_builder.build("pdf_generator", user_profile.config)
+        pdf_generator_agent = PdfGeneratorAgent(
+            config=AgentConfig(
+                agent_id=f"pdf_generator_agent_{user_id}",
+                agent_type="pdf_generator",
+                timeout_ms=PDF_GENERATOR_CFG.timeout_ms,
+                capabilities=["pdf_code_generation"],
+                max_retries=0,
+            ),
+            execution_context=pdf_generator_context,
+            pdf_runner=NodePuppeteerRunner(),
+            prompt_builder=prompt_builder,
+            user_id=user_id,
+        )
+
+        pdf_planner_context = self.context_builder.build("doc_planner_pdf", user_profile.config)
+        pdf_planner_agent = PdfPlannerAgent(
+            config=AgentConfig(
+                agent_id=f"pdf_planner_agent_{user_id}",
+                agent_type="doc_planner_pdf",
+                timeout_ms=PDF_PLANNER_CFG.timeout_ms,
+                capabilities=["pdf_creation"],
+                max_retries=0,
+            ),
+            execution_context=pdf_planner_context,
+            coordinator=self.coordinator,
+            prompt_builder=prompt_builder,
+            user_id=user_id,
+        )
+
         deep_research_agent = None
         if self.job_registry:
             try:
@@ -504,6 +539,8 @@ class UserAgentFactory:
             compute_agent,
             doc_generator_agent,
             doc_planner_agent,
+            pdf_generator_agent,
+            pdf_planner_agent,
             consolidation_agent,
         ]
         if notes_agent:
@@ -544,6 +581,8 @@ class UserAgentFactory:
             "claude_runner_agent": claude_runner_agent,
             "doc_generator_agent": doc_generator_agent,
             "doc_planner_agent": doc_planner_agent,
+            "pdf_generator_agent": pdf_generator_agent,
+            "pdf_planner_agent": pdf_planner_agent,
             "consolidation_agent": consolidation_agent,
         }
         self._cache[user_id] = cached
@@ -598,7 +637,9 @@ class UserAgentFactory:
                             "memory_agent", "web_agent", "web_search_light_agent",
                             "email_search_agent", "maps_agent", "compute_agent",
                             "tasks_agent", "deep_research_agent", "claude_runner_agent",
-                            "doc_generator_agent", "doc_planner_agent", "consolidation_agent"):
+                            "doc_generator_agent", "doc_planner_agent",
+                            "pdf_generator_agent", "pdf_planner_agent",
+                            "consolidation_agent"):
                     agent = entry.get(key)
                     if agent and hasattr(agent, "agent_id"):
                         self.coordinator.unregister_agent(agent.agent_id)
