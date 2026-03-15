@@ -16,7 +16,7 @@ Delivery:
   DeliveryItem #2: PDF  → GCS → named link + Slack file upload
 
 Pipeline:
-  1. System prompt — loaded from PromptBuilder if available; falls back to _SYSTEM_PROMPT.
+  1. System prompt — loaded from PromptBuilder.
   2. Single LLM call — model writes complete HTML+CSS as raw text response.
   3. Strip accidental markdown fences from response.
   4. Run HTML through NodePuppeteerRunner → PDF bytes.
@@ -25,9 +25,9 @@ Pipeline:
 
 On failure (empty HTML, Puppeteer error) — AgentResponse.failure().
 
-NOTE on system prompt: _SYSTEM_PROMPT is the canonical prompt, validated via POC
-(scripts/debug/test_pdf_direct_html.py). PromptBuilder is used when available so
-per-user overrides are respected, but the agent is self-contained without Firestore.
+NOTE on system prompt: _SYSTEM_PROMPT serves as canonical reference, validated via POC
+(scripts/debug/test_pdf_direct_html.py). PromptBuilder is required; per-user overrides
+are respected via Firestore-backed token system.
 """
 
 import base64
@@ -127,7 +127,7 @@ class PdfGeneratorAgent(BaseAgent):
         config: AgentConfig,
         execution_context: AgentExecutionContext,
         pdf_runner: PuppeteerRunnerPort,
-        prompt_builder: Optional[PromptBuilderPort] = None,
+        prompt_builder: PromptBuilderPort,
         user_id: Optional[str] = None,
     ) -> None:
         super().__init__(config)
