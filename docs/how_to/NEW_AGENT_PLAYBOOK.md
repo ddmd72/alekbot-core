@@ -105,7 +105,7 @@ class FooAgent(BaseAgent):
         self,
         config: AgentConfig,
         execution_context,
-        prompt_builder: Optional[PromptBuilderPort] = None,
+        prompt_builder: PromptBuilderPort,
         user_id: Optional[str] = None,
     ) -> None:
         super().__init__(config)
@@ -133,12 +133,15 @@ class FooAgent(BaseAgent):
         start_time = time.time()
         self._on_agent_start(query)
 
-        system_prompt = ""
-        if self.prompt_builder:
-            try:
-                system_prompt = await self.prompt_builder.build_for_agent("foo", self.user_id)
-            except Exception as e:
-                logger.warning(f"FooAgent: PromptBuilder failed, using empty prompt: {e}")
+        try:
+            system_prompt = await self.prompt_builder.build_for_agent("foo", self.user_id)
+        except Exception as e:
+            self._on_agent_error(e, "prompt_builder")
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=f"PromptBuilder failed: {e}",
+            )
 
         try:
             request = LLMRequest(
@@ -243,10 +246,10 @@ Output format is handled entirely by the prompt. Use for most simple agents.
 | `response_schema: dict` | Routed to `response_json_schema` | Injected as `respond` tool **only when `tools` are also present** |
 | `response_schema: dict` + no tools | Enforces structure | **Ignored** |
 
-**Fallback prompt for failed PromptBuilder** is not a valid pattern for agents that produce
-structured JSON. Without the correct OUTPUT_FORMAT token, Claude will not produce the right
-structure. If `build_for_agent()` fails, return `AgentResponse.failure` — do not use a
-hardcoded string fallback.
+**PromptBuilder is mandatory** for all agents. If `build_for_agent()` fails, return
+`AgentResponse.failure()` — do not fall back to an empty string or a hardcoded prompt.
+Without the correct tokens (OUTPUT_FORMAT, cognitive process), the LLM will not produce
+the expected structure. Fail fast, don't degrade silently.
 
 ### Step 5 — `src/composition/user_agent_factory.py`
 
@@ -289,6 +292,7 @@ from unittest.mock import AsyncMock, MagicMock
 from src.agents.foo_agent import FooAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
 from src.ports.llm_port import LLMPort
+from src.ports.prompt_builder_port import PromptBuilderPort
 
 
 @pytest.fixture
@@ -302,11 +306,19 @@ def mock_llm():
 
 
 @pytest.fixture
-def agent(mock_llm):
+def mock_prompt_builder():
+    pb = AsyncMock(spec=PromptBuilderPort)
+    pb.build_for_agent.return_value = "You are a foo specialist."
+    return pb
+
+
+@pytest.fixture
+def agent(mock_llm, mock_prompt_builder):
     config = AgentConfig(agent_id="foo_agent_test", agent_type="foo",
                          timeout_ms=30000, capabilities=["foo"])
     ctx = MagicMock(provider=mock_llm, model_name="gemini-flash")
-    return FooAgent(config=config, execution_context=ctx)
+    return FooAgent(config=config, execution_context=ctx,
+                    prompt_builder=mock_prompt_builder)
 
 
 def make_message(query="test query"):

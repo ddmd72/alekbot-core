@@ -61,9 +61,8 @@ background process extracts new facts from the conversation → bot gets smarter
   `internal=False`, exposed directly to LLMs). One LLM call → raw HTML+CSS text response →
   NodePuppeteerRunner renders to PDF bytes → two DeliveryItem("document"): HTML (GCS link) +
   PDF (GCS link + Slack file upload). Filename extracted from `<title>` tag.
-  System prompt embedded in agent (`_SYSTEM_PROMPT`) — PromptBuilder bypassed until Firestore
-  tokens are recreated for single-pass approach (old tokens contain tool-calling instructions
-  that cause MALFORMED_FUNCTION_CALL). Style auto-selected by LLM from 12-style catalogue.
+  System prompt loaded from PromptBuilder (required). `_SYSTEM_PROMPT` retained as canonical
+  reference for POC testing. Style auto-selected by LLM from 12-style catalogue.
 - Consolidation — background "memory consolidation" (PERFORMANCE tier, runs via Cloud Tasks)
 - DeepResearch (async, provider-agnostic) — long-running research jobs. Agent calls
   `DeepResearchPort.create_interaction()` → returns ACK (job_id) immediately. Result delivered
