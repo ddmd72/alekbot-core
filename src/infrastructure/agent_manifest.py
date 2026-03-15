@@ -319,17 +319,19 @@ NOTES = AgentDescriptor(
     capability_descriptions={
         Intent.CREATE_NOTE: (
             "Create a note to remember something across turns. "
-            "payload: {\"text\": \"<≤15 words>\", "
+            "payload: {\"text\": \"<≤25 words>\", "
             "\"visible_after\": \"<ISO8601 or null>\", "
             "\"expires_after\": \"<ISO8601 or null>\"}"
         ),
         Intent.DELETE_NOTE: (
-            "Delete a note by ID. Use when you have acted on it and no longer need it. "
-            "payload: {\"note_id\": \"<id>\"}"
+            "Delete a note by its note_id. Use when you have acted on it and no longer need it. "
+            "note_id is the numeric epoch-ms ID from your working_memory_for_conversational_anchors notes context. "
+            "payload: {\"note_id\": \"<epoch-ms id from working_memory_for_conversational_anchors>\"}"
         ),
         Intent.UPDATE_NOTE: (
             "Update the text or timing of an existing note. "
-            "payload: {\"note_id\": \"<id>\", \"text\": \"<≤15 words>\", "
+            "note_id is the numeric epoch-ms ID from your working_memory_for_conversational_anchors notes context. "
+            "payload: {\"note_id\": \"<epoch-ms id from working_memory_for_conversational_anchors>\", \"text\": \"<≤25 words>\", "
             "\"visible_after\": \"<ISO8601>\", \"expires_after\": \"<ISO8601>\"}"
         ),
     },

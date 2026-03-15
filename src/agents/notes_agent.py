@@ -75,7 +75,7 @@ class NotesAgent(BaseAgent):
                     visible_after=_parse_dt(message.payload.get("visible_after")),
                     expires_after=_parse_dt(message.payload.get("expires_after")),
                 ))
-                result = {"note_id": note.note_id, "status": "created"}
+                result_str = f"note created (note_id: {note.note_id})"
 
             elif intent == Intent.DELETE_NOTE:
                 note_id = message.payload.get("note_id") or message.payload.get("query", "")
@@ -89,7 +89,7 @@ class NotesAgent(BaseAgent):
                         agent_id=self.agent_id,
                         error=f"Note {note_id!r} not found or does not belong to this user.",
                     )
-                result = {"note_id": note_id, "deleted": True}
+                result_str = f"note deleted (note_id: {note_id})"
 
             elif intent == Intent.UPDATE_NOTE:
                 note_id = message.payload.get("note_id") or message.payload.get("query", "")
@@ -100,7 +100,7 @@ class NotesAgent(BaseAgent):
                     visible_after=_parse_dt(message.payload.get("visible_after")),
                     expires_after=_parse_dt(message.payload.get("expires_after")),
                 ))
-                result = {"note_id": note.note_id, "status": "updated"}
+                result_str = f"note updated (note_id: {note.note_id})"
 
             else:
                 error_msg = f"Unknown intent: {intent}"
@@ -113,8 +113,10 @@ class NotesAgent(BaseAgent):
 
             active_count = len(await self._notes.list_active_notes(user_id, as_of=datetime.now(timezone.utc)))
             if active_count > _NOTES_SOFT_THRESHOLD:
-                result["alert"] = _NOTES_ALERT.format(
-                    count=active_count, threshold=_NOTES_SOFT_THRESHOLD
+                result_str += (
+                    f"\n\nALERT: {active_count} active notes in working memory "
+                    f"(soft limit: {_NOTES_SOFT_THRESHOLD}). "
+                    f"Delete duplicates or outdated entries."
                 )
 
         except ValueError as exc:
@@ -125,11 +127,10 @@ class NotesAgent(BaseAgent):
                 error=str(exc),
             )
 
-        result_str = str(result)
         self._on_agent_success(len(result_str), 0, result_str)
         return AgentResponse.success(
             task_id=message.task_id,
             agent_id=self.agent_id,
-            result=result,
+            result=result_str,
             confidence=1.0,
         )

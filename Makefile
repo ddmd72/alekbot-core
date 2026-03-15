@@ -88,7 +88,7 @@ help: ## Show this help message
 	@echo ""
 	@echo "📊 MONITORING & LOGS:"
 	@echo "  make logs            View production logs (last 30 entries)"
-	@echo "  make logs-dev        View development logs (last 150 entries)"
+	@echo "  make logs-dev [K=300]  View development logs (last K entries)"
 	@echo "  make logs-tail       Live tail production logs"
 	@echo "  make logs-perf       Live tail production perf logs"
 	@echo "  make logs-dev-tail   Live tail development logs"
@@ -262,11 +262,11 @@ logs: ## View production logs (last 30 entries)
 	  --format="value(textPayload)" \
 	  --project=$(PROJECT_ID)
 
-logs-dev: ## View development logs (last 150 entries)
-	@echo "📋 Development logs (last 150 entries):"
+logs-dev: ## View development logs (last K entries, default K=150)
+	@echo "📋 Development logs (last $(K) entries):"
 	@gcloud run services logs read $(SERVICE_NAME_DEV) \
 	  --region=$(REGION) \
-	  --limit=150 \
+	  --limit=$(K) \
 	  --format="value(textPayload)"
 
 logs-tail: ## Live tail production logs
