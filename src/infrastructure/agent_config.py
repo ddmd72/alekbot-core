@@ -111,9 +111,9 @@ class SmartAgentConfig:
     max_agent_retries: int = 2
     retry_backoff_seconds: float = 1.0
     delegation_temperature: float = 0.8
-    # 300 s: matches Quick ceiling; Cloud Run allows up to 3600 s
-    timeout_ms: int = 300_000
-    # No retry: a retry doubles wall time to ~5 min → terrible UX
+    # 120 s: max acceptable UX wait; fallback to Quick kicks in after timeout
+    timeout_ms: int = 120_000
+    # No retry: a retry doubles wall time → terrible UX
     config_max_retries: int = 0
 
 
