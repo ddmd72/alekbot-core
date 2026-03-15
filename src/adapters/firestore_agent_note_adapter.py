@@ -5,8 +5,8 @@ Collection: {env_prefix}orchestrator_notes
 Document ID: epoch milliseconds string (time-sortable, collision window = 1ms)
 
 Constraints enforced here (not at port boundary):
-  - MAX_WORDS_PER_NOTE = 15
-  - MAX_NOTES_PER_USER = 10
+  - MAX_WORDS_PER_NOTE = 25
+  - MAX_NOTES_PER_USER = 30
 """
 
 import uuid
@@ -21,7 +21,7 @@ from ..utils.logger import logger
 
 class FirestoreAgentNoteAdapter(AgentNotePort):
 
-    MAX_NOTES_PER_USER = 20
+    MAX_NOTES_PER_USER = 30
     MAX_WORDS_PER_NOTE = 25
 
     def __init__(self, db_client, env_config: EnvironmentConfig):

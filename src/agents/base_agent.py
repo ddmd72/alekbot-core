@@ -592,28 +592,10 @@ class BaseAgent(ABC):
         turn:          0-based turn index.
         model:         model name for metadata.
         """
-        debug = get_debug_logger()
-        if not debug.enabled:
-            return
-        system_str = "\n\n---\n\n".join(b.get("text", "") for b in system_blocks)
-        meta: dict = {"turn": turn}
-        if model:
-            meta["model"] = model
-        debug.log_prompt(
-            agent_name=self.agent_type or self.agent_id,
-            prompt=user_content,
-            system_instruction=system_str or None,
-            metadata=meta,
-        )
-        response_str = "\n\n".join(response_texts)
-        debug.log_response(
-            agent_name=self.agent_type or self.agent_id,
-            response=json.dumps(
-                {"text": response_str, "tokens": tokens},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            metadata={"turn": turn} if turn else None,
+        response_chars = sum(len(t) for t in response_texts)
+        logger.info(
+            "[debug_raw_turn] agent=%s model=%s turn=%d tokens=%d response_chars=%d",
+            self.agent_type or self.agent_id, model, turn, tokens, response_chars,
         )
 
     def _set_execution_context(self, context: "AgentExecutionContext") -> None:

@@ -35,6 +35,14 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+_NOTES_SOFT_THRESHOLD = 20
+_NOTES_ALERT = (
+    "ALERT: You currently have {count} notes in working memory "
+    "(soft limit: {threshold}). Review your notes and delete duplicates or "
+    "insignificant/outdated entries to stay within the recommended limit."
+)
+
+
 class NotesAgent(BaseAgent):
     """
     Orchestrator notepad agent — no LLM.
@@ -101,6 +109,12 @@ class NotesAgent(BaseAgent):
                     task_id=message.task_id,
                     agent_id=self.agent_id,
                     error=error_msg,
+                )
+
+            active_count = len(await self._notes.list_active_notes(user_id, as_of=datetime.now(timezone.utc)))
+            if active_count > _NOTES_SOFT_THRESHOLD:
+                result["alert"] = _NOTES_ALERT.format(
+                    count=active_count, threshold=_NOTES_SOFT_THRESHOLD
                 )
 
         except ValueError as exc:

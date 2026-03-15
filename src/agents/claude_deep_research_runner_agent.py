@@ -162,7 +162,6 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
         self._on_agent_success(
             char_count=len(result_text),
             token_count=total_tokens,
-            output_text=result_text[:500],
         )
 
         return AgentResponse.success(
@@ -359,13 +358,14 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
 
             accumulated_content.extend(response.content)
 
-            block_summary = [
-                f"{getattr(b, 'type', '?')}:{getattr(b, 'name', '') or ''}"
-                for b in response.content
-            ]
+            block_counts: dict[str, int] = {}
+            for b in response.content:
+                block_counts[getattr(b, "type", "?")] = block_counts.get(getattr(b, "type", "?"), 0) + 1
+            block_summary = " ".join(f"{t}:{n}" for t, n in block_counts.items())
             logger.info(
-                "[DeepResearchRunner] stop_reason=%s pause#=%d tokens=%d container=%s new_blocks=%s",
-                response.stop_reason, pause_count, total_tokens, container_id, block_summary,
+                "[DeepResearchRunner] stop_reason=%s pause#=%d tokens=%d container=%s blocks=%d (%s)",
+                response.stop_reason, pause_count, total_tokens, container_id,
+                len(response.content), block_summary,
             )
 
             if response.stop_reason == "end_turn":
