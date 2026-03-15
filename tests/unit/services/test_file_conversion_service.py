@@ -275,19 +275,3 @@ async def test_convert_markitdown_failure_returns_alert(tmp_path):
     assert result.startswith("[System:")
     assert "bad.xlsx" in result
 
-
-# =============================================================================
-# convert_file_to_text — truncation
-# =============================================================================
-
-@pytest.mark.asyncio
-async def test_convert_long_text_gets_truncated(tmp_path):
-    long_content = "W" * (MAX_CONVERTED_CHARS + 5000)
-    text_file = tmp_path / "huge.txt"
-    text_file.write_text(long_content, encoding="utf-8")
-
-    with patch("os.path.getsize", return_value=len(long_content)):
-        result = await convert_file_to_text(str(text_file), "huge.txt", "text/plain")
-
-    assert "truncated" in result.lower() or "omitted" in result.lower()
-    assert "[File: huge.txt]" in result

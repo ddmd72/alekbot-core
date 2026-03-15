@@ -182,5 +182,4 @@ async def convert_file_to_text(
         logger.warning(f"[FileConversion] Empty output for '{filename}'")
         return _conversion_alert(filename, mime_type)
 
-    text = truncate_with_alert(text, filename)
     return f"[File: {filename}]\n{text}\n[/File: {filename}]"
