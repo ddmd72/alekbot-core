@@ -562,6 +562,7 @@ while len(history) > self.max_history_length:
 4.4 (composition)    — after 4.1, 4.2 (fewer imports to touch)
 4.5 (dead code)      — any time
 4.6 (while overflow) — independent
+4.7 (prompt_builder) — independent
 ```
 
 ---
@@ -589,9 +590,44 @@ while len(history) > self.max_history_length:
 | 4.4 composition | user_agent_factory.py | 2-3d | P2 | after 4.1,4.2 |
 | 4.5 dead code | user_agent_factory.py:450-545 | 5 min | P2 | ✅ |
 | 4.6 while overflow | session_store.py:194 | 1h | P2 | ✅ |
+| 4.7 prompt_builder Optional→required | 12 agent files | 1h | P2 | ✅ |
+
+---
+
+### Task 4.7 — `prompt_builder: Optional[PromptBuilderPort]` → required in all agents
+
+**Files:** 12 agents with `Optional[PromptBuilderPort] = None` in constructor:
+- `src/agents/core/router_agent.py` (2 places)
+- `src/agents/doc_generator_agent.py`
+- `src/agents/doc_planner_agent.py`
+- `src/agents/email_classification_agent.py`
+- `src/agents/web_search_light_agent.py`
+- `src/agents/compute_agent.py`
+- `src/agents/web_search_agent.py`
+- `src/agents/deep_research_agent.py`
+- `src/agents/consolidation_agent.py`
+- `src/agents/memory_search_agent.py`
+
+**Problem:** PromptBuilder is always injected by `UserAgentFactory` — `None` is never passed
+in production. But the `Optional` type signature implies it is acceptable, and some agents
+have fallback code (`if self.prompt_builder: ...`) that degrades to an empty prompt silently.
+This masks misconfiguration instead of failing fast. `PdfGeneratorAgent` was already fixed
+(2026-03-15) — the rest should follow.
+
+**Fix per agent:**
+1. Change `prompt_builder: Optional[PromptBuilderPort] = None` → `prompt_builder: PromptBuilderPort`
+2. Remove `if self.prompt_builder:` guard — call unconditionally
+3. On `build_for_agent()` failure → `AgentResponse.failure()`, not empty string fallback
+4. Update tests if they instantiate without prompt_builder (add mock)
+
+**Also update:**
+- `docs/how_to/NEW_AGENT_PLAYBOOK.md` — template uses `Optional`, change to required
+- RFCs that reference the old pattern (informational, not blocking)
+
+**Verification:** `make test-unit` — all tests must pass after removing Optional.
 
 ---
 
 > **Audit source:** `docs/11_quality/audit_2026_02/`
-> **Last updated:** 2026-02-19
+> **Last updated:** 2026-03-15
 > **Status:** Mark [DONE] as tasks are completed
