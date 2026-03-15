@@ -66,8 +66,6 @@ class Intent:
     GENERATE_DOCX_CODE = "generate_docx_code"
     # PDF creation — produces HTML + PDF delivered via GCS + Slack file upload
     CREATE_PDF = "create_pdf"
-    # Internal: LLM writes HTML+CSS, Puppeteer renders PDF. Called by PdfPlannerAgent only.
-    GENERATE_PDF_CODE = "generate_pdf_code"
 
 
 # ---------------------------------------------------------------------------
@@ -365,9 +363,9 @@ DOC_GENERATOR = AgentDescriptor(
     dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
 )
 
-PDF_PLANNER = AgentDescriptor(
-    agent_id="pdf_planner_agent",
-    agent_type="doc_planner_pdf",
+PDF_GENERATOR = AgentDescriptor(
+    agent_id="pdf_generator_agent",
+    agent_type="pdf_generator",
     capabilities={Intent.CREATE_PDF: ExecutionMode.ASYNC},
     description="Creates professional PDF documents from natural language requests",
     capability_descriptions={
@@ -380,16 +378,6 @@ PDF_PLANNER = AgentDescriptor(
         ),
     },
     internal=False,
-    dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
-)
-
-# internal=True: never shown to LLMs. Called only by PdfPlannerAgent via coordinator.
-PDF_GENERATOR = AgentDescriptor(
-    agent_id="pdf_generator_agent",
-    agent_type="pdf_generator",
-    capabilities={Intent.GENERATE_PDF_CODE: ExecutionMode.ASYNC},
-    description="LLM-driven HTML+CSS generation, Puppeteer PDF rendering",
-    internal=True,
     dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
 )
 
@@ -406,6 +394,5 @@ ALL_DESCRIPTORS = [
     NOTES,
     DOC_PLANNER,
     DOC_GENERATOR,
-    PDF_PLANNER,
     PDF_GENERATOR,
 ]

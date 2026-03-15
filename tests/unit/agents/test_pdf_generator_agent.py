@@ -1,33 +1,35 @@
 """
-Unit tests for PdfGeneratorAgent.
+Unit tests for PdfGeneratorAgent (single-LLM-call pipeline).
 
 Covers:
 - can_handle: QUERY/DELEGATE with query → True; empty query/wrong intent → False
-- execute success: two delivery_items (HTML + PDF), correct types/content_types/filenames/labels
+- execute success: single LLM call, two delivery_items (HTML + PDF)
 - execute success: HTML file_upload=False, PDF file_upload=True
 - execute success: content_b64 decodes to original bytes
-- execute success: filename derived from doc_spec.filename field
-- execute success: filename fallback to document_type when filename absent
-- execute success: display_name from doc_spec.title; fallback to document_type
-- execute retry: PuppeteerRunnerError on turn 1 → retry → succeeds on turn 2
-- execute: LLM finishes without tool call → failure (no captured PDF yet)
-- execute: MAX_TURNS exhausted → failure
+- execute success: filename and display_name extracted from <title> tag
+- execute success: fallback filename "document" when <title> absent
+- execute success: markdown fences stripped from LLM HTML response
+- execute: LLM returns empty string → failure
+- execute: Puppeteer error → failure
 - execute: empty query → failure
-- execute: prompt builder failure → failure
-- execute: unknown tool name → error tool_response appended, loop continues
-- execute: empty html_code arg → error tool_response appended
-- LLM call: tools list includes generate_html; temperature and max_tokens match config
-- _extract_filename: present field, sanitization, document_type fallback, empty spec
+- LLM call: no tools, correct temperature/max_tokens/model_name
+- _strip_markdown_fences: various fence patterns
+- _extract_filename_from_html: title present, absent, special chars
 """
+
 import base64
-import json
-from unittest.mock import AsyncMock, patch
+import re
+from unittest.mock import AsyncMock
 
 import pytest
 
-from src.agents.pdf_generator_agent import PdfGeneratorAgent, _extract_filename
+from src.agents.pdf_generator_agent import (
+    PdfGeneratorAgent,
+    _extract_filename_from_html,
+    _strip_markdown_fences,
+)
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.llm import LLMResponse, ToolCall
+from src.domain.llm import LLMResponse
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import (
     AgentExecutionContext,
@@ -44,17 +46,9 @@ from src.ports.puppeteer_runner_port import PuppeteerRunnerError, PuppeteerRunne
 # ============================================================================
 
 _FAKE_PDF = b"%PDF-1.4 fake-pdf-content"
-_FAKE_HTML = "<html><body><h1>Report</h1></body></html>"
-
-_VALID_SPEC = {
-    "status": "ready",
-    "task_summary": "Q1 report",
-    "doc_spec": {
-        "document_type": "report",
-        "title": "Q1 Sales Report",
-        "filename": "q1_sales_report",
-    },
-}
+_FAKE_HTML = "<!DOCTYPE html><html><head><title>Q1 Sales Report</title></head><body><h1>Report</h1></body></html>"
+_FAKE_HTML_NO_TITLE = "<!DOCTYPE html><html><body><h1>Report</h1></body></html>"
+_QUERY = "Create a Q1 sales report PDF for Acme Corp"
 
 
 def _make_execution_context(mock_llm) -> AgentExecutionContext:
@@ -68,30 +62,21 @@ def _make_execution_context(mock_llm) -> AgentExecutionContext:
 
 
 def _make_message(
-    query: str = None,
+    query: str = _QUERY,
     intent: AgentIntent = AgentIntent.DELEGATE,
 ) -> AgentMessage:
-    if query is None:
-        query = json.dumps(_VALID_SPEC)
     return AgentMessage(
         intent=intent,
         payload={"query": query},
-        sender="pdf_planner_agent",
+        sender="smart_response_agent",
         recipient="pdf_generator_agent",
-        task_id="task_gen_1",
+        task_id="task_pdf_1",
         context={"user_id": "user123", "account_id": "acc1"},
     )
 
 
-def _tool_call_response(html_code: str = _FAKE_HTML) -> LLMResponse:
-    return LLMResponse(
-        text=None,
-        tool_calls=[ToolCall(name="generate_html", args={"html_code": html_code})],
-    )
-
-
-def _text_response(text: str = "Done") -> LLMResponse:
-    return LLMResponse(text=text, tool_calls=[])
+def _html_response(html: str = _FAKE_HTML) -> LLMResponse:
+    return LLMResponse(text=html, tool_calls=[])
 
 
 def _get_llm_request(mock_llm, call_index: int = 0) -> LLMRequest:
@@ -108,7 +93,7 @@ def _get_llm_request(mock_llm, call_index: int = 0) -> LLMRequest:
 @pytest.fixture
 def mock_llm():
     m = AsyncMock(spec=LLMPort)
-    m.generate_content.return_value = _tool_call_response()
+    m.generate_content.return_value = _html_response()
     return m
 
 
@@ -213,17 +198,14 @@ class TestExecuteSuccess:
         decoded = base64.b64decode(pdf_b64)
         assert decoded == _FAKE_PDF
 
-    async def test_html_filename_uses_doc_spec_filename(self, agent):
+    async def test_filename_extracted_from_title_tag(self, agent):
         response = await agent.execute(_make_message())
-        filename = response.delivery_items[0].data["filename"]
-        assert filename == "q1_sales_report.html"
+        html_filename = response.delivery_items[0].data["filename"]
+        pdf_filename = response.delivery_items[1].data["filename"]
+        assert html_filename == "q1_sales_report.html"
+        assert pdf_filename == "q1_sales_report.pdf"
 
-    async def test_pdf_filename_uses_doc_spec_filename(self, agent):
-        response = await agent.execute(_make_message())
-        filename = response.delivery_items[1].data["filename"]
-        assert filename == "q1_sales_report.pdf"
-
-    async def test_label_includes_display_name_from_title(self, agent):
+    async def test_label_uses_raw_title(self, agent):
         response = await agent.execute(_make_message())
         pdf_label = response.delivery_items[1].data["label"]
         assert "Q1 Sales Report" in pdf_label
@@ -246,82 +228,34 @@ class TestExecuteSuccess:
         assert isinstance(response.metadata["duration_ms"], int)
 
     async def test_delegate_intent_succeeds(self, agent):
-        # Regression: AgentWorkerHandler dispatches Cloud Tasks with DELEGATE intent.
         response = await agent.execute(_make_message(intent=AgentIntent.DELEGATE))
         assert response.status == AgentStatus.SUCCESS
 
-    async def test_runner_receives_html_from_tool_call(self, agent, mock_runner):
+    async def test_single_llm_call_only(self, agent, mock_llm):
+        await agent.execute(_make_message())
+        assert mock_llm.generate_content.call_count == 1
+
+    async def test_runner_receives_html_from_llm(self, agent, mock_runner):
         await agent.execute(_make_message())
         call_args = mock_runner.run.call_args
         html_arg = call_args.args[0] if call_args.args else call_args.kwargs.get("html_code")
         assert html_arg == _FAKE_HTML
 
-    async def test_runner_called_once_on_first_success(self, agent, mock_runner):
+    async def test_runner_called_once(self, agent, mock_runner):
         await agent.execute(_make_message())
         mock_runner.run.assert_called_once()
 
 
 # ============================================================================
-# execute — filename fallback
+# execute — fallback filename when no <title>
 # ============================================================================
 
 class TestFilenameFallback:
 
-    async def test_filename_from_document_type_when_no_filename_field(
+    async def test_fallback_filename_document_when_no_title(
         self, mock_llm, mock_prompt_builder, mock_runner
     ):
-        spec = {
-            "status": "ready",
-            "task_summary": "Report",
-            "doc_spec": {"document_type": "proposal", "title": "My Proposal"},
-        }
-        config = AgentConfig(agent_id="pdf_gen", agent_type="pdf_generator")
-        agent = PdfGeneratorAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            pdf_runner=mock_runner,
-            prompt_builder=mock_prompt_builder,
-            user_id="user123",
-        )
-        response = await agent.execute(_make_message(query=json.dumps(spec)))
-        assert response.status == AgentStatus.SUCCESS
-        pdf_filename = response.delivery_items[1].data["filename"]
-        assert pdf_filename == "proposal.pdf"
-
-    async def test_display_name_from_document_type_when_no_title(
-        self, mock_llm, mock_prompt_builder, mock_runner
-    ):
-        spec = {
-            "status": "ready",
-            "task_summary": "Report",
-            "doc_spec": {"document_type": "memo", "filename": "my_memo"},
-        }
-        config = AgentConfig(agent_id="pdf_gen", agent_type="pdf_generator")
-        agent = PdfGeneratorAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            pdf_runner=mock_runner,
-            prompt_builder=mock_prompt_builder,
-            user_id="user123",
-        )
-        response = await agent.execute(_make_message(query=json.dumps(spec)))
-        assert response.status == AgentStatus.SUCCESS
-        pdf_label = response.delivery_items[1].data["label"]
-        assert "Memo" in pdf_label or "memo" in pdf_label
-
-
-# ============================================================================
-# execute — retry on Puppeteer error
-# ============================================================================
-
-class TestRetry:
-
-    async def test_retry_succeeds_on_second_turn(self, mock_llm, mock_prompt_builder, mock_runner):
-        # Turn 1: runner fails. Turn 2: runner succeeds.
-        mock_runner.run.side_effect = [
-            PuppeteerRunnerError("Puppeteer crash turn 1"),
-            _FAKE_PDF,
-        ]
+        mock_llm.generate_content.return_value = _html_response(_FAKE_HTML_NO_TITLE)
         config = AgentConfig(agent_id="pdf_gen", agent_type="pdf_generator")
         agent = PdfGeneratorAgent(
             config=config,
@@ -332,30 +266,14 @@ class TestRetry:
         )
         response = await agent.execute(_make_message())
         assert response.status == AgentStatus.SUCCESS
-        assert len(response.delivery_items) == 2
+        assert response.delivery_items[1].data["filename"] == "document.pdf"
+        assert response.delivery_items[1].data["label"] == "Document.pdf"
 
-    async def test_retry_sends_error_back_to_llm(self, mock_llm, mock_prompt_builder, mock_runner):
-        # After runner failure, agent appends error tool_response to messages and calls LLM again.
-        mock_runner.run.side_effect = [
-            PuppeteerRunnerError("render failed"),
-            _FAKE_PDF,
-        ]
-        config = AgentConfig(agent_id="pdf_gen", agent_type="pdf_generator")
-        agent = PdfGeneratorAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            pdf_runner=mock_runner,
-            prompt_builder=mock_prompt_builder,
-            user_id="user123",
-        )
-        await agent.execute(_make_message())
-        assert mock_llm.generate_content.call_count == 2
-
-    async def test_max_turns_exhausted_returns_failure(
+    async def test_title_with_special_chars_sanitized_in_filename(
         self, mock_llm, mock_prompt_builder, mock_runner
     ):
-        # Runner always fails → all MAX_TURNS exhausted.
-        mock_runner.run.side_effect = PuppeteerRunnerError("always fails")
+        html = "<!DOCTYPE html><html><head><title>Report: Q1 2025 (Draft)</title></head></html>"
+        mock_llm.generate_content.return_value = _html_response(html)
         config = AgentConfig(agent_id="pdf_gen", agent_type="pdf_generator")
         agent = PdfGeneratorAgent(
             config=config,
@@ -365,7 +283,40 @@ class TestRetry:
             user_id="user123",
         )
         response = await agent.execute(_make_message())
-        assert response.status == AgentStatus.FAILED
+        assert response.status == AgentStatus.SUCCESS
+        filename = response.delivery_items[1].data["filename"]
+        # No spaces, colons, parens in filename
+        assert " " not in filename
+        assert ":" not in filename
+        assert "(" not in filename
+        assert filename.endswith(".pdf")
+
+
+# ============================================================================
+# execute — markdown fence stripping
+# ============================================================================
+
+class TestMarkdownFenceStripping:
+
+    async def test_fenced_html_is_rendered_correctly(
+        self, mock_llm, mock_prompt_builder, mock_runner
+    ):
+        fenced = f"```html\n{_FAKE_HTML}\n```"
+        mock_llm.generate_content.return_value = _html_response(fenced)
+        config = AgentConfig(agent_id="pdf_gen", agent_type="pdf_generator")
+        agent = PdfGeneratorAgent(
+            config=config,
+            execution_context=_make_execution_context(mock_llm),
+            pdf_runner=mock_runner,
+            prompt_builder=mock_prompt_builder,
+            user_id="user123",
+        )
+        response = await agent.execute(_make_message())
+        assert response.status == AgentStatus.SUCCESS
+        # Puppeteer received clean HTML, not fenced
+        call_args = mock_runner.run.call_args
+        html_arg = call_args.args[0] if call_args.args else call_args.kwargs.get("html_code")
+        assert "```" not in html_arg
 
 
 # ============================================================================
@@ -378,80 +329,25 @@ class TestExecuteFailure:
         response = await agent.execute(_make_message(query=""))
         assert response.status == AgentStatus.FAILED
 
-    async def test_prompt_builder_failure_returns_failure(self, agent, mock_prompt_builder):
-        mock_prompt_builder.build_for_agent.side_effect = RuntimeError("Firestore down")
-        response = await agent.execute(_make_message())
-        assert response.status == AgentStatus.FAILED
-        assert "system prompt" in response.error
-
-    async def test_no_prompt_builder_returns_failure(self, mock_llm, mock_runner):
-        config = AgentConfig(agent_id="pdf_gen", agent_type="pdf_generator")
-        agent_no_pb = PdfGeneratorAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            pdf_runner=mock_runner,
-            prompt_builder=None,
-            user_id="user123",
-        )
-        response = await agent_no_pb.execute(_make_message())
-        assert response.status == AgentStatus.FAILED
-
-    async def test_llm_no_tool_call_returns_failure(self, agent, mock_llm):
-        # LLM returns text instead of tool call — failure (no captured PDF yet).
-        mock_llm.generate_content.return_value = _text_response("I cannot do this.")
+    async def test_llm_empty_response_returns_failure(self, agent, mock_llm):
+        mock_llm.generate_content.return_value = LLMResponse(text="", tool_calls=[])
         response = await agent.execute(_make_message())
         assert response.status == AgentStatus.FAILED
 
-    async def test_llm_no_tool_call_error_message_informative(self, agent, mock_llm):
-        mock_llm.generate_content.return_value = _text_response("Done.")
+    async def test_llm_whitespace_only_response_returns_failure(self, agent, mock_llm):
+        mock_llm.generate_content.return_value = LLMResponse(text="   \n  ", tool_calls=[])
+        response = await agent.execute(_make_message())
+        assert response.status == AgentStatus.FAILED
+
+    async def test_puppeteer_error_returns_failure(self, agent, mock_runner):
+        mock_runner.run.side_effect = PuppeteerRunnerError("Puppeteer crashed")
+        response = await agent.execute(_make_message())
+        assert response.status == AgentStatus.FAILED
+
+    async def test_puppeteer_error_message_in_response(self, agent, mock_runner):
+        mock_runner.run.side_effect = PuppeteerRunnerError("render timeout")
         response = await agent.execute(_make_message())
         assert response.error and len(response.error) > 0
-
-    async def test_unknown_tool_name_appends_error_to_messages(
-        self, mock_llm, mock_prompt_builder, mock_runner
-    ):
-        # Turn 1: LLM calls unknown tool → error response appended.
-        # Turn 2: LLM calls generate_html → success.
-        mock_llm.generate_content.side_effect = [
-            LLMResponse(
-                text=None,
-                tool_calls=[ToolCall(name="unknown_tool", args={})],
-            ),
-            _tool_call_response(),
-        ]
-        config = AgentConfig(agent_id="pdf_gen", agent_type="pdf_generator")
-        agent = PdfGeneratorAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            pdf_runner=mock_runner,
-            prompt_builder=mock_prompt_builder,
-            user_id="user123",
-        )
-        response = await agent.execute(_make_message())
-        # Second turn should succeed
-        assert response.status == AgentStatus.SUCCESS
-
-    async def test_empty_html_code_appends_error_to_messages(
-        self, mock_llm, mock_prompt_builder, mock_runner
-    ):
-        # Turn 1: tool call with empty html_code → error. Turn 2: valid html_code → success.
-        mock_llm.generate_content.side_effect = [
-            LLMResponse(
-                text=None,
-                tool_calls=[ToolCall(name="generate_html", args={"html_code": ""})],
-            ),
-            _tool_call_response(),
-        ]
-        config = AgentConfig(agent_id="pdf_gen", agent_type="pdf_generator")
-        agent = PdfGeneratorAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            pdf_runner=mock_runner,
-            prompt_builder=mock_prompt_builder,
-            user_id="user123",
-        )
-        response = await agent.execute(_make_message())
-        assert response.status == AgentStatus.SUCCESS
 
 
 # ============================================================================
@@ -460,11 +356,15 @@ class TestExecuteFailure:
 
 class TestLLMCall:
 
-    async def test_tools_include_generate_html(self, agent, mock_llm):
+    async def test_no_tools_in_request(self, agent, mock_llm):
         await agent.execute(_make_message())
         req = _get_llm_request(mock_llm)
-        tool_names = [t["name"] for t in (req.tools or [])]
-        assert "generate_html" in tool_names
+        assert not req.tools
+
+    async def test_no_response_mime_type(self, agent, mock_llm):
+        await agent.execute(_make_message())
+        req = _get_llm_request(mock_llm)
+        assert not req.response_mime_type
 
     async def test_temperature_matches_config(self, agent, mock_llm):
         from src.infrastructure.agent_config import PDF_GENERATOR
@@ -483,71 +383,86 @@ class TestLLMCall:
         req = _get_llm_request(mock_llm)
         assert req.model_name == "gemini-flash-test"
 
-    async def test_system_prompt_from_builder(self, agent, mock_llm):
+    async def test_system_prompt_from_builder_when_available(self, agent, mock_llm):
         await agent.execute(_make_message())
         req = _get_llm_request(mock_llm)
         assert req.system_instruction == "You are a PDF Generator..."
 
-    async def test_spec_query_included_in_user_message(self, agent, mock_llm):
-        spec_json = json.dumps(_VALID_SPEC)
-        await agent.execute(_make_message(query=spec_json))
+    async def test_query_included_in_user_message(self, agent, mock_llm):
+        await agent.execute(_make_message(query=_QUERY))
         req = _get_llm_request(mock_llm)
         user_text = req.messages[0].parts[0].text
-        assert "doc_spec" in user_text
-
-    async def test_no_response_mime_type_set(self, agent, mock_llm):
-        # Generator uses tool call, not JSON mode — response_mime_type must NOT be set.
-        await agent.execute(_make_message())
-        req = _get_llm_request(mock_llm)
-        assert not req.response_mime_type
+        assert _QUERY in user_text
 
 
 # ============================================================================
-# _extract_filename (unit)
+# _strip_markdown_fences (unit)
 # ============================================================================
 
-class TestExtractFilename:
+class TestStripMarkdownFences:
 
-    def test_uses_filename_field_when_present(self):
-        spec = {"filename": "q1_sales_report", "document_type": "report"}
-        assert _extract_filename(spec) == "q1_sales_report"
+    def test_no_fences_unchanged(self):
+        html = "<!DOCTYPE html><html></html>"
+        assert _strip_markdown_fences(html) == html
 
-    def test_sanitizes_spaces_to_underscores(self):
-        spec = {"filename": "my report doc"}
-        result = _extract_filename(spec)
-        assert " " not in result
-        assert "_" in result
+    def test_strips_triple_backtick_html(self):
+        html = "<!DOCTYPE html><html></html>"
+        fenced = f"```html\n{html}\n```"
+        assert _strip_markdown_fences(fenced) == html
 
-    def test_sanitizes_special_chars(self):
-        spec = {"filename": "report@2026!final"}
-        result = _extract_filename(spec)
-        for ch in "@!":
-            assert ch not in result
+    def test_strips_triple_backtick_no_lang(self):
+        html = "<!DOCTYPE html><html></html>"
+        fenced = f"```\n{html}\n```"
+        result = _strip_markdown_fences(fenced)
+        assert "```" not in result
 
-    def test_allows_alphanumeric_underscore_hyphen(self):
-        spec = {"filename": "report_2026-final"}
-        assert _extract_filename(spec) == "report_2026-final"
+    def test_returns_stripped_content(self):
+        html = "<html><body>content</body></html>"
+        result = _strip_markdown_fences(f"```html\n{html}\n```")
+        assert "html>" in result
 
-    def test_falls_back_to_document_type_when_filename_absent(self):
-        spec = {"document_type": "proposal"}
-        assert _extract_filename(spec) == "proposal"
 
-    def test_falls_back_to_document_type_when_filename_empty(self):
-        spec = {"filename": "", "document_type": "memo"}
-        assert _extract_filename(spec) == "memo"
+# ============================================================================
+# _extract_filename_from_html (unit)
+# ============================================================================
 
-    def test_document_type_spaces_replaced_with_underscores(self):
-        spec = {"document_type": "business plan"}
-        assert _extract_filename(spec) == "business_plan"
+class TestExtractFilenameFromHtml:
 
-    def test_document_type_slashes_replaced(self):
-        spec = {"document_type": "report/summary"}
-        result = _extract_filename(spec)
-        assert "/" not in result
+    def test_extracts_title_as_display_name(self):
+        html = "<html><head><title>Q1 Report</title></head></html>"
+        _, display_name = _extract_filename_from_html(html)
+        assert display_name == "Q1 Report"
 
-    def test_empty_spec_returns_document(self):
-        assert _extract_filename({}) == "document"
+    def test_sanitizes_title_for_filename(self):
+        html = "<html><head><title>Q1 Report: Final</title></head></html>"
+        base_filename, _ = _extract_filename_from_html(html)
+        assert " " not in base_filename
+        assert ":" not in base_filename
 
-    def test_filename_field_takes_priority_over_document_type(self):
-        spec = {"filename": "custom_name", "document_type": "report"}
-        assert _extract_filename(spec) == "custom_name"
+    def test_filename_is_lowercase(self):
+        html = "<html><head><title>My Report</title></head></html>"
+        base_filename, _ = _extract_filename_from_html(html)
+        assert base_filename == base_filename.lower()
+
+    def test_fallback_when_no_title(self):
+        html = "<html><body>no title here</body></html>"
+        base_filename, display_name = _extract_filename_from_html(html)
+        assert base_filename == "document"
+        assert display_name == "Document"
+
+    def test_fallback_when_empty_title(self):
+        html = "<html><head><title></title></head></html>"
+        base_filename, display_name = _extract_filename_from_html(html)
+        assert base_filename == "document"
+        assert display_name == "Document"
+
+    def test_alphanumeric_and_hyphens_preserved(self):
+        html = "<html><head><title>report-2025_final</title></head></html>"
+        base_filename, _ = _extract_filename_from_html(html)
+        assert "report" in base_filename
+        assert "2025" in base_filename
+
+    def test_no_consecutive_underscores(self):
+        html = "<html><head><title>A: B: C</title></head></html>"
+        base_filename, _ = _extract_filename_from_html(html)
+        assert "__" not in base_filename

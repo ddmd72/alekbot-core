@@ -42,6 +42,10 @@ ENABLE_GROUNDING_ATTRIBUTION: bool = os.getenv(
     "ENABLE_GROUNDING_ATTRIBUTION", "false"
 ).lower() == "true"
 
+DEEP_RESEARCH_SECOND_PASS: bool = os.getenv(
+    "DEEP_RESEARCH_SECOND_PASS", "true"
+).lower() != "false"
+
 
 # ---------------------------------------------------------------------------
 # BaseAgent (src/agents/base_agent.py)
@@ -316,21 +320,6 @@ class DocGeneratorAgentConfig:
 
 
 DOC_GENERATOR = DocGeneratorAgentConfig()
-
-
-# ---------------------------------------------------------------------------
-# PdfPlannerAgent (src/agents/pdf_planner_agent.py)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class PdfPlannerAgentConfig:
-    temperature: float = 1.0      # Claude default for JSON generation without thinking
-    max_tokens: int = 54_000      # JSON spec for a full document can be large
-    timeout_ms: int = 600_000     # Background async task — allow 10 min for spec generation
-    thinking_effort: Optional[str] = None
-
-
-PDF_PLANNER = PdfPlannerAgentConfig()
 
 
 # ---------------------------------------------------------------------------

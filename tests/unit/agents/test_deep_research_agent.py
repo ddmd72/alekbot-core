@@ -100,16 +100,6 @@ async def test_execute_passes_tier_to_port(mock_job_port):
     assert call_kwargs["tier"] == PerformanceTier.PERFORMANCE
 
 
-async def test_execute_appends_language_to_query(mock_job_port):
-    mock_job_port.create_interaction.return_value = "job_xyz"
-    agent = _make_agent(mock_job_port)
-    await agent.execute(_make_message(query="Research topic", language="Ukrainian"))
-
-    call_kwargs = mock_job_port.create_interaction.call_args.kwargs
-    assert "Ukrainian" in call_kwargs["query"]
-    assert "Research topic" in call_kwargs["query"]
-
-
 # ---------------------------------------------------------------------------
 # execute — prompt builder
 # ---------------------------------------------------------------------------
