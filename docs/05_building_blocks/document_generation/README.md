@@ -4,11 +4,12 @@
 
 ### Purpose
 
-Describes the two-agent pipelines for generating professional documents from natural language
+Describes the pipelines for generating professional documents and web pages from natural language
 requests:
 
 - **DOCX pipeline:** DocPlannerAgent (layout planning) → DocGeneratorAgent (Node.js `docx` npm code generation) → async delivery via Slack.
 - **PDF pipeline:** PdfGeneratorAgent (single LLM call: natural language → HTML+CSS + Puppeteer rendering) → GCS storage + async delivery via Slack.
+- **HTML page pipeline:** HtmlPageGeneratorAgent (single LLM call: natural language → HTML+CSS+JS) → GCS public URL delivered as Slack link.
 
 ### When to Read
 
@@ -31,6 +32,8 @@ This document MUST be updated when:
 - [ ] `PuppeteerRunnerPort` interface or `NodePuppeteerRunner` implementation changes.
 - [ ] `DocumentDeliveryService` GCS storage logic or key format changes.
 - [ ] `pdf_generator/runner.js` stdin/stdout contract changes.
+- [ ] HtmlPageGeneratorAgent execution logic changes.
+- [ ] `COGNITIVE_PROCESS_HTML_PAGE` token design rules change.
 
 ### Cross-References
 
@@ -582,12 +585,104 @@ rendering or platform-specific upload logic.
 | GCS storage | Not used (bytes returned inline) | `DocumentDeliveryService` (both HTML + PDF) |
 | DeliveryItem type | `"file_upload"` | `"document"` (two items: HTML + PDF) |
 | Filename source | JSON spec `filename` field | `<title>` tag extracted from HTML |
-| Tier | PERFORMANCE | BALANCED |
+| Tier | PERFORMANCE | PERFORMANCE |
 | Orchestrator visibility | `create_document` exposed to LLMs | `create_pdf` exposed to LLMs |
 
 ---
 
-## 11. Code References
+## 11. HTML Page Pipeline
+
+### 11.1 Architecture Overview
+
+```
+User Request (natural language page description)
+     │
+     ▼
+HtmlPageGeneratorAgent  [ASYNC Cloud Task, PERFORMANCE tier, Gemini]
+     │  1. build_for_agent(account_id, "html_page", user_id)  → system_prompt
+     │  2. Single LLM call  →  HTML+CSS+JS raw text response
+     │  3. _strip_markdown_fences(html)
+     │  4. _extract_filename_from_html(html)  →  (base_filename, display_name)
+     │
+     ▼
+DeliveryItem("document")
+     content_b64: HTML bytes
+     content_type: text/html; charset=utf-8
+     file_upload: False
+     │
+     ▼
+AgentWorkerHandler._deliver_document_result()
+     │
+     ▼
+DocumentDeliveryService  →  GCS public URL  (key: docs/{uuid}-{filename}.html)
+     │
+     ▼
+UserNotificationService  →  Slack link message
+```
+
+### 11.2 HtmlPageGeneratorAgent
+
+**File:** `src/agents/html_page_generator_agent.py`
+**Intent:** `Intent.CREATE_HTML_PAGE`
+**ExecutionMode:** `ASYNC` (always runs as Cloud Task)
+**Registration:** `internal=False` — exposed to LLM tool selection (Quick, Smart)
+**Tier:** PERFORMANCE (Gemini, `agent_type="html_page"`)
+
+Single LLM call → complete HTML+CSS+JS document as raw text response. No Node.js subprocess —
+HTML is the final artifact. The system prompt (assembled via PromptBuilder, profile `html_page`,
+blueprint `html_page_agent_v1`) instructs the LLM to produce a production-grade, mobile-responsive
+single-page layout targeting the visual quality of Stripe, Apple, Linear, or Vercel pages, with
+self-contained CSS and vanilla JS.
+
+**Output processing:**
+1. `_strip_markdown_fences(html)` — removes accidental ` ```html ``` ` wrapping.
+2. Validate non-empty HTML → `AgentResponse.failure` if empty.
+3. `_extract_filename_from_html(html)` — extracts `<title>` text: display name + sanitized slug.
+   Fallback to `("page", "Page")` when `<title>` absent or empty.
+
+**Delivery item returned on success:**
+
+1. HTML source — `content_type="text/html; charset=utf-8"`, `file_upload=False` → stored to GCS,
+   public URL sent as a link in Slack. No binary render step, no Slack file upload.
+
+**Prompt:** PromptBuilder profile `html_page`, blueprint `html_page_agent_v1`.
+Token: `COGNITIVE_PROCESS_HTML_PAGE` (category: `cognitive_process`, `non_overridable=true`).
+
+Design constraints enforced by prompt (`COGNITIVE_PROCESS_HTML_PAGE`):
+- All CSS in a single `<style>` block; all JS in a single `<script>` block before `</body>`.
+- No external resources except one Google Fonts `<link>` in `<head>`.
+- Fluid type scale with `clamp()`, CSS custom properties for color system at `:root`.
+- `IntersectionObserver` scroll-reveal animations + `@media (prefers-reduced-motion)` fallback.
+- Page type routing: landing page, portfolio, dashboard preview, documentation, product showcase —
+  each with a prescribed section set.
+
+**Agent configuration** (from `agent_config.py`):
+
+| Parameter | Value |
+|-----------|-------|
+| `temperature` | `1.0` (high creativity for layout and design decisions) |
+| `max_tokens` | `64_000` (full HTML+CSS+JS document) |
+| `timeout_ms` | `600_000` (10 min) |
+
+### 11.3 Comparison: DOCX vs PDF vs HTML Page
+
+| Concern | DOCX pipeline | PDF pipeline | HTML page pipeline |
+|---------|--------------|-------------|-------------------|
+| Phases | Two tasks (planner → generator) | Single task | Single task |
+| LLM output | Node.js script (docx npm API) | Complete HTML+CSS | Complete HTML+CSS+JS |
+| Renderer | Node.js `docx` library | Puppeteer (headless Chromium) | None — HTML is final |
+| Node.js project | `docx_generator/` | `pdf_generator/` | None |
+| Port | `DocxRunnerPort` | `PuppeteerRunnerPort` | None |
+| Adapter | `NodeDocxRunner` | `NodePuppeteerRunner` | None |
+| GCS storage | Not used (bytes inline) | `DocumentDeliveryService` (HTML + PDF) | `DocumentDeliveryService` (HTML only) |
+| DeliveryItem type | `"file_upload"` | `"document"` (two items) | `"document"` (one item) |
+| Filename source | JSON spec `filename` field | `<title>` tag | `<title>` tag |
+| Tier | PERFORMANCE | PERFORMANCE | PERFORMANCE |
+| Slack delivery | File upload | Link + file upload (PDF) | Link only |
+
+---
+
+## 12. Code References
 
 **DOCX pipeline:**
 - `src/agents/doc_planner_agent.py` — Phase 1: planning, raw forward to generator, fire-and-forget
@@ -604,13 +699,22 @@ rendering or platform-specific upload logic.
 - `pdf_generator/runner.js` — Puppeteer wrapper: stdin → headless Chrome → stdout PDF bytes
 - `pdf_generator/package.json` — `puppeteer ^24.x`
 
+**HTML page pipeline:**
+- `src/agents/html_page_generator_agent.py` — single LLM call, `_strip_markdown_fences`, `_extract_filename_from_html`, one DeliveryItem (HTML, GCS link)
+- `src/services/document_delivery_service.py` — same service as PDF; stores HTML bytes to GCS
+- `firestore_utils/uploads/COGNITIVE_PROCESS_HTML_PAGE.groovy` — system prompt source (design rules, mobile-first, animations, section catalogue)
+- `firestore_utils/uploads/COGNITIVE_PROCESS_HTML_PAGE.json` — Firestore token upload file
+- `firestore_utils/uploads/html_page_agent_v1.json` — Blueprint (`html_page_agent_v1`, class_order: [cognitive_process])
+- `firestore_utils/uploads/html_page.json` — Agent profile (`agent_id: "html_page"`)
+- `tests/unit/agents/test_html_page_generator_agent.py` — 44 tests (can_handle, execute paths, filename extraction, fence stripping, failure paths, LLM call params)
+
 **Shared infrastructure:**
-- `src/infrastructure/agent_manifest.py` — `Intent.CREATE_DOCUMENT`, `Intent.GENERATE_DOCX_CODE`, `Intent.CREATE_PDF` and corresponding descriptors
-- `src/infrastructure/agent_config.py` — `DocPlannerAgentConfig`, `DocGeneratorAgentConfig`, `PdfGeneratorAgentConfig`
+- `src/infrastructure/agent_manifest.py` — `Intent.CREATE_DOCUMENT`, `Intent.GENERATE_DOCX_CODE`, `Intent.CREATE_PDF`, `Intent.CREATE_HTML_PAGE` and corresponding descriptors
+- `src/infrastructure/agent_config.py` — `DocPlannerAgentConfig`, `DocGeneratorAgentConfig`, `PdfGeneratorAgentConfig`, `HtmlPageGeneratorAgentConfig`
 - `src/infrastructure/agent_coordinator.py` — `_execute_async` receives `deadline_seconds` from descriptor
-- `src/services/agent_context_builder.py` — `"doc_planner"`, `"doc_generator"`, `"pdf_generator"` strategy entries
-- `src/composition/user_agent_factory.py` — DOCX agents (planner + generator) and PDF generator registered and cached per user
-- `src/handlers/agent_worker_handler.py` — `_deliver_docx_result()` (DOCX intents), `_deliver_document_result()` (PDF), `_notify_docx_failure()`, handles `CREATE_DOCUMENT`, `GENERATE_DOCX_CODE`, `CREATE_PDF`
+- `src/services/agent_context_builder.py` — `"doc_planner"`, `"doc_generator"`, `"pdf_generator"`, `"html_page"` strategy entries
+- `src/composition/user_agent_factory.py` — DOCX agents (planner + generator), PDF generator, and HTML page generator registered and cached per user
+- `src/handlers/agent_worker_handler.py` — `_deliver_docx_result()` (DOCX intents), `_deliver_document_result()` (PDF + HTML page), `_notify_docx_failure()`, handles `CREATE_DOCUMENT`, `GENERATE_DOCX_CODE`, `CREATE_PDF`, `CREATE_HTML_PAGE`
 - `src/services/user_notification_service.py` — `notify_file_bytes()`, channel ID resolution via `send_message`
 - `src/adapters/slack/response_channel.py:155-160` — `send_message` normalises `U...` → `D...`
 - `src/adapters/slack/media_adapter.py` — `SlackMediaAdapter.upload_file()`
@@ -620,7 +724,7 @@ rendering or platform-specific upload logic.
 
 ---
 
-## 12. Status
+## 13. Status
 
-**Status:** ✅ Production Ready
-**Last Updated:** 2026-03-14
+**Status:** ✅ Production Ready (DOCX, PDF) | ✅ Ready for Firestore upload (HTML page)
+**Last Updated:** 2026-03-15

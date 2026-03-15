@@ -108,8 +108,8 @@ class AgentWorkerHandler:
                 # DOCX delivery — generator runs as its own Cloud Task and delivers directly.
                 elif intent in (Intent.CREATE_DOCUMENT, Intent.GENERATE_DOCX_CODE):
                     await self._deliver_docx_result(response, context)
-                # PDF delivery — generator produces "document" DeliveryItems.
-                elif intent == Intent.CREATE_PDF:
+                # PDF / HTML page delivery — generator produces "document" DeliveryItems.
+                elif intent in (Intent.CREATE_PDF, Intent.CREATE_HTML_PAGE):
                     await self._deliver_document_result(response, context)
 
                 return {"status": "success", "agent_id": resolved_agent_id, "intent": intent}
@@ -124,7 +124,7 @@ class AgentWorkerHandler:
                     await self._notify_failure(context)
                 elif intent in (Intent.CREATE_DOCUMENT, Intent.GENERATE_DOCX_CODE):
                     await self._notify_docx_failure(context, response.error)
-                elif intent == Intent.CREATE_PDF:
+                elif intent in (Intent.CREATE_PDF, Intent.CREATE_HTML_PAGE):
                     await self._notify_docx_failure(context, response.error)
 
                 return {

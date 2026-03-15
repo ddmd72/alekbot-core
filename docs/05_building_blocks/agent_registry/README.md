@@ -155,6 +155,7 @@ All agents registered via `main.py` at startup. `GcpTaskQueue` only instantiated
 | `doc_planner_agent` | `create_document` | ASYNC | False | Quick, Smart |
 | `doc_generator_agent` | `generate_docx_code` | ASYNC | **True** | DocPlannerAgent only |
 | `pdf_generator_agent` | `create_pdf` | ASYNC | False | Quick, Smart |
+| `html_page_generator_agent` | `create_html_page` | ASYNC | False | Quick, Smart |
 
 `web_search_light_agent` is `internal=True` — it never appears in LLM tool lists. Quick reaches it
 via `intent_remap: {"search_web": "search_web_light"}` at dispatch time.
@@ -554,7 +555,7 @@ make test-e2e-all   # Quick and Smart delegate correctly to the new agent
 ## 10. Code References
 
 - `src/infrastructure/agent_manifest.py` — **Single source of truth** for all agent declarations: `Intent` constants, `AgentDescriptor` instances for every agent (specialists + orchestrators), `ALL_DESCRIPTORS` list. Start here when adding or understanding any agent.
-- `src/infrastructure/agent_config.py` — Central config registry: typed `@dataclass` per agent (`QUICK`, `SMART`, `ROUTER`, `MEMORY_SEARCH`, `WEB_SEARCH`, `WEB_SEARCH_LIGHT`, `CONSOLIDATION`, `EMAIL_SEARCH`, `EMAIL_CLASSIFICATION`, `MAPS_SEARCH`, `COMPUTE`, `PDF_PLANNER`, `PDF_GENERATOR`). Holds all tunable behavior params: delegation turns, timeouts, temperatures, and thinking config. `MapsSearchAgentConfig.model_name` is pinned to `gemini-2.5-flash` (Maps grounding unsupported on Gemini 3.x). `ComputeAgentConfig.temperature=0.0` (deterministic computation). `ConsolidationAgentConfig.thinking_effort="high"` + `max_tokens=32_000` (complex multi-turn reasoning; Claude Sonnet 4.6). `PdfGeneratorAgentConfig.max_tokens=64_000` (full HTML+CSS document can be large).
+- `src/infrastructure/agent_config.py` — Central config registry: typed `@dataclass` per agent (`QUICK`, `SMART`, `ROUTER`, `MEMORY_SEARCH`, `WEB_SEARCH`, `WEB_SEARCH_LIGHT`, `CONSOLIDATION`, `EMAIL_SEARCH`, `EMAIL_CLASSIFICATION`, `MAPS_SEARCH`, `COMPUTE`, `PDF_PLANNER`, `PDF_GENERATOR`). Holds all tunable behavior params: delegation turns, timeouts, temperatures, and thinking config. `MapsSearchAgentConfig.model_name` is pinned to `gemini-2.5-flash` (Maps grounding unsupported on Gemini 3.x). `ComputeAgentConfig.temperature=0.0` (deterministic computation). `ConsolidationAgentConfig.thinking_effort="high"` + `max_tokens=32_000` (complex multi-turn reasoning; Claude Sonnet 4.6). `PdfGeneratorAgentConfig.max_tokens=64_000` (full HTML+CSS document can be large). `HtmlPageGeneratorAgentConfig.temperature=1.0` + `max_tokens=64_000` (high creativity for layout/design; full HTML+CSS+JS document).
 - `src/infrastructure/agent_registry.py` — `AgentDescriptor` dataclass (alias: `AgentManifest`), `AgentRegistry` mechanics, `ExecutionMode`, `get_available_intents()`, `get_available_intents_for(descriptor)`. Descriptor instances live in `agent_manifest.py`.
 - `src/infrastructure/agent_coordinator.py` — handle_delegation(), _execute_sync(), _execute_async(), get_available_intents(), get_available_intents_for()
 - `src/agents/base_agent.py` — lifecycle hooks, `_debug_prompt`, `_debug_response`

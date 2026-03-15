@@ -67,6 +67,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "doc_generator": PerformanceTier.BALANCED,   # JS code generation + retries
     "doc_planner_pdf": PerformanceTier.PERFORMANCE, # PDF layout spec (CSS/HTML units)
     "pdf_generator": PerformanceTier.BALANCED,      # HTML+CSS generation → Puppeteer
+    "html_page": PerformanceTier.PERFORMANCE,        # Full HTML+CSS+JS page — max quality
 }
 
 

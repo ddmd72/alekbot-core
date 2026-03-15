@@ -49,6 +49,7 @@ from ..infrastructure.agent_config import (
     DOC_PLANNER as DOC_PLANNER_CFG,
     DOC_GENERATOR as DOC_GENERATOR_CFG,
     PDF_GENERATOR as PDF_GENERATOR_CFG,
+    HTML_PAGE_GENERATOR as HTML_PAGE_GENERATOR_CFG,
 )
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
@@ -68,6 +69,7 @@ from ..agents.notes_agent import NotesAgent
 from ..agents.doc_planner_agent import DocPlannerAgent
 from ..agents.doc_generator_agent import DocGeneratorAgent
 from ..agents.pdf_generator_agent import PdfGeneratorAgent
+from ..agents.html_page_generator_agent import HtmlPageGeneratorAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..ports.task_queue import TaskQueue
@@ -451,6 +453,20 @@ class UserAgentFactory:
             user_id=user_id,
         )
 
+        html_page_context = self.context_builder.build("html_page", user_profile.config)
+        html_page_generator_agent = HtmlPageGeneratorAgent(
+            config=AgentConfig(
+                agent_id=f"html_page_generator_agent_{user_id}",
+                agent_type="html_page",
+                timeout_ms=HTML_PAGE_GENERATOR_CFG.timeout_ms,
+                capabilities=["html_page_generation"],
+                max_retries=0,
+            ),
+            execution_context=html_page_context,
+            prompt_builder=prompt_builder,
+            user_id=user_id,
+        )
+
         deep_research_agent = None
         if self.job_registry:
             try:
@@ -523,6 +539,7 @@ class UserAgentFactory:
             doc_generator_agent,
             doc_planner_agent,
             pdf_generator_agent,
+            html_page_generator_agent,
             consolidation_agent,
         ]
         if notes_agent:
@@ -564,6 +581,7 @@ class UserAgentFactory:
             "doc_generator_agent": doc_generator_agent,
             "doc_planner_agent": doc_planner_agent,
             "pdf_generator_agent": pdf_generator_agent,
+            "html_page_generator_agent": html_page_generator_agent,
             "consolidation_agent": consolidation_agent,
         }
         self._cache[user_id] = cached
@@ -619,7 +637,7 @@ class UserAgentFactory:
                             "email_search_agent", "maps_agent", "compute_agent",
                             "tasks_agent", "deep_research_agent", "claude_runner_agent",
                             "doc_generator_agent", "doc_planner_agent",
-                            "pdf_generator_agent",
+                            "pdf_generator_agent", "html_page_generator_agent",
                             "consolidation_agent"):
                     agent = entry.get(key)
                     if agent and hasattr(agent, "agent_id"):
