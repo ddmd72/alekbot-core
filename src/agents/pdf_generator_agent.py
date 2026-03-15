@@ -2,33 +2,38 @@
 PdfGeneratorAgent
 =================
 
-Internal specialist agent: receives the raw JSON layout spec from PdfPlannerAgent,
-instructs the LLM to write a complete HTML+CSS document, renders it to PDF via
+Specialist agent: receives a natural-language PDF creation request, generates a
+complete HTML+CSS document in a single LLM call, renders it to PDF via
 PuppeteerRunnerPort, and returns both HTML and PDF as "document" DeliveryItems.
 
-Registration: internal=True — never exposed to LLMs. Dispatched by PdfPlannerAgent
-as a separate ASYNC Cloud Task via coordinator.handle_delegation(
-Intent.GENERATE_PDF_CODE, raw_query, ...).
+Registration: internal=False — exposed to LLMs via Intent.CREATE_PDF.
+Dispatched ASYNC by AgentWorkerHandler via Cloud Tasks.
 
-payload["query"] is the raw LLM JSON output from PdfPlannerAgent (JSON string).
+payload["query"] is the raw natural language request from the orchestrator.
 
 Delivery:
   DeliveryItem #1: HTML → GCS → named link in Slack
   DeliveryItem #2: PDF  → GCS → named link + Slack file upload
 
-Retry loop (max MAX_TURNS total LLM calls):
-  - LLM writes HTML and calls the generate_html tool.
-  - Runner renders HTML to PDF via Puppeteer.
-  - On tool success: both HTML and PDF bytes captured, agent returns immediately.
-  - On tool error: error appended as tool response, LLM retries.
-  - On LLM finishing without tool call: PdfGeneratorError raised → failure response.
-  - On MAX_TURNS exhausted: failure response.
+Pipeline:
+  1. System prompt — loaded from PromptBuilder if available; falls back to _SYSTEM_PROMPT.
+  2. Single LLM call — model writes complete HTML+CSS as raw text response.
+  3. Strip accidental markdown fences from response.
+  4. Run HTML through NodePuppeteerRunner → PDF bytes.
+  5. Extract filename and display name from <title> tag.
+  6. Return two DeliveryItems.
+
+On failure (empty HTML, Puppeteer error) — AgentResponse.failure().
+
+NOTE on system prompt: _SYSTEM_PROMPT is the canonical prompt, validated via POC
+(scripts/debug/test_pdf_direct_html.py). PromptBuilder is used when available so
+per-user overrides are respected, but the agent is self-contained without Firestore.
 """
 
 import base64
-import json
+import re
 import time
-from typing import List, Optional
+from typing import Optional
 
 from .base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
@@ -40,51 +45,78 @@ from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 
 
-_GENERATE_HTML_TOOL: List[dict] = [
-    {
-        "name": "generate_html",
-        "description": (
-            "Submit a complete HTML+CSS document for PDF rendering via Puppeteer. "
-            "The document must be fully self-contained: all CSS embedded in <style> tags, "
-            "no external stylesheets, no external fonts, no JavaScript. "
-            "Use @page CSS rules to control page size and margins. "
-            "Returns {status: 'success', pdf_size: N, html_size: N} on success "
-            "or {status: 'error', message: '...'} on failure. "
-            "Call this tool again with a corrected document if rendering fails."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "html_code": {
-                    "type": "string",
-                    "description": (
-                        "Complete HTML5 document with embedded CSS. "
-                        "Must be self-contained and print-ready. "
-                        "Use @page for page setup and page-break-before for section breaks."
-                    ),
-                }
-            },
-            "required": ["html_code"],
-        },
-    }
-]
+# ---------------------------------------------------------------------------
+# System prompt (canonical — validated via POC)
+# ---------------------------------------------------------------------------
 
+_SYSTEM_PROMPT = """\
+You are a senior product designer and front-end engineer specialising in screen-optimised PDF documents.
 
-class PdfGeneratorError(Exception):
-    """Raised when PDF generation fails after all turns."""
+The output will be saved as a PDF and read on screen — not printed on paper.
+This changes everything: you can use rich color, gradients, large type, generous spacing, and visual effects
+that would be wasteful on paper but make screen reading a pleasure.
+
+You receive information — topics, analysis, data, arguments.
+This is a design brief, not a formatting request. Think: what is the best possible reading experience for this content?
+Invent the layout from scratch. Use whatever patterns fit — hero section, sidebar, card grid,
+timeline, stat callouts, pull quotes, color-coded sections. Mix and match freely.
+
+First, read the content and select the most appropriate design language from this catalogue:
+  apple_keynote   → presentations, executive summaries, luxury/brand, imaged materials
+  economist       → news analysis, geopolitics, editorial long-reads
+  govuk           → legal documents, official reports, regulations, instructions
+  mckinsey_bcg    → business analysis, strategic reports, consulting
+  stripe_report   → financial reports, annual reports, company metrics
+  tufte           → academic papers, scientific analysis, research
+  stripe_docs     → technical documentation, API references, developer guides
+  ibm_carbon      → enterprise analytics, B2B reports, data-heavy documents
+  notion          → general documents, knowledge base, how-to guides
+  material3       → modern app-style, mobile-first, product docs
+  pitch           → pitch decks, investor materials, startup documents
+  linear_changelog→ release notes, product updates, changelogs
+Apply the chosen design language faithfully — its typography rules, spacing, color coding, and layout patterns.
+
+Design principles:
+- Screen readability first: font size minimum 15px body, 20–36px headings. Line height >= 1.7. Max line length 70ch.
+- Rich color: choose a deliberate color scheme (2–3 colors). Use fills, gradients, colored section headers.
+- Visual effects are welcome: box shadows, rounded corners, colored borders, background tints, highlight bands.
+- Emojis as visual anchors: use them sparingly but effectively for section markers, callouts, key points.
+- Generous spacing: padding and margins should feel comfortable, not cramped.
+- Every section must feel intentionally designed — not just text with a heading.
+- CSS infographics where appropriate: timelines, step flows, comparison tables, stat blocks — built from pure HTML/CSS, no images or external resources.
+- Page density: content should fill pages naturally — no large blank areas at page bottoms.
+- Preserve ALL content verbatim — every sentence must appear somewhere, nothing omitted.
+
+Technical rules (non-negotiable):
+- Output ONLY the HTML document. No explanations, no markdown fences.
+- Start with <!DOCTYPE html> and end with </html>.
+- <meta charset="UTF-8"> required.
+- All CSS in <style> tags. No external resources, no CDN fonts.
+- @page { size: A4 portrait; margin: 15mm; }
+- -webkit-print-color-adjust: exact; print-color-adjust: exact.
+- body { width: 794px; margin: 0 auto; box-sizing: border-box; }
+- Page break rules (mandatory):
+    break-inside: avoid  on  .section, table, tr, .callout, h2, h3, h4, li, blockquote
+    break-after:  avoid  on  h1, h2, h3, h4
+    NEVER use break-before: page or page-break-before: always
+- Mobile reading experience (mandatory): add @media (max-width: 600px) block.
+    body width 100%, padding 5vw; font-size 17px, line-height 1.85;
+    all multi-column and sidebar layouts collapse to single column;
+    section headers become full-width, visually prominent scroll anchors;
+    tables get overflow-x: auto so they scroll horizontally if needed.
+"""
 
 
 class PdfGeneratorAgent(BaseAgent):
     """
-    Specialist agent: LLM writes HTML+CSS, Puppeteer renders PDF.
+    Specialist agent: single LLM call writes HTML+CSS, Puppeteer renders PDF.
 
-    Receives the JSON layout spec via payload["query"] (JSON string from coordinator).
+    Accepts a natural-language request via payload["query"].
     Returns AgentResponse with two delivery_items on success:
       - HTML "document" (GCS link)
       - PDF  "document" (GCS link + Slack file upload)
     """
 
-    MAX_TURNS = 5
     TEMPERATURE = PDF_GENERATOR.temperature
     MAX_TOKENS = PDF_GENERATOR.max_tokens
     THINKING_EFFORT = PDF_GENERATOR.thinking_effort
@@ -114,11 +146,11 @@ class PdfGeneratorAgent(BaseAgent):
     async def execute(self, message: AgentMessage) -> AgentResponse:
         raw_query = message.payload.get("query", "")
         if not raw_query:
-            self._on_agent_error(ValueError("No spec provided"), "empty_query")
+            self._on_agent_error(ValueError("No query provided"), "empty_query")
             return AgentResponse.failure(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
-                error="No spec provided in payload",
+                error="No query provided in payload",
             )
 
         account_id = message.context.get("account_id")
@@ -135,160 +167,84 @@ class PdfGeneratorAgent(BaseAgent):
                 error=f"Failed to build system prompt: {exc}",
             )
 
-        messages = [
-            Message(
-                role="user",
-                parts=[MessagePart(
-                    text=(
-                        "Implement the PDF layout specification as a complete HTML+CSS document "
-                        "and call generate_html to submit it for rendering.\n\n"
-                        f"{raw_query}"
-                    )
-                )],
+        request = LLMRequest(
+            model_name=self.model_name,
+            system_instruction=system_prompt,
+            messages=[Message(role="user", parts=[MessagePart(text=raw_query)])],
+            temperature=self.TEMPERATURE,
+            max_tokens=self.MAX_TOKENS,
+            thinking=self.THINKING_EFFORT or None,
+        )
+        response = await self._call_llm(request, turn=0)
+
+        html_code = (response.text or "").strip()
+        html_code = _strip_markdown_fences(html_code)
+
+        if not html_code:
+            err = ValueError("LLM returned empty HTML")
+            self._on_agent_error(err, "pdf_generation")
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error="LLM returned empty HTML — no PDF produced",
             )
-        ]
 
-        captured_html: Optional[str] = None
-        captured_pdf: Optional[bytes] = None
-
-        for turn in range(self.MAX_TURNS):
-            request = LLMRequest(
-                model_name=self.model_name,
-                system_instruction=system_prompt,
-                messages=messages,
-                temperature=self.TEMPERATURE,
-                max_tokens=self.MAX_TOKENS,
-                tools=_GENERATE_HTML_TOOL,
-                thinking=self.THINKING_EFFORT or None,
-                force_tool_use=True,
+        try:
+            pdf_bytes = await self._runner.run(html_code, self.NODE_TIMEOUT)
+        except PuppeteerRunnerError as exc:
+            logger.warning("PdfGeneratorAgent: Puppeteer error: %s", exc)
+            self._on_agent_error(exc, "pdf_generation")
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=f"PDF rendering failed: {exc}",
             )
-            response = await self._call_llm(request, turn=turn)
 
-            if not response.tool_calls:
-                if captured_pdf:
-                    break
-                err = PdfGeneratorError("LLM finished without calling generate_html")
-                self._on_agent_error(err, "pdf_generation")
-                return AgentResponse.failure(
-                    task_id=message.task_id,
-                    agent_id=self.agent_id,
-                    error="LLM finished without calling generate_html — no PDF produced",
-                )
+        base_filename, display_name = _extract_filename_from_html(html_code)
 
-            messages = messages + [
-                Message(
-                    role="model",
-                    parts=[MessagePart(tool_call=tc) for tc in response.tool_calls],
-                )
-            ]
+        token_count = response.usage_metadata.total_tokens if response.usage_metadata else 0
+        duration_ms = int((time.time() - start_time) * 1000)
+        logger.info(
+            "PdfGeneratorAgent: pdf=%d bytes html=%d bytes tokens=%d",
+            len(pdf_bytes), len(html_code), token_count,
+        )
+        self._on_agent_success(len(html_code), token_count, output_text="pdf_generated")
 
-            tool_result_parts = []
-            for tc in response.tool_calls:
-                if tc.name != "generate_html":
-                    tool_result_parts.append(MessagePart(tool_response={
-                        "name": tc.name,
-                        "response": {"status": "error", "message": f"Unknown tool: {tc.name}"},
-                    }))
-                    continue
-
-                html_code = (tc.args or {}).get("html_code", "")
-                if not html_code:
-                    tool_result_parts.append(MessagePart(tool_response={
-                        "name": tc.name,
-                        "response": {"status": "error", "message": "html_code argument is empty"},
-                    }))
-                    continue
-
-                try:
-                    pdf_bytes = await self._runner.run(html_code, self.NODE_TIMEOUT)
-                    captured_html = html_code
-                    captured_pdf = pdf_bytes
-                    logger.info(
-                        "PdfGeneratorAgent: turn %d — generate_html success, pdf=%d bytes html=%d bytes",
-                        turn + 1, len(pdf_bytes), len(html_code),
-                    )
-                    tool_result_parts.append(MessagePart(tool_response={
-                        "name": tc.name,
-                        "response": {
-                            "status": "success",
-                            "pdf_size": len(pdf_bytes),
-                            "html_size": len(html_code),
-                        },
-                    }))
-                except PuppeteerRunnerError as exc:
-                    logger.warning(
-                        "PdfGeneratorAgent: turn %d — generate_html error: %s",
-                        turn + 1, exc,
-                    )
-                    tool_result_parts.append(MessagePart(tool_response={
-                        "name": tc.name,
-                        "response": {"status": "error", "message": str(exc)},
-                    }))
-
-            messages = messages + [
-                Message(role="user", parts=tool_result_parts)
-            ]
-
-            if captured_pdf and captured_html:
-                token_count = response.usage_metadata.total_tokens if response.usage_metadata else 0
-                duration_ms = int((time.time() - start_time) * 1000)
-                self._on_agent_success(
-                    len(captured_pdf), token_count, output_text="pdf_generated"
-                )
-
-                try:
-                    _parsed = json.loads(raw_query)
-                    doc_spec = _parsed.get("doc_spec", {}) if isinstance(_parsed, dict) else {}
-                except Exception:
-                    doc_spec = {}
-
-                base_filename = _extract_filename(doc_spec)
-                display_name = doc_spec.get("title") or doc_spec.get("document_type", "Document").capitalize()
-
-                return AgentResponse.success(
-                    task_id=message.task_id,
-                    agent_id=self.agent_id,
-                    result="pdf_generated",
-                    confidence=1.0,
-                    metadata={"duration_ms": duration_ms, "model": self.model_name},
-                    delivery_items=[
-                        DeliveryItem(
-                            type="document",
-                            data={
-                                "content_b64": base64.b64encode(captured_html.encode("utf-8")).decode("utf-8"),
-                                "filename": f"{base_filename}.html",
-                                "content_type": "text/html; charset=utf-8",
-                                "label": f"{display_name}.html",
-                                "file_upload": False,
-                            },
-                        ),
-                        DeliveryItem(
-                            type="document",
-                            data={
-                                "content_b64": base64.b64encode(captured_pdf).decode("utf-8"),
-                                "filename": f"{base_filename}.pdf",
-                                "content_type": "application/pdf",
-                                "label": f"{display_name}.pdf",
-                                "file_upload": True,
-                            },
-                        ),
-                    ],
-                )
-
-        self._on_agent_error(RuntimeError("MAX_TURNS exhausted"), "pdf_generation")
-        return AgentResponse.failure(
+        return AgentResponse.success(
             task_id=message.task_id,
             agent_id=self.agent_id,
-            error=f"PDF generation failed after {self.MAX_TURNS} turns without a successful generate_html call",
+            result="pdf_generated",
+            confidence=1.0,
+            metadata={"duration_ms": duration_ms, "model": self.model_name},
+            delivery_items=[
+                DeliveryItem(
+                    type="document",
+                    data={
+                        "content_b64": base64.b64encode(html_code.encode("utf-8")).decode("utf-8"),
+                        "filename": f"{base_filename}.html",
+                        "content_type": "text/html; charset=utf-8",
+                        "label": f"{display_name}.html",
+                        "file_upload": False,
+                    },
+                ),
+                DeliveryItem(
+                    type="document",
+                    data={
+                        "content_b64": base64.b64encode(pdf_bytes).decode("utf-8"),
+                        "filename": f"{base_filename}.pdf",
+                        "content_type": "application/pdf",
+                        "label": f"{display_name}.pdf",
+                        "file_upload": True,
+                    },
+                ),
+            ],
         )
 
     async def _build_system_prompt(self, account_id: Optional[str]) -> str:
         return await self.prompt_builder.build_for_agent(
+            account_id=account_id,
             agent_type="pdf_generator",
             user_id=self.user_id,
-            account_id=account_id,
-            routing_metadata=None,
-            include_biographical=False,
         )
 
     def _get_alternative_agents(self) -> list[str]:
@@ -296,20 +252,38 @@ class PdfGeneratorAgent(BaseAgent):
 
 
 # ---------------------------------------------------------------------------
-# Filename helper
+# Helpers
 # ---------------------------------------------------------------------------
 
-def _extract_filename(doc_spec: dict) -> str:
-    """Extract or derive a short base filename (no extension) from the spec."""
-    filename = doc_spec.get("filename", "").strip()
-    if filename:
-        # Sanitize: keep alphanumerics, underscores, hyphens
-        return "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in filename)
-    # Fallback: derive from document_type
-    doc_type = (
-        doc_spec.get("document_type", "document")
-        .lower()
-        .replace(" ", "_")
-        .replace("/", "_")
+def _strip_markdown_fences(html_code: str) -> str:
+    """Remove accidental ```html ... ``` or ``` ... ``` wrapping from LLM output."""
+    if "```" not in html_code:
+        return html_code
+    if html_code.startswith("```"):
+        # Skip the opening fence line (```html or ```)
+        first_newline = html_code.find("\n")
+        html_code = html_code[first_newline + 1:] if first_newline >= 0 else html_code[3:]
+    html_code = html_code.rsplit("```", 1)[0].strip()
+    return html_code
+
+
+def _extract_filename_from_html(html_code: str) -> tuple[str, str]:
+    """
+    Extract (base_filename, display_name) from the HTML <title> tag.
+
+    base_filename: sanitized lowercase slug (alphanumerics, underscores, hyphens).
+    display_name:  raw title text as-is (used for Slack label).
+
+    Falls back to ("document", "Document") when <title> is absent or empty.
+    """
+    match = re.search(r"<title[^>]*>(.*?)</title>", html_code, re.IGNORECASE | re.DOTALL)
+    title = match.group(1).strip() if match else ""
+    if not title:
+        return "document", "Document"
+
+    display_name = title
+    base_filename = "".join(
+        c if c.isalnum() or c in ("_", "-") else "_" for c in title.lower()
     )
-    return doc_type
+    base_filename = re.sub(r"_+", "_", base_filename).strip("_") or "document"
+    return base_filename, display_name

@@ -223,7 +223,7 @@ class DocGeneratorAgent(BaseAgent):
             if captured_bytes:
                 token_count = response.usage_metadata.total_tokens if response.usage_metadata else 0
                 duration_ms = int((time.time() - start_time) * 1000)
-                self._on_agent_success(len(captured_bytes), token_count, output_text="docx_generated")
+                self._on_agent_success(0, token_count, output_text="docx_generated")
 
                 try:
                     _parsed = json.loads(raw_query)

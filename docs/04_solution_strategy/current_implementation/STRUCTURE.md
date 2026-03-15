@@ -106,13 +106,12 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                             #    calls DeepResearchPort.create_interaction(query, user_id, account_id,
 │   │                             #    original_query) and returns. Delivery mechanism (Cloud Task polling
 │   │                             #    or webhook) is adapter-internal. No task_queue in agent.
-│   ├── pdf_planner_agent.py      # 🆕 PDF creation entry point (intent: create_pdf, ASYNC, BALANCED tier).
-│   │                             #    LLM generates JSON layout spec (CSS units: mm/pt, filename field),
-│   │                             #    then delegates raw spec to PdfGeneratorAgent via GENERATE_PDF_CODE.
-│   ├── pdf_generator_agent.py    # 🆕 Internal PDF rendering specialist (intent: generate_pdf_code, ASYNC,
-│   │                             #    internal=True, BALANCED tier). LLM writes HTML+CSS via generate_html
-│   │                             #    tool; NodePuppeteerRunner renders to PDF. Returns two
-│   │                             #    DeliveryItem("document"): HTML (GCS only) + PDF (GCS + Slack upload).
+│   ├── pdf_generator_agent.py    # 🆕 PDF creation (intent: create_pdf, ASYNC, BALANCED tier,
+│   │                             #    internal=False). Single LLM call: natural language → complete
+│   │                             #    HTML+CSS (auto-selects design language from style catalogue).
+│   │                             #    NodePuppeteerRunner renders to PDF. Filename extracted from
+│   │                             #    <title> tag. Returns two DeliveryItem("document"):
+│   │                             #    HTML (GCS only) + PDF (GCS + Slack upload).
 │   ├── observation_agent.py      # ⚠️ LEGACY (replaced by session-based consolidation)
 │   ├── consolidation_agent.py    # Knowledge synthesis specialist ("Life Chronicler")
 │   ├── infrastructure/ # 🆕 Infrastructure Support Agents
@@ -461,8 +460,7 @@ The multi-agent system enables specialized task handling with different LLM mode
 -   **`web_search_agent.py`**: Full-depth web search specialist using Gemini Grounding (BALANCED tier). Called exclusively by SmartResponseAgent via `search_web` intent.
 -   **`email_search_agent.py`**: 🆕 Email archive specialist (BALANCED tier). Accessible to both Quick and Smart (`internal=False` in AgentDescriptor). Three intents: `search_emails` (semantic search in `domain_email_facts_v1`), `get_email_details` (fetch full body from Gmail), `get_email_attachment` (parse attachment via markitdown). Registered via `AgentDescriptor` in `main.py` at startup.
 -   **`email_classification_agent.py`**: 🆕 Shared singleton agent (created in `ServiceContainer`, not per-user). Classifies raw `EmailMetadata` + snippets via tool-calling mode. Outputs `EmailClassificationResult` per email. Called by `EmailIndexingService` (not by the agent delegation chain). Exception to the OUTPUT_FORMAT rule: uses markdown code block extraction in `_parse_response()` due to tool-calling + JSON mode incompatibility — see inline comment.
--   **`pdf_planner_agent.py`**: 🆕 PDF creation entry point. ASYNC, BALANCED tier (Claude, `agent_type="doc_planner_pdf"`). LLM generates a JSON layout spec with CSS dimension units (mm/pt) and a `filename` field. Forwards raw spec to `PdfGeneratorAgent` via `Intent.GENERATE_PDF_CODE`. Mirrors `DocPlannerAgent` pattern — does not parse its own output.
--   **`pdf_generator_agent.py`**: 🆕 Internal PDF rendering specialist. ASYNC, BALANCED tier (Claude, `agent_type="pdf_generator"`, `internal=True`). LLM writes HTML+CSS and calls the `generate_html(html_code)` tool. HTML is rendered to PDF by `NodePuppeteerRunner`. Returns two `DeliveryItem("document", ...)` items — HTML (`file_upload=False`, GCS only) and PDF (`file_upload=True`, GCS + Slack upload). Stored via `DocumentDeliveryService`.
+-   **`pdf_generator_agent.py`**: 🆕 PDF creation specialist. ASYNC, BALANCED tier (Gemini, `agent_type="pdf_generator"`, `internal=False`). Single LLM call: natural language → complete HTML+CSS document. System prompt embeds a style catalogue (12 design systems); LLM auto-selects the most appropriate style. HTML is rendered to PDF by `NodePuppeteerRunner`. Filename extracted from `<title>` tag (`_extract_filename_from_html`). Returns two `DeliveryItem("document", ...)` items — HTML (`file_upload=False`, GCS only) and PDF (`file_upload=True`, GCS + Slack upload). Stored via `DocumentDeliveryService`.
 -   **`consolidation_agent.py`**: Knowledge synthesis specialist ("Life Chronicler"). Uses biographical context caching and vector-based deduplication.
 -   **`observation_agent.py`**: ⚠️ LEGACY (kept for reference).
 

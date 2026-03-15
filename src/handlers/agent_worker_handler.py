@@ -109,7 +109,7 @@ class AgentWorkerHandler:
                 elif intent in (Intent.CREATE_DOCUMENT, Intent.GENERATE_DOCX_CODE):
                     await self._deliver_docx_result(response, context)
                 # PDF delivery — generator produces "document" DeliveryItems.
-                elif intent in (Intent.CREATE_PDF, Intent.GENERATE_PDF_CODE):
+                elif intent == Intent.CREATE_PDF:
                     await self._deliver_document_result(response, context)
 
                 return {"status": "success", "agent_id": resolved_agent_id, "intent": intent}
@@ -124,7 +124,7 @@ class AgentWorkerHandler:
                     await self._notify_failure(context)
                 elif intent in (Intent.CREATE_DOCUMENT, Intent.GENERATE_DOCX_CODE):
                     await self._notify_docx_failure(context, response.error)
-                elif intent in (Intent.CREATE_PDF, Intent.GENERATE_PDF_CODE):
+                elif intent == Intent.CREATE_PDF:
                     await self._notify_docx_failure(context, response.error)
 
                 return {

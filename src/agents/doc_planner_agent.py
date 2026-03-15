@@ -4,16 +4,10 @@ DocPlannerAgent
 
 Specialist agent that creates professional DOCX documents from natural language requests.
 
-Pipeline (single intent, two phases, retry loop):
+Pipeline (single intent, two phases):
   1. LLM call (PERFORMANCE tier, Claude default) — produces a JSON layout spec.
   2. Enqueues DocGeneratorAgent as a separate ASYNC Cloud Task (fire and forget)
      via coordinator.handle_delegation(GENERATE_DOCX_CODE). Returns success immediately.
-
-Retry loop (max MAX_RETRIES attempts):
-  - Each attempt: LLM call → JSON parse → spec status check.
-  - Retries on: JSON parse errors, non-ready spec status.
-  - On success: enqueues DocGenerator and returns success immediately.
-  - On exhaustion: returns AgentResponse.failure.
 
 DocGenerator runs independently as its own Cloud Task.
 AgentWorkerHandler delivers the file by calling notification_service.notify_file_bytes()

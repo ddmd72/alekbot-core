@@ -154,14 +154,13 @@ All agents registered via `main.py` at startup. `GcpTaskQueue` only instantiated
 | `deep_research_agent` | `deep_research` | SYNC | False | Smart |
 | `doc_planner_agent` | `create_document` | ASYNC | False | Quick, Smart |
 | `doc_generator_agent` | `generate_docx_code` | ASYNC | **True** | DocPlannerAgent only |
-| `pdf_planner_agent` | `create_pdf` | ASYNC | False | Quick, Smart |
-| `pdf_generator_agent` | `generate_pdf_code` | ASYNC | **True** | PdfPlannerAgent only |
+| `pdf_generator_agent` | `create_pdf` | ASYNC | False | Quick, Smart |
 
 `web_search_light_agent` is `internal=True` — it never appears in LLM tool lists. Quick reaches it
 via `intent_remap: {"search_web": "search_web_light"}` at dispatch time.
 
-`doc_generator_agent` and `pdf_generator_agent` are `internal=True` — never shown in LLM tool lists.
-Each is enqueued exclusively by its corresponding planner agent as a second ASYNC Cloud Task.
+`doc_generator_agent` is `internal=True` — never shown in LLM tool lists. It is enqueued
+exclusively by `DocPlannerAgent` as a second ASYNC Cloud Task.
 
 ---
 

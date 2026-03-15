@@ -57,6 +57,13 @@ background process extracts new facts from the conversation → bot gets smarter
 - DocGenerator (internal, PERFORMANCE tier) — Node.js DOCX code generation (intent:
   `generate_docx_code`, `internal=True`). LLM writes Node.js script → DocxRunnerPort executes
   subprocess → DOCX bytes returned. See docs/05_building_blocks/document_generation/README.md.
+- PdfGenerator (ASYNC, PERFORMANCE tier) — Single-pass PDF creation (intent: `create_pdf`,
+  `internal=False`, exposed directly to LLMs). One LLM call → raw HTML+CSS text response →
+  NodePuppeteerRunner renders to PDF bytes → two DeliveryItem("document"): HTML (GCS link) +
+  PDF (GCS link + Slack file upload). Filename extracted from `<title>` tag.
+  System prompt embedded in agent (`_SYSTEM_PROMPT`) — PromptBuilder bypassed until Firestore
+  tokens are recreated for single-pass approach (old tokens contain tool-calling instructions
+  that cause MALFORMED_FUNCTION_CALL). Style auto-selected by LLM from 12-style catalogue.
 - Consolidation — background "memory consolidation" (PERFORMANCE tier, runs via Cloud Tasks)
 - DeepResearch (async, provider-agnostic) — long-running research jobs. Agent calls
   `DeepResearchPort.create_interaction()` → returns ACK (job_id) immediately. Result delivered
@@ -142,6 +149,9 @@ src/
                   Document agents: DocPlannerAgent (doc_planner_agent.py, intent create_document,
                   ASYNC), DocGeneratorAgent (doc_generator_agent.py, intent generate_docx_code,
                   internal=True, called only by DocPlannerAgent via coordinator).
+                  PDF agents: PdfGeneratorAgent (pdf_generator_agent.py, intent create_pdf,
+                  ASYNC, internal=False). PuppeteerRunnerPort implemented by NodePuppeteerRunner
+                  (node_puppeteer_runner.py). Node.js runner in pdf_generator/runner.js.
   handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler, WorkerHandler).
                   WorkerHandler dispatches /worker Cloud Tasks by task_type.
   infrastructure/ — AgentCoordinator, queues, agent_config.py (central behavior params),
