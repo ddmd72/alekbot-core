@@ -112,6 +112,12 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                             #    NodePuppeteerRunner renders to PDF. Filename extracted from
 │   │                             #    <title> tag. Returns two DeliveryItem("document"):
 │   │                             #    HTML (GCS only) + PDF (GCS + Slack upload).
+│   ├── html_page_generator_agent.py  # 🆕 HTML page creation (intent: create_html_page, ASYNC,
+│   │                             #    PERFORMANCE tier, internal=False). Single LLM call: natural
+│   │                             #    language → complete HTML+CSS+JS. No subprocess — HTML is
+│   │                             #    final artifact. PromptBuilder mandatory (agent_type="html_page").
+│   │                             #    Filename from <title> tag. Returns one DeliveryItem("document"):
+│   │                             #    HTML (GCS public URL → Slack link, file_upload=False).
 │   ├── observation_agent.py      # ⚠️ LEGACY (replaced by session-based consolidation)
 │   ├── consolidation_agent.py    # Knowledge synthesis specialist ("Life Chronicler")
 │   ├── infrastructure/ # 🆕 Infrastructure Support Agents

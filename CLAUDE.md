@@ -61,8 +61,15 @@ background process extracts new facts from the conversation → bot gets smarter
   `internal=False`, exposed directly to LLMs). One LLM call → raw HTML+CSS text response →
   NodePuppeteerRunner renders to PDF bytes → two DeliveryItem("document"): HTML (GCS link) +
   PDF (GCS link + Slack file upload). Filename extracted from `<title>` tag.
-  System prompt loaded from PromptBuilder (required). `_SYSTEM_PROMPT` retained as canonical
-  reference for POC testing. Style auto-selected by LLM from 12-style catalogue.
+  System prompt loaded from PromptBuilder (required). Style auto-selected by LLM from 12-style catalogue.
+  See docs/05_building_blocks/document_generation/README.md.
+- HtmlPageGenerator (ASYNC, PERFORMANCE tier) — Single-pass HTML page creation (intent:
+  `create_html_page`, `internal=False`). One LLM call → complete HTML+CSS+JS document → one
+  DeliveryItem("document"): HTML GCS public link (no Slack file upload, no Node.js subprocess).
+  Filename from `<title>` tag. PromptBuilder mandatory (`agent_type="html_page"`); fail fast on
+  prompt builder error. Design enforced by `COGNITIVE_PROCESS_HTML_PAGE` token: mobile-first,
+  fluid type scale, CSS custom properties, IntersectionObserver scroll animations.
+  See docs/05_building_blocks/document_generation/README.md § 11.
 - Consolidation — background "memory consolidation" (PERFORMANCE tier, runs via Cloud Tasks)
 - DeepResearch (async, provider-agnostic) — long-running research jobs. Agent calls
   `DeepResearchPort.create_interaction()` → returns ACK (job_id) immediately. Result delivered
@@ -151,6 +158,8 @@ src/
                   PDF agents: PdfGeneratorAgent (pdf_generator_agent.py, intent create_pdf,
                   ASYNC, internal=False). PuppeteerRunnerPort implemented by NodePuppeteerRunner
                   (node_puppeteer_runner.py). Node.js runner in pdf_generator/runner.js.
+                  HTML page agents: HtmlPageGeneratorAgent (html_page_generator_agent.py, intent
+                  create_html_page, ASYNC, internal=False). No port — HTML is final artifact.
   handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler, WorkerHandler).
                   WorkerHandler dispatches /worker Cloud Tasks by task_type.
   infrastructure/ — AgentCoordinator, queues, agent_config.py (central behavior params),

@@ -134,6 +134,13 @@ class AgentProviderStrategy:
             "required_capabilities": [],
             "fallback": "claude"
         },
+        # HTML page generator: Gemini PERFORMANCE for max-quality single-pass page generation.
+        "html_page": {
+            "default_provider": "gemini",
+            "allowed_providers": ["claude", "gemini", "openai"],
+            "required_capabilities": [],
+            "fallback": "claude"
+        },
     }
 
     @classmethod
