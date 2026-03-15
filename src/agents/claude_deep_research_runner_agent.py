@@ -39,10 +39,10 @@ Turn protocol (single loop):
   max_tokens → output budget exhausted; return whatever text was produced.
 """
 import asyncio
-import os
 from typing import Any, Optional
 
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
+from ..infrastructure.agent_config import DEEP_RESEARCH_SECOND_PASS
 from ..infrastructure.agent_manifest import Intent
 from ..utils.logger import logger
 from .base_agent import BaseAgent
@@ -126,9 +126,7 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
 
         self._on_agent_start(f"[{model}] {query[:60]}")
 
-        second_pass_enabled = self._SECOND_PASS_ENABLED and (
-            os.environ.get("DEEP_RESEARCH_SECOND_PASS", "true").lower() != "false"
-        )
+        second_pass_enabled = self._SECOND_PASS_ENABLED and DEEP_RESEARCH_SECOND_PASS
 
         try:
             result_text, total_tokens = await self._research_loop(
@@ -181,24 +179,30 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
         """
         Build the second-pass user message.
 
-        Framed as a personal plea: the user revisits the topic, shares what was found so far,
-        expresses concern it may not be complete, and asks the model to search for anything
-        missed and produce a new final report.
+        Framed as independent verification: the first-pass result is provided as unverified
+        leads — the model must re-investigate using its tools and produce a fresh authoritative
+        report. The output frame ("written as if the notes didn't exist") prevents the model
+        from switching into critic/reviewer mode in its response body.
+        An optional "Research Notes" appendix gives a sanctioned outlet for self-assessment.
         """
         return (
-            f"Hello! I've been researching the following topic:\n\n"
+            f"I'm researching the following topic:\n\n"
             f"{original_query}\n\n"
-            f"A different AI model produced the following research report, but I'm not fully "
-            f"satisfied with the depth and coverage:\n\n"
-            f"{first_pass_result}\n\n"
-            f"This topic is important to me and I want a thorough, well-supported analysis. "
-            f"Please identify what was missed or handled superficially — gaps in analysis, "
-            f"overlooked angles, weak evidence, or unsupported conclusions. "
-            f"I am especially concerned about false positives: claims that sound authoritative "
-            f"but rest on weak or unverified sources. Where evidence is genuinely uncertain, "
-            f"say so explicitly rather than presenting it as established fact. "
-            f"Then produce a new, complete, well-structured research report that covers "
-            f"everything properly."
+            f"Below are unverified preliminary notes from an earlier investigation. "
+            f"Treat them as leads to explore — not as established facts. "
+            f"Some claims may be accurate, others incomplete or misleading.\n\n"
+            f"--- PRELIMINARY NOTES (unverified) ---\n"
+            f"{first_pass_result}\n"
+            f"--- END OF PRELIMINARY NOTES ---\n\n"
+            f"Using your research tools, independently verify the key claims, "
+            f"investigate what may be missing or inaccurate, and conduct your own "
+            f"comprehensive research on this topic.\n\n"
+            f"Your output must be a complete, authoritative research report — written "
+            f"as if the preliminary notes did not exist. Do NOT review or comment on "
+            f"the preliminary notes in the body of your report.\n\n"
+            f"If your independent research revealed significant discrepancies or important "
+            f"additions compared to the preliminary notes, you may include a brief "
+            f"\"Research Notes\" appendix at the very end of your report."
         )
 
     @staticmethod

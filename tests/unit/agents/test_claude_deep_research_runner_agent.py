@@ -697,7 +697,7 @@ class TestRun:
         client.messages.stream.return_value = _FakeStream([], first)
         agent = _make_agent(client)
 
-        with patch.dict(os.environ, {"DEEP_RESEARCH_SECOND_PASS": "false"}):
+        with patch("src.agents.claude_deep_research_runner_agent.DEEP_RESEARCH_SECOND_PASS", False):
             response = await agent.execute(_make_message())
 
         assert response.result["text"] == "First only"
@@ -782,7 +782,7 @@ class TestRun:
         client.messages.stream.return_value = _FakeStream([], first)
         agent = _make_agent(client)
 
-        with patch.dict(os.environ, {"DEEP_RESEARCH_SECOND_PASS": "false"}):
+        with patch("src.agents.claude_deep_research_runner_agent.DEEP_RESEARCH_SECOND_PASS", False):
             response = await agent.execute(_make_message())
 
         # Only one research loop call
