@@ -81,10 +81,10 @@ class OpenAIAdapter(LLMPort):
     def __init__(self, api_key: str) -> None:
         self.client = AsyncOpenAI(
             api_key=api_key,
-            timeout=60.0,
+            timeout=300.0,
             max_retries=2,
         )
-        logger.info("✅ [OpenAIAdapter] Initialized: base_url=api.openai.com, timeout=60s")
+        logger.info("✅ [OpenAIAdapter] Initialized: base_url=api.openai.com, timeout=300s")
 
     async def generate_content(
         self,

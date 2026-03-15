@@ -162,6 +162,7 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
         self._on_agent_success(
             char_count=len(result_text),
             token_count=total_tokens,
+            output_text=result_text,
         )
 
         return AgentResponse.success(
