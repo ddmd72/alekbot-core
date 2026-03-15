@@ -41,7 +41,7 @@ PROD_USER_ID ?= $(USER_ID)
 .PHONY: deploy deploy-dev deploy-indexes
 .PHONY: create-debug-bucket
 .PHONY: start stop restart start-dev stop-dev
-.PHONY: logs logs-dev logs-tail logs-perf logs-dev-tail logs-research-job-dev-tail
+.PHONY: logs logs-dev logs-tail logs-perf logs-dev-tail logs-job-dev list-jobs-dev logs-execution-dev cancel-job-dev fetch-logs-dev fetch-logs-job-dev
 .PHONY: services status auth
 .PHONY: check-models
 .PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
@@ -92,7 +92,12 @@ help: ## Show this help message
 	@echo "  make logs-tail       Live tail production logs"
 	@echo "  make logs-perf       Live tail production perf logs"
 	@echo "  make logs-dev-tail   Live tail development logs"
-	@echo "  make logs-research-job-dev-tail  Live tail research job logs"
+	@echo "  make logs-job-dev    View recent Cloud Run Job logs (last 100 entries)"
+	@echo "  make list-jobs-dev   List all job executions with status"
+	@echo "  make logs-execution-dev EXECUTION=<name>  View logs for a specific execution"
+	@echo "  make cancel-job-dev EXECUTION=<name>      Cancel a running execution"
+	@echo "  make fetch-logs-dev [K=300]      Fetch dev service logs to alek_debug.log"
+	@echo "  make fetch-logs-job-dev [K=300]  Fetch dev job logs to alek_debug_job.log"
 	@echo "  make logs-tail-clean      Tail prod logs (clean mode)"
 	@echo "  make logs-tail-full       Tail prod logs (full mode)"
 	@echo "  make logs-dev-tail-clean  Tail dev logs (clean mode)"
@@ -300,10 +305,54 @@ logs-dev-tail-clean: ## Live tail development logs (clean mode)
 	  --format="value(textPayload)" \
 	  --project=$(PROJECT_ID)
 
-logs-research-job-dev-tail: ## Live tail Cloud Run Job logs for alek-research-job-dev
-	@echo "📡 Tailing research job logs (Ctrl+C to stop)..."
-	@gcloud beta logging tail "resource.type=cloud_run_job AND resource.labels.job_name=alek-research-job-dev" \
+logs-job-dev: ## View recent Cloud Run Job logs (last 100 entries)
+	@echo "📋 Cloud Run Job logs (last 100 entries):"
+	@gcloud run jobs logs read alek-research-job-dev \
+	  --region=$(REGION) \
+	  --limit=100 \
+	  --project=$(PROJECT_ID)
+
+K ?= 300
+
+fetch-logs-dev: ## Fetch last K dev logs to alek_debug.log (default K=300)
+	@echo "📥 Fetching last $(K) dev log entries to alek_debug.log..."
+	@gcloud run services logs read $(SERVICE_NAME_DEV) \
+	  --region=$(REGION) \
+	  --limit=$(K) \
 	  --format="value(textPayload)" \
+	  --project=$(PROJECT_ID) \
+	  > alek_debug.log
+	@echo "✅ Done: $$(wc -l < alek_debug.log) lines written"
+
+fetch-logs-job-dev: ## Fetch last K job logs to alek_debug_job.log (default K=300)
+	@echo "📥 Fetching last $(K) job log entries to alek_debug_job.log..."
+	@gcloud run jobs logs read alek-research-job-dev \
+	  --region=$(REGION) \
+	  --limit=$(K) \
+	  --project=$(PROJECT_ID) \
+	  > alek_debug_job.log
+	@echo "✅ Done: $$(wc -l < alek_debug_job.log) lines written"
+
+list-jobs-dev: ## List all executions of alek-research-job-dev with status
+	@gcloud run jobs executions list \
+	  --job=alek-research-job-dev \
+	  --region=$(REGION) \
+	  --project=$(PROJECT_ID)
+
+logs-execution-dev: ## View logs for a specific execution: make logs-execution-dev EXECUTION=<name>
+	@test -n "$(EXECUTION)" || (echo "❌ Usage: make logs-execution-dev EXECUTION=<execution-name>" && exit 1)
+	@echo "📋 Logs for execution $(EXECUTION):"
+	@gcloud logging read \
+	  'resource.type=cloud_run_job AND labels."run.googleapis.com/execution_name"=$(EXECUTION)' \
+	  --limit=200 \
+	  --format="value(textPayload)" \
+	  --project=$(PROJECT_ID)
+
+cancel-job-dev: ## Cancel a running execution: make cancel-job-dev EXECUTION=<name>
+	@test -n "$(EXECUTION)" || (echo "❌ Usage: make cancel-job-dev EXECUTION=<execution-name>" && exit 1)
+	@echo "🛑 Cancelling execution $(EXECUTION)..."
+	@gcloud run jobs executions cancel $(EXECUTION) \
+	  --region=$(REGION) \
 	  --project=$(PROJECT_ID)
 
 logs-dev-tail-full: ## Live tail development logs (full mode)

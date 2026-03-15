@@ -229,7 +229,7 @@ class PromptDebugLogger:
 
         try:
             now = datetime.now()
-            timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+            timestamp = now.strftime("%Y-%m-%d_%H-%M-%S") + f"_{now.microsecond // 1000:03d}"
             filename = f"{timestamp}_prompt.txt"
 
             lines = []
@@ -289,7 +289,7 @@ class PromptDebugLogger:
 
         try:
             now = datetime.now()
-            timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+            timestamp = now.strftime("%Y-%m-%d_%H-%M-%S") + f"_{now.microsecond // 1000:03d}"
 
             turn = (metadata or {}).get("turn", 0)
 

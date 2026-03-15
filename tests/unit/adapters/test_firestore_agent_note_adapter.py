@@ -144,13 +144,13 @@ class TestCreateNote:
             await adapter.create_note(data)
 
     async def test_create_note_at_cap_raises(self, adapter, col_mock):
-        """20 active notes → ValueError before writing."""
+        """30 active notes → ValueError before writing."""
         active_docs = [
             _make_doc_snapshot(
                 f"note{i}",
                 _make_note_data(text=f"Note {i}"),
             )
-            for i in range(20)
+            for i in range(30)
         ]
         col_mock.where.return_value.get = AsyncMock(return_value=active_docs)
 
