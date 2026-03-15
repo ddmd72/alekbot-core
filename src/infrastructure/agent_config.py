@@ -336,3 +336,17 @@ class PdfGeneratorAgentConfig:
 
 
 PDF_GENERATOR = PdfGeneratorAgentConfig()
+
+
+# ---------------------------------------------------------------------------
+# HtmlPageGeneratorAgent (src/agents/html_page_generator_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class HtmlPageGeneratorAgentConfig:
+    temperature: float = 1.0      # High creativity for layout, design, and content choices
+    max_tokens: int = 64_000      # Full HTML+CSS+JS document can be large
+    timeout_ms: int = 600_000     # Background async task — allow 10 min for generation
+
+
+HTML_PAGE_GENERATOR = HtmlPageGeneratorAgentConfig()

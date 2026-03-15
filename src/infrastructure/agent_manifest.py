@@ -66,6 +66,8 @@ class Intent:
     GENERATE_DOCX_CODE = "generate_docx_code"
     # PDF creation — produces HTML + PDF delivered via GCS + Slack file upload
     CREATE_PDF = "create_pdf"
+    # HTML page creation — produces a single-page HTML layout delivered via GCS public link
+    CREATE_HTML_PAGE = "create_html_page"
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +384,25 @@ PDF_GENERATOR = AgentDescriptor(
 )
 
 
+HTML_PAGE_GENERATOR = AgentDescriptor(
+    agent_id="html_page_generator_agent",
+    agent_type="html_page",
+    capabilities={Intent.CREATE_HTML_PAGE: ExecutionMode.ASYNC},
+    description="Creates production-grade single-page HTML layouts",
+    capability_descriptions={
+        Intent.CREATE_HTML_PAGE: (
+            "Creates a professional single-page HTML layout — landing pages, product showcases, "
+            "portfolios, documentation pages, dashboards, or any visual web page. "
+            "Result delivered as a public link. Mobile-responsive with animations. "
+            "Use when the user asks for an HTML page, web page, landing page, or visual layout. "
+            "payload: {\"query\": \"<page creation request with all relevant context>\"}"
+        ),
+    },
+    internal=False,
+    dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
+)
+
+
 ALL_DESCRIPTORS = [
     MEMORY_SEARCH,
     WEB_SEARCH,
@@ -395,4 +416,5 @@ ALL_DESCRIPTORS = [
     DOC_PLANNER,
     DOC_GENERATOR,
     PDF_GENERATOR,
+    HTML_PAGE_GENERATOR,
 ]

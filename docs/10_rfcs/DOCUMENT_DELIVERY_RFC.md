@@ -1,6 +1,6 @@
 # RFC: Unified Document Delivery + PDF Generation Pipeline
 
-**Status:** In Progress
+**Status:** Partially Implemented (see Implementation Notes)
 **Date:** 2026-03-14
 **Owner:** Solo Dev
 **Depends on:** [DELIVERY_ITEMS_RFC.md](DELIVERY_ITEMS_RFC.md) (Phase 1 — implemented)
@@ -330,3 +330,32 @@ coexist. Migration = change one line in `DocGeneratorAgent._build_delivery_items
 - DOCX migration to `"document"` type — separate task
 - `"html_gcs_link"` and `"file_upload"` removal — not in this RFC (backward compat)
 - PDF rendering quality tuning — separate iteration after initial working version
+
+---
+
+## 7. Implementation Notes (divergence from RFC)
+
+### 7.1 PDF pipeline — single-pass (not two-phase)
+
+The RFC designed a `PdfPlannerAgent` → `PdfGeneratorAgent` two-phase pipeline mirroring DOCX.
+**Actual implementation:** single-pass `PdfGeneratorAgent` only. No `PdfPlannerAgent` in production.
+Reasons: HTML+CSS generation in one call is sufficient; the planner abstraction added latency and
+complexity without value for this format. `GENERATE_PDF_CODE` intent never shipped.
+See: `docs/05_building_blocks/document_generation/README.md` §10 for current architecture.
+
+### 7.2 HTML Page pipeline — added 2026-03-15
+
+`HtmlPageGeneratorAgent` follows the same single-pass pattern as the implemented PDF agent:
+
+```
+User Request
+  → Intent.CREATE_HTML_PAGE (ASYNC, PERFORMANCE tier, Gemini)
+  → Single LLM call → HTML+CSS+JS
+  → DeliveryItem("document") × 1:
+      HTML → GCS public URL → Slack link (file_upload=False)
+```
+
+Key differences from PDF: no Node.js subprocess, no Puppeteer, one delivery item (HTML only).
+`DocumentDeliveryService` is shared. `AgentWorkerHandler._deliver_document_result()` handles both
+`CREATE_PDF` and `CREATE_HTML_PAGE` intents identically.
+See: `docs/05_building_blocks/document_generation/README.md` §11.
