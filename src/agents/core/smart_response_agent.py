@@ -654,23 +654,19 @@ class SmartResponseAgent(BaseAgent):
                     delivery_items=response.delivery_items,
                 )
 
-            if attempt < self.MAX_AGENT_RETRIES:
-                logger.warning(
-                    f"⚠️ Delegation intent='{intent}' failed (attempt {attempt + 1}/"
-                    f"{self.MAX_AGENT_RETRIES + 1}). Retrying..."
-                )
-                await asyncio.sleep(self.RETRY_BACKOFF_SECONDS)
-                continue
-
+            # FAILED — validation or business logic rejection. Retrying won't help.
+            # Return immediately so the LLM can self-correct on the next turn.
+            logger.warning(
+                f"⚠️ Delegation intent='{intent}' rejected by specialist: {response.error}"
+            )
             return ToolResponse(
                 name=tool_call.name,
-                result_str=f"AGENT ERROR: {response.error}"
+                result_str=(
+                    f"SYSTEM: Specialist agent rejected the request. "
+                    f"Error: {response.error} "
+                    f"Correct your input and try again."
+                )
             )
-
-        return ToolResponse(
-            name=tool_call.name,
-            result_str="AGENT ERROR: Max retries exceeded"
-        )
 
     def _format_agent_result(self, result: Any) -> str:
         """Format agent result into string for LLM tool_response."""
