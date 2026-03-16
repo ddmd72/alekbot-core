@@ -76,9 +76,12 @@ architecture fix applied after initial release, and the planned OpenAI migration
   `temperature=1.0` required when thinking is active.
 - **Prompt caching:** system prompt cached with `cache_control: ephemeral` (5 min TTL).
   All `pause_turn` continuations get a cache HIT on the system prompt.
-- **Delivery chain (original — via Cloud Tasks):** runner returns `result["text"]` →
-  `AgentWorkerHandler` → `deliver_deep_research()` → enqueues `create_document` Cloud Task →
-  `DocPlannerAgent` → `DocGeneratorAgent` → DOCX bytes → `notify_file_bytes()` → user channel.
+- **Delivery chain (via Cloud Tasks):** runner returns `{text, round1_text, query}` →
+  `AgentWorkerHandler._deliver_deep_research_result()` → `deliver_deep_research()`:
+  (1) upload raw `.md` round files to GCS (`deep_research/{user_id}/{timestamp}-{round1|round2|report}.md`),
+  send named `notify_document_link()` for each (e.g. "Round 1 — raw research", "Round 2 — verified report");
+  (2) enqueue `create_html_page` Cloud Task → `HtmlPageGeneratorAgent` → styled HTML page → GCS link → user channel.
+  Single-pass mode (second pass disabled): one upload labelled "Research report (raw)" + HTML page.
 - **Cognitive process:** `DEEP_RESEARCH_COGNITIVE_PROCESS.groovy` — 4-phase protocol:
   Phase 0 (topic map) → Phase 1 (execute by dimension) → Phase 2 (counter-search verification)
   → Phase 3 (gap audit) → FINAL OUTPUT. Single uninterrupted session.

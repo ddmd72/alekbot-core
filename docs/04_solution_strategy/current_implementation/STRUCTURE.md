@@ -163,8 +163,9 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── consolidation_handler.py # 🆕 Batch processing orchestrator
 │   ├── conversation_handler.py # Platform-agnostic main orchestrator. Graceful degradation delegated to AgentFallbackService.
 │   ├── deep_research_delivery.py # 🆕 Shared deep research delivery helpers:
-│   │                     #    upload_html_report() — wrap markdown in HTML, upload to GCS
-│   │                     #    deliver_deep_research() — two parallel notifications (SmartAgent + report link)
+│   │                     #    upload_html_report()    — wrap markdown in HTML, upload to GCS (debug only)
+│   │                     #    _upload_round()         — upload raw markdown round text to GCS as .md file
+│   │                     #    deliver_deep_research() — upload round files, send named links, enqueue HtmlPageGenerator task
 │   │                     #    NotificationPort — structural Protocol for UserNotificationService
 │   ├── worker_handler.py # 🆕 /worker dispatcher — routes Cloud Tasks by task_type:
 │   │                     #    email_indexing, email_indexing_watchdog, consolidation, agent_execution,
