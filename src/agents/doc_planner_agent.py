@@ -5,13 +5,16 @@ DocPlannerAgent
 Specialist agent that creates professional DOCX documents from natural language requests.
 
 Pipeline (single intent, two phases):
-  1. LLM call (PERFORMANCE tier, Claude default) — produces a JSON layout spec.
+  1. LLM call (PERFORMANCE tier, Claude default) — produces a JSON layout spec
+     using the Doc Planner system prompt.
   2. Enqueues DocGeneratorAgent as a separate ASYNC Cloud Task (fire and forget)
-     via coordinator.handle_delegation(GENERATE_DOCX_CODE). Returns success immediately.
+     via coordinator.handle_delegation(GENERATE_DOCX_CODE, raw_spec_text, ...).
+     Returns AgentResponse.success immediately — does not wait for generation.
 
-DocGenerator runs independently as its own Cloud Task.
-AgentWorkerHandler delivers the file by calling notification_service.notify_file_bytes()
-when it processes the delivery_items on DocGenerator's AgentResponse.
+The raw LLM output (JSON string) is forwarded to DocGeneratorAgent as-is.
+DocGeneratorAgent writes a Node.js script using the docx npm library and executes it.
+DOCX delivery is handled by AgentWorkerHandler when the generator Cloud Task completes.
+AgentWorkerHandler calls notification_service.notify_file_bytes() to deliver the file.
 """
 
 from __future__ import annotations
@@ -37,9 +40,9 @@ class DocPlannerAgent(BaseAgent):
     Specialist agent for document creation.
 
     Accepts a natural-language query, generates a structured JSON layout spec
-    via LLM (phase 1), then enqueues DocGeneratorAgent as a separate ASYNC
-    Cloud Task (fire and forget). Retries phase 1 up to MAX_RETRIES times
-    on JSON parse errors or non-ready spec status.
+    via LLM (phase 1), then delegates DOCX generation to DocGeneratorAgent
+    via coordinator (phase 2).
+    Returns the file as a DeliveryItem for Cloud Task delivery.
     """
 
     TEMPERATURE = DOC_PLANNER.temperature
@@ -85,12 +88,6 @@ class DocPlannerAgent(BaseAgent):
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
         query = message.payload.get("query", "")
-        extra_content = [
-            v for k, v in message.payload.items()
-            if k not in ("query", "intent") and isinstance(v, str) and v
-        ]
-        if extra_content:
-            query = query + "\n\n---\n\n" + "\n\n---\n\n".join(extra_content)
         if not query:
             self._on_agent_error(ValueError("No query provided"), "empty_query")
             return AgentResponse.failure(
@@ -113,26 +110,25 @@ class DocPlannerAgent(BaseAgent):
                 error=f"Failed to build system prompt: {exc}",
             )
 
-        # Embed document content at the top of the system prompt so that
-        # behavioral instructions (cognitive process, output format) remain
-        # at the end — closest to the generation point. This prevents long
-        # source documents from diluting format instructions via recency bias.
-        combined_system = f"# Document Request\n\n{query}\n\n---\n\n{system_prompt}"
-        messages = [Message(role="user", parts=[MessagePart(text="Generate the JSON specification.")])]
+        messages = [
+            Message(role="user", parts=[MessagePart(text=query)])
+        ]
+
         request = LLMRequest(
             model_name=self.model_name,
-            system_instruction=combined_system,
+            system_instruction=system_prompt,
             messages=messages,
             temperature=self.TEMPERATURE,
-            max_tokens=self.MAX_TOKENS,
+            max_output_tokens=self.MAX_TOKENS,
             response_mime_type="application/json",
             response_schema=self._RESPONSE_SCHEMA,
             thinking=self.THINKING_EFFORT or None,
         )
-        llm_response = await self._call_llm(request, turn=0)
-        raw = (llm_response.text or "").strip()
+        response = await self._call_llm(request, turn=0)
+        raw = (response.text or "").strip()
 
-        # Phase 2: Enqueue DocGenerator as async Cloud Task — fire and forget.
+        # Enqueue generator as a separate async Cloud Task — fire and forget.
+        # Generator delivers the DOCX file directly via AgentWorkerHandler.
         await self._coordinator.handle_delegation(
             intent=Intent.GENERATE_DOCX_CODE,
             query=raw,
@@ -140,7 +136,7 @@ class DocPlannerAgent(BaseAgent):
             calling_agent_id=self.agent_id,
         )
 
-        token_count = llm_response.usage_metadata.total_tokens if llm_response.usage_metadata else 0
+        token_count = response.usage_metadata.total_tokens if response.usage_metadata else 0
         duration_ms = int((time.time() - start_time) * 1000)
         self._on_agent_success(0, token_count, output_text="Document spec ready, generation started")
         return AgentResponse.success(

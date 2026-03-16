@@ -186,8 +186,9 @@ All failure paths call `_on_agent_error(exc, context_tag)` before returning:
 **Registration:** `internal=True` — never shown to LLM tool selection
 **Tier:** PERFORMANCE (Claude default)
 
-`payload["query"]` is the raw LLM text output from DocPlannerAgent. It is included verbatim in
-the LLM user message and piped to the Node.js script's stdin.
+`payload["query"]` is the raw LLM text output from DocPlannerAgent (JSON string). It is prepended
+to the system prompt as a `document_spec { ... }` block (context before rules), and piped to the
+Node.js script's stdin at execution time. The LLM user message is a fixed `"Generate."` string.
 
 ### 4.0 can_handle
 
