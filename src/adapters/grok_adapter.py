@@ -172,8 +172,9 @@ class GrokAdapter(LLMPort):
             model=model_name,
             messages=openai_messages,
             temperature=temperature,
-            max_tokens=4096,
         )
+        if request and request.max_tokens:
+            create_kwargs["max_tokens"] = request.max_tokens
         if use_json_mode:
             create_kwargs["response_format"] = {"type": "json_object"}
         if openai_tools:

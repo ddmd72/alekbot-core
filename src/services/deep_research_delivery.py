@@ -6,7 +6,8 @@ Shared by WorkerHandler, AgentWorkerHandler, and deep_research_webhooks.
 
 - upload_html_report()    — wrap markdown in HTML, upload to GCS via MediaStoragePort
                             (kept for debugging; not called from deliver_deep_research)
-- deliver_deep_research() — enqueue DocPlanner Cloud Task → DocGenerator → DOCX file to user
+- _upload_round()         — upload raw markdown round text to GCS as .md file
+- deliver_deep_research() — upload round files, send named links, enqueue HtmlPageGenerator task
 - NotificationPort        — structural Protocol for UserNotificationService
 """
 
@@ -92,17 +93,40 @@ async def upload_html_report(
         return None
 
 
-def _build_doc_planner_query(original_query: str, result_text: str) -> str:
-    """Build the DocPlanner query from a completed research result."""
+async def _upload_round(
+    text: str,
+    user_id: str,
+    timestamp: str,
+    suffix: str,
+    media_storage: MediaStoragePort,
+) -> Optional[str]:
+    """Upload a raw markdown research round to GCS. Returns public URL or None.
+
+    Args:
+        text:          Raw markdown text from the research loop.
+        user_id:       Used as a path segment for namespacing.
+        timestamp:     UTC timestamp string (e.g. "20260316T123456Z").
+        suffix:        File suffix, e.g. "round1", "round2", "report".
+        media_storage: GCS storage port.
+    """
+    try:
+        key = f"deep_research/{user_id}/{timestamp}-{suffix}.md"
+        url = await media_storage.store(
+            data=text.encode("utf-8"),
+            key=key,
+            content_type="text/markdown; charset=utf-8",
+        )
+        logger.info("[DeepResearch] Uploaded %s (%d chars) → %s", suffix, len(text), url)
+        return url
+    except Exception as exc:
+        logger.error("[DeepResearch] Round upload failed (suffix=%s): %s", suffix, exc, exc_info=True)
+        return None
+
+
+def _build_html_page_query(original_query: str, result_text: str) -> str:
+    """Build the HtmlPageGenerator query from a completed research result."""
     parts = [
-        "Create a professional research report document based on the following research findings.\n"
-        "\n"
-        "Apply document design best practices to ensure strong visual readability:\n"
-        "- Clear hierarchy with a title, section headings, and subheadings\n"
-        "- Tables for comparative data or multi-column information\n"
-        "- Bullet lists for enumerated items; prose paragraphs for narrative content\n"
-        "- An executive summary section at the top\n"
-        "- Consistent spacing and formatting throughout\n"
+        "Create an HTML page for the following research. Every word is substantive — include all of it.\n"
     ]
     if original_query:
         parts.append(f"\nResearch topic: {original_query}\n")
@@ -117,25 +141,68 @@ async def deliver_deep_research(
     query: str,
     task_queue: Optional[TaskQueue],
     session_id: str = "",
+    round1_text: str = "",
+    media_storage: Optional[MediaStoragePort] = None,
+    notification: Optional["NotificationPort"] = None,
 ) -> None:
     """
-    Deliver deep research result by creating a DOCX document via DocPlanner.
+    Deliver deep research result:
+      1. Upload round markdown files to GCS and send named links to the user.
+      2. Enqueue HtmlPageGenerator Cloud Task → styled HTML report delivered to user.
 
-    Enqueues a create_document Cloud Task for DocPlannerAgent. DocPlanner builds
-    a layout spec, delegates to DocGeneratorAgent, which produces DOCX bytes and
-    delivers them via notify_file_bytes to the user's last active channel.
+    round1_text — raw first-pass result before the critic second pass.
+                  If equal to result_text (second pass disabled), uploaded once as "report".
     """
+    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    has_two_rounds = bool(round1_text) and round1_text != result_text
+
+    if media_storage and notification:
+        if has_two_rounds:
+            url1 = await _upload_round(round1_text, user_id, timestamp, "round1", media_storage)
+            if url1:
+                try:
+                    await notification.notify_document_link(
+                        user_id=user_id, account_id=account_id,
+                        url=url1, label="Round 1 — raw research",
+                    )
+                except Exception as exc:
+                    logger.error("[DeepResearch] notify_document_link round1 failed: %s", exc, exc_info=True)
+
+            url2 = await _upload_round(result_text, user_id, timestamp, "round2", media_storage)
+            if url2:
+                try:
+                    await notification.notify_document_link(
+                        user_id=user_id, account_id=account_id,
+                        url=url2, label="Round 2 — verified report",
+                    )
+                except Exception as exc:
+                    logger.error("[DeepResearch] notify_document_link round2 failed: %s", exc, exc_info=True)
+        else:
+            url = await _upload_round(result_text, user_id, timestamp, "report", media_storage)
+            if url:
+                try:
+                    await notification.notify_document_link(
+                        user_id=user_id, account_id=account_id,
+                        url=url, label="Research report (raw)",
+                    )
+                except Exception as exc:
+                    logger.error("[DeepResearch] notify_document_link report failed: %s", exc, exc_info=True)
+    else:
+        logger.warning(
+            "[DeepResearch] media_storage or notification not configured — skipping round uploads"
+        )
+
     if not task_queue:
-        logger.warning("[DeepResearch] No task_queue configured — DOCX delivery skipped")
+        logger.warning("[DeepResearch] No task_queue configured — HTML page delivery skipped")
         return
 
-    doc_query = _build_doc_planner_query(query, result_text)
+    html_query = _build_html_page_query(query, result_text)
 
     try:
         await task_queue.enqueue_agent_task(
-            agent_id="doc_planner_agent",
-            intent="create_document",
-            query=doc_query,
+            agent_id="html_page_generator_agent",
+            intent="create_html_page",
+            query=html_query,
             context={
                 "user_id": user_id,
                 "account_id": account_id,
@@ -143,9 +210,9 @@ async def deliver_deep_research(
             },
             deadline_seconds=720,
         )
-        logger.info("[DeepResearch] DocPlanner task enqueued for user=%s", user_id[:8])
+        logger.info("[DeepResearch] HtmlPageGenerator task enqueued for user=%s", user_id[:8])
     except Exception as exc:
         logger.error(
-            "[DeepResearch] Failed to enqueue DocPlanner task for user=%s: %s",
+            "[DeepResearch] Failed to enqueue HtmlPageGenerator task for user=%s: %s",
             user_id[:8], exc, exc_info=True,
         )

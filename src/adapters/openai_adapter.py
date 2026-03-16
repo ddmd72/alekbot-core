@@ -51,13 +51,13 @@ class OpenAIAdapter(LLMPort):
     # Tier-to-model mapping
     # ECO: gpt-5-nano (cheapest, fastest)
     # BALANCED: gpt-5-mini (mid-tier quality)
-    # PERFORMANCE: gpt-5 (flagship)
+    # PERFORMANCE: gpt-5.2 (previous flagship — faster than gpt-5)
     # Verify model IDs at https://platform.openai.com/docs/models
     # ========================================================================
     MODEL_TIERS = {
         PerformanceTier.ECO: "gpt-5-nano",
         PerformanceTier.BALANCED: "gpt-5-mini",
-        PerformanceTier.PERFORMANCE: "gpt-5",
+        PerformanceTier.PERFORMANCE: "gpt-5.2",
     }
 
     # Models that do not support sampling parameters (temperature, top_p, etc.):
@@ -175,8 +175,9 @@ class OpenAIAdapter(LLMPort):
         create_kwargs: dict = dict(
             model=model_name,
             messages=openai_messages,
-            max_completion_tokens=8192,
         )
+        if request and request.max_tokens:
+            create_kwargs["max_completion_tokens"] = request.max_tokens
         if not self._is_reasoning_model(model_name):
             create_kwargs["temperature"] = temperature
         if openai_tools:
@@ -228,7 +229,6 @@ class OpenAIAdapter(LLMPort):
         create_kwargs: dict = dict(
             model=model_name,
             messages=openai_messages,
-            max_completion_tokens=8192,
         )
         if not self._is_reasoning_model(model_name):
             create_kwargs["temperature"] = temperature
@@ -471,6 +471,14 @@ class OpenAIAdapter(LLMPort):
         message = choice.message
 
         text = message.content or ""
+
+        if not text and choice.finish_reason != "tool_calls":
+            logger.warning(
+                "⚠️ [OpenAIAdapter] Empty content: model=%s finish_reason=%s refusal=%r",
+                completion.model,
+                choice.finish_reason,
+                getattr(message, "refusal", None),
+            )
 
         tool_calls = []
         if message.tool_calls:

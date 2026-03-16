@@ -71,7 +71,7 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
     # Second-pass critic: run a follow-up session with the first result, asking the model
     # to find what was missed and produce a new, improved final report.
     # Disable via DEEP_RESEARCH_SECOND_PASS=false env var (defaults to True).
-    _SECOND_PASS_ENABLED = True
+    _SECOND_PASS_ENABLED = False  # temporarily disabled — single-pass mode
 
     # Models that support adaptive thinking + output_config effort.
     _THINKING_MODELS = {"claude-sonnet-4-6", "claude-opus-4-6"}
@@ -143,6 +143,8 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
                 error=str(exc),
             )
 
+        round1_text = result_text  # capture before optional second-pass override
+
         if second_pass_enabled:
             logger.info("[DeepResearchRunner] Starting second-pass critic session")
             critic_query = self._build_critic_query(original_query, result_text)
@@ -170,6 +172,7 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
             agent_id=self.agent_id,
             result={
                 "text": result_text,
+                "round1_text": round1_text,
                 "query": original_query,
             },
         )
