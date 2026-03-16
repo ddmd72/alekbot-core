@@ -96,6 +96,14 @@ class DocPlannerAgent(BaseAgent):
                 error="No query provided in payload",
             )
 
+        # Append any extra string fields from the payload (e.g. report_content spread by
+        # AgentWorkerHandler from context["params"]) — skip "query" and "intent" which are
+        # routing metadata, not content. Non-string values are silently ignored.
+        _excluded = {"query", "intent"}
+        for key, val in message.payload.items():
+            if key not in _excluded and isinstance(val, str) and val:
+                query = f"{query}\n\n{val}"
+
         self._on_agent_start(query)
         start_time = time.time()
         account_id = message.context.get("account_id")
@@ -119,7 +127,7 @@ class DocPlannerAgent(BaseAgent):
             system_instruction=system_prompt,
             messages=messages,
             temperature=self.TEMPERATURE,
-            max_output_tokens=self.MAX_TOKENS,
+            max_tokens=self.MAX_TOKENS,
             response_mime_type="application/json",
             response_schema=self._RESPONSE_SCHEMA,
             thinking=self.THINKING_EFFORT or None,

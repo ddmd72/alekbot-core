@@ -75,7 +75,8 @@ class NotesAgent(BaseAgent):
                     visible_after=_parse_dt(message.payload.get("visible_after")),
                     expires_after=_parse_dt(message.payload.get("expires_after")),
                 ))
-                result_str = f"note created (note_id: {note.note_id})"
+                result_data = {"note_id": note.note_id, "status": "created"}
+                log_text = f"note created (note_id: {note.note_id})"
 
             elif intent == Intent.DELETE_NOTE:
                 note_id = message.payload.get("note_id") or message.payload.get("query", "")
@@ -89,7 +90,8 @@ class NotesAgent(BaseAgent):
                         agent_id=self.agent_id,
                         error=f"Note {note_id!r} not found or does not belong to this user.",
                     )
-                result_str = f"note deleted (note_id: {note_id})"
+                result_data = {"note_id": note_id, "deleted": True}
+                log_text = f"note deleted (note_id: {note_id})"
 
             elif intent == Intent.UPDATE_NOTE:
                 note_id = message.payload.get("note_id") or message.payload.get("query", "")
@@ -100,7 +102,8 @@ class NotesAgent(BaseAgent):
                     visible_after=_parse_dt(message.payload.get("visible_after")),
                     expires_after=_parse_dt(message.payload.get("expires_after")),
                 ))
-                result_str = f"note updated (note_id: {note.note_id})"
+                result_data = {"note_id": note.note_id, "status": "updated"}
+                log_text = f"note updated (note_id: {note.note_id})"
 
             else:
                 error_msg = f"Unknown intent: {intent}"
@@ -111,10 +114,11 @@ class NotesAgent(BaseAgent):
                     error=error_msg,
                 )
 
+            metadata: dict = {}
             active_count = len(await self._notes.list_active_notes(user_id, as_of=datetime.now(timezone.utc)))
             if active_count > _NOTES_SOFT_THRESHOLD:
-                result_str += (
-                    f"\n\nALERT: {active_count} active notes in working memory "
+                metadata["system_alert"] = (
+                    f"ALERT: {active_count} active notes in working memory "
                     f"(soft limit: {_NOTES_SOFT_THRESHOLD}). "
                     f"Delete duplicates or outdated entries."
                 )
@@ -127,10 +131,11 @@ class NotesAgent(BaseAgent):
                 error=str(exc),
             )
 
-        self._on_agent_success(len(result_str), 0, result_str)
+        self._on_agent_success(len(log_text), 0, log_text)
         return AgentResponse.success(
             task_id=message.task_id,
             agent_id=self.agent_id,
-            result=result_str,
+            result=result_data,
             confidence=1.0,
+            metadata=metadata or None,
         )
