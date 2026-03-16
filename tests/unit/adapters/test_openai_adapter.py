@@ -35,7 +35,7 @@ def test_openai_model_for_tier():
 
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gpt-5-nano"
     assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gpt-5-mini"
-    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-5"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-5.2"
 
 
 def test_openai_unsupported_tier_raises():
@@ -424,12 +424,16 @@ async def test_generate_content_uses_max_completion_tokens():
     adapter.client.chat.completions.create = mock_create
 
     await adapter.generate_content(
-        model_name="gpt-5-mini",
-        system_instruction="You are helpful.",
-        messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+        request=LLMRequest(
+            model_name="gpt-5-mini",
+            system_instruction="You are helpful.",
+            messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+            max_tokens=1000,
+        ),
     )
 
     assert "max_completion_tokens" in captured_kwargs
+    assert captured_kwargs["max_completion_tokens"] == 1000
     assert "max_tokens" not in captured_kwargs
 
 

@@ -677,7 +677,8 @@ class TestRun:
         second = _api_message("end_turn", [_text_block("Second result")])
         agent = _make_agent(_client_with_streams(_FakeStream([], first), _FakeStream([], second)))
 
-        response = await agent.execute(_make_message())
+        with patch.object(ClaudeDeepResearchRunnerAgent, "_SECOND_PASS_ENABLED", True):
+            response = await agent.execute(_make_message())
 
         assert response.status == AgentStatus.SUCCESS
         assert response.result["text"] == "Second result"
@@ -710,7 +711,8 @@ class TestRun:
         client.messages.stream.side_effect = [_FakeStream([], first), _FakeStream([], second)]
         agent = _make_agent(client)
 
-        with patch.dict(os.environ, {"DEEP_RESEARCH_SECOND_PASS": "true"}):
+        with patch.object(ClaudeDeepResearchRunnerAgent, "_SECOND_PASS_ENABLED", True), \
+             patch.dict(os.environ, {"DEEP_RESEARCH_SECOND_PASS": "true"}):
             await agent.execute(_make_message())
 
         assert client.messages.stream.call_count == 2
@@ -746,7 +748,8 @@ class TestRun:
         client.messages.stream.side_effect = [_FakeStream([], first), _FakeStream([], second)]
         agent = _make_agent(client)
 
-        await agent.execute(_make_message())
+        with patch.object(ClaudeDeepResearchRunnerAgent, "_SECOND_PASS_ENABLED", True):
+            await agent.execute(_make_message())
 
         second_call = client.messages.stream.call_args_list[1].kwargs
         critic_query = second_call["messages"][0]["content"]
@@ -759,7 +762,8 @@ class TestRun:
         client.messages.stream.side_effect = [_FakeStream([], first), _FakeStream([], second)]
         agent = _make_agent(client)
 
-        await agent.execute(_make_message(query="Original research topic"))
+        with patch.object(ClaudeDeepResearchRunnerAgent, "_SECOND_PASS_ENABLED", True):
+            await agent.execute(_make_message(query="Original research topic"))
 
         second_call = client.messages.stream.call_args_list[1].kwargs
         critic_query = second_call["messages"][0]["content"]

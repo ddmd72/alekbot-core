@@ -254,15 +254,19 @@ class TestLLMCall:
         assert req.temperature == DOC_GENERATOR.temperature
 
     async def test_raw_query_in_user_message(self, agent, mock_llm):
-        # Raw planner output is included in the LLM user message.
+        # Raw planner JSON is injected into the system prompt as document_spec block.
+        # The user message is a fixed "Generate." trigger — not the raw query.
         await agent.execute(_make_message())
         req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
                           mock_llm.generate_content.call_args.args[0]
-        user_text = req.messages[0].parts[0].text
-        assert "doc_spec" in user_text
+        assert req.messages[0].parts[0].text == "Generate."
+        # doc_spec lives in the system instruction, not the user message
+        assert "doc_spec" in req.system_instruction
 
     async def test_system_prompt_from_builder(self, agent, mock_llm, mock_prompt_builder):
+        # System instruction = document_spec block prepended + builder rules appended.
         await agent.execute(_make_message())
         req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
                           mock_llm.generate_content.call_args.args[0]
-        assert req.system_instruction == "You are a DOC Generator..."
+        assert "document_spec {" in req.system_instruction
+        assert "You are a DOC Generator..." in req.system_instruction

@@ -33,7 +33,9 @@ This document MUST be updated when:
 - [ ] `DocumentDeliveryService` GCS storage logic or key format changes.
 - [ ] `pdf_generator/runner.js` stdin/stdout contract changes.
 - [ ] HtmlPageGeneratorAgent execution logic changes.
-- [ ] `COGNITIVE_PROCESS_HTML_PAGE` token design rules change.
+- [ ] `COGNITIVE_PROCESS_HTML_PAGE` token rules change (output contract, mobile-first, CDN allowlist, OG tags).
+- [ ] `GcsMediaAdapter._inject_noindex()` logic or scope changes.
+- [ ] GCS bucket IAM policy changes (affects public URL accessibility).
 
 ### Cross-References
 
@@ -651,11 +653,20 @@ Token: `COGNITIVE_PROCESS_HTML_PAGE` (category: `cognitive_process`, `non_overri
 
 Design constraints enforced by prompt (`COGNITIVE_PROCESS_HTML_PAGE`):
 - All CSS in a single `<style>` block; all JS in a single `<script>` block before `</body>`.
-- No external resources except one Google Fonts `<link>` in `<head>`.
-- Fluid type scale with `clamp()`, CSS custom properties for color system at `:root`.
+- No external resources except one Google Fonts `<link>` in `<head>`. Additional CDN libraries
+  allowed only when genuinely required: Chart.js (data charts), Leaflet (maps), Alpine.js (UI state).
+- Open Graph tags (`og:title`, `og:description`, `og:type`) required in `<head>` for Slack unfurl
+  previews. `og:image` explicitly excluded — no image source available.
+- Mobile-first: base styles target mobile, desktop in `@media (min-width: 768px)`. `width: 100vw`
+  prohibited — causes iOS viewport overflow; `width: 100%` required instead.
 - `IntersectionObserver` scroll-reveal animations + `@media (prefers-reduced-motion)` fallback.
 - Page type routing: landing page, portfolio, dashboard preview, documentation, product showcase —
   each with a prescribed section set.
+
+**Prompt philosophy (as of 2026-03-16):** Prescriptive design rules (typography scale,
+color system variable names, layout pixel values, visual richness details) were intentionally
+removed. The LLM produces higher-quality, more contextually appropriate designs with freedom
+constrained only by technical contracts and mobile correctness. See § 11.4 for ADR.
 
 **Agent configuration** (from `agent_config.py`):
 
@@ -664,6 +675,76 @@ Design constraints enforced by prompt (`COGNITIVE_PROCESS_HTML_PAGE`):
 | `temperature` | `1.0` (high creativity for layout and design decisions) |
 | `max_tokens` | `64_000` (full HTML+CSS+JS document) |
 | `timeout_ms` | `600_000` (10 min) |
+
+### 11.4 Architecture & Design Decisions (ADR, 2026-03-16)
+
+#### ADR-1: Prompt minimalism — remove prescriptive design rules
+
+**Decision:** Removed all aesthetic micro-constraints from `COGNITIVE_PROCESS_HTML_PAGE`:
+typography scale (specific `clamp()` values, line heights, font weight counts), color system
+variable name requirements, layout pixel values (1200px max-width, 80px section padding),
+visual richness rules (border-radius ranges, box-shadow requirements, hover transform values).
+
+**Rationale:** Prescriptive constraints caused two categories of problems:
+1. **Layout bugs:** `max-width: 65ch` applied to `p`/`ul`/`ol` but not `h2`/`h3` created
+   visual inconsistency (headings full-width, text constrained). Root cause: LLM interprets
+   element-level rules literally, not holistically.
+2. **Design regression:** Specific values constrain the LLM to one aesthetic. Removing them
+   allows the model to select typography, spacing, and color appropriate to each content type.
+
+**Retained:** Technical output contract (DOCTYPE, meta tags, single style/script block),
+quality bar (`Select_Style` — Stripe/Apple/Linear/Vercel level), mobile-first structural rules,
+animation pattern, section catalogue by page type.
+
+**Result:** Immediate quality improvement observed — dark theme, multi-font pairing,
+terminal blocks, contextual layout decisions — none of which the prescriptive prompt allowed.
+
+---
+
+#### ADR-2: OG tags in prompt, not in adapter
+
+**Decision:** `og:title`, `og:description`, `og:type` added to `Output_Contract` as required
+`<head>` elements. `og:image` explicitly excluded.
+
+**Rationale:** Slack unfurl bots (not search engine crawlers) fetch pages to display previews.
+They ignore `robots` meta tags — `noindex` and OG tags are fully compatible. The LLM generates
+OG tags from content it has just written, making `og:description` semantically accurate.
+`og:image` excluded because no image source is available; its absence does not degrade Slack
+previews.
+
+**Alternative considered:** Injecting OG tags in `GcsMediaAdapter` from `<title>` — rejected
+because adapter would produce empty `og:description` and would need to parse HTML it shouldn't
+own.
+
+---
+
+#### ADR-3: `noindex` injected in adapter, not in prompt
+
+**Decision:** `GcsMediaAdapter._inject_noindex()` injects `<meta name="robots" content="noindex,
+nofollow">` into `<head>` for all `text/html` uploads. Applied before `blob.upload_from_string`.
+
+**Rationale:** Guaranteed injection regardless of LLM compliance. Prompt-level instructions
+for technical meta tags are sometimes omitted. The adapter is the correct enforcement point
+for infrastructure-level concerns (storage, indexing policy) that have nothing to do with
+content generation. Covers both `DocumentDeliveryService` and `RichContentService` upload paths.
+
+---
+
+#### ADR-4: GCS bucket IAM — anonymous list access removed
+
+**Decision:** `alek-media-dev` bucket IAM changed from `allUsers: roles/storage.objectViewer`
+to `allUsers: roles/storage.legacyObjectReader`.
+
+**Rationale:** `objectViewer` grants `storage.objects.list` — any party knowing the bucket name
+could enumerate all objects and filenames. `legacyObjectReader` grants only `storage.objects.get`
+— direct URLs remain publicly accessible (required for Slack link delivery) but enumeration is
+blocked. Verified: anonymous `gsutil ls` → `401`; direct URL → `200`.
+
+**Search engine indexing risk:** Low. Googlebot requires an external link to discover pages;
+Slack channels are not indexed. `noindex` injection (ADR-3) provides defense in depth.
+No signed URLs used — files have no expiry. Acceptable for dev bucket given UUID-based paths.
+
+---
 
 ### 11.3 Comparison: DOCX vs PDF vs HTML Page
 
@@ -727,5 +808,5 @@ Design constraints enforced by prompt (`COGNITIVE_PROCESS_HTML_PAGE`):
 
 ## 13. Status
 
-**Status:** ✅ Production Ready (DOCX, PDF) | ✅ Ready for Firestore upload (HTML page)
-**Last Updated:** 2026-03-15
+**Status:** ✅ Production Ready (DOCX, PDF) | ✅ Production Ready (HTML page)
+**Last Updated:** 2026-03-16

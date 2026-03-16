@@ -13,6 +13,18 @@ from ..ports.media_storage_port import MediaStoragePort
 from ..utils.logger import logger
 
 
+def _inject_noindex(data: bytes) -> bytes:
+    """Inject <meta name="robots" content="noindex, nofollow"> after <head> tag."""
+    html = data.decode("utf-8")
+    lower = html.lower()
+    head_idx = lower.find("<head>")
+    if head_idx != -1:
+        insert_at = head_idx + len("<head>")
+        html = html[:insert_at] + '\n    <meta name="robots" content="noindex, nofollow">' + html[insert_at:]
+        return html.encode("utf-8")
+    return data
+
+
 class GcsMediaAdapter(MediaStoragePort):
     """Stores content in a GCS bucket and returns a public URL."""
 
@@ -27,6 +39,9 @@ class GcsMediaAdapter(MediaStoragePort):
 
     def _upload_sync(self, data: bytes, key: str, content_type: str) -> str:
         from google.cloud import storage  # lazy import — optional at startup
+
+        if content_type.startswith("text/html"):
+            data = _inject_noindex(data)
 
         client = storage.Client()
         bucket = client.bucket(self._bucket_name)
