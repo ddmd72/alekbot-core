@@ -8,8 +8,9 @@ specified agent, and handles result delivery.
 
 Deep research delivery:
   When intent == "execute_deep_research_claude", the runner agent returns
-  the research text in AgentResponse.result. This handler enqueues a
-  DocPlanner Cloud Task, which generates a DOCX and delivers it to the user.
+  the research text in AgentResponse.result. This handler uploads round
+  markdown files to GCS, sends named links to the user, and enqueues an
+  HtmlPageGenerator Cloud Task to produce the final styled report.
 """
 
 import base64
@@ -148,7 +149,7 @@ class AgentWorkerHandler:
     async def _deliver_deep_research_result(
         self, response: Any, context: Dict[str, Any]
     ) -> None:
-        """Deliver deep research result by enqueuing DocPlanner task."""
+        """Upload round markdown files to GCS, send named links, enqueue HtmlPageGenerator task."""
 
         result = response.result
         if not isinstance(result, dict) or not result.get("text"):
@@ -157,11 +158,14 @@ class AgentWorkerHandler:
 
         await deliver_deep_research(
             result_text=result["text"],
+            round1_text=result.get("round1_text", ""),
             user_id=context.get("user_id", ""),
             account_id=context.get("account_id", ""),
             query=result.get("query", context.get("original_query", "")),
             task_queue=self._task_queue,
             session_id=context.get("session_id", ""),
+            media_storage=self._media_storage,
+            notification=self._notification,
         )
 
     async def _deliver_docx_result(self, response: Any, context: Dict[str, Any]) -> None:

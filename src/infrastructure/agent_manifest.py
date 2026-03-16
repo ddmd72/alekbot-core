@@ -346,11 +346,8 @@ DOC_PLANNER = AgentDescriptor(
     description="Creates structured Word documents (DOCX) from natural language requests",
     capability_descriptions={
         Intent.CREATE_DOCUMENT: (
-            "Creates a professional Word document (DOCX) — proposals, reports, memos, briefs, "
-            "summaries, contracts, manuals, or any other formal document. "
-            "The result is delivered as a DOCX file attachment in the chat. "
-            "Use when the user explicitly requests a document, report, or formatted file. "
-            "payload: {\"query\": \"<document creation request with all relevant context>\"}"
+            "Creates a Word document (DOCX) delivered as a file attachment. "
+            "payload: {\"query\": \"<user instruction + full source content verbatim>\"}"
         ),
     },
     internal=False,

@@ -111,8 +111,8 @@ class SmartAgentConfig:
     max_agent_retries: int = 2
     retry_backoff_seconds: float = 1.0
     delegation_temperature: float = 0.8
-    # 120 s: max acceptable UX wait; fallback to Quick kicks in after timeout
-    timeout_ms: int = 120_000
+    # 300 s: raised from 120 s to accommodate slower reasoning models (e.g. GPT-5)
+    timeout_ms: int = 300_000
     # No retry: a retry doubles wall time → terrible UX
     config_max_retries: int = 0
 
@@ -300,7 +300,7 @@ class DocPlannerAgentConfig:
     temperature: float = 1.0      # Claude default for JSON generation without thinking
     max_tokens: int = 54_000      # JSON spec for a full document can be large
     timeout_ms: int = 600_000     # Background async task — allow 10 min for spec generation
-    thinking_effort: Optional[str] = None
+    thinking_effort: Optional[str] = "high"
 
 
 DOC_PLANNER = DocPlannerAgentConfig()

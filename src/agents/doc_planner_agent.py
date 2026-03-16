@@ -113,10 +113,15 @@ class DocPlannerAgent(BaseAgent):
                 error=f"Failed to build system prompt: {exc}",
             )
 
-        messages = [Message(role="user", parts=[MessagePart(text=query)])]
+        # Embed document content at the top of the system prompt so that
+        # behavioral instructions (cognitive process, output format) remain
+        # at the end — closest to the generation point. This prevents long
+        # source documents from diluting format instructions via recency bias.
+        combined_system = f"# Document Request\n\n{query}\n\n---\n\n{system_prompt}"
+        messages = [Message(role="user", parts=[MessagePart(text="Generate the JSON specification.")])]
         request = LLMRequest(
             model_name=self.model_name,
-            system_instruction=system_prompt,
+            system_instruction=combined_system,
             messages=messages,
             temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
