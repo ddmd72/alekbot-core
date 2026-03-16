@@ -122,7 +122,7 @@ class DocGeneratorAgent(BaseAgent):
         start_time = time.time()
 
         try:
-            system_prompt = await self._build_system_prompt(account_id)
+            rules_prompt = await self._build_system_prompt(account_id)
         except Exception as exc:
             self._on_agent_error(exc, "prompt_builder")
             return AgentResponse.failure(
@@ -131,16 +131,12 @@ class DocGeneratorAgent(BaseAgent):
                 error=f"Failed to build system prompt: {exc}",
             )
 
+        system_prompt = f"document_spec {{\n{raw_query}\n}}\n\n{rules_prompt}"
+
         messages = [
             Message(
                 role="user",
-                parts=[MessagePart(
-                    text=(
-                        "Implement the document layout specification as a Node.js script "
-                        "and call generate_docx to produce the DOCX file.\n\n"
-                        f"{raw_query}"
-                    )
-                )],
+                parts=[MessagePart(text="Generate.")],
             )
         ]
 
@@ -152,10 +148,9 @@ class DocGeneratorAgent(BaseAgent):
                 system_instruction=system_prompt,
                 messages=messages,
                 temperature=self.TEMPERATURE,
-                max_tokens=self.MAX_TOKENS,
+                max_output_tokens=self.MAX_TOKENS,
                 tools=_GENERATE_DOCX_TOOL,
                 thinking=self.THINKING_EFFORT or None,
-                force_tool_use=True,
             )
             response = await self._call_llm(request, turn=turn)
 
@@ -223,7 +218,7 @@ class DocGeneratorAgent(BaseAgent):
             if captured_bytes:
                 token_count = response.usage_metadata.total_tokens if response.usage_metadata else 0
                 duration_ms = int((time.time() - start_time) * 1000)
-                self._on_agent_success(0, token_count, output_text="docx_generated")
+                self._on_agent_success(len(captured_bytes), token_count, output_text="docx_generated")
 
                 try:
                     _parsed = json.loads(raw_query)
