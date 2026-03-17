@@ -36,6 +36,9 @@ This document MUST be updated when:
 - [ ] `COGNITIVE_PROCESS_HTML_PAGE` token rules change (output contract, mobile-first, CDN allowlist, OG tags).
 - [ ] `GcsMediaAdapter._inject_noindex()` logic or scope changes.
 - [ ] GCS bucket IAM policy changes (affects public URL accessibility).
+- [ ] `ImageSearchPort` interface changes or `UnsplashAdapter` implementation changes.
+- [ ] `_resolve_unsplash_placeholders()` logic changes (URL parsing, dimension handling, attribution).
+- [ ] `UNSPLASH_ACCESS_KEY` secret lifecycle changes (rotation, scope).
 
 ### Cross-References
 
@@ -604,8 +607,15 @@ User Request (natural language page description)
 HtmlPageGeneratorAgent  [ASYNC Cloud Task, PERFORMANCE tier, Gemini]
      │  1. build_for_agent(account_id, "html_page", user_id)  → system_prompt
      │  2. Single LLM call  →  HTML+CSS+JS raw text response
+     │     (LLM writes source.unsplash.com/WxH/?keywords placeholder URLs natively)
      │  3. _strip_markdown_fences(html)
-     │  4. _extract_filename_from_html(html)  →  (base_filename, display_name)
+     │  4. _resolve_unsplash_placeholders(html, image_search)  [if image_search present]
+     │        ├─ Find all source.unsplash.com/... URLs (regex)
+     │        ├─ Parse keywords + dimensions from each URL
+     │        ├─ asyncio.gather → UnsplashAdapter.search(keywords, count=1) per URL
+     │        ├─ Replace placeholders: raw_url?w=W&h=H&fit=crop&auto=format&q=80
+     │        └─ Inject attribution <div> before </body>
+     │  5. _extract_filename_from_html(html)  →  (base_filename, display_name)
      │
      ▼
 DeliveryItem("document")
@@ -637,10 +647,24 @@ blueprint `html_page_agent_v1`) instructs the LLM to produce a production-grade,
 single-page layout targeting the visual quality of Stripe, Apple, Linear, or Vercel pages, with
 self-contained CSS and vanilla JS.
 
+**Constructor dependencies:**
+
+| Parameter | Type | Required | Source |
+|-----------|------|----------|--------|
+| `config` | `AgentConfig` | Yes | `agent_config.py` |
+| `execution_context` | `AgentExecutionContext` | Yes | `AgentContextBuilder` |
+| `prompt_builder` | `PromptBuilderPort` | Yes | `ServiceContainer` |
+| `user_id` | `Optional[str]` | No | caller context |
+| `image_search` | `Optional[ImageSearchPort]` | No | `UserAgentFactory` (reads `UNSPLASH_ACCESS_KEY` env var; omitted if key absent) |
+
 **Output processing:**
 1. `_strip_markdown_fences(html)` — removes accidental ` ```html ``` ` wrapping.
 2. Validate non-empty HTML → `AgentResponse.failure` if empty.
-3. `_extract_filename_from_html(html)` — extracts `<title>` text: display name + sanitized slug.
+3. `_resolve_unsplash_placeholders(html, image_search)` — if `image_search` is provided, replaces
+   `source.unsplash.com` placeholder URLs with real Unsplash API photos. Graceful degradation:
+   any per-URL fetch failure leaves the placeholder unchanged. Photographer credits injected before
+   `</body>`. No-op when `image_search` is `None`.
+4. `_extract_filename_from_html(html)` — extracts `<title>` text: display name + sanitized slug.
    Fallback to `("page", "Page")` when `<title>` absent or empty.
 
 **Delivery item returned on success:**
@@ -653,10 +677,12 @@ Token: `COGNITIVE_PROCESS_HTML_PAGE` (category: `cognitive_process`, `non_overri
 
 Design constraints enforced by prompt (`COGNITIVE_PROCESS_HTML_PAGE`):
 - All CSS in a single `<style>` block; all JS in a single `<script>` block before `</body>`.
-- No external resources except one Google Fonts `<link>` in `<head>`. Additional CDN libraries
+- No external resources except one Google Fonts `<link>` in `<head>` and Unsplash images
+  (`source.unsplash.com`) in `<img src>` and CSS `background-image`. Additional CDN libraries
   allowed only when genuinely required: Chart.js (data charts), Leaflet (maps), Alpine.js (UI state).
 - Open Graph tags (`og:title`, `og:description`, `og:type`) required in `<head>` for Slack unfurl
-  previews. `og:image` explicitly excluded — no image source available.
+  previews. `og:image` explicitly excluded — Unsplash URLs are replaced post-generation and are
+  not known at prompt time.
 - Mobile-first: base styles target mobile, desktop in `@media (min-width: 768px)`. `width: 100vw`
   prohibited — causes iOS viewport overflow; `width: 100%` required instead.
 - `IntersectionObserver` scroll-reveal animations + `@media (prefers-reduced-motion)` fallback.
@@ -746,6 +772,51 @@ No signed URLs used — files have no expiry. Acceptable for dev bucket given UU
 
 ---
 
+#### ADR-5: Unsplash integration — post-processing placeholder replacement
+
+**Decision:** The LLM writes `source.unsplash.com/WxH/?keywords` placeholder URLs natively.
+After generation, `_resolve_unsplash_placeholders()` finds all such URLs via regex, fetches
+real Unsplash photos via `UnsplashAdapter` (one API call per unique placeholder URL, parallel),
+and replaces the placeholders with sized `raw_url?w=W&h=H&fit=crop&auto=format&q=80` URLs.
+Attribution credits are injected before `</body>`. If `UNSPLASH_ACCESS_KEY` is absent, the
+agent runs without image resolution (all Unsplash placeholders remain in output, which still
+renders because browsers reject only CDN photo IDs, not the Source API URL format).
+
+**Rationale:**
+
+1. **Conscious image selection:** The LLM decides what images to include, their placement,
+   and their keywords — which matches the content it just wrote. Pre-fetching in Python
+   before the LLM call requires Python to guess what images will be needed, breaking the
+   design feedback loop.
+
+2. **Source API format is native:** The LLM knows `source.unsplash.com` from training data.
+   No new prompt instruction is needed — the LLM writes these URLs organically when given
+   creative latitude. Allowlisting them in `Output_Contract` is sufficient.
+
+3. **Dimensions preserved:** The URL path encodes dimensions (`/1920x1080/`). Post-processing
+   reads them and applies `?w=&h=&fit=crop` to `raw_url`, delivering exactly the pixel size
+   the LLM intended. No information loss compared to a pre-fetch approach.
+
+4. **Graceful degradation:** API failures are per-URL and non-fatal. Failed placeholders are
+   left unchanged. The page always ships — degraded images, never a broken delivery.
+
+5. **Architecture compliance:** `ImageSearchPort` keeps HTTP calls in `adapters/`
+   (REQ-ARCH-18). `UNSPLASH_ACCESS_KEY` is read in `composition/` (REQ-ARCH-17). Agent
+   depends only on the port interface, never on `aiohttp` or `os.getenv`.
+
+**Alternative considered:** Pre-fetch — Python extracts image intent from `raw_query`, fetches
+images, injects URLs into the user prompt before the LLM call. Rejected: LLM doesn't know
+what images it will generate when the query is processed; keyword guessing from natural language
+is unreliable; breaks the creative loop.
+
+**`images.unsplash.com` hallucinations:** The LLM sometimes writes real CDN photo URLs
+(`images.unsplash.com/photo-XXXX`) from training memory. These bypass the regex intentionally
+— the CDN filename does not map to an Unsplash API photo ID, making lookup impossible. They
+remain in the HTML as-is; they often work (the CDN URL is real), but no attribution is
+injected for them.
+
+---
+
 ### 11.3 Comparison: DOCX vs PDF vs HTML Page
 
 | Concern | DOCX pipeline | PDF pipeline | HTML page pipeline |
@@ -754,8 +825,9 @@ No signed URLs used — files have no expiry. Acceptable for dev bucket given UU
 | LLM output | Node.js script (docx npm API) | Complete HTML+CSS | Complete HTML+CSS+JS |
 | Renderer | Node.js `docx` library | Puppeteer (headless Chromium) | None — HTML is final |
 | Node.js project | `docx_generator/` | `pdf_generator/` | None |
-| Port | `DocxRunnerPort` | `PuppeteerRunnerPort` | None |
-| Adapter | `NodeDocxRunner` | `NodePuppeteerRunner` | None |
+| Port | `DocxRunnerPort` | `PuppeteerRunnerPort` | `ImageSearchPort` (optional) |
+| Adapter | `NodeDocxRunner` | `NodePuppeteerRunner` | `UnsplashAdapter` (optional) |
+| Image sourcing | None | None | Unsplash post-processing (placeholder → real URL) |
 | GCS storage | Not used (bytes inline) | `DocumentDeliveryService` (HTML + PDF) | `DocumentDeliveryService` (HTML only) |
 | DeliveryItem type | `"file_upload"` | `"document"` (two items) | `"document"` (one item) |
 | Filename source | JSON spec `filename` field | `<title>` tag | `<title>` tag |
@@ -782,12 +854,15 @@ No signed URLs used — files have no expiry. Acceptable for dev bucket given UU
 - `pdf_generator/package.json` — `puppeteer ^24.x`
 
 **HTML page pipeline:**
-- `src/agents/html_page_generator_agent.py` — single LLM call, `_strip_markdown_fences`, `_extract_filename_from_html`, one DeliveryItem (HTML, GCS link)
+- `src/agents/html_page_generator_agent.py` — single LLM call, `_strip_markdown_fences`, `_resolve_unsplash_placeholders`, `_extract_filename_from_html`, one DeliveryItem (HTML, GCS link)
+- `src/ports/image_search_port.py` — `ImageSearchPort` ABC + `ImageResult` dataclass (system boundary for stock-photo APIs)
+- `src/adapters/unsplash_adapter.py` — `UnsplashAdapter`: GET `/search/photos`, `orientation=landscape`, 5s timeout, silent failure on errors
 - `src/services/document_delivery_service.py` — same service as PDF; stores HTML bytes to GCS
-- `firestore_utils/uploads/COGNITIVE_PROCESS_HTML_PAGE.groovy` — system prompt source (design rules, mobile-first, animations, section catalogue)
+- `firestore_utils/uploads/COGNITIVE_PROCESS_HTML_PAGE.groovy` — system prompt source (design rules, mobile-first, animations, section catalogue, Unsplash allowlist)
 - `firestore_utils/uploads/COGNITIVE_PROCESS_HTML_PAGE.json` — Firestore token upload file
 - `firestore_utils/uploads/html_page_agent_v1.json` — Blueprint (`html_page_agent_v1`, class_order: [cognitive_process])
 - `firestore_utils/uploads/html_page.json` — Agent profile (`agent_id: "html_page"`)
+- `scripts/test_unsplash.py` — diagnostic script: fetch one Unsplash photo by keyword, verify `UNSPLASH_ACCESS_KEY`
 - `tests/unit/agents/test_html_page_generator_agent.py` — 44 tests (can_handle, execute paths, filename extraction, fence stripping, failure paths, LLM call params)
 
 **Shared infrastructure:**
@@ -808,5 +883,5 @@ No signed URLs used — files have no expiry. Acceptable for dev bucket given UU
 
 ## 13. Status
 
-**Status:** ✅ Production Ready (DOCX, PDF) | ✅ Production Ready (HTML page)
-**Last Updated:** 2026-03-16
+**Status:** ✅ Production Ready (DOCX, PDF) | ✅ Production Ready (HTML page, with Unsplash integration)
+**Last Updated:** 2026-03-17

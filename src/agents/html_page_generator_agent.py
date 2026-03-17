@@ -18,24 +18,33 @@ Pipeline:
   1. System prompt — loaded from PromptBuilder (agent_type="html_page").
   2. Single LLM call — model writes complete HTML+CSS+JS as raw text response.
   3. Strip accidental markdown fences from response.
-  4. Extract filename and display name from <title> tag.
-  5. Return DeliveryItem.
+  4. Resolve Unsplash placeholders: replace source.unsplash.com URLs with real photos.
+  5. Extract filename and display name from <title> tag.
+  6. Return DeliveryItem.
 
 On failure (empty HTML, prompt builder error) — AgentResponse.failure().
 """
 
+import asyncio
 import base64
 import re
 import time
+import urllib.parse
 from typing import Optional
 
 from .base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.llm import Message, MessagePart
 from ..infrastructure.agent_config import HTML_PAGE_GENERATOR
+from ..ports.image_search_port import ImageResult, ImageSearchPort
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
+
+# Matches any source.unsplash.com URL that LLM writes as a placeholder.
+_UNSPLASH_SOURCE_RE = re.compile(r'https://source\.unsplash\.com/[^\s"\'()>]+')
+# Parses optional WxH dimensions from the path: /1920x1080/ → (1920, 1080)
+_UNSPLASH_DIMS_RE = re.compile(r'/(\d+)x(\d+)/')
 
 
 class HtmlPageGeneratorAgent(BaseAgent):
@@ -45,6 +54,9 @@ class HtmlPageGeneratorAgent(BaseAgent):
     Accepts a natural-language request via payload["query"].
     Returns AgentResponse with one delivery_item on success:
       - HTML "document" (GCS public link)
+
+    If image_search is provided, source.unsplash.com placeholder URLs written by the LLM
+    are resolved to real Unsplash photos after generation (post-processing step).
     """
 
     TEMPERATURE = HTML_PAGE_GENERATOR.temperature
@@ -56,12 +68,14 @@ class HtmlPageGeneratorAgent(BaseAgent):
         execution_context: AgentExecutionContext,
         prompt_builder: PromptBuilderPort,
         user_id: Optional[str] = None,
+        image_search: Optional[ImageSearchPort] = None,
     ) -> None:
         super().__init__(config)
         self._llm = execution_context.provider
         self.model_name = execution_context.model_name
         self.prompt_builder = prompt_builder
         self.user_id = user_id
+        self._image_search = image_search
 
     async def can_handle(self, message: AgentMessage) -> bool:
         return (
@@ -118,6 +132,9 @@ class HtmlPageGeneratorAgent(BaseAgent):
                 error="LLM returned empty HTML — no page produced",
             )
 
+        if self._image_search:
+            html_code = await _resolve_unsplash_placeholders(html_code, self._image_search)
+
         base_filename, display_name = _extract_filename_from_html(html_code)
 
         token_count = response.usage_metadata.total_tokens if response.usage_metadata else 0
@@ -150,6 +167,77 @@ class HtmlPageGeneratorAgent(BaseAgent):
 
     def _get_alternative_agents(self) -> list[str]:
         return []
+
+
+# ---------------------------------------------------------------------------
+# Unsplash placeholder resolution
+# ---------------------------------------------------------------------------
+
+async def _resolve_unsplash_placeholders(html: str, image_search: ImageSearchPort) -> str:
+    """
+    Find source.unsplash.com placeholder URLs written by the LLM, fetch real photos
+    from Unsplash API, and replace them in-place.
+
+    Attribution credits are appended before </body>.
+    If the API is unavailable, placeholders are left unchanged (graceful degradation).
+    """
+    placeholder_urls = list(dict.fromkeys(_UNSPLASH_SOURCE_RE.findall(html)))
+    if not placeholder_urls:
+        return html
+
+    # Extract keywords and dimensions from each placeholder URL.
+    # source.unsplash.com/1920x1080/?mountain,sunset → keywords="mountain sunset", w=1920, h=1080
+    queries: dict[str, str] = {}
+    dims: dict[str, tuple[int, int] | None] = {}
+    for url in placeholder_urls:
+        parsed = urllib.parse.urlparse(url)
+        queries[url] = parsed.query.replace(",", " ").strip() or "photo"
+        m = _UNSPLASH_DIMS_RE.search(parsed.path)
+        dims[url] = (int(m.group(1)), int(m.group(2))) if m else None
+
+    # Fetch all images in parallel (one result per placeholder).
+    fetch_results = await asyncio.gather(
+        *[image_search.search(kw, count=1) for kw in queries.values()],
+        return_exceptions=True,
+    )
+
+    # Build placeholder → ImageResult map (skip failures).
+    url_map: dict[str, ImageResult] = {}
+    for placeholder_url, result in zip(placeholder_urls, fetch_results):
+        if isinstance(result, Exception) or not result:
+            continue
+        url_map[placeholder_url] = result[0]
+
+    if not url_map:
+        return html
+
+    # Replace placeholder URLs with real ones (sized via raw_url when dimensions available).
+    for placeholder_url, image in url_map.items():
+        d = dims.get(placeholder_url)
+        if d and image.raw_url:
+            w, h = d
+            real_url = f"{image.raw_url}?w={w}&h={h}&fit=crop&auto=format&q=80"
+        else:
+            real_url = image.url
+        html = html.replace(placeholder_url, real_url)
+
+    # Inject attribution credits before </body>.
+    credit_links = [
+        f'<a href="{img.photographer_url}" target="_blank" rel="noopener noreferrer">'
+        f"Photo by {img.photographer} on Unsplash</a>"
+        for img in url_map.values()
+    ]
+    credits_html = (
+        '<div style="font-size:11px;color:#999;text-align:center;padding:8px 16px;">'
+        + " &nbsp;·&nbsp; ".join(credit_links)
+        + "</div>"
+    )
+    html = html.replace("</body>", credits_html + "\n</body>", 1)
+
+    logger.info(
+        "HtmlPageGeneratorAgent: resolved %d Unsplash placeholders", len(url_map)
+    )
+    return html
 
 
 # ---------------------------------------------------------------------------
