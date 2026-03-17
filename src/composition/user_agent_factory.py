@@ -12,6 +12,7 @@ instantiation happens here.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
@@ -72,6 +73,7 @@ from ..agents.pdf_generator_agent import PdfGeneratorAgent
 from ..agents.html_page_generator_agent import HtmlPageGeneratorAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
+from ..adapters.unsplash_adapter import UnsplashAdapter
 from ..ports.task_queue import TaskQueue
 from ..ports.tasks_provider_port import TasksProviderPort
 from ..ports.agent_note_port import AgentNotePort
@@ -150,6 +152,9 @@ class UserAgentFactory:
         self.job_registry: Optional[ProviderRegistry] = job_registry
         self.task_queue = task_queue
         self.anthropic_client = anthropic_client
+
+        unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
+        self._image_search = UnsplashAdapter(unsplash_key) if unsplash_key else None
 
         self._cache: Dict[str, Dict[str, object]] = {}
         self._cache_ttl = 3600
@@ -465,6 +470,7 @@ class UserAgentFactory:
             execution_context=html_page_context,
             prompt_builder=prompt_builder,
             user_id=user_id,
+            image_search=self._image_search,
         )
 
         deep_research_agent = None

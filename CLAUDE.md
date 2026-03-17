@@ -68,7 +68,13 @@ background process extracts new facts from the conversation → bot gets smarter
   DeliveryItem("document"): HTML GCS public link (no Slack file upload, no Node.js subprocess).
   Filename from `<title>` tag. PromptBuilder mandatory (`agent_type="html_page"`); fail fast on
   prompt builder error. Design enforced by `COGNITIVE_PROCESS_HTML_PAGE` token: mobile-first,
-  fluid type scale, CSS custom properties, IntersectionObserver scroll animations.
+  CSS custom properties, IntersectionObserver scroll animations.
+  **Unsplash integration:** LLM writes `source.unsplash.com/WxH/?keywords` placeholder URLs
+  natively. Post-processing (`_resolve_unsplash_placeholders`) replaces them with real Unsplash
+  API photos (parallel fetch via `UnsplashAdapter`), honoring dimensions and injecting attribution.
+  Requires `UNSPLASH_ACCESS_KEY` env var; graceful no-op when absent.
+  Port: `ImageSearchPort` (`src/ports/image_search_port.py`).
+  Adapter: `UnsplashAdapter` (`src/adapters/unsplash_adapter.py`).
   See docs/05_building_blocks/document_generation/README.md § 11.
 - Consolidation — background "memory consolidation" (PERFORMANCE tier, runs via Cloud Tasks)
 - DeepResearch (async, provider-agnostic) — long-running research jobs. Agent calls
@@ -159,7 +165,8 @@ src/
                   ASYNC, internal=False). PuppeteerRunnerPort implemented by NodePuppeteerRunner
                   (node_puppeteer_runner.py). Node.js runner in pdf_generator/runner.js.
                   HTML page agents: HtmlPageGeneratorAgent (html_page_generator_agent.py, intent
-                  create_html_page, ASYNC, internal=False). No port — HTML is final artifact.
+                  create_html_page, ASYNC, internal=False). HTML is final artifact; optional
+                  ImageSearchPort (UnsplashAdapter) for post-generation image resolution.
   handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler, WorkerHandler).
                   WorkerHandler dispatches /worker Cloud Tasks by task_type.
   infrastructure/ — AgentCoordinator, queues, agent_config.py (central behavior params),
