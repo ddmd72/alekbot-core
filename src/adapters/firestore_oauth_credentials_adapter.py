@@ -94,3 +94,12 @@ class FirestoreOAuthCredentialsAdapter(OAuthCredentialsPort):
             data = doc.to_dict()
             providers.append(data["provider"])
         return providers
+
+    async def list_users_by_provider(self, provider: str) -> List[str]:
+        query = self.collection.where(filter=FieldFilter("provider", "==", provider))
+        user_ids = []
+        async for doc in query.stream():
+            data = doc.to_dict()
+            if data.get("user_id"):
+                user_ids.append(data["user_id"])
+        return user_ids

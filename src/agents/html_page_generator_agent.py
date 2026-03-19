@@ -216,7 +216,7 @@ async def _resolve_unsplash_placeholders(html: str, image_search: ImageSearchPor
         d = dims.get(placeholder_url)
         if d and image.raw_url:
             w, h = d
-            real_url = f"{image.raw_url}?w={w}&h={h}&fit=crop&auto=format&q=80"
+            real_url = f"{image.raw_url}&w={w}&h={h}&fit=crop&auto=format&q=80"
         else:
             real_url = image.url
         html = html.replace(placeholder_url, real_url)

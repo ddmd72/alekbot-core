@@ -6,15 +6,23 @@ Dispatches Cloud Tasks payloads to the appropriate handler by task_type.
 Extracted from main.py for testability and separation of concerns.
 
 Supported task_types:
-  - agent_execution       → AgentWorkerHandler
-  - email_indexing        → run one indexing page, re-enqueue if more
-  - email_indexing_watchdog → mark stale running jobs as failed
-  - consolidation         → process one batch, re-enqueue if more
-  - deep_research_polling → poll Gemini job, deliver via notification service
+  - agent_execution          → AgentWorkerHandler
+  - email_indexing           → run one indexing page, re-enqueue if more
+  - email_indexing_watchdog  → mark stale running jobs as failed
+  - consolidation            → process one batch, re-enqueue if more
+  - deep_research_polling    → poll Gemini job, deliver via notification service
+  - setup_microsoft_todo          → TaskSetupService.setup(user_id)
+  - reindex_task_list             → TaskIndexingService.reindex_list(user_id, list_id)
+  - renew_task_subscriptions      → TaskSetupService.renew_expiring_subscriptions(user_id)
+  - renew_all_task_subscriptions  → fan-out: enqueue renew_task_subscriptions for all MS To Do users
 """
 
 from datetime import datetime, timedelta
-from typing import Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional, Tuple
+
+if TYPE_CHECKING:
+    from ..services.task_indexing_service import TaskIndexingService
+    from ..services.task_setup_service import TaskSetupService
 
 from ..domain.agent import AgentIntent, AgentMessage, AgentStatus
 from ..handlers.agent_worker_handler import AgentWorkerHandler
@@ -57,6 +65,8 @@ class WorkerHandler:
         task_queue: Optional[TaskQueue] = None,
         job_registry: Optional[ProviderRegistry] = None,
         media_storage: Optional[MediaStoragePort] = None,
+        task_setup: "Optional[TaskSetupService]" = None,
+        task_indexing: "Optional[TaskIndexingService]" = None,
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -71,6 +81,8 @@ class WorkerHandler:
         self._task_queue = task_queue
         self._job_registry: Optional[ProviderRegistry] = job_registry
         self._media_storage = media_storage
+        self._task_setup = task_setup
+        self._task_indexing = task_indexing
 
     async def handle(self, payload: dict) -> Optional[Tuple[dict, int]]:
         """
@@ -94,6 +106,14 @@ class WorkerHandler:
             return await self._handle_consolidation(payload)
         elif task_type == "deep_research_polling":
             return await self._handle_deep_research_polling(payload)
+        elif task_type == "setup_microsoft_todo":
+            return await self._handle_setup_microsoft_todo(payload)
+        elif task_type == "reindex_task_list":
+            return await self._handle_reindex_task_list(payload)
+        elif task_type == "renew_task_subscriptions":
+            return await self._handle_renew_task_subscriptions(payload)
+        elif task_type == "renew_all_task_subscriptions":
+            return await self._handle_renew_all_task_subscriptions()
         return None  # unknown task_type — caller handles fallback
 
     # ------------------------------------------------------------------
@@ -326,4 +346,58 @@ class WorkerHandler:
             system_alert="Deep research did not complete — the AI provider returned an error.",
         )
         return {"status": "failed"}, 200
+
+    # ------------------------------------------------------------------
+    # MS To Do task handlers
+    # ------------------------------------------------------------------
+
+    async def _handle_setup_microsoft_todo(self, payload: dict) -> Tuple[dict, int]:
+        """Idempotent onboarding: ensure primary list + subscriptions + enqueue reindex."""
+        if not self._task_setup:
+            logger.warning("[Worker] setup_microsoft_todo: task_setup not configured")
+            return {"error": "task_setup not configured"}, 501
+        user_id = payload.get("user_id", "")
+        if not user_id:
+            return {"error": "missing user_id"}, 400
+        await self._task_setup.setup(user_id)
+        logger.info(f"[Worker] setup_microsoft_todo complete: user={user_id[:8]}")
+        return {"status": "ok"}, 200
+
+    async def _handle_reindex_task_list(self, payload: dict) -> Tuple[dict, int]:
+        """Fetch all tasks from one list, embed, and upsert into search index."""
+        if not self._task_indexing:
+            logger.warning("[Worker] reindex_task_list: task_indexing not configured")
+            return {"error": "task_indexing not configured"}, 501
+        user_id = payload.get("user_id", "")
+        list_id = payload.get("list_id", "")
+        if not user_id or not list_id:
+            return {"error": "missing user_id or list_id"}, 400
+        await self._task_indexing.reindex_list(user_id, list_id)
+        logger.info(f"[Worker] reindex_task_list complete: user={user_id[:8]}, list={list_id[:8]}")
+        return {"status": "ok"}, 200
+
+    async def _handle_renew_task_subscriptions(self, payload: dict) -> Tuple[dict, int]:
+        """Secondary defense: renew all subscriptions expiring within 24h."""
+        if not self._task_setup:
+            logger.warning("[Worker] renew_task_subscriptions: task_setup not configured")
+            return {"error": "task_setup not configured"}, 501
+        user_id = payload.get("user_id", "")
+        if not user_id:
+            return {"error": "missing user_id"}, 400
+        await self._task_setup.renew_expiring_subscriptions(user_id)
+        logger.info(f"[Worker] renew_task_subscriptions complete: user={user_id[:8]}")
+        return {"status": "ok"}, 200
+
+    async def _handle_renew_all_task_subscriptions(self) -> Tuple[dict, int]:
+        """Daily fan-out: enqueue renew_task_subscriptions for every MS To Do user."""
+        if not self._task_setup or not self._task_queue:
+            logger.warning("[Worker] renew_all_task_subscriptions: task_setup or task_queue not configured")
+            return {"error": "task_setup not configured"}, 501
+        user_ids = await self._oauth.list_users_by_provider("microsoft_todo")
+        for user_id in user_ids:
+            await self._task_queue.enqueue_worker_task(
+                "renew_task_subscriptions", {"user_id": user_id}
+            )
+        logger.info(f"[Worker] renew_all_task_subscriptions: enqueued {len(user_ids)} renewal tasks")
+        return {"status": "ok", "enqueued": len(user_ids)}, 200
 
