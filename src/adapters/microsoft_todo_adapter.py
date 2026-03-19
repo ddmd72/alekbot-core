@@ -50,9 +50,9 @@ _PROVIDER = "microsoft_todo"
 _PRIMARY_LIST_NAME = "Alek Bot Tasks"
 _BATCH_SEMAPHORE = asyncio.Semaphore(5)  # Graph API throttling for personal accounts
 
-# Max subscription lifetime: 4320 min (3 days) for personal accounts.
-# Use 4319 to stay within the limit.
-_SUB_EXPIRY_MINUTES = 4319
+# Graph API hard limit for personal (consumers) accounts: 4230 minutes.
+# Use 4229 to stay safely within the limit.
+_SUB_EXPIRY_MINUTES = 4229
 
 _IMPORTANCE_TO_MS = {
     TaskImportance.LOW: "low",
@@ -100,11 +100,13 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
         task_config: TaskConfigPort,
         client_id: str,
         client_secret: str,
+        webhook_secret: Optional[str] = None,
     ) -> None:
         self._oauth = oauth_credentials
         self._task_config = task_config
         self._client_id = client_id
         self._client_secret = client_secret
+        self._webhook_secret = webhook_secret
         # Per-instance in-memory primary_list_id cache: {user_id: list_id}
         self._primary_list_cache: Dict[str, str] = {}
         logger.info("✅ MicrosoftToDoAdapter initialized")
@@ -648,6 +650,8 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
             "resource": f"/me/todo/lists/{list_id}/tasks",
             "expirationDateTime": expires_at.strftime("%Y-%m-%dT%H:%M:%S.0000000Z"),
         }
+        if self._webhook_secret:
+            payload["clientState"] = self._webhook_secret
         data = await self._post(user_id, "/subscriptions", payload)
         sub_id = data["id"]
         logger.info(f"📡 MS: registered subscription {sub_id[:8]} for list {list_id[:8]}")

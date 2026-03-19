@@ -21,6 +21,8 @@ None of them is a public API: they serve the Cabinet, the chat platforms, Google
 | `POST` | `/auth/link-oauth` | JWT | Link another OAuth identity to the user |
 | `GET` | `/auth/connect-gmail` (+ `/callback`) | JWT / OAuth state | Connect Gmail (read-only scope) |
 | `GET` | `/auth/connect-microsoft-todo` (+ `/callback`) | JWT / OAuth state | Connect Microsoft To Do; the callback enqueues `setup_microsoft_todo` |
+| `GET` | `/auth/connect-onedrive` (+ `/callback`) | JWT / OAuth state | Connect the user drive (OneDrive App Folder) |
+| `GET` | `/auth/connect-google-tasks` (+ `/callback`) | JWT / OAuth state | Google Tasks (frozen provider) |
 
 ---
 
@@ -67,6 +69,29 @@ None of them is a public API: they serve the Cabinet, the chat platforms, Google
 | `POST` | `/api/voice/web-call` | JWT | Start a web call (Cloudflare SFU) |
 | `POST` | `/api/voice/web-call/<call_id>/connect`, `/renegotiate`, `/hangup` | JWT | Web call signalling |
 | `GET` | `/api/voice/web-call/<call_id>/status` | JWT | Web call state |
+
+
+
+
+---
+
+
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/slack/events` | Slack signature | Slack Events API; enqueues a named Cloud Task |
+
+## Remote MCP server (claude.ai connector)
+
+---
+
+## Other services
+
+- **Drive indexer** (`indexer_main.py`): `POST /worker` (`drive_sync` only, OIDC, internal ingress), `GET /health`.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+
 
 
 

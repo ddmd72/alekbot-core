@@ -67,31 +67,39 @@ class TaskSetupService:
 
     async def ensure_subscriptions(self, user_id: str) -> None:
         """
-        For each task list, register a subscription if none exists or existing has expired.
-        Enqueues reindex_task_list for newly subscribed lists.
+        Ensure the primary "Alek Bot Tasks" list has an active webhook subscription.
+        Registers a new subscription if absent or expired. Enqueues reindex if newly subscribed.
         Idempotent — safe to call multiple times.
+
+        Scope: primary list only. Multi-list support is a future upgrade path (RFC §6.2).
         """
         config = await self._task_config.get_config(user_id)
-        lists = await self._tasks_provider.list_task_lists(user_id)
+        list_id = config.primary_list_id
+        if not list_id:
+            logger.warning(f"⚠️ No primary_list_id for user {user_id[:8]} — skipping subscriptions")
+            return
+
         now = datetime.now(timezone.utc).replace(tzinfo=None)
+        active = any(
+            sub.list_id == list_id and sub.expires_at > now
+            for sub in config.subscriptions
+        )
+        if active:
+            logger.debug(f"📡 Subscription for primary list already active, user {user_id[:8]}")
+            await self._task_config.save_config(user_id, config)
+            return
 
-        active_list_ids = {sub.list_id for sub in config.subscriptions if sub.expires_at > now}
-
-        for lst in lists:
-            if lst.list_id in active_list_ids:
-                continue
-            sub = await self._lifecycle.register_subscription(
-                user_id, lst.list_id, self._notification_url_base
-            )
-            config.subscriptions.append(sub)
-            await self._task_queue.enqueue_worker_task(
-                "reindex_task_list",
-                {"user_id": user_id, "list_id": lst.list_id},
-            )
-            logger.info(
-                f"📡 Registered subscription for list {lst.list_id[:8]}, user {user_id[:8]}"
-            )
-
+        sub = await self._lifecycle.register_subscription(
+            user_id, list_id, self._notification_url_base
+        )
+        # Keep only subscriptions for the primary list (drop stale entries for other lists)
+        config.subscriptions = [s for s in config.subscriptions if s.list_id == list_id and s.expires_at > now]
+        config.subscriptions.append(sub)
+        await self._task_queue.enqueue_worker_task(
+            "reindex_task_list",
+            {"user_id": user_id, "list_id": list_id},
+        )
+        logger.info(f"📡 Registered subscription for primary list {list_id[:8]}, user {user_id[:8]}")
         await self._task_config.save_config(user_id, config)
 
     # ------------------------------------------------------------------
@@ -203,18 +211,29 @@ class TaskSetupService:
 
     async def reindex_all(self, user_id: str) -> None:
         """
-        Ensure subscriptions are healthy, then enqueue reindex_task_list for every list.
+        Ensure primary list subscription is healthy, then enqueue reindex_task_list for it.
         Called from Cabinet UI or WorkerHandler on manual trigger.
         """
         await self.ensure_subscriptions(user_id)
         config = await self._task_config.get_config(user_id)
-        for sub in config.subscriptions:
-            await self._task_queue.enqueue_worker_task(
-                "reindex_task_list",
-                {"user_id": user_id, "list_id": sub.list_id},
-            )
-        logger.info(
-            f"📬 Enqueued reindex for {len(config.subscriptions)} lists, user {user_id[:8]}"
+        if not config.primary_list_id:
+            logger.warning(f"⚠️ No primary_list_id for user {user_id[:8]} — skipping reindex")
+            return
+        await self._task_queue.enqueue_worker_task(
+            "reindex_task_list",
+            {"user_id": user_id, "list_id": config.primary_list_id},
+        )
+        logger.info(f"📬 Enqueued reindex for primary list, user {user_id[:8]}")
+
+    # ------------------------------------------------------------------
+    # enqueue_reindex_list
+    # ------------------------------------------------------------------
+
+    async def enqueue_reindex_list(self, user_id: str, list_id: str) -> None:
+        """Enqueue reindex_task_list worker task. Called by webhook on list-level notifications."""
+        await self._task_queue.enqueue_worker_task(
+            "reindex_task_list",
+            {"user_id": user_id, "list_id": list_id},
         )
 
     # ------------------------------------------------------------------

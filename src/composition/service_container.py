@@ -115,6 +115,7 @@ class ServiceContainer:
                 task_config=self.task_config_repo,
                 client_id=config["MICROSOFT_TODO_CLIENT_ID"],
                 client_secret=config["MICROSOFT_TODO_CLIENT_SECRET"],
+                webhook_secret=config.get("MICROSOFT_TASKS_WEBHOOK_SECRET"),
             )
 
         self.task_indexing: Optional[TaskIndexingService] = None

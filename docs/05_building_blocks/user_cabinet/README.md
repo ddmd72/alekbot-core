@@ -302,6 +302,54 @@ Each fact row has two action buttons (subtle, muted until hover):
 
 ---
 
+---
+
+## Tasks Management (Microsoft To Do)
+
+Tasks management is available after connecting Microsoft To Do via `/auth/connect-microsoft-todo`.
+
+### `GET /api/tasks/microsoft/status`
+
+Returns integration status.
+
+**Response:**
+```json
+{
+  "connected": true,
+  "subscriptions": [
+    { "list_id": "AAMkAGI2...", "expires_at": "2026-03-22T10:00:00Z" }
+  ]
+}
+```
+`connected: false` when no OAuth credentials are stored. `subscriptions: []` when no Graph subscriptions are active.
+
+### `POST /api/tasks/microsoft/reindex`
+
+Triggers full reindex of all user task lists (enqueues `reindex_task_list` Cloud Task per list). Repairs expired subscriptions before reindexing.
+
+**Response:** `{ "status": "reindex_enqueued" }`
+
+### `GET /api/tasks/microsoft/lists`
+
+Returns all MS To Do task lists for the user. Proxies Graph API — no Firestore read.
+
+**Response:**
+```json
+{
+  "lists": [
+    { "list_id": "AAMkAGI2...", "name": "Alek Bot Tasks", "is_owner": true, "is_shared": false }
+  ]
+}
+```
+
+### `DELETE /api/tasks/microsoft/disconnect`
+
+Deletes all Graph subscriptions, revokes OAuth tokens, clears `task_search_index` and `task_config` for the user.
+
+**Response:** `{ "status": "disconnected" }`
+
+---
+
 ## Dependencies
 
 | Dependency | Type | Purpose |

@@ -9,6 +9,23 @@ Strategic roadmap for Alek-Core architecture evolution, focusing on MVP and Ente
 
 ## ✅ Completed Milestones
 
+### Microsoft To Do Integration (2026-03-19) ✅
+
+- ✅ Full domain model (`Task`, `TaskSearchEntry`, `TaskUserConfig`, `TaskSubscriptionConfig`)
+- ✅ 4 new ports: `TasksProviderPort` (extended), `TaskSearchIndex`, `TaskConfigPort`, `TaskLifecyclePort`
+- ✅ `MicrosoftToDoAdapter` — Graph API CRUD + webhook subscription management
+- ✅ `FirestoreTaskSearchIndex` — 2-vector RRF semantic search (content + context)
+- ✅ `FirestoreTaskConfigRepository` — per-user config with Firestore transaction for primary list ID
+- ✅ `TaskIndexingService` — embed→index pipeline; short_id system (md5[:8])
+- ✅ `TaskSetupService` — lifecycle: setup, ensure_subscriptions, disconnect, renew
+- ✅ `TasksAgent` — 5 tools, recurrence support (5 patterns), search-before-mutate, biographical context
+- ✅ OAuth flow (`/auth/connect-microsoft-todo/*`)
+- ✅ Webhook (`POST /webhook/microsoft-tasks/{user_id}`) — self-healing subscription renewal
+- ✅ Cabinet API (`/api/tasks/*`) — status, reindex, lists, disconnect
+- ✅ WorkerHandler task types: `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`
+- ADR: `docs/09_decisions/adr-008-local-first-external-provider/README.md`
+- Building block doc: `docs/05_building_blocks/tasks_integration/README.md`
+
 ### Milestone 1-3: Technical Foundation
 
 - **AsyncIO Migration**: Core engine converted to asynchronous operations.

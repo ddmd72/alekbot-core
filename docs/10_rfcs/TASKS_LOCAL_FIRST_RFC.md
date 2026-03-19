@@ -1,6 +1,6 @@
 # RFC: Microsoft To Do Integration with Thin Search Index
 
-**Status:** DRAFT
+**Status:** IMPLEMENTED (2026-03-19)
 **Date:** 2026-03-18
 **Supersedes:** `TASKS_AGENT_RFC.md` (Google Tasks adapter approach)
 
@@ -294,6 +294,9 @@ class TaskSearchEntry(BaseModel):
     importance: TaskImportance = TaskImportance.NORMAL
     # stored to keep TaskSearchEntry self-contained; also used in context_vector embed
 
+    short_id: str = ""
+    # stable 8-char md5 prefix, used by TasksAgent as task_ref instead of full 180-char MS IDs
+
     content_vector: Optional[List[float]] = None
     # embed: "{title}. {body}. {' '.join(item.title for item in checklist_items)}"
 
@@ -384,6 +387,10 @@ class TaskSearchIndex(ABC):
         show_completed=False filters out status==COMPLETED.
         list_id if set restricts search to one list.
         """
+
+    @abstractmethod
+    async def get_by_short_id(self, user_id: str, short_id: str) -> Optional[TaskSearchEntry]:
+        """Lookup by short_id (md5(task_id)[:8]). Returns None if not found."""
 
     @abstractmethod
     async def delete_all_for_user(self, user_id: str) -> None:
@@ -594,20 +601,21 @@ one-line change to the agent manifest when multi-list sharing becomes a real use
 - Return formatted results
 
 **Tool: `create_task`**
-- LLM provides: `title`, `body`, `due_datetime`, `importance`, `tags`, `checklist_items`
+- LLM provides: `title`, `body`, `due_datetime`, `importance`, `tags`, `checklist_items`, `recurrence` (optional)
 - `list_id` is **never passed by LLM** — adapter always uses `primary_list_id`
 - Tags are the primary classification mechanism (map to MS To Do `categories`)
 - LLM is instructed to auto-tag from context (e.g. "remind me about Prague hotel" → tags: ["prague", "trip"])
+- Recurrence: 5 patterns supported — `daily`, `weekdays` (Mon–Fri alias), `weekly`, `absoluteMonthly`, `absoluteYearly`. `relativeMonthly`/`relativeYearly` excluded (Graph API bug: silently converts to daily). Smart defaults from `due_datetime` when optional fields omitted.
 - `tasks_provider.create_task(user_id, task_create)` → `Task`
 - `task_indexing.index_task(task)`
 
 **Tool: `update_task`**
-- `task_id` and `list_id` come from prior `search_tasks` result (always present in `TaskSearchEntry`)
+- LLM passes `task_ref` (short_id, 8 chars) from prior `search_tasks` result. Agent resolves to `(list_id, task_id)` via `task_indexing.resolve_short_id()`.
 - `tasks_provider.update_task(user_id, list_id, task_id, updates)` → `Task`
 - `task_indexing.index_task(task)`
 
 **Tool: `delete_task`**
-- `list_id` from search result
+- LLM passes `task_ref` (short_id, 8 chars) from prior `search_tasks` result. Agent resolves to `(list_id, task_id)` via `task_indexing.resolve_short_id()`.
 - `tasks_provider.delete_task(user_id, list_id, task_id)`
 - `task_indexing.deindex_task(user_id, task_id)`
 
@@ -660,6 +668,11 @@ search(user_id: str, query: str, show_completed: bool = False,
     embed(query) → query_vector
     search_index.find_nearest(user_id, {content: query_vector, context: query_vector}, ...)
     Used by TasksAgent search_tasks tool.
+
+resolve_short_id(user_id: str, short_id: str) -> Tuple[str, str]
+    search_index.get_by_short_id(user_id, short_id) → TaskSearchEntry
+    Returns (list_id, task_id). Raises ValueError if not found.
+    Used by TasksAgent for update_task and delete_task.
 ```
 
 ---
@@ -902,7 +915,7 @@ in Phase 5. No real users on Google Tasks.
 
 ## 15. Implementation Phases
 
-### Phase 1 — Domain + Ports
+### Phase 1 — Domain + Ports ✅ COMPLETED
 - `src/domain/task.py` — full replacement (new model + `TaskSearchEntry` + `TaskUserConfig` + `TaskSubscriptionConfig`)
 - `src/ports/task_search_index.py`
 - `src/ports/task_config_port.py`
@@ -911,34 +924,34 @@ in Phase 5. No real users on Google Tasks.
 - Unit tests for all ports
 - `src/composition/service_container.py` — deactivate `GoogleTasksAdapter` (alongside port signature changes)
 
-### Phase 2 — Adapters
+### Phase 2 — Adapters ✅ COMPLETED
 - `src/adapters/microsoft_todo_adapter.py` — implements `TasksProviderPort` + `TaskLifecyclePort`; injects `TaskConfigPort`
 - `src/adapters/firestore_task_search_index.py`
 - `src/adapters/firestore_task_config_repository.py`
 - Wire tests for all three adapters
 
-### Phase 3 — Services
+### Phase 3 — Services ✅ COMPLETED
 - `src/services/task_indexing_service.py`
 - `src/services/task_setup_service.py`
 - Unit tests for both services
 
-### Phase 4 — Agent
+### Phase 4 — Agent ✅ COMPLETED
 - `src/agents/tasks_agent.py` — new constructor with `task_indexing`
 - `src/composition/user_agent_factory.py` — pass `task_indexing` to TasksAgent
 - New agent unit tests; per-test resolution of old breakage
 
-### Phase 5 — Web + config
+### Phase 5 — Web + config ✅ COMPLETED
 - MS OAuth routes
 - `src/web/microsoft_tasks_webhook.py` — delegate to `TaskIndexingService` + `TaskSetupService`
 - Cabinet API — delegate to `TaskSetupService`
 - Config fields
 - WorkerHandler task types + `task_setup` / `task_indexing` deps
 
-### Phase 6 — DI wiring + E2E
+### Phase 6 — DI wiring + E2E ✅ COMPLETED
 - `src/composition/service_container.py` — wire all new adapters + services; webhook blueprint
 - E2E: connect MS To Do → create task via bot → appears in app + semantic search works
 
-### Phase 6 — Documentation (post-implementation)
+### Phase 6 — Documentation (post-implementation) ✅ COMPLETED
 Update arc42 docs to reflect the implemented state. See §17.
 
 ---
@@ -995,3 +1008,37 @@ After all implementation phases are complete, update the following arc42 docs.
 | `docs/06_runtime/API_REFERENCE.md` | OAuth routes (`/auth/connect-microsoft-todo/*`), webhook (`POST /webhook/microsoft-tasks/{user_id}`), Cabinet tasks API |
 | `docs/12_risks/IMPLEMENTATION_ROADMAP.md` | Mark Tasks (MS To Do) integration as completed milestone |
 | `docs/10_rfcs/TASKS_AGENT_RFC.md` | Add `**Status: SUPERSEDED by TASKS_LOCAL_FIRST_RFC.md (2026-03-18)**` at the top |
+
+---
+
+## 18. Implementation Notes (Deltas from RFC)
+
+Implementation completed 2026-03-19. The following details differ from or extend the original RFC design.
+
+### short_id system
+
+`TaskSearchEntry.short_id` = `md5(task_id)[:8]`. Stable 8-char alias for the 180-char MS Graph task ID.
+The LLM tool schema uses `task_ref` (short_id) for `update_task` and `delete_task` — never the full task_id.
+`TaskIndexingService.resolve_short_id(user_id, short_id)` resolves to `(list_id, task_id)` via `TaskSearchIndex.get_by_short_id()`.
+Rationale: full MS To Do task IDs are ~180 chars; LLM context window cost is significant when listing multiple tasks.
+
+### Recurrence support
+
+`create_task` tool exposes a `recurrence` object with 5 supported patterns:
+- `daily` — every N days
+- `weekdays` — Mon–Fri (convenience alias, maps to `weekly` with `days_of_week=["monday"..."friday"]`)
+- `weekly` — specific days of week (defaults to weekday of `due_datetime` if not specified)
+- `absoluteMonthly` — fixed day of month (defaults to day of `due_datetime`)
+- `absoluteYearly` — fixed day + month (defaults to day+month of `due_datetime`)
+
+`relativeMonthly` and `relativeYearly` are intentionally excluded: Graph API for personal (consumers) accounts silently converts them to `daily` — a known Microsoft bug.
+
+`RecurrenceRange` is always `noEnd` with `start_date = today`. LLM does not need to specify range.
+
+### Firestore transaction fix
+
+`FirestoreTaskConfigRepository.set_primary_list_id_if_absent` uses `@firestore.async_transactional` on an inner function, not as a decorator on the method itself (Firestore async transaction pattern requires this).
+
+### MAX_TURNS
+
+`TasksAgent` uses `_MAX_TURNS = 4` (the constant used in the tool-calling loop). This is sufficient for search-before-mutate flows: search (1) → mutate (2) → format response (3), with one turn buffer for disambiguation.

@@ -3,781 +3,1352 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Alek Bot Cabinet</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              brand: { DEFAULT: "#6366f1", hover: "#4f46e5" },
-              warm: { bg: "#f0ece6", card: "#faf8f5", border: "#e8e2d9" }
-            }
-          }
+    <title>Alek Bot — Cabinet</title>
+
+    <meta property="og:title" content="Alek Bot — Cabinet" />
+    <meta
+      property="og:description"
+      content="Manage your memory, integrations, and team settings."
+    />
+    <meta property="og:type" content="website" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* ─── Tokens & Base ─────────────────────────────────── */
+      :root {
+        --bg-app: #f2f2f7; /* Apple system grey background */
+        --bg-panel: rgba(255, 255, 255, 0.75);
+        --bg-panel-solid: #ffffff;
+        --bg-hover: rgba(0, 0, 0, 0.04);
+        --bg-active: rgba(0, 0, 0, 0.08);
+
+        --text-main: #000000;
+        --text-muted: #86868b;
+        --text-subtle: #d2d2d7;
+
+        --border-light: rgba(0, 0, 0, 0.08);
+        --border-focus: #0071e3;
+
+        --accent: #0071e3;
+        --accent-hover: #0077ed;
+        --accent-danger: #ff3b30;
+        --accent-danger-hover: #ff453a;
+        --accent-success: #34c759;
+
+        --black-btn: #1d1d1f;
+
+        --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
+        --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
+        --shadow-lg:
+          0 12px 32px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.04);
+
+        --radius-sm: 10px;
+        --radius-md: 16px;
+        --radius-lg: 24px;
+        --radius-xl: 32px;
+
+        --font-sans:
+          -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        --transition-fast: 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+        --transition-smooth: 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+
+      /* ─── Dark Mode Overrides ─────────────────────────── */
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg-app: #000000;
+          --bg-panel: rgba(28, 28, 30, 0.75);
+          --bg-panel-solid: #1c1c1e;
+          --bg-hover: rgba(255, 255, 255, 0.08);
+          --bg-active: rgba(255, 255, 255, 0.12);
+
+          --text-main: #f5f5f7;
+          --text-muted: #86868b;
+          --text-subtle: #636366;
+
+          --border-light: rgba(255, 255, 255, 0.12);
+
+          --accent: #0a84ff;
+          --accent-hover: #409cff;
+          --accent-danger: #ff453a;
+          --accent-danger-hover: #ff6961;
+          --accent-success: #32d74b;
+
+          --black-btn: #f5f5f7; /* Becomes white in dark mode */
+
+          --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+          --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.6);
+          --shadow-lg:
+            0 12px 32px rgba(0, 0, 0, 0.8), 0 4px 12px rgba(0, 0, 0, 0.4);
         }
       }
-    </script>
-    <style>
-      body { background-color: #f0ece6; }
-      .card { background: #faf8f5; border: 1px solid #e8e2d9; box-shadow: 0 1px 4px rgba(60,40,20,0.07); }
-      .card-divider { border-color: #ede8e0; }
-      .section-header { background: #f5f1eb; border-bottom: 1px solid #e8e2d9; }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        height: 100%;
+        background-color: var(--bg-app);
+        color: var(--text-main);
+        font-family: var(--font-sans);
+        font-size: 18px; /* Increased base font size */
+        line-height: 1.4;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        letter-spacing: -0.01em;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      /* ─── Typography & Utilities ────────────────────────── */
+      h1,
+      h2,
+      h3,
+      h4 {
+        font-weight: 700;
+        color: var(--text-main);
+        letter-spacing: -0.04em;
+      }
+      h1 {
+        font-size: 48px;
+        line-height: 1.1;
+        margin-bottom: 12px;
+      }
+      h2 {
+        font-size: 32px;
+        margin-bottom: 24px;
+      }
+      h3 {
+        font-size: 22px;
+        margin-bottom: 8px;
+        letter-spacing: -0.02em;
+      }
+
+      p {
+        color: var(--text-muted);
+        font-size: 18px;
+        line-height: 1.5;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      /* ─── Layout: Mac-like Floating Nav ───────────────── */
+      .app {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        padding-top: 100px; /* Space for fixed header */
+      }
+
+      .header {
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: calc(100% - 40px);
+        max-width: 800px;
+        height: 64px;
+        background-color: var(--bg-panel);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid var(--border-light);
+        border-radius: 100px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 12px 0 24px;
+        z-index: 50;
+        box-shadow: var(--shadow-md);
+      }
+
+      .logo {
+        font-weight: 700;
+        font-size: 20px;
+        letter-spacing: -0.05em;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      /* Segmented Control Navigation */
+      .header-nav {
+        display: flex;
+        background: rgba(0, 0, 0, 0.04);
+        border-radius: 100px;
+        padding: 4px;
+        position: relative;
+      }
+
+      .nav-item {
+        padding: 8px 20px;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--text-muted);
+        border: none;
+        background: transparent;
+        border-radius: 100px;
+        cursor: pointer;
+        transition: var(--transition-fast);
+        z-index: 1;
+      }
+      .nav-item:hover {
+        color: var(--text-main);
+      }
+      .nav-item.active {
+        color: var(--text-main);
+        background: var(--bg-panel-solid);
+        box-shadow: var(--shadow-sm);
+        font-weight: 600;
+      }
+
+      .user-profile {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .logout-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: var(--bg-hover);
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        transition: var(--transition-fast);
+      }
+      .logout-btn:hover {
+        background: var(--accent-danger);
+        color: white;
+      }
+      .user-email-display {
+        display: none;
+      }
+
+      @media (min-width: 768px) {
+        .user-email-display {
+          display: block;
+          font-size: 14px;
+          color: var(--text-muted);
+          font-weight: 500;
+        }
+      }
+
+      /* Mobile Nav Overrides */
+      @media (max-width: 767px) {
+        .header {
+          top: 10px;
+          width: calc(100% - 20px);
+          padding: 0 8px 0 16px;
+        }
+        .header-nav {
+          display: none; /* Hide top nav on very small screens, make bottom bar */
+        }
+
+        .mobile-bottom-nav {
+          display: flex;
+          position: fixed;
+          bottom: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: var(--bg-panel);
+          border: 1px solid var(--border-light);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          border-radius: 100px;
+          padding: 8px;
+          box-shadow: var(--shadow-lg);
+          z-index: 50;
+          width: max-content;
+        }
+
+        .mobile-bottom-nav .nav-item {
+          padding: 12px 24px;
+        }
+      }
+      @media (min-width: 768px) {
+        .mobile-bottom-nav {
+          display: none;
+        }
+      }
+
+      /* ─── Main Content ──────────────────────────────────── */
+      .main-content {
+        flex: 1;
+        padding: 40px 20px 100px;
+        width: 100%;
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+
+      .section {
+        display: none;
+        opacity: 0;
+        transform: translateY(20px);
+        transition:
+          opacity 0.5s cubic-bezier(0.2, 0.8, 0.2, 1),
+          transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+      .section.active {
+        display: block;
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .hero-header {
+        text-align: center;
+        max-width: 600px;
+        margin: 0 auto 64px;
+      }
+      .hero-header h1 {
+        font-size: 56px;
+      }
+      .hero-header p {
+        font-size: 20px;
+      }
+      @media (max-width: 767px) {
+        .hero-header h1 {
+          font-size: 40px;
+        }
+      }
+
+      /* ─── Components ────────────────────────────────────── */
+      .card {
+        background-color: var(--bg-panel);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-radius: var(--radius-xl);
+        border: 1px solid var(--border-light);
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+        transition: var(--transition-smooth);
+      }
+      .card:hover {
+        box-shadow: var(--shadow-md);
+        transform: translateY(-2px);
+        background-color: var(--bg-panel-solid);
+      }
+
+      .card-body {
+        padding: 32px;
+      }
+
+      /* Pill Buttons */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-family: inherit;
+        font-size: 16px;
+        font-weight: 600;
+        padding: 12px 24px;
+        border-radius: 100px; /* Fully rounded Apple style */
+        border: none;
+        cursor: pointer;
+        transition: var(--transition-fast);
+        text-decoration: none;
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none !important;
+      }
+      .btn:active {
+        transform: scale(0.96);
+      }
+
+      .btn-primary {
+        background-color: var(--accent);
+        color: white;
+        box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3);
+      }
+      .btn-primary:not(:disabled):hover {
+        background-color: var(--accent-hover);
+        box-shadow: 0 6px 16px rgba(0, 113, 227, 0.4);
+      }
+
+      .btn-black {
+        background-color: var(--black-btn);
+        color: var(--bg-app); /* Use background color for contrast */
+      }
+      .btn-black:not(:disabled):hover {
+        opacity: 0.85;
+      }
+
+      .btn-secondary {
+        background-color: var(--bg-hover);
+        color: var(--text-main);
+      }
+      .btn-secondary:not(:disabled):hover {
+        background-color: var(--bg-active);
+      }
+
+      .btn-danger {
+        background-color: rgba(255, 59, 48, 0.1);
+        color: var(--accent-danger);
+      }
+      .btn-danger:not(:disabled):hover {
+        background-color: rgba(255, 59, 48, 0.15);
+      }
+
+      .btn-sm {
+        font-size: 14px;
+        padding: 8px 16px;
+      }
+
+      /* Inputs */
+      .inp {
+        width: 100%;
+        padding: 16px 20px;
+        font-family: inherit;
+        font-size: 18px;
+        border: 1px solid var(--border-light);
+        border-radius: var(--radius-md);
+        background-color: var(--bg-panel);
+        color: var(--text-main);
+        transition: var(--transition-fast);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.02);
+      }
+      .inp::placeholder {
+        color: var(--text-subtle);
+      }
+      .inp:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.15);
+        background-color: var(--bg-panel-solid);
+      }
+
+      .skeleton {
+        background-color: var(--bg-active);
+        border-radius: var(--radius-sm);
+        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      /* ─── Memory Section (Masonry/Bento) ─────────────── */
+      .search-container {
+        max-width: 640px;
+        margin: 0 auto 40px;
+      }
+
+      .search-bar {
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+
+      .search-bar .inp {
+        padding-right: 120px; /* space for button */
+        border-radius: 100px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+      }
+
+      .search-bar .btn-primary {
+        position: absolute;
+        right: 6px;
+        top: 6px;
+        bottom: 6px;
+        padding: 0 24px;
+      }
+
+      .filter-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 48px;
+        justify-content: center;
+      }
+      .chip {
+        font-size: 15px;
+        font-weight: 500;
+        padding: 8px 20px;
+        border-radius: 100px;
+        border: 1px solid var(--border-light);
+        background-color: var(--bg-panel);
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: var(--transition-fast);
+      }
+      .chip:hover {
+        border-color: var(--text-muted);
+        color: var(--text-main);
+      }
+      .chip.active {
+        background-color: var(--black-btn);
+        border-color: var(--black-btn);
+        color: var(--bg-app);
+      }
+
+      .bento-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 24px;
+        align-items: start;
+      }
+      @media (min-width: 768px) {
+        .bento-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+
+      .fact-card {
+        margin-bottom: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        height: 100%;
+        min-height: 200px;
+      }
+      .fact-text {
+        font-size: 20px;
+        line-height: 1.5;
+        color: var(--text-main);
+        font-weight: 500;
+        margin-bottom: 24px;
+      }
+      .fact-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: auto;
+      }
+      .fact-domain-badge {
+        font-weight: 600;
+        font-size: 13px;
+        padding: 4px 12px;
+        border-radius: 100px;
+        color: var(--text-main);
+        background-color: var(--bg-active);
+      }
+      .fact-actions {
+        display: flex;
+        gap: 8px;
+        opacity: 0;
+        transition: opacity var(--transition-fast);
+      }
+      .fact-card:hover .fact-actions {
+        opacity: 1;
+      }
+      @media (max-width: 767px) {
+        .fact-actions {
+          opacity: 1;
+        }
+      }
+
+      /* ─── Integrations Section (Bento Grid) ──────────── */
+      .integration-bento {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 24px;
+        margin-bottom: 48px;
+      }
+      @media (min-width: 768px) {
+        .integration-bento {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+
+      .integration-card {
+        padding: 40px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .integration-icon {
+        width: 80px;
+        height: 80px;
+        border-radius: 22px;
+        background-color: var(--bg-panel-solid);
+        box-shadow: var(--shadow-sm);
+        border: 1px solid var(--border-light);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 40px;
+        margin-bottom: 24px;
+        transition: transform var(--transition-smooth);
+      }
+      .integration-card:hover .integration-icon {
+        transform: scale(1.05) translateY(-4px);
+      }
+
+      .integration-title {
+        font-size: 24px;
+        margin-bottom: 12px;
+      }
+      .integration-description {
+        font-size: 16px;
+        margin-bottom: 32px;
+        max-width: 280px;
+      }
+
+      .integration-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-main);
+        padding: 8px 16px;
+        background: var(--bg-active);
+        border-radius: 100px;
+        margin-bottom: 24px;
+      }
+      .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+      .status-dot.connected {
+        background-color: var(--accent-success);
+        box-shadow: 0 0 8px rgba(52, 199, 89, 0.4);
+      }
+      .status-dot.disconnected {
+        background-color: var(--text-subtle);
+      }
+
+      .integration-actions {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-top: auto;
+      }
+
+      /* Specific card styling to make it feel premium */
+      .integration-card.gmail-card {
+        background: linear-gradient(
+          145deg,
+          var(--bg-panel-solid),
+          var(--bg-panel)
+        );
+      }
+      .integration-card.tasks-card {
+        background: linear-gradient(
+          145deg,
+          var(--bg-panel-solid),
+          var(--bg-panel)
+        );
+      }
+
+      @media (prefers-color-scheme: light) {
+        .integration-card.gmail-card {
+          background: linear-gradient(
+            145deg,
+            rgba(255, 255, 255, 0.9),
+            rgba(240, 244, 255, 0.5)
+          );
+        }
+        .integration-card.tasks-card {
+          background: linear-gradient(
+            145deg,
+            rgba(255, 255, 255, 0.9),
+            rgba(240, 250, 255, 0.5)
+          );
+        }
+      }
+
+      /* ─── Team Section ──────────────────────────────────── */
+      .invite-container {
+        max-width: 600px;
+        margin: 0 auto;
+        text-align: center;
+      }
+
+      .invite-code-box {
+        background-color: var(--bg-panel-solid);
+        padding: 48px;
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-md);
+        margin: 40px 0;
+      }
+
+      .code-display {
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 40px;
+        font-weight: 700;
+        color: var(--text-main);
+        letter-spacing: 0.1em;
+        margin-bottom: 16px;
+      }
+
+      .invite-link-wrapper {
+        display: flex;
+        align-items: center;
+        background: var(--bg-active);
+        border-radius: 100px;
+        padding: 4px;
+        max-width: 400px;
+        margin: 0 auto;
+      }
+
+      .table-card {
+        border-radius: var(--radius-xl);
+        overflow: hidden;
+      }
+
+      .codes-table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+        background: var(--bg-panel-solid);
+      }
+      .codes-table th,
+      .codes-table td {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border-light);
+        font-size: 16px;
+      }
+      .codes-table th {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-muted);
+        background: var(--bg-hover);
+      }
+      .codes-table tr:last-child td {
+        border-bottom: none;
+      }
+
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 14px;
+        border-radius: 100px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .status-badge.active {
+        color: var(--bg-app);
+        background-color: var(--accent-success);
+      }
+      .status-badge.used {
+        color: var(--text-muted);
+        background-color: var(--bg-hover);
+      }
+
+      /* ─── Modals & Toasts ───────────────────────────────── */
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background-color: rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+      .modal-overlay.visible {
+        opacity: 1;
+      }
+
+      .modal-dialog {
+        background-color: var(--bg-panel);
+        backdrop-filter: blur(40px);
+        -webkit-backdrop-filter: blur(40px);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-lg);
+        border: 1px solid var(--border-light);
+        width: 100%;
+        max-width: 500px;
+        transform: scale(0.9) translateY(20px);
+        transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+        overflow: hidden;
+      }
+      .modal-overlay.visible .modal-dialog {
+        transform: scale(1) translateY(0);
+      }
+
+      .modal-header {
+        padding: 32px 32px 16px;
+      }
+      .modal-title {
+        font-size: 24px;
+        margin: 0;
+      }
+
+      .modal-body {
+        padding: 0 32px 32px;
+      }
+      .modal-body label {
+        display: block;
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 12px;
+        color: var(--text-main);
+      }
+
+      .modal-footer {
+        padding: 24px 32px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        background-color: var(--bg-hover);
+      }
+
+      .toast-container {
+        position: fixed;
+        bottom: 32px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 200;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .toast {
+        padding: 16px 24px;
+        border-radius: 100px;
+        box-shadow: var(--shadow-lg);
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--bg-app);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        transform: translateY(40px) scale(0.9);
+        opacity: 0;
+        transition: all 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+        backdrop-filter: blur(20px);
+      }
+      .toast.visible {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+      }
+      .toast.success {
+        background-color: var(--text-main);
+      }
+      .toast.error {
+        background-color: var(--accent-danger);
+      }
+
+      /* ─── Scroll Reveal Animation Classes ───────────────── */
+      .reveal {
+        opacity: 0;
+        transform: translateY(32px) scale(0.98);
+        transition:
+          opacity 0.6s cubic-bezier(0.2, 0.8, 0.2, 1),
+          transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+      .reveal.visible {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
     </style>
   </head>
-  <body class="min-h-screen">
-
-    <!-- Top nav bar -->
-    <header class="sticky top-0 z-10" style="background:#2c2420; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
-      <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span class="text-xl">🤖</span>
-          <span class="font-semibold text-white">Alek Bot</span>
-        </div>
-        <div class="flex items-center gap-4">
-          <span id="user-email" class="text-sm" style="color:#c8bfb5;"></span>
-          <button
-            onclick="logout()"
-            class="text-sm px-3 py-1.5 rounded-md transition-colors"
-            style="border:1px solid #6b5e54; color:#d4c9be; background:transparent;"
-            onmouseover="this.style.background='#3d3028'" onmouseout="this.style.background='transparent'"
-          >Logout</button>
-        </div>
-      </div>
-    </header>
-
-    <!-- Toast notifications -->
-    <div id="toast" class="fixed top-4 right-4 z-50 hidden">
-      <div id="toast-inner" class="px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-xs"></div>
-    </div>
-
-    <!-- Main content -->
-    <main class="max-w-3xl mx-auto px-4 py-8 space-y-6">
-
-      <!-- Account info bar -->
-      <div id="account-bar" class="hidden card rounded-xl px-5 py-3 flex items-center gap-4 text-sm text-gray-600">
-        <span>Account: <span id="account-tier" class="font-medium text-gray-800"></span></span>
-        <span class="text-gray-300">|</span>
-        <span>Role: <span id="account-role" class="font-medium text-gray-800"></span></span>
-      </div>
-
-      <!-- ────────────────────────────────────────────── -->
-      <!-- Platform Connections                          -->
-      <!-- ────────────────────────────────────────────── -->
-      <section class="card rounded-xl overflow-hidden">
-        <div class="section-header px-5 py-4">
-          <h2 class="font-semibold text-gray-800">Connected Platforms</h2>
-          <p class="text-sm text-gray-500 mt-0.5">Link your chat accounts to use Alek Bot</p>
-        </div>
-        <div class="divide-y card-divider" id="platforms-container">
-          <div class="px-5 py-4 text-sm text-gray-400">Loading...</div>
-        </div>
-      </section>
-
-      <!-- ────────────────────────────────────────────── -->
-      <!-- Gmail Integration                             -->
-      <!-- ────────────────────────────────────────────── -->
-      <section id="gmail-section" class="card rounded-xl overflow-hidden">
-        <div class="section-header px-5 py-4 flex items-center justify-between">
-          <div>
-            <h2 class="font-semibold text-gray-800">Gmail Integration</h2>
-            <p class="text-sm text-gray-500 mt-0.5">Index your emails as biographical facts</p>
-          </div>
-          <div id="gmail-header-btn"></div>
-        </div>
-        <div id="gmail-body" class="px-5 py-4 text-sm text-gray-400">Loading...</div>
-      </section>
-
-      <!-- ────────────────────────────────────────────── -->
-      <!-- Task List Integration                         -->
-      <!-- ────────────────────────────────────────────── -->
-      <section id="tasks-section" class="card rounded-xl overflow-hidden">
-        <div class="section-header px-5 py-4 flex items-center justify-between">
-          <div>
-            <h2 class="font-semibold text-gray-800">Task List</h2>
-            <p class="text-sm text-gray-500 mt-0.5">Manage your personal tasks via Alek</p>
-          </div>
-          <div id="tasks-header-btn"></div>
-        </div>
-        <div id="tasks-body" class="px-5 py-4 text-sm text-gray-400">Loading...</div>
-      </section>
-
-      <!-- ────────────────────────────────────────────── -->
-      <!-- My Memory (Facts)                             -->
-      <!-- ────────────────────────────────────────────── -->
-      <section class="card rounded-xl overflow-hidden">
-        <!-- Header -->
-        <div class="section-header px-5 py-4 flex items-center justify-between">
-          <div>
-            <h2 class="font-semibold text-gray-800">My Memory</h2>
-            <p class="text-sm text-gray-500 mt-0.5">Facts Alek Bot knows about you</p>
-          </div>
-          <button
-            id="load-facts-btn"
-            onclick="browseInit()"
-            class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors"
-          >Load facts</button>
-        </div>
-
-        <!-- Controls (hidden until loaded) -->
-        <div id="facts-controls" class="hidden px-5 py-3 space-y-3" style="border-bottom:1px solid #e8e2d9;">
-          <!-- Search row -->
-          <div class="flex gap-2">
-            <input
-              id="facts-search"
-              type="text"
-              placeholder="Search your memory..."
-              class="flex-1 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-              style="border:1px solid #e0d9d0; background:#f5f1eb;"
-              onkeydown="if(event.key==='Enter') runSearch()"
+  <body>
+    <div class="app">
+      <!-- Mac-like Floating Header -->
+      <header class="header">
+        <div class="logo">
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path
+              d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"
             />
-            <button
-              onclick="runSearch()"
-              class="text-sm px-3 py-2 rounded-lg bg-indigo-500 text-white hover:bg-indigo-600 transition-colors whitespace-nowrap"
-            >🔍 Search</button>
-            <button
-              id="back-to-browse-btn"
-              onclick="backToBrowse()"
-              class="hidden text-sm px-3 py-2 rounded-lg transition-colors whitespace-nowrap"
-              style="border:1px solid #d4cdc4; color:#6b7280; background:transparent;"
-            >← Browse</button>
-          </div>
-          <!-- Domain chips (browse mode only) -->
-          <div id="domain-chips" class="flex flex-wrap gap-2"></div>
+          </svg>
+          Alek
         </div>
 
-        <!-- Mode indicator -->
-        <div id="facts-mode-bar" class="hidden px-5 py-2 text-xs" style="background:#f5f1eb; border-bottom:1px solid #e8e2d9; color:#9ca3af;"></div>
-
-        <!-- Scrollable facts list -->
-        <div id="facts-container" class="divide-y overflow-y-auto" style="border-color:#ede8e0; max-height:520px;">
-          <div class="px-5 py-6 text-sm text-gray-400 text-center">Click "Load facts" to view your memory.</div>
-        </div>
-
-        <!-- Footer: count + pagination -->
-        <div id="facts-footer" class="hidden px-5 py-3 flex items-center justify-between" style="border-top:1px solid #e8e2d9;">
-          <span id="facts-count" class="text-xs text-gray-400"></span>
-          <div id="facts-pagination" class="flex items-center gap-2"></div>
-        </div>
-      </section>
-
-      <!-- ────────────────────────────────────────────── -->
-      <!-- Team Invites (owner only)                     -->
-      <!-- ────────────────────────────────────────────── -->
-      <section id="invites-section" class="hidden card rounded-xl overflow-hidden">
-        <div class="section-header px-5 py-4 flex items-center justify-between">
-          <div>
-            <h2 class="font-semibold text-gray-800">Team Invites</h2>
-            <p class="text-sm text-gray-500 mt-0.5">Generate invite links for colleagues</p>
-          </div>
+        <nav class="header-nav">
           <button
-            onclick="generateTeamInvite()"
-            class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors"
-          >Generate link</button>
-        </div>
-
-        <!-- Generated code display -->
-        <div id="generated-code" class="hidden px-5 py-4" style="border-bottom:1px solid #e8e2d9;"></div>
-
-        <!-- Codes table -->
-        <div class="px-5 py-4">
+            class="nav-item active"
+            onclick="navigate('integrations')"
+            id="nav-integrations"
+          >
+            Integrations
+          </button>
+          <button class="nav-item" onclick="navigate('memory')" id="nav-memory">
+            Memory
+          </button>
           <button
-            onclick="loadCodes()"
-            class="text-sm text-indigo-500 hover:text-indigo-700 font-medium"
-          >↻ Refresh</button>
-          <div id="codes-list" class="mt-3"></div>
-        </div>
-      </section>
+            class="nav-item hidden"
+            onclick="navigate('team')"
+            id="nav-team"
+          >
+            Team
+          </button>
+        </nav>
 
-    </main>
+        <div class="user-profile">
+          <span id="user-email" class="user-email-display"></span>
+          <button onclick="logout()" class="logout-btn" title="Log out">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+          </button>
+        </div>
+      </header>
 
-    <!-- ─── Modals ──────────────────────────────────────────── -->
-    <div id="modal-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center" style="background:rgba(44,36,32,0.5);" onclick="closeModal(event)">
+      <!-- Mobile Bottom Nav -->
+      <nav class="mobile-bottom-nav">
+        <button
+          class="nav-item active"
+          onclick="navigate('integrations')"
+          id="nav-mobile-integrations"
+        >
+          Integrations
+        </button>
+        <button
+          class="nav-item"
+          onclick="navigate('memory')"
+          id="nav-mobile-memory"
+        >
+          Memory
+        </button>
+        <button
+          class="nav-item hidden"
+          onclick="navigate('team')"
+          id="nav-mobile-team"
+        >
+          Team
+        </button>
+      </nav>
 
-      <!-- Mark as invalid -->
-      <div id="modal-invalid" class="hidden card rounded-xl w-full max-w-md mx-4 p-6" onclick="event.stopPropagation()">
-        <h3 class="font-semibold text-gray-800 mb-1">Remove this fact</h3>
-        <p class="text-xs text-gray-500 mb-4">This will immediately remove the fact from your memory. Alek will no longer use it in conversations.</p>
-        <div class="mb-5">
-          <label class="text-xs font-medium text-gray-400 uppercase tracking-wide">Fact to remove</label>
-          <div id="modal-invalid-fact" class="mt-1.5 text-sm text-gray-600 px-3 py-2.5 rounded-lg leading-relaxed" style="background:#f0ece6; border:1px solid #e8e2d9;"></div>
-        </div>
-        <div class="flex gap-2 justify-end">
-          <button onclick="closeModal()" class="text-sm px-3 py-1.5 rounded-md transition-colors" style="border:1px solid #d4cdc4; color:#6b7280;" onmouseover="this.style.background='#f0ece6'" onmouseout="this.style.background='transparent'">Cancel</button>
-          <button id="modal-invalid-btn" onclick="invalidateFactDirect()" class="text-sm px-3 py-1.5 rounded-md bg-red-500 text-white hover:bg-red-600 transition-colors">Remove</button>
-        </div>
-      </div>
+      <!-- Main Content Area -->
+      <main class="main-content">
+        <!-- Memory Section -->
+        <section id="section-memory" class="section">
+          <div class="hero-header reveal">
+            <h1>Your Memory</h1>
+            <p>
+              Search, manage, and refine the knowledge base Alek uses to assist
+              you.
+            </p>
+          </div>
 
-      <!-- Correct this fact -->
-      <div id="modal-correct" class="hidden card rounded-xl w-full max-w-md mx-4 p-6" onclick="event.stopPropagation()">
-        <h3 class="font-semibold text-gray-800 mb-1">Correct this fact</h3>
-        <p class="text-xs text-gray-500 mb-4">This copies a message to paste into your chat with Alek. Alek will update the fact — the old version will remain visible in the cabinet until the next memory sync.</p>
-        <div class="mb-3">
-          <label class="text-xs font-medium text-gray-400 uppercase tracking-wide">Current (incorrect)</label>
-          <div id="modal-correct-old" class="mt-1.5 text-sm text-gray-400 px-3 py-2.5 rounded-lg leading-relaxed" style="background:#f0ece6; border:1px solid #e8e2d9;"></div>
-        </div>
-        <div class="mb-5">
-          <label class="text-xs font-medium text-gray-400 uppercase tracking-wide">Correct version</label>
-          <textarea
-            id="modal-correct-new"
-            rows="3"
-            class="mt-1.5 w-full text-sm px-3 py-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
-            style="border:1px solid #d4cdc4; background:#faf8f5;"
-            placeholder="Type the correct version..."
-            onkeydown="if(event.key==='Enter' && event.metaKey) copyCorrectMessage()"
-          ></textarea>
-          <p class="text-xs text-gray-400 mt-1">⌘↵ to copy</p>
-        </div>
-        <div class="flex gap-2 justify-end">
-          <button onclick="closeModal()" class="text-sm px-3 py-1.5 rounded-md transition-colors" style="border:1px solid #d4cdc4; color:#6b7280;" onmouseover="this.style.background='#f0ece6'" onmouseout="this.style.background='transparent'">Cancel</button>
-          <button onclick="copyCorrectMessage()" class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">Copy message</button>
-        </div>
-      </div>
+          <div class="search-container reveal">
+            <div class="search-bar">
+              <input
+                id="facts-search"
+                type="text"
+                placeholder="Ask your memory..."
+                class="inp"
+                onkeydown="if (event.key === 'Enter') runSearch();"
+              />
+              <button onclick="runSearch()" class="btn btn-black">
+                Search
+              </button>
+            </div>
+            <div style="text-align: center; margin-top: 16px">
+              <button
+                id="back-to-browse-btn"
+                onclick="backToBrowse()"
+                class="btn btn-secondary btn-sm hidden"
+              >
+                Clear Search
+              </button>
+            </div>
+          </div>
 
+          <div id="domain-chips" class="filter-chips reveal"></div>
+
+          <div id="facts-container" class="bento-grid">
+            <!-- Skeletons -->
+            <div id="memory-content-placeholder" style="grid-column: 1 / -1">
+              <div class="bento-grid">
+                <div class="card fact-card">
+                  <div class="card-body">
+                    <div
+                      class="skeleton"
+                      style="height: 24px; width: 80%; margin-bottom: 12px"
+                    ></div>
+                    <div
+                      class="skeleton"
+                      style="height: 24px; width: 60%; margin-bottom: 40px"
+                    ></div>
+                    <div
+                      class="skeleton"
+                      style="height: 30px; width: 100px; border-radius: 100px"
+                    ></div>
+                  </div>
+                </div>
+                <div class="card fact-card">
+                  <div class="card-body">
+                    <div
+                      class="skeleton"
+                      style="height: 24px; width: 90%; margin-bottom: 12px"
+                    ></div>
+                    <div
+                      class="skeleton"
+                      style="height: 24px; width: 40%; margin-bottom: 40px"
+                    ></div>
+                    <div
+                      class="skeleton"
+                      style="height: 30px; width: 100px; border-radius: 100px"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            id="facts-footer"
+            style="text-align: center; margin-top: 64px"
+            class="reveal"
+          >
+            <div
+              id="facts-count"
+              style="
+                color: var(--text-muted);
+                font-size: 15px;
+                margin-bottom: 24px;
+              "
+            ></div>
+            <div id="facts-pagination"></div>
+          </div>
+        </section>
+
+        <!-- Integrations Section -->
+        <section id="section-integrations" class="section active">
+          <div class="hero-header reveal visible">
+            <h1>Integrations</h1>
+            <p>
+              Connect your favorite platforms and let Alek work seamlessly
+              across them.
+            </p>
+          </div>
+
+          <div id="platforms-container" class="integration-bento">
+            <!-- Rendered via JS -->
+          </div>
+
+          <!-- Specific containers for Data Services to fix race condition -->
+          <div class="integration-bento">
+            <div id="gmail-container">
+              <!-- Gmail Skeleton -->
+              <div class="card integration-card gmail-card">
+                <div
+                  class="skeleton"
+                  style="
+                    width: 80px;
+                    height: 80px;
+                    border-radius: 22px;
+                    margin-bottom: 24px;
+                  "
+                ></div>
+                <div
+                  class="skeleton"
+                  style="height: 32px; width: 120px; margin-bottom: 16px"
+                ></div>
+                <div
+                  class="skeleton"
+                  style="height: 40px; width: 200px; border-radius: 100px"
+                ></div>
+              </div>
+            </div>
+
+            <div id="tasks-container">
+              <!-- Tasks Skeleton -->
+              <div class="card integration-card tasks-card">
+                <div
+                  class="skeleton"
+                  style="
+                    width: 80px;
+                    height: 80px;
+                    border-radius: 22px;
+                    margin-bottom: 24px;
+                  "
+                ></div>
+                <div
+                  class="skeleton"
+                  style="height: 32px; width: 160px; margin-bottom: 16px"
+                ></div>
+                <div
+                  class="skeleton"
+                  style="height: 40px; width: 200px; border-radius: 100px"
+                ></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Team Section -->
+        <section id="section-team" class="section">
+          <div class="hero-header reveal">
+            <h1>Your Team</h1>
+            <p>Invite colleagues to collaborate and share knowledge.</p>
+          </div>
+
+          <div class="invite-container reveal">
+            <button
+              onclick="generateTeamInvite()"
+              class="btn btn-black"
+              style="padding: 16px 32px; font-size: 18px"
+            >
+              Generate New Invite Link
+            </button>
+
+            <div id="generated-code-container" class="hidden"></div>
+          </div>
+
+          <div class="card table-card reveal" style="margin-top: 64px">
+            <div class="card-body" style="padding: 0">
+              <div class="table-container">
+                <div id="codes-list-container">
+                  <div style="padding: 40px">
+                    <div
+                      class="skeleton"
+                      style="height: 60px; width: 100%"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
     </div>
 
-    <!-- Gmail Indexing Modal -->
-    <div id="gmail-index-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center" style="background:rgba(44,36,32,0.5);" onclick="closeIndexModal(event)">
-      <div class="card rounded-xl w-full max-w-sm mx-4 p-6" onclick="event.stopPropagation()">
-        <h3 class="font-semibold text-gray-800 mb-1">Index Gmail</h3>
-        <p class="text-xs text-gray-500 mb-4">Choose how to index your email history.</p>
-
-        <!-- Mode selector -->
-        <div class="space-y-2 mb-4">
-          <label class="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors" style="border:1px solid #d4cdc4;" id="mode-incremental-label">
-            <input type="radio" name="index-mode" value="incremental" checked class="mt-0.5 accent-indigo-500" onchange="updateIndexModal()">
-            <div>
-              <div class="text-sm font-medium text-gray-700">Incremental</div>
-              <div class="text-xs text-gray-400">Fetch emails newer than the last indexed date.</div>
-            </div>
-          </label>
-          <label class="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors" style="border:1px solid #d4cdc4;" id="mode-reindex-label">
-            <input type="radio" name="index-mode" value="reindex" class="mt-0.5 accent-indigo-500" onchange="updateIndexModal()">
-            <div>
-              <div class="text-sm font-medium text-gray-700">Re-index</div>
-              <div class="text-xs text-gray-400">Reset and re-process the last 3 years. Overwrites existing records.</div>
-            </div>
-          </label>
-          <label class="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors" style="border:1px solid #d4cdc4;" id="mode-backfill-label">
-            <input type="radio" name="index-mode" value="backfill" class="mt-0.5 accent-indigo-500" onchange="updateIndexModal()">
-            <div>
-              <div class="text-sm font-medium text-gray-700">Backfill</div>
-              <div class="text-xs text-gray-400">Index emails older than the earliest already indexed, back to a date you choose.</div>
-            </div>
-          </label>
-        </div>
-
-        <!-- Backfill date (hidden unless backfill selected) -->
-        <div id="backfill-date-row" class="hidden mb-4">
-          <label class="text-xs font-medium text-gray-400 uppercase tracking-wide">Stop date (go back to)</label>
-          <input type="date" id="backfill-until-input"
-            class="mt-1.5 w-full text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
-            style="border:1px solid #d4cdc4; background:#faf8f5;" />
-        </div>
-
-        <!-- Pages (hidden for reindex — full mailbox is always processed) -->
-        <div id="index-pages-row" class="mb-5">
-          <label class="text-xs font-medium text-gray-400 uppercase tracking-wide">Pages (1 page ≈ 300 emails)</label>
-          <input type="number" id="index-pages-input" value="1" min="1" max="50" placeholder="blank = all"
-            class="mt-1.5 w-full text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
-            style="border:1px solid #d4cdc4; background:#faf8f5;" />
-        </div>
-
-        <div class="flex gap-2 justify-end">
-          <button onclick="closeIndexModal()" class="text-sm px-3 py-1.5 rounded-md transition-colors" style="border:1px solid #d4cdc4; color:#6b7280;" onmouseover="this.style.background='#f0ece6'" onmouseout="this.style.background='transparent'">Cancel</button>
-          <button id="index-start-btn" onclick="submitIndexModal()" class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">Start</button>
-        </div>
-      </div>
-    </div>
+    <!-- Modals & Toasts -->
+    <div id="modal-container"></div>
+    <div id="toast-container" class="toast-container"></div>
 
     <script>
+      /* ── App state ───────────────────────────────────── */
       const API = "";
       let currentUser = null;
       let allFacts = [];
 
-      // ─── Domain badge colors ─────────────────────────────────
-      const DOMAIN_COLORS = {
-        health:       "bg-red-100 text-red-700",
-        biographical: "bg-blue-100 text-blue-700",
-        possession:   "bg-amber-100 text-amber-700",
-        location:     "bg-green-100 text-green-700",
-        relationship: "bg-purple-100 text-purple-700",
-        financial:    "bg-teal-100 text-teal-700",
-        professional: "bg-sky-100 text-sky-700",
+      const DOMAIN_LABELS = {
+        health: "Health",
+        biographical: "Biographical",
+        possession: "Possession",
+        location: "Location",
+        relationship: "Relationship",
+        financial: "Financial",
+        professional: "Professional",
       };
-      function domainColor(domain) {
-        return DOMAIN_COLORS[domain] || "bg-gray-100 text-gray-600";
-      }
-      function domainLabel(domain) {
-        return domain ? domain.replace(/_/g, " ") : "—";
+
+      function domainLabel(d) {
+        return d ? DOMAIN_LABELS[d] || d.replace(/_/g, " ") : "Uncategorized";
       }
 
-      // ─── Init ────────────────────────────────────────────────
+      /* ── UI Helpers & Observers ──────────────────────── */
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("visible");
+              observer.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.05, rootMargin: "0px 0px -50px 0px" },
+      );
+
+      function observeElements() {
+        document
+          .querySelectorAll(".reveal:not(.visible)")
+          .forEach((el) => observer.observe(el));
+      }
+
+      /* ── Navigation ──────────────────────────────────── */
+      let _activeSection = "integrations";
+
+      function navigate(name) {
+        document.querySelectorAll(".section").forEach((s) => {
+          s.classList.remove("active");
+        });
+        document
+          .querySelectorAll(".nav-item")
+          .forEach((n) => n.classList.remove("active"));
+
+        const sec = document.getElementById(`section-${name}`);
+        if (sec) {
+          sec.classList.add("active");
+          // Re-trigger animations
+          sec.querySelectorAll(".reveal").forEach((el) => {
+            el.classList.remove("visible");
+            setTimeout(() => el.classList.add("visible"), 50);
+          });
+        }
+
+        // Update Desktop Nav
+        const btnDesktop = document.getElementById(`nav-${name}`);
+        if (btnDesktop) btnDesktop.classList.add("active");
+
+        // Update Mobile Nav
+        const btnMobile = document.getElementById(`nav-mobile-${name}`);
+        if (btnMobile) btnMobile.classList.add("active");
+
+        _activeSection = name;
+
+        const isInitialLoad = factsMode === "idle";
+
+        if (name === "memory" && isInitialLoad) browseInit();
+        if (name === "integrations") {
+          loadPlatforms();
+          loadGmailStatus();
+          loadTasksStatus();
+        }
+        if (name === "team") loadCodes();
+      }
+
+      /* ── Init ────────────────────────────────────────── */
       async function init() {
         try {
           const res = await fetch(`${API}/auth/me`, { credentials: "include" });
           if (!res.ok) throw new Error("Not authenticated");
-
           currentUser = await res.json();
 
-          document.getElementById("user-email").textContent = currentUser.user.email;
-          document.getElementById("account-tier").textContent = currentUser.account.tier;
-          document.getElementById("account-role").textContent = currentUser.account.role;
-          document.getElementById("account-bar").classList.remove("hidden");
+          document.getElementById("user-email").textContent =
+            currentUser.user.email;
 
-          // Show invites section only for owner
           if (currentUser.account.role === "owner") {
-            document.getElementById("invites-section").classList.remove("hidden");
-            loadCodes();
+            document.getElementById("nav-team").classList.remove("hidden");
+            document
+              .getElementById("nav-mobile-team")
+              .classList.remove("hidden");
           }
 
-          // Joined via invite?
           const qs = new URLSearchParams(window.location.search);
-          if (qs.get("joined") === "true") {
-            showToast("✅ Successfully joined the team!", "success");
-          }
-          if (qs.get("gmail_connected") === "1") {
-            showToast("✅ Gmail connected!", "success");
-          }
-          if (qs.get("gmail_error")) {
-            const errMap = { denied: "Gmail access was denied", state: "OAuth error (state mismatch)", no_code: "OAuth error (no code)", exchange: "Failed to connect Gmail" };
-            showToast("❌ " + (errMap[qs.get("gmail_error")] || "Gmail connection failed"), "error");
-          }
-          if (qs.get("microsoft_todo_connected") === "1") {
-            showToast("✅ Microsoft To Do connected!", "success");
-          }
-          if (qs.get("microsoft_todo_error")) {
-            const errMap = { denied: "Microsoft To Do access was denied", state: "OAuth error (state mismatch)", no_code: "OAuth error (no code)", exchange: "Failed to connect Microsoft To Do" };
-            showToast("❌ " + (errMap[qs.get("microsoft_todo_error")] || "Microsoft To Do connection failed"), "error");
-          }
+          if (qs.get("joined") === "true")
+            showToast("Successfully joined team", "success");
+          if (qs.get("gmail_connected") === "1")
+            showToast("Gmail connected", "success");
+          if (qs.get("gmail_error"))
+            showToast("Gmail connection error", "error");
+          if (qs.get("microsoft_todo_connected") === "1")
+            showToast("To Do connected", "success");
+          if (qs.get("microsoft_todo_error"))
+            showToast("To Do connection error", "error");
 
-          loadPlatforms();
-          loadGmailStatus();
-          loadTasksStatus();
-          window._gmailPollInterval = setInterval(loadGmailStatus, 60000);
-        } catch (e) {
+          navigate("integrations");
+        } catch {
           showToast("Please log in first", "error");
           setTimeout(() => (window.location.href = "/auth/login"), 2000);
         }
       }
 
-      // ─── Platform cards ──────────────────────────────────────
-      async function loadPlatforms() {
-        try {
-          const res = await fetch(`${API}/api/user/platforms`, { credentials: "include" });
-          const data = res.ok ? await res.json() : { platforms: {} };
-          renderPlatforms(data.platforms || {});
-        } catch {
-          renderPlatforms({});
-        }
-      }
+      /* ── Facts state ─────────────────────────────────── */
+      let factsMode = "idle",
+        browseCursor = null,
+        browseDomain = "all",
+        browseKnownDomains = [];
 
-      function renderPlatforms(platforms) {
-        const container = document.getElementById("platforms-container");
-        container.innerHTML = [
-          platformCard("slack",    platforms.slack,    "Slack",    "U0AC..."),
-          platformCard("telegram", platforms.telegram, "Telegram", "123456789"),
-        ].join("");
-      }
+      // Store the skeleton template so we don't lose it when overwriting container
+      let _memorySkeletonHtml = "";
 
-      function platformCard(id, linkedId, label, placeholder) {
-        const linked = !!linkedId;
-        return `
-          <div class="px-5 py-4">
-            <div class="flex items-center justify-between gap-4">
-              <div class="flex items-center gap-3 min-w-0">
-                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 ${linked ? "bg-green-400" : "bg-gray-300"}"></span>
-                <div class="min-w-0">
-                  <div class="text-sm font-medium text-gray-800">${label}</div>
-                  ${linked
-                    ? `<div class="text-xs text-green-600 font-mono mt-0.5">${linkedId}</div>`
-                    : `<div class="text-xs text-gray-400 mt-0.5">not connected</div>`
-                  }
-                </div>
-              </div>
-              <div class="flex items-center gap-2 flex-shrink-0">
-                ${linked
-                  ? `<button
-                       onclick="unlinkPlatform('${id}')"
-                       class="text-xs px-2.5 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50 transition-colors"
-                     >Unlink</button>`
-                  : `<input
-                       id="input-${id}"
-                       type="text"
-                       placeholder="${placeholder}"
-                       class="text-xs rounded px-2.5 py-1.5 w-36 focus:outline-none focus:ring-2 focus:ring-indigo-300" style="border:1px solid #d4cdc4; background:#f5f1eb;"
-                     />
-                     <button
-                       onclick="linkPlatform('${id}', '${label}')"
-                       class="text-xs px-2.5 py-1.5 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors whitespace-nowrap"
-                     >Link</button>`
-                }
-              </div>
-            </div>
-          </div>
-        `;
-      }
-
-      async function linkPlatform(id, label) {
-        const input = document.getElementById(`input-${id}`);
-        const value = input.value.trim();
-        if (!value) { showToast("Enter your " + label + " ID", "error"); return; }
-
-        if (id === "slack" && !value.match(/^U[A-Z0-9]+$/i)) {
-          showToast("Slack ID must start with U (e.g. U0AC0NL3L8K)", "error"); return;
-        }
-        if (id === "telegram" && !value.match(/^\d+$/)) {
-          showToast("Telegram ID must be numeric", "error"); return;
-        }
-
-        try {
-          const isTelegram = id === "telegram";
-          const endpoint = isTelegram ? "/api/user/link-telegram" : "/api/user/link-platform";
-          const body = isTelegram
-            ? { telegram_user_id: value }
-            : { platform: id, platform_user_id: value };
-
-          const res = await fetch(`${API}${endpoint}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify(body)
-          });
-
-          if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || "Link failed");
-          }
-
-          showToast(`✅ ${label} linked`, "success");
-          loadPlatforms();
-        } catch (e) {
-          showToast(e.message, "error");
-        }
-      }
-
-      async function unlinkPlatform(platform) {
-        if (!confirm(`Unlink ${platform}?`)) return;
-        try {
-          const res = await fetch(`${API}/api/user/link-platform?platform=${platform}`, {
-            method: "DELETE",
-            credentials: "include"
-          });
-          if (!res.ok) throw new Error("Unlink failed");
-          showToast(`${platform} unlinked`, "success");
-          loadPlatforms();
-        } catch (e) {
-          showToast(e.message, "error");
-        }
-      }
-
-      // ─── Gmail ───────────────────────────────────────────────
-      async function loadGmailStatus() {
-        try {
-          const res = await fetch(`${API}/api/gmail/status`, { credentials: "include" });
-          if (res.status === 401) {
-            clearInterval(window._gmailPollInterval);
-            return;
-          }
-          if (!res.ok) throw new Error();
-          renderGmailStatus(await res.json());
-        } catch {
-          document.getElementById("gmail-body").textContent = "Unable to load Gmail status.";
-        }
-      }
-
-      function renderGmailStatus(data) {
-        const body = document.getElementById("gmail-body");
-        const headerBtn = document.getElementById("gmail-header-btn");
-
-        if (!data.connected) {
-          // State A: not connected
-          body.innerHTML = `<span class="text-gray-400">Not connected. Connect Gmail to let Alek index your email history as biographical facts.</span>`;
-          headerBtn.innerHTML = `<a href="/auth/connect-gmail" class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors inline-block">Connect Gmail</a>`;
-          return;
-        }
-
-        const email = data.email_address || "(unknown email)";
-        const fmtDate = iso => iso
-          ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
-          : null;
-        const coverageFrom = fmtDate(data.oldest_indexed_through);
-        const coverageTo   = fmtDate(data.indexed_through);
-        const coverageText = coverageFrom && coverageTo
-          ? `Coverage: <span class="font-medium text-gray-600">${coverageFrom} – ${coverageTo}</span>`
-          : coverageTo
-            ? `Indexed through: <span class="font-medium text-gray-600">${coverageTo}</span>`
-            : null;
-
-        // State B/C: connected
-        body.innerHTML = `
-          <div class="flex items-center gap-2 mb-1">
-            <span class="w-2.5 h-2.5 rounded-full bg-green-400 flex-shrink-0"></span>
-            <span class="font-medium text-gray-800 text-sm">${escapeHtml(email)}</span>
-          </div>
-          <p class="text-xs text-gray-400 mt-1">
-            ${coverageText ?? "Not indexed yet."}
-          </p>
-          ${coverageTo ? `<p class="text-xs mt-2"><button onclick="deleteGmailData(this)" class="text-red-400 hover:text-red-600 transition-colors">Delete email data</button></p>` : ""}
-        `;
-
-        const indexActive = !!data.indexing_active;
-        const activeJobId = data.active_job_id || null;
-        headerBtn.innerHTML = `
-          <div class="flex items-center gap-2">
-            <button
-              ${indexActive ? "disabled" : "onclick=\"triggerGmailIndex(this)\""}
-              class="text-sm px-3 py-1.5 rounded-md transition-colors ${indexActive ? "bg-gray-200 text-gray-400 cursor-not-allowed" : "bg-indigo-500 text-white hover:bg-indigo-600"}"
-            >${indexActive ? "Indexing…" : "Index"}</button>
-            ${indexActive && activeJobId ? `<button
-              onclick="cancelGmailIndex('${activeJobId}', this)"
-              class="text-sm px-3 py-1.5 rounded-md transition-colors bg-red-100 text-red-600 hover:bg-red-200"
-            >Cancel</button>` : ""}
-            <button
-              onclick="disconnectGmail(this)"
-              class="text-sm px-3 py-1.5 rounded-md transition-colors"
-              style="border:1px solid #d4cdc4; color:#6b7280; background:transparent;"
-              onmouseover="this.style.background='#f0ece6'" onmouseout="this.style.background='transparent'"
-            >Disconnect</button>
-          </div>
-        `;
-      }
-
-      let _indexTriggerBtn = null;
-
-      function triggerGmailIndex(btn) {
-        _indexTriggerBtn = btn;
-        // Reset modal state
-        document.querySelector('input[name="index-mode"][value="incremental"]').checked = true;
-        document.getElementById("backfill-date-row").classList.add("hidden");
-        document.getElementById("index-pages-row").classList.remove("hidden");
-        document.getElementById("index-pages-input").value = "1";
-        document.getElementById("index-start-btn").textContent = "Start";
-        document.getElementById("index-start-btn").disabled = false;
-        document.getElementById("gmail-index-overlay").classList.remove("hidden");
-      }
-
-      function updateIndexModal() {
-        const mode = document.querySelector('input[name="index-mode"]:checked').value;
-        document.getElementById("backfill-date-row").classList.toggle("hidden", mode !== "backfill");
-        document.getElementById("index-pages-row").classList.toggle("hidden", mode === "reindex");
-        // backfill/reindex: пусто = все страницы; incremental: сбрасываем в 1
-        if (mode === "backfill") document.getElementById("index-pages-input").value = "";
-        if (mode === "reindex") document.getElementById("index-pages-input").value = "";
-        if (mode === "incremental") document.getElementById("index-pages-input").value = "1";
-      }
-
-      function closeIndexModal(e) {
-        if (e && e.target !== document.getElementById("gmail-index-overlay")) return;
-        document.getElementById("gmail-index-overlay").classList.add("hidden");
-      }
-
-      document.addEventListener("keydown", e => {
-        if (e.key === "Escape") document.getElementById("gmail-index-overlay").classList.add("hidden");
-      });
-
-      async function submitIndexModal() {
-        const mode = document.querySelector('input[name="index-mode"]:checked').value;
-        const maxPages = Math.max(1, parseInt(document.getElementById("index-pages-input").value) || 1);
-        const backfillUntil = document.getElementById("backfill-until-input").value || null;
-
-        if (mode === "backfill" && !backfillUntil) {
-          showToast("Please select a stop date for backfill", "error");
-          return;
-        }
-
-        const btn = document.getElementById("index-start-btn");
-        btn.textContent = "Indexing…";
-        btn.disabled = true;
-
-        // reindex/backfill без значения → не отправляем max_pages → backend = unlimited
-        const body = { mode };
-        if (mode === "incremental" || document.getElementById("index-pages-input").value.trim())
-          body.max_pages = maxPages;
-        if (mode === "backfill" && backfillUntil) body.backfill_until = backfillUntil;
-
-        try {
-          const res = await fetch(`${API}/api/gmail/index`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          document.getElementById("gmail-index-overlay").classList.add("hidden");
-          if (res.status === 501) {
-            showToast("Indexing not configured on server", "error");
-          } else if (res.status === 202) {
-            showToast("Indexing started in background. You'll be notified when done.", "success");
-            loadGmailStatus();
-          } else if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            showToast(`Indexing failed: ${err.error || res.status}`, "error");
-          } else {
-            const data = await res.json();
-            const msg = `Done: ${data.emails_stored} stored / ${data.emails_fetched} fetched` +
-              (data.has_more ? " · more pages available" : "");
-            showToast(msg, "success");
-            loadGmailStatus();
-          }
-        } catch (e) {
-          showToast(`Error: ${e.message}`, "error");
-          btn.textContent = "Start";
-          btn.disabled = false;
-        }
-      }
-
-      async function cancelGmailIndex(jobId, btn) {
-        if (!confirm("Cancel indexing?\n\nThe current page will finish, then the job will stop.")) return;
-        btn.textContent = "Cancelling…";
-        btn.disabled = true;
-        try {
-          const res = await fetch(`${API}/api/gmail/jobs/${jobId}/cancel`, {
-            method: "POST",
-            credentials: "include",
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            showToast(`Cancel failed: ${err.error || res.status}`, "error");
-            btn.textContent = "Cancel";
-            btn.disabled = false;
-            return;
-          }
-          showToast("Indexing cancelled.", "success");
-          loadGmailStatus();
-        } catch (e) {
-          showToast(`Error: ${e.message}`, "error");
-          btn.textContent = "Cancel";
-          btn.disabled = false;
-        }
-      }
-
-      async function disconnectGmail(btn) {
-        if (!confirm("Disconnect Gmail?\n\nYour indexed email data will be preserved. You can re-connect at any time.")) return;
-        btn.textContent = "Disconnecting...";
-        btn.disabled = true;
-        try {
-          const res = await fetch(`${API}/api/gmail/disconnect`, { method: "DELETE", credentials: "include" });
-          if (!res.ok) throw new Error();
-          showToast("Gmail disconnected. Indexed data preserved.", "success");
-          loadGmailStatus();
-        } catch {
-          showToast("Failed to disconnect Gmail", "error");
-          btn.textContent = "Disconnect";
-          btn.disabled = false;
-        }
-      }
-
-      async function deleteGmailData(btn) {
-        if (!confirm("Delete all indexed email data?\n\nThis cannot be undone. You will need to re-index from scratch.")) return;
-        btn.textContent = "Deleting...";
-        btn.disabled = true;
-        try {
-          const res = await fetch(`${API}/api/gmail/data`, { method: "DELETE", credentials: "include" });
-          if (!res.ok) throw new Error();
-          showToast("Email data deleted.", "success");
-          loadGmailStatus();
-        } catch {
-          showToast("Failed to delete email data", "error");
-          btn.textContent = "Delete email data";
-          btn.disabled = false;
-        }
-      }
-
-      // ─── Task List ───────────────────────────────────────────
-      async function loadTasksStatus() {
-        try {
-          const res = await fetch(`${API}/api/tasks/microsoft/status`, { credentials: "include" });
-          if (!res.ok) throw new Error();
-          renderTasksStatus(await res.json());
-        } catch {
-          document.getElementById("tasks-body").textContent = "Unable to load task list status.";
-        }
-      }
-
-      function renderTasksStatus(data) {
-        const body = document.getElementById("tasks-body");
-        const headerBtn = document.getElementById("tasks-header-btn");
-        if (!data.connected) {
-          body.innerHTML = `<span class="text-gray-400">Not connected. Connect your task list so Alek can manage tasks on your behalf.</span>`;
-          headerBtn.innerHTML = `<a href="/auth/connect-microsoft-todo" class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors inline-block">Connect Microsoft To Do</a>`;
-          return;
-        }
-        const account = data.email_address ? `<span class="text-gray-500">${data.email_address}</span>` : "";
-        body.innerHTML = `
-          <div class="flex items-center gap-2">
-            <span class="inline-block w-2 h-2 rounded-full bg-green-400"></span>
-            <span class="text-gray-700 font-medium">Connected</span>
-            ${account}
-          </div>
-          <p class="mt-2 text-xs text-gray-400">Alek can now view and manage your task list. Use natural language: "Add task: ...", "Show my tasks", "Mark done: ..."</p>
-          <p class="text-xs mt-3"><button onclick="disconnectTasks(this)" class="text-red-400 hover:text-red-600 transition-colors">Disconnect task list</button></p>`;
-        headerBtn.innerHTML = "";
-      }
-
-      async function disconnectTasks(btn) {
-        if (!confirm("Disconnect task list?\n\nAlek will no longer be able to manage your tasks.")) return;
-        btn.textContent = "Disconnecting...";
-        btn.disabled = true;
-        try {
-          const res = await fetch(`${API}/api/tasks/microsoft/disconnect`, { method: "DELETE", credentials: "include" });
-          if (!res.ok) throw new Error();
-          showToast("Task list disconnected.", "success");
-          loadTasksStatus();
-        } catch {
-          showToast("Failed to disconnect task list", "error");
-          btn.textContent = "Disconnect task list";
-          btn.disabled = false;
-        }
-      }
-
-      // ─── Facts: state ────────────────────────────────────────
-      let factsMode = "idle";   // idle | browse | search
-      let browseCursor = null;
-      let browseDomain = "all";
-      let browseKnownDomains = [];
-
-      // ─── Browse mode ─────────────────────────────────────────
       async function browseInit() {
+        if (!_memorySkeletonHtml) {
+          const skel = document.getElementById("memory-content-placeholder");
+          if (skel) _memorySkeletonHtml = skel.outerHTML;
+        }
+        document.getElementById("facts-container").innerHTML =
+          _memorySkeletonHtml;
         browseCursor = null;
         browseDomain = "all";
         browseKnownDomains = [];
+        factsMode = "browse";
         await browseLoad(true);
       }
 
       async function browseLoad(isFirst = false) {
-        const btn = document.getElementById("load-facts-btn");
-        btn.textContent = "Loading...";
-        btn.disabled = true;
+        if (isFirst) {
+          document.getElementById("facts-container").innerHTML =
+            _memorySkeletonHtml;
+        }
 
         try {
-          const domainParam = browseDomain !== "all" ? `&domain=${encodeURIComponent(browseDomain)}` : "";
-          const cursorParam = browseCursor ? `&cursor=${encodeURIComponent(browseCursor)}` : "";
-          const res = await fetch(`${API}/api/user/facts/browse?limit=100${domainParam}${cursorParam}`, { credentials: "include" });
+          const dp =
+            browseDomain !== "all"
+              ? `&domain=${encodeURIComponent(browseDomain)}`
+              : "";
+          const cp = browseCursor
+            ? `&cursor=${encodeURIComponent(browseCursor)}`
+            : "";
+          const res = await fetch(
+            `${API}/api/user/facts/browse?limit=50${dp}${cp}`,
+            { credentials: "include" },
+          );
           if (!res.ok) throw new Error("Failed to load facts");
           const data = await res.json();
 
-          if (isFirst) {
-            factsMode = "browse";
-            document.getElementById("facts-controls").classList.remove("hidden");
-            document.getElementById("facts-footer").classList.remove("hidden");
-            document.getElementById("back-to-browse-btn").classList.add("hidden");
-            document.getElementById("domain-chips").classList.remove("hidden");
-            document.getElementById("facts-mode-bar").classList.add("hidden");
-          }
+          document.getElementById("back-to-browse-btn").classList.add("hidden");
+          document.getElementById("domain-chips").classList.remove("hidden");
 
-          allFacts = data.facts || [];
+          const newFacts = data.facts || [];
+          if (isFirst) allFacts = newFacts;
+          else allFacts = allFacts.concat(newFacts);
+
           browseCursor = data.next_cursor || null;
+          newFacts.forEach((f) => {
+            if (f.domain && !browseKnownDomains.includes(f.domain))
+              browseKnownDomains.push(f.domain);
+          });
 
-          // Track domains seen so far
-          allFacts.forEach(f => { if (f.domain && !browseKnownDomains.includes(f.domain)) browseKnownDomains.push(f.domain); });
-
-          renderFacts(allFacts, data.next_cursor);
+          renderFacts(newFacts, isFirst);
           renderDomainChips(browseKnownDomains.sort());
-          btn.textContent = "↻ Reload";
         } catch (e) {
           showToast("Error loading facts: " + e.message, "error");
-          btn.textContent = "Load facts";
-        } finally {
-          btn.disabled = false;
         }
       }
 
@@ -789,238 +1360,539 @@
       function setDomainFilter(domain) {
         browseDomain = domain;
         browseCursor = null;
-        browseLoad(false);
+        allFacts = [];
+
+        // Ensure styling updates visually right away
+        document
+          .querySelectorAll(".chip")
+          .forEach((c) => c.classList.remove("active"));
+        const chip = document.getElementById(`chip-${domain}`);
+        if (chip) chip.classList.add("active");
+
+        browseLoad(true);
       }
 
       function backToBrowse() {
         document.getElementById("facts-search").value = "";
         document.getElementById("domain-chips").classList.remove("hidden");
         document.getElementById("back-to-browse-btn").classList.add("hidden");
-        document.getElementById("facts-mode-bar").classList.add("hidden");
         browseInit();
       }
 
-      // ─── Search mode ─────────────────────────────────────────
       async function runSearch() {
         const query = document.getElementById("facts-search").value.trim();
-        if (!query) { backToBrowse(); return; }
+        if (!query) {
+          backToBrowse();
+          return;
+        }
 
-        const btn = document.getElementById("load-facts-btn");
-        btn.textContent = "Searching...";
-        btn.disabled = true;
+        document.getElementById("facts-container").innerHTML =
+          _memorySkeletonHtml;
+        factsMode = "search";
 
         try {
           const res = await fetch(`${API}/api/user/facts/search`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
-            body: JSON.stringify({ query })
+            body: JSON.stringify({ query }),
           });
           if (!res.ok) throw new Error("Search failed");
           const data = await res.json();
-
-          factsMode = "search";
           allFacts = data.facts || [];
           document.getElementById("domain-chips").classList.add("hidden");
-          document.getElementById("back-to-browse-btn").classList.remove("hidden");
-          const modeBar = document.getElementById("facts-mode-bar");
-          modeBar.classList.remove("hidden");
-          modeBar.textContent = `Semantic search: "${query}" — top ${allFacts.length} results`;
-          renderFacts(allFacts, null);
-          document.getElementById("facts-controls").classList.remove("hidden");
-          document.getElementById("facts-footer").classList.remove("hidden");
+          document
+            .getElementById("back-to-browse-btn")
+            .classList.remove("hidden");
+
+          renderFacts(allFacts, true);
         } catch (e) {
           showToast("Search error: " + e.message, "error");
-        } finally {
-          btn.textContent = factsMode === "browse" ? "↻ Reload" : "Load facts";
-          btn.disabled = false;
         }
       }
 
-      // ─── Rendering ───────────────────────────────────────────
-      function renderFacts(facts, nextCursor) {
+      function renderFacts(facts, isFirstLoad) {
         const container = document.getElementById("facts-container");
         const countEl = document.getElementById("facts-count");
-        const paginationEl = document.getElementById("facts-pagination");
+        const pageEl = document.getElementById("facts-pagination");
 
-        if (facts.length === 0) {
-          container.innerHTML = `<div class="px-5 py-6 text-sm text-gray-400 text-center">No facts found</div>`;
-          countEl.textContent = "0 facts";
-          paginationEl.innerHTML = "";
+        if (isFirstLoad && facts.length === 0) {
+          container.innerHTML = `<div style="grid-column: 1/-1; text-align:center; padding: 64px 20px;">
+                                   <h3 style="color:var(--text-muted); font-weight:500;">Nothing found in memory.</h3>
+                                 </div>`;
+          countEl.textContent = "";
+          pageEl.innerHTML = "";
           return;
         }
 
-        container.innerHTML = facts.map((f, i) => {
-          const date = f.created_at
-            ? new Date(f.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
-            : "";
-          const badge = f.domain
-            ? `<span class="inline-block text-xs px-2 py-0.5 rounded-full font-medium ${domainColor(f.domain)}">${domainLabel(f.domain)}</span>`
-            : "";
-          return `
-            <div class="px-5 py-3 flex items-start gap-3 transition-colors" style="background:transparent;" onmouseover="this.style.background='#ede8df'" onmouseout="this.style.background='transparent'">
-              <div class="flex-1 min-w-0">
-                <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(f.text)}</p>
-                <div class="flex items-center gap-2 mt-1.5 flex-wrap">
-                  ${badge}
-                  ${date ? `<span class="text-xs text-gray-400">${date}</span>` : ""}
-                </div>
-              </div>
-              <div class="flex-shrink-0 flex gap-1 pt-0.5">
-                <button
-                  data-idx="${i}"
-                  onclick="openCorrectModal(allFacts[this.dataset.idx].text)"
-                  title="Correct this fact"
-                  class="text-xs px-2 py-1 rounded transition-colors"
-                  style="color:#b0a89e; border:1px solid #e8e2d9; background:transparent;"
-                  onmouseover="this.style.borderColor='#6366f1'; this.style.color='#6366f1';"
-                  onmouseout="this.style.borderColor='#e8e2d9'; this.style.color='#b0a89e';"
-                >Edit</button>
-                <button
-                  data-idx="${i}"
-                  onclick="openInvalidModal(allFacts[this.dataset.idx].id, allFacts[this.dataset.idx].text)"
-                  title="Mark as invalid"
-                  class="text-xs px-2 py-1 rounded transition-colors"
-                  style="color:#b0a89e; border:1px solid #e8e2d9; background:transparent;"
-                  onmouseover="this.style.borderColor='#ef4444'; this.style.color='#ef4444';"
-                  onmouseout="this.style.borderColor='#e8e2d9'; this.style.color='#b0a89e';"
-                >Invalid</button>
+        const factsHtml = facts
+          .map((f, i) => {
+            const date = f.created_at
+              ? new Date(f.created_at).toLocaleDateString("en-US", {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                })
+              : "";
+            const domain = f.domain
+              ? `<span class="fact-domain-badge">${domainLabel(f.domain)}</span>`
+              : "";
+            const factIndex = allFacts.findIndex((fact) => fact.id === f.id);
+
+            return `
+        <div class="card fact-card reveal" style="transition-delay: ${Math.min(i, 8) * 40}ms;">
+          <div class="card-body" style="display:flex; flex-direction:column; height:100%;">
+            <div class="fact-text">${escapeHtml(f.text)}</div>
+            
+            <div class="fact-meta">
+              ${domain}
+              
+              <div class="fact-actions">
+                <button data-idx="${factIndex}" onclick="openCorrectModal(this.dataset.idx)" class="btn btn-secondary btn-sm">Edit</button>
+                <button data-idx="${factIndex}" onclick="openInvalidModal(this.dataset.idx)" class="btn btn-danger btn-sm">Delete</button>
               </div>
             </div>
-          `;
-        }).join("");
+          </div>
+        </div>`;
+          })
+          .join("");
 
-        countEl.textContent = `${facts.length} fact${facts.length !== 1 ? "s" : ""}${nextCursor ? " (more available)" : ""}`;
+        if (isFirstLoad) container.innerHTML = factsHtml;
+        else container.innerHTML += factsHtml;
 
-        paginationEl.innerHTML = nextCursor
-          ? `<button onclick="browseNextPage()" class="text-xs px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">Load more</button>`
+        observeElements();
+
+        countEl.textContent = `Showing ${allFacts.length} facts`;
+        pageEl.innerHTML = browseCursor
+          ? `<button onclick="browseNextPage()" class="btn btn-secondary">Load more</button>`
           : "";
       }
 
       function renderDomainChips(domains) {
-        const container = document.getElementById("domain-chips");
-        const chips = [{ label: "All", value: "all" }, ...domains.map(d => ({ label: domainLabel(d), value: d }))];
-        container.innerHTML = chips.map(chip => `
-          <button
-            onclick="setDomainFilter('${chip.value}')"
-            id="chip-${chip.value}"
-            class="text-xs px-2.5 py-1 rounded-full border transition-colors ${chip.value === browseDomain ? "bg-indigo-500 text-white border-indigo-500" : "text-gray-600 hover:border-indigo-300"}" style="${chip.value === browseDomain ? "" : "border-color:#d4cdc4;"}"
-          >${chip.label}</button>
-        `).join("");
+        const chips = [
+          { label: "All", value: "all" },
+          ...domains.map((d) => ({ label: domainLabel(d), value: d })),
+        ];
+        document.getElementById("domain-chips").innerHTML = chips
+          .map(
+            (c) =>
+              `<button id="chip-${c.value}" onclick="setDomainFilter('${c.value}')" class="chip ${c.value === browseDomain ? "active" : ""}">${c.label}</button>`,
+          )
+          .join("");
       }
 
-      // ─── Fact action modals ──────────────────────────────────
-      let _modalFactText = "";
-      let _modalFactId = "";
-
-      function openInvalidModal(factId, factText) {
-        _modalFactId = factId;
-        _modalFactText = factText;
-        document.getElementById("modal-invalid-fact").textContent = factText;
-        document.getElementById("modal-invalid-btn").textContent = "Remove";
-        document.getElementById("modal-invalid-btn").disabled = false;
-        document.getElementById("modal-invalid").classList.remove("hidden");
-        document.getElementById("modal-correct").classList.add("hidden");
-        document.getElementById("modal-overlay").classList.remove("hidden");
-      }
-
-      function openCorrectModal(factText) {
-        _modalFactText = factText;
-        document.getElementById("modal-correct-old").textContent = factText;
-        document.getElementById("modal-correct-new").value = "";
-        document.getElementById("modal-correct").classList.remove("hidden");
-        document.getElementById("modal-invalid").classList.add("hidden");
-        document.getElementById("modal-overlay").classList.remove("hidden");
-        setTimeout(() => document.getElementById("modal-correct-new").focus(), 50);
-      }
-
-      function closeModal(e) {
-        if (e && e.target !== document.getElementById("modal-overlay")) return;
-        document.getElementById("modal-overlay").classList.add("hidden");
-      }
-
-      document.addEventListener("keydown", e => {
-        if (e.key === "Escape") document.getElementById("modal-overlay").classList.add("hidden");
-      });
-
-      async function invalidateFactDirect() {
-        const btn = document.getElementById("modal-invalid-btn");
-        btn.textContent = "Removing...";
-        btn.disabled = true;
+      /* ── Integrations ────────────────────────────────── */
+      async function loadPlatforms() {
         try {
-          const res = await fetch(`${API}/api/user/facts/${_modalFactId}/invalidate`, {
-            method: "POST",
-            credentials: "include"
+          const res = await fetch(`${API}/api/user/platforms`, {
+            credentials: "include",
           });
+          const data = res.ok ? await res.json() : { platforms: {} };
+          renderPlatforms(data.platforms || {});
+        } catch {
+          renderPlatforms({});
+        }
+      }
+
+      function renderPlatforms(platforms) {
+        const container = document.getElementById("platforms-container");
+        container.innerHTML = `
+          ${platformCard("slack", platforms.slack, "Slack", "Sync seamlessly with your workspace.", "U0AC...")}
+          ${platformCard("telegram", platforms.telegram, "Telegram", "Connect your Telegram account.", "123456789")}
+        `;
+        observeElements();
+      }
+
+      function platformCard(id, linkedId, label, description, placeholder) {
+        const linked = !!linkedId;
+        return `
+        <div class="card integration-card reveal">
+          <div class="integration-icon">
+            ${id === "slack" ? `<svg width="32" height="32" viewBox="0 0 24 24" fill="#E01E5A"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.523-2.522v-2.522h2.523zM15.165 17.688a2.527 2.527 0 0 1-2.523-2.523 2.526 2.526 0 0 1 2.523-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/></svg>` : `<svg width="32" height="32" viewBox="0 0 24 24" fill="#0088cc"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.295-.6.295-.002 0-.003 0-.005 0l.213-3.054 5.56-5.022c.24-.213-.054-.334-.373-.121l-6.869 4.326-2.96-.924c-.64-.203-.658-.64.135-.954l11.566-4.458c.538-.196 1.006.128.832.94z"/></svg>`}
+          </div>
+          <h3 class="integration-title">${label}</h3>
+          <p class="integration-description">${description}</p>
+          
+          <div class="integration-status">
+            <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
+            <span>${linked ? `Connected: ${linkedId}` : "Not connected"}</span>
+          </div>
+
+          <div class="integration-actions">
+            ${
+              linked
+                ? `<button onclick="unlinkPlatform('${id}')" class="btn btn-secondary">Disconnect</button>`
+                : `<input id="input-${id}" type="text" placeholder="${placeholder}" class="inp" style="text-align:center;" />
+                   <button onclick="linkPlatform('${id}', '${label}')" class="btn btn-black">Link Account</button>`
+            }
+          </div>
+        </div>`;
+      }
+
+      async function linkPlatform(id, label) {
+        const input = document.getElementById(`input-${id}`);
+        const value = input.value.trim();
+        if (!value) {
+          showToast("Enter your " + label + " ID", "error");
+          return;
+        }
+        try {
+          const isTg = id === "telegram";
+          const res = await fetch(
+            `${API}${isTg ? "/api/user/link-telegram" : "/api/user/link-platform"}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify(
+                isTg
+                  ? { telegram_user_id: value }
+                  : { platform: id, platform_user_id: value },
+              ),
+            },
+          );
           if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || "Failed to remove fact");
+            const e = await res.json();
+            throw new Error(e.error || "Link failed");
           }
-          document.getElementById("modal-overlay").classList.add("hidden");
-          // Remove fact from local list and re-render immediately
-          allFacts = allFacts.filter(f => f.id !== _modalFactId);
-          renderFacts(allFacts, browseCursor);
-          showToast("✅ Fact removed from your memory", "success");
+          showToast(`${label} linked`, "success");
+          loadPlatforms();
         } catch (e) {
-          btn.textContent = "Remove";
-          btn.disabled = false;
           showToast(e.message, "error");
         }
       }
 
-      function copyCorrectMessage() {
-        const newText = document.getElementById("modal-correct-new").value.trim();
-        if (!newText) { showToast("Please enter the correct version", "error"); return; }
-        const msg = `I found this fact in my memory database and it needs correction.\nCurrent (incorrect): "${_modalFactText}"\nCorrect version: "${newText}"\nPlease update it accordingly.`;
-        navigator.clipboard.writeText(msg).then(() => {
-          document.getElementById("modal-overlay").classList.add("hidden");
-          showToast("✅ Message copied — paste it into your chat with Alek", "success");
-        });
+      async function unlinkPlatform(platform) {
+        if (!confirm(`Disconnect ${platform}?`)) return;
+        try {
+          const res = await fetch(
+            `${API}/api/user/link-platform?platform=${platform}`,
+            { method: "DELETE", credentials: "include" },
+          );
+          if (!res.ok) throw new Error("Unlink failed");
+          showToast(`${platform} disconnected`, "success");
+          loadPlatforms();
+        } catch (e) {
+          showToast(e.message, "error");
+        }
       }
 
-      // ─── Team Invites ────────────────────────────────────────
-      async function generateTeamInvite() {
-        const email = prompt("Enter email address to invite:");
-        if (!email || !email.trim()) return;
+      async function loadGmailStatus() {
+        try {
+          const res = await fetch(`${API}/api/gmail/status`, {
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error();
+          renderGmailStatus(await res.json());
+        } catch {
+          // Graceful degradation
+        }
+      }
 
+      function renderGmailStatus(data) {
+        const container = document.getElementById("gmail-container");
+
+        const linked = data.connected;
+        const indexActive = linked && !!data.indexing_active;
+        const activeJobId = data.active_job_id || null;
+
+        let statusText = linked ? `Connected` : "Not connected";
+
+        let metaHtml = "";
+        if (linked) {
+          const fmt = (iso) =>
+            iso
+              ? new Date(iso).toLocaleDateString("en-US", {
+                  month: "short",
+                  year: "numeric",
+                })
+              : null;
+          const from = fmt(data.oldest_indexed_through),
+            to = fmt(data.indexed_through);
+          const cov =
+            from && to ? `${from} – ${to}` : to ? `Up to ${to}` : "Not indexed";
+
+          metaHtml = `
+            <div style="font-size:14px; color:var(--text-muted); margin-bottom:16px;">
+              <b>Coverage:</b> ${cov}
+              ${data.indexed_through ? `<br><a href="#" onclick="deleteGmailData(); return false;" style="color:var(--accent-danger); font-size:13px; margin-top:4px; display:inline-block;">Delete Data</a>` : ""}
+            </div>
+          `;
+        }
+
+        let actionButtons = !linked
+          ? `<a href="/auth/connect-gmail" class="btn btn-black">Connect Gmail</a>`
+          : `<button onclick="triggerGmailIndex()" class="btn btn-primary" ${indexActive ? "disabled" : ""}>${indexActive ? "Indexing..." : "Index Emails"}</button>
+             ${indexActive && activeJobId ? `<button onclick="cancelGmailIndex('${activeJobId}', this)" class="btn btn-secondary">Cancel</button>` : ""}
+             <button onclick="disconnectGmail()" class="btn btn-secondary">Disconnect</button>`;
+
+        container.innerHTML = `
+          <div class="card integration-card gmail-card reveal">
+            <div class="integration-icon">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#EA4335" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+            </div>
+            <h3 class="integration-title">Gmail</h3>
+            <p class="integration-description">Index email history as facts to give Alek deep context.</p>
+            
+            <div class="integration-status">
+              <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
+              <span>${statusText}</span>
+            </div>
+            
+            ${metaHtml}
+
+            <div class="integration-actions">
+              ${actionButtons}
+            </div>
+          </div>
+        `;
+        observeElements();
+      }
+
+      function triggerGmailIndex() {
+        renderModal(
+          "index-gmail",
+          "Index Gmail",
+          `<div style="margin-bottom: 24px;">
+            <label style="margin-bottom: 12px; font-size:18px;">Index Mode</label>
+            <div style="display:flex;flex-direction:column;gap:16px; background:var(--bg-active); padding:16px; border-radius:16px;">
+              <label style="display:flex;align-items:center;gap:12px;font-weight:500;cursor:pointer; font-size:16px; margin:0;">
+                <input type="radio" name="index-mode" value="incremental" checked onchange="updateIndexModal()" style="width:20px;height:20px;"> Incremental (New only)
+              </label>
+              <label style="display:flex;align-items:center;gap:12px;font-weight:500;cursor:pointer; font-size:16px; margin:0;">
+                <input type="radio" name="index-mode" value="backfill" onchange="updateIndexModal()" style="width:20px;height:20px;"> Backfill (To specific date)
+              </label>
+              <label style="display:flex;align-items:center;gap:12px;font-weight:500;cursor:pointer; font-size:16px; margin:0;">
+                <input type="radio" name="index-mode" value="reindex" onchange="updateIndexModal()" style="width:20px;height:20px;"> Re-index Everything
+              </label>
+            </div>
+          </div>
+          <div id="backfill-date-row" style="display:none; margin-bottom: 24px;">
+            <label for="backfill-until-input">Index until date</label>
+            <input type="date" id="backfill-until-input" class="inp" />
+          </div>
+          <div id="index-pages-row" style="margin-bottom: 24px;">
+            <label for="index-pages-input">Max pages to fetch</label>
+            <input type="number" id="index-pages-input" class="inp" value="1" min="1" placeholder="Empty = fetch all" />
+          </div>`,
+          `<button onclick="closeModal()" class="btn btn-secondary">Cancel</button>
+           <button id="modal-index-btn" onclick="submitIndexModal()" class="btn btn-primary">Start Indexing</button>`,
+        );
+      }
+
+      function updateIndexModal() {
+        const mode = document.querySelector(
+          'input[name="index-mode"]:checked',
+        ).value;
+        document.getElementById("backfill-date-row").style.display =
+          mode === "backfill" ? "block" : "none";
+        document.getElementById("index-pages-row").style.display =
+          mode === "reindex" ? "none" : "block";
+        if (mode === "incremental")
+          document.getElementById("index-pages-input").value = "1";
+        if (mode === "backfill" || mode === "reindex")
+          document.getElementById("index-pages-input").value = "";
+      }
+
+      async function submitIndexModal() {
+        const mode = document.querySelector(
+          'input[name="index-mode"]:checked',
+        ).value;
+        const pagesEl = document.getElementById("index-pages-input");
+        const maxPages = Math.max(1, parseInt(pagesEl.value) || 1);
+        const backfillUntil =
+          (document.getElementById("backfill-until-input") || {}).value || null;
+
+        if (mode === "backfill" && !backfillUntil) {
+          showToast("Select date for Backfill", "error");
+          return;
+        }
+
+        const btn = document.getElementById("modal-index-btn");
+        btn.textContent = "Starting...";
+        btn.disabled = true;
+
+        const body = { mode };
+        if (mode === "incremental" || pagesEl.value.trim())
+          body.max_pages = maxPages;
+        if (mode === "backfill" && backfillUntil)
+          body.backfill_until = backfillUntil;
+
+        try {
+          const res = await fetch(`${API}/api/gmail/index`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          closeModal();
+          if (res.status === 202) {
+            showToast("Indexing started in background.", "success");
+            loadGmailStatus();
+          } else if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Error: ${err.error || res.status}`, "error");
+          } else {
+            const data = await res.json();
+            showToast(`Done: ${data.emails_stored} stored`, "success");
+            loadGmailStatus();
+          }
+        } catch (e) {
+          showToast(`Error: ${e.message}`, "error");
+          btn.textContent = "Start";
+          btn.disabled = false;
+        }
+      }
+
+      async function cancelGmailIndex(jobId, btn) {
+        if (!confirm("Cancel indexing?")) return;
+        btn.textContent = "Canceling...";
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/api/gmail/jobs/${jobId}/cancel`, {
+            method: "POST",
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error();
+          showToast("Indexing canceled.", "success");
+          loadGmailStatus();
+        } catch {
+          showToast("Error canceling", "error");
+          btn.textContent = "Cancel";
+          btn.disabled = false;
+        }
+      }
+
+      async function deleteGmailData() {
+        if (!confirm("Delete all indexed emails? Cannot be undone.")) return;
+        try {
+          const res = await fetch(`${API}/api/gmail/data`, {
+            method: "DELETE",
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error();
+          showToast("Data deleted.", "success");
+          loadGmailStatus();
+        } catch {
+          showToast("Failed to delete", "error");
+        }
+      }
+
+      async function disconnectGmail() {
+        if (!confirm("Disconnect Gmail? Indexed data remains.")) return;
+        try {
+          const res = await fetch(`${API}/api/gmail/disconnect`, {
+            method: "DELETE",
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error();
+          showToast("Gmail disconnected.", "success");
+          loadGmailStatus();
+        } catch {
+          showToast("Failed to disconnect", "error");
+        }
+      }
+
+      async function loadTasksStatus() {
+        try {
+          const res = await fetch(`${API}/api/tasks/microsoft/status`, {
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error();
+          renderServiceStatus(
+            "tasks",
+            "Microsoft To Do",
+            "Manage tasks using natural language.",
+            await res.json(),
+          );
+        } catch {}
+      }
+
+      function renderServiceStatus(id, name, description, data) {
+        // Specifically targets tasks-container
+        const container = document.getElementById("tasks-container");
+
+        const linked = data.connected;
+
+        let statusText = linked ? `Connected` : "Not connected";
+
+        const actionButtons = linked
+          ? `<button onclick="disconnectService('${id}')" class="btn btn-secondary">Disconnect Account</button>`
+          : `<a href="/auth/connect-microsoft-todo" class="btn btn-black">Connect Microsoft To Do</a>`;
+
+        container.innerHTML = `
+          <div class="card integration-card tasks-card reveal">
+            <div class="integration-icon">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#0078D4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+            </div>
+            <h3 class="integration-title">${name}</h3>
+            <p class="integration-description">${description}</p>
+            
+            <div class="integration-status">
+              <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
+              <span>${statusText}</span>
+            </div>
+
+            <div class="integration-actions">
+              ${actionButtons}
+            </div>
+          </div>
+        `;
+        observeElements();
+      }
+
+      async function disconnectService(id) {
+        const name = id === "gmail" ? "Gmail" : "MS ToDo";
+        if (!confirm(`Disconnect ${name}?`)) return;
+        try {
+          const res = await fetch(`${API}/api/tasks/microsoft/disconnect`, {
+            method: "DELETE",
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error();
+          showToast(`${name} disconnected`, "success");
+          loadTasksStatus();
+        } catch (e) {
+          showToast("Error disconnecting", "error");
+        }
+      }
+
+      /* ── Team invites ────────────────────────────────── */
+      async function generateTeamInvite() {
+        const email = prompt("Enter email to invite:");
+        if (!email || !email.trim()) return;
         try {
           const res = await fetch(`${API}/api/user/invite-codes`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
-            body: JSON.stringify({ type: "team_invite", email: email.trim(), role: "MEMBER" })
+            body: JSON.stringify({
+              type: "team_invite",
+              email: email.trim(),
+              role: "MEMBER",
+            }),
           });
-
-          if (!res.ok) {
-            const err = await res.json();
-            if (err.error && err.error.includes("not authorized")) {
-              showToast("❌ Email not on whitelist. Contact admin.", "error");
-            } else {
-              throw new Error(err.error || "Failed to generate invite");
-            }
-            return;
-          }
-
+          if (!res.ok) throw new Error("Could not create invite");
           const data = await res.json();
           const deepLink = `${window.location.origin}/join?code=${data.code}`;
           const expiry = new Date(data.expires_at).toLocaleString();
-
-          const codeEl = document.getElementById("generated-code");
-          codeEl.classList.remove("hidden");
-          codeEl.innerHTML = `
-            <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-              <div class="font-mono font-bold text-indigo-700 text-lg mb-1">${data.code}</div>
-              <div class="text-xs text-gray-500 mb-3">Valid until: ${expiry}</div>
-              <div class="flex items-center gap-2">
-                <input type="text" id="deep-link" value="${deepLink}" readonly
-                  class="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 bg-white font-mono" />
-                <button onclick="copyDeepLink()"
-                  class="text-xs px-2.5 py-1.5 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors whitespace-nowrap">
-                  Copy link
-                </button>
-              </div>
-            </div>
-          `;
+          const el = document.getElementById("generated-code-container");
+          el.classList.remove("hidden");
+          el.innerHTML = `
+        <div class="invite-code-box reveal">
+          <p style="margin-bottom:8px; font-weight:600; color:var(--text-main);">Share this code</p>
+          <div class="code-display">${data.code}</div>
+          <p style="font-size: 14px; margin-bottom: 24px;">Valid until ${expiry}</p>
+          
+          <div class="invite-link-wrapper">
+            <input type="text" id="deep-link-input" value="${deepLink}" readonly style="flex:1; background:transparent; border:none; padding:12px 20px; font-size:16px; outline:none; color:var(--text-main);" />
+            <button onclick="copyDeepLink()" class="btn btn-black" style="padding: 10px 24px;">Copy Link</button>
+          </div>
+        </div>`;
+          setTimeout(
+            () => el.querySelector(".reveal").classList.add("visible"),
+            50,
+          );
           loadCodes();
         } catch (e) {
           showToast(e.message, "error");
@@ -1029,79 +1901,188 @@
 
       async function loadCodes() {
         try {
-          const res = await fetch(`${API}/api/user/invite-codes`, { credentials: "include" });
-          if (!res.ok) throw new Error("Failed to load codes");
+          const res = await fetch(`${API}/api/user/invite-codes`, {
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error();
           const data = await res.json();
-          const list = document.getElementById("codes-list");
-
+          const list = document.getElementById("codes-list-container");
           if (!data.invites.length) {
-            list.innerHTML = `<p class="text-sm text-gray-400">No codes generated yet</p>`;
+            list.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 64px 24px; font-size:18px;">No codes generated yet.</div>`;
             return;
           }
-
           list.innerHTML = `
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="text-xs text-gray-400 uppercase">
-                  <th class="text-left pb-2 font-medium">Code</th>
-                  <th class="text-left pb-2 font-medium">Status</th>
-                  <th class="text-left pb-2 font-medium">Created</th>
-                  <th class="text-left pb-2 font-medium">Used</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-50">
-                ${data.invites.map(c => `
-                  <tr class="hover:bg-gray-50">
-                    <td class="py-2 font-mono text-xs text-gray-700">${c.code}</td>
-                    <td class="py-2">
-                      <span class="text-xs px-2 py-0.5 rounded-full font-medium ${c.is_valid ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}">
-                        ${c.is_valid ? "Active" : "Used/Expired"}
-                      </span>
-                    </td>
-                    <td class="py-2 text-xs text-gray-500">${new Date(c.created_at).toLocaleDateString()}</td>
-                    <td class="py-2 text-xs text-gray-500">${c.used_at ? new Date(c.used_at).toLocaleDateString() : "—"}</td>
-                  </tr>
-                `).join("")}
-              </tbody>
-            </table>
-          `;
+        <table class="codes-table">
+          <thead><tr><th>Code</th><th>Status</th><th>Created</th><th>Used</th></tr></thead>
+          <tbody>${data.invites
+            .map(
+              (c) => `
+            <tr>
+              <td><span style="font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 600;">${c.code}</span></td>
+              <td><span class="status-badge ${c.is_valid ? "active" : "used"}">${c.is_valid ? "Active" : "Used"}</span></td>
+              <td>${new Date(c.created_at).toLocaleDateString()}</td>
+              <td>${c.used_at ? new Date(c.used_at).toLocaleDateString() : "—"}</td>
+            </tr>`,
+            )
+            .join("")}
+          </tbody>
+        </table>`;
         } catch (e) {
-          showToast("Error loading codes: " + e.message, "error");
+          showToast("Error loading codes", "error");
         }
       }
 
       function copyDeepLink() {
-        const input = document.getElementById("deep-link");
-        navigator.clipboard.writeText(input.value);
-        showToast("✅ Link copied!", "success");
+        navigator.clipboard.writeText(
+          document.getElementById("deep-link-input").value,
+        );
+        showToast("Link copied!", "success");
       }
 
-      // ─── Auth ────────────────────────────────────────────────
+      /* ── Modals & Toasts ──────────────────────────────── */
+      let _modalFactIdx = null;
+
+      function renderModal(id, title, body, footer) {
+        const container = document.getElementById("modal-container");
+        container.innerHTML = `
+        <div class="modal-overlay" id="${id}-overlay" onclick="closeModal()">
+          <div class="modal-dialog" id="${id}-dialog" onclick="event.stopPropagation()">
+            <div class="modal-header"><h3 class="modal-title">${title}</h3></div>
+            <div class="modal-body">${body}</div>
+            <div class="modal-footer">${footer}</div>
+          </div>
+        </div>`;
+
+        // Trigger animation
+        setTimeout(() => {
+          document.querySelector(".modal-overlay").classList.add("visible");
+        }, 10);
+
+        document.addEventListener("keydown", handleEsc, true);
+      }
+
+      function closeModal() {
+        const overlay = document.querySelector(".modal-overlay");
+        if (overlay) {
+          overlay.classList.remove("visible");
+          setTimeout(() => {
+            document.getElementById("modal-container").innerHTML = "";
+          }, 300); // Wait for transition
+        }
+        document.removeEventListener("keydown", handleEsc, true);
+      }
+
+      function handleEsc(e) {
+        if (e.key === "Escape") closeModal();
+      }
+
+      function openInvalidModal(factIdx) {
+        _modalFactIdx = factIdx;
+        const fact = allFacts[factIdx];
+        const body = `<p style="margin-bottom:16px; font-size:18px;">Are you sure you want to delete this fact? This cannot be undone.</p>
+                      <div style="padding: 24px; background-color: var(--bg-active); border-radius: 16px; color: var(--text-muted); font-size: 16px;">${escapeHtml(fact.text)}</div>`;
+        const footer = `<button onclick="closeModal()" class="btn btn-secondary">Cancel</button>
+                        <button id="modal-invalid-btn" onclick="invalidateFactDirect()" class="btn btn-danger">Delete Fact</button>`;
+        renderModal("invalid-fact", "Delete Fact", body, footer);
+      }
+
+      async function invalidateFactDirect() {
+        const fact = allFacts[_modalFactIdx];
+        const btn = document.getElementById("modal-invalid-btn");
+        btn.textContent = "Deleting...";
+        btn.disabled = true;
+        try {
+          const res = await fetch(
+            `${API}/api/user/facts/${fact.id}/invalidate`,
+            { method: "POST", credentials: "include" },
+          );
+          if (!res.ok) throw new Error();
+          closeModal();
+          allFacts.splice(_modalFactIdx, 1);
+          renderFacts(allFacts, true);
+          showToast("Fact deleted", "success");
+        } catch {
+          btn.textContent = "Delete";
+          btn.disabled = false;
+          showToast("Error deleting", "error");
+        }
+      }
+
+      function openCorrectModal(factIdx) {
+        _modalFactIdx = factIdx;
+        const fact = allFacts[factIdx];
+        const body = `<div style="margin-bottom:24px;">
+                        <label>Current version</label>
+                        <div style="padding: 20px; background-color: var(--bg-active); border-radius: 16px; color: var(--text-muted); font-size: 16px;">${escapeHtml(fact.text)}</div>
+                      </div>
+                      <div style="margin-bottom:0;">
+                        <label for="modal-correct-new">Correct version</label>
+                        <textarea id="modal-correct-new" rows="4" class="inp" placeholder="Enter the correct version..."></textarea>
+                      </div>`;
+        const footer = `<button onclick="closeModal()" class="btn btn-secondary">Cancel</button>
+                        <button onclick="copyCorrectMessage()" class="btn btn-primary">Copy correction</button>`;
+        renderModal("correct-fact", "Correct Fact", body, footer);
+        setTimeout(
+          () => document.getElementById("modal-correct-new").focus(),
+          100,
+        );
+      }
+
+      function copyCorrectMessage() {
+        const oldText = allFacts[_modalFactIdx].text;
+        const newText = document
+          .getElementById("modal-correct-new")
+          .value.trim();
+        if (!newText) {
+          showToast("Enter a correction", "error");
+          return;
+        }
+        const msg = `I found this fact in my memory database and it needs correction.\nCurrent: "${oldText}"\nCorrect: "${newText}"\nPlease update it.`;
+        navigator.clipboard.writeText(msg).then(() => {
+          closeModal();
+          showToast("Message copied! Paste to chat.", "success");
+        });
+      }
+
+      function showToast(msg, type = "success") {
+        const container = document.getElementById("toast-container");
+        const toast = document.createElement("div");
+        toast.className = `toast ${type}`;
+
+        const icon =
+          type === "success"
+            ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`
+            : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
+
+        toast.innerHTML = `${icon} <span>${msg}</span>`;
+        container.appendChild(toast);
+
+        // Animate in
+        setTimeout(() => toast.classList.add("visible"), 10);
+
+        // Animate out
+        setTimeout(() => {
+          toast.classList.remove("visible");
+          setTimeout(() => toast.remove(), 400);
+        }, 4000);
+      }
+
+      document.addEventListener("DOMContentLoaded", init);
+
+      function escapeHtml(str) {
+        return (str || "")
+          .replace(/&/g, "&")
+          .replace(/</g, "<")
+          .replace(/>/g, ">");
+      }
+
       async function logout() {
-        await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
+        await fetch(`${API}/auth/logout`, {
+          method: "POST",
+          credentials: "include",
+        });
         window.location.href = "/auth/login";
       }
-
-      // ─── Toast ───────────────────────────────────────────────
-      let _toastTimer = null;
-      function showToast(msg, type) {
-        const el = document.getElementById("toast");
-        const inner = document.getElementById("toast-inner");
-        inner.textContent = msg;
-        inner.className = `px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-xs ${
-          type === "success" ? "bg-green-600 text-white" : "bg-red-600 text-white"
-        }`;
-        el.classList.remove("hidden");
-        clearTimeout(_toastTimer);
-        _toastTimer = setTimeout(() => el.classList.add("hidden"), 4000);
-      }
-
-      // ─── Utils ───────────────────────────────────────────────
-      function escapeHtml(str) {
-        return (str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-      }
-
-      init();
     </script>
   </body>
 </html>

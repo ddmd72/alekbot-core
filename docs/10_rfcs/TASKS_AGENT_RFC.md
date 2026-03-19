@@ -1,6 +1,7 @@
 # RFC: Tasks Specialist Agent (Google Tasks, provider-agnostic port)
 
 **Status:** ✅ IMPLEMENTED
+**Superseded by:** `TASKS_LOCAL_FIRST_RFC.md` (2026-03-18) — Microsoft To Do implementation
 **Date:** 2026-03-08
 **Implemented:** 2026-03-09
 

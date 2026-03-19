@@ -1,8 +1,8 @@
 # Firestore Collections (Production Audit)
 
-**Last Updated:** 2026-03-02
+**Last Updated:** 2026-03-19
 **Status:** ✅ Production Validated
-**Version:** 3.4 (Email Indexing + Notification State)
+**Version:** 3.5 (Tasks Integration)
 
 ---
 
@@ -81,6 +81,8 @@ Account usage counters written before 2026-07-28 are inflated. For historical co
 | `{p}fact_review_messages` | memory-review message claims (the weekly digest) | `{user_id}:digest:{iso_week}` | same |
 | `{p}fact_review_state` | memory-review state per account | `account_id` | same |
 | `{p}domain_email_facts_v1` | valuable emails as facts, four vectors, the same search path as facts | `{user_id}_{email_id}` | `IndexedEmail`, `src/domain/email.py` |
+
+What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained in the memory map,
 
 ### 3.3 Conversation and background work
 
@@ -792,6 +794,70 @@ Used by `SearchEnrichmentService` and `FirestoreFactRepository.search_facts()`. 
 
 
 
+
+
+
+
+
+---
+
+
+
+
+
+
+
+
+
+```json
+{
+  
+  
+  
+  
+  "title": "Buy milk",
+  
+  
+  
+  
+  
+  
+  
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+---
+
+
+
+
+
+
+
+```json
+{
+  
+  "subscriptions": [
+    {
+      
+      
+      
+    }
+  ]
+}
+```
 
 
 

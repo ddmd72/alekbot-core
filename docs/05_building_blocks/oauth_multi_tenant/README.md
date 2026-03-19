@@ -123,6 +123,31 @@ Users can unify their identities across platforms:
 
 ---
 
-**Last Updated:** 2026-02-10  
-**Status:** ✅ Complete  
+---
+
+## 8. Third-Party OAuth Providers
+
+Beyond Google (login), the system supports connecting external services via separate OAuth flows. Each integration stores credentials in `{env}_oauth_credentials` (doc ID: `{user_id}_{provider}`).
+
+### Gmail (provider: `"gmail"`)
+
+- **Scope:** `gmail.readonly`
+- **Tenant:** Google (same as login provider, but separate credential entry)
+- **Flow:** `GET /auth/connect-gmail` → `GET /auth/connect-gmail/callback`
+- **Purpose:** Email indexing pipeline (`EmailIndexingService`)
+
+### Microsoft To Do (provider: `"microsoft_todo"`)
+
+- **Scope:** `Tasks.ReadWrite offline_access`
+- **Tenant:** Azure `consumers` endpoint — personal Microsoft accounts only
+- **Token endpoint:** `https://login.microsoftonline.com/consumers/oauth2/v2.0/token`
+- **Flow:** `GET /auth/connect-microsoft-todo` → `GET /auth/connect-microsoft-todo/callback`
+- **On connect:** Callback enqueues `setup_microsoft_todo` Cloud Task → `TaskSetupService.setup()` → creates "Alek Bot Tasks" list (if absent) + registers Graph API subscriptions + triggers initial reindex
+- **Token refresh:** Auto-refreshed by `MicrosoftToDoAdapter` when token < 5 min from expiry, using the same refresh pattern as `GmailProviderAdapter`
+- **Purpose:** Task CRUD + search via `TasksAgent`
+
+---
+
+**Last Updated:** 2026-03-19 (Microsoft To Do OAuth added)
+**Status:** ✅ Complete
 **Phase:** Documentation Audit Phase 3.4
