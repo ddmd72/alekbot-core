@@ -39,6 +39,10 @@ def create_oauth_blueprint(
     gmail_oauth_service: Optional[GoogleOAuthService] = None,
     oauth_credentials_port: Optional[OAuthCredentialsPort] = None,
     google_tasks_oauth_service: Optional[GoogleOAuthService] = None,
+    ms_todo_client_id: Optional[str] = None,
+    ms_todo_client_secret: Optional[str] = None,
+    ms_todo_redirect_uri: Optional[str] = None,
+    task_queue=None,
 ) -> Blueprint:
     """
     Create Quart Blueprint with OAuth endpoints.
@@ -642,6 +646,152 @@ def create_oauth_blueprint(
         response = await make_response(redirect("/cabinet?tasks_connected=1"))
         response.delete_cookie("tasks_oauth_state")
         response.delete_cookie("tasks_connect_user_id")
+        return response
+
+    # ========================================================================
+    # GET /auth/connect-microsoft-todo - Initiate MS To Do OAuth
+    # ========================================================================
+    @bp.route("/auth/connect-microsoft-todo", methods=["GET"])
+    async def connect_microsoft_todo():
+        """
+        Initiate Microsoft To Do OAuth (Tasks.ReadWrite + offline_access).
+
+        Requires: authenticated session (access_token cookie).
+        Sets cookies: microsoft_todo_oauth_state, microsoft_todo_connect_user_id.
+        Redirects to Microsoft consent page (consumers tenant).
+        """
+        if not ms_todo_client_id or not ms_todo_redirect_uri:
+            return jsonify({"error": "Microsoft To Do integration not configured"}), 501
+
+        access_token = request.cookies.get("access_token")
+        if not access_token:
+            return redirect("/auth/login?next=/cabinet")
+
+        try:
+            payload = session_service.verify_access_token(access_token)
+            user_id = payload["sub"]
+        except jwt.InvalidTokenError:
+            return redirect("/auth/login?next=/cabinet")
+
+        state = secrets.token_urlsafe(32)
+        params = {
+            "client_id": ms_todo_client_id,
+            "response_type": "code",
+            "redirect_uri": ms_todo_redirect_uri,
+            "scope": "Tasks.ReadWrite offline_access",
+            "state": state,
+            "response_mode": "query",
+        }
+        from urllib.parse import urlencode
+        auth_url = (
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?"
+            + urlencode(params)
+        )
+        logger.info(f"📋 MS To Do OAuth initiated for user={user_id[:8]}")
+
+        response = await make_response(redirect(auth_url))
+        response.set_cookie("microsoft_todo_oauth_state", state, max_age=600, httponly=True, secure=True, samesite="lax")
+        response.set_cookie("microsoft_todo_connect_user_id", user_id, max_age=600, httponly=True, secure=True, samesite="lax")
+        return response
+
+    # ========================================================================
+    # GET /auth/connect-microsoft-todo/callback - MS To Do OAuth callback
+    # ========================================================================
+    @bp.route("/auth/connect-microsoft-todo/callback", methods=["GET"])
+    async def connect_microsoft_todo_callback():
+        """
+        Handle Microsoft To Do OAuth callback.
+
+        Exchanges code for tokens, persists OAuthCredentials, enqueues setup task.
+        Redirects to /cabinet?microsoft_todo_connected=1 on success.
+        """
+        if not ms_todo_client_id or not ms_todo_client_secret or not ms_todo_redirect_uri:
+            return jsonify({"error": "Microsoft To Do integration not configured"}), 501
+
+        code = request.args.get("code")
+        state = request.args.get("state")
+        error = request.args.get("error")
+
+        if error:
+            logger.warning(f"⚠️ MS To Do OAuth denied by user: {error}")
+            return redirect("/cabinet?microsoft_todo_error=denied")
+
+        stored_state = request.cookies.get("microsoft_todo_oauth_state")
+        user_id = request.cookies.get("microsoft_todo_connect_user_id")
+
+        if not stored_state or stored_state != state or not user_id:
+            logger.warning("⚠️ MS To Do OAuth callback CSRF validation failed")
+            return redirect("/cabinet?microsoft_todo_error=state")
+
+        if not code:
+            return redirect("/cabinet?microsoft_todo_error=no_code")
+
+        try:
+            import aiohttp
+            from datetime import datetime, timedelta, timezone
+            from ..domain.email import OAuthCredentials
+
+            token_url = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    token_url,
+                    data={
+                        "client_id": ms_todo_client_id,
+                        "client_secret": ms_todo_client_secret,
+                        "code": code,
+                        "redirect_uri": ms_todo_redirect_uri,
+                        "grant_type": "authorization_code",
+                    },
+                ) as resp:
+                    if not resp.ok:
+                        text = await resp.text()
+                        raise RuntimeError(f"Token exchange failed: {resp.status} {text}")
+                    token_data = await resp.json()
+
+            # Fetch Microsoft account email for display
+            ms_email = ""
+            try:
+                async with aiohttp.ClientSession() as me_session:
+                    async with me_session.get(
+                        "https://graph.microsoft.com/v1.0/me",
+                        headers={"Authorization": f"Bearer {token_data['access_token']}"},
+                    ) as me_resp:
+                        if me_resp.ok:
+                            me_data = await me_resp.json()
+                            ms_email = me_data.get("mail") or me_data.get("userPrincipalName", "")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not fetch MS user profile: {e}")
+
+            expires_in = int(token_data.get("expires_in", 3600))
+            credentials = OAuthCredentials(
+                user_id=user_id,
+                provider="microsoft_todo",
+                access_token=token_data["access_token"],
+                refresh_token=token_data.get("refresh_token"),
+                token_expiry=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+                scopes=token_data.get("scope", "").split(),
+                email_address=ms_email,
+            )
+            await oauth_credentials_port.save_credentials(credentials)
+            logger.info(f"✅ MS To Do connected for user={user_id[:8]}")
+
+            # Enqueue setup (idempotent): ensure_primary_list + register subscriptions
+            if task_queue:
+                await task_queue.enqueue_worker_task(
+                    "setup_microsoft_todo",
+                    {"user_id": user_id},
+                )
+
+        except Exception as exc:
+            logger.error(f"💥 MS To Do OAuth callback failed: {exc}", exc_info=True)
+            err_response = await make_response(redirect("/cabinet?microsoft_todo_error=exchange"))
+            err_response.delete_cookie("microsoft_todo_oauth_state")
+            err_response.delete_cookie("microsoft_todo_connect_user_id")
+            return err_response
+
+        response = await make_response(redirect("/cabinet?microsoft_todo_connected=1"))
+        response.delete_cookie("microsoft_todo_oauth_state")
+        response.delete_cookie("microsoft_todo_connect_user_id")
         return response
 
     return bp

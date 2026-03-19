@@ -1,19 +1,24 @@
 """
-TasksAgent — specialist agent for task management.
+TasksAgent — specialist agent for MS To Do task management.
 
 One intent: manage_user_tasks
   payload: {"query": "<delegation instruction from orchestrator>"}
 
-The agent receives a natural-language delegation from the orchestrator and
-autonomously selects the correct CRUD tool to execute. Biographical context
-is injected so the agent can understand personal references in tasks.
-
-Tool-calling loop (mirrors MapsSearchAgent pattern):
+Tool-calling loop:
   1. Build system prompt with bio context via PromptBuilderPort.
   2. Pass 5 CRUD tool declarations to the LLM.
-  3. LLM selects tool(s) — e.g. search_tasks first, then update_task.
-  4. Execute each tool call against TasksProviderPort.
+  3. LLM selects tool(s).
+  4. Execute each tool call — CRUD via TasksProviderPort, search via TaskIndexingService.
   5. Repeat until LLM produces a final text response or MAX_TURNS reached.
+
+search_tasks flow:
+  task_indexing.search() → List[TaskSearchEntry] → batch_get_tasks() → full Task objects
+
+create_task flow:
+  tasks_provider.create_task() → task_indexing.index_task()
+
+update_task / delete_task:
+  list_id always comes from the LLM (populated from prior search_tasks result).
 """
 
 from __future__ import annotations
@@ -21,22 +26,32 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
-from ..domain.task import Task, TaskCreate, TaskStatus, TaskUpdate
+from ..domain.task import (
+    RecurrencePattern,
+    RecurrenceRange,
+    Task,
+    TaskCreate,
+    TaskImportance,
+    TaskRecurrence,
+    TaskStatus,
+    TaskUpdate,
+)
 from ..infrastructure.agent_config import TASKS as TASKS_CFG
-from ..infrastructure.agent_manifest import Intent
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, MessagePart
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.tasks_provider_port import TasksProviderPort
+if TYPE_CHECKING:
+    from ..services.task_indexing_service import TaskIndexingService
 from ..utils.logger import logger
 
-_MAX_TURNS = 4  # Most operations need 1–2 tool calls; 4 is a safe ceiling.
+_MAX_TURNS = 4
 
 # ---------------------------------------------------------------------------
-# Tool declarations — passed to LLM on every call
+# Tool declarations
 # ---------------------------------------------------------------------------
 
 _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
@@ -61,16 +76,20 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
     {
         "name": "search_tasks",
         "description": (
-            "Search the user's task list by keyword. "
+            "Search the user's tasks by semantic similarity. "
             "Use this instead of list_tasks when the delegation mentions a specific topic, "
-            "name, or description. Returns matching tasks with their IDs."
+            "name, or description. Returns matching tasks with their IDs and list_ids."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Keyword or phrase to search for in task titles and notes.",
+                    "description": "Keyword or phrase to search for in tasks.",
+                },
+                "show_completed": {
+                    "type": "boolean",
+                    "description": "If true, include completed tasks in search results.",
                 },
             },
             "required": ["query"],
@@ -86,13 +105,71 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
                     "type": "string",
                     "description": "Task title — concise imperative phrase, e.g. 'Buy milk'.",
                 },
-                "notes": {
+                "body": {
                     "type": "string",
-                    "description": "Optional extra detail. Omit if none.",
+                    "description": "Optional extra detail or notes. Omit if none.",
                 },
-                "due_date": {
+                "due_datetime": {
                     "type": "string",
-                    "description": "Optional due date in YYYY-MM-DD format. Omit if not mentioned.",
+                    "description": "Optional due date/time in ISO-8601 format. Omit if not mentioned.",
+                },
+                "importance": {
+                    "type": "string",
+                    "enum": ["low", "normal", "high"],
+                    "description": "Task importance. Default: normal.",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Classification tags. Auto-infer from context — "
+                        "e.g. 'remind me about Prague hotel' -> ['prague', 'trip']."
+                    ),
+                },
+                "recurrence": {
+                    "type": "object",
+                    "description": "Recurrence settings. Use only when the task should repeat regularly.",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "enum": ["daily", "weekdays", "weekly", "absoluteMonthly", "absoluteYearly"],
+                            "description": (
+                                "Repeat frequency. "
+                                "'daily' — every N days. "
+                                "'weekdays' — every Mon–Fri. "
+                                "'weekly' — on specific days of the week. "
+                                "'absoluteMonthly' — on a specific day of the month. "
+                                "'absoluteYearly' — on a specific day of a specific month."
+                            ),
+                        },
+                        "interval": {
+                            "type": "integer",
+                            "description": "Every N periods (e.g. 2 = every 2 weeks). Default 1.",
+                        },
+                        "days_of_week": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "For 'weekly': days to repeat, e.g. ['monday', 'friday']. "
+                                "If omitted, derived from due_datetime."
+                            ),
+                        },
+                        "day_of_month": {
+                            "type": "integer",
+                            "description": (
+                                "For 'absoluteMonthly'/'absoluteYearly': day of month (1–31). "
+                                "If omitted, derived from due_datetime."
+                            ),
+                        },
+                        "month": {
+                            "type": "integer",
+                            "description": (
+                                "For 'absoluteYearly': month (1–12). "
+                                "If omitted, derived from due_datetime."
+                            ),
+                        },
+                    },
+                    "required": ["pattern"],
                 },
             },
             "required": ["title"],
@@ -101,52 +178,62 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
     {
         "name": "update_task",
         "description": (
-            "Modify an existing task — rename, reschedule, mark as done, or mark as not done. "
-            "Requires task_id. If task_id is unknown, call search_tasks first to find it."
+            "Modify an existing task — rename, reschedule, mark done, or mark undone. "
+            "Requires task_ref from a prior search_tasks or list_tasks result."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "task_id": {
+                "task_ref": {
                     "type": "string",
-                    "description": "ID of the task to update (from list_tasks or search_tasks result).",
+                    "description": "Short task reference (the 'ref' field from search_tasks or list_tasks).",
                 },
                 "title": {
                     "type": "string",
                     "description": "New title. Omit if not changing.",
                 },
-                "notes": {
+                "body": {
                     "type": "string",
-                    "description": "New notes. Omit if not changing.",
+                    "description": "New notes/body. Omit if not changing.",
                 },
-                "due_date": {
+                "due_datetime": {
                     "type": "string",
-                    "description": "New due date in YYYY-MM-DD. Omit if not changing.",
+                    "description": "New due date/time in ISO-8601. Omit if not changing.",
+                },
+                "importance": {
+                    "type": "string",
+                    "enum": ["low", "normal", "high"],
+                    "description": "New importance level. Omit if not changing.",
                 },
                 "status": {
                     "type": "string",
-                    "enum": ["completed", "needsAction"],
-                    "description": "'completed' to mark done, 'needsAction' to mark undone. Omit if not changing.",
+                    "enum": ["notStarted", "inProgress", "completed", "deferred", "waitingOnOthers"],
+                    "description": "New status. Use 'completed' to mark done, 'notStarted' to mark undone.",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Replacement tag list. Omit if not changing.",
                 },
             },
-            "required": ["task_id"],
+            "required": ["task_ref"],
         },
     },
     {
         "name": "delete_task",
         "description": (
-            "Permanently remove a task from the list. "
-            "Requires task_id. If unknown, call search_tasks first."
+            "Permanently remove a task. "
+            "Requires task_ref from a prior search_tasks or list_tasks result."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "task_id": {
+                "task_ref": {
                     "type": "string",
-                    "description": "ID of the task to delete.",
+                    "description": "Short task reference (the 'ref' field from search_tasks or list_tasks).",
                 },
             },
-            "required": ["task_id"],
+            "required": ["task_ref"],
         },
     },
 ]
@@ -154,11 +241,10 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
 
 class TasksAgent(BaseAgent):
     """
-    Specialist agent for task management.
+    Specialist agent for MS To Do task management.
 
     Receives a natural-language delegation from the orchestrator.
     Uses a tool-calling loop to select and execute the right CRUD operation.
-    Biographical context is injected so the agent understands personal references.
     """
 
     TEMPERATURE = TASKS_CFG.temperature
@@ -170,6 +256,7 @@ class TasksAgent(BaseAgent):
         execution_context: AgentExecutionContext,
         prompt_builder: PromptBuilderPort,
         tasks_provider: TasksProviderPort,
+        task_indexing: TaskIndexingService,
         user_id: Optional[str] = None,
     ) -> None:
         super().__init__(config)
@@ -178,6 +265,7 @@ class TasksAgent(BaseAgent):
         self.model_name = execution_context.model_name
         self.prompt_builder = prompt_builder
         self._tasks = tasks_provider
+        self._indexing = task_indexing
         self.user_id = user_id
 
         logger.info(
@@ -192,13 +280,13 @@ class TasksAgent(BaseAgent):
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
         query = message.payload.get("query", "")
+        reasoning = message.payload.get("context", "")
         user_id = message.context.get("user_id") or self.user_id
         account_id = message.context.get("account_id")
 
         self._on_agent_start(query)
         start_time = time.time()
 
-        # Build system prompt with biographical context
         system_prompt = ""
         try:
             system_prompt = await self.prompt_builder.build_for_agent(
@@ -209,10 +297,15 @@ class TasksAgent(BaseAgent):
                 include_biographical=True,
             )
         except Exception as exc:
-            logger.warning(f"📋 TasksAgent: prompt build failed ({exc}), proceeding without bio context")
+            logger.warning(
+                f"📋 TasksAgent: prompt build failed ({exc}), proceeding without bio context"
+            )
+        user_text = query
+        if reasoning:
+            user_text = f"{query}\n\nContext: {reasoning}"
 
         messages: List[Message] = [
-            Message(role="user", parts=[MessagePart(text=query)])
+            Message(role="user", parts=[MessagePart(text=user_text)])
         ]
 
         final_text = ""
@@ -233,14 +326,12 @@ class TasksAgent(BaseAgent):
                 final_text = response.text or ""
                 break
 
-            # Append model tool-call message
             messages.append(Message(
                 role="model",
                 raw_content=response.raw_content,
                 parts=[MessagePart(tool_call=tc) for tc in response.tool_calls],
             ))
 
-            # Execute tool calls
             tool_result_parts: List[MessagePart] = []
             for tool_call in response.tool_calls:
                 logger.info(
@@ -302,7 +393,6 @@ class TasksAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _execute_tool(self, name: str, args: Dict[str, Any], user_id: str) -> Any:
-        """Dispatch an LLM tool call to TasksProviderPort."""
         if name == "list_tasks":
             tasks = await self._tasks.list_tasks(
                 user_id=user_id,
@@ -311,39 +401,62 @@ class TasksAgent(BaseAgent):
             return self._format_task_list(tasks)
 
         if name == "search_tasks":
-            tasks = await self._tasks.search_tasks(
+            entries = await self._indexing.search(
                 user_id=user_id,
-                query=args.get("query", ""),
+                query=args["query"],
+                show_completed=args.get("show_completed", False),
             )
+            if not entries:
+                return {"tasks": [], "count": 0}
+            refs: List[Tuple[str, str]] = [(e.list_id, e.task_id) for e in entries]
+            tasks = await self._tasks.batch_get_tasks(user_id=user_id, task_refs=refs)
             return self._format_task_list(tasks)
 
         if name == "create_task":
+            recurrence: Optional[TaskRecurrence] = None
+            if rec_args := args.get("recurrence"):
+                recurrence = self._parse_recurrence(rec_args, args.get("due_datetime"))
             task = await self._tasks.create_task(
                 user_id=user_id,
                 task=TaskCreate(
                     title=args["title"],
-                    notes=args.get("notes"),
-                    due_date=self._parse_date(args.get("due_date")),
+                    body=args.get("body"),
+                    due_datetime=self._parse_datetime(args.get("due_datetime")),
+                    importance=TaskImportance(args["importance"]) if args.get("importance") else TaskImportance.NORMAL,
+                    tags=args.get("tags") or [],
+                    recurrence=recurrence,
                 ),
             )
-            return {"created": True, "task_id": task.task_id, "display": task.to_display_string()}
+            await self._indexing.index_task(task)
+            return {"created": True, "title": task.title}
 
         if name == "update_task":
+            list_id, task_id = await self._indexing.resolve_short_id(user_id, args["task_ref"])
             task = await self._tasks.update_task(
                 user_id=user_id,
-                task_id=args["task_id"],
+                list_id=list_id,
+                task_id=task_id,
                 updates=TaskUpdate(
                     title=args.get("title"),
-                    notes=args.get("notes"),
-                    due_date=self._parse_date(args.get("due_date")),
+                    body=args.get("body"),
+                    due_datetime=self._parse_datetime(args.get("due_datetime")),
+                    importance=TaskImportance(args["importance"]) if args.get("importance") else None,
                     status=TaskStatus(args["status"]) if args.get("status") else None,
+                    tags=args.get("tags"),
                 ),
             )
-            return {"updated": True, "task_id": task.task_id, "display": task.to_display_string()}
+            await self._indexing.index_task(task)
+            return {"updated": True, "title": task.title}
 
         if name == "delete_task":
-            await self._tasks.delete_task(user_id=user_id, task_id=args["task_id"])
-            return {"deleted": True, "task_id": args["task_id"]}
+            list_id, task_id = await self._indexing.resolve_short_id(user_id, args["task_ref"])
+            await self._tasks.delete_task(
+                user_id=user_id,
+                list_id=list_id,
+                task_id=task_id,
+            )
+            await self._indexing.deindex_task(user_id, task_id)
+            return {"deleted": True}
 
         return {"error": f"unknown tool: {name}"}
 
@@ -352,29 +465,130 @@ class TasksAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _format_task_list(tasks: List[Task]) -> Dict[str, Any]:
+    def _short_id(task_id: str) -> str:
+        import hashlib
+        return hashlib.md5(task_id.encode()).hexdigest()[:8]
+
+    def _format_task_list(self, tasks: List[Task]) -> Dict[str, Any]:
         if not tasks:
             return {"tasks": [], "count": 0}
-        return {
-            "tasks": [
-                {
-                    "task_id": t.task_id,
-                    "title": t.title,
-                    "notes": t.notes,
-                    "due_date": t.due_date.strftime("%Y-%m-%d") if t.due_date else None,
-                    "status": t.status.value,
+
+        def _dt(v: Any) -> Optional[str]:
+            return v.isoformat() if v else None
+
+        def _serialize(t: Task) -> Dict[str, Any]:
+            d: Dict[str, Any] = {
+                "ref": self._short_id(t.task_id),
+                "title": t.title,
+                "status": t.status.value,
+                "importance": t.importance.value,
+            }
+            if t.body:
+                d["body"] = t.body
+            if t.tags:
+                d["tags"] = list(t.tags)
+            if t.due_datetime:
+                d["due_datetime"] = _dt(t.due_datetime)
+            if t.reminder_datetime:
+                d["reminder_datetime"] = _dt(t.reminder_datetime)
+                d["is_reminder_on"] = t.is_reminder_on
+            if t.completed_at:
+                d["completed_at"] = _dt(t.completed_at)
+            if t.checklist_items:
+                d["checklist_items"] = [
+                    {
+                        "item_id": c.item_id,
+                        "title": c.title,
+                        "is_completed": c.is_completed,
+                        **({"checked_at": _dt(c.checked_at)} if c.checked_at else {}),
+                    }
+                    for c in t.checklist_items
+                ]
+            if t.linked_resources:
+                d["linked_resources"] = [
+                    {
+                        "display_name": r.display_name,
+                        "web_url": r.web_url,
+                        **({"application_name": r.application_name} if r.application_name else {}),
+                    }
+                    for r in t.linked_resources
+                ]
+            if t.recurrence:
+                d["recurrence"] = {
+                    "type": t.recurrence.pattern.type,
+                    "interval": t.recurrence.pattern.interval,
                 }
-                for t in tasks
-            ],
-            "count": len(tasks),
-        }
+            if t.attachments:
+                d["attachments"] = [
+                    {
+                        "attachment_id": a.attachment_id,
+                        "filename": a.filename,
+                        **({"url": a.url} if a.url else {}),
+                        **({"gcs_uri": a.gcs_uri} if a.gcs_uri else {}),
+                    }
+                    for a in t.attachments
+                ]
+            return d
+
+        return {"tasks": [_serialize(t) for t in tasks], "count": len(tasks)}
+
+    def _parse_recurrence(
+        self, rec_args: Dict[str, Any], due_datetime_str: Optional[str]
+    ) -> TaskRecurrence:
+        """
+        Parse LLM recurrence args into a TaskRecurrence domain object.
+
+        Supported patterns (all that MS To Do actually implements):
+          daily           — interval only
+          weekdays        — convenience alias → weekly Mon–Fri
+          weekly          — daysOfWeek (defaults to weekday of due_datetime)
+          absoluteMonthly — dayOfMonth (defaults to day of due_datetime)
+          absoluteYearly  — dayOfMonth + month (defaults from due_datetime)
+        """
+        pattern_type = rec_args["pattern"]
+        interval = rec_args.get("interval", 1)
+        due_dt = self._parse_datetime(due_datetime_str) or datetime.utcnow()
+
+        _WEEKDAY_NAMES = [
+            "monday", "tuesday", "wednesday", "thursday",
+            "friday", "saturday", "sunday",
+        ]
+
+        days_of_week: list = []
+        day_of_month: Optional[int] = None
+        month: Optional[int] = None
+
+        if pattern_type == "weekdays":
+            pattern_type = "weekly"
+            days_of_week = ["monday", "tuesday", "wednesday", "thursday", "friday"]
+        elif pattern_type == "weekly":
+            days_of_week = rec_args.get("days_of_week") or [_WEEKDAY_NAMES[due_dt.weekday()]]
+        elif pattern_type == "absoluteMonthly":
+            day_of_month = rec_args.get("day_of_month") or due_dt.day
+        elif pattern_type == "absoluteYearly":
+            day_of_month = rec_args.get("day_of_month") or due_dt.day
+            month = rec_args.get("month") or due_dt.month
+
+        return TaskRecurrence(
+            pattern=RecurrencePattern(
+                type=pattern_type,
+                interval=interval,
+                days_of_week=days_of_week,
+                day_of_month=day_of_month,
+                month=month,
+            ),
+            range=RecurrenceRange(
+                type="noEnd",
+                start_date=datetime.utcnow().date().isoformat(),
+            ),
+        )
 
     @staticmethod
-    def _parse_date(value: Any) -> Optional[datetime]:
+    def _parse_datetime(value: Any) -> Optional[datetime]:
         if not value or not isinstance(value, str):
             return None
         try:
-            return datetime.strptime(value[:10], "%Y-%m-%d")
+            return datetime.fromisoformat(value.rstrip("Z"))
         except ValueError:
-            logger.warning(f"📋 TasksAgent: could not parse date '{value}', ignoring")
+            logger.warning(f"📋 TasksAgent: could not parse datetime '{value}', ignoring")
             return None

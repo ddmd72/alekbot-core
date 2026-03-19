@@ -25,6 +25,7 @@ import pytest
 from src.agents.html_page_generator_agent import (
     HtmlPageGeneratorAgent,
     _extract_filename_from_html,
+    _resolve_unsplash_placeholders,
     _strip_markdown_fences,
 )
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
@@ -421,3 +422,23 @@ class TestExtractFilenameFromHtml:
         html = "<html><head><title>A: B: C</title></head></html>"
         base_filename, _ = _extract_filename_from_html(html)
         assert "__" not in base_filename
+
+
+# ============================================================================
+# _resolve_unsplash_placeholders
+# ============================================================================
+
+async def test_raw_url_with_existing_query_uses_ampersand():
+    """raw_url from Unsplash API already has ?ixid=...&ixlib=... — must use & not ? for sizing."""
+    from src.ports.image_search_port import ImageResult, ImageSearchPort
+    mock = AsyncMock(spec=ImageSearchPort)
+    raw_url = "https://images.unsplash.com/photo-abc?ixid=abc&ixlib=rb-4.1.0"
+    mock.search.return_value = [ImageResult(
+        url=raw_url, raw_url=raw_url,
+        photographer="Jane", photographer_url="https://unsplash.com/@jane",
+    )]
+    html = '<img src="https://source.unsplash.com/150x150/?hacker,hoodie">'
+    result = await _resolve_unsplash_placeholders(html, mock)
+    assert "?w=" not in result
+    assert "&w=150" in result
+    assert "&h=150" in result

@@ -74,6 +74,13 @@ def load_settings():
         "TELEGRAM_WEBHOOK_SECRET": os.getenv("TELEGRAM_WEBHOOK_SECRET"),
         # Media storage
         "GCS_MEDIA_BUCKET": os.getenv("GCS_MEDIA_BUCKET", ""),
+        # Microsoft To Do OAuth + webhook (TASKS_LOCAL_FIRST_RFC.md §11)
+        "MICROSOFT_TODO_CLIENT_ID": os.getenv("MICROSOFT_TODO_CLIENT_ID", ""),
+        "MICROSOFT_TODO_CLIENT_SECRET": os.getenv("MICROSOFT_TODO_CLIENT_SECRET", ""),
+        "MICROSOFT_TODO_REDIRECT_URI": os.getenv("MICROSOFT_TODO_REDIRECT_URI", ""),
+        "MICROSOFT_TASKS_WEBHOOK_SECRET": os.getenv("MICROSOFT_TASKS_WEBHOOK_SECRET", ""),
+        # Unsplash image search (HtmlPageGeneratorAgent)
+        "UNSPLASH_ACCESS_KEY": os.getenv("UNSPLASH_ACCESS_KEY", ""),
     }
 
     if settings["GOOGLE_CLOUD_PROJECT"] and not env_config.use_emulator:

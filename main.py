@@ -32,6 +32,8 @@ from quart import Quart
 from src.web.oauth_app import create_oauth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
+from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
+from src.services.task_setup_service import TaskSetupService
 from src.services.authentication_service import AuthenticationService
 from src.services.session_service import SessionService
 from src.services.invite_code_service import InviteCodeService
@@ -425,6 +427,20 @@ async def main():
         email_job_repo = container.email_job_repo
         email_indexing_service = container.email_indexing_service
 
+        # MS To Do services — reuse adapters from ServiceContainer
+        task_setup_service = None
+        if container.ms_todo_adapter and agent_task_queue:
+            service_url = config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
+            task_setup_service = TaskSetupService(
+                lifecycle=container.ms_todo_adapter,
+                task_config=container.task_config_repo,
+                tasks_provider=container.ms_todo_adapter,
+                oauth_credentials=oauth_credentials_port,
+                task_search_index=container.task_search_index,
+                task_queue=agent_task_queue,
+                notification_url_base=service_url,
+            )
+
         # Create blueprints (will be registered on slack_adapter.quart_app)
         oauth_bp = create_oauth_blueprint(
             auth_service=auth_service,
@@ -435,6 +451,10 @@ async def main():
             gmail_oauth_service=gmail_oauth_service,
             oauth_credentials_port=oauth_credentials_port,
             google_tasks_oauth_service=google_tasks_oauth_service,
+            ms_todo_client_id=config.get("MICROSOFT_TODO_CLIENT_ID", ""),
+            ms_todo_client_secret=config.get("MICROSOFT_TODO_CLIENT_SECRET", ""),
+            ms_todo_redirect_uri=config.get("MICROSOFT_TODO_REDIRECT_URI", ""),
+            task_queue=agent_task_queue,
         )
 
         cabinet_bp = create_user_cabinet_blueprint(
@@ -450,6 +470,8 @@ async def main():
             email_indexing_service=email_indexing_service,
             email_job_repo=email_job_repo,
             task_queue=agent_task_queue,
+            task_setup=task_setup_service,
+            tasks_provider=container.ms_todo_adapter,
         )
 
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
@@ -467,12 +489,20 @@ async def main():
             task_queue=agent_task_queue,
             job_registry=job_registry,
             media_storage=gcs_media_adapter,
+            task_setup=task_setup_service,
+            task_indexing=container.task_indexing,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
             notification_service=notification_service,
             webhook_secret=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET"),
             task_queue=agent_task_queue,
+        )
+
+        ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(
+            task_indexing=container.task_indexing,
+            task_setup=task_setup_service,
+            webhook_secret=config.get("MICROSOFT_TASKS_WEBHOOK_SECRET"),
         )
 
         logger.info("✅ OAuth + Cabinet services initialized")
@@ -571,6 +601,7 @@ async def main():
                 main_app.register_blueprint(oauth_bp)
                 main_app.register_blueprint(cabinet_bp)
                 main_app.register_blueprint(deep_research_webhooks_bp)
+                main_app.register_blueprint(ms_tasks_webhook_bp)
                 
                 # ====================================================================
                 # PHASE 3: Telegram Integration (Optional)

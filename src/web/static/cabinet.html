@@ -342,12 +342,12 @@
             const errMap = { denied: "Gmail access was denied", state: "OAuth error (state mismatch)", no_code: "OAuth error (no code)", exchange: "Failed to connect Gmail" };
             showToast("❌ " + (errMap[qs.get("gmail_error")] || "Gmail connection failed"), "error");
           }
-          if (qs.get("tasks_connected") === "1") {
-            showToast("✅ Task list connected!", "success");
+          if (qs.get("microsoft_todo_connected") === "1") {
+            showToast("✅ Microsoft To Do connected!", "success");
           }
-          if (qs.get("tasks_error")) {
-            const errMap = { denied: "Task list access was denied", state: "OAuth error (state mismatch)", no_code: "OAuth error (no code)", exchange: "Failed to connect task list" };
-            showToast("❌ " + (errMap[qs.get("tasks_error")] || "Task list connection failed"), "error");
+          if (qs.get("microsoft_todo_error")) {
+            const errMap = { denied: "Microsoft To Do access was denied", state: "OAuth error (state mismatch)", no_code: "OAuth error (no code)", exchange: "Failed to connect Microsoft To Do" };
+            showToast("❌ " + (errMap[qs.get("microsoft_todo_error")] || "Microsoft To Do connection failed"), "error");
           }
 
           loadPlatforms();
@@ -685,7 +685,7 @@
       // ─── Task List ───────────────────────────────────────────
       async function loadTasksStatus() {
         try {
-          const res = await fetch(`${API}/api/tasks/status`, { credentials: "include" });
+          const res = await fetch(`${API}/api/tasks/microsoft/status`, { credentials: "include" });
           if (!res.ok) throw new Error();
           renderTasksStatus(await res.json());
         } catch {
@@ -698,7 +698,7 @@
         const headerBtn = document.getElementById("tasks-header-btn");
         if (!data.connected) {
           body.innerHTML = `<span class="text-gray-400">Not connected. Connect your task list so Alek can manage tasks on your behalf.</span>`;
-          headerBtn.innerHTML = `<a href="/auth/connect-google-tasks" class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors inline-block">Connect</a>`;
+          headerBtn.innerHTML = `<a href="/auth/connect-microsoft-todo" class="text-sm px-3 py-1.5 rounded-md bg-indigo-500 text-white hover:bg-indigo-600 transition-colors inline-block">Connect Microsoft To Do</a>`;
           return;
         }
         const account = data.email_address ? `<span class="text-gray-500">${data.email_address}</span>` : "";
@@ -718,7 +718,7 @@
         btn.textContent = "Disconnecting...";
         btn.disabled = true;
         try {
-          const res = await fetch(`${API}/api/tasks/disconnect`, { method: "DELETE", credentials: "include" });
+          const res = await fetch(`${API}/api/tasks/microsoft/disconnect`, { method: "DELETE", credentials: "include" });
           if (!res.ok) throw new Error();
           showToast("Task list disconnected.", "success");
           loadTasksStatus();

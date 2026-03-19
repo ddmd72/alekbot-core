@@ -34,6 +34,8 @@ def create_user_cabinet_blueprint(
     email_indexing_service: Optional[EmailIndexingService] = None,
     email_job_repo: Optional[EmailIndexingJobRepository] = None,
     task_queue: Optional[TaskQueue] = None,
+    task_setup=None,
+    tasks_provider=None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -730,6 +732,63 @@ def create_user_cabinet_blueprint(
             return jsonify({"success": True}), 200
         except Exception as exc:
             logger.error(f"Error disconnecting Tasks: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    # =========================================================================
+    # Microsoft To Do task endpoints
+    # =========================================================================
+
+    @bp.route("/api/tasks/microsoft/status", methods=["GET"])
+    @auth_required
+    async def ms_tasks_status():
+        """Return MS To Do connection state and active subscriptions."""
+        if not task_setup:
+            return jsonify({"connected": False}), 200
+        try:
+            status = await task_setup.get_status(g.user_id)
+            return jsonify(status), 200
+        except Exception as exc:
+            logger.error(f"Error fetching MS Tasks status: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/tasks/microsoft/reindex", methods=["POST"])
+    @auth_required
+    async def ms_tasks_reindex():
+        """Trigger full re-index of all MS To Do task lists."""
+        if not task_setup:
+            return jsonify({"error": "MS Tasks integration not configured"}), 501
+        try:
+            await task_setup.reindex_all(g.user_id)
+            return jsonify({"status": "ok"}), 200
+        except Exception as exc:
+            logger.error(f"Error triggering MS Tasks reindex: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/tasks/microsoft/lists", methods=["GET"])
+    @auth_required
+    async def ms_tasks_lists():
+        """Return all MS To Do task lists for the authenticated user."""
+        if not tasks_provider:
+            return jsonify({"error": "MS Tasks integration not configured"}), 501
+        try:
+            lists = await tasks_provider.list_task_lists(g.user_id)
+            return jsonify({"lists": [{"id": tl.id, "name": tl.name} for tl in lists]}), 200
+        except Exception as exc:
+            logger.error(f"Error fetching MS task lists: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/tasks/microsoft/disconnect", methods=["DELETE"])
+    @auth_required
+    async def ms_tasks_disconnect():
+        """Disconnect MS To Do: delete subscriptions, revoke token, clear index."""
+        if not task_setup:
+            return jsonify({"error": "MS Tasks integration not configured"}), 501
+        try:
+            await task_setup.disconnect(g.user_id)
+            logger.info(f"🔌 MS Tasks disconnected for user={g.user_id[:8]}")
+            return jsonify({"success": True}), 200
+        except Exception as exc:
+            logger.error(f"Error disconnecting MS Tasks: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
     @bp.route("/api/gmail/data", methods=["DELETE"])

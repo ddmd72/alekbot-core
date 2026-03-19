@@ -1,341 +1,314 @@
 """
 Unit tests for TasksAgent.
 
-One intent: manage_user_tasks.
-Agent uses a tool-calling loop — LLM autonomously selects list/search/create/update/delete.
+Mock boundary: ports (TasksProviderPort, TaskIndexingService) and LLM.
 
-Tests cover:
-- can_handle: accepts QUERY with non-empty query; rejects DELEGATE, empty/missing query
-- tool-calling loop: list, create, search→update (two turns), immediate text (no tool calls)
-- tool execution errors: provider failure appends error dict, agent continues
-- _execute_tool: direct dispatch to provider, correct arg mapping, unknown tool
-- _format_task_list: dict structure (tool result, not final output)
-- _parse_date: valid date, malformed date, None
+Covers (per RFC §14):
+- search_tasks: delegates to task_indexing.search -> batch_get_tasks
+- create_task: calls tasks_provider.create_task -> task_indexing.index_task
+- update_task: calls tasks_provider.update_task -> task_indexing.index_task
+- delete_task: calls tasks_provider.delete_task -> task_indexing.deindex_task
+- list_tasks: delegates to tasks_provider.list_tasks
 """
 
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.agents.tasks_agent import TasksAgent
-from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.task import Task, TaskCreate, TaskStatus, TaskUpdate
-from src.domain.user import PerformanceTier
-from src.infrastructure.agent_manifest import Intent
-from src.ports.llm_port import (
-    AgentExecutionContext,
-    LLMPort,
-    LLMResponse,
-    ProviderCapabilities,
-    ToolCall,
+from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
+from src.domain.task import (
+    Task,
+    TaskImportance,
+    TaskSearchEntry,
+    TaskStatus,
 )
-from src.ports.prompt_builder_port import PromptBuilderPort
+from src.ports.llm_port import AgentExecutionContext, LLMResponse, ToolCall
 from src.ports.tasks_provider_port import TasksProviderPort
+from src.services.task_indexing_service import TaskIndexingService
+
+_USER_ID = "user-1"
+_LIST_ID = "list-1"
+_TASK_ID = "task-1"
+_SHORT_ID = "c146b6ad"  # hashlib.md5(_TASK_ID.encode()).hexdigest()[:8]
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_USER_ID = "user-abc123"
-_ACCOUNT_ID = "account-xyz"
-
-
-def _make_execution_context(mock_llm) -> AgentExecutionContext:
-    return AgentExecutionContext(
-        agent_type="tasks",
-        provider=mock_llm,
-        model_name="gemini-flash-latest",
-        tier=PerformanceTier.BALANCED,
-        capabilities=ProviderCapabilities(native_tools=True),
+def _make_task(**kwargs) -> Task:
+    defaults = dict(
+        task_id=_TASK_ID,
+        list_id=_LIST_ID,
+        list_name="Alek Bot Tasks",
+        user_id=_USER_ID,
+        title="Buy milk",
+        status=TaskStatus.NOT_STARTED,
+        tags=["shopping"],
+        importance=TaskImportance.NORMAL,
     )
+    defaults.update(kwargs)
+    return Task(**defaults)
 
 
-def _make_agent(mock_llm, mock_tasks) -> TasksAgent:
-    mock_prompt_builder = AsyncMock(spec=PromptBuilderPort)
-    mock_prompt_builder.build_for_agent.return_value = "system prompt"
-    return TasksAgent(
+def _make_entry(**kwargs) -> TaskSearchEntry:
+    defaults = dict(
+        task_id=_TASK_ID,
+        list_id=_LIST_ID,
+        list_name="Alek Bot Tasks",
+        user_id=_USER_ID,
+        title="Buy milk",
+        status=TaskStatus.NOT_STARTED,
+        tags=["shopping"],
+        importance=TaskImportance.NORMAL,
+        indexed_at=datetime(2026, 3, 18),
+    )
+    defaults.update(kwargs)
+    return TaskSearchEntry(**defaults)
+
+
+def _make_agent():
+    from src.agents.tasks_agent import TasksAgent
+
+    provider = AsyncMock(spec=TasksProviderPort)
+    indexing = AsyncMock(spec=TaskIndexingService)
+
+    execution_context = MagicMock(spec=AgentExecutionContext)
+    execution_context.provider = AsyncMock()
+    execution_context.model_name = "test-model"
+
+    prompt_builder = AsyncMock()
+    prompt_builder.build_for_agent.return_value = "system prompt"
+
+    agent = TasksAgent(
         config=AgentConfig(
             agent_id=f"tasks_agent_{_USER_ID}",
             agent_type="tasks",
+            timeout_ms=10000,
         ),
-        execution_context=_make_execution_context(mock_llm),
-        prompt_builder=mock_prompt_builder,
-        tasks_provider=mock_tasks,
+        execution_context=execution_context,
+        prompt_builder=prompt_builder,
+        tasks_provider=provider,
+        task_indexing=indexing,
         user_id=_USER_ID,
     )
 
+    return agent, provider, indexing
 
-def _make_message(query: str = "show my tasks", intent: str = Intent.MANAGE_USER_TASKS) -> AgentMessage:
+
+def _make_message(query: str = "find milk task") -> AgentMessage:
     return AgentMessage(
-        task_id="task-1",
-        intent=AgentIntent.QUERY,
-        payload={"intent": intent, "query": query},
-        context={"user_id": _USER_ID, "account_id": _ACCOUNT_ID},
+        task_id="task-abc",
         sender="quick_response_agent",
         recipient="tasks_agent",
+        intent=AgentIntent.QUERY,
+        payload={"query": query},
+        context={"user_id": _USER_ID, "account_id": "acc-1"},
     )
 
 
-def _make_task(
-    task_id: str = "t1",
-    title: str = "Buy milk",
-    status: TaskStatus = TaskStatus.NEEDS_ACTION,
-    due_date: datetime | None = None,
-) -> Task:
-    return Task(
-        task_id=task_id,
-        title=title,
-        status=status,
-        due_date=due_date,
-        provider="google_tasks",
-    )
+def _llm_responses(tool_name: str, tool_args: dict, final_text: str):
+    """Returns (tool_response, text_response) mocks for _call_llm side_effect."""
+    tool_resp = MagicMock(spec=LLMResponse)
+    tool_resp.tool_calls = [ToolCall(name=tool_name, args=tool_args, id="tc-1")]
+    tool_resp.text = ""
+    tool_resp.raw_content = None
+
+    text_resp = MagicMock(spec=LLMResponse)
+    text_resp.tool_calls = []
+    text_resp.text = final_text
+    text_resp.raw_content = None
+
+    return [tool_resp, text_resp]
 
 
-def _tool_call_response(name: str, args: dict) -> LLMResponse:
-    return LLMResponse(tool_calls=[ToolCall(name=name, args=args)])
+# =============================================================================
+# search_tasks
+# =============================================================================
 
 
-def _text_response(text: str) -> LLMResponse:
-    return LLMResponse(text=text, tool_calls=[])
+class TestSearchTasks:
+
+    async def test_search_delegates_to_indexing(self):
+        agent, provider, indexing = _make_agent()
+        indexing.search.return_value = [_make_entry()]
+        provider.batch_get_tasks.return_value = [_make_task()]
+
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses("search_tasks", {"query": "milk"}, "Found: Buy milk")
+            await agent.execute(_make_message(query="find milk"))
+
+        indexing.search.assert_called_once()
+
+    async def test_search_passes_query(self):
+        agent, provider, indexing = _make_agent()
+        indexing.search.return_value = [_make_entry()]
+        provider.batch_get_tasks.return_value = [_make_task()]
+
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses("search_tasks", {"query": "milk"}, "Found")
+            await agent.execute(_make_message(query="find milk"))
+
+        indexing.search.assert_called_once_with(user_id=_USER_ID, query="milk", show_completed=False)
+
+    async def test_search_then_batch_get(self):
+        agent, provider, indexing = _make_agent()
+        entry = _make_entry()
+        indexing.search.return_value = [entry]
+        provider.batch_get_tasks.return_value = [_make_task()]
+
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses("search_tasks", {"query": "milk"}, "Found tasks")
+            await agent.execute(_make_message(query="find milk"))
+
+        provider.batch_get_tasks.assert_called_once()
+        call_kwargs = provider.batch_get_tasks.call_args.kwargs
+        assert (_LIST_ID, _TASK_ID) in call_kwargs["task_refs"]
+
+    async def test_search_empty_skips_batch_get(self):
+        agent, provider, indexing = _make_agent()
+        indexing.search.return_value = []
+
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses("search_tasks", {"query": "xyz"}, "Nothing found")
+            await agent.execute(_make_message(query="xyz"))
+
+        provider.batch_get_tasks.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# can_handle
-# ---------------------------------------------------------------------------
+# =============================================================================
+# create_task
+# =============================================================================
 
 
-class TestCanHandle:
-    @pytest.fixture
-    def agent(self):
-        return _make_agent(AsyncMock(spec=LLMPort), AsyncMock(spec=TasksProviderPort))
+class TestCreateTask:
 
-    async def test_accepts_query_with_non_empty_query(self, agent):
-        msg = _make_message("show my tasks")
-        assert await agent.can_handle(msg) is True
+    async def test_create_calls_provider(self):
+        agent, provider, indexing = _make_agent()
+        task = _make_task(title="Buy milk")
+        provider.create_task.return_value = task
 
-    async def test_rejects_non_query_intent(self, agent):
-        msg = AgentMessage(
-            task_id="t",
-            intent=AgentIntent.DELEGATE,
-            payload={"intent": Intent.MANAGE_USER_TASKS, "query": "show tasks"},
-            context={},
-            sender="quick_response_agent",
-            recipient="tasks_agent",
-        )
-        assert await agent.can_handle(msg) is False
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses("create_task", {"title": "Buy milk"}, "Created")
+            await agent.execute(_make_message(query="create milk task"))
 
-    async def test_rejects_empty_query(self, agent):
-        msg = _make_message(query="")
-        assert await agent.can_handle(msg) is False
+        provider.create_task.assert_called_once()
 
-    async def test_rejects_missing_query(self, agent):
-        msg = AgentMessage(
-            task_id="t",
-            intent=AgentIntent.QUERY,
-            payload={"intent": Intent.MANAGE_USER_TASKS},
-            context={},
-            sender="quick_response_agent",
-            recipient="tasks_agent",
-        )
-        assert await agent.can_handle(msg) is False
+    async def test_create_indexes_after_create(self):
+        agent, provider, indexing = _make_agent()
+        task = _make_task(title="Buy milk")
+        provider.create_task.return_value = task
+
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses("create_task", {"title": "Buy milk"}, "Created")
+            await agent.execute(_make_message(query="create milk task"))
+
+        indexing.index_task.assert_called_once_with(task)
 
 
-# ---------------------------------------------------------------------------
-# Tool-calling loop
-# ---------------------------------------------------------------------------
+# =============================================================================
+# update_task
+# =============================================================================
 
 
-class TestToolCallingLoop:
-    @pytest.fixture
-    def mock_llm(self):
-        return AsyncMock(spec=LLMPort)
+class TestUpdateTask:
 
-    @pytest.fixture
-    def mock_tasks(self):
-        return AsyncMock(spec=TasksProviderPort)
+    async def test_update_calls_provider_with_list_id(self):
+        agent, provider, indexing = _make_agent()
+        updated_task = _make_task(title="Updated")
+        provider.update_task.return_value = updated_task
+        indexing.resolve_short_id.return_value = (_LIST_ID, _TASK_ID)
 
-    @pytest.fixture
-    def agent(self, mock_llm, mock_tasks):
-        return _make_agent(mock_llm, mock_tasks)
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses(
+                "update_task",
+                {"task_ref": _SHORT_ID, "title": "Updated"},
+                "Updated",
+            )
+            await agent.execute(_make_message(query="rename task"))
 
-    async def test_list_tasks_tool_call_then_text(self, agent, mock_llm, mock_tasks):
-        """LLM calls list_tasks → provider returns tasks → LLM formats text → SUCCESS."""
-        mock_tasks.list_tasks.return_value = [_make_task("t1", "Buy milk")]
-        mock_llm.generate_content.side_effect = [
-            _tool_call_response("list_tasks", {"show_completed": False}),
-            _text_response("You have 1 task: Buy milk"),
-        ]
+        provider.update_task.assert_called_once()
+        call_kwargs = provider.update_task.call_args.kwargs
+        assert call_kwargs["task_id"] == _TASK_ID
+        assert call_kwargs["list_id"] == _LIST_ID
 
-        response = await agent.execute(_make_message("show my tasks"))
+    async def test_update_reindexes(self):
+        agent, provider, indexing = _make_agent()
+        updated_task = _make_task(status=TaskStatus.COMPLETED)
+        provider.update_task.return_value = updated_task
+        indexing.resolve_short_id.return_value = (_LIST_ID, _TASK_ID)
 
-        assert response.status == AgentStatus.SUCCESS
-        assert response.result == "You have 1 task: Buy milk"
-        mock_tasks.list_tasks.assert_called_once_with(user_id=_USER_ID, show_completed=False)
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses(
+                "update_task",
+                {"task_ref": _SHORT_ID, "status": "completed"},
+                "Marked done",
+            )
+            await agent.execute(_make_message(query="mark task done"))
 
-    async def test_create_task_tool_call(self, agent, mock_llm, mock_tasks):
-        """LLM calls create_task → provider creates → LLM confirms → SUCCESS."""
-        created = _make_task("new-id", "Buy milk")
-        mock_tasks.create_task.return_value = created
-        mock_llm.generate_content.side_effect = [
-            _tool_call_response("create_task", {"title": "Buy milk"}),
-            _text_response("Task 'Buy milk' created."),
-        ]
-
-        response = await agent.execute(_make_message("add task buy milk"))
-
-        assert response.status == AgentStatus.SUCCESS
-        mock_tasks.create_task.assert_called_once()
-        call_task: TaskCreate = mock_tasks.create_task.call_args.kwargs["task"]
-        assert call_task.title == "Buy milk"
-
-    async def test_search_then_update_two_turns(self, agent, mock_llm, mock_tasks):
-        """LLM calls search_tasks on turn 1, update_task on turn 2 — two tool turns."""
-        mock_tasks.search_tasks.return_value = [_make_task("t1", "Buy milk")]
-        mock_tasks.update_task.return_value = _make_task("t1", status=TaskStatus.COMPLETED)
-        mock_llm.generate_content.side_effect = [
-            _tool_call_response("search_tasks", {"query": "milk"}),
-            _tool_call_response("update_task", {"task_id": "t1", "status": "completed"}),
-            _text_response("Task marked as done."),
-        ]
-
-        response = await agent.execute(_make_message("mark buy milk as done"))
-
-        assert response.status == AgentStatus.SUCCESS
-        mock_tasks.search_tasks.assert_called_once_with(user_id=_USER_ID, query="milk")
-        mock_tasks.update_task.assert_called_once()
-        update_args = mock_tasks.update_task.call_args.kwargs
-        assert update_args["task_id"] == "t1"
-        assert update_args["updates"].status == TaskStatus.COMPLETED
-
-    async def test_immediate_text_no_tool_calls(self, agent, mock_llm, mock_tasks):
-        """LLM returns text immediately without any tool call → SUCCESS, no provider calls."""
-        mock_llm.generate_content.return_value = _text_response("Here is what I found...")
-
-        response = await agent.execute(_make_message("what should I do?"))
-
-        assert response.status == AgentStatus.SUCCESS
-        mock_tasks.list_tasks.assert_not_called()
-        mock_tasks.search_tasks.assert_not_called()
-
-    async def test_provider_error_appended_as_error_dict(self, agent, mock_llm, mock_tasks):
-        """Provider failure → error dict appended to messages → LLM continues."""
-        mock_tasks.list_tasks.side_effect = ValueError("No credentials")
-        mock_llm.generate_content.side_effect = [
-            _tool_call_response("list_tasks", {}),
-            _text_response("Could not access your tasks."),
-        ]
-
-        response = await agent.execute(_make_message("show tasks"))
-
-        assert response.status == AgentStatus.SUCCESS
-        # LLM was called twice: once tool call, once after error dict
-        assert mock_llm.generate_content.call_count == 2
-
-    async def test_no_final_text_returns_failure(self, agent, mock_llm, mock_tasks):
-        """LLM returns empty text and no tool calls → FAILED."""
-        mock_llm.generate_content.return_value = LLMResponse(text="", tool_calls=[])
-
-        response = await agent.execute(_make_message("do something"))
-
-        assert response.status == AgentStatus.FAILED
+        indexing.index_task.assert_called_once_with(updated_task)
 
 
-# ---------------------------------------------------------------------------
-# _execute_tool dispatch
-# ---------------------------------------------------------------------------
+# =============================================================================
+# delete_task
+# =============================================================================
 
 
-class TestExecuteTool:
-    @pytest.fixture
-    def mock_tasks(self):
-        return AsyncMock(spec=TasksProviderPort)
+class TestDeleteTask:
 
-    @pytest.fixture
-    def agent(self, mock_tasks):
-        return _make_agent(AsyncMock(spec=LLMPort), mock_tasks)
+    async def test_delete_calls_provider(self):
+        agent, provider, indexing = _make_agent()
+        provider.delete_task.return_value = None
+        indexing.resolve_short_id.return_value = (_LIST_ID, _TASK_ID)
 
-    async def test_list_tasks_with_show_completed(self, agent, mock_tasks):
-        mock_tasks.list_tasks.return_value = []
-        await agent._execute_tool("list_tasks", {"show_completed": True}, _USER_ID)
-        mock_tasks.list_tasks.assert_called_once_with(user_id=_USER_ID, show_completed=True)
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses(
+                "delete_task", {"task_ref": _SHORT_ID}, "Deleted"
+            )
+            await agent.execute(_make_message(query="delete milk task"))
 
-    async def test_create_task_parses_due_date(self, agent, mock_tasks):
-        created = _make_task("t1", "Pay bills", due_date=datetime(2026, 3, 15))
-        mock_tasks.create_task.return_value = created
-        await agent._execute_tool(
-            "create_task", {"title": "Pay bills", "due_date": "2026-03-15"}, _USER_ID
-        )
-        call_task: TaskCreate = mock_tasks.create_task.call_args.kwargs["task"]
-        assert call_task.title == "Pay bills"
-        assert call_task.due_date == datetime(2026, 3, 15)
+        provider.delete_task.assert_called_once()
+        call_kwargs = provider.delete_task.call_args.kwargs
+        assert call_kwargs["task_id"] == _TASK_ID
+        assert call_kwargs["list_id"] == _LIST_ID
 
-    async def test_update_task_completed_status(self, agent, mock_tasks):
-        mock_tasks.update_task.return_value = _make_task("t1", status=TaskStatus.COMPLETED)
-        await agent._execute_tool(
-            "update_task", {"task_id": "t1", "status": "completed"}, _USER_ID
-        )
-        update_args = mock_tasks.update_task.call_args.kwargs
-        assert update_args["task_id"] == "t1"
-        assert update_args["updates"].status == TaskStatus.COMPLETED
+    async def test_delete_deindexes(self):
+        agent, provider, indexing = _make_agent()
+        provider.delete_task.return_value = None
+        indexing.resolve_short_id.return_value = (_LIST_ID, _TASK_ID)
 
-    async def test_delete_task(self, agent, mock_tasks):
-        mock_tasks.delete_task.return_value = None
-        result = await agent._execute_tool("delete_task", {"task_id": "t1"}, _USER_ID)
-        mock_tasks.delete_task.assert_called_once_with(user_id=_USER_ID, task_id="t1")
-        assert result["deleted"] is True
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses(
+                "delete_task", {"task_ref": _SHORT_ID}, "Deleted"
+            )
+            await agent.execute(_make_message(query="delete milk task"))
 
-    async def test_unknown_tool_returns_error_dict(self, agent, mock_tasks):
-        result = await agent._execute_tool("fly_to_moon", {}, _USER_ID)
-        assert "error" in result
-        assert "fly_to_moon" in result["error"]
+        indexing.deindex_task.assert_called_once_with(_USER_ID, _TASK_ID)
 
 
-# ---------------------------------------------------------------------------
-# _format_task_list (tool result structure, not final LLM output)
-# ---------------------------------------------------------------------------
+# =============================================================================
+# list_tasks
+# =============================================================================
 
 
-class TestFormatTaskList:
-    def test_non_empty_list_structure(self):
-        tasks = [_make_task("t1", "Buy milk"), _make_task("t2", "Read book")]
-        result = TasksAgent._format_task_list(tasks)
-        assert result["count"] == 2
-        assert result["tasks"][0]["task_id"] == "t1"
-        assert result["tasks"][0]["title"] == "Buy milk"
-        assert result["tasks"][0]["status"] == "needsAction"
+class TestListTasks:
 
-    def test_task_with_due_date(self):
-        task = _make_task("t1", "Pay bills", due_date=datetime(2026, 3, 15))
-        result = TasksAgent._format_task_list([task])
-        assert result["tasks"][0]["due_date"] == "2026-03-15"
+    async def test_list_calls_provider(self):
+        agent, provider, _ = _make_agent()
+        provider.list_tasks.return_value = [_make_task()]
 
-    def test_empty_list(self):
-        result = TasksAgent._format_task_list([])
-        assert result["tasks"] == []
-        assert result["count"] == 0
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses("list_tasks", {}, "Here are your tasks")
+            await agent.execute(_make_message(query="list my tasks"))
 
+        provider.list_tasks.assert_called_once()
 
-# ---------------------------------------------------------------------------
-# _parse_date
-# ---------------------------------------------------------------------------
+    async def test_list_passes_show_completed(self):
+        agent, provider, _ = _make_agent()
+        provider.list_tasks.return_value = []
 
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = _llm_responses(
+                "list_tasks", {"show_completed": True}, "Completed tasks"
+            )
+            await agent.execute(_make_message(query="show completed tasks"))
 
-class TestParseDate:
-    def test_valid_date(self):
-        result = TasksAgent._parse_date("2026-03-15")
-        assert result == datetime(2026, 3, 15)
-
-    def test_datetime_string_truncated(self):
-        result = TasksAgent._parse_date("2026-03-15T10:00:00Z")
-        assert result == datetime(2026, 3, 15)
-
-    def test_malformed_returns_none(self):
-        assert TasksAgent._parse_date("not-a-date") is None
-
-    def test_none_returns_none(self):
-        assert TasksAgent._parse_date(None) is None
-
-    def test_empty_string_returns_none(self):
-        assert TasksAgent._parse_date("") is None
+        call_kwargs = provider.list_tasks.call_args.kwargs
+        assert call_kwargs.get("show_completed") is True

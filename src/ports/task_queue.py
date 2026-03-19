@@ -95,3 +95,20 @@ class TaskQueue(Protocol):
         Worker re-enqueues if job.next_page_token is set after processing.
         """
         ...
+
+    async def enqueue_worker_task(
+        self,
+        task_type: str,
+        payload: Dict[str, Any],
+        delay_seconds: int = 0,
+    ) -> str:
+        """
+        Enqueue a generic worker task by task_type.
+
+        Used for custom task types (e.g. setup_microsoft_todo, reindex_task_list,
+        renew_task_subscriptions) that don't warrant a dedicated typed method.
+        Worker receives payload with task_type injected automatically.
+        delay_seconds: schedule this many seconds in the future.
+        Returns task name (Cloud Tasks task ID).
+        """
+        ...

@@ -87,7 +87,7 @@ class TestOAuthCredentialsPort:
     def test_abstract_method_count(self):
         assert _abstract_methods(OAuthCredentialsPort) == {
             "get_credentials", "save_credentials", "revoke_credentials",
-            "is_connected", "list_connected_providers"
+            "is_connected", "list_connected_providers", "list_users_by_provider"
         }
 
     def test_get_credentials_signature(self):

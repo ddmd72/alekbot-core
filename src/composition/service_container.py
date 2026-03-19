@@ -41,8 +41,13 @@ from ..adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredent
 from ..adapters.gmail_provider_adapter import GmailProviderAdapter
 from ..adapters.firestore_email_job_repo import FirestoreEmailJobRepository
 from ..adapters.firestore_email_exclusions_adapter import FirestoreEmailExclusionsAdapter
-from ..adapters.google_tasks_adapter import GoogleTasksAdapter
+# GoogleTasksAdapter frozen — deactivated in favour of MicrosoftToDoAdapter
+# from ..adapters.google_tasks_adapter import GoogleTasksAdapter
 from ..adapters.firestore_agent_note_adapter import FirestoreAgentNoteAdapter
+from ..adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
+from ..adapters.firestore_task_search_index import FirestoreTaskSearchIndex
+from ..adapters.microsoft_todo_adapter import MicrosoftToDoAdapter
+from ..services.task_indexing_service import TaskIndexingService
 from ..agents.email_classification_agent import EmailClassificationAgent
 from ..domain.agent import AgentConfig
 from ..domain.user import UserBotConfig
@@ -97,11 +102,28 @@ class ServiceContainer:
         self.email_job_repo = FirestoreEmailJobRepository(db_client, env_config)
         self.email_exclusions_repo = FirestoreEmailExclusionsAdapter(db_client, env_config)
 
-        self.google_tasks_provider = GoogleTasksAdapter(
-            oauth_credentials_repo=self.oauth_credentials,
-            client_id=config.get("GOOGLE_OAUTH_CLIENT_ID", ""),
-            client_secret=config.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
-        )
+        # GoogleTasksAdapter deactivated — MicrosoftToDoAdapter is the active provider
+        self.google_tasks_provider = None
+
+        # MS To Do adapters (always instantiated; functional only when OAuth credentials present)
+        self.task_config_repo = FirestoreTaskConfigRepository(db_client, env_config)
+        self.task_search_index = FirestoreTaskSearchIndex(db_client, env_config)
+        self.ms_todo_adapter: Optional[MicrosoftToDoAdapter] = None
+        if config.get("MICROSOFT_TODO_CLIENT_ID") and config.get("MICROSOFT_TODO_CLIENT_SECRET"):
+            self.ms_todo_adapter = MicrosoftToDoAdapter(
+                oauth_credentials=self.oauth_credentials,
+                task_config=self.task_config_repo,
+                client_id=config["MICROSOFT_TODO_CLIENT_ID"],
+                client_secret=config["MICROSOFT_TODO_CLIENT_SECRET"],
+            )
+
+        self.task_indexing: Optional[TaskIndexingService] = None
+        if self.ms_todo_adapter:
+            self.task_indexing = TaskIndexingService(
+                embedding_service=self.embedding_service,
+                search_index=self.task_search_index,
+                tasks_provider=self.ms_todo_adapter,
+            )
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
 
@@ -232,7 +254,8 @@ class ServiceContainer:
             "fact_management_adapter_factory": self.create_fact_management_adapter,
             "email_search_service": self.email_search_service,
             "indexed_email_repo": self.indexed_email_repo,
-            "tasks_provider": self.google_tasks_provider,
+            "tasks_provider": self.ms_todo_adapter,
+            "task_indexing": self.task_indexing,
             "notes_provider": self.notes_adapter,
         }
 

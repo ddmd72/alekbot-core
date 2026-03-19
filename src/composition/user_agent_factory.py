@@ -78,6 +78,7 @@ from ..ports.task_queue import TaskQueue
 from ..ports.tasks_provider_port import TasksProviderPort
 from ..ports.agent_note_port import AgentNotePort
 from ..services.email_search_service import EmailSearchService
+from ..services.task_indexing_service import TaskIndexingService
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..utils.logger import logger
 
@@ -120,6 +121,7 @@ class UserAgentFactory:
         email_search_service: EmailSearchService,
         indexed_email_repo: Optional[IndexedEmailRepository] = None,
         tasks_provider: Optional[TasksProviderPort] = None,
+        task_indexing: Optional[TaskIndexingService] = None,
         notes_provider: Optional[AgentNotePort] = None,
         job_registry: Optional[ProviderRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
@@ -148,6 +150,7 @@ class UserAgentFactory:
         self.email_search_service = email_search_service
         self.indexed_email_repo = indexed_email_repo
         self.tasks_provider = tasks_provider
+        self.task_indexing = task_indexing
         self.notes_provider = notes_provider
         self.job_registry: Optional[ProviderRegistry] = job_registry
         self.task_queue = task_queue
@@ -398,7 +401,7 @@ class UserAgentFactory:
         )
 
         tasks_agent = None
-        if self.tasks_provider:
+        if self.tasks_provider and self.task_indexing:
             tasks_context = self.context_builder.build("tasks", user_profile.config)
             tasks_agent = TasksAgent(
                 config=AgentConfig(
@@ -410,6 +413,7 @@ class UserAgentFactory:
                 execution_context=tasks_context,
                 prompt_builder=prompt_builder,
                 tasks_provider=self.tasks_provider,
+                task_indexing=self.task_indexing,
                 user_id=user_id,
             )
 
