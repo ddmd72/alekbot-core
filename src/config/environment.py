@@ -266,6 +266,26 @@ class EnvironmentConfig:
         return f"{prefix}email_indexing_jobs_v1"
 
     @property
+    def task_search_index_collection(self) -> str:
+        """
+        Task search index (thin vector index; source of truth is MS To Do).
+        Dev: development_task_search_index
+        Prod: task_search_index
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}task_search_index"
+
+    @property
+    def task_config_collection(self) -> str:
+        """
+        Per-user tasks integration config (primary list ID + subscriptions).
+        Dev: development_task_config
+        Prod: task_config
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}task_config"
+
+    @property
     def user_notification_state_collection(self) -> str:
         """
         Last active messaging channel per user (platform + channel_id).

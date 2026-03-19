@@ -238,19 +238,20 @@ TASKS = AgentDescriptor(
     description="User's personal task list — create, view, search, update, complete, and delete tasks.",
     capability_descriptions={
         Intent.MANAGE_USER_TASKS: (
-            "Manage the user's personal task list. The agent autonomously selects the right operation "
-            "(list, search, create, update, delete) based on the delegation instruction. "
-            "Formulate the query as a clear delegation so the agent knows what to do:\n"
-            "  'Show user active tasks'\n"
-            "  'Show user completed tasks'\n"
-            "  'Find user tasks about: <keyword>'\n"
-            "  'Add task for user: <task title>'\n"
-            "  'Add task for user: <task title>, due 2026-03-28'\n"
-            "  'Mark done for user: <task title>'\n"
-            "  'Reschedule for user: <task title> → due 2026-03-28'\n"
-            "  'Delete task for user: <task title>'\n"
-            "Write the delegation query in the same language you use to respond to the user. "
-            "Respect the user's communication preferences (tone, formality, style)."
+            "Manage the user's personal task list (MS To Do). "
+            "Payload: {\"query\": \"<instruction>\", \"context\": \"<reasoning and background>\"}.\n"
+            "query — the operation. context — why: what the user said, what they meant, relevant details. "
+            "The agent uses context to infer tags, importance, notes, and dates accurately.\n"
+            "query examples:\n"
+            "  'Show active tasks'  |  'Show completed tasks'\n"
+            "  'Find tasks about: <keyword>'\n"
+            "  'Add task: <title>'  |  'Add task: <title>, due 2026-03-28, importance high'\n"
+            "  'Mark done: <task title>'  |  'Reopen: <task title>'\n"
+            "  'Rename: <old title> → <new title>'\n"
+            "  'Reschedule: <task title> → due 2026-03-28'\n"
+            "  'Delete: <task title>'\n"
+            "context example: 'User planning Prague trip next month, budget hotel ~€800'\n"
+            "Write the delegation in the same language you use to respond to the user."
         ),
     },
     internal=False,

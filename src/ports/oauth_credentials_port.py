@@ -48,3 +48,10 @@ class OAuthCredentialsPort(ABC):
         All providers with stored credentials for this user (e.g. ["gmail"]).
         Used by EmailIndexingService to fan-out across all connected providers.
         """
+
+    @abstractmethod
+    async def list_users_by_provider(self, provider: str) -> List[str]:
+        """
+        All user_ids that have stored credentials for this provider.
+        Used by bulk renewal jobs (e.g. renew MS To Do subscriptions daily).
+        """
