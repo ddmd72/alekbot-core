@@ -76,6 +76,20 @@ background process extracts new facts from the conversation → bot gets smarter
   Port: `ImageSearchPort` (`src/ports/image_search_port.py`).
   Adapter: `UnsplashAdapter` (`src/adapters/unsplash_adapter.py`).
   See docs/05_building_blocks/document_generation/README.md § 11.
+- Tasks (BALANCED tier) — `TasksAgent` backed by Microsoft To Do Graph API. Intent `manage_user_tasks`.
+  5 tools: `list_tasks`, `search_tasks`, `create_task`, `update_task`, `delete_task`. Max 6 turns.
+  Search-before-mutate: LLM calls `search_tasks` first, gets `task_ref` (8-char short_id =
+  `md5(task_id)[:8]`), then passes it to `update_task`/`delete_task`.
+  Recurrence: 5 patterns (`daily`, `weekdays`, `weekly`, `absoluteMonthly`, `absoluteYearly`);
+  smart defaults from `due_datetime`.
+  `MicrosoftToDoAdapter` — Graph API CRUD + subscription management.
+  `TaskIndexingService` — embed→index pipeline + `resolve_short_id`.
+  `TaskSearchIndex` — 2-vector RRF in Firestore (`task_search_index` collection).
+  `TaskSetupService` — lifecycle: setup, ensure_subscriptions, disconnect.
+  Webhook: `POST /webhook/microsoft-tasks/{user_id}` → self-healing index freshness.
+  Worker tasks: `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`.
+  OAuth: Azure consumers tenant, `Tasks.ReadWrite offline_access`.
+  See `docs/05_building_blocks/tasks_integration/README.md`.
 - Consolidation — background "memory consolidation" (PERFORMANCE tier, runs via Cloud Tasks)
 - DeepResearch (async, provider-agnostic) — long-running research jobs. Agent calls
   `DeepResearchPort.create_interaction()` → returns ACK (job_id) immediately. Result delivered
@@ -95,7 +109,8 @@ background process extracts new facts from the conversation → bot gets smarter
 - `UserNotificationService` — sends Slack/Telegram alert on job completion; stores last
   active channel per user in `user_notification_state`
 - `WorkerHandler` — dispatches `/worker` Cloud Tasks by `task_type`:
-  `email_indexing`, `email_indexing_watchdog`, `consolidation`, `agent_execution`
+  `email_indexing`, `email_indexing_watchdog`, `consolidation`, `agent_execution`,
+  `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`
 - Watchdog: Cloud Scheduler fires `email_indexing_watchdog` every 2h; marks stale `running`
   jobs as `failed`
 
@@ -143,6 +158,9 @@ src/
                   Email ports: EmailProviderPort, EmailClassifierPort, EmailExclusionsPort,
                   IndexedEmailRepository, EmailIndexingJobRepository, OAuthCredentialsPort,
                   NotificationStatePort, NotificationChannelFactoryPort.
+                  Tasks ports: TasksProviderPort (task_provider_port.py), TaskSearchIndex
+                  (task_search_index.py), TaskConfigPort (task_config_port.py),
+                  TaskLifecyclePort (task_lifecycle_port.py).
   adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, Slack, Telegram,
                   Gmail). Email adapters: GmailProviderAdapter, FirestoreIndexedEmailRepository,
                   FirestoreEmailJobRepository, FirestoreEmailExclusionsAdapter,
@@ -151,11 +169,17 @@ src/
                   DOCX adapter: NodeDocxRunner (node_docx_runner.py) — DocxRunnerPort
                   implementation; writes temp script to docx_generator/ dir, executes via
                   subprocess, captures stdout as DOCX bytes.
+                  Tasks adapters: MicrosoftToDoAdapter (microsoft_todo_adapter.py) — Graph API
+                  CRUD + subscription management; implements TasksProviderPort + TaskLifecyclePort.
+                  FirestoreTaskSearchIndex (firestore_task_search_index.py) — 2-vector RRF.
+                  FirestoreTaskConfigRepository (firestore_task_config_repository.py).
   services/     — Business logic. Receive ports via DI.
                   prompt_builder.py includes both PromptBuilder and UserPromptBuilder
                   (merged from former user_prompt_builder.py).
                   Email services: EmailIndexingService, EmailSearchService,
                   EmailEmbeddingRepairService, GmailOAuthService, UserNotificationService.
+                  Tasks services: TaskIndexingService (embed→index + resolve_short_id),
+                  TaskSetupService (lifecycle: setup/disconnect/ensure_subscriptions).
   agents/       — Multi-agent system. core/ — agents, infrastructure/ — billing/logging.
                   Email agents: EmailSearchAgent, EmailClassificationAgent.
                   Document agents: DocPlannerAgent (doc_planner_agent.py, intent create_document,
@@ -180,9 +204,13 @@ src/
                   groovy_to_markdown_transformer.
   web/          — Quart web app (OAuth + Cabinet UI). Endpoints:
                   Auth: /auth/login, /auth/callback, /auth/link-oauth, /auth/me,
-                  /auth/refresh, /auth/logout, /auth/connect-gmail, /auth/connect-gmail/callback.
+                  /auth/refresh, /auth/logout, /auth/connect-gmail, /auth/connect-gmail/callback,
+                  /auth/connect-microsoft-todo, /auth/connect-microsoft-todo/callback.
                   Gmail: /api/gmail/status, /api/gmail/index, /api/gmail/jobs/<id>,
                   /api/gmail/jobs/<id>/cancel, /api/gmail/disconnect, /api/gmail/data.
+                  Tasks: /api/tasks/microsoft/status, /api/tasks/microsoft/reindex,
+                  /api/tasks/microsoft/lists, /api/tasks/microsoft/disconnect.
+                  Webhook: /webhook/microsoft-tasks/<user_id>.
                   User: /api/user/link-platform, /api/user/platforms, /api/user/invite-codes,
                   /api/user/join-team, /api/user/facts, /api/user/facts/browse,
                   /api/user/facts/search, /api/user/facts/<id>/invalidate.

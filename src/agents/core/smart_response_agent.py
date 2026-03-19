@@ -610,6 +610,12 @@ class SmartResponseAgent(BaseAgent):
         intent = args.get("intent", "")
         query = args.get("query", "")
         context_params = args.get("context", {})  # optional rich params from LLM
+        # LLM may pass context as a free-form string (task reasoning/background).
+        # Wrap it so the specialist receives it as reasoning appended to the query.
+        if isinstance(context_params, str) and context_params:
+            context_params = {"reasoning": context_params}
+        elif not isinstance(context_params, dict):
+            context_params = {}
 
         if not intent:
             return ToolResponse(

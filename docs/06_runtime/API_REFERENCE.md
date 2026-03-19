@@ -21,6 +21,8 @@ All user-facing endpoints require authentication unless noted. Invalid/expired t
 | `POST` | `/auth/link-oauth` | ✅ | Link additional OAuth provider |
 | `GET` | `/auth/connect-gmail` | ✅ | Redirect to Google Gmail OAuth consent (gmail.readonly scope) |
 | `GET` | `/auth/connect-gmail/callback` | ❌ | Gmail OAuth callback; stores credentials in `oauth_credentials` |
+| `GET` | `/auth/connect-microsoft-todo` | ✅ | Redirect to Azure consumers OAuth (Tasks.ReadWrite offline_access) |
+| `GET` | `/auth/connect-microsoft-todo/callback` | ❌ | MS OAuth callback; stores credentials + enqueues `setup_microsoft_todo` Cloud Task |
 
 ---
 
@@ -70,6 +72,29 @@ All Gmail endpoints require authentication. Gmail must be connected first via `/
 | `DELETE` | `/api/gmail/data` | ✅ | Delete all indexed email data for this user |
 
 **Job lifecycle:** Cabinet triggers `POST /api/gmail/index` → job created → Cloud Tasks dispatches paginated `email_indexing` tasks → each page processed by `WorkerHandler` → re-enqueued if `next_page_token` present → on completion: `UserNotificationService` sends Slack/Telegram alert.
+
+---
+
+## Microsoft Tasks Webhook
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/webhook/microsoft-tasks/{user_id}` | clientState | Graph API change notifications for task create/update/delete. `?validationToken=XYZ` → echo for subscription validation. Body: Graph notification payload; `clientState` checked against `MICROSOFT_TASKS_WEBHOOK_SECRET`. |
+
+**Flow:** User edits task in MS To Do app → Graph sends POST here → `task_indexing.index_task_by_ref()` or `deindex_task()` → Firestore search index updated. Also triggers self-healing subscription renewal.
+
+---
+
+## Microsoft Tasks Cabinet API (`/api/tasks/microsoft/*`)
+
+All Tasks endpoints require authentication. Microsoft To Do must be connected first via `/auth/connect-microsoft-todo`.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/tasks/microsoft/status` | ✅ | Integration status: `{connected: bool, subscriptions: [{list_id, expires_at}]}` |
+| `POST` | `/api/tasks/microsoft/reindex` | ✅ | Trigger full reindex of all task lists (enqueues Cloud Tasks) |
+| `GET` | `/api/tasks/microsoft/lists` | ✅ | List all MS To Do task lists for the user (proxies Graph API) |
+| `DELETE` | `/api/tasks/microsoft/disconnect` | ✅ | Delete all Graph subscriptions, revoke OAuth tokens, clear search index |
 
 ---
 
