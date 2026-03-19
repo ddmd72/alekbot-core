@@ -1,8 +1,8 @@
 # Firestore Database Schema (Production Audit)
 
-**Last Updated:** 2026-03-02
+**Last Updated:** 2026-03-19
 **Status:** ✅ Production Validated
-**Version:** 3.4 (Email Indexing + Notification State)
+**Version:** 3.5 (Tasks Integration)
 
 ---
 
@@ -81,6 +81,8 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
 | **Infra**  | `development_sessions`            | `sessions`            | Sliding Window Cache  |
 | **Infra**  | `development_consolidation_queue` | `consolidation_queue` | Async Queue           |
 | **Infra**  | `development_event_dedup`         | `event_dedup`         | Idempotency Store     |
+| **Infra**  | `development_task_search_index`   | `task_search_index`   | MS To Do Semantic Search Index |
+| **Infra**  | `development_task_config`         | `task_config`         | Per-User MS To Do Config (primary list + subscriptions) |
 
 **Prefixes:**
 
@@ -796,6 +798,70 @@ Added 2026-02-18 for User Cabinet facts browser (`GET /api/user/facts/browse`). 
 | Session lookup | Composite | ✅ |
 
 **Action required:** Production `domain_facts_v2` needs state-based indexes deployed. Track in `config/firestore.indexes.json` — run `deploy_firestore_indexes.py` or `make deploy-prod`.
+
+---
+
+## 10. Tasks Integration Collections (v1)
+
+### 10.1 Task Search Index (`{prefix}task_search_index`)
+
+**Purpose:** Thin semantic search index for MS To Do tasks. Source of truth is MS To Do (Graph API) — this collection stores only vectors + enough metadata for search and display.
+**Document ID:** `{user_id}_{task_id}`
+**Code Reference:** `src/domain/task.py` → `TaskSearchEntry`, `src/adapters/firestore_task_search_index.py`
+
+```json
+{
+  "task_id": "AAMkAGI2...",            // MS Graph task ID
+  "list_id": "AAMkAGI2...",            // MS Graph list ID
+  "list_name": "Alek Bot Tasks",       // denormalized from Task.list_name
+  "user_id": "550e8400-...",
+  "title": "Buy milk",
+  "status": "notStarted",              // TaskStatus enum value
+  "tags": ["groceries"],               // MS To Do categories
+  "importance": "normal",              // TaskImportance enum value
+  "short_id": "a1b2c3d4",             // md5(task_id)[:8] — stable 8-char alias for LLM
+  "content_vector": [0.1, 0.2, ...],  // embed("{title}. {body}. {checklist_items}")
+  "context_vector": [0.1, 0.2, ...],  // embed("{list_name}. {tags}. Importance: {importance}")
+  "indexed_at": "2026-03-19T10:00:00Z"
+}
+```
+
+**Embed schemes:**
+- `content_vector`: `"{title}. {body}. {' '.join(item.title for item in checklist_items)}"`
+- `context_vector`: `"{list_name}. {', '.join(tags)}. Importance: {importance}"`
+
+**Search:** RRF across `content_vector` + `context_vector`. Filters: `user_id ==`, optionally `status != "completed"`, optionally `list_id ==`.
+
+**Indexes required:**
+- `user_id` ASC + `content_vector` VECTOR (768 or 1536 dim)
+- `user_id` ASC + `context_vector` VECTOR
+
+**Lifecycle:** Upserted by `TaskIndexingService.index_task()`. Deleted by `deindex_task()` (on agent delete or webhook `deleted` event). All entries for a user deleted on disconnect.
+
+---
+
+### 10.2 Task Config (`{prefix}task_config`)
+
+**Purpose:** Per-user MS To Do integration config — primary list ID and active Graph webhook subscriptions.
+**Document ID:** `user_id`
+**Code Reference:** `src/domain/task.py` → `TaskUserConfig`, `src/adapters/firestore_task_config_repository.py`
+
+```json
+{
+  "primary_list_id": "AAMkAGI2...",    // MS Graph list ID for "Alek Bot Tasks"
+  "subscriptions": [
+    {
+      "sub_id": "abc123...",           // Graph subscription ID
+      "list_id": "AAMkAGI2...",        // list this subscription covers
+      "expires_at": "2026-03-22T10:00:00Z"  // Graph sub expiry (max ~3 days)
+    }
+  ]
+}
+```
+
+**`primary_list_id` write pattern:** `set_primary_list_id_if_absent()` uses a Firestore transaction — safe under concurrent calls (e.g. parallel `setup_microsoft_todo` tasks). Returns existing value if already set.
+
+**Subscriptions:** One per MS To Do list. Renewed on webhook receipt (self-healing) or by `renew_task_subscriptions` worker task. Cleared on disconnect.
 
 ---
 
