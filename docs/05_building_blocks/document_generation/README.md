@@ -698,9 +698,10 @@ constrained only by technical contracts and mobile correctness. See § 11.4 for 
 
 | Parameter | Value |
 |-----------|-------|
-| `temperature` | `1.0` (high creativity for layout and design decisions) |
+| `temperature` | `1.2` (high creativity for layout and design decisions) |
 | `max_tokens` | `64_000` (full HTML+CSS+JS document) |
 | `timeout_ms` | `600_000` (10 min) |
+| `thinking_effort` | `"medium"` |
 
 ### 11.4 Architecture & Design Decisions (ADR, 2026-03-16)
 
