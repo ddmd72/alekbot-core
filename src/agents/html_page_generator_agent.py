@@ -61,6 +61,7 @@ class HtmlPageGeneratorAgent(BaseAgent):
 
     TEMPERATURE = HTML_PAGE_GENERATOR.temperature
     MAX_TOKENS = HTML_PAGE_GENERATOR.max_tokens
+    THINKING_EFFORT = HTML_PAGE_GENERATOR.thinking_effort
 
     def __init__(
         self,
@@ -117,6 +118,7 @@ class HtmlPageGeneratorAgent(BaseAgent):
             messages=[Message(role="user", parts=[MessagePart(text=raw_query)])],
             temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
+            thinking=self.THINKING_EFFORT or None,
         )
         response = await self._call_llm(request, turn=0)
 
