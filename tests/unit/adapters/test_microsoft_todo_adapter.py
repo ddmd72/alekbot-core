@@ -489,7 +489,7 @@ class TestRegisterSubscription:
         call_json = session.post.call_args.kwargs["json"]
         assert _USER_ID in call_json["notificationUrl"]
 
-    async def test_subscription_expiry_is_4319_minutes_from_now(self):
+    async def test_subscription_expiry_is_4000_minutes_from_now(self):
         adapter, _, _ = _make_adapter()
         post_resp = _mock_response({"id": "sub-1", "resource": "/me/todo/lists/x/tasks"})
         session = _mock_session({"post": post_resp})
@@ -499,11 +499,11 @@ class TestRegisterSubscription:
             result = await adapter.register_subscription(_USER_ID, _LIST_ID, "https://app.com")
         after = datetime.utcnow()
 
-        # expires_at should be roughly now + 4319 minutes
+        # expires_at should be roughly now + 4000 minutes
         from datetime import timezone
         expires_naive = result.expires_at.replace(tzinfo=None) if result.expires_at.tzinfo else result.expires_at
-        expected_min = before + __import__("datetime").timedelta(minutes=4318)
-        expected_max = after + __import__("datetime").timedelta(minutes=4320)
+        expected_min = before + __import__("datetime").timedelta(minutes=3999)
+        expected_max = after + __import__("datetime").timedelta(minutes=4001)
         assert expected_min <= expires_naive <= expected_max
 
 

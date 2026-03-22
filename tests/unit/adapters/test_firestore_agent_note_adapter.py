@@ -27,7 +27,10 @@ from src.config.environment import EnvironmentConfig
 _USER_ID = "user-abc123"
 _OTHER_USER_ID = "user-other"
 _NOW = datetime(2026, 3, 9, 14, 30, 22, tzinfo=timezone.utc)
+_FUTURE = _NOW + timedelta(hours=1)
+_PAST = _NOW - timedelta(hours=1)
 _NOTE_ID = str(int(_NOW.timestamp() * 1000))  # epoch ms
+_DEFAULT_INSTRUCTION = "Call the dentist and schedule an appointment"
 
 
 @pytest.fixture
@@ -67,16 +70,16 @@ def _make_doc_snapshot(note_id: str, data: dict, exists: bool = True) -> MagicMo
 def _make_note_data(
     user_id: str = _USER_ID,
     text: str = "Remind about dentist",
+    instruction: str = _DEFAULT_INSTRUCTION,
     created_at: datetime = _NOW,
-    visible_after=None,
-    expires_after=None,
+    due: datetime = None,
 ) -> dict:
     return {
         "user_id": user_id,
         "text": text,
+        "instruction": instruction,
         "created_at": created_at,
-        "visible_after": visible_after,
-        "expires_after": expires_after,
+        "due": due if due is not None else _FUTURE,
     }
 
 
@@ -102,7 +105,7 @@ class TestCreateNote:
             mock_dt.now.side_effect = None
             mock_dt.side_effect = None
 
-            data = NoteCreate(user_id=_USER_ID, text="Remind about dentist")
+            data = NoteCreate(user_id=_USER_ID, text="Remind about dentist", instruction=_DEFAULT_INSTRUCTION, due=_FUTURE)
             note = await adapter.create_note(data)
 
         assert len(note.note_id) == 13
@@ -116,7 +119,7 @@ class TestCreateNote:
         col_mock.document.return_value = doc_ref
         col_mock.where.return_value.get = AsyncMock(return_value=[])
 
-        data = NoteCreate(user_id=_USER_ID, text="Check tomorrow")
+        data = NoteCreate(user_id=_USER_ID, text="Check tomorrow", instruction=_DEFAULT_INSTRUCTION, due=_FUTURE)
         note = await adapter.create_note(data)
 
         col_mock.document.assert_called_once_with(note.note_id)
@@ -132,29 +135,31 @@ class TestCreateNote:
         col_mock.where.return_value.get = AsyncMock(return_value=[])
 
         text = " ".join(["word"] * 25)
-        data = NoteCreate(user_id=_USER_ID, text=text)
+        data = NoteCreate(user_id=_USER_ID, text=text, instruction=_DEFAULT_INSTRUCTION, due=_FUTURE)
         note = await adapter.create_note(data)
         assert note.text == text
 
     async def test_create_note_word_count_exceeds_limit_raises(self, adapter, col_mock):
         col_mock.where.return_value.get = AsyncMock(return_value=[])
 
-        data = NoteCreate(user_id=_USER_ID, text=" ".join(["word"] * 26))
+        data = NoteCreate(user_id=_USER_ID, text=" ".join(["word"] * 26), instruction=_DEFAULT_INSTRUCTION, due=_FUTURE)
         with pytest.raises(ValueError, match="25 words"):
             await adapter.create_note(data)
 
     async def test_create_note_at_cap_raises(self, adapter, col_mock):
         """30 active notes → ValueError before writing."""
+        # Use a far-future due so notes survive the due > as_of filter in list_active_notes
+        far_future = datetime(2099, 1, 1, tzinfo=timezone.utc)
         active_docs = [
             _make_doc_snapshot(
                 f"note{i}",
-                _make_note_data(text=f"Note {i}"),
+                _make_note_data(text=f"Note {i}", due=far_future),
             )
             for i in range(30)
         ]
         col_mock.where.return_value.get = AsyncMock(return_value=active_docs)
 
-        data = NoteCreate(user_id=_USER_ID, text="One more note")
+        data = NoteCreate(user_id=_USER_ID, text="One more note", instruction=_DEFAULT_INSTRUCTION, due=_FUTURE)
         with pytest.raises(ValueError, match="cap"):
             await adapter.create_note(data)
 
@@ -164,7 +169,7 @@ class TestCreateNote:
         col_mock.document.return_value = doc_ref
         col_mock.where.return_value.get = AsyncMock(return_value=[])
 
-        data = NoteCreate(user_id=_USER_ID, text="Buy groceries")
+        data = NoteCreate(user_id=_USER_ID, text="Buy groceries", instruction=_DEFAULT_INSTRUCTION, due=_FUTURE)
         note = await adapter.create_note(data)
 
         assert isinstance(note, AgentNote)
@@ -179,43 +184,22 @@ class TestCreateNote:
 
 class TestListActiveNotes:
 
-    async def test_returns_notes_without_timing_constraints(self, adapter, col_mock):
+    async def test_returns_notes_with_future_due(self, adapter, col_mock):
+        """Notes with due > as_of are included."""
         docs = [
-            _make_doc_snapshot("n1", _make_note_data(text="Note A")),
-            _make_doc_snapshot("n2", _make_note_data(text="Note B")),
+            _make_doc_snapshot("n1", _make_note_data(text="Note A", due=_FUTURE)),
+            _make_doc_snapshot("n2", _make_note_data(text="Note B", due=_FUTURE)),
         ]
         col_mock.where.return_value.get = AsyncMock(return_value=docs)
 
         notes = await adapter.list_active_notes(_USER_ID, as_of=_NOW)
         assert len(notes) == 2
 
-    async def test_excludes_note_with_future_visible_after(self, adapter, col_mock):
-        future = _NOW + timedelta(hours=1)
+    async def test_excludes_note_with_past_due(self, adapter, col_mock):
+        """Notes with due <= as_of are excluded (already fired or overdue)."""
         docs = [
-            _make_doc_snapshot("n1", _make_note_data(text="Hidden", visible_after=future)),
-            _make_doc_snapshot("n2", _make_note_data(text="Visible")),
-        ]
-        col_mock.where.return_value.get = AsyncMock(return_value=docs)
-
-        notes = await adapter.list_active_notes(_USER_ID, as_of=_NOW)
-        assert len(notes) == 1
-        assert notes[0].text == "Visible"
-
-    async def test_includes_note_with_past_visible_after(self, adapter, col_mock):
-        past = _NOW - timedelta(hours=1)
-        docs = [
-            _make_doc_snapshot("n1", _make_note_data(text="Already visible", visible_after=past)),
-        ]
-        col_mock.where.return_value.get = AsyncMock(return_value=docs)
-
-        notes = await adapter.list_active_notes(_USER_ID, as_of=_NOW)
-        assert len(notes) == 1
-
-    async def test_excludes_expired_note(self, adapter, col_mock):
-        past = _NOW - timedelta(seconds=1)
-        docs = [
-            _make_doc_snapshot("n1", _make_note_data(text="Expired", expires_after=past)),
-            _make_doc_snapshot("n2", _make_note_data(text="Active")),
+            _make_doc_snapshot("n1", _make_note_data(text="Overdue", due=_PAST)),
+            _make_doc_snapshot("n2", _make_note_data(text="Active", due=_FUTURE)),
         ]
         col_mock.where.return_value.get = AsyncMock(return_value=docs)
 
@@ -223,15 +207,36 @@ class TestListActiveNotes:
         assert len(notes) == 1
         assert notes[0].text == "Active"
 
-    async def test_includes_note_expiring_in_future(self, adapter, col_mock):
-        future = _NOW + timedelta(hours=1)
+    async def test_excludes_note_with_due_equal_to_as_of(self, adapter, col_mock):
+        """Notes with due == as_of are excluded (fire moment has passed)."""
         docs = [
-            _make_doc_snapshot("n1", _make_note_data(text="Not yet expired", expires_after=future)),
+            _make_doc_snapshot("n1", _make_note_data(text="Just fired", due=_NOW)),
+        ]
+        col_mock.where.return_value.get = AsyncMock(return_value=docs)
+
+        notes = await adapter.list_active_notes(_USER_ID, as_of=_NOW)
+        assert len(notes) == 0
+
+    async def test_includes_note_with_future_due(self, adapter, col_mock):
+        """Notes with due > as_of are included regardless of how far in future."""
+        docs = [
+            _make_doc_snapshot("n1", _make_note_data(text="Far future", due=_NOW + timedelta(days=30))),
         ]
         col_mock.where.return_value.get = AsyncMock(return_value=docs)
 
         notes = await adapter.list_active_notes(_USER_ID, as_of=_NOW)
         assert len(notes) == 1
+
+    async def test_all_overdue_returns_empty(self, adapter, col_mock):
+        """All notes past due → empty list."""
+        docs = [
+            _make_doc_snapshot("n1", _make_note_data(text="Expired A", due=_PAST)),
+            _make_doc_snapshot("n2", _make_note_data(text="Expired B", due=_PAST)),
+        ]
+        col_mock.where.return_value.get = AsyncMock(return_value=docs)
+
+        notes = await adapter.list_active_notes(_USER_ID, as_of=_NOW)
+        assert len(notes) == 0
 
     async def test_sorted_by_created_at_ascending(self, adapter, col_mock):
         t1 = datetime(2026, 3, 9, 10, 0, 0, tzinfo=timezone.utc)

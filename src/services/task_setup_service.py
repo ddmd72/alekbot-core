@@ -57,24 +57,28 @@ class TaskSetupService:
         3. Ensure all lists have active webhook subscriptions
         """
         list_id = await self._lifecycle.ensure_primary_list(user_id)
-        await self._task_config.set_primary_list_id_if_absent(user_id, list_id)
-        await self.ensure_subscriptions(user_id)
+        list_id = await self._task_config.set_primary_list_id_if_absent(user_id, list_id)
+        await self.ensure_subscriptions(user_id, _list_id=list_id)
         logger.info(f"✅ MS To Do setup complete for user {user_id[:8]}")
 
     # ------------------------------------------------------------------
     # ensure_subscriptions
     # ------------------------------------------------------------------
 
-    async def ensure_subscriptions(self, user_id: str) -> None:
+    async def ensure_subscriptions(self, user_id: str, *, _list_id: str = None) -> None:
         """
         Ensure the primary "Alek Bot Tasks" list has an active webhook subscription.
         Registers a new subscription if absent or expired. Enqueues reindex if newly subscribed.
         Idempotent — safe to call multiple times.
 
+        _list_id: optional hint (used by setup to avoid a redundant ensure_primary_list call).
         Scope: primary list only. Multi-list support is a future upgrade path (RFC §6.2).
         """
         config = await self._task_config.get_config(user_id)
-        list_id = config.primary_list_id
+        list_id = _list_id or config.primary_list_id
+        if not list_id:
+            list_id = await self._lifecycle.ensure_primary_list(user_id)
+            list_id = await self._task_config.set_primary_list_id_if_absent(user_id, list_id)
         if not list_id:
             logger.warning(f"⚠️ No primary_list_id for user {user_id[:8]} — skipping subscriptions")
             return
@@ -216,14 +220,15 @@ class TaskSetupService:
         """
         await self.ensure_subscriptions(user_id)
         config = await self._task_config.get_config(user_id)
-        if not config.primary_list_id:
-            logger.warning(f"⚠️ No primary_list_id for user {user_id[:8]} — skipping reindex")
+        if not config.subscriptions:
+            logger.warning(f"⚠️ No subscriptions for user {user_id[:8]} — skipping reindex")
             return
-        await self._task_queue.enqueue_worker_task(
-            "reindex_task_list",
-            {"user_id": user_id, "list_id": config.primary_list_id},
-        )
-        logger.info(f"📬 Enqueued reindex for primary list, user {user_id[:8]}")
+        for sub in config.subscriptions:
+            await self._task_queue.enqueue_worker_task(
+                "reindex_task_list",
+                {"user_id": user_id, "list_id": sub.list_id},
+            )
+        logger.info(f"📬 Enqueued reindex for {len(config.subscriptions)} list(s), user {user_id[:8]}")
 
     # ------------------------------------------------------------------
     # enqueue_reindex_list
