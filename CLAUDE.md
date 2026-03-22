@@ -79,10 +79,10 @@ background process extracts new facts from the conversation → bot gets smarter
 - Notes / Proactive Reminders (ECO tier) — `NotesAgent` backed by `FirestoreAgentNoteAdapter`. Intent `manage_self_reminders`.
   Two-field model: `text` (≤15-word label) + `instruction` (full execution context, self-contained).
   3 tools: `create_self_reminder`, `update_self_reminder`, `delete_self_reminder`. Single LLM call.
-  Firing: Cloud Scheduler every 15 min → `POST /worker {fire_due_reminders}` → `WorkerHandler` →
+  Firing: Cloud Scheduler every 5 min → `POST /worker {fire_due_reminders}` → `WorkerHandler` →
   `UserNotificationService.notify(system_alert=instruction)` → QuickAgent executes as new conversation.
   Fired conversations saved to session history. Recurrence: `hourly/daily/weekly/monthly`.
-  Idempotency: `last_fired` guard (14-min window). Soft cap 20 / hard cap 30 active reminders.
+  Idempotency: `last_fired` guard (4-min window). Soft cap 20 / hard cap 30 active reminders.
   Transparency: every CRUD sends `notify_raw()` to user's channel immediately.
   Context: orchestrator sees `active_reminders {}` summary; NotesAgent sees full details + bio facts.
   Timezone: from `UserBotConfig.timezone` (IANA, set in Cabinet UI). Used for: prompt datetime,
@@ -223,13 +223,15 @@ src/
                   /auth/refresh, /auth/logout, /auth/connect-gmail, /auth/connect-gmail/callback,
                   /auth/connect-microsoft-todo, /auth/connect-microsoft-todo/callback.
                   Gmail: /api/gmail/status, /api/gmail/index, /api/gmail/jobs/<id>,
-                  /api/gmail/jobs/<id>/cancel, /api/gmail/disconnect, /api/gmail/data.
+                  /api/gmail/jobs/<id>/cancel, /api/gmail/disconnect, /api/gmail/data,
+                  /api/gmail/auto-index (GET/PUT — daily auto-index schedule).
                   Tasks: /api/tasks/microsoft/status, /api/tasks/microsoft/reindex,
                   /api/tasks/microsoft/lists, /api/tasks/microsoft/disconnect.
                   Webhook: /webhook/microsoft-tasks/<user_id>.
                   User: /api/user/link-platform, /api/user/platforms, /api/user/invite-codes,
                   /api/user/join-team, /api/user/facts, /api/user/facts/browse,
-                  /api/user/facts/search, /api/user/facts/<id>/invalidate.
+                  /api/user/facts/search, /api/user/facts/<id>/invalidate,
+                  /api/user/timezone (GET/PUT — IANA timezone setting).
                   Cabinet UI: /cabinet, /cabinet/docs, /cabinet/docs/<path>.
                   Other: /health, deep_research_webhooks (OpenAI async results).
                   Runs as a shared Quart app (all blueprints on port 8080).
