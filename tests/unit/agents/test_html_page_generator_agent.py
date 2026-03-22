@@ -342,13 +342,14 @@ class TestLLMCall:
     async def test_system_prompt_from_builder(self, agent, mock_llm):
         await agent.execute(_make_message())
         req = _get_llm_request(mock_llm)
-        assert req.system_instruction == "You are an HTML Page Generator..."
+        # system_instruction is "REQUEST\n\n{query}\n\n---\n\n{prompt}" — prompt must be present
+        assert "You are an HTML Page Generator..." in req.system_instruction
 
-    async def test_query_included_in_user_message(self, agent, mock_llm):
+    async def test_query_included_in_system_instruction(self, agent, mock_llm):
         await agent.execute(_make_message(query=_QUERY))
         req = _get_llm_request(mock_llm)
-        user_text = req.messages[0].parts[0].text
-        assert _QUERY in user_text
+        # query is embedded in system_instruction (REQUEST block), not in user message
+        assert _QUERY in req.system_instruction
 
 
 # ============================================================================
