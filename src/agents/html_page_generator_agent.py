@@ -34,7 +34,7 @@ from typing import Optional
 
 from .base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
-from ..domain.llm import Message, MessagePart
+from ..domain.llm import Message, MessagePart, PROMPT_CACHE_BOUNDARY
 from ..infrastructure.agent_config import HTML_PAGE_GENERATOR
 from ..ports.image_search_port import ImageResult, ImageSearchPort
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
@@ -99,10 +99,11 @@ class HtmlPageGeneratorAgent(BaseAgent):
         start_time = time.time()
 
         try:
-            system_prompt = await self.prompt_builder.build_for_agent(
+            raw_prompt = await self.prompt_builder.build_for_agent(
                 account_id=account_id,
                 agent_type="html_page",
                 user_id=self.user_id,
+                include_biographical=False,
             )
         except Exception as exc:
             self._on_agent_error(exc, "prompt_builder")
@@ -112,10 +113,15 @@ class HtmlPageGeneratorAgent(BaseAgent):
                 error=f"Failed to build system prompt: {exc}",
             )
 
+        # Structure: user request first (high attention), Groovy instructions last (high recency).
+        # knowledge_base and cache boundary are stripped — irrelevant for HTML generation.
+        groovy_instructions = raw_prompt.split(PROMPT_CACHE_BOUNDARY)[0].strip()
+        system_instruction = f"REQUEST\n\n{raw_query}\n\n---\n\n{groovy_instructions}"
+
         request = LLMRequest(
             model_name=self.model_name,
-            system_instruction=system_prompt,
-            messages=[Message(role="user", parts=[MessagePart(text=raw_query)])],
+            system_instruction=system_instruction,
+            messages=[Message(role="user", parts=[MessagePart(text="Generate the HTML page for the request in the REQUEST block above.")])],
             temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
             thinking=self.THINKING_EFFORT or None,

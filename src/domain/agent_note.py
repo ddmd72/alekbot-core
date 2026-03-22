@@ -1,41 +1,53 @@
 """
 Agent Note domain model.
 
-A short-lived contextual annotation written by the orchestrator to itself.
-Injected into subsequent prompt turns by Router enrichment.
+A self-reminder written by the orchestrator to itself.
+When the reminder fires, its instruction is run as a new conversation —
+exactly as if the user had written it.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
 
 @dataclass
+class ReminderRecurrence:
+    """How to reschedule a reminder after it fires."""
+    type: str       # "hourly" | "daily" | "weekly" | "monthly"
+    interval: int = 1  # every N units (e.g. interval=2, type="daily" → every 2 days)
+
+
+@dataclass
 class AgentNote:
-    """Persisted orchestrator note, injected into future prompts."""
+    """Persisted orchestrator self-reminder."""
     note_id: str
     user_id: str
-    text: str
+    text: str                               # Short display label (≤15 words)
+    instruction: str                        # Full execution context, run when fired
     created_at: datetime
-    visible_after: Optional[datetime] = None   # None = visible immediately
-    expires_after: Optional[datetime] = None   # None = never expires
+    due: datetime                           # UTC — when to fire
+    recurrence: Optional[ReminderRecurrence] = None
+    last_fired: Optional[datetime] = None   # UTC — updated after each fire
 
 
 @dataclass
 class NoteCreate:
-    """Input for creating a new note."""
+    """Input for creating a new self-reminder."""
     user_id: str
-    text: str
-    visible_after: Optional[datetime] = None
-    expires_after: Optional[datetime] = None
+    text: str                               # Short display label
+    instruction: str                        # Full execution context
+    due: datetime                           # UTC
+    recurrence: Optional[ReminderRecurrence] = None
 
 
 @dataclass
 class NoteUpdate:
-    """Input for updating an existing note."""
+    """Input for updating an existing self-reminder (PATCH semantics)."""
     note_id: str
     user_id: str
     text: Optional[str] = None
-    visible_after: Optional[datetime] = None
-    expires_after: Optional[datetime] = None
+    instruction: Optional[str] = None
+    due: Optional[datetime] = None          # UTC
+    recurrence: Optional[ReminderRecurrence] = None

@@ -1612,20 +1612,10 @@ mandatory before team/multi-user rollout.
 
 ## 🔧 Known Tech Debt
 
-### TD-001: NotesAgent breaks delegate_to_specialist mental model
+### ~~TD-001: NotesAgent breaks delegate_to_specialist mental model~~ RESOLVED 2026-03-22
 
-**Introduced:** 2026-03-09 (Agent Notepad feature)
-
-**Problem:** All specialist agents model the orchestrator as a pure delegator —
-the LLM understands `delegate_to_specialist` as "I assign a task to an external agent".
-Notes operations (`create_note`, `delete_note`, `update_note`) are self-management, not
-external delegation. This breaks the consistent mental model.
-
-**Current state:** Works correctly — `note_id` routes through `context` → `payload` correctly.
-The semantic mismatch doesn't cause bugs but may cause occasional LLM confusion about
-the nature of the operation.
-
-**Proposed fix:** Reframe NotesAgent as a "personal secretary" in its AgentDescriptor
-capability description and prompt instructions. The orchestrator delegates TO the secretary
-("write this note for me"), maintaining the pure-delegator role. No architectural changes
-required — only prompt/descriptor wording update.
+NotesAgent was redesigned as a proactive self-reminders specialist (`manage_self_reminders`).
+Old passive notepad intents (`create_note`, `delete_note`, `update_note`) removed.
+New framing in `AgentDescriptor` and `PROTOCOL_AGENT_SELECTION.groovy` — orchestrator
+delegates to a specialist ("schedule a reminder"), maintaining pure-delegator role.
+Cloud Scheduler fires reminders proactively. See PROACTIVE_SELF_REMINDERS_RFC.md.

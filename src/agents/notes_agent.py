@@ -2,140 +2,376 @@
 Notes Agent
 ===========
 
-Specialist agent for orchestrator notepad CRUD.
-No LLM — pure Firestore I/O via AgentNotePort.
+Specialist executor for proactive self-reminders — deferred instructions that fire
+automatically via Cloud Scheduler, regardless of user activity.
 
-Intents: create_note, delete_note, update_note.
-Notes are read by RouterAgent (list_active_notes) and injected into
-the prompt context automatically — no read intent needed.
+Single intent: manage_self_reminders.
+Receives a natural language query from the orchestrator, selects the right tool via
+one LLM call, executes CRUD directly against AgentNotePort, and returns a brief status.
+
+Tools:
+  create_self_reminder  — text (label) + instruction (execution context) + due + optional recurrence
+  update_self_reminder  — note_id + optional fields (PATCH semantics)
+  delete_self_reminder  — note_id
+
+Two-field model:
+  text        — short display label (≤15 words), shown in active_reminders context block
+  instruction — full execution context (no limit); this is the ONLY input when the reminder
+                fires. Cloud Scheduler → WorkerHandler → UserNotificationService.notify(
+                system_alert=instruction) → QuickAgent executes as a new conversation.
+
+Context injection:
+  - Orchestrator: sees active_reminders {} summary (text + fires datetime) via RouterAgent
+  - NotesAgent: sees full active_reminders block (text + instruction + due) loaded in _run()
+  - Biographical facts included (include_biographical=True)
+
+Transparency: every mutation sends notify_raw() to the user's last active channel.
 """
 
+from __future__ import annotations
+
+import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
-from ..domain.agent_note import NoteCreate, NoteUpdate
+from ..domain.agent_note import NoteCreate, NoteUpdate, ReminderRecurrence
+from ..infrastructure.agent_config import NOTES as NOTES_CFG
 from ..infrastructure.agent_manifest import Intent
 from ..ports.agent_note_port import AgentNotePort
+from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, MessagePart
+from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 
+if TYPE_CHECKING:
+    from ..services.user_notification_service import UserNotificationService
 
-def _parse_dt(value: Optional[str]) -> Optional[datetime]:
-    """Parse ISO 8601 string to timezone-aware datetime. Returns None if absent."""
+_NOTES_SOFT_THRESHOLD = 20
+
+_TOOL_DECLARATIONS = [
+    {
+        "name": "create_self_reminder",
+        "description": "Create a self-reminder that will fire at a specified time.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Short display label — ≤15 words. Shown in working memory context.",
+                },
+                "instruction": {
+                    "type": "string",
+                    "description": (
+                        "Full execution context. This is what runs when the reminder fires — "
+                        "write it as a complete, self-contained instruction with all necessary "
+                        "context: what to do, why, any relevant details from the conversation. "
+                        "No length limit."
+                    ),
+                },
+                "due": {
+                    "type": "string",
+                    "description": "ISO-8601 datetime in the user's local time when to fire.",
+                },
+                "recurrence": {
+                    "type": "object",
+                    "description": "Optional. Repeat after firing.",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["hourly", "daily", "weekly", "monthly"],
+                        },
+                        "interval": {
+                            "type": "integer",
+                            "description": "Every N units. Default 1.",
+                        },
+                    },
+                    "required": ["type"],
+                },
+            },
+            "required": ["text", "instruction", "due"],
+        },
+    },
+    {
+        "name": "update_self_reminder",
+        "description": (
+            "Update fields of an existing self-reminder. "
+            "PATCH semantics — only provided fields are changed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "note_id": {
+                    "type": "string",
+                    "description": "Reminder ID (epoch-ms string from working_memory).",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "New display label (≤15 words). Omit to keep unchanged.",
+                },
+                "instruction": {
+                    "type": "string",
+                    "description": "New execution context. Omit to keep unchanged.",
+                },
+                "due": {
+                    "type": "string",
+                    "description": "New ISO-8601 due datetime in user's local time. Omit to keep unchanged.",
+                },
+                "recurrence": {
+                    "type": "object",
+                    "description": "New recurrence settings. Replaces existing. Omit to keep unchanged.",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["hourly", "daily", "weekly", "monthly"],
+                        },
+                        "interval": {
+                            "type": "integer",
+                            "description": "Every N units. Default 1.",
+                        },
+                    },
+                    "required": ["type"],
+                },
+            },
+            "required": ["note_id"],
+        },
+    },
+    {
+        "name": "delete_self_reminder",
+        "description": "Delete a self-reminder by ID.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "note_id": {
+                    "type": "string",
+                    "description": "Reminder ID (epoch-ms string from working_memory).",
+                },
+            },
+            "required": ["note_id"],
+        },
+    },
+]
+
+
+def _resolve_tz(timezone_str: Optional[str]) -> ZoneInfo:
+    """Resolve IANA timezone string to ZoneInfo. Falls back to UTC on invalid input."""
+    if not timezone_str:
+        return ZoneInfo("UTC")
+    try:
+        return ZoneInfo(timezone_str)
+    except (ZoneInfoNotFoundError, KeyError):
+        logger.warning("⚠️ [NotesAgent] Unknown timezone %r, falling back to UTC", timezone_str)
+        return ZoneInfo("UTC")
+
+
+def _parse_dt(value: Optional[str], user_tz: ZoneInfo) -> Optional[datetime]:
+    """
+    Parse ISO-8601 string to UTC datetime.
+
+    - If the string has timezone info → convert to UTC.
+    - If naive (no tz) → interpret as user's local time, then convert to UTC.
+    """
     if not value:
         return None
     try:
         dt = datetime.fromisoformat(value)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
+            # Naive: assume user's local timezone
+            dt = dt.replace(tzinfo=user_tz)
+        return dt.astimezone(timezone.utc)
     except (ValueError, TypeError):
         logger.warning("⚠️ [NotesAgent] Could not parse datetime: %r", value)
         return None
 
 
-_NOTES_SOFT_THRESHOLD = 20
-_NOTES_ALERT = (
-    "ALERT: You currently have {count} notes in working memory "
-    "(soft limit: {threshold}). Review your notes and delete duplicates or "
-    "insignificant/outdated entries to stay within the recommended limit."
-)
+def _parse_recurrence(args: Optional[Dict[str, Any]]) -> Optional[ReminderRecurrence]:
+    if not args or not args.get("type"):
+        return None
+    return ReminderRecurrence(
+        type=args["type"],
+        interval=int(args.get("interval") or 1),
+    )
 
 
 class NotesAgent(BaseAgent):
     """
-    Orchestrator notepad agent — no LLM.
-    Dispatches on intent string and delegates to AgentNotePort.
+    Specialist for self-reminders — deferred instructions that fire proactively.
+    One LLM call to parse natural language → CRUD via AgentNotePort.
     """
 
-    def __init__(self, config: AgentConfig, notes_port: AgentNotePort) -> None:
+    TEMPERATURE = NOTES_CFG.temperature
+    MAX_TOKENS = NOTES_CFG.max_tokens
+
+    def __init__(
+        self,
+        config: AgentConfig,
+        execution_context: AgentExecutionContext,
+        notes_port: AgentNotePort,
+        prompt_builder: Optional[PromptBuilderPort] = None,
+        user_timezone: str = "UTC",
+        notification_service: Optional["UserNotificationService"] = None,
+    ) -> None:
         super().__init__(config)
+        self._set_execution_context(execution_context)
+        self._llm = execution_context.provider
+        self.model_name = execution_context.model_name
         self._notes = notes_port
+        self._prompt_builder = prompt_builder
+        self._user_tz = _resolve_tz(user_timezone)
+        self._notification_service = notification_service
 
     async def can_handle(self, message: AgentMessage) -> bool:
         if message.intent != AgentIntent.QUERY:
             return False
-        intent = message.payload.get("intent")
-        return intent in (Intent.CREATE_NOTE, Intent.DELETE_NOTE, Intent.UPDATE_NOTE)
+        return message.payload.get("intent") == Intent.MANAGE_SELF_REMINDERS
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
-        intent = message.payload.get("intent")
-        user_id = message.context.get("user_id")
-        self._on_agent_start(intent)
+        query = message.payload.get("query", "")
+        user_id = message.context.get("user_id") or ""
+        account_id = message.context.get("account_id") or ""
 
-        try:
-            if intent == Intent.CREATE_NOTE:
-                # text arrives in payload["query"] (LLM puts text in the query field);
-                # visible_after / expires_after arrive via context → extra_payload → payload
-                text = message.payload.get("text") or message.payload.get("query", "")
-                note = await self._notes.create_note(NoteCreate(
-                    user_id=user_id,
-                    text=text,
-                    visible_after=_parse_dt(message.payload.get("visible_after")),
-                    expires_after=_parse_dt(message.payload.get("expires_after")),
-                ))
-                result_data = {"note_id": note.note_id, "status": "created"}
-                log_text = f"note created (note_id: {note.note_id})"
+        self._on_agent_start(query[:60])
+        start_time = time.time()
 
-            elif intent == Intent.DELETE_NOTE:
-                note_id = message.payload.get("note_id") or message.payload.get("query", "")
-                deleted = await self._notes.delete_note(
-                    note_id=note_id,
-                    user_id=user_id,
-                )
-                if not deleted:
-                    return AgentResponse.failure(
-                        task_id=message.task_id,
-                        agent_id=self.agent_id,
-                        error=f"Note {note_id!r} not found or does not belong to this user.",
-                    )
-                result_data = {"note_id": note_id, "deleted": True}
-                log_text = f"note deleted (note_id: {note_id})"
+        result = await self._run(query, user_id, account_id)
 
-            elif intent == Intent.UPDATE_NOTE:
-                note_id = message.payload.get("note_id") or message.payload.get("query", "")
-                note = await self._notes.update_note(NoteUpdate(
-                    note_id=note_id,
-                    user_id=user_id,
-                    text=message.payload.get("text"),
-                    visible_after=_parse_dt(message.payload.get("visible_after")),
-                    expires_after=_parse_dt(message.payload.get("expires_after")),
-                ))
-                result_data = {"note_id": note.note_id, "status": "updated"}
-                log_text = f"note updated (note_id: {note.note_id})"
+        duration_ms = int((time.time() - start_time) * 1000)
 
-            else:
-                error_msg = f"Unknown intent: {intent}"
-                logger.error("❌ [NotesAgent] %s", error_msg)
-                return AgentResponse.failure(
-                    task_id=message.task_id,
-                    agent_id=self.agent_id,
-                    error=error_msg,
-                )
-
-            metadata: dict = {}
-            active_count = len(await self._notes.list_active_notes(user_id, as_of=datetime.now(timezone.utc)))
-            if active_count > _NOTES_SOFT_THRESHOLD:
-                metadata["system_alert"] = (
-                    f"ALERT: {active_count} active notes in working memory "
-                    f"(soft limit: {_NOTES_SOFT_THRESHOLD}). "
-                    f"Delete duplicates or outdated entries."
-                )
-
-        except ValueError as exc:
-            logger.error("❌ [NotesAgent] Validation error: %s", exc)
+        if "error" in result:
             return AgentResponse.failure(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
-                error=str(exc),
+                error=result["error"],
             )
 
-        self._on_agent_success(len(log_text), 0, log_text)
+        confirmation = result.get("status", "done")
+        self._on_agent_success(len(confirmation), 0, confirmation)
         return AgentResponse.success(
             task_id=message.task_id,
             agent_id=self.agent_id,
-            result=result_data,
+            result=confirmation,
             confidence=1.0,
-            metadata=metadata or None,
+            metadata={"duration_ms": duration_ms},
         )
+
+    # ------------------------------------------------------------------
+    # LLM call
+    # ------------------------------------------------------------------
+
+    async def _run(self, query: str, user_id: str, account_id: str) -> Dict[str, Any]:
+        if not self._prompt_builder:
+            raise ValueError("NotesAgent requires prompt_builder")
+        system_prompt = await self._prompt_builder.build_for_agent(
+            agent_type="notes",
+            user_id=user_id,
+            account_id=account_id,
+            include_biographical=True,
+        )
+
+        active_notes = await self._notes.list_active_notes(user_id, as_of=datetime.now(timezone.utc))
+        if active_notes:
+            lines = []
+            for n in active_notes:
+                due_str = n.due.astimezone(self._user_tz).strftime("%Y-%m-%d %H:%M %Z") if n.due else "no due"
+                rec_str = f", repeats {n.recurrence.type}" if n.recurrence else ""
+                lines.append(f"  - [{n.note_id}] \"{n.text}\" | fires: {due_str}{rec_str}")
+                lines.append(f"    instruction: {n.instruction}")
+            system_prompt += "\n\nactive_reminders {\n" + "\n".join(lines) + "\n}"
+
+        request = LLMRequest(
+            model_name=self.model_name,
+            system_instruction=system_prompt,
+            messages=[Message(role="user", parts=[MessagePart(text=query or "(no instruction)")])],
+            tools=_TOOL_DECLARATIONS,
+            max_tokens=self.MAX_TOKENS,
+            temperature=self.TEMPERATURE,
+        )
+        response = await self._call_llm(request, turn=0)
+
+        if not response.tool_calls:
+            return {"error": "LLM did not select a tool."}
+
+        tool_call = response.tool_calls[0]
+        return await self._execute_tool(tool_call.name, tool_call.args or {}, user_id, account_id)
+
+    # ------------------------------------------------------------------
+    # Tool execution
+    # ------------------------------------------------------------------
+
+    async def _execute_tool(
+        self, name: str, args: Dict[str, Any], user_id: str, account_id: str
+    ) -> Any:
+        if name == "create_self_reminder":
+            due = _parse_dt(args.get("due"), self._user_tz)
+            if due is None:
+                return {"error": "create_self_reminder requires 'due' field (ISO-8601 datetime)."}
+            instruction = args.get("instruction", "")
+            note = await self._notes.create_note(NoteCreate(
+                user_id=user_id,
+                text=args.get("text", ""),
+                instruction=instruction,
+                due=due,
+                recurrence=_parse_recurrence(args.get("recurrence")),
+            ))
+            result: Dict[str, Any] = {"note_id": note.note_id, "status": "created"}
+            active = await self._notes.list_active_notes(user_id, as_of=datetime.now(timezone.utc))
+            if len(active) >= _NOTES_SOFT_THRESHOLD:
+                result["alert"] = (
+                    f"You now have {len(active)} active reminders "
+                    f"(soft cap: {_NOTES_SOFT_THRESHOLD}). "
+                    "Review working_memory and delete stale reminders."
+                )
+            await self._notify(
+                user_id, account_id,
+                f"📌 Reminder set: \"{note.text}\" — {self._fmt_due(note.due)}"
+                + (f" (repeats {note.recurrence.type})" if note.recurrence else ""),
+            )
+            return result
+
+        if name == "update_self_reminder":
+            note_id = str(args.get("note_id") or "")
+            note = await self._notes.update_note(NoteUpdate(
+                note_id=note_id,
+                user_id=user_id,
+                text=args.get("text"),
+                instruction=args.get("instruction"),
+                due=_parse_dt(args.get("due"), self._user_tz),
+                recurrence=_parse_recurrence(args.get("recurrence")),
+            ))
+            await self._notify(
+                user_id, account_id,
+                f"📝 Reminder updated: \"{note.text}\" — {self._fmt_due(note.due)}",
+            )
+            return {"note_id": note.note_id, "status": "updated"}
+
+        if name == "delete_self_reminder":
+            note_id = str(args.get("note_id") or "")
+            deleted = await self._notes.delete_note(note_id=note_id, user_id=user_id)
+            if not deleted:
+                return {"error": f"Reminder {note_id!r} not found or does not belong to this user."}
+            await self._notify(user_id, account_id, f"🗑️ Reminder deleted: ID {note_id}")
+            return {"note_id": note_id, "status": "deleted"}
+
+        return {"error": f"unknown tool: {name}"}
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _fmt_due(self, due: datetime) -> str:
+        """Format UTC datetime as user-local string for transparency notifications."""
+        return due.astimezone(self._user_tz).strftime("%d %b %Y %H:%M %Z")
+
+    async def _notify(self, user_id: str, account_id: str, text: str) -> None:
+        """Best-effort transparency notification — failure is logged and swallowed."""
+        if not self._notification_service:
+            return
+        try:
+            await self._notification_service.notify_raw(
+                user_id=user_id,
+                account_id=account_id,
+                text=text,
+            )
+        except Exception as exc:
+            logger.warning("⚠️ [NotesAgent] notify_raw failed: %s", exc)

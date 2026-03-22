@@ -11,18 +11,27 @@ Supported task_types:
   - email_indexing_watchdog  → mark stale running jobs as failed
   - consolidation            → process one batch, re-enqueue if more
   - deep_research_polling    → poll Gemini job, deliver via notification service
+  - fire_due_reminders       → fire all reminders with due <= now, reschedule or delete
   - setup_microsoft_todo          → TaskSetupService.setup(user_id)
   - reindex_task_list             → TaskIndexingService.reindex_list(user_id, list_id)
   - renew_task_subscriptions      → TaskSetupService.renew_expiring_subscriptions(user_id)
   - renew_all_task_subscriptions  → fan-out: enqueue renew_task_subscriptions for all MS To Do users
+  - start_email_indexing         → fan-out: start incremental indexing for all Gmail users with auto_index enabled
 """
 
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional, Tuple
+from zoneinfo import ZoneInfo
+
+from dateutil.relativedelta import relativedelta
 
 if TYPE_CHECKING:
     from ..services.task_indexing_service import TaskIndexingService
     from ..services.task_setup_service import TaskSetupService
+
+from ..domain.agent_note import ReminderRecurrence
+from ..ports.agent_note_port import AgentNotePort
 
 from ..domain.agent import AgentIntent, AgentMessage, AgentStatus
 from ..handlers.agent_worker_handler import AgentWorkerHandler
@@ -67,6 +76,7 @@ class WorkerHandler:
         media_storage: Optional[MediaStoragePort] = None,
         task_setup: "Optional[TaskSetupService]" = None,
         task_indexing: "Optional[TaskIndexingService]" = None,
+        notes_port: Optional[AgentNotePort] = None,
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -83,6 +93,7 @@ class WorkerHandler:
         self._media_storage = media_storage
         self._task_setup = task_setup
         self._task_indexing = task_indexing
+        self._notes_port = notes_port
 
     async def handle(self, payload: dict) -> Optional[Tuple[dict, int]]:
         """
@@ -114,11 +125,74 @@ class WorkerHandler:
             return await self._handle_renew_task_subscriptions(payload)
         elif task_type == "renew_all_task_subscriptions":
             return await self._handle_renew_all_task_subscriptions()
+        elif task_type == "fire_due_reminders":
+            return await self._handle_fire_due_reminders()
+        elif task_type == "start_email_indexing":
+            return await self._handle_start_email_indexing()
         return None  # unknown task_type — caller handles fallback
 
     # ------------------------------------------------------------------
     # Email indexing
     # ------------------------------------------------------------------
+
+    async def _handle_start_email_indexing(self) -> Tuple[dict, int]:
+        """
+        Fan-out: start incremental indexing for all Gmail users with auto_index enabled
+        and whose auto_index_hour matches the current hour in their timezone.
+        Called by Cloud Scheduler hourly.
+        """
+        if not self._oauth or not self._email_job_repo or not self._task_queue:
+            logger.warning("[Worker] start_email_indexing: required services not configured")
+            return {"error": "services not configured"}, 501
+
+        user_ids = await self._oauth.list_users_by_provider("gmail")
+        now_utc = datetime.now(timezone.utc)
+        started, skipped = 0, 0
+
+        for user_id in user_ids:
+            profile = await self._user_repo.get_user(user_id)
+            if not profile:
+                skipped += 1
+                continue
+
+            cfg = profile.config
+            if not cfg.gmail_auto_index:
+                skipped += 1
+                continue
+
+            user_tz = ZoneInfo(cfg.timezone or "UTC")
+            local_hour = now_utc.astimezone(user_tz).hour
+            if local_hour != cfg.gmail_auto_index_hour:
+                skipped += 1
+                continue
+
+            # Check no indexing job already running
+            latest_job = await self._email_job_repo.get_latest_job(user_id, "gmail")
+            if latest_job and latest_job.status == "running":
+                logger.info(f"[Worker] start_email_indexing: job already running for {user_id[:8]}, skipping")
+                skipped += 1
+                continue
+
+            creds = await self._oauth.get_credentials(user_id, "gmail")
+            if not creds:
+                logger.warning(f"[Worker] start_email_indexing: no credentials for {user_id[:8]}")
+                skipped += 1
+                continue
+
+            job = self._email_indexing.create_job(
+                user_id=user_id,
+                provider="gmail",
+                triggered_by="scheduler",
+                mode="incremental",
+                account_id=profile.account_id,
+            )
+            await self._email_job_repo.create_job(job)
+            await self._task_queue.enqueue_email_indexing_task(job.job_id)
+            logger.info(f"[Worker] start_email_indexing: enqueued job {job.job_id[:8]} for {user_id[:8]}")
+            started += 1
+
+        logger.info(f"[Worker] start_email_indexing complete: started={started}, skipped={skipped}")
+        return {"started": started, "skipped": skipped}, 200
 
     async def _handle_email_indexing(self, payload: dict) -> Tuple[dict, int]:
         """
@@ -400,4 +474,122 @@ class WorkerHandler:
             )
         logger.info(f"[Worker] renew_all_task_subscriptions: enqueued {len(user_ids)} renewal tasks")
         return {"status": "ok", "enqueued": len(user_ids)}, 200
+
+    # ------------------------------------------------------------------
+    # Self-reminders: fire_due_reminders
+    # ------------------------------------------------------------------
+
+    _CRON_WINDOW_SECONDS = 4 * 60  # 4 min — idempotency guard for 5-min cron
+
+    async def _handle_fire_due_reminders(self) -> Tuple[dict, int]:
+        """
+        Fire all reminders with due <= now.
+
+        For each due note:
+          1. Resolve user account_id (skip if user not found).
+          2. Idempotency: skip if already fired within the current cron window.
+          3. Fire: notify() sends instruction to QuickAgent → delivers to user's channel.
+          4. Reschedule (recurrent) or delete (one-time).
+
+        Called by Cloud Scheduler every 15 minutes.
+        """
+        if not self._notes_port:
+            logger.warning("[Worker] fire_due_reminders: notes_port not configured")
+            return {"error": "notes_port not configured"}, 501
+
+        now = datetime.now(timezone.utc)
+        due_notes = await self._notes_port.list_due_reminders(as_of=now)
+        logger.info(f"[Worker] fire_due_reminders: {len(due_notes)} due note(s) at {now.isoformat()}")
+
+        fired, skipped = 0, 0
+        for note in due_notes:
+            # Idempotency: skip if fired recently (prevents double-fire on cron overlap)
+            if note.last_fired and (now - note.last_fired).total_seconds() < self._CRON_WINDOW_SECONDS:
+                skipped += 1
+                continue
+
+            # Resolve account_id
+            user_profile = await self._user_repo.get_user(note.user_id)
+            if not user_profile or not user_profile.account_id:
+                logger.warning(
+                    "[Worker] fire_due_reminders: user not found or no account_id: %s",
+                    note.user_id[:8],
+                )
+                skipped += 1
+                continue
+
+            account_id = user_profile.account_id
+            user_tz = ZoneInfo(user_profile.config.timezone or "UTC")
+
+            try:
+                await self._agent_factory.ensure_agents_for_user(note.user_id)
+                await self._notification.notify(
+                    user_id=note.user_id,
+                    account_id=account_id,
+                    system_alert=note.instruction,
+                    session_id=str(uuid.uuid4()),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[Worker] fire_due_reminders: notify failed for user=%s note=%s: %s",
+                    note.user_id[:8], note.note_id, exc,
+                )
+                # Still reschedule/delete — notification failure is not a reason to skip.
+
+            if note.recurrence:
+                next_due = _compute_next_due(note.due, note.recurrence, user_tz)
+                await self._notes_port.reschedule(note.note_id, next_due, last_fired=now)
+                logger.info(
+                    "[Worker] Rescheduled reminder %s → %s (user=%s)",
+                    note.note_id, next_due.isoformat(), note.user_id[:8],
+                )
+            else:
+                await self._notes_port.delete_note(note.note_id, note.user_id)
+                logger.info(
+                    "[Worker] Deleted one-time reminder %s (user=%s)",
+                    note.note_id, note.user_id[:8],
+                )
+
+            fired += 1
+
+        logger.info(f"[Worker] fire_due_reminders complete: fired={fired}, skipped={skipped}")
+        return {"fired": fired, "skipped": skipped}, 200
+
+
+# ---------------------------------------------------------------------------
+# Utility: compute next due datetime for recurrent reminders
+# ---------------------------------------------------------------------------
+
+def _compute_next_due(
+    current_due: datetime,
+    recurrence: ReminderRecurrence,
+    user_tz: ZoneInfo,
+) -> datetime:
+    """
+    Compute next UTC due datetime after firing.
+
+    - hourly: pure UTC arithmetic (DST-safe by definition)
+    - daily / weekly / monthly: arithmetic in user timezone to preserve wall-clock time
+      (e.g. "every day at 9am" stays at 9am local even across DST transitions)
+    """
+    interval = recurrence.interval or 1
+
+    if recurrence.type == "hourly":
+        return current_due + timedelta(hours=interval)
+
+    # Convert to user's local time, compute next, convert back to UTC
+    local_due = current_due.astimezone(user_tz)
+
+    if recurrence.type == "daily":
+        next_local = local_due + timedelta(days=interval)
+    elif recurrence.type == "weekly":
+        next_local = local_due + timedelta(weeks=interval)
+    elif recurrence.type == "monthly":
+        next_local = local_due + relativedelta(months=interval)
+    else:
+        # Unknown type — fall back to daily
+        logger.warning("[compute_next_due] Unknown recurrence type %r, defaulting to daily", recurrence.type)
+        next_local = local_due + timedelta(days=interval)
+
+    return next_local.astimezone(timezone.utc)
 

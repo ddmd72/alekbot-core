@@ -83,6 +83,7 @@ Account usage counters written before 2026-07-28 are inflated. For historical co
 | `{p}domain_email_facts_v1` | valuable emails as facts, four vectors, the same search path as facts | `{user_id}_{email_id}` | `IndexedEmail`, `src/domain/email.py` |
 
 What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained in the memory map,
+`../05_building_blocks/memory/README.md`.
 
 ### 3.3 Conversation and background work
 
@@ -858,6 +859,49 @@ Used by `SearchEnrichmentService` and `FirestoreFactRepository.search_facts()`. 
   ]
 }
 ```
+
+
+
+
+
+---
+
+
+
+
+
+
+
+```json
+{
+  
+  
+  "text": "Send Valencia morning news", // short display label ≤15 words
+  "instruction": "The user asked for a daily morning news briefing about Valencia...", // full execution context, no limit
+  
+  
+    
+    
+  },
+  
+  
+}
+```
+
+
+
+
+
+
+|-----------|-------|--------|
+
+
+
+
+
+
+
+
 
 
 

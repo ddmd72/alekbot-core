@@ -114,7 +114,7 @@ PENDING → RUNNING → COMPLETED
                  → FAILED (after error; Watchdog marks stale RUNNING as FAILED after 2h)
 ```
 
-A job is created with `triggered_by` = `"user"` (manual) or `"auto"` (future scheduled). Jobs are resumable: every page writes `next_page_token` to Firestore before re-enqueuing the next Cloud Task.
+A job is created with `triggered_by` = `"user"` (manual via Cabinet UI), `"scheduler"` (automatic via Cloud Scheduler), or `"auto"` (OAuth callback). Jobs are resumable: every page writes `next_page_token` to Firestore before re-enqueuing the next Cloud Task.
 
 ### 4.2 Per-Page Processing (one Cloud Tasks invocation)
 
@@ -135,7 +135,22 @@ Chunk size: **100 emails per page** (`GMAIL_DEFAULT_QUERY` filters Primary + Upd
 9. **Re-enqueue:** If `next_page_token` present → enqueue next Cloud Task.
 10. **Complete:** If no more pages → mark job `COMPLETED`, call `UserNotificationService.send_system_alert()`.
 
-### 4.3 Watchdog
+### 4.3 Scheduled Auto-Indexing
+
+Users can enable daily incremental indexing from Cabinet UI > Integrations > Gmail. Two settings stored in `UserBotConfig`:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `gmail_auto_index` | `False` | Enable/disable daily auto-index |
+| `gmail_auto_index_hour` | `8` | Local hour (0–23) in user's timezone |
+
+**Flow:** Cloud Scheduler fires `start_email_indexing` hourly → `WorkerHandler._handle_start_email_indexing()` iterates all Gmail users → checks `gmail_auto_index=True` and `current_local_hour == gmail_auto_index_hour` → creates incremental job and enqueues first Cloud Task.
+
+Skips users with a job already running. Uses `OAuthCredentialsPort.list_users_by_provider("gmail")` for fan-out.
+
+See [../../07_deployment/SCHEDULERS.md](../../07_deployment/SCHEDULERS.md) for scheduler details.
+
+### 4.4 Watchdog
 
 `task_type=email_indexing_watchdog` is triggered by Cloud Scheduler (periodic). It scans all jobs in `RUNNING` state older than 2 hours and marks them `FAILED`. This handles Cloud Tasks timeouts and crash-recovery scenarios.
 

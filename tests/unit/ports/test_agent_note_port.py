@@ -2,7 +2,8 @@
 Port contract tests for AgentNotePort.
 
 Covers:
-- AgentNotePort (4 abstract async methods: create_note, delete_note, update_note, list_active_notes)
+- AgentNotePort (6 abstract async methods: create_note, delete_note, update_note,
+  list_active_notes, list_due_reminders, reschedule)
 - AsyncMock(spec=AgentNotePort) satisfies the port contract in agent tests
 """
 
@@ -39,7 +40,8 @@ class TestAgentNotePortContract:
         assert getattr(AgentNotePort.list_active_notes, "__isabstractmethod__", False)
 
     def test_all_abstract_methods_are_async(self):
-        for name in ("create_note", "delete_note", "update_note", "list_active_notes"):
+        for name in ("create_note", "delete_note", "update_note", "list_active_notes",
+                     "list_due_reminders", "reschedule"):
             method = getattr(AgentNotePort, name)
             assert inspect.iscoroutinefunction(method), f"{name} must be async"
 
@@ -48,7 +50,7 @@ class TestAgentNotePortContract:
             name for name, method in inspect.getmembers(AgentNotePort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 4, f"Expected 4 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 6, f"Expected 6 abstract methods, got {abstract_methods}"
 
     def test_create_note_signature(self):
         sig = inspect.signature(AgentNotePort.create_note)
@@ -89,13 +91,15 @@ class TestAgentNotePortMockImplementation:
             note_id=note_id,
             user_id="user-1",
             text="Remind user about dentist",
+            instruction="Remind user about dentist",
             created_at=datetime(2026, 3, 9, 14, 30, 22, tzinfo=timezone.utc),
+            due=datetime(2026, 3, 10, 9, 0, 0, tzinfo=timezone.utc),
         )
 
     async def test_create_note_returns_agent_note(self, mock_port):
         note = self._make_note()
         mock_port.create_note.return_value = note
-        data = NoteCreate(user_id="user-1", text="Remind user about dentist")
+        data = NoteCreate(user_id="user-1", text="Remind user about dentist", instruction="Remind user about dentist", due=datetime(2026, 3, 10, 9, 0, 0, tzinfo=timezone.utc))
         result = await mock_port.create_note(data)
         assert result.note_id == "1741525822123"
         assert result.text == "Remind user about dentist"

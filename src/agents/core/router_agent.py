@@ -336,7 +336,7 @@ class RouterAgent(BaseAgent):
                     {
                         "note_id": n.note_id,
                         "text": n.text,
-                        "expires_after": n.expires_after.isoformat() if n.expires_after else None,
+                        "due": n.due.isoformat() if n.due else None,
                     }
                     for n in raw_notes
                 ]

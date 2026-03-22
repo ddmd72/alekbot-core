@@ -278,6 +278,20 @@ COMPUTE = ComputeAgentConfig()
 
 
 # ---------------------------------------------------------------------------
+# NotesAgent (src/agents/notes_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class NotesAgentConfig:
+    temperature: float = 0.2      # Low: deterministic CRUD, not creative
+    max_tokens: int = 512         # Single tool call + brief confirmation
+    timeout_ms: int = 10_000      # Fast: 1 tool call + 1 confirmation turn
+
+
+NOTES = NotesAgentConfig()
+
+
+# ---------------------------------------------------------------------------
 # TasksAgent (src/agents/tasks_agent.py)
 # ---------------------------------------------------------------------------
 

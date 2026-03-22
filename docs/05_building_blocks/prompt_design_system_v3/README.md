@@ -325,7 +325,7 @@ Appends dynamic context to the cached static template. Never cached.
 2. Format + validate static bio via `SecurityPort` (UNTRUSTED zone)
 3. Append `knowledge_base {}` block (bio + optionally conversation_history) — only if non-empty
 4. Append `<!-- CACHE_BOUNDARY -->`
-5. Append `working_memory_for_conversational_anchors {}` (only if active notes present) — orchestrator's own notes fetched by RouterAgent via `AgentNotePort.list_active_notes()` at turn start; TRUSTED zone, no `SecurityPort` validation
+5. Append `active_reminders {}` (only if active reminders present) — user's self-reminders fetched by RouterAgent via `AgentNotePort.list_active_notes()` at turn start; TRUSTED zone, no `SecurityPort` validation
 6. Append `current_date_time {}` (always)
 7. Append `query_specific_context` (only if Q-S facts present)
 
@@ -403,15 +403,15 @@ knowledge_base {                         ← Phase 2: static bio facts (before b
 
 <!-- CACHE_BOUNDARY -->
 
-working_memory_for_conversational_anchors {          ← only when active notes exist
-    // Notes you wrote to yourself. Not visible to the user. Snapshot from turn start — trust tool results for changes made this turn.
-    - [id: 1741523842000] "User avoids mornings — always suggest evening options"
-    - [id: 1741524100123] "Budget tight this month — filter recommendations accordingly" (expires: 2026-03-31T23:59:59Z)
+active_reminders {          ← only when active reminders exist
+    // Reminders you scheduled for yourself. Not visible to the user. Snapshot from turn start — trust tool results for changes made this turn.
+    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time.
+    - "Send Valencia morning news briefing" (fires: Mar 23 08:00 UTC) [id: 1742700000000]
+    - "Weekly project check-in" (fires: Mar 28 09:00 UTC) [id: 1742800000000]
 }
 
 current_date_time {
-    2026-02-27 15:42 Thursday (UTC)
-    System time is UTC. User's local time may differ.
+    2026-02-27 15:42 Thursday (CET)
 }
 
 query_specific_context: '''          ← Phase 2: only when router found semantic facts

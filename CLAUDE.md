@@ -76,6 +76,18 @@ background process extracts new facts from the conversation → bot gets smarter
   Port: `ImageSearchPort` (`src/ports/image_search_port.py`).
   Adapter: `UnsplashAdapter` (`src/adapters/unsplash_adapter.py`).
   See docs/05_building_blocks/document_generation/README.md § 11.
+- Notes / Proactive Reminders (ECO tier) — `NotesAgent` backed by `FirestoreAgentNoteAdapter`. Intent `manage_self_reminders`.
+  Two-field model: `text` (≤15-word label) + `instruction` (full execution context, self-contained).
+  3 tools: `create_self_reminder`, `update_self_reminder`, `delete_self_reminder`. Single LLM call.
+  Firing: Cloud Scheduler every 15 min → `POST /worker {fire_due_reminders}` → `WorkerHandler` →
+  `UserNotificationService.notify(system_alert=instruction)` → QuickAgent executes as new conversation.
+  Fired conversations saved to session history. Recurrence: `hourly/daily/weekly/monthly`.
+  Idempotency: `last_fired` guard (14-min window). Soft cap 20 / hard cap 30 active reminders.
+  Transparency: every CRUD sends `notify_raw()` to user's channel immediately.
+  Context: orchestrator sees `active_reminders {}` summary; NotesAgent sees full details + bio facts.
+  Timezone: from `UserBotConfig.timezone` (IANA, set in Cabinet UI). Used for: prompt datetime,
+  `due` UTC conversion, `next_due` recurrence, transparency notification formatting.
+  See `docs/10_rfcs/PROACTIVE_SELF_REMINDERS_RFC.md`.
 - Tasks (BALANCED tier) — `TasksAgent` backed by Microsoft To Do Graph API. Intent `manage_user_tasks`.
   5 tools: `list_tasks`, `search_tasks`, `create_task`, `update_task`, `delete_task`. Max 6 turns.
   Search-before-mutate: LLM calls `search_tasks` first, gets `task_ref` (8-char short_id =
@@ -106,11 +118,15 @@ background process extracts new facts from the conversation → bot gets smarter
 - `EmailIndexingService` → `GmailProviderAdapter` → `EmailClassificationAgent` (LLM triage)
 - Valuable emails → `IndexedEmail` stored in `domain_email_facts_v1` (4-vector schema, mirrors FactEntity)
 - `EmailEmbeddingRepairService` — async repair job for emails stored without vectors
-- `UserNotificationService` — sends Slack/Telegram alert on job completion; stores last
-  active channel per user in `user_notification_state`
+- `UserNotificationService` — sends background notifications to user's last active channel.
+  `notify()`: routes `system_alert` through QuickAgent → formatted delivery + session history save.
+  `notify_raw()`: direct text delivery, no agent reformatting. Stores last active channel per user
+  in `user_notification_state`. Callers: reminders worker, email indexing, deep research, async docs.
 - `WorkerHandler` — dispatches `/worker` Cloud Tasks by `task_type`:
-  `email_indexing`, `email_indexing_watchdog`, `consolidation`, `agent_execution`,
-  `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`
+  `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`, `consolidation`, `agent_execution`,
+  `fire_due_reminders`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
+  `renew_all_task_subscriptions`
+  See `docs/07_deployment/SCHEDULERS.md` for full scheduler reference.
 - Watchdog: Cloud Scheduler fires `email_indexing_watchdog` every 2h; marks stale `running`
   jobs as `failed`
 

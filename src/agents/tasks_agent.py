@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ..agents.base_agent import BaseAgent
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from ..services.task_indexing_service import TaskIndexingService
 from ..utils.logger import logger
 
-_MAX_TURNS = 4
+_MAX_TURNS = 6
 
 # ---------------------------------------------------------------------------
 # Tool declarations
@@ -107,11 +107,24 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
                 },
                 "body": {
                     "type": "string",
-                    "description": "Optional extra detail or notes. Omit if none.",
+                    "description": "Extra detail or notes. Omit if not provided.",
                 },
                 "due_datetime": {
                     "type": "string",
-                    "description": "Optional due date/time in ISO-8601 format. Omit if not mentioned.",
+                    "description": "Due date/time in ISO-8601. Omit if not mentioned.",
+                },
+                "start_datetime": {
+                    "type": "string",
+                    "description": "Start date/time in ISO-8601. Omit if not mentioned.",
+                },
+                "reminder_datetime": {
+                    "type": "string",
+                    "description": (
+                        "Reminder alert date/time in ISO-8601. "
+                        "Set when the user specifies a reminder time. "
+                        "When omitted and due_datetime is provided, reminder is automatically "
+                        "set to 8pm the day before the due date."
+                    ),
                 },
                 "importance": {
                     "type": "string",
@@ -123,49 +136,49 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
                     "items": {"type": "string"},
                     "description": (
                         "Classification tags. Auto-infer from context — "
-                        "e.g. 'remind me about Prague hotel' -> ['prague', 'trip']."
+                        "e.g. 'remind me about Prague hotel' → ['prague', 'trip']."
                     ),
                 },
                 "recurrence": {
                     "type": "object",
-                    "description": "Recurrence settings. Use only when the task should repeat regularly.",
+                    "description": "Recurrence settings. Include only when the task should repeat.",
                     "properties": {
                         "pattern": {
                             "type": "string",
                             "enum": ["daily", "weekdays", "weekly", "absoluteMonthly", "absoluteYearly"],
                             "description": (
-                                "Repeat frequency. "
-                                "'daily' — every N days. "
-                                "'weekdays' — every Mon–Fri. "
-                                "'weekly' — on specific days of the week. "
-                                "'absoluteMonthly' — on a specific day of the month. "
-                                "'absoluteYearly' — on a specific day of a specific month."
+                                "Repeat frequency: "
+                                "'daily' — every N days; "
+                                "'weekdays' — Mon–Fri; "
+                                "'weekly' — specific days of the week; "
+                                "'absoluteMonthly' — same day each month; "
+                                "'absoluteYearly' — same day each year."
                             ),
                         },
                         "interval": {
                             "type": "integer",
-                            "description": "Every N periods (e.g. 2 = every 2 weeks). Default 1.",
+                            "description": "Every N periods (e.g. 2 = every other week). Default 1.",
                         },
                         "days_of_week": {
                             "type": "array",
                             "items": {"type": "string"},
                             "description": (
                                 "For 'weekly': days to repeat, e.g. ['monday', 'friday']. "
-                                "If omitted, derived from due_datetime."
+                                "Derived from due_datetime when omitted."
                             ),
                         },
                         "day_of_month": {
                             "type": "integer",
                             "description": (
                                 "For 'absoluteMonthly'/'absoluteYearly': day of month (1–31). "
-                                "If omitted, derived from due_datetime."
+                                "Derived from due_datetime when omitted."
                             ),
                         },
                         "month": {
                             "type": "integer",
                             "description": (
                                 "For 'absoluteYearly': month (1–12). "
-                                "If omitted, derived from due_datetime."
+                                "Derived from due_datetime when omitted."
                             ),
                         },
                     },
@@ -178,8 +191,10 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
     {
         "name": "update_task",
         "description": (
-            "Modify an existing task — rename, reschedule, mark done, or mark undone. "
-            "Requires task_ref from a prior search_tasks or list_tasks result."
+            "Modify an existing task — rename, reschedule, set reminder, change recurrence, "
+            "mark done, or mark undone. "
+            "Requires task_ref from a prior search_tasks or list_tasks result. "
+            "Only include fields that should change; omit all others."
         ),
         "parameters": {
             "type": "object",
@@ -198,7 +213,27 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
                 },
                 "due_datetime": {
                     "type": "string",
-                    "description": "New due date/time in ISO-8601. Omit if not changing.",
+                    "description": (
+                        "New due date/time in ISO-8601. Omit if not changing. "
+                        "When changed without an explicit reminder_datetime, reminder is "
+                        "automatically moved to 8pm the day before the new due date."
+                    ),
+                },
+                "start_datetime": {
+                    "type": "string",
+                    "description": "New start date/time in ISO-8601. Omit if not changing.",
+                },
+                "reminder_datetime": {
+                    "type": "string",
+                    "description": (
+                        "New reminder alert date/time in ISO-8601. "
+                        "Set when the user explicitly specifies a reminder time. "
+                        "Omit to let auto-reminder logic apply when due_datetime is also changing."
+                    ),
+                },
+                "is_reminder_on": {
+                    "type": "boolean",
+                    "description": "Set false to disable the reminder. Omit if not changing.",
                 },
                 "importance": {
                     "type": "string",
@@ -208,12 +243,57 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
                 "status": {
                     "type": "string",
                     "enum": ["notStarted", "inProgress", "completed", "deferred", "waitingOnOthers"],
-                    "description": "New status. Use 'completed' to mark done, 'notStarted' to mark undone.",
+                    "description": "New status. Use 'completed' to mark done, 'notStarted' to unmark.",
                 },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Replacement tag list. Omit if not changing.",
+                    "description": "Full replacement tag list. Omit if not changing.",
+                },
+                "recurrence": {
+                    "type": "object",
+                    "description": "New recurrence settings. Replaces existing recurrence entirely.",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "enum": ["daily", "weekdays", "weekly", "absoluteMonthly", "absoluteYearly"],
+                            "description": (
+                                "Repeat frequency: "
+                                "'daily' — every N days; "
+                                "'weekdays' — Mon–Fri; "
+                                "'weekly' — specific days of the week; "
+                                "'absoluteMonthly' — same day each month; "
+                                "'absoluteYearly' — same day each year."
+                            ),
+                        },
+                        "interval": {
+                            "type": "integer",
+                            "description": "Every N periods (e.g. 2 = every other week). Default 1.",
+                        },
+                        "days_of_week": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "For 'weekly': days to repeat, e.g. ['monday', 'friday']. "
+                                "Derived from due_datetime when omitted."
+                            ),
+                        },
+                        "day_of_month": {
+                            "type": "integer",
+                            "description": (
+                                "For 'absoluteMonthly'/'absoluteYearly': day of month (1–31). "
+                                "Derived from due_datetime when omitted."
+                            ),
+                        },
+                        "month": {
+                            "type": "integer",
+                            "description": (
+                                "For 'absoluteYearly': month (1–12). "
+                                "Derived from due_datetime when omitted."
+                            ),
+                        },
+                    },
+                    "required": ["pattern"],
                 },
             },
             "required": ["task_ref"],
@@ -416,12 +496,20 @@ class TasksAgent(BaseAgent):
             recurrence: Optional[TaskRecurrence] = None
             if rec_args := args.get("recurrence"):
                 recurrence = self._parse_recurrence(rec_args, args.get("due_datetime"))
+            parsed_due = self._parse_datetime(args.get("due_datetime"))
+            reminder_dt, is_reminder_on = self._derive_reminder(
+                self._parse_datetime(args.get("reminder_datetime")),
+                parsed_due,
+            )
             task = await self._tasks.create_task(
                 user_id=user_id,
                 task=TaskCreate(
                     title=args["title"],
                     body=args.get("body"),
-                    due_datetime=self._parse_datetime(args.get("due_datetime")),
+                    due_datetime=parsed_due,
+                    start_datetime=self._parse_datetime(args.get("start_datetime")),
+                    reminder_datetime=reminder_dt,
+                    is_reminder_on=is_reminder_on,
                     importance=TaskImportance(args["importance"]) if args.get("importance") else TaskImportance.NORMAL,
                     tags=args.get("tags") or [],
                     recurrence=recurrence,
@@ -432,6 +520,18 @@ class TasksAgent(BaseAgent):
 
         if name == "update_task":
             list_id, task_id = await self._indexing.resolve_short_id(user_id, args["task_ref"])
+            parsed_due = self._parse_datetime(args.get("due_datetime"))
+            parsed_reminder = self._parse_datetime(args.get("reminder_datetime"))
+            # Auto-reminder: task had no due_date, a new due_datetime is set, no explicit reminder.
+            reminder_dt = parsed_reminder
+            is_reminder_on: Optional[bool] = args.get("is_reminder_on")
+            if parsed_due is not None and parsed_reminder is None:
+                current = await self._tasks.get_task(user_id, list_id, task_id)
+                if current.due_datetime is None:
+                    reminder_dt, is_reminder_on = self._derive_reminder(None, parsed_due)
+            recurrence: Optional[TaskRecurrence] = None
+            if rec_args := args.get("recurrence"):
+                recurrence = self._parse_recurrence(rec_args, args.get("due_datetime"))
             task = await self._tasks.update_task(
                 user_id=user_id,
                 list_id=list_id,
@@ -439,10 +539,14 @@ class TasksAgent(BaseAgent):
                 updates=TaskUpdate(
                     title=args.get("title"),
                     body=args.get("body"),
-                    due_datetime=self._parse_datetime(args.get("due_datetime")),
+                    due_datetime=parsed_due,
+                    start_datetime=self._parse_datetime(args.get("start_datetime")),
+                    reminder_datetime=reminder_dt,
+                    is_reminder_on=is_reminder_on,
                     importance=TaskImportance(args["importance"]) if args.get("importance") else None,
                     status=TaskStatus(args["status"]) if args.get("status") else None,
                     tags=args.get("tags"),
+                    recurrence=recurrence,
                 ),
             )
             await self._indexing.index_task(task)
@@ -463,6 +567,28 @@ class TasksAgent(BaseAgent):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _derive_reminder(
+        explicit_reminder: Optional[datetime],
+        due_datetime: Optional[datetime],
+    ) -> Tuple[Optional[datetime], bool]:
+        """
+        Return (reminder_datetime, is_reminder_on).
+
+        Priority:
+          1. explicit_reminder is set → use it as-is, is_reminder_on=True.
+          2. due_datetime is set → auto-set to 8pm the day before, is_reminder_on=True.
+          3. Neither → (None, False): no reminder.
+        """
+        if explicit_reminder is not None:
+            return explicit_reminder, True
+        if due_datetime is not None:
+            auto = (due_datetime - timedelta(days=1)).replace(
+                hour=20, minute=0, second=0, microsecond=0
+            )
+            return auto, True
+        return None, False
 
     @staticmethod
     def _short_id(task_id: str) -> str:

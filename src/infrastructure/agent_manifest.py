@@ -57,9 +57,7 @@ class Intent:
     # Tasks management — single entry point; agent selects CRUD tool internally
     MANAGE_USER_TASKS = "manage_user_tasks"
     # Orchestrator notepad — short-lived cross-turn notes
-    CREATE_NOTE = "create_note"
-    DELETE_NOTE = "delete_note"
-    UPDATE_NOTE = "update_note"
+    MANAGE_SELF_REMINDERS = "manage_self_reminders"
     # Document creation — produces a DOCX file attachment
     CREATE_DOCUMENT = "create_document"
     # Internal: LLM writes Node.js docx script, Python executes it. Called by DocPlannerAgent only.
@@ -239,18 +237,13 @@ TASKS = AgentDescriptor(
     capability_descriptions={
         Intent.MANAGE_USER_TASKS: (
             "Manage the user's personal task list (MS To Do). "
-            "Payload: {\"query\": \"<instruction>\", \"context\": \"<reasoning and background>\"}.\n"
-            "query — the operation. context — why: what the user said, what they meant, relevant details. "
-            "The agent uses context to infer tags, importance, notes, and dates accurately.\n"
-            "query examples:\n"
-            "  'Show active tasks'  |  'Show completed tasks'\n"
-            "  'Find tasks about: <keyword>'\n"
-            "  'Add task: <title>'  |  'Add task: <title>, due 2026-03-28, importance high'\n"
-            "  'Mark done: <task title>'  |  'Reopen: <task title>'\n"
-            "  'Rename: <old title> → <new title>'\n"
-            "  'Reschedule: <task title> → due 2026-03-28'\n"
-            "  'Delete: <task title>'\n"
-            "context example: 'User planning Prague trip next month, budget hotel ~€800'\n"
+            "payload: {\"query\": \"<delegation>\", \"context\": \"<optional background>\"}\n"
+            "\n"
+            "Write query as a natural language instruction — not a command. "
+            "Include everything you know: what the user wants, what the task is about, "
+            "all dates and times as mentioned, any relevant context. "
+            "The agent is an LLM and will understand — give it the full picture, not a template.\n"
+            "\n"
             "Write the delegation in the same language you use to respond to the user."
         ),
     },
@@ -312,28 +305,15 @@ NOTES = AgentDescriptor(
     agent_id="notes_agent",
     agent_type="notes",
     capabilities={
-        Intent.CREATE_NOTE: ExecutionMode.SYNC,
-        Intent.DELETE_NOTE: ExecutionMode.SYNC,
-        Intent.UPDATE_NOTE: ExecutionMode.SYNC,
+        Intent.MANAGE_SELF_REMINDERS: ExecutionMode.SYNC,
     },
-    description="Orchestrator notepad — write, update, or delete contextual notes",
+    description="Full CRUD management of proactive self-reminders: create, update, delete, and list reminders that fire automatically at a scheduled time",
     capability_descriptions={
-        Intent.CREATE_NOTE: (
-            "Create a note to remember something across turns. "
-            "payload: {\"text\": \"<≤25 words>\", "
-            "\"visible_after\": \"<ISO8601 or null>\", "
-            "\"expires_after\": \"<ISO8601 or null>\"}"
-        ),
-        Intent.DELETE_NOTE: (
-            "Delete a note by its note_id. Use when you have acted on it and no longer need it. "
-            "note_id is the numeric epoch-ms ID from your working_memory_for_conversational_anchors notes context. "
-            "payload: {\"note_id\": \"<epoch-ms id from working_memory_for_conversational_anchors>\"}"
-        ),
-        Intent.UPDATE_NOTE: (
-            "Update the text or timing of an existing note. "
-            "note_id is the numeric epoch-ms ID from your working_memory_for_conversational_anchors notes context. "
-            "payload: {\"note_id\": \"<epoch-ms id from working_memory_for_conversational_anchors>\", \"text\": \"<≤25 words>\", "
-            "\"visible_after\": \"<ISO8601>\", \"expires_after\": \"<ISO8601>\"}"
+        Intent.MANAGE_SELF_REMINDERS: (
+            "Full CRUD for proactive self-reminders (create, update, delete, list). "
+            "Reminders fire automatically on schedule; each carries a self-contained instruction "
+            "executed in a new conversation with no session memory.\n"
+            "payload: {\"query\": \"<briefing: operation, timing, full context, note_id if updating/deleting>\"}"
         ),
     },
     internal=False,

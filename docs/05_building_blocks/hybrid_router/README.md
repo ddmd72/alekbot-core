@@ -95,8 +95,8 @@ The router doesn't just route; it prepares the context for the target agent.
 
 1. **Keyword Extraction:** LLM triage extracts "semantic lenses" and search phrases.
 2. **Enrichment:** Calls `SearchEnrichmentService` to perform parallel multi-vector searches.
-3. **Notes Enrichment:** Calls `AgentNotePort.list_active_notes(user_id, as_of=now)` to fetch the orchestrator's active working memory notes. Result is serialized as `agent_notes: List[dict]` in the routed message context (`note_id`, `text`, `expires_after`). Failures are caught and logged as warnings — notes enrichment never blocks routing.
-4. **Context Injection:** The enriched context (search results + active notes) is attached to the `AgentMessage` sent to the target agent. Quick/Smart extract `agent_notes` from context and pass them to `PromptBuilder.build_for_agent()` → injected as `working_memory_for_conversational_anchors {}` block after `PROMPT_CACHE_BOUNDARY`.
+3. **Reminders Enrichment:** Calls `AgentNotePort.list_active_notes(user_id, as_of=now)` to fetch the user's active self-reminders. Result is serialized as `agent_notes: List[dict]` in the routed message context (`note_id`, `text`, `due`). Failures are caught and logged as warnings — enrichment never blocks routing.
+4. **Context Injection:** The enriched context (search results + active reminders) is attached to the `AgentMessage` sent to the target agent. Quick/Smart extract `agent_notes` from context and pass them to `PromptBuilder.build_for_agent()` → injected as `active_reminders {}` block after `PROMPT_CACHE_BOUNDARY`.
 
 ---
 

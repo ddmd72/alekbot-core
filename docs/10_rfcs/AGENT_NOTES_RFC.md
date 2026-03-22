@@ -1,6 +1,6 @@
 # RFC: Orchestrator Notes (Agent Notepad)
 
-**Status:** CONCEPT
+**Status:** SUPERSEDED by PROACTIVE_SELF_REMINDERS_RFC.md — do not use
 **Date:** 2026-03-08
 
 ---
