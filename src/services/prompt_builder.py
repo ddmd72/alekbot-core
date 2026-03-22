@@ -275,6 +275,9 @@ class PromptBuilder(PromptBuilderPort):
         else:
             query_specific_context = None
 
+        user_timezone = getattr(self, "config", None)
+        user_timezone = user_timezone.timezone if user_timezone else "UTC"
+
         return await self.assembly_service.assemble(
             agent_type=agent_type,
             user_id=user_id or ANONYMOUS_USER_ID,
@@ -284,6 +287,7 @@ class PromptBuilder(PromptBuilderPort):
             query_specific_context=query_specific_context,
             kb_preamble=kb_preamble,
             agent_notes=agent_notes,
+            user_timezone=user_timezone,
         )
 
     async def _get_biographical_component(self, user_id: str) -> str:

@@ -83,6 +83,7 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
 | **Infra**  | `development_event_dedup`         | `event_dedup`         | Idempotency Store     |
 | **Infra**  | `development_task_search_index`   | `task_search_index`   | MS To Do Semantic Search Index |
 | **Infra**  | `development_task_config`         | `task_config`         | Per-User MS To Do Config (primary list + subscriptions) |
+| **Infra**  | `development_orchestrator_notes`  | `orchestrator_notes`  | Proactive Self-Reminders |
 
 **Prefixes:**
 
@@ -862,6 +863,49 @@ Added 2026-02-18 for User Cabinet facts browser (`GET /api/user/facts/browse`). 
 **`primary_list_id` write pattern:** `set_primary_list_id_if_absent()` uses a Firestore transaction — safe under concurrent calls (e.g. parallel `setup_microsoft_todo` tasks). Returns existing value if already set.
 
 **Subscriptions:** One per MS To Do list. Renewed on webhook receipt (self-healing) or by `renew_task_subscriptions` worker task. Cleared on disconnect.
+
+---
+
+## 11. Proactive Self-Reminders (`{prefix}orchestrator_notes`)
+
+**Purpose:** Stores user self-reminders that fire automatically via Cloud Scheduler. Source of truth for all reminder state.
+**Document ID:** epoch milliseconds (time-sortable, 1ms collision window).
+**Code Reference:** `src/domain/agent_note.py` → `AgentNote`, `src/adapters/firestore_agent_note_adapter.py`
+
+```json
+{
+  "note_id": "1742700000000",           // epoch-ms string, same as document ID
+  "user_id": "550e8400-...",
+  "text": "Send Valencia morning news", // short display label ≤15 words
+  "instruction": "The user asked for a daily morning news briefing about Valencia...", // full execution context, no limit
+  "due": "2026-03-23T08:00:00Z",        // UTC datetime when reminder fires
+  "recurrence": {                        // null for one-time reminders
+    "type": "daily",                    // "hourly" | "daily" | "weekly" | "monthly"
+    "interval": 1                       // every N units
+  },
+  "last_fired": "2026-03-22T08:00:05Z", // UTC, null until first fire
+  "created_at": "2026-03-21T14:30:00Z"
+}
+```
+
+**Required Firestore index:** `due ASC` — enables `WHERE due <= :now` cross-user query in `list_due_reminders()` without full collection scan.
+
+**Access patterns:**
+
+| Operation | Query | Caller |
+|-----------|-------|--------|
+| `list_active_notes(user_id, as_of)` | `WHERE user_id = ? AND due > ?` | RouterAgent (per-turn enrichment) |
+| `list_due_reminders(as_of)` | `WHERE due <= ?` (cross-user) | WorkerHandler `fire_due_reminders` |
+| `create_note` | Insert | NotesAgent |
+| `update_note` | Update by note_id | NotesAgent |
+| `delete_note` | Delete by note_id + user_id | NotesAgent / WorkerHandler |
+| `reschedule` | Update `due` + `last_fired` | WorkerHandler after firing recurrent reminder |
+
+**Firing flow:** Cloud Scheduler (every 15 min) → `POST /worker {fire_due_reminders}` → `list_due_reminders(now)` → `UserNotificationService.notify(system_alert=instruction)` → QuickAgent formats + delivers → session history saved. One-time: deleted. Recurrent: rescheduled via `relativedelta` in user's timezone.
+
+**Idempotency:** Skip if `last_fired >= now - 14min` (cron overlap guard).
+
+**Caps:** Soft 20 (alert in CRUD result), hard 30 (adapter-level exception on create).
 
 ---
 

@@ -339,6 +339,7 @@ async def main():
             state_repo=notification_state_repo,
             channel_factory=notification_channel_factory,
             coordinator=coordinator,
+            session_store=session_store,
         )
 
         # DocumentDeliveryService — GCS-backed, used by both async (AgentWorkerHandler)
@@ -491,6 +492,7 @@ async def main():
             media_storage=gcs_media_adapter,
             task_setup=task_setup_service,
             task_indexing=container.task_indexing,
+            notes_port=container.notes_adapter,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

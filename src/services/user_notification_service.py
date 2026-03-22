@@ -1,23 +1,29 @@
 """
 UserNotificationService — sends background notifications to a user via their last active channel.
 
-Flow:
+Flow (notify):
   1. Load last active channel from NotificationStatePort.
   2. Create a ResponseChannel via NotificationChannelFactoryPort.
   3. Send system_alert to QuickAgent (via AgentCoordinator) to format in user's communication style.
   4. Deliver the formatted response via ResponseChannel.
+  5. Save both turns to session history via SessionStore (if configured).
 
-Callers: email indexing worker (batch progress), future background tasks.
+Callers:
+  - fire_due_reminders worker (proactive self-reminders)
+  - email indexing worker (batch progress / completion)
+  - deep_research_polling worker (async research delivery)
+  - AgentWorkerHandler (async document delivery via notify_document_link / notify_file_bytes)
 """
 import uuid
 from typing import Optional, Protocol
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus
-from ..domain.llm import MessagePart
+from ..domain.llm import Message, MessagePart
 from ..domain.messaging import SmartResponse
 from ..ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from ..ports.notification_state_port import NotificationStatePort
 from ..ports.platform_media_port import PlatformMediaPort
+from ..ports.session_store import SessionStore
 from ..utils.logger import logger
 
 
@@ -35,11 +41,13 @@ class UserNotificationService:
         channel_factory: NotificationChannelFactoryPort,
         coordinator: MessageRouter,
         platform_media: Optional[PlatformMediaPort] = None,
+        session_store: Optional[SessionStore] = None,
     ):
         self._state_repo = state_repo
         self._channel_factory = channel_factory
         self._coordinator = coordinator
         self._platform_media: Optional[PlatformMediaPort] = platform_media
+        self._session_store: Optional[SessionStore] = session_store
 
     async def save_channel(self, user_id: str, platform: str, channel_id: str) -> None:
         """
@@ -170,6 +178,11 @@ class UserNotificationService:
                 text = str(result) if result else ""
 
             if text:
+                # Prepend user mention for Slack so the message triggers a notification sound.
+                # channel_id is a Slack user ID (U...) when stored from a DM conversation.
+                if channel_info.platform == "slack" and channel_info.channel_id.startswith("U"):
+                    text = f"<@{channel_info.channel_id}> {text}"
+
                 if len(text) > response_channel.max_message_length:
                     placeholder = await response_channel.send_message("📩")
                     message_id = placeholder['ts']
@@ -182,6 +195,20 @@ class UserNotificationService:
                     f"📬 [Notification] Sent to {channel_info.platform} "
                     f"channel={channel_info.channel_id} user={user_id[:8]}"
                 )
+
+                if self._session_store:
+                    try:
+                        await self._session_store.append_messages_batch(
+                            session_id=session_id,
+                            owner_id=user_id,
+                            messages=[
+                                Message(role="user", parts=[MessagePart(text=system_alert)]),
+                                Message(role="model", parts=[MessagePart(text=text, full_text=text)]),
+                            ],
+                        )
+                    except Exception as exc:
+                        logger.warning("[Notification] Failed to save history: %s", exc)
+
             if rich_content:
                 await response_channel.send_rich_content(rich_content)
         except Exception as exc:

@@ -369,6 +369,43 @@ def create_user_cabinet_blueprint(
             logger.error(f"Error fetching platforms: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
+    @bp.route("/api/user/timezone", methods=["GET"])
+    @auth_required
+    async def get_timezone():
+        """Return the user's current timezone setting."""
+        try:
+            user = await user_repo.get_user(g.user_id)
+            tz = user.config.timezone if user else "UTC"
+            return jsonify({"timezone": tz}), 200
+        except Exception as e:
+            logger.error(f"Error fetching timezone: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/timezone", methods=["PUT"])
+    @auth_required
+    async def set_timezone():
+        """Update the user's timezone. Body: {\"timezone\": \"Europe/Kyiv\"}"""
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            body = await request.get_json(force=True) or {}
+            tz_name = body.get("timezone", "").strip()
+            if not tz_name:
+                return jsonify({"error": "timezone field is required"}), 400
+            try:
+                ZoneInfo(tz_name)  # validate IANA name
+            except (ZoneInfoNotFoundError, KeyError):
+                return jsonify({"error": f"Unknown timezone: {tz_name!r}"}), 400
+
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            user.config.timezone = tz_name
+            await user_repo.update_user(user)
+            return jsonify({"timezone": tz_name}), 200
+        except Exception as e:
+            logger.error(f"Error updating timezone: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
     @bp.route("/api/user/facts", methods=["GET"])
     @auth_required
     async def get_facts():
@@ -691,6 +728,48 @@ def create_user_cabinet_blueprint(
             return jsonify({"success": True}), 200
         except Exception as exc:
             logger.error(f"Error disconnecting Gmail: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/gmail/auto-index", methods=["GET"])
+    @auth_required
+    async def gmail_auto_index_get():
+        """Return current auto-index schedule settings for the authenticated user."""
+        try:
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            return jsonify({
+                "enabled": user.config.gmail_auto_index,
+                "hour": user.config.gmail_auto_index_hour,
+            }), 200
+        except Exception as exc:
+            logger.error(f"Error fetching auto-index settings: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/gmail/auto-index", methods=["PUT"])
+    @auth_required
+    async def gmail_auto_index_set():
+        """Update auto-index schedule. Body: {\"enabled\": bool, \"hour\": 0-23}"""
+        try:
+            body = await request.get_json(force=True) or {}
+            enabled = body.get("enabled")
+            hour = body.get("hour")
+
+            if enabled is None or not isinstance(enabled, bool):
+                return jsonify({"error": "enabled (bool) required"}), 400
+            if hour is None or not isinstance(hour, int) or not (0 <= hour <= 23):
+                return jsonify({"error": "hour must be integer 0-23"}), 400
+
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+
+            user.config.gmail_auto_index = enabled
+            user.config.gmail_auto_index_hour = hour
+            await user_repo.update_user(user)
+            return jsonify({"enabled": enabled, "hour": hour}), 200
+        except Exception as exc:
+            logger.error(f"Error updating auto-index settings: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
     # =========================================================================
