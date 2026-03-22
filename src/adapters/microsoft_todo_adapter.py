@@ -50,9 +50,9 @@ _PROVIDER = "microsoft_todo"
 _PRIMARY_LIST_NAME = "Alek Bot Tasks"
 _BATCH_SEMAPHORE = asyncio.Semaphore(5)  # Graph API throttling for personal accounts
 
-# Graph API hard limit for personal (consumers) accounts: 4230 minutes.
-# Use 4229 to stay safely within the limit.
-_SUB_EXPIRY_MINUTES = 4229
+# Graph API limit for personal (consumers) accounts varies; use a conservative
+# 4000 minutes (~2.8 days) to stay safely within any documented ceiling.
+_SUB_EXPIRY_MINUTES = 4000
 
 _IMPORTANCE_TO_MS = {
     TaskImportance.LOW: "low",
