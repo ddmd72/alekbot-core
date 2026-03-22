@@ -78,7 +78,7 @@ steps:
           --uri="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"renew_all_task_subscriptions"}' \
-          --headers="Content-Type=application/json" \
+          --update-headers="Content-Type=application/json" \
           --location=us-central1 \
           --attempt-deadline=60s \
           --project=$PROJECT_ID \
@@ -87,6 +87,48 @@ steps:
           --uri="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"renew_all_task_subscriptions"}' \
+          --headers="Content-Type=application/json" \
+          --location=us-central1 \
+          --attempt-deadline=60s \
+          --project=$PROJECT_ID
+
+        gcloud scheduler jobs describe alek-bot-prod-start-email-indexing \
+          --location=us-central1 --project=$PROJECT_ID &>/dev/null \
+        && gcloud scheduler jobs update http alek-bot-prod-start-email-indexing \
+          --schedule="0 * * * *" \
+          --uri="$_SERVICE_URL/worker" \
+          --http-method=POST \
+          --message-body='{"task_type":"start_email_indexing"}' \
+          --update-headers="Content-Type=application/json" \
+          --location=us-central1 \
+          --attempt-deadline=60s \
+          --project=$PROJECT_ID \
+        || gcloud scheduler jobs create http alek-bot-prod-start-email-indexing \
+          --schedule="0 * * * *" \
+          --uri="$_SERVICE_URL/worker" \
+          --http-method=POST \
+          --message-body='{"task_type":"start_email_indexing"}' \
+          --headers="Content-Type=application/json" \
+          --location=us-central1 \
+          --attempt-deadline=60s \
+          --project=$PROJECT_ID
+
+        gcloud scheduler jobs describe alek-bot-prod-fire-due-reminders \
+          --location=us-central1 --project=$PROJECT_ID &>/dev/null \
+        && gcloud scheduler jobs update http alek-bot-prod-fire-due-reminders \
+          --schedule="*/5 * * * *" \
+          --uri="$_SERVICE_URL/worker" \
+          --http-method=POST \
+          --message-body='{"task_type":"fire_due_reminders"}' \
+          --update-headers="Content-Type=application/json" \
+          --location=us-central1 \
+          --attempt-deadline=60s \
+          --project=$PROJECT_ID \
+        || gcloud scheduler jobs create http alek-bot-prod-fire-due-reminders \
+          --schedule="*/5 * * * *" \
+          --uri="$_SERVICE_URL/worker" \
+          --http-method=POST \
+          --message-body='{"task_type":"fire_due_reminders"}' \
           --headers="Content-Type=application/json" \
           --location=us-central1 \
           --attempt-deadline=60s \

@@ -46,6 +46,7 @@ from ..infrastructure.agent_config import (
     COMPUTE as COMPUTE_CFG,
     DEEP_RESEARCH as DEEP_RESEARCH_CFG,
     CLAUDE_DEEP_RESEARCH_RUNNER as CLAUDE_DEEP_RESEARCH_RUNNER_CFG,
+    NOTES as NOTES_CFG,
     TASKS as TASKS_CFG,
     DOC_PLANNER as DOC_PLANNER_CFG,
     DOC_GENERATOR as DOC_GENERATOR_CFG,
@@ -123,6 +124,7 @@ class UserAgentFactory:
         tasks_provider: Optional[TasksProviderPort] = None,
         task_indexing: Optional[TaskIndexingService] = None,
         notes_provider: Optional[AgentNotePort] = None,
+        notification_service: Optional[object] = None,
         job_registry: Optional[ProviderRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
         anthropic_client: Optional[object] = None,
@@ -152,6 +154,7 @@ class UserAgentFactory:
         self.tasks_provider = tasks_provider
         self.task_indexing = task_indexing
         self.notes_provider = notes_provider
+        self.notification_service = notification_service
         self.job_registry: Optional[ProviderRegistry] = job_registry
         self.task_queue = task_queue
         self.anthropic_client = anthropic_client
@@ -285,15 +288,22 @@ class UserAgentFactory:
             history_summary_service=history_summary_service,
         )
 
-        notes_agent = NotesAgent(
-            config=AgentConfig(
-                agent_id=f"notes_agent_{user_id}",
-                agent_type="notes",
-                timeout_ms=5000,
-                capabilities=["note_management"],
-            ),
-            notes_port=self.notes_provider,
-        ) if self.notes_provider else None
+        notes_agent = None
+        if self.notes_provider:
+            notes_context = self.context_builder.build("notes", user_profile.config)
+            notes_agent = NotesAgent(
+                config=AgentConfig(
+                    agent_id=f"notes_agent_{user_id}",
+                    agent_type="notes",
+                    timeout_ms=NOTES_CFG.timeout_ms,
+                    capabilities=["note_management"],
+                ),
+                execution_context=notes_context,
+                notes_port=self.notes_provider,
+                prompt_builder=prompt_builder,
+                user_timezone=user_profile.config.timezone,
+                notification_service=self.notification_service,
+            )
 
         router_agent = create_router_agent(
             execution_context=router_context,
@@ -565,10 +575,15 @@ class UserAgentFactory:
         # Preload prompt assembly cache (warm-up optimization, non-critical)
         if self.assembly_service and hasattr(self.assembly_service, "preload_cache"):
             try:
-                await asyncio.gather(
+                preload_coros = [
                     self.assembly_service.preload_cache("quick", account_id, user_id),
                     self.assembly_service.preload_cache("smart", account_id, user_id),
-                )
+                ]
+                if self.notes_provider:
+                    preload_coros.append(
+                        self.assembly_service.preload_cache("notes", account_id, user_id)
+                    )
+                await asyncio.gather(*preload_coros)
             except Exception as e:
                 logger.warning(f"Failed to preload prompt cache for user {user_id[:8]}: {e}")
 

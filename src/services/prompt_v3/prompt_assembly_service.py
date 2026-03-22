@@ -70,6 +70,7 @@ class PromptAssemblyService:
         query_specific_context: Optional[str] = None,
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
+        user_timezone: str = "UTC",
     ) -> str:
         """Full prompt assembly with class-collection model + caching.
 
@@ -128,6 +129,7 @@ class PromptAssemblyService:
             query_specific_context=query_specific_context,
             kb_preamble=kb_preamble,
             agent_notes=agent_notes,
+            user_timezone=user_timezone,
         )
 
         logger.info(f"✅ Assembled prompt: {len(final_prompt)} chars")
@@ -348,6 +350,7 @@ class PromptAssemblyService:
         query_specific_context: Optional[str] = None,
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
+        user_timezone: str = "UTC",
     ) -> str:
         """Inject RUNTIME data with SecurityPort validation.
 
@@ -402,9 +405,15 @@ class PromptAssemblyService:
         else:
             validated_convo = ""
 
-        # Build current datetime string
-        utc_now = datetime.now(timezone.utc)
-        current_datetime = utc_now.strftime("%Y-%m-%d %H:%M %A (UTC)")
+        # Build current datetime string in user's local timezone
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            user_tz = ZoneInfo(user_timezone or "UTC")
+        except (ZoneInfoNotFoundError, KeyError):
+            user_tz = ZoneInfo("UTC")
+        local_now = datetime.now(user_tz)
+        tz_abbr = local_now.strftime("%Z") or user_timezone or "UTC"
+        current_datetime = local_now.strftime(f"%Y-%m-%d %H:%M %A ({tz_abbr})")
 
         # Static runtime blocks — appended after the blueprint template (before the boundary).
         # Blueprint no longer contains [[BIOGRAPHICAL_CONTEXT]] / [[CONVERSATION_HISTORY]]
@@ -437,19 +446,26 @@ class PromptAssemblyService:
             for note in agent_notes:
                 note_id = note.get("note_id", "")
                 text = note.get("text", "")
+                due = note.get("due")
                 expires_after = note.get("expires_after")
-                if expires_after:
+                if due:
+                    try:
+                        due_dt = datetime.fromisoformat(str(due))
+                        timing_str = f" (fires: {due_dt.strftime('%b %d %H:%M UTC')})"
+                    except (ValueError, TypeError):
+                        timing_str = f" (fires: {due})"
+                elif expires_after:
                     try:
                         exp_dt = datetime.fromisoformat(str(expires_after))
-                        expires_str = f" (expires: {exp_dt.strftime('%b %d %H:%M UTC')})"
+                        timing_str = f" (expires: {exp_dt.strftime('%b %d %H:%M UTC')})"
                     except (ValueError, TypeError):
-                        expires_str = f" (expires: {expires_after})"
+                        timing_str = f" (expires: {expires_after})"
                 else:
-                    expires_str = ""
-                line = f"    - {text}{expires_str} [id: {note_id}]"
+                    timing_str = ""
+                line = f"    - {text}{timing_str} [id: {note_id}]"
                 note_lines.append(line)
-            header = "    // Notes you wrote to yourself. Not visible to the user. Snapshot from turn start — trust tool results for changes made this turn.\n    // IDs are Unix timestamps (ms) — use to gauge note age relative to current_date_time.\n    // Before creating a note, check if an existing one covers the same topic — update it instead of adding a duplicate."
-            dynamic_parts.append("working_memory_for_conversational_anchors {\n" + header + "\n" + "\n".join(note_lines) + "\n}")
+            header = "    // Summary view of reminders you scheduled for yourself. Not visible to the user. Snapshot from turn start.\n    // Full execution context (instruction) is stored internally — not shown here. Use note_id to update or delete via manage_self_reminders.\n    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time."
+            dynamic_parts.append("active_reminders {\n" + header + "\n" + "\n".join(note_lines) + "\n}")
 
         dynamic_parts.append(f"current_date_time {{\n    {current_datetime}\n}}")
         if query_specific_str:

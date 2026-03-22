@@ -1,20 +1,28 @@
 """
-FirestoreAgentNoteAdapter — persists orchestrator notes.
+FirestoreAgentNoteAdapter — persists orchestrator self-reminders.
 
 Collection: {env_prefix}orchestrator_notes
 Document ID: epoch milliseconds string (time-sortable, collision window = 1ms)
 
 Constraints enforced here (not at port boundary):
-  - MAX_WORDS_PER_NOTE = 25
+  - MAX_WORDS_PER_NOTE = 25  (text label only — instruction has no limit)
   - MAX_NOTES_PER_USER = 30
+
+Required Firestore index:
+  Collection: orchestrator_notes
+  Field: due ASC
+  (enables list_due_reminders WHERE due <= :now without full collection scan)
+
+Migration note: existing documents may have visible_after/expires_after fields.
+These are silently ignored — _dict_to_note does not map them.
+Existing documents without 'instruction' fall back to 'text'.
 """
 
-import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
 from ..config.environment import EnvironmentConfig
-from ..domain.agent_note import AgentNote, NoteCreate, NoteUpdate
+from ..domain.agent_note import AgentNote, NoteCreate, NoteUpdate, ReminderRecurrence
 from ..ports.agent_note_port import AgentNotePort
 from ..utils.logger import logger
 
@@ -51,27 +59,34 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             )
 
         note_id = str(int(now.timestamp() * 1000))
-        await self._col.document(note_id).set({
+        doc: dict = {
             "user_id": data.user_id,
             "text": data.text,
+            "instruction": data.instruction,
             "created_at": now,
-            "visible_after": data.visible_after,
-            "expires_after": data.expires_after,
-        })
+            "due": data.due,
+            "last_fired": None,
+        }
+        if data.recurrence:
+            doc["recurrence"] = {"type": data.recurrence.type, "interval": data.recurrence.interval}
+        else:
+            doc["recurrence"] = None
+
+        await self._col.document(note_id).set(doc)
         return AgentNote(
             note_id=note_id,
             user_id=data.user_id,
             text=data.text,
+            instruction=data.instruction,
             created_at=now,
-            visible_after=data.visible_after,
-            expires_after=data.expires_after,
+            due=data.due,
+            recurrence=data.recurrence,
         )
 
     async def delete_note(self, note_id: str, user_id: str) -> bool:
-        logger.debug("🗑️ [AgentNote] delete_note called: note_id=%r user_id=%s", note_id, user_id[:8])
+        logger.debug("🗑️ [AgentNote] delete_note: note_id=%r user_id=%s", note_id, user_id[:8])
         doc_ref = self._col.document(note_id)
         doc = await doc_ref.get()
-        logger.debug("🗑️ [AgentNote] delete_note doc.exists=%s", doc.exists)
         if not doc.exists:
             return False
         data = doc.to_dict()
@@ -95,7 +110,7 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
                 f"Note {data.note_id} does not belong to user {data.user_id[:8]}"
             )
 
-        updates = {}
+        updates: dict = {}
         if data.text is not None:
             word_count = len(data.text.split())
             if word_count > self.MAX_WORDS_PER_NOTE:
@@ -103,28 +118,41 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
                     f"Note text exceeds {self.MAX_WORDS_PER_NOTE} words ({word_count})"
                 )
             updates["text"] = data.text
-        if data.visible_after is not None:
-            updates["visible_after"] = data.visible_after
-        if data.expires_after is not None:
-            updates["expires_after"] = data.expires_after
+        if data.instruction is not None:
+            updates["instruction"] = data.instruction
+        if data.due is not None:
+            updates["due"] = data.due
+        if data.recurrence is not None:
+            updates["recurrence"] = {"type": data.recurrence.type, "interval": data.recurrence.interval}
 
         if updates:
             await doc_ref.update(updates)
 
-        updated = {**existing, **updates}
-        return self._dict_to_note(data.note_id, updated)
+        merged = {**existing, **updates}
+        return self._dict_to_note(data.note_id, merged)
 
     async def list_active_notes(self, user_id: str, as_of: datetime) -> List[AgentNote]:
+        """Return notes that have not yet fired (due > as_of)."""
         docs = await self._col.where("user_id", "==", user_id).get()
         result = []
         for doc in docs:
             note = self._dict_to_note(doc.id, doc.to_dict())
-            if note.visible_after and note.visible_after > as_of:
-                continue
-            if note.expires_after and note.expires_after <= as_of:
+            if note.due <= as_of:
                 continue
             result.append(note)
         return sorted(result, key=lambda n: n.created_at)
+
+    async def list_due_reminders(self, as_of: datetime) -> List[AgentNote]:
+        """Cross-user: all notes with due <= as_of. Requires Firestore index on due ASC."""
+        docs = await self._col.where("due", "<=", as_of).get()
+        return [self._dict_to_note(doc.id, doc.to_dict()) for doc in docs]
+
+    async def reschedule(self, note_id: str, next_due: datetime, last_fired: datetime) -> None:
+        """Update due and last_fired for a recurrent reminder after firing."""
+        await self._col.document(note_id).update({
+            "due": next_due,
+            "last_fired": last_fired,
+        })
 
     # ------------------------------------------------------------------
     # Helpers
@@ -132,25 +160,29 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
 
     @staticmethod
     def _dict_to_note(note_id: str, data: dict) -> AgentNote:
-        created_at = data.get("created_at")
-        if created_at and not hasattr(created_at, "tzinfo"):
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        elif created_at and created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
+        def _ensure_utc(dt):
+            if dt is None:
+                return None
+            if hasattr(dt, "tzinfo") and dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
 
-        visible_after = data.get("visible_after")
-        if visible_after and hasattr(visible_after, "tzinfo") and visible_after.tzinfo is None:
-            visible_after = visible_after.replace(tzinfo=timezone.utc)
+        created_at = _ensure_utc(data.get("created_at")) or datetime.now(timezone.utc)
 
-        expires_after = data.get("expires_after")
-        if expires_after and hasattr(expires_after, "tzinfo") and expires_after.tzinfo is None:
-            expires_after = expires_after.replace(tzinfo=timezone.utc)
+        recurrence: Optional[ReminderRecurrence] = None
+        if rec := data.get("recurrence"):
+            recurrence = ReminderRecurrence(type=rec["type"], interval=rec.get("interval", 1))
+
+        # Migration: existing docs without 'instruction' fall back to 'text'
+        instruction = data.get("instruction") or data.get("text", "")
 
         return AgentNote(
             note_id=note_id,
             user_id=data["user_id"],
             text=data["text"],
-            created_at=created_at or datetime.now(timezone.utc),
-            visible_after=visible_after,
-            expires_after=expires_after,
+            instruction=instruction,
+            created_at=created_at,
+            due=_ensure_utc(data["due"]),
+            recurrence=recurrence,
+            last_fired=_ensure_utc(data.get("last_fired")),
         )

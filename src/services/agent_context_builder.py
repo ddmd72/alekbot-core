@@ -96,6 +96,12 @@ class AgentProviderStrategy:
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },
+        "notes": {
+            "default_provider": "gemini",
+            "allowed_providers": ["gemini", "claude"],
+            "required_capabilities": ["native_tools"],
+            "fallback": "gemini"
+        },
         # Deep research uses DeepResearchPort (not LLMPort) — AgentContextBuilder.build() is
         # NOT called for this agent type. This entry exists solely for unified default/allowed
         # provider declaration. UserAgentFactory reads default_provider from here.

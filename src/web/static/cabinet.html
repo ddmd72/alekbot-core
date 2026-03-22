@@ -923,6 +923,9 @@
           >
             Team
           </button>
+          <button class="nav-item" onclick="navigate('settings')" id="nav-settings">
+            Settings
+          </button>
         </nav>
 
         <div class="user-profile">
@@ -968,6 +971,9 @@
           id="nav-mobile-team"
         >
           Team
+        </button>
+        <button class="nav-item" onclick="navigate('settings')" id="nav-mobile-settings">
+          Settings
         </button>
       </nav>
 
@@ -1164,6 +1170,73 @@
             </div>
           </div>
         </section>
+
+        <!-- Settings Section -->
+        <section id="section-settings" class="section">
+          <div class="hero-header reveal">
+            <h1>Settings</h1>
+            <p>Preferences that personalise how Alek works for you.</p>
+          </div>
+
+          <div class="card reveal" style="max-width: 520px">
+            <div class="card-body">
+              <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Timezone</h3>
+              <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
+                Used for scheduling reminders and interpreting time expressions.
+              </p>
+              <div style="display: flex; gap: 12px; align-items: center">
+                <select
+                  id="timezone-input"
+                  style="
+                    flex: 1;
+                    padding: 10px 14px;
+                    border-radius: var(--radius-sm);
+                    border: 1px solid var(--border-light);
+                    background: var(--bg-hover);
+                    color: var(--text-main);
+                    font-family: inherit;
+                    font-size: 15px;
+                    outline: none;
+                    cursor: pointer;
+                    transition: border-color var(--transition-fast);
+                  "
+                  onfocus="this.style.borderColor='var(--border-focus)'"
+                  onblur="this.style.borderColor='var(--border-light)'"
+                >
+                  <optgroup label="Europe">
+                    <option value="Europe/Kyiv">Kyiv (UTC+2/+3)</option>
+                    <option value="Europe/London">London (UTC+0/+1)</option>
+                    <option value="Europe/Paris">Paris / Berlin (UTC+1/+2)</option>
+                    <option value="Europe/Warsaw">Warsaw (UTC+1/+2)</option>
+                    <option value="Europe/Istanbul">Istanbul (UTC+3)</option>
+                  </optgroup>
+                  <optgroup label="Americas">
+                    <option value="America/New_York">New York (UTC-5/-4)</option>
+                    <option value="America/Chicago">Chicago (UTC-6/-5)</option>
+                    <option value="America/Denver">Denver (UTC-7/-6)</option>
+                    <option value="America/Los_Angeles">Los Angeles (UTC-8/-7)</option>
+                    <option value="America/Toronto">Toronto (UTC-5/-4)</option>
+                    <option value="America/Sao_Paulo">São Paulo (UTC-3)</option>
+                  </optgroup>
+                  <optgroup label="Asia & Pacific">
+                    <option value="Asia/Dubai">Dubai (UTC+4)</option>
+                    <option value="Asia/Kolkata">India (UTC+5:30)</option>
+                    <option value="Asia/Singapore">Singapore (UTC+8)</option>
+                    <option value="Asia/Tokyo">Tokyo (UTC+9)</option>
+                    <option value="Asia/Seoul">Seoul (UTC+9)</option>
+                    <option value="Australia/Sydney">Sydney (UTC+10/+11)</option>
+                  </optgroup>
+                  <optgroup label="Other">
+                    <option value="UTC">UTC</option>
+                  </optgroup>
+                </select>
+                <button onclick="saveTimezone()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -1250,6 +1323,42 @@
           loadTasksStatus();
         }
         if (name === "team") loadCodes();
+        if (name === "settings") loadSettings();
+      }
+
+      /* ── Settings ────────────────────────────────────── */
+      async function loadSettings() {
+        try {
+          const res = await fetch(`${API}/api/user/timezone`, { credentials: "include" });
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          const sel = document.getElementById("timezone-input");
+          sel.value = data.timezone || "UTC";
+          if (!sel.value) sel.value = "UTC"; // fallback if stored value not in list
+        } catch {
+          showToast("Failed to load settings", "error");
+        }
+      }
+
+      async function saveTimezone() {
+        const tz = document.getElementById("timezone-input").value.trim();
+        if (!tz) { showToast("Enter a timezone", "error"); return; }
+        try {
+          const res = await fetch(`${API}/api/user/timezone`, {
+            method: "PUT",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ timezone: tz }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showToast(err.error || "Invalid timezone", "error");
+            return;
+          }
+          showToast("Timezone saved", "success");
+        } catch {
+          showToast("Failed to save timezone", "error");
+        }
       }
 
       /* ── Init ────────────────────────────────────────── */
@@ -1579,13 +1688,35 @@
 
       async function loadGmailStatus() {
         try {
-          const res = await fetch(`${API}/api/gmail/status`, {
-            credentials: "include",
-          });
-          if (!res.ok) throw new Error();
-          renderGmailStatus(await res.json());
+          const [statusRes, autoIndexRes] = await Promise.all([
+            fetch(`${API}/api/gmail/status`, { credentials: "include" }),
+            fetch(`${API}/api/gmail/auto-index`, { credentials: "include" }),
+          ]);
+          if (!statusRes.ok) throw new Error();
+          const data = await statusRes.json();
+          if (autoIndexRes.ok) {
+            const ai = await autoIndexRes.json();
+            data.auto_index_enabled = ai.enabled;
+            data.auto_index_hour = ai.hour;
+          }
+          renderGmailStatus(data);
         } catch {
           // Graceful degradation
+        }
+      }
+
+      async function saveGmailAutoIndex(enabled, hour) {
+        try {
+          const res = await fetch(`${API}/api/gmail/auto-index`, {
+            method: "PUT",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled, hour }),
+          });
+          if (!res.ok) throw new Error();
+          showToast(enabled ? `Auto-index enabled at ${hour}:00` : "Auto-index disabled", "success");
+        } catch {
+          showToast("Failed to save auto-index settings", "error");
         }
       }
 
@@ -1620,6 +1751,33 @@
           `;
         }
 
+        let autoIndexHtml = "";
+        if (linked) {
+          const aiEnabled = !!data.auto_index_enabled;
+          const aiHour = data.auto_index_hour ?? 8;
+          const hourOptions = Array.from({length: 24}, (_, h) =>
+            `<option value="${h}" ${h === aiHour ? "selected" : ""}>${String(h).padStart(2,"0")}:00</option>`
+          ).join("");
+          autoIndexHtml = `
+            <div style="margin-bottom:16px; padding:12px 16px; background:var(--bg-active); border-radius:12px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                <label style="font-size:14px; font-weight:500; cursor:pointer;" for="ai-toggle">Daily auto-index</label>
+                <input type="checkbox" id="ai-toggle" ${aiEnabled ? "checked" : ""}
+                  onchange="document.getElementById('ai-hour-row').style.display=this.checked?'flex':'none'; saveGmailAutoIndex(this.checked, parseInt(document.getElementById('ai-hour').value))"
+                  style="width:18px;height:18px;cursor:pointer;">
+              </div>
+              <div id="ai-hour-row" style="display:${aiEnabled ? "flex" : "none"}; align-items:center; gap:8px; margin-top:10px;">
+                <span style="font-size:13px; color:var(--text-muted);">Run at</span>
+                <select id="ai-hour" onchange="saveGmailAutoIndex(true, parseInt(this.value))"
+                  style="font-size:13px; padding:4px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-primary);">
+                  ${hourOptions}
+                </select>
+                <span style="font-size:13px; color:var(--text-muted);">in your timezone</span>
+              </div>
+            </div>
+          `;
+        }
+
         let actionButtons = !linked
           ? `<a href="/auth/connect-gmail" class="btn btn-black">Connect Gmail</a>`
           : `<button onclick="triggerGmailIndex()" class="btn btn-primary" ${indexActive ? "disabled" : ""}>${indexActive ? "Indexing..." : "Index Emails"}</button>
@@ -1633,13 +1791,14 @@
             </div>
             <h3 class="integration-title">Gmail</h3>
             <p class="integration-description">Index email history as facts to give Alek deep context.</p>
-            
+
             <div class="integration-status">
               <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
               <span>${statusText}</span>
             </div>
-            
+
             ${metaHtml}
+            ${autoIndexHtml}
 
             <div class="integration-actions">
               ${actionButtons}

@@ -68,6 +68,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "doc_planner_pdf": PerformanceTier.PERFORMANCE, # PDF layout spec (CSS/HTML units)
     "pdf_generator": PerformanceTier.BALANCED,      # HTML+CSS generation → Puppeteer
     "html_page": PerformanceTier.PERFORMANCE,        # Full HTML+CSS+JS page — max quality
+    "notes": PerformanceTier.ECO,                    # Simple CRUD, single tool call
 }
 
 
@@ -164,6 +165,16 @@ class UserBotConfig(BaseModel):
     # Purpose: Last N model turns use full_text, older turns use summary (text)
     # ========================================================================
     history_recent_full_turns: Optional[int] = None  # recent turns with full text (default: 5)
+
+    # Timezone (IANA name, e.g. "Europe/Kyiv", "America/New_York")
+    # Set via Cabinet UI. Used for: datetime injection in prompts, reminder due resolution, next_due computation.
+    timezone: str = "UTC"
+
+    # Gmail auto-indexing schedule
+    # gmail_auto_index: enable daily incremental indexing via Cloud Scheduler
+    # gmail_auto_index_hour: local hour (0-23) in user's timezone when indexing fires
+    gmail_auto_index: bool = False
+    gmail_auto_index_hour: int = 8
     
     # ========================================================================
     # NEW Biographical Keywords (2026-02-07): Configurable query keywords
