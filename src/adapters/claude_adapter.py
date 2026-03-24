@@ -45,6 +45,10 @@ class ClaudeAdapter(LLMPort):
     # Haiku models do not support thinking — silently skipped when thinking_effort is set.
     _THINKING_MODELS = ("claude-sonnet", "claude-opus")
 
+    # Models that support dynamic filtering web search (web_search_20260209 / web_fetch_20260209).
+    # Haiku 4.5 only supports the legacy web_search_20250305 (no dynamic filtering, no code_execution).
+    _DYNAMIC_SEARCH_MODELS = ("claude-sonnet", "claude-opus")
+
     # ========================================================================
     # NEW Provider Refactor Session 7: Provider capability declaration
     # Plan: docs/architecture/provider_refactor/PROVIDER_REFACTOR_EXECUTION_PLAN.md
@@ -154,11 +158,22 @@ class ClaudeAdapter(LLMPort):
         claude_tools = self._convert_tools(tools) if tools else []
         # Inject built-in web search when requested; must prepend (not via _convert_tools —
         # built-in tools use {type, name} format, not {name, description, input_schema})
+        # Dynamic filtering (20260209) requires Sonnet/Opus — Haiku falls back to legacy tools.
+        # New tool versions are GA — no web-search-2025-03-05 beta header needed.
+        # code_execution_20250825 is auto-injected by the API when 20260209 tools are active.
+        _use_dynamic_search = use_grounding and any(m in (model_name or "") for m in self._DYNAMIC_SEARCH_MODELS)
         if use_grounding:
-            claude_tools = [
-                {"type": "web_search_20250305", "name": "web_search"},
-                {"type": "web_fetch_20250910",  "name": "web_fetch"},
-            ] + claude_tools
+            if _use_dynamic_search:
+                claude_tools = [
+                    {"type": "web_search_20260209", "name": "web_search"},
+                    {"type": "web_fetch_20260209",  "name": "web_fetch"},
+                ] + claude_tools
+            else:
+                # Haiku fallback: legacy tools, no dynamic filtering
+                claude_tools = [
+                    {"type": "web_search_20250305", "name": "web_search"},
+                    {"type": "web_fetch_20250910",  "name": "web_fetch"},
+                ] + claude_tools
 
         # Claude analog of Gemini's response_schema: inject a "respond" tool so Claude is
         # forced into structured output even when real delegation tools are also present.
@@ -208,8 +223,10 @@ class ClaudeAdapter(LLMPort):
         # Regular request
         # Claude API rejects tool_choice=null — must be omitted entirely when not forcing a tool
         thinking_effort = request.thinking if request else None
+        # web-search-2025-03-05 is needed only for legacy web_search_20250305 (Haiku fallback).
+        # New 20260209 tools are GA — no extra beta header required.
         beta_headers = ["prompt-caching-2024-07-31"]
-        if use_grounding:
+        if use_grounding and not _use_dynamic_search:
             beta_headers.append("web-search-2025-03-05")
 
         # Adaptive thinking + effort dispatch — model-based, provider-internal.
@@ -244,17 +261,23 @@ class ClaudeAdapter(LLMPort):
             create_kwargs["tool_choice"] = {"type": "auto" if thinking_param else "any"}
         # Always stream: Anthropic SDK requires streaming for requests >10 min
         # (multi-turn tool loops like consolidation regularly exceed this threshold).
-        try:
-            async with self.client.messages.stream(**create_kwargs) as stream:
-                response = await stream.get_final_message()
-        except anthropic.RateLimitError as e:
-            raise LLMRateLimitError(str(e), http_status=429) from e
-        except anthropic.APIStatusError as e:
-            if e.status_code == 503:
-                raise LLMUnavailableError(str(e), http_status=503) from e
-            raise
-
-        llm_response = self._parse_response(response)
+        # Grounding path uses a pause_turn loop — code_execution_20250825 (auto-injected by
+        # the API when web_search_20260209/web_fetch_20260209 are active) may pause mid-turn.
+        # Container ID is captured from message_delta events and passed on each continuation
+        # so the API can reuse the same execution sandbox (fetch optimisation).
+        if _use_dynamic_search:
+            llm_response = await self._grounded_stream_loop(create_kwargs)
+        else:
+            try:
+                async with self.client.messages.stream(**create_kwargs) as stream:
+                    response = await stream.get_final_message()
+            except anthropic.RateLimitError as e:
+                raise LLMRateLimitError(str(e), http_status=429) from e
+            except anthropic.APIStatusError as e:
+                if e.status_code == 503:
+                    raise LLMUnavailableError(str(e), http_status=503) from e
+                raise
+            llm_response = self._parse_response(response)
 
         # Intercept "respond" tool call: extract structured args → return as JSON text.
         # Remaining real tool_calls (if any) are discarded — Claude signalled it is done.
@@ -271,6 +294,121 @@ class ClaudeAdapter(LLMPort):
                 )
 
         return llm_response
+
+    async def _grounded_stream_loop(self, create_kwargs: dict) -> LLMResponse:
+        """
+        Streaming loop for use_grounding=True calls.
+
+        Handles pause_turn continuations required when code_execution_20250825 (auto-injected
+        by the API alongside web_search_20260209/web_fetch_20260209) is still running
+        server-side. Container ID is captured from message_delta stream events and forwarded
+        on each continuation so the API reuses the same execution sandbox.
+
+        Pattern mirrors ClaudeDeepResearchRunnerAgent._call_with_overload_retry /
+        _research_loop, scoped to the grounding use-case.
+        """
+        _MAX_PAUSE_TURNS = 20
+
+        call_kwargs = dict(create_kwargs)
+        original_messages: list = call_kwargs.pop("messages")
+        messages: list = list(original_messages)
+        accumulated_content: list = []
+        container_id: Optional[str] = None
+        pause_count = 0
+        total_input = 0
+        total_output = 0
+        cache_metadata = None
+
+        while True:
+            kwargs = {**call_kwargs, "messages": messages}
+            if container_id:
+                kwargs["container"] = container_id
+
+            try:
+                new_container: Optional[str] = None
+                async with self.client.messages.stream(**kwargs) as stream:
+                    async for event in stream:
+                        if new_container is None and getattr(event, "type", None) == "message_delta":
+                            delta = getattr(event, "delta", None)
+                            delta_container = getattr(delta, "container", None) if delta else None
+                            if delta_container is not None:
+                                cid = getattr(delta_container, "id", None)
+                                if cid:
+                                    new_container = cid
+                    response = await stream.get_final_message()
+            except anthropic.RateLimitError as e:
+                raise LLMRateLimitError(str(e), http_status=429) from e
+            except anthropic.APIStatusError as e:
+                if e.status_code == 503:
+                    raise LLMUnavailableError(str(e), http_status=503) from e
+                raise
+
+            container_id = new_container or container_id
+
+            if hasattr(response, "usage") and response.usage:
+                total_input += response.usage.input_tokens or 0
+                total_output += response.usage.output_tokens or 0
+                if hasattr(response.usage, "cache_read_input_tokens") or \
+                        hasattr(response.usage, "cache_creation_input_tokens"):
+                    cache_metadata = CacheMetadata(
+                        provider="anthropic",
+                        cache_hit=getattr(response.usage, "cache_read_input_tokens", 0) > 0,
+                        tokens_saved=getattr(response.usage, "cache_read_input_tokens", 0),
+                        created_at=time.time(),
+                    )
+
+            accumulated_content.extend(response.content)
+
+            if response.stop_reason == "end_turn":
+                break
+
+            if response.stop_reason == "pause_turn":
+                pause_count += 1
+                if pause_count >= _MAX_PAUSE_TURNS:
+                    logger.warning(
+                        "[ClaudeAdapter] grounded loop: exceeded %d pause_turns — returning partial",
+                        _MAX_PAUSE_TURNS,
+                    )
+                    break
+                messages = list(original_messages) + [
+                    {"role": "assistant", "content": accumulated_content}
+                ]
+                logger.debug(
+                    "[ClaudeAdapter] grounded loop: pause_turn #%d container=%s",
+                    pause_count, container_id,
+                )
+                continue
+
+            # max_tokens or unexpected — return whatever we have
+            logger.warning(
+                "[ClaudeAdapter] grounded loop: unexpected stop_reason=%s", response.stop_reason
+            )
+            break
+
+        text = ""
+        tool_calls = []
+        for block in accumulated_content:
+            block_type = getattr(block, "type", None)
+            if block_type == "text":
+                text += block.text
+            elif block_type == "tool_use":
+                tool_calls.append(ToolCall(
+                    name=block.name,
+                    args=block.input,
+                    thought_signature=block.id,
+                ))
+
+        return LLMResponse(
+            text=text,
+            tool_calls=tool_calls,
+            raw_content=None,
+            usage_metadata=UsageMetadata(
+                prompt_tokens=total_input,
+                completion_tokens=total_output,
+                total_tokens=total_input + total_output,
+            ),
+            cache_metadata=cache_metadata,
+        )
 
     def supports_caching(self) -> bool:
         return True

@@ -631,3 +631,29 @@ This masks misconfiguration instead of failing fast. `PdfGeneratorAgent` was alr
 > **Audit source:** `docs/11_quality/audit_2026_02/`
 > **Last updated:** 2026-03-15
 > **Status:** Mark [DONE] as tasks are completed
+
+---
+
+## [TECH DEBT] Deep Research Cloud Run Job: .md round files never uploaded to GCS
+
+**Discovered:** 2026-03-24
+
+**Root cause:** `job_main.py` calls `deliver_deep_research()` without `media_storage` and `round1_text` arguments:
+
+```python
+# job_main.py — current (broken)
+await deliver_deep_research(
+    result_text=result_text,
+    ...
+    # media_storage=None (default) → skips GCS upload silently
+    # round1_text="" (default) → second-pass round never uploaded
+)
+```
+
+`deliver_deep_research()` has an `if media_storage and notification:` guard — when `media_storage` is `None`, GCS upload is silently skipped and a warning is logged. The `.md` files (`deep_research/{user_id}/{timestamp}-round1.md`, `round2.md`) are never written.
+
+**Impact:** Raw markdown research output is lost after the Cloud Run Job completes. Only the HTML page (via HtmlPageGeneratorAgent Cloud Task) is delivered.
+
+**Fix:** Wire `GcsMediaAdapter` and a notification port into `job_main.py` and pass them to `deliver_deep_research()`. Requires bootstrapping `GCS_MEDIA_BUCKET` env var and a lightweight notification adapter in the Job entrypoint.
+
+**Priority:** Low — HTML delivery works; raw `.md` is a nice-to-have for debugging and archival.

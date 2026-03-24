@@ -241,7 +241,7 @@ async def test_force_tool_use_without_tools_omits_tool_choice():
 
 @pytest.mark.asyncio
 async def test_use_grounding_injects_web_search_and_web_fetch():
-    """use_grounding=True → web_search_20250305 and web_fetch_20250910 prepended to tools."""
+    """Sonnet + use_grounding=True → dynamic filtering tools (20260209) prepended to tools."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     cm = _make_claude_cm(_make_sdk_response())
@@ -263,15 +263,16 @@ async def test_use_grounding_injects_web_search_and_web_fetch():
 
     tools = captured.get("tools", [])
     types_in_tools = [t.get("type") for t in tools if isinstance(t, dict)]
-    assert "web_search_20250305" in types_in_tools, f"web_search tool missing; tools={tools}"
-    assert "web_fetch_20250910" in types_in_tools, f"web_fetch tool missing; tools={tools}"
-    assert tools[0]["type"] == "web_search_20250305"  # must be prepended, not appended
-    assert tools[1]["type"] == "web_fetch_20250910"
+    assert "web_search_20260209" in types_in_tools, f"web_search tool missing; tools={tools}"
+    assert "web_fetch_20260209" in types_in_tools, f"web_fetch tool missing; tools={tools}"
+    assert tools[0]["type"] == "web_search_20260209"  # must be prepended, not appended
+    assert tools[1]["type"] == "web_fetch_20260209"
 
 
 @pytest.mark.asyncio
 async def test_use_grounding_adds_web_search_beta_header():
-    """use_grounding=True → extra_headers must include web-search-2025-03-05 beta tag."""
+    """use_grounding=True → prompt-caching header present; web-search-2025-03-05 not needed
+    (new 20260209 tools are GA and require no extra beta header)."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     cm = _make_claude_cm(_make_sdk_response())
@@ -292,9 +293,132 @@ async def test_use_grounding_adds_web_search_beta_header():
     )
 
     beta_header = captured.get("extra_headers", {}).get("anthropic-beta", "")
-    assert "web-search-2025-03-05" in beta_header, (
-        f"web-search beta header missing; anthropic-beta={beta_header!r}"
+    assert "prompt-caching-2024-07-31" in beta_header, (
+        f"prompt-caching header missing; anthropic-beta={beta_header!r}"
     )
+    assert "web-search-2025-03-05" not in beta_header, (
+        f"obsolete web-search header should not be sent; anthropic-beta={beta_header!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_haiku_use_grounding_injects_legacy_tools():
+    """Haiku + use_grounding=True → legacy tools (20250305/20250910), NOT dynamic filtering tools."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    cm = _make_claude_cm(_make_sdk_response())
+
+    def capturing_stream(**kwargs):
+        captured.update(kwargs)
+        return cm
+
+    adapter.client.messages.stream = capturing_stream
+
+    await adapter.generate_content(
+        request=LLMRequest(
+            model_name="claude-haiku-4-5-20251001",
+            system_instruction="test",
+            messages=_MESSAGES,
+            use_grounding=True,
+        )
+    )
+
+    tools = captured.get("tools", [])
+    types_in_tools = [t.get("type") for t in tools if isinstance(t, dict)]
+    assert "web_search_20250305" in types_in_tools, f"legacy web_search missing; tools={tools}"
+    assert "web_fetch_20250910" in types_in_tools, f"legacy web_fetch missing; tools={tools}"
+    assert "web_search_20260209" not in types_in_tools, "dynamic filtering tool must NOT be used for Haiku"
+    assert "web_fetch_20260209" not in types_in_tools, "dynamic filtering tool must NOT be used for Haiku"
+
+
+@pytest.mark.asyncio
+async def test_haiku_use_grounding_adds_legacy_beta_header():
+    """Haiku + use_grounding=True → web-search-2025-03-05 header required for legacy tools."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    cm = _make_claude_cm(_make_sdk_response())
+
+    def capturing_stream(**kwargs):
+        captured.update(kwargs)
+        return cm
+
+    adapter.client.messages.stream = capturing_stream
+
+    await adapter.generate_content(
+        request=LLMRequest(
+            model_name="claude-haiku-4-5-20251001",
+            system_instruction="test",
+            messages=_MESSAGES,
+            use_grounding=True,
+        )
+    )
+
+    beta_header = captured.get("extra_headers", {}).get("anthropic-beta", "")
+    assert "web-search-2025-03-05" in beta_header, (
+        f"legacy beta header missing for Haiku; anthropic-beta={beta_header!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_grounded_loop_handles_pause_turn_continuation():
+    """Sonnet + use_grounding: pause_turn on first call → loop sends accumulated content back,
+    end_turn on second call → final text returned."""
+    adapter = ClaudeAdapter(api_key="test-key")
+
+    call_kwargs_log: list = []
+
+    def _make_response(stop_reason: str, text: str = ""):
+        block = MagicMock()
+        block.type = "text"
+        block.text = text
+        usage = MagicMock()
+        usage.input_tokens = 5
+        usage.output_tokens = 3
+        usage.cache_creation_input_tokens = 0
+        usage.cache_read_input_tokens = 0
+        resp = MagicMock()
+        resp.content = [block]
+        resp.usage = usage
+        resp.stop_reason = stop_reason
+        return resp
+
+    responses = [
+        _make_response("pause_turn", ""),  # pause_turn has no text (code_execution running)
+        _make_response("end_turn", "final answer"),
+    ]
+    call_index = 0
+
+    def capturing_stream(**kwargs):
+        nonlocal call_index
+        call_kwargs_log.append(dict(kwargs))
+        resp = responses[call_index]
+        call_index += 1
+        stream = AsyncMock()
+        stream.__aiter__ = MagicMock(return_value=stream)
+        stream.__anext__ = AsyncMock(side_effect=StopAsyncIteration)  # no delta events
+        stream.get_final_message = AsyncMock(return_value=resp)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=stream)
+        cm.__aexit__ = AsyncMock(return_value=None)
+        return cm
+
+    adapter.client.messages.stream = capturing_stream
+
+    result = await adapter.generate_content(
+        request=LLMRequest(
+            model_name="claude-sonnet-4-6",
+            system_instruction="test",
+            messages=_MESSAGES,
+            use_grounding=True,
+        )
+    )
+
+    assert call_index == 2, f"Expected 2 stream calls (pause_turn + end_turn), got {call_index}"
+    # Second call must include accumulated assistant content
+    second_messages = call_kwargs_log[1].get("messages", [])
+    assert len(second_messages) == 2, "Second call must have original user msg + assistant continuation"
+    assert second_messages[1]["role"] == "assistant"
+    assert result.text == "final answer"
 
 
 @pytest.mark.asyncio
