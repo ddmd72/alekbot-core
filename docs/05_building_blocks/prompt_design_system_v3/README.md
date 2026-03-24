@@ -22,6 +22,7 @@ or understanding the assembly pipeline.
 - Implementation RFC: [../../10_rfcs/PROMPT_BUILDER_V4_RFC.md](../../10_rfcs/PROMPT_BUILDER_V4_RFC.md)
 - Groovy DSL conventions: [../../08_concepts/groovy_prompt_pattern.md](../../08_concepts/groovy_prompt_pattern.md)
 - Security validation: [../security_validation/README.md](../security_validation/README.md)
+- Language policy tokens (LANG_*): [../localization_system/README.md](../localization_system/README.md)
 
 ---
 
@@ -446,7 +447,7 @@ query_specific_context: '''          ← Phase 2: only when router found semanti
 |------|-----------|------------|
 | `blueprint_repository.py` | `BlueprintRepository` | `get(blueprint_id)` |
 | `token_repository.py` | `TokenRepository` | `get(token_id)`, `list_by_class()` |
-| `agent_profile_repository.py` | `AgentProfileRepository` | `get_agent_profile(agent_id) -> AgentProfile`, `get_override_tokens(owner_type, owner_id) -> Dict[str, ProfileToken]` |
+| `agent_profile_repository.py` | `AgentProfileRepository` | `get_agent_profile(agent_id) -> AgentProfile`, `get_override_tokens(owner_type, owner_id) -> Dict[str, ProfileToken]`, `set_override_tokens(owner_type, owner_id, tokens, clear_ids)` |
 
 ### Adapters (`src/adapters/prompt_v3/`)
 
@@ -537,4 +538,81 @@ These change per request:
 - `tests/unit/adapters/prompt_v3/test_firestore_repositories.py` — adapter unit tests
 - `tests/integration/test_prompt_4level_assembly.py` — integration (real Firestore)
 
-**Last Updated:** 2026-02-27
+**Last Updated:** 2026-03-24
+
+---
+
+## 11. Language Policy Tokens (LANG_* family)
+
+Language control for bot responses is implemented as a standard override, not as a special
+code path. Five tokens in `development_domain_prompt_tokens_v3_system` cover all language modes:
+
+| Token ID | Behavior | Groovy rule name |
+|----------|---------|-----------------|
+| `LANG_MIRROR` | Mirrors user input language (default) | `Output_Language_Mirror` |
+| `LANG_FIXED_UK` | Always Ukrainian | `Output_Language_Fixed_UK` |
+| `LANG_FIXED_EN` | Always English | `Output_Language_Fixed_EN` |
+| `LANG_FIXED_FR` | Always French | `Output_Language_Fixed_FR` |
+| `LANG_FIXED_ES` | Always Spanish | `Output_Language_Fixed_ES` |
+
+**Schema:** `class: policies`, `category: output_language`, `non_overridable: false`.
+
+`non_overridable: false` is the key design decision: it allows USER-level overrides to replace
+the default `LANG_MIRROR` with a fixed-language token via the standard override mechanism
+(class + category match). No special assembly code is needed.
+
+### Default in agent profiles
+
+Quick and Smart profiles have `LANG_MIRROR` at `order: 300`:
+
+```json
+"LANG_MIRROR": {"order": 300, "non_overridable": false}
+```
+
+This replaced `POLICY_OUTPUT_LANGUAGE` (`non_overridable: true`) — the old token was
+hardcoded and could not be user-overridden.
+
+### User override — fixed language
+
+`LanguagePreferenceService.set_preference()` calls `set_override_tokens()`:
+
+```python
+set_override_tokens(
+    OwnerType.USER, user_id,
+    tokens={LANG_FIXED_EN: ProfileToken(token_id=..., order=70)},
+    clear_ids={LANG_MIRROR, LANG_FIXED_UK, LANG_FIXED_FR, LANG_FIXED_ES},
+)
+```
+
+`set_override_tokens()` performs an atomic read-modify-write on the override document
+(`USER_{user_id}` in `domain_prompt_overrides_v3`):
+1. Read existing override tokens
+2. Remove all IDs in `clear_ids` (other LANG_* entries)
+3. Write new token(s)
+4. `doc_ref.set(...)` — awaited (AsyncClient)
+
+Result: the override doc contains exactly one LANG_* token. Assembly replaces `LANG_MIRROR`
+from the agent profile with `LANG_FIXED_EN` from the user override.
+
+### User override — mirror mode
+
+```python
+set_override_tokens(OwnerType.USER, user_id, tokens={}, clear_ids=ALL_LANG_IDS)
+```
+
+Clears all LANG_* entries from the override doc. Assembly falls back to `LANG_MIRROR` from
+the agent profile. No override doc deletion needed — an empty `tokens` map is sufficient.
+
+### Upload files
+
+```
+firestore_utils/uploads/LANG_MIRROR.json
+firestore_utils/uploads/LANG_FIXED_UK.json
+firestore_utils/uploads/LANG_FIXED_EN.json
+firestore_utils/uploads/LANG_FIXED_FR.json
+firestore_utils/uploads/LANG_FIXED_ES.json
+```
+
+Upload to `development_domain_prompt_tokens_v3_system` with `--format json`.
+
+See full language system documentation: [../localization_system/README.md](../localization_system/README.md)

@@ -8,6 +8,16 @@ from typing import Dict, List
 from ..domain.ui_messages import StatusType
 
 
+ENTERTAINMENT_INTROS: List[str] = [
+    "Entertain yourself while I dig through the web",
+    "While I search — hold an ironic pause",
+    "Keep your brain busy while mine searches",
+    "A fact break while I google",
+    "Relax, it's a search, not a flight to Mars",
+    "Hold this short story while I'm on my way",
+    "While I rummage — here's your mini-dessert",
+]
+
 # Fallback prompts when user sends file without text
 FILE_FALLBACK_IMAGE = "What's in this photo?"
 FILE_FALLBACK_VIDEO = "What's in this video?"

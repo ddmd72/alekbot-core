@@ -1,6 +1,7 @@
 import logging
 from enum import Enum
 from typing import List, Dict, TYPE_CHECKING, Optional
+from .language import LanguageCode
 
 _log = logging.getLogger(__name__)
 from datetime import datetime, timezone
@@ -71,6 +72,10 @@ class BillingAccount(BaseModel):
     # ========================================================================
     # owner_user_id: str = ""  # → Use iam_policy lookup (checked rarely, query OK)
     # member_user_ids: List[str] = []  # → Query UserProfile WHERE account_id = X
+
+    # Account-level default language (RFC: MULTILINGUAL_SUPPORT_RFC.md §5.2)
+    # None = use system config default. Set directly in Firestore per account when needed.
+    default_language: Optional[LanguageCode] = None
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

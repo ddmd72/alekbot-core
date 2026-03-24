@@ -4,7 +4,7 @@ Telegram webhook adapter with HMAC verification and IAM integration.
 import asyncio
 import hmac
 import mimetypes
-from typing import List
+from typing import List, Optional
 from quart import Blueprint, request, jsonify
 from telegram import Bot, Update
 
@@ -13,6 +13,8 @@ from .response_channel import TelegramResponseChannel
 from ...domain.messaging import MessageContext, FileAttachment
 from ...ports.conversation_handler_port import ConversationHandlerPort
 from ...ports.platform_auth_port import PlatformAuthPort
+from ...ports.language_service_port import LanguageServicePort
+from ...ports.localization_port import LocalizationPort
 from ...utils.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 from ...utils.logger import logger
 
@@ -34,6 +36,8 @@ class TelegramWebhookAdapter(PlatformPort):
         conversation_handler: ConversationHandlerPort,
         iam_service: PlatformAuthPort,
         audio_service=None,
+        language_service: Optional[LanguageServicePort] = None,
+        localization: Optional[LocalizationPort] = None,
     ):
         """
         Initialize Telegram webhook adapter.
@@ -46,6 +50,8 @@ class TelegramWebhookAdapter(PlatformPort):
             conversation_handler: ConversationHandlerPort for processing messages
             iam_service: PlatformAuthPort for authorization
             audio_service: Optional audio transcription port
+            language_service: Optional language preference resolver
+            localization: Optional localization adapter for UI phrases
         """
         self.conversation_handler = conversation_handler
         self.iam_service = iam_service
@@ -59,6 +65,8 @@ class TelegramWebhookAdapter(PlatformPort):
         self.bot = Bot(token)
         self.dedup_store = dedup_store
         self.session_store = session_store
+        self._language_service = language_service
+        self._localization = localization
         
         # Create Quart Blueprint for webhook endpoint
         self.blueprint = Blueprint('telegram', __name__)
@@ -158,13 +166,10 @@ class TelegramWebhookAdapter(PlatformPort):
             # 1. IAM Authorization (SAME PATTERN AS SLACK)
             decision = await self.iam_service.authorize("telegram", platform_user_id=telegram_user_id)
 
-            response_channel = TelegramResponseChannel(self.bot, chat_id)
-
             if decision.action == "reject":
                 # User NOT authorized → send centralized IAM message
                 logger.warning(f"⛔ Unauthorized Telegram user: {telegram_user_id}")
-                
-                # ✅ Use centralized message from IAMService
+                response_channel = TelegramResponseChannel(self.bot, chat_id)
                 await response_channel.send_message(decision.message)
                 return
 
@@ -175,10 +180,25 @@ class TelegramWebhookAdapter(PlatformPort):
 
             # 3. Resolve session (SAME PATTERN AS SLACK)
             session_id = await self._resolve_session_id(user_id)
-            
+
             logger.info(f"👤 Processing Telegram message for user {user_id}, session {session_id[:8]}...")
 
-            # 4. Translate attachments (ASYNC!)
+            # 4. Resolve language
+            from ...domain.language import LanguageCode
+            if self._language_service:
+                ui_lang = await self._language_service.resolve_ui_language(user_id)
+                preferred_language, agent_mirror = await self._language_service.get_preference(user_id)
+            else:
+                ui_lang = LanguageCode.UK
+                preferred_language, agent_mirror = None, True
+
+            response_channel = TelegramResponseChannel(
+                self.bot, chat_id,
+                language=ui_lang,
+                localization=self._localization,
+            )
+
+            # 5. Translate attachments (ASYNC!)
             attachments = []
             if message.photo or message.document:
                 # Telegram sends photos as array of sizes - take largest (last element)
@@ -188,26 +208,29 @@ class TelegramWebhookAdapter(PlatformPort):
                 else:
                     files = [message.document]
                     logger.info(f"📎 Document received: {message.document.file_name}")
-                
+
                 attachments = await self._translate_platform_files(files)
                 logger.info(f"✅ File translation complete: {len(attachments)}/{len(files)} successful")
 
-            # 5. Create MessageContext
+            # 6. Create MessageContext
             context = MessageContext(
                 text=text,
                 session_id=session_id,
                 user_id=user_id,
                 account_id=account_id,
+                language=ui_lang.value,
                 attachments=attachments,
                 thread_id=str(message.message_thread_id) if message.is_topic_message else None,
                 metadata={
                     "platform": "telegram",
                     "chat_id": chat_id,
-                    "telegram_user_id": telegram_user_id
+                    "telegram_user_id": telegram_user_id,
+                    "preferred_language": preferred_language,
+                    "agent_mirror": agent_mirror,
                 }
             )
 
-            # 5. Call ConversationHandler (platform-agnostic!)
+            # 7. Call ConversationHandler (platform-agnostic!)
             await self.conversation_handler.handle_message(context, response_channel)
 
         except Exception as e:

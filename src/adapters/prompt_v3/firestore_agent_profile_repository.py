@@ -5,7 +5,7 @@ Part of Prompt Design System v4 (RFC: docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md).
 """
 
 import logging
-from typing import Dict
+from typing import Dict, Optional, Set
 
 from google.cloud import firestore
 
@@ -114,6 +114,37 @@ class FirestoreAgentProfileRepository(AgentProfileRepository):
         logger.debug(f"Loaded {len(result)} override tokens from {override_id}")
         return result
 
+    async def set_override_tokens(
+        self,
+        owner_type: OwnerType,
+        owner_id: str,
+        tokens: Dict[str, ProfileToken],
+        clear_ids: Optional[Set[str]] = None,
+    ) -> None:
+        """Upsert tokens into override document, optionally clearing others atomically."""
+        override_id = f"{owner_type.value.upper()}_{owner_id}"
+        doc_ref = self.db.collection(self.overrides_collection).document(override_id)
+
+        doc = await doc_ref.get()
+        existing_tokens = doc.to_dict().get("tokens", {}) if doc.exists else {}
+
+        if clear_ids:
+            for tid in clear_ids:
+                existing_tokens.pop(tid, None)
+
+        for tid, pt in tokens.items():
+            existing_tokens[tid] = {"order": pt.order, "non_overridable": pt.non_overridable}
+
+        await doc_ref.set({
+            "owner_type": owner_type.value.upper(),
+            "owner_id": owner_id,
+            "tokens": existing_tokens,
+        })
+        logger.debug(
+            f"set_override_tokens: {override_id} upserted={list(tokens)} "
+            f"cleared={list(clear_ids or [])}"
+        )
+
     async def delete_profile(
         self,
         owner_type: OwnerType,
@@ -134,5 +165,5 @@ class FirestoreAgentProfileRepository(AgentProfileRepository):
             logger.warning(f"Profile not found for deletion: {profile_id} in {collection}")
             return
 
-        doc_ref.delete()
+        await doc_ref.delete()
         logger.info(f"Deleted profile: {profile_id} from {collection}")

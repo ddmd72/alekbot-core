@@ -32,6 +32,7 @@ class MessageContext:
     attachments: List[FileAttachment] = field(default_factory=list)
     thread_id: Optional[str] = None
     metadata: dict = field(default_factory=dict)  # Platform-specific extras
+    language: str = "uk"  # Effective UI language (RFC: MULTILINGUAL_SUPPORT_RFC.md §13.3)
 
 
 @dataclass

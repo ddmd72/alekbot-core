@@ -1,8 +1,8 @@
 # User Cabinet
 
-**Status:** ✅ Production Ready (2026-02-18)
+**Status:** ✅ Production Ready (2026-03-24)
 
-**Purpose:** Web-based self-service portal for authenticated users. Allows platform linking (Slack, Telegram), browsing and semantically searching personal memory (facts), fact management (remove/correct), and managing team invites.
+**Purpose:** Web-based self-service portal for authenticated users. Allows platform linking (Slack, Telegram), browsing and semantically searching personal memory (facts), fact management (remove/correct), managing team invites, and configuring language settings.
 
 **Code:** `src/web/user_cabinet_app.py`, `src/web/static/cabinet.html`
 
@@ -20,6 +20,7 @@ User Cabinet is a single-page application served at `/cabinet`. It authenticates
 - ✅ **Fact Removal** — Direct invalidation via `POST /api/user/facts/{id}/invalidate`; immediate effect, no LLM required
 - ✅ **Fact Correction** — UI generates a pre-formatted message for the user to paste into chat; ConsolidationAgent handles the update
 - ✅ **Team Invites** — Owner-only invite code generation and management
+- ✅ **Language Settings** — UI language + bot response language, per user
 - ✅ **Hexagonal Architecture** — Web layer depends only on `FactRepository` and `EmbeddingService` ports
 
 ---
@@ -347,6 +348,57 @@ Returns all MS To Do task lists for the user. Proxies Graph API — no Firestore
 Deletes all Graph subscriptions, revokes OAuth tokens, clears `task_search_index` and `task_config` for the user.
 
 **Response:** `{ "status": "disconnected" }`
+
+---
+
+## Language Settings
+
+Controls two independent concerns: UI language (status phrases in Slack/Telegram) and
+bot response language (what language the LLM uses in replies).
+
+See full documentation: [../localization_system/README.md](../localization_system/README.md)
+
+### `GET /api/user/language`
+
+Returns current preference.
+
+```json
+{ "preferred_language": "en", "agent_mirror": false }
+```
+
+`preferred_language` is `null` when not set (system default applies).
+
+### `POST /api/user/language`
+
+```json
+{ "preferred_language": "en", "agent_mirror": false }
+```
+
+| Field | Values | Meaning |
+|-------|--------|---------|
+| `preferred_language` | `"uk"`, `"en"`, `"fr"`, `"es"`, `null` | UI language + fixed bot language |
+| `agent_mirror` | `true` / `false` | `true` = bot mirrors input; `false` = fixed language |
+
+**Side effects on save:**
+1. `UserBotConfig.preferred_language` + `agent_mirror` written to Firestore
+2. USER-level LANG_* token override written to `domain_prompt_overrides_v3`
+3. Prompt assembly cache invalidated (24h TTL reset)
+4. Language change alert sent to bot via QuickAgent → saved to main session history
+
+**UI layout (Cabinet settings card):**
+```
+Bot Language
+
+UI Language:
+[ System default ]  [ UK ][ EN ]
+                    [ FR ][ ES ]
+
+Bot responds:
+[ Mirror my language ]  [ Fixed (UI language) ]
+```
+
+"Fixed" uses whichever UI language is selected — not a separate dropdown.
+"Mirror" clears the LANG_* override; bot follows input language dynamically.
 
 ---
 

@@ -10,7 +10,7 @@ import time
 import asyncio
 from datetime import datetime, timezone
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, List
+from typing import ClassVar, Dict, Optional, List
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentStatus
 from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
 from ..ports.llm_port import Message, MessagePart
@@ -101,19 +101,28 @@ class CircuitBreaker:
 class BaseAgent(ABC):
     """
     Abstract base class for all agents.
-    
+
     Provides common functionality:
     - Circuit breaker for fault tolerance
     - Retry logic with exponential backoff
     - Standardized error handling
     - Logging and telemetry hooks
     - Conversation history composition helper
-    
+
     Subclasses must implement:
     - can_handle(): Determine if agent can process message
     - execute(): Core agent logic
+
+    Class-level flags:
+    - forwards_language_preference: When True the agent extracts preferred_language
+      and agent_mirror from message.context["metadata"] and passes them to
+      prompt_builder.build_for_agent(). Only orchestrators (Quick, Smart) set this True.
+      Internal specialist agents leave it False — they inherit user language from the
+      system prompt assembled by their caller, not from per-call params.
     """
-    
+
+    forwards_language_preference: ClassVar[bool] = False
+
     def __init__(self, config: AgentConfig, circuit_breaker: Optional[CircuitBreaker] = None):
         """
         Initialize base agent.

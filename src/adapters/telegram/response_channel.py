@@ -9,7 +9,8 @@ from typing import Any, Optional, List
 from telegram import Bot
 from ...domain.messaging import ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType
-from ...locales.uk import get_message as get_uk_message, get_entertainment_intros
+from ...domain.language import LanguageCode
+from ...ports.localization_port import LocalizationPort
 from ...utils.message_chunker import MessageChunker
 from ...utils.logger import logger
 
@@ -26,18 +27,28 @@ class TelegramResponseChannel(ResponseChannel):
     Uses plain text (not MarkdownV2) for MVP to avoid escaping complexity.
     """
 
-    def __init__(self, bot: Bot, chat_id: int):
+    def __init__(
+        self,
+        bot: Bot,
+        chat_id: int,
+        language: LanguageCode = LanguageCode.UK,
+        localization: Optional[LocalizationPort] = None,
+    ):
         """
         Initialize Telegram response channel.
-        
+
         Args:
             bot: Telegram Bot instance (python-telegram-bot)
             chat_id: Telegram chat ID
+            language: Effective UI language for this request
+            localization: Localization adapter for UI phrases
         """
         self.bot = bot
         self.chat_id = chat_id
         self.channel_id = str(chat_id)
         self.platform = "telegram"
+        self.language = language
+        self._localization = localization
         self.chunker = MessageChunker(max_length=TELEGRAM_CHUNK_SIZE)
         logger.info(f"✅ TelegramResponseChannel initialized for chat {chat_id}")
 
@@ -385,14 +396,20 @@ class TelegramResponseChannel(ResponseChannel):
         """
         return await self.send_message(content.fallback_text, thread_id)
 
+    def _get_status_phrases(self, status_type: StatusType) -> list:
+        if self._localization:
+            return self._localization.get_status_phrases(self.language, status_type)
+        from ...locales.uk import get_message as get_uk_message
+        return get_uk_message(status_type)
+
     async def send_status(
         self,
         status_type: StatusType,
         thread_id: Optional[str] = None
     ) -> str:
-        """Send status message using Ukrainian localization."""
+        """Send status message using localized phrases."""
         try:
-            messages = get_uk_message(status_type)
+            messages = self._get_status_phrases(status_type)
             phrase = random.choice(messages)
 
             status_text = f"⏳ {phrase}."
@@ -410,7 +427,7 @@ class TelegramResponseChannel(ResponseChannel):
     ) -> tuple[str, str]:
         """Send status message and return (message_id, phrase)."""
         try:
-            messages = get_uk_message(status_type)
+            messages = self._get_status_phrases(status_type)
             phrase = random.choice(messages)
 
             status_text = f"⏳ {phrase}."
@@ -423,12 +440,16 @@ class TelegramResponseChannel(ResponseChannel):
 
     async def get_status_phrase(self, status_type: StatusType) -> str:
         """Get localized phrase for status type."""
-        messages = get_uk_message(status_type)
-        return random.choice(messages)
+        return random.choice(self._get_status_phrases(status_type))
 
     async def get_entertainment_intro(self) -> str:
         """Get localized intro phrase for entertainment messages."""
-        return random.choice(get_entertainment_intros())
+        if self._localization:
+            phrases = self._localization.get_entertainment_intros(self.language)
+        else:
+            from ...locales.uk import get_entertainment_intros
+            phrases = get_entertainment_intros()
+        return random.choice(phrases)
 
     async def send_entertainment_message(
         self,
@@ -460,7 +481,7 @@ class TelegramResponseChannel(ResponseChannel):
     ) -> None:
         """Update existing status message with new status type."""
         try:
-            messages = get_uk_message(status_type)
+            messages = self._get_status_phrases(status_type)
             phrase = random.choice(messages)
 
             status_text = f"⏳ {phrase}."
@@ -478,7 +499,7 @@ class TelegramResponseChannel(ResponseChannel):
     ) -> None:
         """Update existing status message with animated dots."""
         try:
-            messages = get_uk_message(status_type)
+            messages = self._get_status_phrases(status_type)
             phrase = random.choice(messages)
 
             dots = '.' * dots_count
