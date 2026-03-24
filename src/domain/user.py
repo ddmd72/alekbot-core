@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 from uuid import uuid4
 from pydantic import BaseModel, Field
+from .language import LanguageCode
 
 class UserTier(str, Enum):
     FREE = "free"
@@ -169,6 +170,12 @@ class UserBotConfig(BaseModel):
     # Timezone (IANA name, e.g. "Europe/Kyiv", "America/New_York")
     # Set via Cabinet UI. Used for: datetime injection in prompts, reminder due resolution, next_due computation.
     timezone: str = "UTC"
+
+    # Language preferences (RFC: MULTILINGUAL_SUPPORT_RFC.md §4.2)
+    # preferred_language: None = use system default for UI; Set = override UI language.
+    # agent_mirror: True = bot responds in user's input language; False = always use effective language.
+    preferred_language: Optional[LanguageCode] = None
+    agent_mirror: bool = True
 
     # Gmail auto-indexing schedule
     # gmail_auto_index: enable daily incremental indexing via Cloud Scheduler

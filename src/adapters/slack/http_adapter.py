@@ -22,6 +22,8 @@ from ...ports.conversation_handler_port import ConversationHandlerPort
 from ...ports.platform_auth_port import PlatformAuthPort
 from ...ports.session_store import SessionStore
 from ...ports.dedup_store import DedupStore
+from ...ports.language_service_port import LanguageServicePort
+from ...ports.localization_port import LocalizationPort
 from ...utils.logger import logger
 from ...utils.telemetry import (
     start_span,
@@ -53,6 +55,8 @@ class HTTPModeAdapter(SlackAdapter):
         iam_service: PlatformAuthPort,
         dedup_store: DedupStore,
         audio_service: Optional[Any] = None,
+        language_service: Optional[LanguageServicePort] = None,
+        localization: Optional[LocalizationPort] = None,
     ):
         super().__init__(
             app,
@@ -67,6 +71,8 @@ class HTTPModeAdapter(SlackAdapter):
         self.task_service = task_service
         self.session_store = session_store
         self.dedup_store = dedup_store
+        self._language_service = language_service
+        self._localization = localization
         self._session_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
         if not self.slack_signing_secret:
@@ -77,6 +83,17 @@ class HTTPModeAdapter(SlackAdapter):
         self._setup_routes()
 
         logger.info("🌐 HTTP Mode adapter initialized (Multi-Tenant)")
+
+    async def _resolve_language(self, user_id: str):
+        """Return (ui_lang, preferred_language, agent_mirror) for a user."""
+        from ...domain.language import LanguageCode
+        if self._language_service:
+            ui_lang = await self._language_service.resolve_ui_language(user_id)
+            preferred, mirror = await self._language_service.get_preference(user_id)
+        else:
+            ui_lang = LanguageCode.UK
+            preferred, mirror = None, True
+        return ui_lang, preferred, mirror
 
     def _translate_files(self, slack_files: list) -> list:
         attachments = []
@@ -281,10 +298,14 @@ class HTTPModeAdapter(SlackAdapter):
             set_log_context(user_id=user_id, session_id=session_id)
             logger.info(f"👤 Processing message for user {user_id} ({user_profile.display_name})")
 
+            ui_lang, preferred_language, agent_mirror = await self._resolve_language(user_id)
+
             response_channel = SlackResponseChannel(
                 self.app.client,
                 channel,
-                self.slack_bot_token
+                self.slack_bot_token,
+                language=ui_lang,
+                localization=self._localization,
             )
 
             if text.startswith("$"):
@@ -294,6 +315,7 @@ class HTTPModeAdapter(SlackAdapter):
                     session_id=session_id,
                     user_id=user_id,
                     account_id=account_id,  # SESSION_26
+                    language=ui_lang.value,
                     metadata={"event_type": "command", "slack_user_id": slack_user_id}
                 )
                 await self.conversation_handler.handle_command(command, context, response_channel)
@@ -304,12 +326,15 @@ class HTTPModeAdapter(SlackAdapter):
                 session_id=session_id,
                 user_id=user_id,
                 account_id=account_id,  # SESSION_26
+                language=ui_lang.value,
                 attachments=self._translate_files(event.get("files", [])),
                 thread_id=event.get("thread_ts"),
                 metadata={
                     "event_type": "message",
                     "channel_type": event.get("channel_type", "im"),
-                    "slack_user_id": slack_user_id
+                    "slack_user_id": slack_user_id,
+                    "preferred_language": preferred_language,
+                    "agent_mirror": agent_mirror,
                 }
             )
 
@@ -347,23 +372,30 @@ class HTTPModeAdapter(SlackAdapter):
             set_log_context(user_id=user_id, session_id=session_id)
             logger.info(f"👤 Processing mention for user {user_id} ({user_profile.display_name})")
 
+            ui_lang, preferred_language, agent_mirror = await self._resolve_language(user_id)
+
             context = MessageContext(
                 text=text,
                 session_id=session_id,
                 user_id=user_id,
                 account_id=account_id,  # SESSION_26
+                language=ui_lang.value,
                 attachments=self._translate_files(event.get("files", [])),
                 thread_id=thread_ts,
                 metadata={
                     "event_type": "app_mention",
-                    "slack_user_id": slack_user_id
+                    "slack_user_id": slack_user_id,
+                    "preferred_language": preferred_language,
+                    "agent_mirror": agent_mirror,
                 }
             )
 
             response_channel = SlackResponseChannel(
                 self.app.client,
                 channel,
-                self.slack_bot_token
+                self.slack_bot_token,
+                language=ui_lang,
+                localization=self._localization,
             )
 
             await self.conversation_handler.handle_message(context, response_channel)

@@ -527,7 +527,6 @@ class WorkerHandler:
                     user_id=note.user_id,
                     account_id=account_id,
                     system_alert=note.instruction,
-                    session_id=str(uuid.uuid4()),
                 )
             except Exception as exc:
                 logger.warning(

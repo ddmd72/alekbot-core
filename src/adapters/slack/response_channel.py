@@ -9,7 +9,8 @@ import aiohttp
 from typing import Any, Optional, Dict, List
 from ...domain.messaging import ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType
-from ...locales.uk import get_message as get_uk_message, get_entertainment_intros
+from ...domain.language import LanguageCode
+from ...ports.localization_port import LocalizationPort
 from ...utils.logger import logger
 
 
@@ -26,19 +27,30 @@ class SlackResponseChannel(ResponseChannel):
     This adapter translates generic response operations into Slack Web API calls.
     """
     
-    def __init__(self, app_client, channel_id: str, bot_token: str):
+    def __init__(
+        self,
+        app_client,
+        channel_id: str,
+        bot_token: str,
+        language: LanguageCode = LanguageCode.UK,
+        localization: Optional[LocalizationPort] = None,
+    ):
         """
         Initialize Slack response channel.
-        
+
         Args:
             app_client: Slack app client for API calls
             channel_id: Slack channel ID
             bot_token: Slack bot token for file downloads
+            language: Effective UI language for this request
+            localization: Localization adapter for UI phrases
         """
         self.client = app_client
         self.channel_id = channel_id
         self.bot_token = bot_token
         self.platform = "slack"
+        self.language = language
+        self._localization = localization
     
     @property
     def max_message_length(self) -> int:
@@ -322,20 +334,25 @@ class SlackResponseChannel(ResponseChannel):
 
         return blocks
 
+    def _get_status_phrases(self, status_type: StatusType) -> List[str]:
+        if self._localization:
+            return self._localization.get_status_phrases(self.language, status_type)
+        from ...locales.uk import get_message as get_uk_message
+        return get_uk_message(status_type)
+
     async def send_status(self, status_type: StatusType, thread_id: Optional[str] = None) -> str:
         """
-        Send a status message using Ukrainian localization.
-        
+        Send a status message using localized phrases.
+
         Args:
             status_type: Semantic status type (THINKING, SEARCHING_MEMORY, etc.)
             thread_id: Optional thread timestamp
-            
+
         Returns:
             Message timestamp (ID) for future updates
         """
         try:
-            # Get Ukrainian message from centralized library
-            messages = get_uk_message(status_type)
+            messages = self._get_status_phrases(status_type)
             phrase = random.choice(messages)
             
             # Send status message with emoji
@@ -358,10 +375,9 @@ class SlackResponseChannel(ResponseChannel):
             Tuple of (message_id, phrase)
         """
         try:
-            # Get Ukrainian message from centralized library
-            messages = get_uk_message(status_type)
+            messages = self._get_status_phrases(status_type)
             phrase = random.choice(messages)
-            
+
             # Send status message with emoji and single dot
             status_text = f"⏳ {phrase}."
             response = await self.send_message(status_text, thread_id)
@@ -380,12 +396,16 @@ class SlackResponseChannel(ResponseChannel):
         Returns:
             Localized phrase (without emoji or dots)
         """
-        messages = get_uk_message(status_type)
-        return random.choice(messages)
+        return random.choice(self._get_status_phrases(status_type))
 
     async def get_entertainment_intro(self) -> str:
         """Get a localized intro phrase for entertainment messages."""
-        return random.choice(get_entertainment_intros())
+        if self._localization:
+            phrases = self._localization.get_entertainment_intros(self.language)
+        else:
+            from ...locales.uk import get_entertainment_intros
+            phrases = get_entertainment_intros()
+        return random.choice(phrases)
 
     async def send_entertainment_message(self, text: str, thread_id: Optional[str] = None) -> Any:
         """Send entertainment message with emoji prefix."""
@@ -418,10 +438,9 @@ class SlackResponseChannel(ResponseChannel):
             status_type: New semantic status type
         """
         try:
-            # Get Ukrainian message from centralized library
-            messages = get_uk_message(status_type)
+            messages = self._get_status_phrases(status_type)
             phrase = random.choice(messages)
-            
+
             # Update status message with emoji
             status_text = f"⏳ {phrase}."
             await self.update_message(message_id, status_text)
@@ -439,10 +458,9 @@ class SlackResponseChannel(ResponseChannel):
             dots_count: Number of dots to display (1-5)
         """
         try:
-            # Get Ukrainian message from centralized library
-            messages = get_uk_message(status_type)
+            messages = self._get_status_phrases(status_type)
             phrase = random.choice(messages)
-            
+
             # Update status message with emoji and animated dots
             dots = '.' * dots_count
             status_text = f"⏳ {phrase}{dots}"

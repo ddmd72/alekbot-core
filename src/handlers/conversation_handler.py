@@ -25,6 +25,7 @@ from ..utils.file_conversion import (
 )
 from ..ports.audio_transcription_port import AudioTranscriptionPort
 from ..ports.conversation_handler_port import ConversationHandlerPort
+from ..ports.localization_port import LocalizationPort
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 from ..utils.logging_context import set_log_context
@@ -92,6 +93,7 @@ class ConversationHandler(ConversationHandlerPort):
         # Previously: `from src.handlers.consolidation_handler import process_user_batches_on_overflow`
         # That was a horizontal coupling between two handlers. Now wired in composition/.
         overflow_callback: Optional[Callable[..., Coroutine]] = None,
+        localization: Optional[LocalizationPort] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -106,6 +108,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._indexed_email_repo = indexed_email_repo
         self._user_repo = user_repo
         self._overflow_callback = overflow_callback
+        self._localization = localization
         self._fallback_service = AgentFallbackService(coordinator)
 
     async def _deliver_rich_content(
@@ -363,25 +366,26 @@ class ConversationHandler(ConversationHandlerPort):
                     pass
 
         try:
-            # 🆕 FALLBACK: If no text but has attachments → use dynamic localized prompt
+            # FALLBACK: If no text but has attachments → use localized file prompt
             if not context.text and context.attachments:
-                from ..locales import uk
-                
-                # Detect file type and use appropriate fallback
                 first_attachment = context.attachments[0]
                 mime_type = first_attachment.mime_type.lower()
-                
-                if mime_type.startswith("image/"):
-                    context.text = uk.FILE_FALLBACK_IMAGE
-                elif mime_type.startswith("video/"):
-                    context.text = uk.FILE_FALLBACK_VIDEO
-                elif mime_type == "application/pdf":
-                    context.text = uk.FILE_FALLBACK_PDF
-                elif mime_type.startswith("application/") or mime_type.startswith("text/"):
-                    context.text = uk.FILE_FALLBACK_DOCUMENT
+                if self._localization:
+                    from ..domain.language import LanguageCode
+                    lang = LanguageCode.from_str(context.language, default=LanguageCode.UK)
+                    context.text = self._localization.get_file_prompt(lang, mime_type)
                 else:
-                    context.text = uk.FILE_FALLBACK_GENERIC
-                
+                    from ..locales import uk
+                    if mime_type.startswith("image/"):
+                        context.text = uk.FILE_FALLBACK_IMAGE
+                    elif mime_type.startswith("video/"):
+                        context.text = uk.FILE_FALLBACK_VIDEO
+                    elif mime_type == "application/pdf":
+                        context.text = uk.FILE_FALLBACK_PDF
+                    elif mime_type.startswith("application/") or mime_type.startswith("text/"):
+                        context.text = uk.FILE_FALLBACK_DOCUMENT
+                    else:
+                        context.text = uk.FILE_FALLBACK_GENERIC
                 logger.info(f"📎 File without text ({mime_type}) - using fallback: '{context.text}'")
             
             if context.text:

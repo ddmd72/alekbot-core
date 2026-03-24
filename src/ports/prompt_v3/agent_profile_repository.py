@@ -5,7 +5,7 @@ Part of Prompt Design System v4 (RFC: docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md).
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Dict, Optional, Set
 
 from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.profile_slot import ProfileToken
@@ -60,6 +60,28 @@ class AgentProfileRepository(ABC):
 
         Returns:
             Dict mapping token_id -> ProfileToken. Empty dict if no overrides found.
+        """
+        pass
+
+    @abstractmethod
+    async def set_override_tokens(
+        self,
+        owner_type: OwnerType,
+        owner_id: str,
+        tokens: Dict[str, ProfileToken],
+        clear_ids: Optional[Set[str]] = None,
+    ) -> None:
+        """Upsert tokens into an override document, optionally removing others atomically.
+
+        Performs a read-modify-write: preserves existing tokens not in `tokens` or
+        `clear_ids`. Safe to call on a non-existent document (creates it).
+
+        Args:
+            owner_type: OwnerType.ACCOUNT or OwnerType.USER
+            owner_id: Account ID or user ID
+            tokens: Token map to upsert {token_id: ProfileToken}
+            clear_ids: Token IDs to remove from the override document before upserting.
+                       Use to atomically swap one language token for another.
         """
         pass
 

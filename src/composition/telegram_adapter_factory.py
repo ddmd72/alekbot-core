@@ -21,6 +21,8 @@ from ..ports.html_renderer_port import HtmlRendererPort
 from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..ports.platform_auth_port import PlatformAuthPort
 from ..ports.file_service import FileService
+from ..ports.language_service_port import LanguageServicePort
+from ..ports.localization_port import LocalizationPort
 from ..utils.logger import logger
 
 
@@ -49,6 +51,8 @@ class TelegramAdapterFactory:
         notification_service: Optional[UserNotificationService] = None,
         indexed_email_repo=None,
         user_repo=None,
+        language_service: Optional[LanguageServicePort] = None,
+        localization: Optional[LocalizationPort] = None,
     ) -> TelegramWebhookAdapter:
         """
         Create TelegramWebhookAdapter with RichContentService wired in.
@@ -93,6 +97,7 @@ class TelegramAdapterFactory:
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
             overflow_callback=process_user_batches_on_overflow,
+            localization=localization,
         )
 
         logger.info("TelegramAdapterFactory: wiring complete (html_renderer=%s)", html_renderer is not None)
@@ -105,4 +110,6 @@ class TelegramAdapterFactory:
             conversation_handler=conversation_handler,
             iam_service=iam_service,
             audio_service=audio_service,
+            language_service=language_service,
+            localization=localization,
         )
