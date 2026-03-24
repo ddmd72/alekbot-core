@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from google.cloud import secretmanager
 from typing import Optional
 from .environment import EnvironmentConfig
+from ..domain.language import LanguageCode
 
 # ARCHITECTURE FIX: ConsolidationSettings moved to src/domain/settings.py.
 # It is a pure value object with no infrastructure deps — same as SearchConfig.
@@ -127,5 +128,10 @@ def load_settings():
     # See: docs/10_rfcs/PROMPT_V3_ROLLBACK_PLAN.md
     settings["ENABLE_PROMPT_V3"] = os.getenv("ENABLE_PROMPT_V3", "false").lower() == "true"
     settings["ENABLE_HTML_RENDERER"] = os.getenv("ENABLE_HTML_RENDERER", "false").lower() == "true"
+
+    # System default language (RFC: MULTILINGUAL_SUPPORT_RFC.md §5.1)
+    # Loaded from SYSTEM_DEFAULT_LANGUAGE env var. EN is the neutral baseline.
+    lang_str = os.getenv("SYSTEM_DEFAULT_LANGUAGE", "en").lower()
+    settings["SYSTEM_DEFAULT_LANGUAGE"] = LanguageCode.from_str(lang_str, default=LanguageCode.EN)
 
     return settings

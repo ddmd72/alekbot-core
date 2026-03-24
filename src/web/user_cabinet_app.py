@@ -15,6 +15,7 @@ from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
 from ..ports.task_queue import TaskQueue
+from ..ports.language_service_port import LanguageServicePort
 from ..utils.logger import logger
 
 # Documentation owner (loaded from environment variable - Secret Manager)
@@ -36,6 +37,7 @@ def create_user_cabinet_blueprint(
     task_queue: Optional[TaskQueue] = None,
     task_setup=None,
     tasks_provider=None,
+    language_service: Optional[LanguageServicePort] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -404,6 +406,53 @@ def create_user_cabinet_blueprint(
             return jsonify({"timezone": tz_name}), 200
         except Exception as e:
             logger.error(f"Error updating timezone: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/language", methods=["GET"])
+    @auth_required
+    async def get_language():
+        """Return the user's current language preference."""
+        try:
+            if language_service:
+                preferred, mirror = await language_service.get_preference(g.user_id)
+            else:
+                preferred, mirror = None, True
+            return jsonify({
+                "preferred_language": preferred.value if preferred else None,
+                "agent_mirror": mirror,
+            }), 200
+        except Exception as e:
+            logger.error(f"Error fetching language preference: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/language", methods=["POST"])
+    @auth_required
+    async def set_language():
+        """Update language preference. Body: {\"preferred_language\": \"en\"|null, \"agent_mirror\": bool}"""
+        from ..domain.language import LanguageCode
+        try:
+            body = await request.get_json(force=True) or {}
+            lang_raw = body.get("preferred_language")
+            mirror = body.get("agent_mirror", True)
+
+            if not isinstance(mirror, bool):
+                return jsonify({"error": "agent_mirror must be a boolean"}), 400
+
+            preferred: Optional[LanguageCode] = None
+            if lang_raw is not None:
+                preferred = LanguageCode.from_str(lang_raw, default=None)
+                if preferred is None:
+                    return jsonify({"error": f"Unsupported language: {lang_raw!r}"}), 400
+
+            if language_service:
+                await language_service.set_preference(g.user_id, preferred, mirror)
+
+            return jsonify({
+                "preferred_language": preferred.value if preferred else None,
+                "agent_mirror": mirror,
+            }), 200
+        except Exception as e:
+            logger.error(f"Error updating language preference: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
     @bp.route("/api/user/facts", methods=["GET"])

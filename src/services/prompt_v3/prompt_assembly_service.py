@@ -47,7 +47,7 @@ class PromptAssemblyService:
         security_port: SecurityPort,
         formatter: ContextFormatter,
         bio_formatter: BiographicalFactsFormatter,
-        cache_ttl: int = 86400  # 24 hours
+        cache_ttl: int = 86400,  # 24 hours
     ):
         self.token_repo = token_repo
         self.blueprint_repo = blueprint_repo
@@ -510,12 +510,14 @@ class PromptAssemblyService:
         self,
         agent_type: str,
         account_id: Optional[str],
-        user_id: Optional[str]
+        user_id: Optional[str],
     ) -> str:
         """Build cache key from parameters.
 
         Cache key does NOT include runtime data (biographical_facts, conversation_history)
-        because they are injected AFTER cache lookup.
+        because they are injected AFTER cache lookup. Language state is captured via
+        user_id — user-level profile overrides (LANG_FIXED_*) are fetched during
+        static assembly and vary per user.
         """
         acc_part = account_id if account_id else "no-acc"
         usr_part = user_id if user_id else "no-usr"

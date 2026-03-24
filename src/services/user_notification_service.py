@@ -143,6 +143,7 @@ class UserNotificationService:
             return
 
         recipient = agent_id_override or f"quick_response_agent_{user_id}"
+        effective_session_id = session_id if session_id is not None else user_id
         framed = MessagePart(text=f"[System: {system_alert} Your response to this message will be read by the user. Inform them of the event details in your usual manner of communication.]")
         message = AgentMessage.create(
             sender="notification_service",
@@ -152,7 +153,7 @@ class UserNotificationService:
             context={
                 "user_id": user_id,
                 "account_id": account_id,
-                "session_id": session_id or str(uuid.uuid4()),
+                "session_id": effective_session_id,
                 "thread_id": None,
                 "current_message_parts": [framed],
             },
@@ -199,7 +200,7 @@ class UserNotificationService:
                 if self._session_store:
                     try:
                         await self._session_store.append_messages_batch(
-                            session_id=session_id,
+                            session_id=effective_session_id,
                             owner_id=user_id,
                             messages=[
                                 Message(role="user", parts=[MessagePart(text=system_alert)]),

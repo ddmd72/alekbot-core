@@ -44,12 +44,12 @@ class TestAgentProfileRepositoryContract:
         assert getattr(AgentProfileRepository.delete_profile, "__isabstractmethod__", False)
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 3 abstract methods."""
+        """Port should have exactly 4 abstract methods."""
         abstract_methods = {
             name for name, method in inspect.getmembers(AgentProfileRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 3, f"Expected 3 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 4, f"Expected 4 abstract methods, got {abstract_methods}"
 
     def test_get_agent_profile_signature(self):
         sig = inspect.signature(AgentProfileRepository.get_agent_profile)

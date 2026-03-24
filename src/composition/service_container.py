@@ -190,7 +190,7 @@ class ServiceContainer:
         # ------------------------------------------------------------------
         # Prompt v3 design system (optional — graceful fallback to None)
         # ------------------------------------------------------------------
-        self.assembly_service = self._init_assembly_service(config, db_client, env_config)
+        self.assembly_service, self.profile_repo = self._init_assembly_service(config, db_client, env_config)
 
         # ------------------------------------------------------------------
         # Email classification + indexing pipeline
@@ -308,7 +308,8 @@ class ServiceContainer:
     @staticmethod
     def _init_assembly_service(
         config: dict, db_client: Any, env_config: EnvironmentConfig
-    ) -> Optional[Any]:
+    ) -> tuple:
+        """Returns (assembly_service, profile_repo). Both None on failure."""
         logger.info("🔐 Initializing Prompt Design System v3 (optional)...")
         try:
             from ..adapters.security.regex_adapter import RegexSecurityAdapter
@@ -348,10 +349,10 @@ class ServiceContainer:
                 bio_formatter=BiographicalFactsFormatter(),
             )
             logger.info("✅ Prompt Design System v3 initialized successfully")
-            return service
+            return service, profile_repo
         except ImportError as e:
             logger.warning(f"⚠️ Prompt Design System v3 not available: {e}")
-            return None
+            return None, None
         except Exception as e:
             logger.error(f"❌ Failed to initialize Prompt Design System v3: {e}", exc_info=True)
-            return None
+            return None, None

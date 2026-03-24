@@ -293,6 +293,22 @@ async def main():
         file_service = FileUploadService(container.llm_port)
         session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
 
+        logger.info("🌐 Initializing Language Services...")
+        from src.adapters.file_localization_adapter import FileLocalizationAdapter
+        from src.services.language_preference_service import LanguagePreferenceService
+        from src.domain.language import LanguageCode
+        _localization = FileLocalizationAdapter()
+        _system_lang = LanguageCode.from_str(
+            config.get("SYSTEM_DEFAULT_LANGUAGE", "en"), default=LanguageCode.EN
+        )
+        _language_service = LanguagePreferenceService(
+            user_repo=user_repo,
+            account_repo=account_repo,
+            profile_repo=container.profile_repo,
+            prompt_builder=container.assembly_service,
+            system_default_language=_system_lang,
+        )
+
         # Async job adapters (Deep Research) — pure API clients, no queue logic.
         # Both instantiated when API keys are present; per-user selection via
         # UserBotConfig.agent_providers["deep_research"] ("gemini" | "openai").
@@ -341,6 +357,7 @@ async def main():
             coordinator=coordinator,
             session_store=session_store,
         )
+        _language_service._notification_service = notification_service
 
         # DocumentDeliveryService — GCS-backed, used by both async (AgentWorkerHandler)
         # and sync (ConversationHandler) document delivery paths.
@@ -379,6 +396,7 @@ async def main():
             anthropic_client=anthropic_client,
         )
         _agent_factory_ref[0] = agent_factory  # Wire deferred reference for overflow_callback
+        _language_service._ensure_agents = agent_factory.ensure_agents_for_user
         await agent_factory.start()
 
         # ====================================================================
@@ -473,6 +491,7 @@ async def main():
             task_queue=agent_task_queue,
             task_setup=task_setup_service,
             tasks_provider=container.ms_todo_adapter,
+            language_service=_language_service,
         )
 
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
@@ -561,6 +580,8 @@ async def main():
             notification_service=notification_service,
             indexed_email_repo=container.indexed_email_repo,
             user_repo=user_repo,
+            language_service=_language_service,
+            localization=_localization,
         )
         notification_channel_factory.register_factory(
             "slack",
@@ -641,6 +662,8 @@ async def main():
                             notification_service=notification_service,
                             indexed_email_repo=container.indexed_email_repo,
                             user_repo=user_repo,
+                            language_service=_language_service,
+                            localization=_localization,
                         )
                         def _make_telegram_channel(adapter, channel_id):
                             try:

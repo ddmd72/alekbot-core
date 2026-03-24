@@ -1236,6 +1236,36 @@
               </div>
             </div>
           </div>
+
+          <div class="card reveal" style="max-width: 520px; margin-top: 20px">
+            <div class="card-body">
+              <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Language</h3>
+              <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
+                UI language and the language Alek responds in.
+              </p>
+
+              <div style="margin-bottom: 18px">
+                <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px">UI Language</div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap" id="lang-ui-buttons">
+                  <button class="btn lang-ui-btn" data-lang="" onclick="setLangUI('')">System default</button>
+                  <button class="btn lang-ui-btn" data-lang="uk" onclick="setLangUI('uk')">🇺🇦 Ukrainian</button>
+                  <button class="btn lang-ui-btn" data-lang="en" onclick="setLangUI('en')">🇬🇧 English</button>
+                  <button class="btn lang-ui-btn" data-lang="fr" onclick="setLangUI('fr')">🇫🇷 French</button>
+                  <button class="btn lang-ui-btn" data-lang="es" onclick="setLangUI('es')">🇪🇸 Spanish</button>
+                </div>
+              </div>
+
+              <div style="margin-bottom: 18px">
+                <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px">Bot responds in</div>
+                <div style="display: flex; gap: 8px">
+                  <button class="btn lang-mirror-btn" data-mirror="true" onclick="setLangMirror(true)">Mirror input</button>
+                  <button class="btn lang-mirror-btn" data-mirror="false" onclick="setLangMirror(false)">Fixed language</button>
+                </div>
+              </div>
+
+              <button onclick="saveLanguage()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">Save</button>
+            </div>
+          </div>
         </section>
       </main>
     </div>
@@ -1338,6 +1368,7 @@
         } catch {
           showToast("Failed to load settings", "error");
         }
+        await loadLanguage();
       }
 
       async function saveTimezone() {
@@ -1358,6 +1389,60 @@
           showToast("Timezone saved", "success");
         } catch {
           showToast("Failed to save timezone", "error");
+        }
+      }
+
+      /* ── Language settings ───────────────────────────── */
+      let _langUiSelected = "";
+      let _langMirrorSelected = true;
+
+      function setLangUI(lang) {
+        _langUiSelected = lang;
+        document.querySelectorAll(".lang-ui-btn").forEach(b => {
+          b.classList.toggle("btn-primary", b.dataset.lang === lang);
+          b.classList.toggle("btn-secondary", b.dataset.lang !== lang);
+        });
+      }
+
+      function setLangMirror(mirror) {
+        _langMirrorSelected = mirror;
+        document.querySelectorAll(".lang-mirror-btn").forEach(b => {
+          const active = (b.dataset.mirror === "true") === mirror;
+          b.classList.toggle("btn-primary", active);
+          b.classList.toggle("btn-secondary", !active);
+        });
+      }
+
+      async function loadLanguage() {
+        try {
+          const res = await fetch(`${API}/api/user/language`, { credentials: "include" });
+          if (!res.ok) return;
+          const data = await res.json();
+          setLangUI(data.preferred_language || "");
+          setLangMirror(data.agent_mirror !== false);
+        } catch { /* non-fatal */ }
+      }
+
+      async function saveLanguage() {
+        try {
+          const body = {
+            preferred_language: _langUiSelected || null,
+            agent_mirror: _langMirrorSelected,
+          };
+          const res = await fetch(`${API}/api/user/language`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showToast(err.error || "Failed to save", "error");
+            return;
+          }
+          showToast("Language saved", "success");
+        } catch {
+          showToast("Failed to save language", "error");
         }
       }
 

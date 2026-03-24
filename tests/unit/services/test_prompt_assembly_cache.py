@@ -55,14 +55,13 @@ class TestPromptAssemblyCaching:
     
     def test_build_cache_key(self, assembly_service):
         """Test cache key generation."""
-        # Full parameters
         key = assembly_service._build_cache_key("smart", "account_123456789", "user_987654321")
         assert key == "prompt:smart:acc:account_123456789:usr:user_987654321"
-        
+
         # No account
         key = assembly_service._build_cache_key("quick", None, "user_123")
         assert key == "prompt:quick:acc:no-acc:usr:user_123"
-        
+
         # No user
         key = assembly_service._build_cache_key("smart", "acc_123", None)
         assert key == "prompt:smart:acc:acc_123:usr:no-usr"
