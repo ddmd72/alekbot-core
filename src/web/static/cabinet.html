@@ -881,6 +881,31 @@
           transition-duration: 0.01ms !important;
         }
       }
+
+      /* Language segment control */
+      .lang-segment-control {
+        display: inline-flex;
+        background: rgba(0, 0, 0, 0.04);
+        border-radius: 100px;
+        padding: 4px;
+      }
+      .lang-seg-btn {
+        padding: 8px 18px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-muted);
+        border: none;
+        background: transparent;
+        border-radius: 100px;
+        cursor: pointer;
+        transition: var(--transition-fast);
+      }
+      .lang-seg-btn.active {
+        color: var(--text-main);
+        background: var(--bg-panel-solid);
+        box-shadow: var(--shadow-sm);
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
@@ -888,20 +913,8 @@
       <!-- Mac-like Floating Header -->
       <header class="header">
         <div class="logo">
-          <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path
-              d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"
-            />
-          </svg>
+          <img src="/static/alek-logo.png" width="28" height="28"
+               style="border-radius: 6px; object-fit: cover;" alt="Alek" />
           Alek
         </div>
 
@@ -982,8 +995,8 @@
         <!-- Memory Section -->
         <section id="section-memory" class="section">
           <div class="hero-header reveal">
-            <h1>Your Memory</h1>
-            <p>
+            <h1 id="memory-title">Your Memory</h1>
+            <p id="memory-subtitle">
               Search, manage, and refine the knowledge base Alek uses to assist
               you.
             </p>
@@ -998,7 +1011,7 @@
                 class="inp"
                 onkeydown="if (event.key === 'Enter') runSearch();"
               />
-              <button onclick="runSearch()" class="btn btn-black">
+              <button id="memory-search-btn" onclick="runSearch()" class="btn btn-black">
                 Search
               </button>
             </div>
@@ -1075,8 +1088,8 @@
         <!-- Integrations Section -->
         <section id="section-integrations" class="section active">
           <div class="hero-header reveal visible">
-            <h1>Integrations</h1>
-            <p>
+            <h1 id="integrations-title">Integrations</h1>
+            <p id="integrations-subtitle">
               Connect your favorite platforms and let Alek work seamlessly
               across them.
             </p>
@@ -1139,12 +1152,13 @@
         <!-- Team Section -->
         <section id="section-team" class="section">
           <div class="hero-header reveal">
-            <h1>Your Team</h1>
-            <p>Invite colleagues to collaborate and share knowledge.</p>
+            <h1 id="team-title">Your Team</h1>
+            <p id="team-subtitle">Invite colleagues to collaborate and share knowledge.</p>
           </div>
 
           <div class="invite-container reveal">
             <button
+              id="team-generate-btn"
               onclick="generateTeamInvite()"
               class="btn btn-black"
               style="padding: 16px 32px; font-size: 18px"
@@ -1174,14 +1188,14 @@
         <!-- Settings Section -->
         <section id="section-settings" class="section">
           <div class="hero-header reveal">
-            <h1>Settings</h1>
-            <p>Preferences that personalise how Alek works for you.</p>
+            <h1 id="settings-title">Settings</h1>
+            <p id="settings-subtitle">Preferences that personalise how Alek works for you.</p>
           </div>
 
           <div class="card reveal" style="max-width: 520px">
             <div class="card-body">
-              <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Timezone</h3>
-              <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
+              <h3 id="settings-tz-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Timezone</h3>
+              <p id="settings-tz-desc" style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
                 Used for scheduling reminders and interpreting time expressions.
               </p>
               <div style="display: flex; gap: 12px; align-items: center">
@@ -1230,7 +1244,7 @@
                     <option value="UTC">UTC</option>
                   </optgroup>
                 </select>
-                <button onclick="saveTimezone()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">
+                <button id="settings-tz-save" onclick="saveTimezone()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">
                   Save
                 </button>
               </div>
@@ -1239,31 +1253,37 @@
 
           <div class="card reveal" style="max-width: 520px; margin-top: 20px">
             <div class="card-body">
-              <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Language</h3>
-              <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
+              <h3 id="settings-lang-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Language</h3>
+              <p id="settings-lang-desc" style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
                 UI language and the language Alek responds in.
               </p>
 
               <div style="margin-bottom: 18px">
-                <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px">UI Language</div>
-                <div style="display: flex; gap: 8px; flex-wrap: wrap" id="lang-ui-buttons">
-                  <button class="btn lang-ui-btn" data-lang="" onclick="setLangUI('')">System default</button>
-                  <button class="btn lang-ui-btn" data-lang="uk" onclick="setLangUI('uk')">🇺🇦 Ukrainian</button>
-                  <button class="btn lang-ui-btn" data-lang="en" onclick="setLangUI('en')">🇬🇧 English</button>
-                  <button class="btn lang-ui-btn" data-lang="fr" onclick="setLangUI('fr')">🇫🇷 French</button>
-                  <button class="btn lang-ui-btn" data-lang="es" onclick="setLangUI('es')">🇪🇸 Spanish</button>
+                <div id="settings-lang-ui-label" style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px">UI Language</div>
+                <select id="lang-ui-select" onchange="setLangUI(this.value)"
+                  style="width: 100%; padding: 10px 14px; border-radius: var(--radius-sm);
+                         border: 1px solid var(--border-light); background: var(--bg-hover);
+                         color: var(--text-main); font-family: inherit; font-size: 15px;
+                         outline: none; cursor: pointer; transition: border-color var(--transition-fast)"
+                  onfocus="this.style.borderColor='var(--border-focus)'"
+                  onblur="this.style.borderColor='var(--border-light)'">
+                  <option value="">🌐 System default</option>
+                  <option value="uk">🇺🇦 Ukrainian</option>
+                  <option value="en">🇬🇧 English</option>
+                  <option value="fr">🇫🇷 French</option>
+                  <option value="es">🇪🇸 Spanish</option>
+                </select>
+              </div>
+
+              <div style="margin-bottom: 24px">
+                <div id="settings-lang-bot-label" style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px">Bot responds in</div>
+                <div class="lang-segment-control">
+                  <button id="lang-mirror-btn" class="lang-seg-btn active" onclick="setLangMirror(true)">Mirror input</button>
+                  <button id="lang-fixed-btn" class="lang-seg-btn" onclick="setLangMirror(false)">Fixed language</button>
                 </div>
               </div>
 
-              <div style="margin-bottom: 18px">
-                <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px">Bot responds in</div>
-                <div style="display: flex; gap: 8px">
-                  <button class="btn lang-mirror-btn" data-mirror="true" onclick="setLangMirror(true)">Mirror input</button>
-                  <button class="btn lang-mirror-btn" data-mirror="false" onclick="setLangMirror(false)">Fixed language</button>
-                </div>
-              </div>
-
-              <button onclick="saveLanguage()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">Save</button>
+              <button id="settings-lang-save" onclick="saveLanguage()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">Save</button>
             </div>
           </div>
         </section>
@@ -1279,6 +1299,275 @@
       const API = "";
       let currentUser = null;
       let allFacts = [];
+
+      /* ── i18n ────────────────────────────────────────── */
+      const LANG_DICT = {
+        en: {
+          "nav.integrations": "Integrations",
+          "nav.memory": "Memory",
+          "nav.team": "Team",
+          "nav.settings": "Settings",
+          "memory.title": "Your Memory",
+          "memory.subtitle": "Search, manage, and refine the knowledge base Alek uses to assist you.",
+          "memory.search_btn": "Search",
+          "memory.search_placeholder": "Ask your memory...",
+          "memory.clear": "Clear Search",
+          "integrations.title": "Integrations",
+          "integrations.subtitle": "Connect your favorite platforms and let Alek work seamlessly across them.",
+          "platform.slack_desc": "Sync seamlessly with your workspace.",
+          "platform.telegram_desc": "Connect your Telegram account.",
+          "platform.gmail_desc": "Index email history as facts to give Alek deep context.",
+          "platform.tasks_desc": "Manage tasks using natural language.",
+          "platform.connected": "Connected",
+          "platform.not_connected": "Not connected",
+          "platform.disconnect": "Disconnect",
+          "platform.disconnect_account": "Disconnect Account",
+          "platform.link_account": "Link Account",
+          "platform.connect_gmail": "Connect Gmail",
+          "platform.connect_todo": "Connect Microsoft To Do",
+          "platform.index_emails": "Index Emails",
+          "platform.indexing": "Indexing...",
+          "platform.cancel": "Cancel",
+          "team.title": "Your Team",
+          "team.subtitle": "Invite colleagues to collaborate and share knowledge.",
+          "team.generate_invite": "Generate New Invite Link",
+          "settings.title": "Settings",
+          "settings.subtitle": "Preferences that personalise how Alek works for you.",
+          "settings.tz.title": "Timezone",
+          "settings.tz.desc": "Used for scheduling reminders and interpreting time expressions.",
+          "settings.lang.title": "Language",
+          "settings.lang.desc": "UI language and the language Alek responds in.",
+          "settings.lang.ui_label": "UI Language",
+          "settings.lang.bot_label": "Bot responds in",
+          "settings.lang.mirror": "Mirror input",
+          "settings.lang.fixed": "Fixed language",
+          "btn.save": "Save",
+          "toast.lang_saved": "Language saved",
+          "toast.lang_failed": "Failed to save language",
+          "toast.tz_saved": "Timezone saved",
+          "toast.tz_failed": "Failed to save timezone",
+          "toast.link_copied": "Link copied!",
+          "toast.team_joined": "Successfully joined team",
+          "toast.gmail_connected": "Gmail connected",
+          "toast.todo_connected": "To Do connected",
+        },
+        uk: {
+          "nav.integrations": "Інтеграції",
+          "nav.memory": "Пам\u2019ять",
+          "nav.team": "Команда",
+          "nav.settings": "Налаштування",
+          "memory.title": "Ваша пам\u2019ять",
+          "memory.subtitle": "Шукайте, керуйте та вдосконалюйте базу знань, яку Alek використовує для вашої допомоги.",
+          "memory.search_btn": "Пошук",
+          "memory.search_placeholder": "Запитай свою пам\u2019ять...",
+          "memory.clear": "Очистити пошук",
+          "integrations.title": "Інтеграції",
+          "integrations.subtitle": "Підключіть свої платформи і дозвольте Alek працювати безперешкодно.",
+          "platform.slack_desc": "Синхронізуйтеся з вашим робочим простором.",
+          "platform.telegram_desc": "Підключіть ваш Telegram-акаунт.",
+          "platform.gmail_desc": "Індексуйте email-архів як факти для контексту Alek.",
+          "platform.tasks_desc": "Керуйте задачами природною мовою.",
+          "platform.connected": "Підключено",
+          "platform.not_connected": "Не підключено",
+          "platform.disconnect": "Відключити",
+          "platform.disconnect_account": "Відключити акаунт",
+          "platform.link_account": "Прив\u2019язати акаунт",
+          "platform.connect_gmail": "Підключити Gmail",
+          "platform.connect_todo": "Підключити Microsoft To Do",
+          "platform.index_emails": "Індексувати пошту",
+          "platform.indexing": "Індексується...",
+          "platform.cancel": "Скасувати",
+          "team.title": "Ваша команда",
+          "team.subtitle": "Запрошуйте колег для спільної роботи та обміну знаннями.",
+          "team.generate_invite": "Створити запрошення",
+          "settings.title": "Налаштування",
+          "settings.subtitle": "Персоналізуйте роботу Alek під себе.",
+          "settings.tz.title": "Часовий пояс",
+          "settings.tz.desc": "Використовується для планування нагадувань та інтерпретації часових виразів.",
+          "settings.lang.title": "Мова",
+          "settings.lang.desc": "Мова інтерфейсу та мова відповідей Alek.",
+          "settings.lang.ui_label": "Мова інтерфейсу",
+          "settings.lang.bot_label": "Бот відповідає",
+          "settings.lang.mirror": "Мова запиту",
+          "settings.lang.fixed": "Фіксована мова",
+          "btn.save": "Зберегти",
+          "toast.lang_saved": "Мову збережено",
+          "toast.lang_failed": "Не вдалося зберегти мову",
+          "toast.tz_saved": "Часовий пояс збережено",
+          "toast.tz_failed": "Не вдалося зберегти часовий пояс",
+          "toast.link_copied": "Посилання скопійовано!",
+          "toast.team_joined": "Успішно приєднано до команди",
+          "toast.gmail_connected": "Gmail підключено",
+          "toast.todo_connected": "To Do підключено",
+        },
+        fr: {
+          "nav.integrations": "Int\u00e9grations",
+          "nav.memory": "M\u00e9moire",
+          "nav.team": "\u00c9quipe",
+          "nav.settings": "Param\u00e8tres",
+          "memory.title": "Votre m\u00e9moire",
+          "memory.subtitle": "Recherchez, g\u00e9rez et affinez la base de connaissances qu'Alek utilise.",
+          "memory.search_btn": "Rechercher",
+          "memory.search_placeholder": "Interrogez votre m\u00e9moire...",
+          "memory.clear": "Effacer la recherche",
+          "integrations.title": "Int\u00e9grations",
+          "integrations.subtitle": "Connectez vos plateformes pr\u00e9f\u00e9r\u00e9es et laissez Alek travailler.",
+          "platform.slack_desc": "Synchronisez avec votre espace de travail.",
+          "platform.telegram_desc": "Connectez votre compte Telegram.",
+          "platform.gmail_desc": "Indexez l'historique des emails comme faits.",
+          "platform.tasks_desc": "G\u00e9rez les t\u00e2ches en langage naturel.",
+          "platform.connected": "Connect\u00e9",
+          "platform.not_connected": "Non connect\u00e9",
+          "platform.disconnect": "D\u00e9connecter",
+          "platform.disconnect_account": "D\u00e9connecter le compte",
+          "platform.link_account": "Lier le compte",
+          "platform.connect_gmail": "Connecter Gmail",
+          "platform.connect_todo": "Connecter Microsoft To Do",
+          "platform.index_emails": "Indexer les emails",
+          "platform.indexing": "Indexation...",
+          "platform.cancel": "Annuler",
+          "team.title": "Votre \u00e9quipe",
+          "team.subtitle": "Invitez des coll\u00e8gues \u00e0 collaborer et partager des connaissances.",
+          "team.generate_invite": "Cr\u00e9er un lien d'invitation",
+          "settings.title": "Param\u00e8tres",
+          "settings.subtitle": "Pr\u00e9f\u00e9rences pour personnaliser Alek.",
+          "settings.tz.title": "Fuseau horaire",
+          "settings.tz.desc": "Utilis\u00e9 pour planifier les rappels et interpr\u00e9ter les expressions de temps.",
+          "settings.lang.title": "Langue",
+          "settings.lang.desc": "Langue de l'interface et langue de r\u00e9ponse d'Alek.",
+          "settings.lang.ui_label": "Langue de l'interface",
+          "settings.lang.bot_label": "Alek r\u00e9pond en",
+          "settings.lang.mirror": "Langue de la requ\u00eate",
+          "settings.lang.fixed": "Langue fixe",
+          "btn.save": "Enregistrer",
+          "toast.lang_saved": "Langue enregistr\u00e9e",
+          "toast.lang_failed": "\u00c9chec de la sauvegarde",
+          "toast.tz_saved": "Fuseau horaire enregistr\u00e9",
+          "toast.tz_failed": "\u00c9chec de la sauvegarde",
+          "toast.link_copied": "Lien copi\u00e9 !",
+          "toast.team_joined": "Rejoint l'\u00e9quipe",
+          "toast.gmail_connected": "Gmail connect\u00e9",
+          "toast.todo_connected": "To Do connect\u00e9",
+        },
+        es: {
+          "nav.integrations": "Integraciones",
+          "nav.memory": "Memoria",
+          "nav.team": "Equipo",
+          "nav.settings": "Ajustes",
+          "memory.title": "Tu memoria",
+          "memory.subtitle": "Busca, gestiona y perfecciona la base de conocimiento que usa Alek.",
+          "memory.search_btn": "Buscar",
+          "memory.search_placeholder": "Pregunta a tu memoria...",
+          "memory.clear": "Borrar b\u00fasqueda",
+          "integrations.title": "Integraciones",
+          "integrations.subtitle": "Conecta tus plataformas favoritas y deja que Alek trabaje.",
+          "platform.slack_desc": "Sincroniza con tu espacio de trabajo.",
+          "platform.telegram_desc": "Conecta tu cuenta de Telegram.",
+          "platform.gmail_desc": "Indexa el historial de correos como hechos.",
+          "platform.tasks_desc": "Gestiona tareas en lenguaje natural.",
+          "platform.connected": "Conectado",
+          "platform.not_connected": "No conectado",
+          "platform.disconnect": "Desconectar",
+          "platform.disconnect_account": "Desconectar cuenta",
+          "platform.link_account": "Vincular cuenta",
+          "platform.connect_gmail": "Conectar Gmail",
+          "platform.connect_todo": "Conectar Microsoft To Do",
+          "platform.index_emails": "Indexar correos",
+          "platform.indexing": "Indexando...",
+          "platform.cancel": "Cancelar",
+          "team.title": "Tu equipo",
+          "team.subtitle": "Invita a colegas a colaborar y compartir conocimiento.",
+          "team.generate_invite": "Crear enlace de invitaci\u00f3n",
+          "settings.title": "Ajustes",
+          "settings.subtitle": "Preferencias para personalizar Alek.",
+          "settings.tz.title": "Zona horaria",
+          "settings.tz.desc": "Usada para programar recordatorios e interpretar expresiones de tiempo.",
+          "settings.lang.title": "Idioma",
+          "settings.lang.desc": "Idioma de la interfaz y el idioma en que Alek responde.",
+          "settings.lang.ui_label": "Idioma de la interfaz",
+          "settings.lang.bot_label": "Alek responde en",
+          "settings.lang.mirror": "Idioma del mensaje",
+          "settings.lang.fixed": "Idioma fijo",
+          "btn.save": "Guardar",
+          "toast.lang_saved": "Idioma guardado",
+          "toast.lang_failed": "Error al guardar",
+          "toast.tz_saved": "Zona horaria guardada",
+          "toast.tz_failed": "Error al guardar",
+          "toast.link_copied": "\u00a1Enlace copiado!",
+          "toast.team_joined": "Unido al equipo",
+          "toast.gmail_connected": "Gmail conectado",
+          "toast.todo_connected": "To Do conectado",
+        },
+      };
+
+      // Selector → translation key (for static DOM elements)
+      const I18N_SELECTORS = {
+        "#nav-integrations":          "nav.integrations",
+        "#nav-mobile-integrations":   "nav.integrations",
+        "#nav-memory":                "nav.memory",
+        "#nav-mobile-memory":         "nav.memory",
+        "#nav-team":                  "nav.team",
+        "#nav-mobile-team":           "nav.team",
+        "#nav-settings":              "nav.settings",
+        "#nav-mobile-settings":       "nav.settings",
+        "#memory-title":              "memory.title",
+        "#memory-subtitle":           "memory.subtitle",
+        "#memory-search-btn":         "memory.search_btn",
+        "#back-to-browse-btn":        "memory.clear",
+        "#integrations-title":        "integrations.title",
+        "#integrations-subtitle":     "integrations.subtitle",
+        "#team-title":                "team.title",
+        "#team-subtitle":             "team.subtitle",
+        "#team-generate-btn":         "team.generate_invite",
+        "#settings-title":            "settings.title",
+        "#settings-subtitle":         "settings.subtitle",
+        "#settings-tz-title":         "settings.tz.title",
+        "#settings-tz-desc":          "settings.tz.desc",
+        "#settings-tz-save":          "btn.save",
+        "#settings-lang-title":       "settings.lang.title",
+        "#settings-lang-desc":        "settings.lang.desc",
+        "#settings-lang-ui-label":    "settings.lang.ui_label",
+        "#settings-lang-bot-label":   "settings.lang.bot_label",
+        "#settings-lang-save":        "btn.save",
+        "#lang-mirror-btn":           "settings.lang.mirror",
+        "#lang-fixed-btn":            "settings.lang.fixed",
+      };
+
+      const I18N_PLACEHOLDERS = {
+        "#facts-search": "memory.search_placeholder",
+      };
+
+      let _currentLang = "en";
+
+      function t(key) {
+        return (LANG_DICT[_currentLang] || LANG_DICT["en"])[key] || key;
+      }
+
+      function applyTranslations(lang) {
+        let resolved = lang;
+        if (!lang) {
+          const browser = (navigator.language || "").slice(0, 2).toLowerCase();
+          resolved = LANG_DICT[browser] ? browser : "en";
+        }
+        _currentLang = resolved;
+
+        for (const [sel, key] of Object.entries(I18N_SELECTORS)) {
+          const el = document.querySelector(sel);
+          if (el) el.textContent = t(key);
+        }
+        for (const [sel, key] of Object.entries(I18N_PLACEHOLDERS)) {
+          const el = document.querySelector(sel);
+          if (el) el.placeholder = t(key);
+        }
+
+        // Re-render dynamic sections that are currently visible
+        const active = document.querySelector(".section.active");
+        if (active && active.id === "section-integrations") {
+          loadPlatforms();
+          loadGmailStatus();
+          loadTasksStatus();
+        }
+      }
 
       const DOMAIN_LABELS = {
         health: "Health",
@@ -1386,9 +1675,9 @@
             showToast(err.error || "Invalid timezone", "error");
             return;
           }
-          showToast("Timezone saved", "success");
+          showToast(t("toast.tz_saved"), "success");
         } catch {
-          showToast("Failed to save timezone", "error");
+          showToast(t("toast.tz_failed"), "error");
         }
       }
 
@@ -1398,19 +1687,17 @@
 
       function setLangUI(lang) {
         _langUiSelected = lang;
-        document.querySelectorAll(".lang-ui-btn").forEach(b => {
-          b.classList.toggle("btn-primary", b.dataset.lang === lang);
-          b.classList.toggle("btn-secondary", b.dataset.lang !== lang);
-        });
+        const sel = document.getElementById("lang-ui-select");
+        if (sel) sel.value = lang;
+        applyTranslations(lang);
       }
 
       function setLangMirror(mirror) {
         _langMirrorSelected = mirror;
-        document.querySelectorAll(".lang-mirror-btn").forEach(b => {
-          const active = (b.dataset.mirror === "true") === mirror;
-          b.classList.toggle("btn-primary", active);
-          b.classList.toggle("btn-secondary", !active);
-        });
+        const mirrorBtn = document.getElementById("lang-mirror-btn");
+        const fixedBtn = document.getElementById("lang-fixed-btn");
+        if (mirrorBtn) mirrorBtn.classList.toggle("active", mirror);
+        if (fixedBtn) fixedBtn.classList.toggle("active", !mirror);
       }
 
       async function loadLanguage() {
@@ -1437,12 +1724,12 @@
           });
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            showToast(err.error || "Failed to save", "error");
+            showToast(err.error || t("toast.lang_failed"), "error");
             return;
           }
-          showToast("Language saved", "success");
+          showToast(t("toast.lang_saved"), "success");
         } catch {
-          showToast("Failed to save language", "error");
+          showToast(t("toast.lang_failed"), "error");
         }
       }
 
@@ -1465,13 +1752,13 @@
 
           const qs = new URLSearchParams(window.location.search);
           if (qs.get("joined") === "true")
-            showToast("Successfully joined team", "success");
+            showToast(t("toast.team_joined"), "success");
           if (qs.get("gmail_connected") === "1")
-            showToast("Gmail connected", "success");
+            showToast(t("toast.gmail_connected"), "success");
           if (qs.get("gmail_error"))
             showToast("Gmail connection error", "error");
           if (qs.get("microsoft_todo_connected") === "1")
-            showToast("To Do connected", "success");
+            showToast(t("toast.todo_connected"), "success");
           if (qs.get("microsoft_todo_error"))
             showToast("To Do connection error", "error");
 
@@ -1691,8 +1978,8 @@
       function renderPlatforms(platforms) {
         const container = document.getElementById("platforms-container");
         container.innerHTML = `
-          ${platformCard("slack", platforms.slack, "Slack", "Sync seamlessly with your workspace.", "U0AC...")}
-          ${platformCard("telegram", platforms.telegram, "Telegram", "Connect your Telegram account.", "123456789")}
+          ${platformCard("slack", platforms.slack, "Slack", t("platform.slack_desc"), "U0AC...")}
+          ${platformCard("telegram", platforms.telegram, "Telegram", t("platform.telegram_desc"), "123456789")}
         `;
         observeElements();
       }
@@ -1706,18 +1993,18 @@
           </div>
           <h3 class="integration-title">${label}</h3>
           <p class="integration-description">${description}</p>
-          
+
           <div class="integration-status">
             <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
-            <span>${linked ? `Connected: ${linkedId}` : "Not connected"}</span>
+            <span>${linked ? `${t("platform.connected")}: ${linkedId}` : t("platform.not_connected")}</span>
           </div>
 
           <div class="integration-actions">
             ${
               linked
-                ? `<button onclick="unlinkPlatform('${id}')" class="btn btn-secondary">Disconnect</button>`
+                ? `<button onclick="unlinkPlatform('${id}')" class="btn btn-secondary">${t("platform.disconnect")}</button>`
                 : `<input id="input-${id}" type="text" placeholder="${placeholder}" class="inp" style="text-align:center;" />
-                   <button onclick="linkPlatform('${id}', '${label}')" class="btn btn-black">Link Account</button>`
+                   <button onclick="linkPlatform('${id}', '${label}')" class="btn btn-black">${t("platform.link_account")}</button>`
             }
           </div>
         </div>`;
@@ -1812,7 +2099,7 @@
         const indexActive = linked && !!data.indexing_active;
         const activeJobId = data.active_job_id || null;
 
-        let statusText = linked ? `Connected` : "Not connected";
+        let statusText = linked ? t("platform.connected") : t("platform.not_connected");
 
         let metaHtml = "";
         if (linked) {
@@ -1864,10 +2151,10 @@
         }
 
         let actionButtons = !linked
-          ? `<a href="/auth/connect-gmail" class="btn btn-black">Connect Gmail</a>`
-          : `<button onclick="triggerGmailIndex()" class="btn btn-primary" ${indexActive ? "disabled" : ""}>${indexActive ? "Indexing..." : "Index Emails"}</button>
-             ${indexActive && activeJobId ? `<button onclick="cancelGmailIndex('${activeJobId}', this)" class="btn btn-secondary">Cancel</button>` : ""}
-             <button onclick="disconnectGmail()" class="btn btn-secondary">Disconnect</button>`;
+          ? `<a href="/auth/connect-gmail" class="btn btn-black">${t("platform.connect_gmail")}</a>`
+          : `<button onclick="triggerGmailIndex()" class="btn btn-primary" ${indexActive ? "disabled" : ""}>${indexActive ? t("platform.indexing") : t("platform.index_emails")}</button>
+             ${indexActive && activeJobId ? `<button onclick="cancelGmailIndex('${activeJobId}', this)" class="btn btn-secondary">${t("platform.cancel")}</button>` : ""}
+             <button onclick="disconnectGmail()" class="btn btn-secondary">${t("platform.disconnect")}</button>`;
 
         container.innerHTML = `
           <div class="card integration-card gmail-card reveal">
@@ -1875,7 +2162,7 @@
               <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#EA4335" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
             </div>
             <h3 class="integration-title">Gmail</h3>
-            <p class="integration-description">Index email history as facts to give Alek deep context.</p>
+            <p class="integration-description">${t("platform.gmail_desc")}</p>
 
             <div class="integration-status">
               <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
@@ -2046,7 +2333,7 @@
           renderServiceStatus(
             "tasks",
             "Microsoft To Do",
-            "Manage tasks using natural language.",
+            t("platform.tasks_desc"),
             await res.json(),
           );
         } catch {}
@@ -2058,11 +2345,11 @@
 
         const linked = data.connected;
 
-        let statusText = linked ? `Connected` : "Not connected";
+        let statusText = linked ? t("platform.connected") : t("platform.not_connected");
 
         const actionButtons = linked
-          ? `<button onclick="disconnectService('${id}')" class="btn btn-secondary">Disconnect Account</button>`
-          : `<a href="/auth/connect-microsoft-todo" class="btn btn-black">Connect Microsoft To Do</a>`;
+          ? `<button onclick="disconnectService('${id}')" class="btn btn-secondary">${t("platform.disconnect_account")}</button>`
+          : `<a href="/auth/connect-microsoft-todo" class="btn btn-black">${t("platform.connect_todo")}</a>`;
 
         container.innerHTML = `
           <div class="card integration-card tasks-card reveal">
@@ -2180,7 +2467,7 @@
         navigator.clipboard.writeText(
           document.getElementById("deep-link-input").value,
         );
-        showToast("Link copied!", "success");
+        showToast(t("toast.link_copied"), "success");
       }
 
       /* ── Modals & Toasts ──────────────────────────────── */

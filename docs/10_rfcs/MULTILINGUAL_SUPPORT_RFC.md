@@ -1,6 +1,6 @@
 # RFC: Multilingual Support — Hexagonal Localization Architecture
 
-**Status:** DRAFT
+**Status:** IMPLEMENTED
 **Created:** 2026-02-21
 **Scope:** Domain, Ports, Adapters, Services, Web Cabinet, ResponseChannel, PromptBuilder
 **Goal:** First-class language support that can be extended without rearchitecting.
@@ -636,21 +636,39 @@ async def update_language(user_id: str):
 
 ### 13.6 Cabinet UI
 
-```
-┌─────────────────────────────────────────────────────┐
-│  Bot Language                                        │
-│                                                      │
-│  UI Language:                                        │
-│  [ System default ]  [ 🇺🇦 UK ][ 🇬🇧 EN ]        │
-│                      [ 🇫🇷 FR ][ 🇪🇸 ES ]        │
-│                                                      │
-│  Bot responds:                                       │
-│  [● Mirror my language ]  [ Fixed (UI language) ]    │
-└─────────────────────────────────────────────────────┘
-```
+Implemented in `src/web/static/cabinet.html` — Settings → Language card.
 
-"System default" clears `preferred_language` → `null` in the API call.
+**UI Language** — `<select>` dropdown (consistent with Timezone card style):
+- 🌐 System default → `preferred_language: null`
+- 🇺🇦 Ukrainian / 🇬🇧 English / 🇫🇷 French / 🇪🇸 Spanish → typed `LanguageCode` value
+
+**Bot responds in** — segmented control (two options):
+- Mirror input → `agent_mirror: true`
+- Fixed language → `agent_mirror: false`
+
+Selecting a language applies it **immediately** (before Save) via `applyTranslations(lang)` —
+the entire Cabinet UI switches language in real time. Save persists to the backend via
+`POST /api/user/language`.
+
+**Client-side i18n** (`cabinet.html` only — no server-side rendering needed):
+- `LANG_DICT` — flat key→string translation table for EN / UK / FR / ES.
+- `I18N_SELECTORS` — CSS selector → translation key map for static DOM elements.
+- `t(key)` — reads `_currentLang`, falls back to `"en"`.
+- `applyTranslations(lang)` — iterates `I18N_SELECTORS`, updates `textContent`/`placeholder`,
+  re-renders dynamic sections (Integrations) if currently visible.
+- System default resolves to `navigator.language` → nearest supported code → `"en"`.
+
 "Fixed" uses whatever UI language is currently selected.
+
+**Extension — adding a new language** (e.g., DE):
+1. `src/domain/language.py` — add `LanguageCode.DE = "de"`
+2. `src/locales/de.py` — bot status phrases
+3. `FileLocalizationAdapter._REGISTRY` — register adapter
+4. `LANG_FIXED_DE` token in Firestore
+5. `LANG_DICT.de` block in `cabinet.html` — client-side UI translations
+6. `<option value="de">` in `#lang-ui-select` dropdown
+
+Zero other changes.
 
 ---
 
@@ -742,7 +760,7 @@ def get_message(status_type: StatusType, overrides: Dict = None) -> List[str]:
 2. `LanguageCode.DE = "de"`
 3. Entry in `FileLocalizationAdapter._REGISTRY`
 4. `LANG_FIXED_DE` token in Firestore
-5. Button in `cabinet.html`
+5. `LANG_DICT.de` block + `<option value="de">` in `cabinet.html`
 
 **Zero other changes.**
 
