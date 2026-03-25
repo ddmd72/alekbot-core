@@ -35,6 +35,7 @@ from .agent_registry import AgentDescriptor, ExecutionMode
 class Intent:
     """Typed constants for all agent intent names."""
     SEARCH_MEMORY        = "search_memory"
+    SAVE_TO_MEMORY       = "save_to_memory"
     SEARCH_WEB           = "search_web"
     FETCH_URL            = "fetch_url"
     SEARCH_WEB_LIGHT     = "search_web_light"
@@ -73,15 +74,35 @@ class Intent:
 # ---------------------------------------------------------------------------
 
 MEMORY_SEARCH = AgentDescriptor(
-    agent_id="memory_search_agent",
-    agent_type="memory_search",
-    capabilities={Intent.SEARCH_MEMORY: ExecutionMode.SYNC},
-    description="Personal knowledge base search",
+    agent_id="facts_memory_agent",
+    agent_type="facts_memory",
+    capabilities={
+        Intent.SEARCH_MEMORY: ExecutionMode.SYNC,
+        Intent.SAVE_TO_MEMORY: ExecutionMode.SYNC,
+    },
+    description="Personal knowledge base: search and save facts",
     capability_descriptions={
         Intent.SEARCH_MEMORY: (
             "Semantic search across the personal knowledge base — "
             "biographical facts, projects, health, family, possessions, preferences"
         ),
+        Intent.SAVE_TO_MEMORY: (
+            "Save a specific fact or piece of information to long-term memory. "
+            "Call only when the user explicitly asks to save or remember something. "
+            "query: brief task description (what to save). "
+            "context.text: detailed, self-contained fact passage — all circumstances, dates, "
+            "names, conditions. Must be understandable without any prior conversation context."
+        ),
+    },
+    context_schemas={
+        Intent.SAVE_TO_MEMORY: {
+            "text": (
+                "Detailed, self-contained description of the fact to save. "
+                "Include every relevant detail: what, when, conditions, numbers, names, "
+                "surrounding circumstances. Write in third person ('User...'). "
+                "Must be fully understandable without the surrounding conversation."
+            ),
+        },
     },
 )
 

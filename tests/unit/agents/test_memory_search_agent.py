@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.agents.memory_search_agent import MemorySearchAgent
+from src.agents.memory_search_agent import FactsMemoryAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.entities import FactType
 from src.domain.search import EnrichedContext, EnrichedFact
@@ -45,7 +45,7 @@ def _make_agent(with_enrichment: bool = True, with_embedding: bool = False):
     embedding = AsyncMock(spec=EmbeddingService)
     search_enrichment = AsyncMock(spec=SearchEnrichmentPort) if with_enrichment else None
 
-    agent = MemorySearchAgent(
+    agent = FactsMemoryAgent(
         config=AgentConfig(
             agent_id=f"memory_search_agent_{_USER_ID}",
             agent_type="memory_search",
@@ -275,3 +275,57 @@ class TestExecuteNoKeys:
         response = await agent.execute(msg)
         assert response.status == AgentStatus.FAILED
         assert "No search keys" in response.error
+
+
+class TestSaveToMemory:
+    """Tests for the save_to_memory intent path."""
+
+    # --- can_handle routing ---
+
+    async def test_can_handle_accepts_payload_text(self):
+        """payload['text'] present (params-spread from context={"text":"..."}) → accepted."""
+        agent, *_ = _make_agent()
+        msg = _make_message({"text": "User weighs 80 kg. Mentioned in diet discussion."})
+        assert await agent.can_handle(msg) is True
+
+    async def test_can_handle_accepts_intent_flag(self):
+        """payload['intent']=='save_to_memory' without text → accepted (fallback path)."""
+        agent, *_ = _make_agent()
+        msg = _make_message({"intent": "save_to_memory", "query": "Save user weight fact"})
+        assert await agent.can_handle(msg) is True
+
+    # --- execute routing and result ---
+
+    async def test_execute_routes_to_save_when_text_present(self):
+        """execute() routes to _handle_save() when payload['text'] is set."""
+        agent, *_ = _make_agent()
+        passage = "User weighs 80 kg. Mentioned in diet discussion."
+        msg = _make_message({"text": passage})
+        response = await agent.execute(msg)
+        assert response.status == AgentStatus.SUCCESS
+        assert response.result == {"saved": True}
+
+    async def test_execute_uses_payload_text_as_consolidation_text(self):
+        """history_context contains the full passage from payload['text']."""
+        agent, *_ = _make_agent()
+        passage = "User weighs 80 kg. Mentioned in diet discussion."
+        msg = _make_message({"text": passage})
+        response = await agent.execute(msg)
+        assert response.history_context == {"consolidation_text": passage}
+
+    async def test_execute_fallback_to_query_when_no_text(self):
+        """When text absent but intent flag set, query is used as consolidation_text."""
+        agent, *_ = _make_agent()
+        task_desc = "Save user weight fact"
+        msg = _make_message({"intent": "save_to_memory", "query": task_desc})
+        response = await agent.execute(msg)
+        assert response.status == AgentStatus.SUCCESS
+        assert response.history_context == {"consolidation_text": task_desc}
+
+    async def test_execute_empty_text_returns_failure(self):
+        """Both text and query absent → failure, no exception."""
+        agent, *_ = _make_agent()
+        msg = _make_message({"intent": "save_to_memory", "query": ""})
+        response = await agent.execute(msg)
+        assert response.status == AgentStatus.FAILED
+        assert "empty text" in response.error

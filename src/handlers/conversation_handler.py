@@ -612,6 +612,17 @@ class ConversationHandler(ConversationHandlerPort):
                     structured_data.content_type, len(rich_block)
                 )
 
+            # Attach consolidation_text from save_to_memory delegations to the user message.
+            # consolidation_text is invisible to agents/adapters; only the consolidation
+            # serializer reads it (p.full_text or p.consolidation_text or p.text).
+            consolidation_texts = (response.metadata or {}).get("consolidation_text", [])
+            if consolidation_texts:
+                combined = "\n".join(consolidation_texts) if isinstance(consolidation_texts, list) else str(consolidation_texts)
+                clean_message_parts.append(MessagePart(consolidation_text=combined))
+                logger.info(
+                    "💾 [History] consolidation_text attached to user message (%d chars)", len(combined)
+                )
+
             # Dispatch typed delivery items (e.g. grounding attribution widget from WebSearchAgent).
             for item in response.delivery_items:
                 await self._deliver_item(item, response_channel, context.thread_id)
@@ -745,7 +756,7 @@ class ConversationHandler(ConversationHandlerPort):
                 for msg in old_messages:
                     serialized.append({
                         "role": msg.role,
-                        "parts": [{"text": p.full_text or p.text} for p in msg.parts if p.full_text or p.text],
+                        "parts": [{"text": p.full_text or p.consolidation_text or p.text} for p in msg.parts if p.full_text or p.consolidation_text or p.text],
                         "created_at": msg.created_at
                     })
 

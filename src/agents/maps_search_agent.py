@@ -229,4 +229,4 @@ class MapsSearchAgent(BaseAgent):
             )
 
     def _get_alternative_agents(self) -> list[str]:
-        return ["web_search_agent", "memory_search_agent"]
+        return ["web_search_agent", "facts_memory_agent"]
