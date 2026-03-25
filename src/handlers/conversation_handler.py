@@ -635,8 +635,10 @@ class ConversationHandler(ConversationHandlerPort):
             logger.error(f"❌ [ConversationHandler] Error: {e}", exc_info=True)
             try:
                 await response_channel.send_status(StatusType.ERROR, thread_id=context.thread_id)
-                error_text = f"`{str(e)}`"
-                await response_channel.send_message(error_text, thread_id=context.thread_id)
+                await response_channel.send_message(
+                    "Something went wrong on my end. Please try again.",
+                    thread_id=context.thread_id,
+                )
             except Exception:
                 pass
 
