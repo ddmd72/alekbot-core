@@ -405,6 +405,7 @@ class EnrichedFact:
     tags: Optional[List[str]]
     metadata: Optional[Dict]
     reported_date: Optional[str]     # ISO-8601 string, e.g. "2026-02-24"
+    context: Optional[str]           # Human-readable label explaining why this fact was recorded
     version: Optional[int]
 ```
 
@@ -412,7 +413,32 @@ class EnrichedFact:
 
 ---
 
-## 8. Code References
+## 8. MemorySearchAgent Output Format
+
+`MemorySearchAgent` formats its result as a single string — fact blocks joined by `---` separators. Each block contains the fact text followed by optional supplementary fields when present.
+
+```
+User's 2024 Q1-Summer travel: Valencia (Jan), Paris (Jan), Barcelona (Mar)...
+context: 2024 travel history Q1-Summer
+reported: 2026-03-06
+metadata: {"year": 2024, "trips": [{"city": "Valencia", "month": "Jan"}, ...]}
+---
+User follows intermittent fasting (16-18 hour interval)...
+context: dietary protocol
+reported: 2026-02-24
+---
+User is diagnosed with Posterior Pelvic Tilt...
+reported: 2025-09-12
+```
+
+**Field semantics:**
+- `context` — human-readable label explaining why the fact was recorded (from `FactEntity.context`)
+- `reported` — date the fact/event was observed (first 10 chars of `reported_date` ISO string)
+- `metadata` — structured JSON data beyond what the text captures; omitted when null
+
+**Design rationale:** Plain text with `\n` separators is optimal for LLM consumption. The `---` separator delineates fact boundaries without introducing JSON parsing overhead. Supplementary fields are appended inline only when non-null, keeping short facts compact.
+
+## 9. Code References
 
 - **Main Service:** `src/services/search_enrichment_service.py`
 - **Deduplication:** `src/services/deduplication_service.py`
@@ -422,7 +448,7 @@ class EnrichedFact:
 
 ---
 
-## 9. Testing
+## 10. Testing
 
 ### 9.1 Unit Tests
 
@@ -437,7 +463,7 @@ pytest tests/unit/services/test_deduplication_service.py
 pytest tests/integration/test_search_enrichment_integration.py
 ```
 
-### 9.3 Key Test Cases
+### 10.3 Key Test Cases
 
 - ✅ RRF ranking with multiple queries
 - ✅ Smart deduplication with number differences
@@ -449,9 +475,9 @@ pytest tests/integration/test_search_enrichment_integration.py
 
 ---
 
-## 10. Performance Characteristics
+## 11. Performance Characteristics
 
-### 10.1 Latency
+### 11.1 Latency
 
 **Isolated execution (single caller, no concurrent find_nearest from other paths):**
 
@@ -475,7 +501,7 @@ keeps Cloud Run at full CPU. Under full CPU, latency with 6 parallel streams is 
 only happens when the event loop has CPU to process it. Confirmed via diagnostic logging of `grpc`,
 `grpc.aio`, and `google` namespaces — zero retries or exceptions observed.
 
-### 10.2 Concurrency Control (`_FIND_NEAREST_SEMAPHORE`)
+### 11.2 Concurrency Control (`_FIND_NEAREST_SEMAPHORE`)
 
 A module-level semaphore in `src/adapters/firestore_repo.py` caps the number of simultaneous `find_nearest` calls across **all callers in the process**:
 
@@ -497,7 +523,7 @@ The semaphore is shared by all code paths in the same process:
 - `FactManagementAdapter.search_existing_facts()` — used by ConsolidationAgent (up to 6 streams per call)
 - Any `AgentWorkerHandler` task that triggers a search agent
 
-### 10.3 Cost
+### 11.3 Cost
 
 **Firestore Reads:**
 
@@ -511,13 +537,13 @@ The semaphore is shared by all code paths in the same process:
 
 ---
 
-## 11. Status
+## 12. Status
 
 **Status:** ✅ Production Ready
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### 12.1 Low Relevance
 
@@ -587,5 +613,5 @@ not indicate a connection problem — it is a symptom of CPU throttling.
 
 ---
 
-**Last Updated:** 2026-02-24
+**Last Updated:** 2026-03-25
 **Status:** ✅ Production Ready
