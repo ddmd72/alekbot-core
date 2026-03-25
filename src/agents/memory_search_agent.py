@@ -297,10 +297,9 @@ class MemorySearchAgent(BaseAgent):
         
         # Extract facts from enriched context (EnrichedContext dataclass)
         enriched_facts = enriched_context.facts  # List[EnrichedFact]
-        
-        # EnrichedFact already filtered by SearchEnrichmentService
-        # Extract content from EnrichedFact objects
-        results = [f.content for f in enriched_facts]
+
+        # Format each fact with supplementary fields (context, reported_date, metadata)
+        result_str = "\n---\n".join(self._format_fact_rich(f) for f in enriched_facts)
         
         total_duration = time.time() - start_time
         
@@ -317,19 +316,20 @@ class MemorySearchAgent(BaseAgent):
             logger.debug(f"      [{i+1}] {fact.content}")
         
         # Calculate confidence
-        confidence = min(1.0, len(results) / 5.0) if results else 0.0
-        
+        fact_count = len(enriched_facts)
+        confidence = min(1.0, fact_count / 5.0) if fact_count else 0.0
+
         return AgentResponse.success(
             task_id=message.task_id,
             agent_id=self.agent_id,
-            result=results,
+            result=result_str,
             confidence=confidence,
             metadata={
                 "search_strategy": "multi_vector_rrf",
                 "total_duration_ms": int(total_duration * 1000),
                 "enrichment_duration_ms": int(enrichment_duration * 1000),
-                "result_count": len(results),
-                "total_facts": len(enriched_facts),
+                "result_count": fact_count,
+                "total_facts": fact_count,
                 "dedup_count": enriched_context.dedup_count,
                 "total_sources": enriched_context.total_sources,
                 "account_id": self._account_id,
@@ -367,37 +367,53 @@ class MemorySearchAgent(BaseAgent):
         
         # 3. Filter and format results
         filtered_facts = [f for f in facts if getattr(f, "type", None) != FactType.PRINCIPLE]
-        results = [f.text for f in filtered_facts]
-        
+        result_str = "\n---\n".join(self._format_fact_rich(f) for f in filtered_facts)
+
         total_duration = time.time() - start_time
-        
+        fact_count = len(filtered_facts)
+
         logger.info(
-            f"✅ [MemorySearchAgent] Legacy search completed: {len(results)}/{len(facts)} non-anchor results "
+            f"✅ [MemorySearchAgent] Legacy search completed: {fact_count}/{len(facts)} non-anchor results "
             f"in {total_duration:.2f}s"
         )
-        
+
         # Log top results
         for i, fact in enumerate(filtered_facts[:3]):
             logger.debug(f"      [{i+1}] {fact.text}")
-        
-        confidence = min(1.0, len(results) / 5.0) if results else 0.0
-        
+
+        confidence = min(1.0, fact_count / 5.0) if fact_count else 0.0
+
         return AgentResponse.success(
             task_id=message.task_id,
             agent_id=self.agent_id,
-            result=results,
+            result=result_str,
             confidence=confidence,
             metadata={
                 "search_strategy": "legacy_single_vector",
                 "total_duration_ms": int(total_duration * 1000),
                 "embedding_duration_ms": int(emb_duration * 1000),
                 "search_duration_ms": int(search_duration * 1000),
-                "result_count": len(results),
+                "result_count": fact_count,
                 "account_id": self._account_id,
                 "query": query
             }
         )
     
+    def _format_fact_rich(self, fact) -> str:
+        """Format a single fact with supplementary fields for LLM consumption."""
+        parts = [fact.content if hasattr(fact, "content") else fact.text]
+        context = getattr(fact, "context", None)
+        reported_date = getattr(fact, "reported_date", None)
+        metadata = getattr(fact, "metadata", None)
+        if context:
+            parts.append(f"context: {context}")
+        if reported_date:
+            date_str = str(reported_date)[:10]
+            parts.append(f"reported: {date_str}")
+        if metadata:
+            parts.append(f"metadata: {json.dumps(metadata, ensure_ascii=False)}")
+        return "\n".join(parts)
+
     def _get_alternative_agents(self) -> List[str]:
         """Suggest alternative agents if this one cannot handle the request."""
         return ["web_search_agent", "reasoning_agent"]

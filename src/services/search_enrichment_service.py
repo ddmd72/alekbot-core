@@ -506,6 +506,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
                     tags=fact.tags,
                     metadata=fact.metadata,
                     reported_date=fact.reported_date.isoformat() if fact.reported_date else None,
+                    context=fact.context,
                     version=fact.version,
                 )
                 for fact in facts
@@ -561,6 +562,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
                     tags=fact.tags,
                     metadata=fact.metadata,
                     reported_date=fact.reported_date.isoformat() if fact.reported_date else None,
+                    context=fact.context,
                     version=fact.version,
                 )
                 for fact in facts
