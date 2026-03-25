@@ -245,7 +245,7 @@ async def main():
                 for msg in messages:
                     serialized.append({
                         "role": msg.role,
-                        "parts": [{"text": p.full_text or p.text} for p in msg.parts if p.full_text or p.text],
+                        "parts": [{"text": p.full_text or p.consolidation_text or p.text} for p in msg.parts if p.full_text or p.consolidation_text or p.text],
                         "created_at": msg.created_at
                     })
 

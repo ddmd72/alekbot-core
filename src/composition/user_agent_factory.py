@@ -57,7 +57,7 @@ from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
 from ..services.history_summary_service import HistorySummaryService
 from ..agents.core.router_agent import create_router_agent
-from ..agents.memory_search_agent import MemorySearchAgent
+from ..agents.memory_search_agent import FactsMemoryAgent
 from ..agents.web_search_agent import WebSearchAgent
 from ..agents.web_search_light_agent import WebSearchLightAgent
 from ..agents.email_search_agent import EmailSearchAgent
@@ -321,11 +321,11 @@ class UserAgentFactory:
 
         account_id = user_profile.account_id
 
-        memory_search_context = self.context_builder.build("memory_search", user_profile.config)
-        memory_agent = MemorySearchAgent(
+        memory_search_context = self.context_builder.build("facts_memory", user_profile.config)
+        memory_agent = FactsMemoryAgent(
             config=AgentConfig(
-                agent_id=f"memory_search_agent_{user_id}",
-                agent_type="memory_search",
+                agent_id=f"facts_memory_agent_{user_id}",
+                agent_type="facts_memory",
                 timeout_ms=MEMORY_SEARCH_CFG.timeout_ms,
                 capabilities=["personal_data_retrieval", "fact_search"],
             ),

@@ -27,6 +27,7 @@ class ToolCall(BaseModel):
 class MessagePart(BaseModel):
     text: Optional[str] = None
     full_text: Optional[str] = None  # Full response (when text=summary). Used for tiered history loading.
+    consolidation_text: Optional[str] = None  # Visible only to consolidation serializer. Never exposed to agents or LLM adapters.
     tool_call: Optional[ToolCall] = None
     tool_response: Optional[Dict[str, Any]] = None  # {name: str, response: Any}
     file_data: Optional[Dict[str, Any]] = None  # {uri: str, mime_type: str}

@@ -250,4 +250,4 @@ class WebSearchAgent(BaseAgent):
         )
 
     def _get_alternative_agents(self) -> list[str]:
-        return ["memory_search_agent", "reasoning_agent"]
+        return ["facts_memory_agent", "reasoning_agent"]

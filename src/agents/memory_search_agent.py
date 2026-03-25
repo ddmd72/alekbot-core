@@ -26,16 +26,13 @@ from ..utils.logger import logger
 from ..infrastructure.agent_config import MEMORY_SEARCH
 
 
-class MemorySearchAgent(BaseAgent):
+class FactsMemoryAgent(BaseAgent):
     """
-    Agent responsible for searching user's personal memory archive.
+    Agent responsible for searching and saving user's personal memory (facts).
 
     Capabilities:
-    - Multi-vector RRF search (keywords + 2 semantic vectors)
-    - Personal data retrieval
-    - Historical fact lookup
-
-    Does NOT require LLM - pure search with enrichment.
+    - search_memory: Multi-vector RRF search (keywords + 2 semantic vectors)
+    - save_to_memory: Attach text to user message for consolidation (no LLM call)
     """
 
     TEMPERATURE = MEMORY_SEARCH.temperature
@@ -106,7 +103,7 @@ class MemorySearchAgent(BaseAgent):
         self._user_id = user_id
 
         logger.info(
-            f"🧠 MemorySearchAgent initialized for account {account_id[:20]}... "
+            f"🧠 FactsMemoryAgent initialized for account {account_id[:20]}... "
             f"(enrichment={'enabled' if search_enrichment else 'disabled'}, "
             f"llm={'enabled' if self._llm else 'disabled'})"
         )
@@ -114,39 +111,34 @@ class MemorySearchAgent(BaseAgent):
     async def can_handle(self, message: AgentMessage) -> bool:
         """
         Determine if this agent can handle the message.
-        
-        MemorySearchAgent is an executor, not a decision maker.
-        SmartResponseAgent's LLM already decided to delegate here.
-        
-        We validate:
-        - Intent must be QUERY
-        - Payload must have search keys (3-key format or legacy query)
-        
-        Args:
-            message: Agent message to evaluate
-            
-        Returns:
-            True if agent can process this message
+
+        Accepts:
+        - search_memory: intent=QUERY + (3-key format OR legacy query)
+        - save_to_memory: intent=QUERY + "text" key in payload
         """
         logger.debug(
-            f"🧠 [MemorySearchAgent] can_handle check: "
+            f"🧠 [FactsMemoryAgent] can_handle check: "
             f"intent={message.intent}, payload keys={list(message.payload.keys())}"
         )
-        
-        # Check intent
+
         if message.intent != AgentIntent.QUERY:
-            logger.debug("🧠 [MemorySearchAgent] can_handle=False (wrong intent)")
+            logger.debug("🧠 [FactsMemoryAgent] can_handle=False (wrong intent)")
             return False
-        
-        # Check 3-key format OR legacy query
+
+        # save_to_memory path: "text" in payload (rich passage via context_schemas) OR intent flag
+        if message.payload.get("text") or message.payload.get("intent") == "save_to_memory":
+            logger.debug("🧠 [FactsMemoryAgent] can_handle=True (save_to_memory)")
+            return True
+
+        # search_memory path: 3-key format OR legacy query
         has_3key = all(k in message.payload for k in ["keywords", "primary_query", "alternative_query"])
         has_legacy = "query" in message.payload
-        
+
         if not (has_3key or has_legacy):
-            logger.debug("🧠 [MemorySearchAgent] can_handle=False (no search keys in payload)")
+            logger.debug("🧠 [FactsMemoryAgent] can_handle=False (no search keys in payload)")
             return False
-        
-        logger.debug(f"🧠 [MemorySearchAgent] can_handle=True (format={'3-key' if has_3key else 'legacy'})")
+
+        logger.debug(f"🧠 [FactsMemoryAgent] can_handle=True (format={'3-key' if has_3key else 'legacy'})")
         return True
     
     async def _formulate_search_keys(self, query: str) -> dict:
@@ -182,11 +174,11 @@ class MemorySearchAgent(BaseAgent):
 
             response = await self._call_llm(request)
             raw_response = (response.text or "").strip()
-            logger.info("🔍 [MemorySearchAgent] LLM raw response: %r", raw_response)
+            logger.info("🔍 [FactsMemoryAgent] LLM raw response: %r", raw_response)
 
             keys = json.loads(raw_response)
             logger.info(
-                f"🔍 [MemorySearchAgent] LLM formulated keys: "
+                f"🔍 [FactsMemoryAgent] LLM formulated keys: "
                 f"keywords={keys.get('keywords')}, "
                 f"primary='{keys.get('primary_query', '')[:60]}', "
                 f"domains={keys.get('domains')}"
@@ -194,22 +186,52 @@ class MemorySearchAgent(BaseAgent):
             return keys
 
         except Exception as e:
-            logger.warning(f"⚠️ [MemorySearchAgent] Key formulation failed ({e}), falling back to raw query")
+            logger.warning(f"⚠️ [FactsMemoryAgent] Key formulation failed ({e}), falling back to raw query")
             return {}
+
+    async def _handle_save(self, message: AgentMessage) -> AgentResponse:
+        """Handle save_to_memory: attach text to user message for consolidation.
+
+        Source priority:
+        1. message.payload["text"] — LLM fills context={"text": "..."} → Quick spreads
+           context_params via delegation_context["params"] → coordinator spreads into payload.
+        2. message.payload["query"] — fallback: the brief task description only.
+        """
+        text = (message.payload.get("text") or message.payload.get("query", "")).strip()
+        if not text:
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error="save_to_memory: empty text",
+            )
+        self._on_agent_start(text)
+        logger.info(f"💾 [FactsMemoryAgent] save_to_memory: {text[:80]}")
+        self._on_agent_success(char_count=len(text), token_count=0, output_text=text)
+        return AgentResponse.success(
+            task_id=message.task_id,
+            agent_id=self.agent_id,
+            result={"saved": True},
+            history_context={"consolidation_text": text},
+        )
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
         """
-        Execute memory search using 3-key multi-vector strategy.
+        Execute memory search or save.
 
-        If an LLM is configured, derives search keys from raw query automatically.
-        Otherwise expects pre-formulated keys in payload (legacy behaviour).
+        Routes by payload content:
+        - "text" key present → save_to_memory (LLM filled context={"text":"..."} → spread into payload)
+        - "intent"=="save_to_memory" without "text" → save_to_memory (fallback: query only)
+        - otherwise → search_memory (multi-vector RRF)
         """
+        if message.payload.get("text") or message.payload.get("intent") == "save_to_memory":
+            return await self._handle_save(message)
+
         raw_query = message.payload.get("query", "")
         self._on_agent_start(raw_query)
 
         # --- LLM path: derive keys from query ---
         if self._llm and raw_query:
-            logger.info(f"🔍 [MemorySearchAgent] === LLM key formulation for: '{raw_query}' ===")
+            logger.info(f"🔍 [FactsMemoryAgent] === LLM key formulation for: '{raw_query}' ===")
             keys = await self._formulate_search_keys(raw_query)
             keywords = keys.get("keywords", [])
             primary_query = keys.get("primary_query", "")
@@ -222,7 +244,7 @@ class MemorySearchAgent(BaseAgent):
             alternative_query = message.payload.get("alternative_query", "")
             domains = message.payload.get("domains", None)
             logger.info(
-                f"🔍 [MemorySearchAgent] === Legacy keys from payload ===\n"
+                f"🔍 [FactsMemoryAgent] === Legacy keys from payload ===\n"
                 f"   keywords: {keywords}\n"
                 f"   primary_query: '{primary_query}'\n"
                 f"   alternative_query: '{alternative_query}'\n"
@@ -240,7 +262,7 @@ class MemorySearchAgent(BaseAgent):
 
         try:
             if self._search_enrichment and (keywords or primary_query):
-                logger.info(f"🔍 [MemorySearchAgent] Using SearchEnrichmentService (multi-vector RRF)")
+                logger.info(f"🔍 [FactsMemoryAgent] Using SearchEnrichmentService (multi-vector RRF)")
                 return await self._execute_enriched_search(
                     message=message,
                     keywords=keywords,
@@ -250,7 +272,7 @@ class MemorySearchAgent(BaseAgent):
                     start_time=start_time,
                 )
             else:
-                logger.info(f"🔍 [MemorySearchAgent] Using legacy single-vector search (fallback)")
+                logger.info(f"🔍 [FactsMemoryAgent] Using legacy single-vector search (fallback)")
                 return await self._execute_legacy_search(
                     message=message,
                     query=primary_query or raw_query,
@@ -277,7 +299,7 @@ class MemorySearchAgent(BaseAgent):
         """Execute search using SearchEnrichmentService (multi-vector RRF + optional domain channel)."""
 
         logger.info(
-            f"🔍 [MemorySearchAgent] Starting multi-vector RRF search:\n"
+            f"🔍 [FactsMemoryAgent] Starting multi-vector RRF search:\n"
             f"   → Keywords: {keywords}\n"
             f"   → Primary: '{primary_query}'\n"
             f"   → Alternative: '{alternative_query}'\n"
@@ -304,7 +326,7 @@ class MemorySearchAgent(BaseAgent):
         total_duration = time.time() - start_time
         
         logger.info(
-            f"✅ [MemorySearchAgent] Multi-vector RRF completed:\n"
+            f"✅ [FactsMemoryAgent] Multi-vector RRF completed:\n"
             f"   → Total facts: {len(enriched_facts)}\n"
             f"   → Duration: {total_duration:.2f}s\n"
             f"   → Enrichment: {enrichment_duration:.2f}s\n"
@@ -348,7 +370,7 @@ class MemorySearchAgent(BaseAgent):
     ) -> AgentResponse:
         """Execute legacy single-vector search (fallback)."""
         
-        logger.info(f"🔍 [MemorySearchAgent] Starting legacy search: '{query}'")
+        logger.info(f"🔍 [FactsMemoryAgent] Starting legacy search: '{query}'")
         
         # 1. Generate embedding
         emb_start = time.time()
@@ -373,7 +395,7 @@ class MemorySearchAgent(BaseAgent):
         fact_count = len(filtered_facts)
 
         logger.info(
-            f"✅ [MemorySearchAgent] Legacy search completed: {fact_count}/{len(facts)} non-anchor results "
+            f"✅ [FactsMemoryAgent] Legacy search completed: {fact_count}/{len(facts)} non-anchor results "
             f"in {total_duration:.2f}s"
         )
 

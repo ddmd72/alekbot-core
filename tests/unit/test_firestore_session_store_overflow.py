@@ -81,3 +81,53 @@ async def test_session_store_overflow_logic():
     assert len(saved_data["history"]) == 4
     assert saved_data["history"][0]["parts"][0]["text"] == "msg 3"
     assert saved_data["history"][-1]["parts"][0]["text"] == "new 2"
+
+
+def test_consolidation_serializer_includes_consolidation_text_parts():
+    """
+    Reproduce the real session history shape observed in Firestore:
+
+        role: "user"
+        parts:
+          0: {"text": "У меня бекенд отвалился..."}
+          1: {"consolidation_text": "Save Mitsubishi Colt left mirror damage fact"}
+
+    The consolidation serializer (overflow_callback / $consolidate path) uses:
+        [{"text": p.full_text or p.consolidation_text or p.text}
+         for p in msg.parts if p.full_text or p.consolidation_text or p.text]
+
+    Both parts must appear in the output — consolidation_text is treated as the
+    text of that part.
+    """
+    raw_firestore_message = {
+        "role": "user",
+        "parts": [
+            {"text": "У меня бекенд отвалился и не сохранило сохрани пожалуйста еще раз"},
+            {"consolidation_text": "Save Mitsubishi Colt left mirror damage fact"},
+        ],
+        "created_at": 1774481644.1386607,
+    }
+
+    mock_db = MagicMock()
+    store = FirestoreSessionStore(mock_db, max_history_length=100, batch_size=10)
+
+    # Deserialize from raw Firestore dict (same path used during overflow_callback)
+    messages = store._deserialize_history([raw_firestore_message])
+    assert len(messages) == 1
+    msg = messages[0]
+    assert len(msg.parts) == 2
+    assert msg.parts[0].text == "У меня бекенд отвалился и не сохранило сохрани пожалуйста еще раз"
+    assert msg.parts[0].consolidation_text is None
+    assert msg.parts[1].text is None
+    assert msg.parts[1].consolidation_text == "Save Mitsubishi Colt left mirror damage fact"
+
+    # Apply the consolidation serializer expression (identical to main.py:248 and conversation_handler.py:759)
+    serialized_parts = [
+        {"text": p.full_text or p.consolidation_text or p.text}
+        for p in msg.parts
+        if p.full_text or p.consolidation_text or p.text
+    ]
+
+    assert len(serialized_parts) == 2
+    assert serialized_parts[0] == {"text": "У меня бекенд отвалился и не сохранило сохрани пожалуйста еще раз"}
+    assert serialized_parts[1] == {"text": "Save Mitsubishi Colt left mirror damage fact"}

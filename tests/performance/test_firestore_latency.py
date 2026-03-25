@@ -16,7 +16,7 @@ from google.cloud import firestore
 from src.config.settings import load_settings
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
-from src.agents.memory_search_agent import MemorySearchAgent
+from src.agents.memory_search_agent import FactsMemoryAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent
 
 
@@ -44,7 +44,7 @@ async def test_memory_search_firestore_latency():
     repo, embedding_service = _make_repo(config)
     await repo.initialize()
 
-    agent = MemorySearchAgent(
+    agent = FactsMemoryAgent(
         config=AgentConfig(
             agent_id="memory_search_perf",
             agent_type="memory_search",
