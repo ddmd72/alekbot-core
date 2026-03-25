@@ -345,6 +345,8 @@ class FirestoreSessionStore(SessionStore):
                     part_dict["text"] = part.text
                 if part.full_text:
                     part_dict["full_text"] = part.full_text
+                if part.consolidation_text:
+                    part_dict["consolidation_text"] = part.consolidation_text
                 if part.file_data:
                     part_dict["file_data"] = part.file_data
                 if part.tool_call:
@@ -386,6 +388,7 @@ class FirestoreSessionStore(SessionStore):
                 part = MessagePart(
                     text=part_dict.get("text"),
                     full_text=part_dict.get("full_text"),
+                    consolidation_text=part_dict.get("consolidation_text"),
                     file_data=part_dict.get("file_data"),
                     tool_call=tool_call,
                     tool_response=part_dict.get("tool_response"),

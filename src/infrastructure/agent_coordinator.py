@@ -286,7 +286,7 @@ class AgentCoordinator:
         """
         # Simple heuristic: suggest agents based on intent
         intent_to_agent_type = {
-            AgentIntent.QUERY: ["memory_search", "web_search"],
+            AgentIntent.QUERY: ["facts_memory", "web_search"],
             AgentIntent.DELEGATE: ["observation", "consolidation"],
         }
         

@@ -134,6 +134,36 @@ Module-level pass-through wrapper active only during Stage 1. Records `(fact_id,
 for every CREATE / UPDATE / MERGE. `tracker.changed` seeds Stage 2 cluster selection.
 Does not affect production writes.
 
+### 3.5 `MessagePart.consolidation_text` — Explicit-Save Injection
+
+**Problem:** Native binary parts (`file_data`) are dropped from history after the turn. When the
+consolidation serializer runs `[{"text": p.full_text or p.text} for p in msg.parts ...]`, file-only
+user messages produce an empty list. `ConsolidationAgent`'s `Domain_Scope` policy ("NEVER process
+ASSISTANT statements as facts unless USER confirms with NEW information") then discards any model
+commentary about the file. Facts extracted from uploaded files do not survive consolidation.
+
+**Solution:** `MessagePart.consolidation_text` is an optional field on every `MessagePart`. It is:
+- Set by `ConversationHandler` when `FactsMemoryAgent` returns `history_context={"consolidation_text": text}` (see `save_to_memory` intent).
+- Appended as a new `MessagePart(consolidation_text=combined)` to the user message before it is persisted.
+- Serialized and deserialized by `FirestoreSessionStore` alongside other part fields.
+- Read by both consolidation serialization paths:
+
+```python
+# overflow_callback (main.py) and $consolidate (conversation_handler.py)
+"parts": [
+    {"text": p.full_text or p.consolidation_text or p.text}
+    for p in msg.parts
+    if p.full_text or p.consolidation_text or p.text
+]
+```
+
+**Invariant:** `consolidation_text` is **never read by any LLM adapter**. All adapters iterate
+`part.text` / `part.full_text` / `part.file_data` only. The field is consolidation-pipeline-only
+and cannot leak into agent or LLM context under any circumstances.
+
+**Why this works for `Domain_Scope`:** The passage is attached to the *user* message's parts, not
+the model message. `ConsolidationAgent` sees it as user-side content → the policy does not block it.
+
 ---
 
 ## 4. Stage 2 — Inline Cluster Review

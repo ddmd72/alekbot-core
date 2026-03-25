@@ -96,7 +96,10 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── base_agent.py   # BaseAgent + CircuitBreaker + lifecycle hooks (_on_agent_start,
 │   │                   #   _on_agent_success, _on_agent_error, _on_delegation) + debug helpers
 │   │                   #   (_debug_prompt, _debug_response, _format_history_for_debug)
-│   ├── memory_search_agent.py    # RAG specialist (vector search, shared Quick+Smart)
+│   ├── memory_search_agent.py    # FactsMemoryAgent — unified memory specialist (Quick+Smart).
+│   │                             #   Two intents: search_memory (RAG/vector search via SearchEnrichmentService)
+│   │                             #   + save_to_memory (explicit user save → attaches consolidation_text
+│   │                             #   to user message via history_context → flows through normal pipeline).
 │   ├── web_search_agent.py       # Full web search specialist (Smart path, Gemini Grounding)
 │   ├── web_search_light_agent.py # Lightweight grounding specialist (Quick path, ECO tier)
 │   ├── email_search_agent.py     # 🆕 Email archive specialist (Quick+Smart, 3 intents)
@@ -147,7 +150,9 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── entities.py     # FactEntity & FactType + normalize_fact_taxonomy() helper
 │   ├── llm.py          # Core LLM types: LLMRequest, LLMResponse, Message, MessagePart, ToolCall,
 │   │                   #    ProviderCapabilities, UsageMetadata, PromptCacheConfig, CacheMetadata,
-│   │                   #    AutomaticFunctionCallingConfig + PROMPT_CACHE_BOUNDARY constant
+│   │                   #    AutomaticFunctionCallingConfig + PROMPT_CACHE_BOUNDARY constant.
+│   │                   #    MessagePart.consolidation_text: invisible to LLM adapters; read only by
+│   │                   #    consolidation serializer (overflow callback + $consolidate path).
 │   ├── messaging.py    # Messaging DTOs & Protocols
 │   ├── notification.py # 🆕 NotificationChannel (last active platform channel per user)
 │   ├── prompt.py       # 🆕 Prompt Component models (OwnerType, ComponentScope)

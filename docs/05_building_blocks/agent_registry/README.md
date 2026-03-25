@@ -23,7 +23,7 @@ This document MUST be updated when:
 - [ ] `coordinator.handle_delegation()` routing logic is modified.
 - [ ] The Firestore token `PROTOCOL_SMART_AGENT_SELECTION` or `PROTOCOL_QUICK_AGENT_SELECTION` changes.
 - [ ] An intent's execution mode changes (SYNC ↔ ASYNC).
-- [ ] MemorySearchAgent output format token (`OUTPUT_FORMAT_MEMORY_SEARCH`) or key formulation changes.
+- [ ] FactsMemoryAgent output format token (`OUTPUT_FORMAT_MEMORY_SEARCH`) or key formulation changes.
 - [ ] `QuickResponseAgent` `MAX_DELEGATION_TURNS` or `intent_remap` changes.
 
 ### Cross-References
@@ -53,7 +53,7 @@ difference is in how they query it: Smart calls `get_available_intents()` (all n
 Quick calls `get_available_intents_for(descriptor)` filtered by its `allowed_intents` (same set) and
 applies `intent_remap` at dispatch time (`search_web` → `search_web_light`). `web_search_light_agent`
 is registered with `internal=True` — invisible to LLMs but reachable via remap. Both trees share
-`MemorySearchAgent`. See [Section 5.3](#53-quick-delegation-path-protocol_quick_agent_selection) and
+`FactsMemoryAgent`. See [Section 5.3](#53-quick-delegation-path-protocol_quick_agent_selection) and
 [Quick Agent Delegation](../quick_agent_delegation/README.md).
 
 ---
@@ -66,11 +66,11 @@ SmartAgent (LLM)
   ▼
 AgentCoordinator.handle_delegation()
   │  registry.get_agent_for_intent("search_memory")
-  │  → AgentManifest(agent_id="memory_search_agent", intents={"search_memory": SYNC}, ...)
+  │  → AgentManifest(agent_id="facts_memory_agent", intents={"search_memory": SYNC, "save_to_memory": SYNC}, ...)
   │
   ├─ SYNC path ──────────────────────────────────────────────────────────
   │    _execute_sync()
-  │      Resolves per-user agent_id: "memory_search_agent_{user_id}"
+  │      Resolves per-user agent_id: "facts_memory_agent_{user_id}"
   │      Creates AgentMessage(intent=QUERY, payload={query, **context.params})
   │      await route_message(message) → AgentResponse
   │      Returns result inline to SmartAgent
@@ -99,8 +99,8 @@ Located at `src/infrastructure/agent_registry.py`.
 @dataclass
 class AgentDescriptor:
     # Identity
-    agent_id: str          # "memory_search_agent"
-    agent_type: str        # "memory_search"
+    agent_id: str          # "facts_memory_agent"
+    agent_type: str        # "facts_memory"
 
     # A: What this agent offers other agents
     capabilities: Dict[str, ExecutionMode]              # {"search_memory": SYNC}
@@ -153,7 +153,7 @@ All agents registered via `main.py` at startup. `GcpTaskQueue` only instantiated
 
 | Agent ID | Intent(s) | Mode | `internal` | Caller |
 |----------|-----------|------|-----------|--------|
-| `memory_search_agent` | `search_memory` | SYNC | False | Quick, Smart |
+| `facts_memory_agent` | `search_memory`, `save_to_memory` | SYNC | False | Quick, Smart |
 | `web_search_agent` | `search_web` | SYNC | False | Smart |
 | `web_search_light_agent` | `search_web_light` | SYNC | **True** | Quick (via `intent_remap`) |
 | `email_search_agent` | `search_emails`, `get_email_details`, `get_email_attachment` | SYNC | False | Quick, Smart |
@@ -213,14 +213,15 @@ The canonical rules for when and how SmartAgent uses `delegate_to_specialist` li
 token `PROTOCOL_SMART_AGENT_SELECTION`. This token is the *behavior specification* for the
 delegation protocol — the code tool definition is generic; the Firestore token makes it intelligent.
 
-### 5.1 memory_search_agent (`search_memory`)
+### 5.1 facts_memory_specialist (`search_memory`, `save_to_memory`)
 
-- **When:** User asks about personal data requiring KB retrieval beyond the biographical baseline.
-- **How:** Formulate a **self-contained query** — resolve conversational references ("this", "tell
+- **`search_memory` — When:** User asks about personal data requiring KB retrieval beyond the biographical baseline.
+- **`search_memory` — How:** Formulate a **self-contained query** — resolve conversational references ("this", "tell
   me more", "the project I mentioned") using conversation history before delegating. The query must
   be understandable without prior context.
-- **Anti-patterns:** Passing the raw user message verbatim when it contains unresolved anaphora;
-  using for external/real-time information.
+- **`save_to_memory` — When:** User explicitly asks to save, remember, or store a specific fact or piece of information ("remember this", "save this", "keep this in mind"). Never called automatically.
+- **`save_to_memory` — How:** Call `delegate_to_specialist(intent="save_to_memory", text="<rich passage>")`. Write a detailed, third-person passage including all context, conditions, and circumstances — do not pre-digest. The passage is attached to the user message via `MessagePart.consolidation_text` and flows through the normal consolidation pipeline.
+- **Anti-patterns:** Passing the raw user message verbatim for `search_memory` when it contains unresolved anaphora; using for external/real-time information; calling `save_to_memory` without explicit user request.
 
 ### 5.2 web_search_agent (`search_web`)
 
@@ -249,20 +250,53 @@ QuickAgent uses a **separate Firestore token** (`PROTOCOL_QUICK_AGENT_SELECTION`
 
 ---
 
-## 6. MemorySearchAgent: LLM Key Formulation
+## 6. FactsMemoryAgent: Two Intents
 
-Before calling `SearchEnrichmentService`, MemorySearchAgent runs a **key formulation step** via
+`FactsMemoryAgent` (`src/agents/memory_search_agent.py`) is the unified memory specialist exposed
+to both Quick and Smart via the registry. It handles two intents:
+
+| Intent | Trigger | Payload key | Side effect |
+|--------|---------|-------------|-------------|
+| `search_memory` | KB retrieval request | `query` | None — read only |
+| `save_to_memory` | Explicit user save request | `text` (via params spread) or `query` | Attaches `consolidation_text` to user message |
+
+### `save_to_memory` mechanics
+
+**How `context.text` reaches `payload["text"]`:**
+
+The LLM issues a 3-field tool call:
+```
+delegate_to_specialist(intent="save_to_memory",
+  query="<brief task description>",
+  context={"text": "<detailed self-contained passage>"})
+```
+`context_schemas` on the `AgentDescriptor` tells `AgentCoordinator` to expect a typed `context`
+object for this intent. The coordinator's `_execute_sync` spreads `context["params"]` into
+`extra_payload`, so `AgentMessage.payload["text"]` contains the rich passage. `_handle_save()`
+reads `payload.get("text")` first, falling back to `payload.get("query")` if absent.
+
+**What `_handle_save()` does:** It does not write to Firestore directly. It returns
+`AgentResponse(history_context={"consolidation_text": text})`. `ConversationHandler` picks this
+up from `response.metadata["consolidation_text"]` and appends
+`MessagePart(consolidation_text=combined)` to the user message before persisting to session
+history. The consolidation serializer reads `p.full_text or p.consolidation_text or p.text` — so
+the passage is included in the next `ConsolidationBatch` without bypassing the SEARCH+DECIDE pipeline.
+
+`MessagePart.consolidation_text` is invisible to all LLM adapters (they only read `text`,
+`full_text`, `file_data`) — zero risk of the save payload leaking into future LLM context.
+
+### 6.2 `search_memory`: LLM Key Formulation
+
+Before calling `SearchEnrichmentService`, `FactsMemoryAgent` runs a **key formulation step** via
 Gemini Flash (ECO tier). This is the bridge between a natural language delegation query and the
 multi-vector search system.
 
-### 6.1 Why
-
-`SearchEnrichmentService` requires 3 distinct, non-overlapping inputs for its multi-vector strategy:
+**Why:** `SearchEnrichmentService` requires 3 distinct, non-overlapping inputs for its multi-vector strategy:
 `keywords` (tag matching), `primary_query` (direct semantic vector), `alternative_query` (diversity
 vector). A raw natural language query cannot fill all 3 effectively — an LLM sub-call optimizes
 each channel independently.
 
-### 6.2 Firestore Prompt: COGNITIVE_PROCESS_MEMORY_SEARCH
+### 6.3 Firestore Prompt: COGNITIVE_PROCESS_MEMORY_SEARCH
 
 Token class: `cognitive_process`. This prompt instructs Gemini to act as a "Memory Search Key
 Extractor" and produce a structured JSON output:
@@ -280,7 +314,7 @@ Extractor" and produce a structured JSON output:
 `work`, `network`, `preference`, `skill`, `project`, `finance`, `education`, `legal`,
 `entertainment`, `communication`.
 
-### 6.3 Output Format Enforcement (Prompt-Level)
+### 6.4 Output Format Enforcement (Prompt-Level)
 
 Constraints are described in the `OUTPUT_FORMAT_MEMORY_SEARCH` Firestore token (category:
 `output_format`), which is included in the `memorysearch` agent profile
@@ -301,7 +335,7 @@ structure described in the prompt without API-level enforcement. This was confir
 | `primary_query` | max 50 chars | Prompt |
 | `alternative_query` | max 50 chars, no overlap with primary | Prompt |
 
-### 6.4 Key → SearchEnrichmentService Mapping
+### 6.5 Key → SearchEnrichmentService Mapping
 
 | LLM output field | `enrich_context()` parameter |
 |-----------------|------------------------------|
@@ -321,9 +355,9 @@ Added to the existing coordinator without modifying `route_message()`, `register
 
 ```
 handle_delegation(intent="search_memory", query="...", context={user_id, account_id, params})
-  ├─ registry.get_agent_for_intent("search_memory") → AgentManifest
+  ├─ registry.get_agent_for_intent("search_memory") → AgentManifest(agent_id="facts_memory_agent")
   ├─ _execute_sync(manifest, intent, query, context)
-  │    ├─ agent_id = f"{manifest.agent_id}_{context['user_id']}"
+  │    ├─ agent_id = f"facts_memory_agent_{context['user_id']}"
   │    ├─ message = AgentMessage(sender="coordinator", recipient=agent_id,
   │    │                         intent=QUERY, payload={query, **context.params})
   │    └─ return await route_message(message)

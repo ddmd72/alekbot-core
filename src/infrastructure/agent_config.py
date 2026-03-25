@@ -118,7 +118,7 @@ class SmartAgentConfig:
 
 
 # ---------------------------------------------------------------------------
-# MemorySearchAgent (src/agents/memory_search_agent.py)
+# FactsMemoryAgent (src/agents/memory_search_agent.py)
 # ---------------------------------------------------------------------------
 
 @dataclass

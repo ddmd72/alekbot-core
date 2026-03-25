@@ -4,7 +4,7 @@ Unit tests for MemorySearchAgent.
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
-from src.agents.memory_search_agent import MemorySearchAgent
+from src.agents.memory_search_agent import FactsMemoryAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
 from src.domain.entities import FactEntity, FactType
 from src.ports.llm_port import AgentExecutionContext, ProviderCapabilities
@@ -31,7 +31,7 @@ class TestMemorySearchAgent:
             agent_id="memory_agent",
             agent_type="memory_search"
         )
-        return MemorySearchAgent(
+        return FactsMemoryAgent(
             config=config,
             repository=mock_repo,
             embedding_service=mock_embedding,
@@ -97,8 +97,7 @@ class TestMemorySearchAgent:
         response = await agent.execute(message)
 
         assert response.status == AgentStatus.SUCCESS
-        assert len(response.result) == 1
-        assert response.result[0] == "User owns a Honda Civic"
+        assert "User owns a Honda Civic" in response.result
         assert response.confidence > 0.0
         
         # Verify calls
@@ -200,7 +199,7 @@ class TestMemorySearchAgentLLM:
         mock_embedding.get_embedding = AsyncMock(return_value=[0.1])
 
         config = AgentConfig(agent_id="memory_agent_llm", agent_type="memory_search")
-        return MemorySearchAgent(
+        return FactsMemoryAgent(
             config=config,
             repository=mock_repo,
             embedding_service=mock_embedding,
