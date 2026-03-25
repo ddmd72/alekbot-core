@@ -17,10 +17,10 @@ Three intents, all routed through one agent instance:
                             payload: {"email_id": "...", "filename": "file.pdf"}
                             No LLM — Gmail API + markitdown via EmailSearchService.
 
-Routing: execute() dispatches on payload keys:
-  email_id + filename  →  get_attachment
-  email_id only        →  get_details
-  query only           →  search_emails
+Routing: execute() dispatches on payload["intent"]:
+  get_email_attachment  →  _handle_get_attachment (requires email_id in payload)
+  get_email_details     →  _handle_get_details    (requires email_id in payload)
+  search_emails         →  _handle_search_emails  (requires query in payload)
 """
 
 from __future__ import annotations
@@ -82,22 +82,46 @@ class EmailSearchAgent(BaseAgent):
         if message.intent != AgentIntent.QUERY:
             return False
         payload = message.payload
-        return bool(payload.get("email_id") or payload.get("query", ""))
+        intent = payload.get("intent", "")
+        if intent in ("get_email_details", "get_email_attachment"):
+            return True  # email_id validation happens in execute()
+        return bool(payload.get("query", ""))
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
-        """Route to the appropriate handler based on payload keys."""
+        """Route to the appropriate handler based on payload["intent"]."""
         payload = message.payload
         user_id = message.context.get("user_id") or self.user_id
-
+        intent = payload.get("intent", "")
         email_id: str = payload.get("email_id", "")
         filename: str = payload.get("filename", "")
 
-        if email_id and filename:
-            return await self._handle_get_attachment(message, email_id, filename, user_id)
-        elif email_id:
+        if intent == "get_email_details":
+            if not email_id:
+                return AgentResponse.failure(
+                    task_id=message.task_id,
+                    agent_id=self.agent_id,
+                    error=(
+                        "email_id is required for get_email_details. "
+                        "From the prior search_emails result, copy the bracketed email id "
+                        'and pass it as context={"email_id": "<value>"}.'
+                    ),
+                )
             return await self._handle_get_details(message, email_id, user_id)
-        else:
-            return await self._handle_search_emails(message, user_id)
+
+        if intent == "get_email_attachment":
+            if not email_id:
+                return AgentResponse.failure(
+                    task_id=message.task_id,
+                    agent_id=self.agent_id,
+                    error=(
+                        "email_id is required for get_email_attachment. "
+                        "From the prior search_emails result, copy the bracketed email id "
+                        'and pass it as context={"email_id": "<value>", "filename": "<attachment name>"}.'
+                    ),
+                )
+            return await self._handle_get_attachment(message, email_id, filename, user_id)
+
+        return await self._handle_search_emails(message, user_id)
 
     # ------------------------------------------------------------------
     # Intent: get_email_details
