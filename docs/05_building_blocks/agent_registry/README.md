@@ -105,6 +105,13 @@ class AgentDescriptor:
     # A: What this agent offers other agents
     capabilities: Dict[str, ExecutionMode]              # {"search_memory": SYNC}
     capability_descriptions: Dict[str, str] = field(default_factory=dict)
+    context_schemas: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # Per-intent typed context fields exposed in the LLM tool schema.
+    # Keys are intent names; values are {field_name: description} dicts.
+    # Example:
+    #   {Intent.GET_EMAIL_DETAILS: {"email_id": "Message ID from search_emails result"}}
+    # These are collected by BaseAgent._build_delegate_tool_declaration() into
+    # context.properties — so Gemini populates them instead of generating empty {}.
     internal: bool = False   # True = not shown in LLM tool list (e.g. web_search_light)
 
     # B: What this agent needs (to delegate)
@@ -131,10 +138,11 @@ class ExecutionMode(str, Enum):
 ### 3.3 Registry Methods
 
 ```python
-def get_available_intents(self) -> List[Dict[str, str]]:
-    """All non-internal intents — injected into SmartAgent tool description."""
+def get_available_intents(self) -> List[Dict[str, Any]]:
+    """All non-internal intents — injected into SmartAgent tool description.
+    Each item: {"name": str, "description": str, "context_schema": dict (optional)}"""
 
-def get_available_intents_for(self, descriptor: AgentDescriptor) -> List[Dict[str, str]]:
+def get_available_intents_for(self, descriptor: AgentDescriptor) -> List[Dict[str, Any]]:
     """Intents available to a specific agent, filtered by its allowed_intents.
     None → all non-internal; frozenset → only those matching the set."""
 ```
@@ -167,20 +175,26 @@ exclusively by `DocPlannerAgent` as a second ASYNC Cloud Task.
 
 ## 4. SmartAgent as Generic Orchestrator
 
-SmartAgent exposes exactly one delegation tool to the LLM:
+SmartAgent and QuickAgent expose exactly one delegation tool to the LLM:
 
 ```python
 delegate_to_specialist(
     intent: str,    # one of the available intents
     query:  str,    # self-contained query, resolvable without prior context
-    context: dict   # optional extra parameters (e.g., search enrichment hints)
+    context: dict   # typed optional parameters (e.g., email_id, filename)
 )
 ```
 
-Available intents are injected into the tool description at runtime:
-- SmartAgent calls `coordinator.get_available_intents()` — all non-internal intents.
-- QuickAgent calls `coordinator.get_available_intents_for(self._descriptor)` — same non-internal
-  set, but filtered by its own `allowed_intents` (currently `None` → same result as Smart).
+The tool declaration is built by `BaseAgent._build_delegate_tool_declaration(available_intents)` —
+a single shared implementation used by both Quick and Smart. It:
+1. Injects the list of available intents into the tool description.
+2. Collects all `context_schemas` fields from all available intents and exposes them as typed
+   `context.properties` in the JSON schema — so Gemini populates them instead of generating `{}`.
+
+Available intents are injected at runtime:
+- SmartAgent calls `coordinator.get_available_intents_for(self._descriptor)` — all non-internal intents.
+- QuickAgent calls `coordinator.get_available_intents_for(self._descriptor)` — filtered by its
+  own `allowed_intents` (currently `None` → same result as Smart).
 
 When a new agent is registered in `main.py` with `internal=False`, both agents automatically see
 the new intent — no code change required in either agent.
@@ -372,6 +386,12 @@ FOO = AgentDescriptor(
     capability_descriptions={
         Intent.FOO: "What this agent does. payload: {\"query\": \"<task>\"}"
     },
+    # Optional: declare typed context fields for intents that require structured input.
+    # These become context.properties in the LLM tool schema — Gemini will populate them
+    # instead of generating {}. Only needed when the intent requires non-query parameters.
+    # context_schemas={
+    #     Intent.FOO: {"some_id": "Description of this field for the LLM"},
+    # },
     internal=False,
 )
 
