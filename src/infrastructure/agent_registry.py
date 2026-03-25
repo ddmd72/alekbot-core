@@ -17,7 +17,7 @@ Specialists register their descriptor in main.py to publish A.
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..utils.logger import logger
 
@@ -75,6 +75,7 @@ class AgentDescriptor:
     # Part A: What I offer
     capabilities: Dict[str, ExecutionMode] = field(default_factory=dict)
     capability_descriptions: Dict[str, str] = field(default_factory=dict)
+    context_schemas: Dict[str, Dict[str, str]] = field(default_factory=dict)
     internal: bool = False
     description: str = ""
     requires_auth: bool = False
@@ -161,7 +162,11 @@ class AgentRegistry:
                     descriptor.capability_descriptions.get(intent)
                     or descriptor.description
                 )
-                result.append({"name": intent, "description": description})
+                item: Dict[str, Any] = {"name": intent, "description": description}
+                schema = descriptor.context_schemas.get(intent)
+                if schema:
+                    item["context_schema"] = schema
+                result.append(item)
         return result
 
     def get_available_intents_for(self, descriptor: AgentDescriptor) -> List[Dict[str, str]]:

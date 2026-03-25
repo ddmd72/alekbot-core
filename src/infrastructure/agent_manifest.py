@@ -152,16 +152,28 @@ EMAIL_SEARCH = AgentDescriptor(
     capability_descriptions={
         Intent.SEARCH_EMAILS: (
             "Semantic search across the user's indexed email archive "
-            "by topic, sender, date, or document type"
+            "by topic, sender, date, or document type. "
+            "Returns a list of emails with their ids and attachment filenames."
         ),
         Intent.GET_EMAIL_DETAILS: (
             "Fetch full body of a specific email. "
-            "Requires email_id in context (from prior search result)"
+            "Use after search_emails to read the content of a found email. "
+            'Requires: context={"email_id": "<id from search_emails result>"}'
         ),
         Intent.GET_EMAIL_ATTACHMENT: (
-            "Extract and read an email attachment as text. "
-            "Requires email_id and filename in context (from prior search result)"
+            "Extract and read an email attachment as text (PDF, DOCX, etc.). "
+            "Use after search_emails when the email has an attachment. "
+            'Requires: context={"email_id": "<id from search_emails result>", "filename": "<filename from search_emails result>"}'
         ),
+    },
+    context_schemas={
+        Intent.GET_EMAIL_DETAILS: {
+            "email_id": "Email message ID from a prior search_emails result",
+        },
+        Intent.GET_EMAIL_ATTACHMENT: {
+            "email_id": "Email message ID from a prior search_emails result",
+            "filename": "Exact attachment filename from a prior search_emails result",
+        },
     },
 )
 

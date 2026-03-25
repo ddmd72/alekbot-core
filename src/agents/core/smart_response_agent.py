@@ -65,6 +65,7 @@ class AgentLoopResult:
     history_summary: Optional[str] = None
     history_contexts: Optional[Dict[str, List[Any]]] = field(default=None)
     delivery_items: List[DeliveryItem] = field(default_factory=list)
+    failed: bool = False
 
 
 class SmartResponseAgent(BaseAgent):
@@ -227,6 +228,13 @@ class SmartResponseAgent(BaseAgent):
                 history=clean_history,
                 tool_declarations=self._get_tool_declarations()
             )
+
+            if loop_result.failed:
+                return AgentResponse.failure(
+                    task_id=message.task_id,
+                    agent_id=self.agent_id,
+                    error="max_turns_exhausted",
+                )
 
             smart_response = loop_result.smart_response
             total_tokens = loop_result.total_tokens
@@ -506,15 +514,12 @@ class SmartResponseAgent(BaseAgent):
                 ]
             ))
 
-        smart_response = SmartResponse(
-            text="I'm still thinking about this, but let's pause here.",
-            structured_data=structured_data
-        )
         return AgentLoopResult(
-            smart_response=smart_response,
+            smart_response=SmartResponse(text="", structured_data=structured_data),
             total_tokens=total_tokens,
             history_contexts=accumulated_history or None,
             delivery_items=all_delivery_items,
+            failed=True,
         )
 
     async def _execute_agents_smart_parallel(
@@ -709,6 +714,10 @@ class SmartResponseAgent(BaseAgent):
             text = e.get("text") or ""
             if text:
                 lines.append(f"  → {text[:150]}")
+        lines.append(
+            "\nTo read email body: delegate get_email_details with context={\"email_id\": \"<id from above>\"}"
+            "\nTo read attachment: delegate get_email_attachment with context={\"email_id\": \"<id>\", \"filename\": \"<filename>\"}"
+        )
         return "\n".join(lines)
 
     async def _generate_history_summary(self, response_text: str) -> Optional[str]:
@@ -724,52 +733,8 @@ class SmartResponseAgent(BaseAgent):
 
     def _get_tool_declarations(self) -> List[Dict[str, Any]]:
         """Build tool declarations for LLM API. Available intents injected from AgentRegistry."""
-        available_intents = (
-            self.coordinator.get_available_intents_for(self._descriptor)
-            if self.coordinator else []
-        )
-
-        intents_description = "\n".join(
-            f"- {i['name']}: {i['description']}" for i in available_intents
-        ) or "(no specialist agents registered)"
-
-        return [
-            {
-                "name": "delegate_to_specialist",
-                "description": (
-                    "Send a task to a specialist agent in the network. "
-                    "The specialist executes autonomously and returns results.\n\n"
-                    f"Available intents:\n{intents_description}\n\n"
-                    "See agents_registry in your system prompt for per-intent "
-                    "query formulation rules and required context fields."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "intent": {
-                            "type": "string",
-                            "description": "Target agent intent (from available intents list)"
-                        },
-                        "query": {
-                            "type": "string",
-                            "description": (
-                                "Task for the specialist. "
-                                "Formulate per agents_registry rules for the chosen intent."
-                            )
-                        },
-                        "context": {
-                            "type": "object",
-                            "description": (
-                                "Structured parameters for intents that require them "
-                                "(e.g. email_id, filename). "
-                                "See agents_registry for required fields per intent."
-                            )
-                        },
-                    },
-                    "required": ["intent", "query"]
-                }
-            },
-        ]
+        available_intents = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
+        return [self._build_delegate_tool_declaration(available_intents)]
 
     def _summarize_history(self, history: List[Message]) -> str:
         """Summarize message history for debugging."""

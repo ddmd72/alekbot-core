@@ -56,6 +56,7 @@ class _QuickLoopResult:
     history_contexts: Optional[Dict[str, List[Any]]] = field(default=None)
     delivery_items: List[DeliveryItem] = field(default_factory=list)
     raw_text: str = ""  # Raw LLM output before parse_llm_response, for debug logging
+    failed: bool = False
 
 
 class QuickResponseAgent(BaseAgent):
@@ -244,6 +245,13 @@ class QuickResponseAgent(BaseAgent):
                 account_id=account_id,
             )
 
+            if loop_result.failed:
+                return AgentResponse.failure(
+                    task_id=message.task_id,
+                    agent_id=self.agent_id,
+                    error="max_turns_exhausted",
+                )
+
             smart_response = loop_result.smart_response
             history_summary = loop_result.history_summary
             total_tokens = loop_result.total_tokens
@@ -375,51 +383,8 @@ class QuickResponseAgent(BaseAgent):
 
     def _get_quick_tool_declarations(self) -> List[Dict[str, Any]]:
         """Build tool declarations from AgentRegistry (all non-internal intents)."""
-        available_intents = []
-        if self.coordinator:
-            available_intents = self.coordinator.get_available_intents_for(self._descriptor)
-
-        intents_description = "\n".join(
-            f"- {i['name']}: {i['description']}" for i in available_intents
-        ) or "(no specialist agents registered)"
-
-        return [
-            {
-                "name": "delegate_to_specialist",
-                "description": (
-                    "Send a task to a specialist agent in the network. "
-                    "The specialist executes autonomously and returns results.\n\n"
-                    f"Available intents:\n{intents_description}\n\n"
-                    "See agents_registry in your system prompt for per-intent "
-                    "query formulation rules and required context fields."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "intent": {
-                            "type": "string",
-                            "description": "Target agent intent (from available intents list)"
-                        },
-                        "query": {
-                            "type": "string",
-                            "description": (
-                                "Task for the specialist. "
-                                "Formulate per agents_registry rules for the chosen intent."
-                            )
-                        },
-                        "context": {
-                            "type": "object",
-                            "description": (
-                                "Structured parameters for intents that require them "
-                                "(e.g. email_id, filename). "
-                                "See agents_registry for required fields per intent."
-                            )
-                        },
-                    },
-                    "required": ["intent", "query"]
-                }
-            },
-        ]
+        available_intents = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
+        return [self._build_delegate_tool_declaration(available_intents)]
 
     async def _execute_quick_delegation_loop(
         self,
@@ -517,12 +482,13 @@ class QuickResponseAgent(BaseAgent):
                 ]
             ))
 
-        # Max turns exhausted — return empty response
+        # Max turns exhausted — signal failure so fallback service can handle gracefully
         return _QuickLoopResult(
             smart_response=SmartResponse(text=""),
             total_tokens=total_tokens,
             history_contexts=accumulated_history or None,
             delivery_items=all_delivery_items,
+            failed=True,
         )
 
     async def _execute_quick_parallel(
