@@ -297,7 +297,7 @@ class TestCanHandleEmailId:
     async def test_returns_true_with_email_id(self, agent):
         msg = AgentMessage(
             intent=AgentIntent.QUERY,
-            payload={"email_id": "19bd6ad70f3e911b"},
+            payload={"intent": "get_email_details", "email_id": "19bd6ad70f3e911b"},
             sender="smart", recipient="email_search_agent", task_id="t",
             context={"user_id": "user123"},
         )
@@ -306,7 +306,7 @@ class TestCanHandleEmailId:
     async def test_returns_true_with_email_id_and_filename(self, agent):
         msg = AgentMessage(
             intent=AgentIntent.QUERY,
-            payload={"email_id": "19bd6ad70f3e911b", "filename": "doc.pdf"},
+            payload={"intent": "get_email_attachment", "email_id": "19bd6ad70f3e911b", "filename": "doc.pdf"},
             sender="smart", recipient="email_search_agent", task_id="t",
             context={"user_id": "user123"},
         )
@@ -331,7 +331,7 @@ class TestGetEmailDetails:
     def _msg(self, email_id: str = "19bd6ad70f3e911b") -> AgentMessage:
         return AgentMessage(
             intent=AgentIntent.QUERY,
-            payload={"email_id": email_id},
+            payload={"intent": "get_email_details", "email_id": email_id},
             sender="smart", recipient="email_search_agent", task_id="t",
             context={"user_id": "user123", "account_id": "acc1"},
         )
@@ -390,7 +390,7 @@ class TestGetEmailAttachment:
     ) -> AgentMessage:
         return AgentMessage(
             intent=AgentIntent.QUERY,
-            payload={"email_id": email_id, "filename": filename},
+            payload={"intent": "get_email_attachment", "email_id": email_id, "filename": filename},
             sender="smart", recipient="email_search_agent", task_id="t",
             context={"user_id": "user123", "account_id": "acc1"},
         )
@@ -444,7 +444,7 @@ class TestGetEmailAttachment:
         mock_search_service.get_details.return_value = "body"
         msg = AgentMessage(
             intent=AgentIntent.QUERY,
-            payload={"email_id": "e1"},  # no filename
+            payload={"intent": "get_email_details", "email_id": "e1"},  # no filename
             sender="smart", recipient="email_search_agent", task_id="t",
             context={"user_id": "user123"},
         )
