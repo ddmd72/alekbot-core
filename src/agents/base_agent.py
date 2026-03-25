@@ -504,6 +504,66 @@ class BaseAgent(ABC):
         preview = f"'{query[:60]}...'" if len(query) > 60 else f"'{query}'"
         logger.info(f"[{self.agent_id}] → delegate: intent={intent} query={preview}")
 
+    @staticmethod
+    def _build_delegate_tool_declaration(available_intents: list) -> dict:
+        """Build the delegate_to_specialist tool declaration for LLM APIs.
+
+        Collects context_schema fields from all available intents and exposes
+        them as typed properties on the context parameter — so Gemini can
+        populate them from the conversation instead of generating an empty {}.
+        """
+        intents_description = "\n".join(
+            f"- {i['name']}: {i['description']}" for i in available_intents
+        ) or "(no specialist agents registered)"
+
+        context_properties: dict = {}
+        for intent in available_intents:
+            for field_name, field_desc in intent.get("context_schema", {}).items():
+                if field_name not in context_properties:
+                    context_properties[field_name] = {
+                        "type": "string",
+                        "description": field_desc,
+                    }
+
+        context_param: dict = {
+            "type": "object",
+            "description": (
+                "Structured parameters for intents that require them. "
+                "See agents_registry in your system prompt for required fields per intent."
+            ),
+        }
+        if context_properties:
+            context_param["properties"] = context_properties
+
+        return {
+            "name": "delegate_to_specialist",
+            "description": (
+                "Send a task to a specialist agent in the network. "
+                "The specialist executes autonomously and returns results.\n\n"
+                f"Available intents:\n{intents_description}\n\n"
+                "See agents_registry in your system prompt for per-intent "
+                "query formulation rules and required context fields."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "intent": {
+                        "type": "string",
+                        "description": "Target agent intent (from available intents list)",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Task for the specialist. "
+                            "Formulate per agents_registry rules for the chosen intent."
+                        ),
+                    },
+                    "context": context_param,
+                },
+                "required": ["intent", "query"],
+            },
+        }
+
     # ---------------------------------------------------------------------- #
     # Debug logging helpers                                                  #
     # ---------------------------------------------------------------------- #
