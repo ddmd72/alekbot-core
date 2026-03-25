@@ -25,6 +25,7 @@ class EnrichedFact:
     tags: Optional[List[str]] = None
     metadata: Optional[Dict] = None
     reported_date: Optional[str] = None  # ISO string
+    context: Optional[str] = None
     version: Optional[int] = None
 
 @dataclass
