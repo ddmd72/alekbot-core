@@ -53,8 +53,8 @@ agent code. Model tier (ECO/BALANCED/PERFORMANCE) is resolved from user config a
 | Quick | Gemini | sync | Handles complexity 1–6 (~70% of requests); full tool access, single-pass, no re-evaluation |
 | Smart | Gemini | sync | Handles complexity 7–10; multi-turn reasoning with re-evaluation after tool results |
 | Memory | Gemini | sync | LLM formulates search keys → multi-vector RRF retrieval; also handles explicit `save_to_memory` |
-| WebSearch | Gemini | sync | Single-pass Google Grounding with synthesis; called by Smart. Intents: `search_web`, `fetch_url` |
-| WebSearchLight | Gemini | sync | Lightweight Grounding; called by Quick via `search_web` → `search_web_light` remap. Internal |
+| WebSearch | Gemini | sync | Provider-native web search (`use_grounding=True`); called by Smart. Intents: `search_web`, `fetch_url` |
+| WebSearchLight | Gemini | sync | Lightweight provider-native search; called by Quick via `search_web` → `search_web_light` remap. Internal |
 | EmailSearch | Gemini | sync | Email archive specialist: semantic search, full body fetch, attachment parsing |
 | EmailClassification | Gemini | sync | Classifies raw emails; extracts fact sentences for indexing — not user-facing |
 | DocPlanner | Claude | async | DOCX creation entry point: LLM → JSON layout spec → delegates to DocGenerator |
