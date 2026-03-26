@@ -82,12 +82,18 @@ background process extracts new facts from the conversation → bot gets smarter
   Port: `ImageSearchPort` (`src/ports/image_search_port.py`).
   Adapter: `UnsplashAdapter` (`src/adapters/unsplash_adapter.py`).
   See docs/05_building_blocks/document_generation/README.md § 11.
-- Notes / Proactive Reminders (ECO tier) — `NotesAgent` backed by `FirestoreAgentNoteAdapter`. Intent `manage_self_reminders`.
+- Proactive Self-Reminders (ECO tier) — `NotesAgent` backed by `FirestoreAgentNoteAdapter`.
+  Intent `manage_self_reminders`. Paradigm: **deferred instructions for the orchestrator itself** —
+  not a user-facing notepad, but a mechanism where the system sets reminders that fire autonomously
+  and execute as new conversations (the orchestrator talks to itself on a schedule).
   Two-field model: `text` (≤15-word label) + `instruction` (full execution context, self-contained).
+  `instruction` is the ONLY input when a reminder fires — must be fully self-contained with no
+  dependency on session memory or prior conversation.
   3 tools: `create_self_reminder`, `update_self_reminder`, `delete_self_reminder`. Single LLM call.
-  Firing: Cloud Scheduler every 5 min → `POST /worker {fire_due_reminders}` → `WorkerHandler` →
+  Firing: Cloud Scheduler every 15 min → `POST /worker {fire_due_reminders}` → `WorkerHandler` →
   `UserNotificationService.notify(system_alert=instruction)` → QuickAgent executes as new conversation.
-  Fired conversations saved to session history. Recurrence: `hourly/daily/weekly/monthly`.
+  One-time reminders: deleted after firing. Recurrent (`hourly/daily/weekly/monthly`): `reschedule()`
+  computes `next_due` in user's local timezone (DST-safe), updates `due` + `last_fired`.
   Idempotency: `last_fired` guard (4-min window). Soft cap 20 / hard cap 30 active reminders.
   Transparency: every CRUD sends `notify_raw()` to user's channel immediately.
   Context: orchestrator sees `active_reminders {}` summary; NotesAgent sees full details + bio facts.
