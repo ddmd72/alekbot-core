@@ -85,7 +85,7 @@ Adding a new specialist requires a registry entry in `agent_manifest.py` — no 
 
 Analogous to how the brain consolidates short-term into long-term memory:
 
-- Sliding window (100–200 messages) fills → oldest batch sent to Cloud Tasks
+- Sliding window fills → oldest batch sent to Cloud Tasks (prod: overflow at 50 messages, batch=30; dev: 70/50)
 - `ConsolidationAgent` runs as a separate HTTP request on Cloud Run (full CPU guaranteed)
 - Extracts atomic facts and principles; semantic deduplication threshold: 0.96
 - 3 vectors per fact (text, tags, metadata) for multi-vector search
