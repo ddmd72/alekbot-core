@@ -111,6 +111,17 @@ background process extracts new facts from the conversation → bot gets smarter
   Two-pass: first pass → second-pass critic (controlled by `DEEP_RESEARCH_SECOND_PASS` env var).
   max_tokens=64K + `output-128k-2025-02-19` beta. Logs: `resource.type=cloud_run_job`,
   `make logs-research-job-dev-tail`. Debug prompts saved to GCS at `end_turn` and `max_tokens`.
+- MapsSearch (SYNC, BALANCED tier) — `MapsSearchAgent` (`maps_search_agent.py`). Intent `maps_query`.
+  Place search & discovery, route computation (distance/duration), current weather via Google Maps
+  AI Grounding Lite (MCP). Multi-turn tool loop: LLM selects MCP tools, agent executes, LLM formats
+  response with clickable Google Maps links. System prompt via PromptBuilder (`maps_search` profile).
+  Backend injected via `MapsToolsPort`. See `docs/10_rfcs/MCP_INFRASTRUCTURE_RFC.md`.
+- Compute (SYNC, ECO tier) — `ComputeAgent` (`compute_agent.py`). Four intents:
+  `compute_math` (arithmetic, algebra, unit conversions), `compute_datetime` (date differences,
+  day-of-week, age, timezone conversions, countdowns), `compute_finance` (loan/mortgage payments,
+  compound interest, amortization), `compute` (general-purpose: statistics, BMI, scoring, any
+  numeric analysis). All execute Python code via Gemini `code_execution` sandbox. Provider-agnostic:
+  `LLMRequest.use_code_execution=True`. No external data access — compute-only.
 
 **Gmail Email Indexing** — passive inbox-as-memory pipeline:
 - User connects Gmail via OAuth (`/auth/connect-gmail`); credentials stored in `oauth_credentials`
@@ -177,6 +188,7 @@ src/
                   Tasks ports: TasksProviderPort (task_provider_port.py), TaskSearchIndex
                   (task_search_index.py), TaskConfigPort (task_config_port.py),
                   TaskLifecyclePort (task_lifecycle_port.py).
+                  Maps ports: MapsToolsPort (maps_tools_port.py).
   adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, Slack, Telegram,
                   Gmail). Email adapters: GmailProviderAdapter, FirestoreIndexedEmailRepository,
                   FirestoreEmailJobRepository, FirestoreEmailExclusionsAdapter,
@@ -207,6 +219,9 @@ src/
                   HTML page agents: HtmlPageGeneratorAgent (html_page_generator_agent.py, intent
                   create_html_page, ASYNC, internal=False). HTML is final artifact; optional
                   ImageSearchPort (UnsplashAdapter) for post-generation image resolution.
+                  Maps agents: MapsSearchAgent (maps_search_agent.py, intent maps_query, SYNC).
+                  Compute agents: ComputeAgent (compute_agent.py, intents compute_math,
+                  compute_datetime, compute_finance, compute; SYNC, code_execution sandbox).
   handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler, WorkerHandler).
                   WorkerHandler dispatches /worker Cloud Tasks by task_type.
   infrastructure/ — AgentCoordinator, queues, agent_config.py (central behavior params),
