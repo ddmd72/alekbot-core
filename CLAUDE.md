@@ -163,6 +163,22 @@ background process extracts new facts from the conversation → bot gets smarter
 - Runtime context (biographical facts, conversation history) appended as `knowledge_base {}` block
 - `PROMPT_CACHE_BOUNDARY` splits the final prompt: static prefix cached by Anthropic (5 min), dynamic suffix (datetime + Q-S context) sent fresh every request
 
+**Multilingual Support** — two independent language axes:
+- **Agent response language** — controlled via prompt tokens (`LANG_MIRROR`, `LANG_FIXED_UK`,
+  `LANG_FIXED_EN`, `LANG_FIXED_FR`, `LANG_FIXED_ES`). Mirror mode (default): LLM responds in the
+  user's input language. Fixed mode: always responds in the chosen language regardless of input.
+  `LanguagePreferenceService` writes to UserProfile + swaps prompt token atomically. On change,
+  injects system alert into active conversation so LLM picks up new policy immediately.
+- **UI language** — status messages ("Thinking..."), file prompts, entertainment intros.
+  `LocalizationPort` → `FileLocalizationAdapter` reads from `src/locales/{code}.py`.
+  Resolution chain: USER preferred_language → ACCOUNT default_language → SYSTEM default.
+- Domain: `LanguageCode` enum (uk, en, fr, es) in `src/domain/language.py`.
+  Ports: `LanguageServicePort` (read-only resolution), `LocalizationPort` (UI strings).
+  Service: `LanguagePreferenceService` (write path + notification).
+  Adding a new language: (1) add `LanguageCode` entry, (2) create `src/locales/{code}.py`,
+  (3) register in `FileLocalizationAdapter._REGISTRY`, (4) add `LANG_FIXED_{CODE}` token to Firestore.
+  Cabinet UI: `/api/user/language` (GET/POST). RFC: `docs/10_rfcs/MULTILINGUAL_SUPPORT_RFC.md`.
+
 **Memory search** — 6 parallel queries across different vectors,
 ranked via Reciprocal Rank Fusion (RRF). One search per request,
 result reused by all agents.
@@ -197,6 +213,8 @@ src/
                   (task_search_index.py), TaskConfigPort (task_config_port.py),
                   TaskLifecyclePort (task_lifecycle_port.py).
                   Maps ports: MapsToolsPort (maps_tools_port.py).
+                  Language ports: LanguageServicePort (language_service_port.py),
+                  LocalizationPort (localization_port.py).
   adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, Slack, Telegram,
                   Gmail). Email adapters: GmailProviderAdapter, FirestoreIndexedEmailRepository,
                   FirestoreEmailJobRepository, FirestoreEmailExclusionsAdapter,
@@ -209,6 +227,7 @@ src/
                   CRUD + subscription management; implements TasksProviderPort + TaskLifecyclePort.
                   FirestoreTaskSearchIndex (firestore_task_search_index.py) — 2-vector RRF.
                   FirestoreTaskConfigRepository (firestore_task_config_repository.py).
+                  Language adapters: FileLocalizationAdapter (file_localization_adapter.py).
   services/     — Business logic. Receive ports via DI.
                   prompt_builder.py includes both PromptBuilder and UserPromptBuilder
                   (merged from former user_prompt_builder.py).
@@ -216,6 +235,7 @@ src/
                   EmailEmbeddingRepairService, GmailOAuthService, UserNotificationService.
                   Tasks services: TaskIndexingService (embed→index + resolve_short_id),
                   TaskSetupService (lifecycle: setup/disconnect/ensure_subscriptions).
+                  Language services: LanguagePreferenceService (write path + prompt token swap).
   agents/       — Multi-agent system. core/ — agents, infrastructure/ — billing/logging.
                   Email agents: EmailSearchAgent, EmailClassificationAgent.
                   Document agents: DocPlannerAgent (doc_planner_agent.py, intent create_document,
@@ -237,6 +257,8 @@ src/
                   agent_manifest.py (Intent constants + all agent declarations — single source of truth).
   composition/  — ServiceContainer + UserAgentFactory + SlackAdapterFactory + TelegramAdapterFactory.
                   UserAgentFactory lives in composition/ (NOT services/).
+  locales/      — Per-language UI string modules (uk.py, en.py, fr.py, es.py).
+                  Loaded by FileLocalizationAdapter. Add new file per new language.
   config/       — EnvironmentConfig, Settings, AuthConfig.
   utils/        — Logger, telemetry, debug_logger (PromptDebugLogger), file_conversion
                   (convert_file_to_text, is_native_binary, make_history_stub),
