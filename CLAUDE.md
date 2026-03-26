@@ -30,10 +30,11 @@ background process extracts new facts from the conversation → bot gets smarter
 ## Key Mechanisms
 
 **Multi-agent network** — not one LLM for everything, but specialists:
-- Router — hybrid classifier: rule-based shortcut for trivial requests (greetings, acks),
-  LLM triage (Gemini) for everything else. Complexity score 1–6 → Quick, 7–10 → Smart.
-  Confidence safety net: low confidence always falls back to Smart. Vision (attachments) forces
-  complexity ≥ 7. Does NOT build enriched context — that is the orchestrators' job.
+- Router (Gemini) — LLM triage on every request: classifies complexity (1–6 → Quick, 7–10 → Smart),
+  extracts semantic lens and search intent, triggers memory/web enrichment before routing.
+  Rule-based `_classify_request` is a fallback only (LLM unavailable or failed).
+  Confidence safety net: low confidence always falls back to Smart.
+  Vision (file attachments): forces complexity ≥ 7.
 - Quick — functionally equivalent to Smart in tool access and intents.
   Two differences only: (1) no re-evaluation after tool results (Smart re-evaluates for follow-up
   delegation; Quick does not); (2) tool remapping: `search_web` → `search_web_light` via
