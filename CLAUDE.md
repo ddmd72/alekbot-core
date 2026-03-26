@@ -30,14 +30,16 @@ background process extracts new facts from the conversation → bot gets smarter
 ## Key Mechanisms
 
 **Multi-agent network** — not one LLM for everything, but specialists:
-- Router (Gemini Flash) — classifies requests (complexity 1-5 → Quick, 6-10 → Smart),
-  builds enriched context (biographical facts, memory search results) and passes it downstream.
-- Quick (Flash, BALANCED) — functionally equivalent to Smart in tool access and intents.
+- Router — hybrid classifier: rule-based shortcut for trivial requests (greetings, acks),
+  LLM triage (Gemini) for everything else. Complexity score 1–6 → Quick, 7–10 → Smart.
+  Confidence safety net: low confidence always falls back to Smart. Vision (attachments) forces
+  complexity ≥ 7. Does NOT build enriched context — that is the orchestrators' job.
+- Quick — functionally equivalent to Smart in tool access and intents.
   Two differences only: (1) no re-evaluation after tool results (Smart re-evaluates for follow-up
   delegation; Quick does not); (2) tool remapping: `search_web` → `search_web_light` via
-  `intent_remap` at dispatch time. Handles complexity 1–5 (≈70% of requests), significantly cheaper.
-- Smart (PERFORMANCE tier — model resolved from execution context, provider-agnostic) — called
-  only for complexity 6–10 requests. After tool results, re-evaluates for follow-up delegation.
+  `intent_remap` at dispatch time. Handles complexity 1–6 (≈70% of requests), significantly cheaper.
+- Smart — provider-agnostic, model resolved from execution context per user config.
+  Called only for complexity 7–10 requests. After tool results, re-evaluates for follow-up delegation.
 - WebSearchLight (ECO) — single-pass Google grounding. Separate agent because Gemini cannot
   combine grounding + function calling in one request. Remapped from `search_web` by Quick.
 - WebSearch (BALANCED) — single-pass Google grounding with synthesis prompt. Called by Smart.
@@ -100,19 +102,22 @@ background process extracts new facts from the conversation → bot gets smarter
   Timezone: from `UserBotConfig.timezone` (IANA, set in Cabinet UI). Used for: prompt datetime,
   `due` UTC conversion, `next_due` recurrence, transparency notification formatting.
   See `docs/10_rfcs/PROACTIVE_SELF_REMINDERS_RFC.md`.
-- Tasks (BALANCED tier) — `TasksAgent` backed by Microsoft To Do Graph API. Intent `manage_user_tasks`.
+- Tasks — `TasksAgent` backed by `TasksProviderPort`. Intent `manage_user_tasks`.
   5 tools: `list_tasks`, `search_tasks`, `create_task`, `update_task`, `delete_task`. Max 6 turns.
   Search-before-mutate: LLM calls `search_tasks` first, gets `task_ref` (8-char short_id =
   `md5(task_id)[:8]`), then passes it to `update_task`/`delete_task`.
   Recurrence: 5 patterns (`daily`, `weekdays`, `weekly`, `absoluteMonthly`, `absoluteYearly`);
   smart defaults from `due_datetime`.
-  `MicrosoftToDoAdapter` — Graph API CRUD + subscription management.
+  Two provider adapters (injected per user via UserAgentFactory):
+    `MicrosoftToDoAdapter` — Graph API CRUD + webhook subscriptions; implements
+      TasksProviderPort + TaskLifecyclePort. OAuth: Azure consumers tenant, `Tasks.ReadWrite`.
+      Webhook: `POST /webhook/microsoft-tasks/{user_id}` → self-healing index freshness.
+      Worker tasks: `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`.
+    `GoogleTasksAdapter` — Google Tasks REST API CRUD; implements TasksProviderPort.
+      OAuth: `/auth/connect-google-tasks`.
   `TaskIndexingService` — embed→index pipeline + `resolve_short_id`.
   `TaskSearchIndex` — 2-vector RRF in Firestore (`task_search_index` collection).
   `TaskSetupService` — lifecycle: setup, ensure_subscriptions, disconnect.
-  Webhook: `POST /webhook/microsoft-tasks/{user_id}` → self-healing index freshness.
-  Worker tasks: `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`.
-  OAuth: Azure consumers tenant, `Tasks.ReadWrite offline_access`.
   See `docs/05_building_blocks/tasks_integration/README.md`.
 - Consolidation — background "memory consolidation" (PERFORMANCE tier, runs via Cloud Tasks)
 - DeepResearch (async, provider-agnostic) — long-running research jobs. Agent calls
@@ -191,7 +196,7 @@ result reused by all agents.
 
 ## Economics
 
-- 70% of requests → Flash (cheap), 30% → Opus (expensive) = -62% LLM costs
+- 70% of requests → Quick path (cheap ECO-tier model), 30% → Smart path (expensive) = -62% LLM costs
 - Budget ~$100/month, 1 vCPU Cloud Run — async is mandatory
 - Solo-dev — maintainability beats architectural elegance
 
@@ -207,7 +212,7 @@ src/
                   UsageMetadata, PromptCacheConfig, CacheMetadata, PROMPT_CACHE_BOUNDARY).
                   MessagePart includes `consolidation_text` field — visible only to consolidation
                   serializer; used by `save_to_memory` to attach facts to user messages.
-  ports/        — ~56 ABC interfaces. Import only domain/ and stdlib.
+  ports/        — ~51 ABC interfaces. Import only domain/ and stdlib.
                   New (2026-03-08): SecurityPort (security_port.py), PlatformPort (platform_port.py),
                   DedupStore (dedup_store.py).
                   New (2026-03-12): DocxRunnerPort (docx_runner_port.py) — system boundary for
@@ -221,7 +226,7 @@ src/
                   Maps ports: MapsToolsPort (maps_tools_port.py).
                   Language ports: LanguageServicePort (language_service_port.py),
                   LocalizationPort (localization_port.py).
-  adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, Slack, Telegram,
+  adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, OpenAI, Slack, Telegram,
                   Gmail). Email adapters: GmailProviderAdapter, FirestoreIndexedEmailRepository,
                   FirestoreEmailJobRepository, FirestoreEmailExclusionsAdapter,
                   FirestoreOAuthCredentialsAdapter, FirestoreNotificationStateAdapter,
@@ -229,8 +234,12 @@ src/
                   DOCX adapter: NodeDocxRunner (node_docx_runner.py) — DocxRunnerPort
                   implementation; writes temp script to docx_generator/ dir, executes via
                   subprocess, captures stdout as DOCX bytes.
+                  PDF/HTML adapter: NodePuppeteerRunner (node_puppeteer_runner.py) — PuppeteerRunnerPort.
+                  HtmlRendererPort: PlaywrightHtmlRenderer (playwright_html_renderer.py).
                   Tasks adapters: MicrosoftToDoAdapter (microsoft_todo_adapter.py) — Graph API
                   CRUD + subscription management; implements TasksProviderPort + TaskLifecyclePort.
+                  GoogleTasksAdapter (google_tasks_adapter.py) — Google Tasks REST API CRUD;
+                  implements TasksProviderPort. Provider injected per user by UserAgentFactory.
                   FirestoreTaskSearchIndex (firestore_task_search_index.py) — 2-vector RRF.
                   FirestoreTaskConfigRepository (firestore_task_config_repository.py).
                   Language adapters: FileLocalizationAdapter (file_localization_adapter.py).
