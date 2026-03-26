@@ -41,9 +41,12 @@ background process extracts new facts from the conversation → bot gets smarter
   `intent_remap` at dispatch time. Handles complexity 1–6 (≈70% of requests), significantly cheaper.
 - Smart — provider-agnostic, model resolved from execution context per user config.
   Called only for complexity 7–10 requests. After tool results, re-evaluates for follow-up delegation.
-- WebSearchLight (ECO) — single-pass Google grounding. Separate agent because Gemini cannot
-  combine grounding + function calling in one request. Remapped from `search_web` by Quick.
-- WebSearch (BALANCED) — single-pass Google grounding with synthesis prompt. Called by Smart.
+- WebSearchLight — single-pass provider-native search (`use_grounding=True`). Separate agent
+  because Gemini cannot combine grounding + function calling in one request.
+  Remapped from `search_web` by Quick. Internal (`internal=True`).
+- WebSearch — provider-native web search with synthesis prompt. Called by Smart.
+  `use_grounding=True` — each adapter injects its own tool: Gemini → Google Search,
+  OpenAI → web_search, Claude → web_search_20250305 + web_fetch_20250910.
   Two intents: `search_web` (real-time web search) + `fetch_url` (fetch and extract content
   from a specific URL provided by the user).
 - Memory (LLM key formulation + vector search) — MemorySearchAgent: ECO-tier LLM extracts
