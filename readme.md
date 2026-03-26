@@ -39,39 +39,41 @@ src/
   web/            — Quart OAuth app + Cabinet UI.
 ```
 
-**Agents are provider-agnostic.** Each agent declares a performance tier (ECO / BALANCED /
-PERFORMANCE); a strategy resolves the concrete model at runtime. Providers (Gemini, Claude,
-Grok) are swappable without touching agent code.
+**Agents are provider-agnostic.** Each agent type has a default provider and a per-user
+override mechanism. Providers (Gemini, Claude, OpenAI, Grok) are swappable without touching
+agent code. Model tier (ECO/BALANCED/PERFORMANCE) is resolved from user config at runtime.
 
 ---
 
 ## Agent network
 
-| Agent | Tier | Mode | Role |
+| Agent | Default provider | Mode | Role |
 |---|---|---|---|
-| Router | ECO | sync | Classifies complexity (1–10), triggers memory search, builds enriched context |
-| Quick | ECO | sync | Handles complexity 1–5 (~70% of requests); full tool access, single-pass |
-| Smart | PERFORMANCE | sync | Handles complexity 6–10; multi-turn reasoning with re-evaluation after tool results |
-| Memory | ECO | sync | LLM formulates search keys → multi-vector RRF retrieval; also handles explicit `save_to_memory` |
-| WebSearch | BALANCED | sync | Single-pass Google Grounding with synthesis; called by Smart |
-| WebSearchLight | ECO | sync | Single-pass Google Grounding; called by Quick (tool remap at dispatch time) |
-| EmailSearch | BALANCED | sync | Email archive specialist: semantic search, full body fetch, attachment parsing |
-| EmailClassification | BALANCED | sync | Classifies raw emails; extracts fact sentences for indexing — not user-facing |
-| DocPlanner | PERFORMANCE | async | DOCX creation entry point: LLM → JSON layout spec → delegates to DocGenerator |
-| DocGenerator | PERFORMANCE | async | Writes Node.js script → subprocess → DOCX bytes; internal (not exposed to LLM) |
-| PdfGenerator | PERFORMANCE | async | One LLM call → HTML+CSS → Puppeteer renders PDF; delivers GCS link + Slack upload |
-| HtmlPageGenerator | PERFORMANCE | async | One LLM call → full HTML+CSS+JS page with Unsplash image integration; delivers GCS link |
-| Tasks | BALANCED | sync | Microsoft To Do: list, search, create, update, delete tasks with recurrence support |
-| Notes | ECO | sync | Proactive self-reminders: deferred instructions that fire autonomously on a schedule |
-| MapsSearch | BALANCED | sync | Place search, route computation, weather via Google Maps AI Grounding (MCP) |
-| Compute | ECO | sync | Math, datetime, finance calculations via Gemini code execution sandbox |
-| DeepResearch | PERFORMANCE | async | Long-running research jobs; provider-agnostic (Gemini polling / OpenAI webhook) |
-| Consolidation | PERFORMANCE | async | Background long-term memory formation ("Life Chronicler") via Cloud Tasks |
+| Router | Gemini | sync | Hybrid: rule-based for trivial requests, LLM triage otherwise. Complexity 1–6 → Quick, 7–10 → Smart |
+| Quick | Gemini | sync | Handles complexity 1–6 (~70% of requests); full tool access, single-pass, no re-evaluation |
+| Smart | Gemini | sync | Handles complexity 7–10; multi-turn reasoning with re-evaluation after tool results |
+| Memory | Gemini | sync | LLM formulates search keys → multi-vector RRF retrieval; also handles explicit `save_to_memory` |
+| WebSearch | Gemini | sync | Single-pass Google Grounding with synthesis; called by Smart. Intents: `search_web`, `fetch_url` |
+| WebSearchLight | Gemini | sync | Lightweight Grounding; called by Quick via `search_web` → `search_web_light` remap. Internal |
+| EmailSearch | Gemini | sync | Email archive specialist: semantic search, full body fetch, attachment parsing |
+| EmailClassification | Gemini | sync | Classifies raw emails; extracts fact sentences for indexing — not user-facing |
+| DocPlanner | Claude | async | DOCX creation entry point: LLM → JSON layout spec → delegates to DocGenerator |
+| DocGenerator | Claude | async | Writes Node.js script → subprocess → DOCX bytes; internal (not exposed to LLM) |
+| PdfGenerator | Gemini | async | One LLM call → HTML+CSS → Puppeteer renders PDF; delivers GCS link + Slack upload |
+| HtmlPageGenerator | Gemini | async | One LLM call → full HTML+CSS+JS page with Unsplash image integration; delivers GCS link |
+| Tasks | Gemini | sync | Microsoft To Do or Google Tasks (per user): list, search, create, update, delete |
+| Notes | Gemini | sync | Proactive self-reminders: deferred instructions that fire autonomously on a schedule |
+| MapsSearch | Gemini | sync | Place search, route computation, weather via Google Maps AI Grounding (MCP) |
+| Compute | Gemini | sync | Math, datetime, finance calculations via Gemini code execution sandbox (Gemini-only) |
+| DeepResearch | OpenAI | async | Long-running research jobs; provider-agnostic (OpenAI webhook / Gemini polling / Claude Cloud Run Job) |
+| Consolidation | Claude | async | Background long-term memory formation ("Life Chronicler") via Cloud Tasks |
 
-**70% ECO + 30% PERFORMANCE = ~−62% LLM cost** vs. routing everything to a top-tier model.
+**70% Quick path (cheap model) + 30% Smart path (expensive) = ~−62% LLM cost** vs. routing everything to a top-tier model.
 
 Quick and Smart are functionally identical in tool access. Two differences only: Quick skips
 re-evaluation after tool results; Quick remaps `search_web` → `search_web_light` at dispatch time.
+
+Providers are user-configurable per agent. Defaults listed above reflect the production baseline.
 
 Adding a new specialist requires a registry entry in `agent_manifest.py` — no changes to orchestrators.
 
@@ -139,7 +141,7 @@ Two independent language axes:
 ## Stack
 
 - **Runtime:** Python 3.13, asyncio throughout — no synchronous I/O
-- **LLM providers:** Google Gemini, Anthropic Claude, Grok (provider-agnostic tier abstraction)
+- **LLM providers:** Google Gemini, Anthropic Claude, OpenAI, Grok (provider-agnostic; per-agent default + per-user override)
 - **Infrastructure:** GCP Cloud Run, Firestore (named database `us-production`), Cloud Tasks, Cloud Scheduler
 - **Interfaces:** Slack (Socket Mode dev / HTTP Events API prod), Telegram
 - **Integrations:** Gmail (OAuth + indexing), Microsoft To Do (Graph API + webhooks), Unsplash, Google Maps (MCP)
