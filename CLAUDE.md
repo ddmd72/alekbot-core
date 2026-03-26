@@ -64,8 +64,8 @@ background process extracts new facts from the conversation → bot gets smarter
   mode; extracts fact sentences for Firestore storage. Exception to OUTPUT_FORMAT rule:
   uses markdown code block extraction in `_parse_response()` — see inline comment.
 - DocPlanner (ASYNC, PERFORMANCE tier) — DOCX creation entry point (intent: `create_document`).
-  Two-phase: LLM → JSON layout spec → delegates to DocGenerator via coordinator. Retry loop
-  (max 3). Result: DeliveryItem("file_upload") delivered by AgentWorkerHandler → notify_file_bytes.
+  Single LLM call → JSON layout spec → fire-and-forget delegate to DocGenerator via coordinator.
+  Result: DeliveryItem("file_upload") delivered by AgentWorkerHandler → notify_file_bytes.
 - DocGenerator (internal, PERFORMANCE tier) — Node.js DOCX code generation (intent:
   `generate_docx_code`, `internal=True`). LLM writes Node.js script → DocxRunnerPort executes
   subprocess → DOCX bytes returned. See docs/05_building_blocks/document_generation/README.md.
@@ -100,7 +100,7 @@ background process extracts new facts from the conversation → bot gets smarter
   `UserNotificationService.notify(system_alert=instruction)` → QuickAgent executes as new conversation.
   One-time reminders: deleted after firing. Recurrent (`hourly/daily/weekly/monthly`): `reschedule()`
   computes `next_due` in user's local timezone (DST-safe), updates `due` + `last_fired`.
-  Idempotency: `last_fired` guard (4-min window). Soft cap 20 / hard cap 30 active reminders.
+  Idempotency: `last_fired` guard (4-min window). Soft cap 20 active reminders.
   Transparency: every CRUD sends `notify_raw()` to user's channel immediately.
   Context: orchestrator sees `active_reminders {}` summary; NotesAgent sees full details + bio facts.
   Timezone: from `UserBotConfig.timezone` (IANA, set in Cabinet UI). Used for: prompt datetime,
@@ -129,8 +129,10 @@ background process extracts new facts from the conversation → bot gets smarter
   by adapter: polling every 120s (Gemini), webhook (OpenAI). `ClaudeDeepResearchRunnerAgent`
   wraps Claude's native extended thinking; runs as a **Cloud Run Job** (not Cloud Task) via
   `JobRunnerPort` + `CloudRunJobsAdapter`. Entrypoint: `job_main.py`. task-timeout=18000s (5h).
-  Two-pass: first pass → second-pass critic (controlled by `DEEP_RESEARCH_SECOND_PASS` env var).
-  max_tokens=64K + `output-128k-2025-02-19` beta. Logs: `resource.type=cloud_run_job`,
+  Two-pass critic controlled by `DEEP_RESEARCH_SECOND_PASS` env var AND `_SECOND_PASS_ENABLED`
+  class flag (currently `False` — second pass disabled in code). max_tokens=64K for thinking
+  models (claude-sonnet-4-6/opus-4-6), 32K for others. Beta: `output-128k-2025-02-19`.
+  Logs: `resource.type=cloud_run_job`,
   `make logs-research-job-dev-tail`. Debug prompts saved to GCS at `end_turn` and `max_tokens`.
 - MapsSearch (SYNC, BALANCED tier) — `MapsSearchAgent` (`maps_search_agent.py`). Intent `maps_query`.
   Place search & discovery, route computation (distance/duration), current weather via Google Maps
@@ -163,7 +165,8 @@ background process extracts new facts from the conversation → bot gets smarter
   jobs as `failed`
 
 **Consolidation** — analogous to long-term memory formation:
-- Sliding window (100-200 messages) fills up → batch goes to queue
+- Sliding window fills → batch goes to queue. Thresholds (configurable per user):
+  prod defaults: overflow_threshold=50 messages, batch_size=30; dev: threshold=70, batch_size=50
 - Cloud Tasks runs ConsolidationAgent in the background (non-blocking for user)
 - "Life Chronicler" extracts facts and principles from raw messages
 - Deduplication (threshold 0.96, number-aware) — a duplicate is better than a loss
