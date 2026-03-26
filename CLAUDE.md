@@ -41,8 +41,14 @@ background process extracts new facts from the conversation → bot gets smarter
 - WebSearchLight (ECO) — single-pass Google grounding. Separate agent because Gemini cannot
   combine grounding + function calling in one request. Remapped from `search_web` by Quick.
 - WebSearch (BALANCED) — single-pass Google grounding with synthesis prompt. Called by Smart.
+  Two intents: `search_web` (real-time web search) + `fetch_url` (fetch and extract content
+  from a specific URL provided by the user).
 - Memory (LLM key formulation + vector search) — MemorySearchAgent: ECO-tier LLM extracts
   search keys, then multi-vector RRF search. Shared between Quick and Smart paths.
+  Two intents: `search_memory` (semantic search) + `save_to_memory` (explicit fact save).
+  `save_to_memory`: zero LLM calls — orchestrator fills `context.text` via `context_schemas`
+  with a self-contained fact passage; agent attaches it as `consolidation_text` on `MessagePart`
+  (user message layer, never compressed) → consolidation picks it up in the normal batch cycle.
 - EmailSearch — EmailSearchAgent: email archive specialist (BALANCED tier). Accessible to both
   Quick and Smart (registered in AgentDescriptor with `internal=False`). Three intents:
   `search_emails` (vector search in indexed archive), `get_email_details` (fetch full email body),
@@ -134,9 +140,9 @@ background process extracts new facts from the conversation → bot gets smarter
   `notify_raw()`: direct text delivery, no agent reformatting. Stores last active channel per user
   in `user_notification_state`. Callers: reminders worker, email indexing, deep research, async docs.
 - `WorkerHandler` — dispatches `/worker` Cloud Tasks by `task_type`:
-  `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`, `consolidation`, `agent_execution`,
-  `fire_due_reminders`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
-  `renew_all_task_subscriptions`
+  `agent_execution`, `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`,
+  `consolidation`, `deep_research_polling`, `fire_due_reminders`, `setup_microsoft_todo`,
+  `reindex_task_list`, `renew_task_subscriptions`, `renew_all_task_subscriptions`
   See `docs/07_deployment/SCHEDULERS.md` for full scheduler reference.
 - Watchdog: Cloud Scheduler fires `email_indexing_watchdog` every 2h; marks stale `running`
   jobs as `failed`
@@ -177,7 +183,9 @@ src/
                   Includes: auth.py (TokenClaims, OAuthTokens, OAuthUserInfo, IAMDecision),
                   llm.py (LLMRequest, LLMResponse, Message, MessagePart, ToolCall, ProviderCapabilities,
                   UsageMetadata, PromptCacheConfig, CacheMetadata, PROMPT_CACHE_BOUNDARY).
-  ports/        — ~42 ABC interfaces. Import only domain/ and stdlib.
+                  MessagePart includes `consolidation_text` field — visible only to consolidation
+                  serializer; used by `save_to_memory` to attach facts to user messages.
+  ports/        — ~56 ABC interfaces. Import only domain/ and stdlib.
                   New (2026-03-08): SecurityPort (security_port.py), PlatformPort (platform_port.py),
                   DedupStore (dedup_store.py).
                   New (2026-03-12): DocxRunnerPort (docx_runner_port.py) — system boundary for
@@ -236,17 +244,21 @@ src/
   web/          — Quart web app (OAuth + Cabinet UI). Endpoints:
                   Auth: /auth/login, /auth/callback, /auth/link-oauth, /auth/me,
                   /auth/refresh, /auth/logout, /auth/connect-gmail, /auth/connect-gmail/callback,
+                  /auth/connect-google-tasks, /auth/connect-google-tasks/callback,
                   /auth/connect-microsoft-todo, /auth/connect-microsoft-todo/callback.
                   Gmail: /api/gmail/status, /api/gmail/index, /api/gmail/jobs/<id>,
-                  /api/gmail/jobs/<id>/cancel, /api/gmail/disconnect, /api/gmail/data,
+                  /api/gmail/jobs/<id>/cancel, /api/gmail/disconnect, /api/gmail/data (GET/DELETE),
                   /api/gmail/auto-index (GET/PUT — daily auto-index schedule).
-                  Tasks: /api/tasks/microsoft/status, /api/tasks/microsoft/reindex,
+                  Tasks: /api/tasks/status (GET), /api/tasks/disconnect (DELETE),
+                  /api/tasks/microsoft/status, /api/tasks/microsoft/reindex,
                   /api/tasks/microsoft/lists, /api/tasks/microsoft/disconnect.
                   Webhook: /webhook/microsoft-tasks/<user_id>.
-                  User: /api/user/link-platform, /api/user/platforms, /api/user/invite-codes,
+                  User: /api/user/link-platform (POST/DELETE), /api/user/link-telegram (POST),
+                  /api/user/platforms, /api/user/invite-codes (GET/POST),
                   /api/user/join-team, /api/user/facts, /api/user/facts/browse,
                   /api/user/facts/search, /api/user/facts/<id>/invalidate,
-                  /api/user/timezone (GET/PUT — IANA timezone setting).
+                  /api/user/timezone (GET/PUT — IANA timezone setting),
+                  /api/user/language (GET/POST — UI + bot response language).
                   Cabinet UI: /cabinet, /cabinet/docs, /cabinet/docs/<path>.
                   Other: /health, deep_research_webhooks (OpenAI async results).
                   Runs as a shared Quart app (all blueprints on port 8080).
@@ -297,7 +309,11 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   Two halves: (A) `capabilities` — what this agent offers (intents it exposes, with `internal=True`
   hiding an agent from LLM tool descriptions); (B) `requirements` — `allowed_intents` (which intents
   it may call; `None` = all non-internal) + `intent_remap` (dispatch-time substitution, e.g. Quick
-  remaps `search_web` → `search_web_light`). `AgentManifest` is a backward-compatible alias.
+  remaps `search_web` → `search_web_light`); (C) `context_schemas` — per-intent typed parameter
+  contracts (dict of field name → description). When present, orchestrator fills structured
+  `context` params at delegation time instead of passing a bare `query` string. Used by
+  `save_to_memory` (text), `get_email_details` (email_id), `get_email_attachment` (email_id,
+  filename). `AgentManifest` is a backward-compatible alias.
   Specialists: declared in `agent_manifest.py` → registered via `ALL_DESCRIPTORS` in `main.py`.
   Orchestrators (Quick, Smart): declared in `agent_manifest.py`, set as class-level `_descriptor`
   in the agent class — coordinator never routes TO them via registry.
