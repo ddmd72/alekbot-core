@@ -49,7 +49,7 @@ agent code. Model tier (ECO/BALANCED/PERFORMANCE) is resolved from user config a
 
 | Agent | Default provider | Mode | Role |
 |---|---|---|---|
-| Router | Gemini | sync | Hybrid: rule-based for trivial requests, LLM triage otherwise. Complexity 1–6 → Quick, 7–10 → Smart |
+| Router | Gemini | sync | LLM triage on every request: complexity score, semantic lens, memory/web enrichment. 1–6 → Quick, 7–10 → Smart |
 | Quick | Gemini | sync | Handles complexity 1–6 (~70% of requests); full tool access, single-pass, no re-evaluation |
 | Smart | Gemini | sync | Handles complexity 7–10; multi-turn reasoning with re-evaluation after tool results |
 | Memory | Gemini | sync | LLM formulates search keys → multi-vector RRF retrieval; also handles explicit `save_to_memory` |
