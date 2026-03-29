@@ -112,6 +112,7 @@ class UserNotificationService:
         system_alert: str,
         agent_id_override: Optional[str] = None,
         session_id: Optional[str] = None,
+        save_history: bool = True,
     ) -> None:
         """
         Send a background notification to the user's last active channel.
@@ -197,7 +198,7 @@ class UserNotificationService:
                     f"channel={channel_info.channel_id} user={user_id[:8]}"
                 )
 
-                if self._session_store:
+                if self._session_store and save_history:
                     try:
                         await self._session_store.append_messages_batch(
                             session_id=effective_session_id,
@@ -257,6 +258,19 @@ class UserNotificationService:
                 f"📎 [Notification] Document link delivered to {channel_info.platform} "
                 f"channel={channel_info.channel_id} user={user_id[:8]} label={label}"
             )
+            if self._session_store:
+                history_note = (
+                    f"[Document delivered to user: {label} — {url}\n"
+                    f"If the user asks about it, you can read the full content using the fetch_url intent.]"
+                )
+                await self._session_store.append_messages_batch(
+                    session_id=user_id,
+                    owner_id=user_id,
+                    messages=[
+                        Message(role="user", parts=[MessagePart(text=f"[System: async document ready — {label}]")]),
+                        Message(role="model", parts=[MessagePart(text=history_note, full_text=history_note)]),
+                    ],
+                )
         except Exception as exc:
             logger.error(
                 f"[Notification] Document link delivery failed for {user_id[:8]} "

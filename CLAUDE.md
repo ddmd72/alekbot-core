@@ -168,11 +168,19 @@ background process extracts new facts from the conversation → bot gets smarter
   jobs as `failed`
 - **Daily Email Review** — `gmail_daily_review` + `gmail_daily_review_hour` in `UserBotConfig`.
   Cloud Scheduler hourly → `start_daily_email_review` fan-out → `daily_email_review` per-user Cloud Task.
-  Worker fetches last 24h emails via `GmailProviderAdapter` (`list_emails` + `batch_get_full_content(deep=False)`),
-  caps at 200 emails, truncates body to 500 chars. Passes structured JSON array
-  `[{email_id, from, subject, date, snippet, body, attachments}]` to SmartAgent via `notify()`.
-  SmartAgent has full tool access: `get_email_details`, `get_email_attachment`, `search_web`.
-  Expected output: HTML page via `create_html_page` delivered as GCS link to user's channel.
+  Worker fetches last 24h emails via `GmailProviderAdapter` (`list_emails(date_to=None)` + `batch_get_full_content(deep=False)`),
+  caps at 200 emails, truncates body to 500 chars. Body text cleaned by adapter: BS4 HTML parsing +
+  `html.unescape()` + invisible Unicode stripping (zero-width joiners, non-breaking spaces etc.).
+  Passes structured JSON array `[{email_id, from, subject, date, snippet, body, attachments}]` to SmartAgent
+  via `notify(save_history=False)` — not saved to session history to avoid context pollution.
+  SmartAgent protocol: Phase 0 triage (disposition tags per email: [ACTION]/[FYI]/[DIGEST]/[NOISE]),
+  Phase 1 deep reads (`get_email_details` for all [ACTION], `get_email_attachment` for relevant attachments),
+  Phase 2 research (`search_web` for context). Every email must appear in the HTML report.
+  Subject lines rendered as clickable Gmail links (`https://mail.google.com/mail/u/0/#all/{email_id}`).
+  Output: HTML page via `create_html_page` (GCS link) + short chat message. Language: user's language.
+  After HTML delivery: `notify_document_link` saves user/model pair to session history with URL +
+  `fetch_url` hint — agent can re-fetch the report if user asks about it later.
+  Cabinet UI: `/api/gmail/daily-review` (GET/PUT). Scheduler: `alek-bot-{env}-start-daily-email-review`.
 
 **Consolidation** — analogous to long-term memory formation:
 - Sliding window fills → batch goes to queue. Thresholds (configurable per user):

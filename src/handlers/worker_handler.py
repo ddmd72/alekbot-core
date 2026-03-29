@@ -631,6 +631,7 @@ class WorkerHandler:
             account_id=account_id,
             system_alert=system_alert,
             agent_id_override=f"smart_response_agent_{user_id}",
+            save_history=False,
         )
 
         logger.info(

@@ -995,3 +995,27 @@ def test_adapters_do_not_import_sibling_adapter_implementations():
         "injection in composition root:\n"
         + "\n".join(violations)
     )
+
+
+# ---------------------------------------------------------------------------
+# REQ-ARCH-25 — handlers/ must not import ports/ directly
+#
+# Ports are contracts between the domain and the infrastructure. Handlers are
+# orchestrators — they coordinate services and domain objects. A handler that
+# imports a port directly couples dispatch logic to infrastructure contracts,
+# bypassing the service layer that is the proper owner of port interactions.
+#
+# Rule: ports must be accessed through services, never through dispatchers.
+# If a handler needs to call a port method, extract that logic into a service.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.requirement("REQ-ARCH-25")
+def test_handlers_do_not_import_ports_directly():
+    """handlers/ must not import src.ports directly.
+
+    Ports are infrastructure contracts owned by services. Handlers receive
+    wired service objects via constructor injection and call service methods —
+    they never call port methods directly.
+    """
+    _assert_no_forbidden("src/handlers", ["src.ports"])

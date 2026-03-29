@@ -61,7 +61,7 @@ class EmailReviewService:
             batch, page_token = await self._email_provider.list_emails(
                 credentials=creds,
                 date_from=date_from,
-                date_to=now_utc,
+                date_to=None,  # Gmail before: is day-exclusive; omit to include today's emails
                 page_token=page_token,
                 max_results=min(100, _MAX_EMAILS - len(all_metadata)),
             )
@@ -105,15 +105,46 @@ class EmailReviewService:
             f"[DAILY EMAIL REVIEW] {date_str}\n"
             f"{len(emails)} emails received in the last 24 hours.\n"
             f"\n"
-            f"The user configured this daily inbox brief themselves — they set it up to fire at a "
-            f"chosen hour every day so you can analyse their inbox on their behalf.\n"
-            f"This is not a one-off request. It is a standing instruction: the user trusts you to "
-            f"review their mail, surface what matters, and deliver a structured report.\n"
+            f"The user configured this daily inbox brief themselves. "
+            f"This is not a standing instruction to summarise — it is a standing instruction to work. "
+            f"Act as a personal secretary doing a thorough inbox review.\n"
             f"\n"
-            f"Each entry below contains: email_id, from, subject, date, snippet, body (first 500 chars), "
-            f"attachments (filenames only). Use get_email_details(email_id) to read a full message body "
-            f"and get_email_attachment(email_id, filename) to parse an attachment — call these for "
-            f"anything that warrants deeper investigation.\n"
+            f"Language rule: write the entire report and response message in the user's language. "
+            f"You know which language the user communicates in — use it throughout.\n"
+            f"\n"
+            f"Each entry contains: email_id, from, subject, date, snippet, body (first 500 chars), "
+            f"attachments (filenames only). Newsletter/digest bodies are often mostly links — "
+            f"rely on subject + snippet for initial triage.\n"
+            f"\n"
+            f"---\n"
+            f"\n"
+            f"## PHASE 0 — Triage (before any tool calls)\n"
+            f"\n"
+            f"Scan all {len(emails)} emails. Assign each a disposition tag:\n"
+            f"  [ACTION]  — requires a response, decision, or follow-up from the user\n"
+            f"  [FYI]     — informational, personally relevant, worth reading\n"
+            f"  [DIGEST]  — newsletter, roundup, automated digest\n"
+            f"  [NOISE]   — promotional, irrelevant, unsubscribe candidate\n"
+            f"\n"
+            f"Every email must get a tag. Nothing dropped.\n"
+            f"Output the triage map before proceeding to Phase 1.\n"
+            f"\n"
+            f"## PHASE 1 — Deep reads\n"
+            f"\n"
+            f"Call get_email_details(email_id) for:\n"
+            f"- Every [ACTION] email — no exceptions\n"
+            f"- [FYI] emails where snippet/body is insufficient to understand the full content\n"
+            f"- Any attachment worth reading: call get_email_attachment(email_id, filename)\n"
+            f"\n"
+            f"Minimum: get_email_details on at least 3 emails (or all [ACTION] + [FYI] if fewer).\n"
+            f"\n"
+            f"## PHASE 2 — Research\n"
+            f"\n"
+            f"Call search_web for topics, senders, events, or companies that need external context:\n"
+            f"news, product updates, regulatory changes, background on unfamiliar senders, etc.\n"
+            f"Minimum: 2 search_web calls if any [ACTION] or [FYI] email warrants it.\n"
+            f"\n"
+            f"---\n"
             f"\n"
             f"{json.dumps(emails, ensure_ascii=False, indent=2)}\n"
             f"\n"
@@ -121,16 +152,21 @@ class EmailReviewService:
             f"You know who the user is — draw on that knowledge to make the analysis personally relevant.\n"
             f"\n"
             f"Produce two outputs:\n"
-            f"1. An HTML page (create_html_page) — this is the main artifact. Put the full analysis "
-            f"here: trends, highlights, research, unsubscribe candidates, anything actionable. "
-            f"The user will read it at their convenience.\n"
-            f"2. A response message — short summary of the most important finding, or whatever you "
-            f"judge worth saying out loud. This is what the user sees first in the chat."
+            f"1. An HTML page (create_html_page) — the main artifact. Full analysis: per-email coverage "
+            f"with disposition tags, highlights, action items, research findings, unsubscribe candidates. "
+            f"Every email in the triage map must appear. "
+            f"For every email mentioned, render its subject as a clickable link using the format: "
+            f"https://mail.google.com/mail/u/0/#all/{{email_id}} — this opens the email on web and "
+            f"in the Gmail mobile app. The user will read it at their convenience.\n"
+            f"2. A response message — one short paragraph: the most important finding or action item. "
+            f"This is what the user sees first in the chat."
         )
 
     async def _refresh_if_needed(self, creds: OAuthCredentials) -> Optional[OAuthCredentials]:
         now_utc = datetime.now(timezone.utc)
-        if creds.token_expiry and creds.token_expiry <= now_utc + timedelta(minutes=5):
+        if creds.token_expiry:
+            expiry = creds.token_expiry.replace(tzinfo=timezone.utc) if creds.token_expiry.tzinfo is None else creds.token_expiry
+        if creds.token_expiry and expiry <= now_utc + timedelta(minutes=5):
             try:
                 creds = await self._email_provider.refresh_token(creds)
                 await self._oauth.save_credentials(creds)
