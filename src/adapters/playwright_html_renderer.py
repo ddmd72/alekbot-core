@@ -87,7 +87,7 @@ class PlaywrightHtmlRenderer(HtmlRendererPort):
                 try:
                     await page.close()
                 except Exception:
-                    pass
+                    logger.debug("Failed to close browser page during cleanup")
 
     async def _ensure_browser(self) -> None:
         """Start browser if not running, or reconnect if it crashed."""

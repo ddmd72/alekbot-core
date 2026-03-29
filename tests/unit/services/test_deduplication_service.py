@@ -1,21 +1,21 @@
 """
-Unit tests for SmartDeduplicationService
+Unit tests for SmartDeduplication
 
 Session: 2026-02-08 Deduplication Strategy Optimization
 Tests the intelligent deduplication algorithm with number-aware comparison.
 """
 
 import pytest
-from src.services.deduplication_service import SmartDeduplicationService
+from src.services.deduplication_service import SmartDeduplication
 
 
-class TestSmartDeduplicationService:
+class TestSmartDeduplication:
     """Test suite for smart deduplication logic."""
     
     @pytest.fixture
     def service(self):
         """Create deduplication service instance."""
-        return SmartDeduplicationService()
+        return SmartDeduplication()
     
     # ========================================================================
     # LEVEL 1: Low Similarity Tests (< 0.96)

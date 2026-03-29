@@ -192,7 +192,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
         # Session 2026-02-08: Smart semantic deduplication
         # Session 2026-02-16: Now with configurable threshold + skip option
         # Replaces old 3-level dedup (ID + biographical + none)
-        # Now uses SmartDeduplicationService (same as WRITE path)
+        # Now uses SmartDeduplication (same as WRITE path)
         
         if skip_semantic_dedup:
             # Consolidation mode: keep ALL facts with different IDs
@@ -311,11 +311,11 @@ class SearchEnrichmentService(SearchEnrichmentPort):
         similarity_threshold: float = 0.98
     ) -> tuple[List[EnrichedFact], int]:
         """
-        Remove ALL duplicates using SmartDeduplicationService with configurable threshold.
+        Remove ALL duplicates using SmartDeduplication with configurable threshold.
         
         Session 2026-02-08: Unified semantic deduplication for READ path
         - Replaces old _deduplicate_facts() (ID-only) + _deduplicate_biographical() (exact text)
-        - Uses same SmartDeduplicationService as WRITE path (consistency!)
+        - Uses same SmartDeduplication as WRITE path (consistency!)
         - Applies 4-level algorithm: similarity, numbers, length, heuristics
         - Now READ and WRITE use identical duplicate detection logic
         
@@ -340,13 +340,13 @@ class SearchEnrichmentService(SearchEnrichmentPort):
         Returns:
             Tuple (deduplicated_facts, removed_count)
         """
-        from ..domain.deduplication_service import SmartDeduplicationService
+        from ..domain.deduplication_service import SmartDeduplication
         
         if not facts:
             return [], 0
         
         # Create service with custom threshold
-        dedup_service = SmartDeduplicationService(
+        dedup_service = SmartDeduplication(
             moderate_threshold=0.96,  # Always check dissimilar facts
             strict_threshold=similarity_threshold  # Configurable!
         )
@@ -369,7 +369,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
                 # Calculate cosine similarity (no Firestore read needed!)
                 similarity = cosine_similarity(enriched.vector, kept_enriched.vector)
                 
-                # Use SmartDeduplicationService logic (same as WRITE path)
+                # Use SmartDeduplication logic (same as WRITE path)
                 is_dup, reason = dedup_service.is_duplicate(
                     enriched.content,
                     kept_enriched.content,

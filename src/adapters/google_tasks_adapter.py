@@ -339,7 +339,7 @@ class GoogleTasksAdapter(TasksProviderPort):
                     item["due"][:10], "%Y-%m-%d"
                 )
             except (ValueError, TypeError):
-                pass
+                logger.debug("Could not parse due date %r for task %s", item.get("due"), item.get("id"))
 
         updated_at: Optional[datetime] = None
         if item.get("updated"):
@@ -348,7 +348,7 @@ class GoogleTasksAdapter(TasksProviderPort):
                     item["updated"][:19], "%Y-%m-%dT%H:%M:%S"
                 )
             except (ValueError, TypeError):
-                pass
+                logger.debug("Could not parse updated_at %r for task %s", item.get("updated"), item.get("id"))
 
         return Task(
             task_id=item["id"],

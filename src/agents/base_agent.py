@@ -542,7 +542,10 @@ class BaseAgent(ABC):
 
         context: optional label for WHERE the error occurred (default: "execute").
         """
-        logger.error(f"❌ [{self.agent_id}] error in {context}: {error}", exc_info=True)
+        if isinstance(error, (LLMUnavailableError, LLMRateLimitError)):
+            logger.error(f"❌ [{self.agent_id}] error in {context}: {error}")
+        else:
+            logger.error(f"❌ [{self.agent_id}] error in {context}: {error}", exc_info=True)
 
     def _on_delegation(self, intent: str, query: str = "") -> None:
         """Lifecycle hook: called before each specialist delegation.
@@ -778,7 +781,7 @@ class BaseAgent(ABC):
                 self._billing_cache_read_tokens += getattr(m, "cache_read_tokens", 0)
                 self._billing_cache_creation_tokens += getattr(m, "cache_creation_tokens", 0)
             except (TypeError, AttributeError):
-                pass  # non-conforming usage_metadata (e.g. test mocks) — skip billing accumulation
+                logger.debug("Non-conforming usage_metadata (e.g. test mock) — skipping billing accumulation")
         return response
 
     @staticmethod

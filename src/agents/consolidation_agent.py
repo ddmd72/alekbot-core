@@ -1209,7 +1209,7 @@ class ConsolidationAgent(BaseAgent):
                 data = json.loads(response_text)
                 return data.get("operations", [])
             except json.JSONDecodeError:
-                pass
+                logger.debug("Direct JSON parse failed, trying embedded JSON fallback")
 
             # LLM returned plain text (e.g. narrative explanation) — extract
             # any embedded JSON object as fallback
