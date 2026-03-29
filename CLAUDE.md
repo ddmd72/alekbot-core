@@ -93,11 +93,13 @@ background process extracts new facts from the conversation → bot gets smarter
   not a user-facing notepad, but a mechanism where the system sets reminders that fire autonomously
   and execute as new conversations (the orchestrator talks to itself on a schedule).
   Two-field model: `text` (≤15-word label) + `instruction` (full execution context, self-contained).
-  `instruction` is the ONLY input when a reminder fires — must be fully self-contained with no
-  dependency on session memory or prior conversation.
+  `instruction` is the core of the reminder — but when firing, `_build_reminder_alert()` in
+  `WorkerHandler` enriches it with: note_id, schedule type (one-time vs recurring with interval),
+  self-authorship framing ("you wrote this to yourself"), proactive guidance (conversation history
+  as primary signal, available intents to act on).
   3 tools: `create_self_reminder`, `update_self_reminder`, `delete_self_reminder`. Single LLM call.
   Firing: Cloud Scheduler every 15 min → `POST /worker {fire_due_reminders}` → `WorkerHandler` →
-  `UserNotificationService.notify(system_alert=instruction)` → QuickAgent executes as new conversation.
+  `_build_reminder_alert(note)` → `UserNotificationService.notify(system_alert=..., agent_id_override=smart_response_agent_{user_id})` → SmartAgent executes as new conversation.
   One-time reminders: deleted after firing. Recurrent (`hourly/daily/weekly/monthly`): `reschedule()`
   computes `next_due` in user's local timezone (DST-safe), updates `due` + `last_fired`.
   Idempotency: `last_fired` guard (4-min window). Soft cap 20 active reminders.

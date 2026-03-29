@@ -526,7 +526,8 @@ class WorkerHandler:
                 await self._notification.notify(
                     user_id=note.user_id,
                     account_id=account_id,
-                    system_alert=note.instruction,
+                    system_alert=_build_reminder_alert(note),
+                    agent_id_override=f"smart_response_agent_{note.user_id}",
                 )
             except Exception as exc:
                 logger.warning(
@@ -553,6 +554,39 @@ class WorkerHandler:
 
         logger.info(f"[Worker] fire_due_reminders complete: fired={fired}, skipped={skipped}")
         return {"fired": fired, "skipped": skipped}, 200
+
+
+# ---------------------------------------------------------------------------
+# Utility: build system alert text for fired reminders
+# ---------------------------------------------------------------------------
+
+def _build_reminder_alert(note: "AgentNote") -> str:
+    if note.recurrence:
+        interval = note.recurrence.interval or 1
+        schedule = f"this reminder recurs every {interval} {note.recurrence.type} — it will fire again on the next cycle."
+    else:
+        schedule = "this was a one-time reminder, it fires once."
+
+    return (
+        f'[SELF-REMINDER] "{note.text}"\n'
+        f"note_id: {note.note_id}\n"
+        f"This reminder was set by you for yourself at an earlier point.\n"
+        f"The instruction below is your own prior intent — you wrote it then so you could act on it now.\n"
+        f"Schedule: {schedule}\n"
+        f"\n"
+        f"{note.instruction}\n"
+        f"\n"
+        f"---\n"
+        f"You have full context on why you set this — the instruction above is yours.\n"
+        f"The manage_self_reminders intent is available if you decide to update or delete it.\n"
+        f"Having received this execution context, you have an opportunity to act in the user's interest — "
+        f"not only on the reminder itself, but on anything you judge valuable right now.\n"
+        f"To decide what is worth doing right now, start with conversation history — "
+        f"it is the primary signal: patterns, unfinished threads, recurring topics. "
+        f"From there you have access to: user memory (search_memory), "
+        f"active reminders (manage_self_reminders), user tasks (manage_user_tasks), "
+        f"web (search_web), email archive (search_emails)."
+    )
 
 
 # ---------------------------------------------------------------------------
