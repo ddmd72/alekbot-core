@@ -49,15 +49,15 @@ class OpenAIAdapter(LLMPort):
 
     # ========================================================================
     # Tier-to-model mapping
-    # ECO: gpt-5-nano (cheapest, fastest)
-    # BALANCED: gpt-5-mini (mid-tier quality)
-    # PERFORMANCE: gpt-5.2 (previous flagship — faster than gpt-5)
+    # ECO: gpt-5.4-nano (cheapest, fastest)
+    # BALANCED: gpt-5.4-mini (mid-tier quality)
+    # PERFORMANCE: gpt-5.4 (flagship)
     # Verify model IDs at https://platform.openai.com/docs/models
     # ========================================================================
     MODEL_TIERS = {
-        PerformanceTier.ECO: "gpt-5-nano",
-        PerformanceTier.BALANCED: "gpt-5-mini",
-        PerformanceTier.PERFORMANCE: "gpt-5.2",
+        PerformanceTier.ECO: "gpt-5.4-nano",
+        PerformanceTier.BALANCED: "gpt-5.4-mini",
+        PerformanceTier.PERFORMANCE: "gpt-5.4",
     }
 
     # Models that do not support sampling parameters (temperature, top_p, etc.):

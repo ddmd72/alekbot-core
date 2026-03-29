@@ -39,7 +39,6 @@ from ...ports.llm_port import (
 from ...ports.session_store import SessionStore
 from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_port import AgentExecutionContext
-from ...domain.billing import calculate_cost
 from ...utils.logger import logger
 from ...utils.llm_response_parser import parse_llm_response
 from ...domain.messaging import SmartResponse
@@ -259,19 +258,6 @@ class QuickResponseAgent(BaseAgent):
 
             if smart_response.text:
                 smart_response.text = self._sanitize_response(smart_response.text)
-
-            class _FakeUsage:
-                def __init__(self, tokens):
-                    self.total_tokens = tokens
-                    self.prompt_tokens = 0
-                    self.completion_tokens = 0
-
-            class _FakeResponse:
-                def __init__(self, tokens):
-                    self.usage_metadata = _FakeUsage(tokens)
-                    self.metadata = {}
-
-            await self._track_usage(user_id, _FakeResponse(total_tokens))
 
             # Post-processing: fire-and-forget history summary (plain-text path).
             summary_task = None
@@ -687,49 +673,6 @@ class QuickResponseAgent(BaseAgent):
         )
         
         return text.strip()
-    
-    async def _track_usage(self, user_id: str, response) -> None:
-        """
-        Track usage for billing (fire-and-forget).
-
-        Sends usage data to BillingAgent via AgentCoordinator.
-
-        Args:
-            user_id: User identifier
-            response: LLM response with usage metadata
-        """
-        if not response.usage_metadata:
-            return
-
-        if not self.coordinator:
-            logger.debug(
-                f"📊 Usage: {response.usage_metadata.total_tokens} tokens "
-                f"(user={user_id})"
-            )
-            return
-
-        asyncio.create_task(
-            self.coordinator.route_message(
-                AgentMessage.create(
-                    sender=self.agent_id,
-                    recipient="billing_agent",
-                    intent=AgentIntent.INFORM,
-                    payload={
-                        "user_id": user_id,
-                        "tokens": response.usage_metadata.total_tokens,
-                        "cost": calculate_cost(
-                            model=self.model_name,
-                            prompt_tokens=response.usage_metadata.prompt_tokens,
-                            completion_tokens=response.usage_metadata.completion_tokens
-                        ),
-                        "model": self.model_name
-                    },
-                    context={
-                        "session_id": response.metadata.get("session_id") if hasattr(response, "metadata") else None
-                    }
-                )
-            )
-        )
     
 
 def create_quick_response_agent(

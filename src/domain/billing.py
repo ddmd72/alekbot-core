@@ -89,16 +89,21 @@ class BillingAccount(BaseModel):
 _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # --- Gemini ("latest" aliases resolve to current stable generation) ---
     "gemini-flash-lite-latest":          {"input": 0.10,  "output": 0.40},   # 2.5 Flash-Lite
-    "gemini-flash-latest":               {"input": 0.30,  "output": 2.50},   # 2.5 Flash
-    "gemini-pro-latest":                 {"input": 1.25,  "output": 10.00},  # 2.5 Pro
+    "gemini-flash-latest":               {"input": 0.50,  "output": 3.00},   # resolves to gemini-3-flash-preview
+    "gemini-pro-latest":                 {"input": 2.00,  "output": 12.00},  # resolves to gemini-3.1-pro-preview
     "gemini-3-flash-preview":            {"input": 0.50,  "output": 3.00},   # Gemini 3 Flash Preview (router fallback)
     "deep-research-pro-preview-12-2025": {"input": 1.25,  "output": 10.00},  # approx. Gemini Pro tier
-    "models/gemini-3-pro-preview":       {"input": 2.50,  "output": 10.00},  # legacy entry
+    "models/gemini-3-pro-preview":       {"input": 2.00,  "output": 12.00},  # Gemini 3.1 Pro Preview
     # --- Claude ---
     "claude-haiku-4-5-20251001":         {"input": 1.00,  "output": 5.00},
     "claude-sonnet-4-6":                 {"input": 3.00,  "output": 15.00},
     "claude-opus-4-6":                   {"input": 5.00,  "output": 25.00},
-    # --- OpenAI ---
+    # --- OpenAI (gpt-5.4 family, Mar 2026) ---
+    "gpt-5.4-nano":                      {"input": 0.20,  "output": 1.25},
+    "gpt-5.4-mini":                      {"input": 0.75,  "output": 4.50},
+    "gpt-5.4":                           {"input": 2.50,  "output": 15.00},
+    # legacy model IDs (gpt-5 family, Aug–Dec 2025)
+    "gpt-5.2":                           {"input": 1.75,  "output": 14.00},
     "gpt-5-nano":                        {"input": 0.05,  "output": 0.40},
     "gpt-5-mini":                        {"input": 0.25,  "output": 2.00},
     "gpt-5":                             {"input": 1.25,  "output": 10.00},
@@ -110,14 +115,28 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
 }
 
 
-def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    """Calculate request cost in USD based on token counts."""
+def calculate_cost(
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> float:
+    """Calculate request cost in USD based on token counts.
+
+    cache_read_tokens:    tokens served from cache — charged at 0.1× input price (Claude).
+    cache_creation_tokens: tokens written to cache — charged at 1.25× input price (Claude).
+    Non-Claude providers always pass 0 for both; multipliers are safe to apply universally.
+    """
     pricing = _PRICING_PER_MILLION_TOKENS.get(model)
     if not pricing:
         _log.warning("Unknown model pricing for %s; cost set to 0.0", model)
         return 0.0
+    input_price = pricing["input"]
     cost = (
-        (prompt_tokens / 1_000_000) * pricing["input"]
+        (prompt_tokens / 1_000_000) * input_price
         + (completion_tokens / 1_000_000) * pricing["output"]
+        + (cache_read_tokens / 1_000_000) * input_price * 0.1
+        + (cache_creation_tokens / 1_000_000) * input_price * 1.25
     )
     return round(cost, 6)
