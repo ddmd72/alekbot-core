@@ -247,6 +247,8 @@ class SlackResponseChannel(ResponseChannel):
                 mrkdwn=True
             )
 
+        if not content.fallback_text:
+            return None
         return await self.send_message(content.fallback_text, thread_id)
 
     def _split_into_chunks(self, text: str, max_length: int) -> List[str]:

@@ -7,6 +7,7 @@ anthropic
 openai>=1.0.0  # xAI Grok (OpenAI-compatible API)
 python-dotenv
 aiohttp
+beautifulsoup4  # HTML → plain text extraction for Gmail email bodies
 aiofiles  # Async file I/O for Claude vision support
 markitdown[all]  # File-to-text conversion: DOCX, XLSX, YouTube, audio + image description in docs
 openpyxl>=3.1.0  # CSV → xlsx conversion in RichContentService
