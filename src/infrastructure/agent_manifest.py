@@ -67,6 +67,8 @@ class Intent:
     CREATE_PDF = "create_pdf"
     # HTML page creation — produces a single-page HTML layout delivered via GCS public link
     CREATE_HTML_PAGE = "create_html_page"
+    # User-facing guide — returns what the system can do for the end user
+    USER_GUIDE = "user_guide"
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +399,24 @@ PDF_GENERATOR = AgentDescriptor(
 )
 
 
+HELP = AgentDescriptor(
+    agent_id="help_agent",
+    agent_type="help",
+    capabilities={Intent.USER_GUIDE: ExecutionMode.SYNC},
+    description="System capabilities reference",
+    capability_descriptions={
+        Intent.USER_GUIDE: (
+            "Returns a structured list of everything this system can do — "
+            "all available agents and their capabilities. "
+            "Call when the user asks what you can do, what features are available, "
+            "or how to use the system. "
+            'payload: {"query": "<user\'s question about capabilities>"}'
+        ),
+    },
+    internal=False,
+)
+
+
 HTML_PAGE_GENERATOR = AgentDescriptor(
     agent_id="html_page_generator_agent",
     agent_type="html_page",
@@ -430,4 +450,5 @@ ALL_DESCRIPTORS = [
     DOC_GENERATOR,
     PDF_GENERATOR,
     HTML_PAGE_GENERATOR,
+    HELP,
 ]
