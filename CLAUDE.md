@@ -329,6 +329,23 @@ docx_generator/ — Node.js project with docx npm library. NodeDocxRunner writes
                   here so node_modules/docx resolves at execution time. Not a Python package.
 ```
 
+## Layer Semantics (when in doubt, use this to decide where a new class goes)
+
+- **`domain/`** — pure data and algorithms. No I/O, no side effects, no logging. If a class only
+  needs stdlib + pydantic, it belongs here regardless of how complex the logic is.
+- **`ports/`** — contracts (ABC). One port per system boundary. Do not create a port for a
+  single internal service with no substitution need.
+- **`services/`** — orchestrate I/O through ports. Do NOT participate in agent routing.
+  Do NOT inherit BaseAgent. If it takes ports via constructor and coordinates work — it's a service.
+- **`agents/`** — inherit BaseAgent, receive AgentMessage, return AgentResponse. Participate in
+  multi-agent routing via AgentCoordinator. If it doesn't extend BaseAgent — it's not an agent.
+- **`handlers/`** — entry points for external events: HTTP request (Slack/Telegram webhook),
+  Cloud Task dispatch, Cloud Scheduler trigger. Exactly three exist. A new one only if a new
+  external event source is added — not because a class is large.
+- **`composition/`** — wiring layer. The only layer allowed to know about all other layers
+  simultaneously. ServiceContainer + factories live here. If constructing an object requires
+  importing from 2+ concrete layers — it belongs in composition/.
+
 ## Import Rules (CRITICAL)
 
 ```
