@@ -54,12 +54,12 @@ class BillingAgent(BaseAgent):
             return False
 
         payload = message.payload
-        required_fields = {"user_id", "tokens", "cost", "model"}
+        required_fields = {"account_id", "tokens", "cost", "model"}
         return required_fields.issubset(payload.keys())
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
         payload = message.payload
-        user_id = payload["user_id"]
+        account_id = payload["account_id"]
 
         record = {
             "tokens": payload["tokens"],
@@ -70,12 +70,12 @@ class BillingAgent(BaseAgent):
         }
 
         async with self._lock:
-            self.pending_records[user_id].append(record)
-            should_flush = len(self.pending_records[user_id]) >= self.flush_threshold
+            self.pending_records[account_id].append(record)
+            should_flush = len(self.pending_records[account_id]) >= self.flush_threshold
 
         # Flush outside lock: I/O must not block other writers
         if should_flush:
-            await self._flush_user(user_id)
+            await self._flush_account(account_id)
 
         return AgentResponse.success(
             task_id=message.task_id,
@@ -84,9 +84,9 @@ class BillingAgent(BaseAgent):
             confidence=1.0
         )
 
-    async def _flush_user(self, user_id: str) -> None:
+    async def _flush_account(self, account_id: str) -> None:
         async with self._lock:
-            records = self.pending_records.pop(user_id, [])
+            records = self.pending_records.pop(account_id, [])
 
         # I/O outside lock
         if not records:
@@ -98,11 +98,11 @@ class BillingAgent(BaseAgent):
 
         logger.debug(
             f"💳 [BillingAgent] Flushing {len(records)} records "
-            f"for user {user_id} (tokens={total_tokens}, cost={total_cost:.6f})"
+            f"for account {account_id} (tokens={total_tokens}, cost={total_cost:.6f})"
         )
 
         await self.quota_service.record_usage(
-            user_id=user_id,
+            account_id=account_id,
             model=model,
             tokens=total_tokens,
             cost=total_cost
@@ -112,9 +112,9 @@ class BillingAgent(BaseAgent):
         while True:
             await asyncio.sleep(self.flush_interval)
             async with self._lock:
-                user_ids = list(self.pending_records.keys())
-            for user_id in user_ids:
-                await self._flush_user(user_id)
+                account_ids = list(self.pending_records.keys())
+            for account_id in account_ids:
+                await self._flush_account(account_id)
 
     async def shutdown(self) -> None:
         if self._flush_task:
@@ -125,6 +125,6 @@ class BillingAgent(BaseAgent):
                 pass
 
         async with self._lock:
-            user_ids = list(self.pending_records.keys())
-        for user_id in user_ids:
-            await self._flush_user(user_id)
+            account_ids = list(self.pending_records.keys())
+        for account_id in account_ids:
+            await self._flush_account(account_id)
