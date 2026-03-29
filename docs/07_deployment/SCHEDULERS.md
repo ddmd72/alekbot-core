@@ -71,7 +71,7 @@ Region: `us-central1`. Attempt deadline: `60s` for all `/worker` jobs.
 | **Schedule** | `0 * * * *` (every hour, on the hour) |
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "start_daily_email_review"}` |
-| **Purpose** | Fan-out: for every Gmail user with `config.gmail_daily_review=True`, checks if `current_hour_in_user_tz == config.gmail_daily_review_hour`. If yes, enqueues a `daily_email_review` Cloud Task. Fetches last 24h emails (up to 200), passes structured payload to SmartAgent. SmartAgent delivers an HTML page + short chat message. |
+| **Purpose** | Fan-out: for every Gmail user with `config.gmail_daily_review=True`, checks if `current_hour_in_user_tz == config.gmail_daily_review_hour`. If yes, enqueues a `daily_email_review` Cloud Task. Worker fetches last 24h emails (up to 200, full body via BS4 HTML→text + invisible char stripping) and passes structured JSON to SmartAgent via `notify(save_history=False)`. SmartAgent runs Phase 0 triage → Phase 1 deep reads (`get_email_details`) → Phase 2 research (`search_web`) → delivers HTML report (GCS link) + short chat message. After HTML delivery, URL is saved to session history via `notify_document_link()`. |
 | **Handler** | `WorkerHandler._handle_start_daily_email_review()` → `WorkerHandler._handle_daily_email_review()` |
 | **User setting** | Toggle + hour picker in Cabinet UI > Integrations > Gmail |
 | **Env** | dev + prod |
