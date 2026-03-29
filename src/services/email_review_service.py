@@ -15,7 +15,8 @@ Responsibilities:
 
 import json
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from ..domain.email import OAuthCredentials
 from ..ports.email_provider_port import EmailProviderPort
@@ -35,6 +36,28 @@ class EmailReviewService:
     ) -> None:
         self._email_provider = email_provider
         self._oauth = oauth_credentials
+
+    async def find_eligible_users(
+        self, user_repo: Any, now_utc: datetime
+    ) -> List[Tuple[str, str]]:
+        """
+        Return (user_id, account_id) pairs for Gmail users eligible for daily review
+        at the given UTC time (gmail_daily_review=True, hour matches local timezone).
+        """
+        user_ids = await self._oauth.list_users_by_provider("gmail")
+        eligible: List[Tuple[str, str]] = []
+        for user_id in user_ids:
+            profile = await user_repo.get_user(user_id)
+            if not profile:
+                continue
+            cfg = profile.config
+            if not cfg.gmail_daily_review:
+                continue
+            user_tz = ZoneInfo(cfg.timezone or "UTC")
+            if now_utc.astimezone(user_tz).hour != cfg.gmail_daily_review_hour:
+                continue
+            eligible.append((user_id, profile.account_id))
+        return eligible
 
     async def fetch_review_payload(self, user_id: str) -> Optional[List[dict]]:
         """

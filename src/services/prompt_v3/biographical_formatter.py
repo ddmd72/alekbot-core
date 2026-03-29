@@ -178,13 +178,16 @@ class BiographicalFactsFormatter:
             return ""
 
         lines = ["**Query-Specific Context:**"]
-        
+
         for fact in facts:
             text = (fact.get("text") or "").strip()
             if not text:
                 continue
-            
+
             lines.append(f"- {text}")
+
+        if len(lines) == 1:
+            return ""
 
         return "\n".join(lines)
 

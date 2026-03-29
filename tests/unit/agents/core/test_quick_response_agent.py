@@ -820,3 +820,533 @@ class TestLinkListPassThrough:
         assert response.status == AgentStatus.SUCCESS
         assert len(response.result.link_list) == 3
         assert response.result.link_list[2]["title"] == "Place C"
+
+
+# =============================================================================
+# _format_email_search_compact — static method, isolated tests
+# =============================================================================
+
+
+class TestFormatEmailSearchCompact:
+
+    def _fmt(self, result):
+        from src.agents.core.quick_response_agent import QuickResponseAgent
+        return QuickResponseAgent._format_email_search_compact(result)
+
+    def test_non_string_returns_str(self):
+        result = self._fmt(42)
+        assert result == "42"
+
+    def test_invalid_json_returns_original_string(self):
+        result = self._fmt("not json at all")
+        assert result == "not json at all"
+
+    def test_empty_emails_list_returns_original(self):
+        import json
+        data = json.dumps({"count": 0, "emails": []})
+        result = self._fmt(data)
+        assert result == data
+
+    def test_no_emails_key_returns_original(self):
+        import json
+        data = json.dumps({"count": 0})
+        result = self._fmt(data)
+        assert result == data
+
+    def test_single_email_no_attachments_no_text(self):
+        import json
+        data = json.dumps({"emails": [{"email_id": "abc", "from": "a@b.com", "date": "2026-03-01"}]})
+        result = self._fmt(data)
+        assert "abc" in result
+        assert "a@b.com" in result
+        assert "Found 1 email(s):" in result
+
+    def test_email_with_text_snippet(self):
+        import json
+        data = json.dumps({"emails": [{"email_id": "abc", "text": "Important update"}]})
+        result = self._fmt(data)
+        assert "Important update" in result
+
+    def test_email_with_attachments(self):
+        import json
+        data = json.dumps({"emails": [{"email_id": "abc", "attachments": ["report.pdf", "data.xlsx"]}]})
+        result = self._fmt(data)
+        assert "report.pdf" in result
+        assert "data.xlsx" in result
+
+    def test_email_text_truncated_to_150_chars(self):
+        import json
+        long_text = "x" * 300
+        data = json.dumps({"emails": [{"email_id": "abc", "text": long_text}]})
+        result = self._fmt(data)
+        # The text should be truncated (at most 150 chars shown)
+        assert "x" * 151 not in result
+
+    def test_non_dict_json_returns_original(self):
+        import json
+        data = json.dumps([1, 2, 3])
+        result = self._fmt(data)
+        assert result == data
+
+
+# =============================================================================
+# _delegate_quick — edge cases
+# =============================================================================
+
+
+class TestDelegateQuickEdgeCases:
+
+    @pytest.fixture
+    def agent(self, quick_agent):
+        return quick_agent
+
+    async def test_no_coordinator_returns_error_string(self, agent):
+        agent.coordinator = None
+        from src.ports.llm_port import ToolCall
+        tc = ToolCall(name="delegate_to_specialist", args={"intent": "search_memory", "query": "test"})
+        result_str, ctx, items = await agent._delegate_quick(tc, "u1", "sess1")
+        assert "SYSTEM ERROR" in result_str
+        assert ctx is None
+
+    async def test_no_intent_returns_error_string(self, agent):
+        from src.ports.llm_port import ToolCall
+        from unittest.mock import AsyncMock, MagicMock
+        agent.coordinator = MagicMock()
+        tc = ToolCall(name="delegate_to_specialist", args={"query": "test"})
+        result_str, ctx, items = await agent._delegate_quick(tc, "u1", "sess1")
+        assert "SYSTEM ERROR" in result_str
+
+    async def test_context_params_as_string_wrapped(self, agent):
+        """str context_params is wrapped in {"reasoning": ...}."""
+        from src.ports.llm_port import ToolCall
+        from unittest.mock import AsyncMock, MagicMock
+        from src.domain.agent import AgentResponse, AgentStatus
+
+        mock_coordinator = MagicMock()
+        success_response = MagicMock()
+        success_response.status = AgentStatus.SUCCESS
+        success_response.result = "found it"
+        success_response.history_context = None
+        success_response.delivery_items = []
+        mock_coordinator.handle_delegation = AsyncMock(return_value=success_response)
+        agent.coordinator = mock_coordinator
+
+        tc = ToolCall(
+            name="delegate_to_specialist",
+            args={"intent": "search_memory", "query": "test", "context": "some reasoning text"},
+        )
+        result_str, ctx, items = await agent._delegate_quick(tc, "u1", "sess1")
+        # Should succeed without raising; context_params was wrapped
+        assert result_str is not None
+
+
+# =============================================================================
+# Biographical context loading (lines 187-193, 201)
+# =============================================================================
+
+class TestBiographicalContextLoading:
+
+    def _make_agent_with_repo(self, quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder):
+        repo = MagicMock()
+        repo.get_biographical_context_cached = AsyncMock(return_value=["fact1", "fact2"])
+        execution_context = AgentExecutionContext(
+            agent_type="quick",
+            provider=mock_llm_port,
+            model_name="gemini-3-flash-preview",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+        agent = QuickResponseAgent(
+            config=quick_agent_config,
+            execution_context=execution_context,
+            session_store=mock_session_store,
+            prompt_builder=mock_prompt_builder,
+            repository=repo,
+        )
+        return agent, repo
+
+    @pytest.mark.asyncio
+    async def test_biographical_context_loaded_when_account_id_set(
+        self, quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+    ):
+        """account_id + repository → get_biographical_context_cached is called."""
+        agent, repo = self._make_agent_with_repo(
+            quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+        )
+        mock_llm_port.generate_content = AsyncMock(return_value=MockLLMResponse(text="ok"))
+        msg = AgentMessage.create(
+            sender="router",
+            recipient="quick_response_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "hello"},
+            context={
+                "user_id": "u1",
+                "session_id": "sess1",
+                "account_id": "acc1",
+                "classification": {"is_simple": True},
+            },
+        )
+        response = await agent.execute(msg)
+        assert response.status == AgentStatus.SUCCESS
+        repo.get_biographical_context_cached.assert_called_once_with(owner_id="acc1", limit=100)
+
+    @pytest.mark.asyncio
+    async def test_biographical_context_exception_is_swallowed(
+        self, quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+    ):
+        """repository raises → warning logged, execution continues (lines 192-193)."""
+        agent, repo = self._make_agent_with_repo(
+            quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+        )
+        repo.get_biographical_context_cached = AsyncMock(side_effect=RuntimeError("DB error"))
+        mock_llm_port.generate_content = AsyncMock(return_value=MockLLMResponse(text="ok"))
+        msg = AgentMessage.create(
+            sender="router",
+            recipient="quick_response_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "hello"},
+            context={
+                "user_id": "u1",
+                "session_id": "sess1",
+                "account_id": "acc1",
+                "classification": {"is_simple": True},
+            },
+        )
+        response = await agent.execute(msg)
+        assert response.status == AgentStatus.SUCCESS  # does not crash
+
+    @pytest.mark.asyncio
+    async def test_enriched_context_with_facts_logs_merge(
+        self, quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+    ):
+        """enriched_context with facts → merge info log (line 201)."""
+        execution_context = AgentExecutionContext(
+            agent_type="quick",
+            provider=mock_llm_port,
+            model_name="gemini-3-flash-preview",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+        agent = QuickResponseAgent(
+            config=quick_agent_config,
+            execution_context=execution_context,
+            session_store=mock_session_store,
+            prompt_builder=mock_prompt_builder,
+        )
+        mock_llm_port.generate_content = AsyncMock(return_value=MockLLMResponse(text="ok"))
+        msg = AgentMessage.create(
+            sender="router",
+            recipient="quick_response_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "hello"},
+            context={
+                "user_id": "u1",
+                "session_id": "sess1",
+                "enriched_context": {"facts": ["semantic fact 1"]},
+                "classification": {"is_simple": True},
+            },
+        )
+        response = await agent.execute(msg)
+        assert response.status == AgentStatus.SUCCESS
+
+
+# =============================================================================
+# _load_history — exception path (lines 345-347)
+# =============================================================================
+
+class TestLoadHistoryException:
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_empty(self, quick_agent, mock_session_store):
+        """load_session raises → returns empty list (lines 345-347)."""
+        mock_session_store.load_session = AsyncMock(side_effect=RuntimeError("DB down"))
+        result = await quick_agent._load_history("sess-abc")
+        assert result == []
+
+
+# =============================================================================
+# _sanitize_response — empty string (line 643)
+# =============================================================================
+
+class TestSanitizeResponseEmpty:
+
+    def test_empty_string_returns_empty(self, quick_agent):
+        """Empty string → returns immediately (line 643)."""
+        assert quick_agent._sanitize_response("") == ""
+
+    def test_none_like_falsy_returns_as_is(self, quick_agent):
+        """None-like falsy value returns as-is."""
+        assert quick_agent._sanitize_response(None) is None
+
+
+# =============================================================================
+# _delegate_quick — non-dict context_params (line 558)
+# =============================================================================
+
+class TestDelegateQuickNonDictContext:
+
+    @pytest.mark.asyncio
+    async def test_none_context_params_normalized(self, quick_agent):
+        """context=None (not a dict, not a string) → normalized to {} (line 558)."""
+        coordinator = MagicMock()
+        success_response = AgentResponse.success(task_id="t", agent_id="a", result="ok")
+        coordinator.handle_delegation = AsyncMock(return_value=success_response)
+        quick_agent.coordinator = coordinator
+
+        tc = ToolCall(
+            name="delegate_to_specialist",
+            args={"intent": "search_memory", "query": "test", "context": None},
+        )
+        result_str, ctx, items = await quick_agent._delegate_quick(tc, "u1", "sess1")
+        # Should not crash
+        assert result_str is not None
+
+
+# =============================================================================
+# _delegate_quick — retry + max retry error (lines 603-609)
+# =============================================================================
+
+class TestDelegateQuickRetry:
+
+    @pytest.mark.asyncio
+    async def test_retry_on_failure_returns_error_after_max_retries(self, quick_agent):
+        """coordinator returns FAILURE → retries → finally returns AGENT ERROR (603-609)."""
+        coordinator = MagicMock()
+        failure_response = AgentResponse.failure(task_id="t", agent_id="a", error="timeout")
+        coordinator.handle_delegation = AsyncMock(return_value=failure_response)
+        quick_agent.coordinator = coordinator
+
+        tc = ToolCall(
+            name="delegate_to_specialist",
+            args={"intent": "search_memory", "query": "q"},
+        )
+        with patch("src.agents.core.quick_response_agent.asyncio.sleep", new_callable=AsyncMock):
+            result_str, ctx, items = await quick_agent._delegate_quick(tc, "u1", "sess1")
+        assert "AGENT ERROR" in result_str
+        assert ctx is None
+
+
+# =============================================================================
+# _delegate_quick — search_emails formats result (line 590)
+# =============================================================================
+
+class TestDelegateQuickSearchEmails:
+
+    @pytest.mark.asyncio
+    async def test_search_emails_result_formatted_compact(self, quick_agent):
+        """search_emails intent → _format_email_search_compact called (line 590)."""
+        import json
+        email_json = json.dumps({"emails": [{"email_id": "abc123", "from": "a@b.com", "date": "2026-03-01"}]})
+        success_response = AgentResponse.success(task_id="t", agent_id="a", result=email_json)
+        coordinator = MagicMock()
+        coordinator.handle_delegation = AsyncMock(return_value=success_response)
+        quick_agent.coordinator = coordinator
+
+        tc = ToolCall(
+            name="delegate_to_specialist",
+            args={"intent": "search_emails", "query": "invoice"},
+        )
+        result_str, ctx, items = await quick_agent._delegate_quick(tc, "u1", "sess1")
+        # _format_email_search_compact produces compact format
+        assert "abc123" in result_str
+        assert "Found 1 email(s):" in result_str
+
+
+# =============================================================================
+# Delegation loop — full flow (lines 434-530)
+# =============================================================================
+
+def _make_coordinator_quick_agent(quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder):
+    """Create quick agent with coordinator."""
+    from src.ports.llm_port import LLMResponse, UsageMetadata
+
+    execution_context = AgentExecutionContext(
+        agent_type="quick",
+        provider=mock_llm_port,
+        model_name="gemini-3-flash-preview",
+        tier=PerformanceTier.ECO,
+        capabilities=ProviderCapabilities()
+    )
+    coordinator = MagicMock()
+    agent = QuickResponseAgent(
+        config=quick_agent_config,
+        execution_context=execution_context,
+        session_store=mock_session_store,
+        prompt_builder=mock_prompt_builder,
+        coordinator=coordinator,
+    )
+    return agent, coordinator
+
+
+def _tool_llm_response(intent="search_memory", query="q"):
+    from src.ports.llm_port import LLMResponse, UsageMetadata
+    return LLMResponse(
+        text="",
+        tool_calls=[ToolCall(name="delegate_to_specialist", args={"intent": intent, "query": query})],
+        usage_metadata=UsageMetadata(prompt_tokens=5, completion_tokens=5, total_tokens=10),
+    )
+
+
+class TestDelegationLoopFull:
+
+    @pytest.mark.asyncio
+    async def test_delegation_loop_memory_then_answer(
+        self, quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+    ):
+        """LLM delegates to search_memory, coordinator returns result, LLM answers.
+        Covers lines 437-469, 488-516 (memory path of _execute_quick_parallel).
+        """
+        from src.ports.llm_port import LLMResponse, UsageMetadata
+
+        agent, coordinator = _make_coordinator_quick_agent(
+            quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+        )
+        coordinator.handle_delegation = AsyncMock(
+            return_value=AgentResponse.success(task_id="t", agent_id="a", result="memory result")
+        )
+        coordinator.get_available_intents_for = MagicMock(return_value=[])
+
+        mock_llm_port.generate_content = AsyncMock(side_effect=[
+            _tool_llm_response("search_memory", "what do I know"),
+            MockLLMResponse(text="Here is the answer."),
+        ])
+        response = await agent.execute(create_query_message("what do I know?"))
+        assert response.status == AgentStatus.SUCCESS
+        assert response.result.text == "Here is the answer."
+
+    @pytest.mark.asyncio
+    async def test_delegation_loop_parallel_other_calls(
+        self, quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+    ):
+        """LLM delegates to non-memory intent → parallel path (lines 517-528)."""
+        from src.ports.llm_port import LLMResponse, UsageMetadata
+
+        agent, coordinator = _make_coordinator_quick_agent(
+            quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+        )
+        coordinator.handle_delegation = AsyncMock(
+            return_value=AgentResponse.success(task_id="t", agent_id="a", result="web result")
+        )
+        coordinator.get_available_intents_for = MagicMock(return_value=[])
+
+        mock_llm_port.generate_content = AsyncMock(side_effect=[
+            _tool_llm_response("search_web_light", "current weather"),
+            MockLLMResponse(text="It's sunny."),
+        ])
+        response = await agent.execute(create_query_message("weather?"))
+        assert response.status == AgentStatus.SUCCESS
+        assert "sunny" in response.result.text
+
+    @pytest.mark.asyncio
+    async def test_delegation_loop_history_context_in_metadata(
+        self, quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+    ):
+        """Specialist returns history_context → accumulated → metadata (lines 281-282)."""
+        agent, coordinator = _make_coordinator_quick_agent(
+            quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+        )
+        email_ctx = {"email_search_context": {"you_searched": "invoices"}}
+        coordinator.handle_delegation = AsyncMock(
+            return_value=AgentResponse.success(
+                task_id="t", agent_id="a", result="emails found",
+                history_context=email_ctx,
+            )
+        )
+        coordinator.get_available_intents_for = MagicMock(return_value=[])
+
+        mock_llm_port.generate_content = AsyncMock(side_effect=[
+            _tool_llm_response("search_emails", "invoices"),
+            MockLLMResponse(text="Found 3 invoices."),
+        ])
+        response = await agent.execute(create_query_message("show me invoices"))
+        assert response.status == AgentStatus.SUCCESS
+        # history_context from specialist should appear in metadata
+        assert "email_search_context" in response.metadata
+
+    @pytest.mark.asyncio
+    async def test_delegation_loop_raw_content_appended(
+        self, quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+    ):
+        """LLMResponse with raw_content → raw_content path in history append (line 434-435)."""
+        from src.ports.llm_port import LLMResponse, UsageMetadata
+
+        agent, coordinator = _make_coordinator_quick_agent(
+            quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+        )
+        coordinator.handle_delegation = AsyncMock(
+            return_value=AgentResponse.success(task_id="t", agent_id="a", result="ok")
+        )
+        coordinator.get_available_intents_for = MagicMock(return_value=[])
+
+        raw = MagicMock()
+        raw.parts = [MagicMock()]
+        first_response = LLMResponse(
+            text="",
+            tool_calls=[ToolCall(name="delegate_to_specialist", args={"intent": "search_memory", "query": "q"})],
+            raw_content=raw,
+            usage_metadata=UsageMetadata(prompt_tokens=5, completion_tokens=5, total_tokens=10),
+        )
+        mock_llm_port.generate_content = AsyncMock(side_effect=[
+            first_response,
+            MockLLMResponse(text="Done."),
+        ])
+        response = await agent.execute(create_query_message("query"))
+        assert response.status == AgentStatus.SUCCESS
+
+
+# =============================================================================
+# Max turns exhausted (lines 248, 471-478)
+# =============================================================================
+
+class TestMaxTurnsExhausted:
+
+    @pytest.mark.asyncio
+    async def test_max_delegation_turns_exhausted_returns_failure(
+        self, quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+    ):
+        """LLM keeps returning tool_calls → max turns hit → execute returns failure (lines 248, 471-478)."""
+        from src.infrastructure.agent_config import QUICK
+        max_turns = QUICK.max_delegation_turns
+
+        agent, coordinator = _make_coordinator_quick_agent(
+            quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+        )
+        coordinator.handle_delegation = AsyncMock(
+            return_value=AgentResponse.success(task_id="t", agent_id="a", result="ok")
+        )
+        coordinator.get_available_intents_for = MagicMock(return_value=[])
+
+        # Every LLM call returns a tool_call → loop never exits via response
+        mock_llm_port.generate_content = AsyncMock(
+            side_effect=[_tool_llm_response("search_memory", "q")] * max_turns
+        )
+        response = await agent.execute(create_query_message("infinite loop?"))
+        assert response.status == AgentStatus.FAILED
+
+
+# =============================================================================
+# _execute_quick_parallel — exception in other_call (line 525)
+# =============================================================================
+
+class TestExecuteQuickParallelException:
+
+    @pytest.mark.asyncio
+    async def test_parallel_exception_produces_error_result(
+        self, quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+    ):
+        """coordinator raises for a non-memory call → asyncio.gather captures it
+        → ToolResponse with AGENT ERROR is set (line 525)."""
+        agent, coordinator = _make_coordinator_quick_agent(
+            quick_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder
+        )
+        coordinator.handle_delegation = AsyncMock(side_effect=RuntimeError("network error"))
+        coordinator.get_available_intents_for = MagicMock(return_value=[])
+
+        # Non-memory intent → goes through parallel other_calls path
+        mock_llm_port.generate_content = AsyncMock(side_effect=[
+            _tool_llm_response("search_web_light", "weather"),
+            MockLLMResponse(text="Weather info."),
+        ])
+        response = await agent.execute(create_query_message("weather?"))
+        # Execution continues despite the exception in the parallel call
+        assert response.status == AgentStatus.SUCCESS
