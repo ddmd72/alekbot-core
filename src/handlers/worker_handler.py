@@ -237,15 +237,7 @@ class WorkerHandler:
             await self._task_queue.enqueue_email_indexing_task(job.job_id)
             logger.info(f"📬 [Worker] Re-enqueued email indexing page for job {job.job_id[:8]}")
         elif not job.next_page_token:
-            try:
-                await self._agent_factory.ensure_agents_for_user(job.user_id)
-                await self._notification.notify(
-                    user_id=job.user_id,
-                    account_id=job.account_id,
-                    system_alert=self._email_indexing.completion_alert(job),
-                )
-            except Exception as notify_exc:
-                logger.warning(f"⚠️ [Worker] Notification failed (non-critical): {notify_exc}")
+            logger.info(f"✅ [Worker] Indexing job {job_id[:8]} complete: stored={job.emails_stored}, failed={job.emails_failed}")
 
         return {"status": "ok", "has_more": bool(job.next_page_token)}, 200
 

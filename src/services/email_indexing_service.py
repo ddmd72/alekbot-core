@@ -65,14 +65,6 @@ class EmailIndexingService:
     # Public API
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def completion_alert(job: IndexingJob) -> str:
-        """System alert text for UserNotificationService after a job completes."""
-        msg = f"Email indexing complete: {job.emails_stored} emails indexed"
-        if job.emails_failed:
-            msg += f", {job.emails_failed} failed"
-        return msg + "."
-
     def create_job(
         self,
         user_id: str,
