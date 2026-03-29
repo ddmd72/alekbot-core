@@ -15,9 +15,12 @@ Gmail API endpoints used:
 
 import asyncio
 import base64
+import html as _html_lib
 import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+
+from bs4 import BeautifulSoup
 from typing import Dict, List, Optional, Tuple
 
 import aiohttp
@@ -300,7 +303,7 @@ class GmailProviderAdapter(EmailProviderPort):
                     body_html = decoded
                     body_text = cls._html_to_text(decoded)
                 else:
-                    body_text = decoded
+                    body_text = " ".join(cls._strip_invisible(_html_lib.unescape(decoded)).split())
         else:
             for part in parts:
                 filename = part.get("filename", "")
@@ -317,9 +320,10 @@ class GmailProviderAdapter(EmailProviderPort):
                     body_html = body_html or sub_html
                     attachments.extend(sub_att)
                 elif pt == "text/plain" and part_data and not body_text:
-                    body_text = base64.urlsafe_b64decode(part_data + "==").decode(
+                    raw = base64.urlsafe_b64decode(part_data + "==").decode(
                         "utf-8", errors="replace"
                     )
+                    body_text = " ".join(cls._strip_invisible(_html_lib.unescape(raw)).split())
                 elif pt == "text/html" and part_data and not body_html:
                     body_html = base64.urlsafe_b64decode(part_data + "==").decode(
                         "utf-8", errors="replace"
@@ -331,19 +335,23 @@ class GmailProviderAdapter(EmailProviderPort):
         return body_text, body_html, attachments
 
     @staticmethod
-    def _html_to_text(html: str) -> str:
-        """Minimal HTML → plain text: strip tags, normalize whitespace."""
-        # Remove <script> and <style> blocks
-        html = re.sub(
-            r"<(script|style)[^>]*>.*?</\1>",
-            "",
-            html,
-            flags=re.DOTALL | re.IGNORECASE,
+    def _strip_invisible(text: str) -> str:
+        """Remove zero-width and invisible Unicode characters used as email tracking spacers."""
+        return re.sub(
+            r"[\u00ad\u034f\u200b-\u200f\u2028\u2029\u2060\ufeff\xa0]",
+            " ",
+            text,
         )
-        # Remove all remaining tags
-        html = re.sub(r"<[^>]+>", " ", html)
-        # Normalize whitespace
-        return " ".join(html.split())
+
+    @classmethod
+    def _html_to_text(cls, html: str) -> str:
+        """HTML → plain text via BeautifulSoup: proper entity decoding, structure-aware extraction."""
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "head"]):
+            tag.decompose()
+        text = soup.get_text(separator=" ")
+        text = cls._strip_invisible(text)
+        return " ".join(text.split())
 
     async def _fetch_attachment_binaries(
         self,
