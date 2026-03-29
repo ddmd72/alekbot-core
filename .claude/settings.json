@@ -13,7 +13,18 @@
       "Bash(git diff*)",
       "Bash(git log*)",
       "Bash(git branch*)",
-      "Bash(git fetch*)"
+      "Bash(git fetch*)",
+      "Bash(make logs*)",
+      "Bash(gcloud logging read*)",
+      "Bash(gcloud beta logging tail*)",
+      "Bash(gcloud run services logs read*)",
+      "Bash(gcloud logging tail*)",
+      "Bash(make deploy*)",
+      "Bash(gcloud run services describe*)",
+      "Bash(gcloud run jobs describe*)",
+      "Bash(gcloud run jobs list*)",
+      "Bash(gsutil cat*)",
+      "Bash(gsutil ls*)"
     ]
   }
 }

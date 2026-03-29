@@ -76,6 +76,7 @@ re-evaluation after tool results; Quick remaps `search_web` → `search_web_ligh
 Providers are user-configurable per agent. Defaults listed above reflect the production baseline.
 
 Adding a new specialist requires a registry entry in `agent_manifest.py` — no changes to orchestrators.
+Also update [`src/utils/capabilities.py`](src/utils/capabilities.py) — user-facing capabilities reference returned by `get_help`.
 
 ---
 

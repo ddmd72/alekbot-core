@@ -405,6 +405,9 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
 ## Adding a New Specialist Agent
 
 See [`docs/how_to/NEW_AGENT_PLAYBOOK.md`](docs/how_to/NEW_AGENT_PLAYBOOK.md) — **mandatory protocol**.
+
+When adding a new agent or capability, also update [`src/utils/capabilities.py`](src/utils/capabilities.py) —
+this file is the user-facing capabilities reference returned by the `get_help` intent.
 Read Phase 0 before writing any code. Follow steps in order. Do not skip.
 
 ## Adding or Modifying an LLM Adapter
