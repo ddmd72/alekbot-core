@@ -536,7 +536,7 @@ Multiple `DeliveryItem`s are dispatched in order after the main text response.
 
 - **`PdfGeneratorAgent`** — `document` type. Returns two items per successful generation: HTML source (`file_upload=False`) and PDF binary (`file_upload=True`). Both are stored to GCS via `DocumentDeliveryService` (key: `docs/{uuid4()}-{filename}`). The PDF item additionally triggers `notify_file_bytes()` to deliver the binary file to the user's Slack channel.
 
-- **`HtmlPageGeneratorAgent`** — `document` type. Returns one item: HTML source (`file_upload=False`, `content_type="text/html; charset=utf-8"`). Stored to GCS via `DocumentDeliveryService`. Only `notify_document_link()` is called — no binary upload to Slack. Delivery intent: `CREATE_HTML_PAGE` in `AgentWorkerHandler._deliver_document_result()`.
+- **`HtmlPageGeneratorAgent`** — `document` type. Returns one item: HTML source (`file_upload=False`, `content_type="text/html; charset=utf-8"`). Stored to GCS via `DocumentDeliveryService`. Only `notify_document_link()` is called — no binary upload to Slack. `notify_document_link()` additionally saves a user/model history pair (`[System: async document ready — {label}]` + URL note with `fetch_url` hint) so the agent can re-fetch the report if the user asks about it later. Delivery intent: `CREATE_HTML_PAGE` in `AgentWorkerHandler._deliver_document_result()`.
 
 `MapsSearchAgent` does not use `DeliveryItem` — place links are embedded directly in the LLM
 response text as Slack mrkdwn `<placeUrl|Name>` links. The `_SYSTEM_INSTRUCTION` in the agent
@@ -586,6 +586,6 @@ formatting. `places[i]` in the tool result corresponds to the i-th place cited i
 ## 12. Status
 
 **Status:** ✅ Production Ready
-**Last Updated:** 2026-03-14
+**Last Updated:** 2026-03-29
 
 ---
