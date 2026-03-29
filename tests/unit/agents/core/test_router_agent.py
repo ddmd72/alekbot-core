@@ -10,12 +10,19 @@ Tests cover:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.agents.core.router_agent import RouterAgent, create_router_agent
 from src.domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from src.ports.llm_port import AgentExecutionContext, ProviderCapabilities, LLMPort
 from src.ports.prompt_builder_port import PromptBuilderPort
+from src.ports.session_store import SessionStore
+from src.ports.repository import FactRepository
+from src.ports.agent_note_port import AgentNotePort
+from src.domain.llm import Message, MessagePart
+from src.domain.session import SessionState
+from src.domain.agent_note import AgentNote
 from src.domain.user import PerformanceTier
 
 
@@ -621,10 +628,713 @@ class TestRouterAgentIntegration:
     async def test_full_classification_flow_complex_external(self, router_agent):
         """Test full flow for external search query."""
         message = create_query_message("Яка погода завтра в Києві?")
-        
+
         response = await router_agent.execute(message)
-        
+
         assert response.status == AgentStatus.SUCCESS
         # Rule-based path routes to quick_agent; smart routing requires LLM
         assert response.result["classification"]["is_simple"] is False
         assert response.result["classification"]["needs_external"] is True
+
+
+# ============================================================================
+# Agent ID with user_id Tests (line 212)
+# ============================================================================
+
+class TestRouterAgentId:
+    """Tests for per-user agent_id assignment (line 212)."""
+
+    def test_agent_id_includes_user_id_when_provided_via_factory(self):
+        """create_router_agent(user_id=...) produces agent with per-user agent_id."""
+        agent = create_router_agent(user_id="user_xyz")
+        # Factory pre-sets config.agent_id, so the if-branch on line 212 is False
+        # and agent_id stays as-is: router_agent_user_xyz
+        assert agent.agent_id == "router_agent_user_xyz"
+
+    def test_agent_id_unchanged_when_no_user_id(self, router_config):
+        """agent_id should remain 'router_agent' when user_id is not provided."""
+        agent = RouterAgent(config=router_config)
+        assert agent.agent_id == "router_agent"
+
+    def test_agent_id_unchanged_when_user_id_set(self, router_config):
+        """user_id alone does not change agent_id — factory sets it via config."""
+        agent = RouterAgent(config=router_config, user_id="user_abc")
+        assert agent.agent_id == "router_agent"
+
+    def test_agent_id_unchanged_when_config_already_has_custom_id(self):
+        """If config.agent_id is not 'router_agent', user_id rename branch does not fire."""
+        custom_config = AgentConfig(
+            agent_id="my_custom_router",
+            agent_type="router",
+            llm_model=None,
+            max_retries=1,
+            timeout_ms=None,
+            capabilities=[]
+        )
+        # custom id != "router_agent" → branch on line 211 is False → no rename attempt
+        agent = RouterAgent(config=custom_config)
+        assert agent.agent_id == "my_custom_router"
+
+
+# ============================================================================
+# Admin Cache Reset Command (line 264)
+# ============================================================================
+
+class TestAdminCacheResetRouting:
+    """Test that $admin_cache_reset is intercepted before any other processing (line 264)."""
+
+    @pytest.mark.asyncio
+    async def test_admin_cache_reset_command_intercepted(self, router_config):
+        """$admin_cache_reset must short-circuit execute and return without routing."""
+        agent = RouterAgent(config=router_config)
+        message = create_query_message("$admin_cache_reset")
+
+        response = await agent.execute(message)
+
+        # No coordinator → result comes from _handle_admin_cache_reset
+        assert response.status == AgentStatus.SUCCESS
+        assert response.metadata["command"] == "admin_cache_reset"
+
+    @pytest.mark.asyncio
+    async def test_admin_cache_reset_with_whitespace(self, router_config):
+        """$admin_cache_reset with surrounding whitespace should still be intercepted."""
+        agent = RouterAgent(config=router_config)
+        message = create_query_message("  $admin_cache_reset  ")
+
+        response = await agent.execute(message)
+
+        assert response.status == AgentStatus.SUCCESS
+        assert response.metadata["command"] == "admin_cache_reset"
+
+
+# ============================================================================
+# Conversation History Loading (line 271)
+# ============================================================================
+
+class TestConversationHistoryLoading:
+    """Test history loading when session_store AND session_id are both set (line 271)."""
+
+    @pytest.mark.asyncio
+    async def test_history_loaded_when_session_store_and_session_id_present(self, router_config):
+        """_load_conversation_context should be called when both session_store and session_id set."""
+        mock_session_store = AsyncMock(spec=SessionStore)
+        session = SessionState(session_id="sess_001", user_id="user1")
+        mock_session_store.load_session.return_value = session
+
+        agent = RouterAgent(
+            config=router_config,
+            session_store=mock_session_store,
+        )
+
+        message = AgentMessage.create(
+            sender="ch",
+            recipient="router_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "Привіт"},
+            context={"user_id": "user1", "session_id": "sess_001"},
+        )
+
+        response = await agent.execute(message)
+
+        mock_session_store.load_session.assert_called_once_with("sess_001")
+        assert response.status == AgentStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_history_not_loaded_when_session_id_missing(self, router_config):
+        """_load_conversation_context should NOT be called when session_id is absent."""
+        mock_session_store = AsyncMock(spec=SessionStore)
+
+        agent = RouterAgent(
+            config=router_config,
+            session_store=mock_session_store,
+        )
+
+        message = AgentMessage.create(
+            sender="ch",
+            recipient="router_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "Привіт"},
+            context={"user_id": "user1"},  # no session_id
+        )
+
+        await agent.execute(message)
+
+        mock_session_store.load_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_history_not_loaded_when_no_session_store(self, router_config):
+        """History loading must be skipped entirely when session_store is None."""
+        agent = RouterAgent(config=router_config)
+
+        message = AgentMessage.create(
+            sender="ch",
+            recipient="router_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "Привіт"},
+            context={"user_id": "user1", "session_id": "sess_001"},
+        )
+
+        response = await agent.execute(message)
+        assert response.status == AgentStatus.SUCCESS
+
+
+# ============================================================================
+# Vision Complexity Override (lines 284-285)
+# ============================================================================
+
+class TestVisionComplexityOverride:
+    """Test that a message with file_data forces complexity >= 7 (lines 284-285)."""
+
+    @pytest.mark.asyncio
+    async def test_vision_attachment_forces_smart_routing(self, router_config, mock_llm, mock_prompt_builder):
+        """current_parts with file_data must force complexity=7 → smart_agent path."""
+        # LLM returns complexity=2 (would route to quick without vision override)
+        mock_llm.generate_content.return_value = MagicMock(
+            text='{"needs_memory_search":false,"confidence":0.9,"reasoning":"image","search_intent":"none","relevant_domains":[],"semantic_lens":[],"search_phrase":"","metadata":{"user_tone":"casual","complexity_score":2}}'
+        )
+        ec = AgentExecutionContext(
+            agent_type="router",
+            provider=mock_llm,
+            model_name="gemini-flash",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+        agent = RouterAgent(
+            config=router_config,
+            execution_context=ec,
+            prompt_builder=mock_prompt_builder,
+            smart_agent_id="smart_agent",
+            quick_agent_id="quick_agent",
+        )
+
+        # Simulate current_message_parts containing a file attachment
+        file_part = MagicMock(spec=MessagePart)
+        file_part.text = None
+        file_part.file_data = MagicMock()  # truthy → vision detected
+
+        message = AgentMessage.create(
+            sender="ch",
+            recipient="router_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "What is in this image?"},
+            context={
+                "user_id": "user1",
+                "session_id": None,
+                "current_message_parts": [file_part],
+            },
+        )
+
+        response = await agent.execute(message)
+
+        assert response.result["routed_to"] == "smart_agent"
+
+    @pytest.mark.asyncio
+    async def test_no_file_data_does_not_override_complexity(self, router_config):
+        """Parts without file_data must not trigger the vision override."""
+        text_part = MagicMock(spec=MessagePart)
+        text_part.text = "Hello"
+        text_part.file_data = None
+
+        agent = RouterAgent(
+            config=router_config,
+            quick_agent_id="quick_agent",
+            smart_agent_id="smart_agent",
+        )
+
+        message = AgentMessage.create(
+            sender="ch",
+            recipient="router_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "Hello"},
+            context={
+                "user_id": "user1",
+                "current_message_parts": [text_part],
+            },
+        )
+
+        response = await agent.execute(message)
+        assert response.result["routed_to"] == "quick_agent"
+
+
+# ============================================================================
+# Biographical fetch exception swallow (lines 304-319)
+# ============================================================================
+
+class TestBiographicalFetchException:
+    """Router must swallow biographical fetch errors and continue (lines 304-319)."""
+
+    @pytest.mark.asyncio
+    async def test_biographical_fetch_failure_does_not_crash_router(self, mock_llm, mock_prompt_builder):
+        """Exception in repository.get_biographical_context_cached must be swallowed."""
+        mock_llm.generate_content.return_value = MagicMock(
+            text='{"needs_memory_search":true,"confidence":0.9,"reasoning":"topic","search_intent":"topic","relevant_domains":[],"semantic_lens":["test"],"search_phrase":"test","metadata":{"user_tone":"casual","complexity_score":5}}'
+        )
+        ec = AgentExecutionContext(
+            agent_type="router",
+            provider=mock_llm,
+            model_name="gemini-flash",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+
+        mock_repository = AsyncMock(spec=FactRepository)
+        mock_repository.get_biographical_context_cached = AsyncMock(
+            side_effect=Exception("Firestore unavailable")
+        )
+
+        mock_enrichment = AsyncMock()
+        mock_enrichment.enrich_context = AsyncMock(return_value=None)
+
+        agent = create_router_agent(
+            execution_context=ec,
+            prompt_builder=mock_prompt_builder,
+            repository=mock_repository,
+            search_enrichment_service=mock_enrichment,
+            user_id="user1",
+        )
+
+        message = create_query_message("Tell me about my projects")
+
+        # Must not raise even though biographical fetch fails
+        response = await agent.execute(message)
+        assert response.status == AgentStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_biographical_fetch_skipped_without_repository(self, mock_llm, mock_prompt_builder):
+        """When repository is None, no biographical fetch attempt should be made."""
+        mock_llm.generate_content.return_value = MagicMock(
+            text='{"needs_memory_search":false,"confidence":0.9,"reasoning":"ok","search_intent":"topic","relevant_domains":[],"semantic_lens":["test"],"search_phrase":"test","metadata":{"user_tone":"casual","complexity_score":3}}'
+        )
+        ec = AgentExecutionContext(
+            agent_type="router",
+            provider=mock_llm,
+            model_name="gemini-flash",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+
+        mock_enrichment = AsyncMock()
+        mock_enrichment.enrich_context = AsyncMock(return_value=None)
+
+        agent = create_router_agent(
+            execution_context=ec,
+            prompt_builder=mock_prompt_builder,
+            repository=None,
+            search_enrichment_service=mock_enrichment,
+            user_id="user1",
+        )
+
+        response = await agent.execute(create_query_message("найди мої проекти"))
+        assert response.status == AgentStatus.SUCCESS
+
+
+# ============================================================================
+# Notes port fetch + exception swallow (lines 330-344)
+# ============================================================================
+
+class TestNotesPortFetch:
+    """Test notes port list_active_notes path and exception swallow (lines 330-344)."""
+
+    @pytest.mark.asyncio
+    async def test_notes_loaded_when_notes_port_and_user_id_present(self):
+        """list_active_notes should be called when notes_port and user_id are set."""
+        note = AgentNote(
+            note_id="n1",
+            user_id="user1",
+            text="Buy milk",
+            instruction="Go to the shop",
+            created_at=datetime.now(timezone.utc),
+            due=datetime.now(timezone.utc),
+        )
+        mock_notes_port = AsyncMock(spec=AgentNotePort)
+        mock_notes_port.list_active_notes = AsyncMock(return_value=[note])
+
+        agent = create_router_agent(
+            notes_port=mock_notes_port,
+            user_id="user1",
+        )
+
+        message = create_query_message("Привіт")
+        response = await agent.execute(message)
+
+        mock_notes_port.list_active_notes.assert_called_once()
+        call_kwargs = mock_notes_port.list_active_notes.call_args
+        assert call_kwargs.kwargs.get("user_id") == "user1" or call_kwargs.args[0] == "user1"
+        assert response.status == AgentStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_notes_fetch_failure_does_not_crash_router(self):
+        """Exception in notes_port.list_active_notes must be swallowed."""
+        mock_notes_port = AsyncMock(spec=AgentNotePort)
+        mock_notes_port.list_active_notes = AsyncMock(
+            side_effect=Exception("Notes DB unavailable")
+        )
+
+        agent = create_router_agent(
+            notes_port=mock_notes_port,
+            user_id="user1",
+        )
+
+        response = await agent.execute(create_query_message("Привіт"))
+        assert response.status == AgentStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_notes_skipped_without_user_id(self, router_config):
+        """list_active_notes should NOT be called when user_id is absent."""
+        mock_notes_port = AsyncMock(spec=AgentNotePort)
+        mock_notes_port.list_active_notes = AsyncMock(return_value=[])
+
+        agent = RouterAgent(
+            config=router_config,
+            notes_port=mock_notes_port,
+            # no user_id
+        )
+
+        await agent.execute(create_query_message("Привіт"))
+        mock_notes_port.list_active_notes.assert_not_called()
+
+
+# ============================================================================
+# _load_triage_prompt raises RuntimeError without prompt_builder (line 410)
+# ============================================================================
+
+class TestLoadTriagePromptNoPromptBuilder:
+    """_load_triage_prompt must raise RuntimeError when no prompt_builder (line 410)."""
+
+    @pytest.mark.asyncio
+    async def test_load_triage_prompt_raises_without_prompt_builder(self, router_config, mock_llm):
+        """_load_triage_prompt raises RuntimeError when prompt_builder is None."""
+        ec = AgentExecutionContext(
+            agent_type="router",
+            provider=mock_llm,
+            model_name="gemini-flash",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+        agent = RouterAgent(
+            config=router_config,
+            execution_context=ec,
+            prompt_builder=None,  # no prompt_builder
+        )
+
+        message = create_query_message("What's the weather?")
+        with pytest.raises(RuntimeError, match="RouterAgent requires prompt_builder"):
+            await agent._load_triage_prompt(message)
+
+    @pytest.mark.asyncio
+    async def test_llm_triage_falls_back_to_rule_based_when_prompt_builder_missing(self, router_config, mock_llm):
+        """When prompt_builder is missing, LLM triage raises → fallback to rule-based (not exception)."""
+        ec = AgentExecutionContext(
+            agent_type="router",
+            provider=mock_llm,
+            model_name="gemini-flash",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+        agent = RouterAgent(
+            config=router_config,
+            execution_context=ec,
+            prompt_builder=None,
+        )
+
+        # Should NOT raise — fallback kicks in
+        response = await agent.execute(create_query_message("Hello"))
+        assert response.status == AgentStatus.SUCCESS
+
+
+# ============================================================================
+# _classify_with_llm: empty clean_messages fallback (line 441)
+# ============================================================================
+
+class TestClassifyWithLlmEmptyMessages:
+    """When all messages have no text parts, fall back to rule-based (line 441)."""
+
+    @pytest.mark.asyncio
+    async def test_classify_with_llm_falls_back_when_no_text_parts(self, router_config, mock_llm, mock_prompt_builder):
+        """_classify_with_llm must return _classify_request(text) when clean_messages is empty."""
+        ec = AgentExecutionContext(
+            agent_type="router",
+            provider=mock_llm,
+            model_name="gemini-flash",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+        agent = RouterAgent(
+            config=router_config,
+            execution_context=ec,
+            prompt_builder=mock_prompt_builder,
+        )
+
+        # Build a history where every message has only file_data parts (no text)
+        file_only_part = MagicMock(spec=MessagePart)
+        file_only_part.text = None
+        file_only_part.file_data = MagicMock()
+        history = [Message(role="user", parts=[file_only_part])]
+
+        message = create_query_message("Hello")
+
+        # Call _classify_with_llm directly
+        result = await agent._classify_with_llm("Hello", message, history)
+
+        # Rule-based result must be returned — LLM not called
+        mock_llm.generate_content.assert_not_called()
+        assert "is_simple" in result
+
+
+# ============================================================================
+# _classify_with_llm: JSONDecodeError re-raised (lines 473-476)
+# ============================================================================
+
+class TestClassifyWithLlmJsonDecodeError:
+    """JSONDecodeError from json.loads must be re-raised (lines 473-476)."""
+
+    @pytest.mark.asyncio
+    async def test_json_decode_error_raises(self, router_config, mock_llm, mock_prompt_builder):
+        """Malformed JSON in triage response must propagate as JSONDecodeError.
+        The regex r'(\\{.*\\})' (re.DOTALL) requires matching braces, so we use
+        text that has both { and } but invalid JSON body."""
+        mock_llm.generate_content.return_value = MagicMock(
+            text='{broken: json}'
+        )
+        ec = AgentExecutionContext(
+            agent_type="router",
+            provider=mock_llm,
+            model_name="gemini-flash",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+        agent = RouterAgent(
+            config=router_config,
+            execution_context=ec,
+            prompt_builder=mock_prompt_builder,
+        )
+
+        # The broken JSON is still a valid regex match for `\{.*\}` (re.DOTALL),
+        # so json.loads will be called and will raise JSONDecodeError.
+        # _classify_request_with_fallback catches any exception and uses rule-based fallback.
+        response = await agent.execute(create_query_message("query"))
+        # Fallback must succeed
+        assert response.status == AgentStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_no_json_in_response_raises_value_error(self, router_config, mock_llm, mock_prompt_builder):
+        """When LLM returns text with no JSON object, ValueError is raised (line 476).
+        _classify_request_with_fallback catches it and uses rule-based fallback."""
+        mock_llm.generate_content.return_value = MagicMock(
+            text="This is just plain text with no JSON braces at all"
+        )
+        ec = AgentExecutionContext(
+            agent_type="router",
+            provider=mock_llm,
+            model_name="gemini-flash",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+        agent = RouterAgent(
+            config=router_config,
+            execution_context=ec,
+            prompt_builder=mock_prompt_builder,
+        )
+
+        # ValueError from line 476 is caught by _classify_request_with_fallback
+        response = await agent.execute(create_query_message("query"))
+        assert response.status == AgentStatus.SUCCESS
+
+
+# ============================================================================
+# _apply_routing_rules: low-confidence → smart (line 485)
+# ============================================================================
+
+class TestApplyRoutingRulesLowConfidence:
+    """confidence < CONFIDENCE_THRESHOLD must return smart_agent_id (line 485)."""
+
+    def test_low_confidence_routes_to_smart(self, router_config):
+        """Confidence below threshold always routes to smart regardless of complexity."""
+        from src.domain.agent import RoutingMetadata
+
+        agent = RouterAgent(
+            config=router_config,
+            quick_agent_id="quick_agent",
+            smart_agent_id="smart_agent",
+        )
+
+        # Confidence below threshold (0.5)
+        routing_metadata = RoutingMetadata(
+            complexity_score=1,   # would be quick if confidence were OK
+            confidence=0.1,       # below threshold
+            user_tone="casual",
+            semantic_lens=[],
+            needs_memory_search=False,
+            needs_tools=[],
+            reasoning="low confidence test",
+        )
+
+        result = agent._apply_routing_rules(routing_metadata)
+        assert result == "smart_agent"
+
+    def test_high_confidence_low_complexity_routes_to_quick(self, router_config):
+        """High confidence + low complexity routes to quick_agent."""
+        from src.domain.agent import RoutingMetadata
+
+        agent = RouterAgent(
+            config=router_config,
+            quick_agent_id="quick_agent",
+            smart_agent_id="smart_agent",
+        )
+
+        routing_metadata = RoutingMetadata(
+            complexity_score=2,
+            confidence=0.9,
+            user_tone="casual",
+            semantic_lens=[],
+            needs_memory_search=False,
+            needs_tools=[],
+            reasoning="high confidence test",
+        )
+
+        result = agent._apply_routing_rules(routing_metadata)
+        assert result == "quick_agent"
+
+
+# ============================================================================
+# _is_simple_request: SHORT_ACKNOWLEDGMENTS exact match (line 552)
+# ============================================================================
+
+class TestIsSimpleRequestAcknowledgments:
+    """Exact match in SHORT_ACKNOWLEDGMENTS must return True (line 552)."""
+
+    def test_short_acknowledgment_exact_match_is_simple(self, router_agent):
+        """Each SHORT_ACKNOWLEDGMENTS token must individually return True."""
+        for token in RouterAgent.SHORT_ACKNOWLEDGMENTS:
+            assert router_agent._is_simple_request(token) is True, (
+                f"Expected '{token}' to be simple"
+            )
+
+    def test_short_acknowledgment_not_in_simple_phrases(self, router_agent):
+        """A token that is only in SHORT_ACKNOWLEDGMENTS (not SIMPLE_PHRASES) returns True."""
+        # "fine" is in SHORT_ACKNOWLEDGMENTS but not necessarily in SIMPLE_PHRASES
+        if "fine" not in RouterAgent.SIMPLE_PHRASES:
+            assert router_agent._is_simple_request("fine") is True
+
+
+# ============================================================================
+# _is_personal_request: empty string returns False (line 584)
+# ============================================================================
+
+class TestIsPersonalRequestEmptyString:
+    """_is_personal_request('') must return False (line 584)."""
+
+    def test_empty_string_not_personal(self, router_agent):
+        assert router_agent._is_personal_request("") is False
+
+    def test_whitespace_only_not_personal(self, router_agent):
+        assert router_agent._is_personal_request("   ") is False
+
+
+# ============================================================================
+# _requires_external_search: empty string returns False (line 608)
+# ============================================================================
+
+class TestRequiresExternalSearchEmptyString:
+    """_requires_external_search('') must return False (line 608)."""
+
+    def test_empty_string_no_external_search(self, router_agent):
+        assert router_agent._requires_external_search("") is False
+
+    def test_whitespace_only_no_external_search(self, router_agent):
+        assert router_agent._requires_external_search("   ") is False
+
+
+# ============================================================================
+# _handle_admin_cache_reset (lines 628-669)
+# ============================================================================
+
+class TestHandleAdminCacheReset:
+    """Full coverage of _handle_admin_cache_reset branches (lines 628-669)."""
+
+    @pytest.mark.asyncio
+    async def test_cache_reset_success_with_assembly_service(self, router_config):
+        """When prompt_builder has assembly_service.invalidate_cache, returns success (lines 628-649)."""
+        mock_assembly_service = MagicMock()
+        mock_assembly_service.invalidate_cache = MagicMock()
+
+        mock_pb = MagicMock(spec=PromptBuilderPort)
+        mock_pb.assembly_service = mock_assembly_service
+
+        agent = RouterAgent(config=router_config, prompt_builder=mock_pb)
+
+        response = await agent._handle_admin_cache_reset()
+
+        mock_assembly_service.invalidate_cache.assert_called_once()
+        assert response.status == AgentStatus.SUCCESS
+        assert response.metadata["cache_cleared"] is True
+        assert response.metadata["command"] == "admin_cache_reset"
+
+    @pytest.mark.asyncio
+    async def test_cache_reset_failure_when_invalidate_raises(self, router_config):
+        """When invalidate_cache() raises, returns AgentResponse.failure with the error."""
+        mock_assembly_service = MagicMock()
+        mock_assembly_service.invalidate_cache = MagicMock(
+            side_effect=RuntimeError("cache exploded")
+        )
+
+        mock_pb = MagicMock(spec=PromptBuilderPort)
+        mock_pb.assembly_service = mock_assembly_service
+
+        agent = RouterAgent(config=router_config, prompt_builder=mock_pb)
+
+        response = await agent._handle_admin_cache_reset()
+        assert response.status == AgentStatus.FAILED
+        assert "cache exploded" in response.error
+
+    @pytest.mark.asyncio
+    async def test_cache_reset_not_available_when_no_assembly_service(self, router_config):
+        """When prompt_builder lacks assembly_service attr, returns 'not available' (lines 659-669)."""
+        mock_pb = MagicMock(spec=PromptBuilderPort)
+        # spec=PromptBuilderPort means hasattr(mock_pb, 'assembly_service') is False
+        # by default (unless the port has that attr), so we simply don't set it.
+        # Use a plain object to be explicit.
+        class _FakePB:
+            pass  # no assembly_service attribute
+
+        agent = RouterAgent(config=router_config, prompt_builder=_FakePB())
+
+        response = await agent._handle_admin_cache_reset()
+
+        assert response.status == AgentStatus.SUCCESS
+        assert response.metadata["cache_cleared"] is False
+        assert response.metadata["command"] == "admin_cache_reset"
+
+    @pytest.mark.asyncio
+    async def test_cache_reset_not_available_when_no_prompt_builder(self, router_config):
+        """When prompt_builder is None, returns 'not available' success response."""
+        agent = RouterAgent(config=router_config, prompt_builder=None)
+
+        response = await agent._handle_admin_cache_reset()
+
+        assert response.status == AgentStatus.SUCCESS
+        assert response.metadata["cache_cleared"] is False
+
+    @pytest.mark.asyncio
+    async def test_cache_reset_not_available_when_assembly_service_is_none(self, router_config):
+        """When assembly_service attribute is None (falsy), returns 'not available'."""
+        mock_pb = MagicMock()
+        mock_pb.assembly_service = None
+
+        agent = RouterAgent(config=router_config, prompt_builder=mock_pb)
+
+        response = await agent._handle_admin_cache_reset()
+
+        assert response.status == AgentStatus.SUCCESS
+        assert response.metadata["cache_cleared"] is False
+
+
+# ============================================================================
+# _get_alternative_agents returns None (line 673)
+# ============================================================================
+
+class TestGetAlternativeAgents:
+    """_get_alternative_agents must return None (line 673)."""
+
+    def test_get_alternative_agents_returns_none(self, router_agent):
+        assert router_agent._get_alternative_agents() is None

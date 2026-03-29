@@ -476,3 +476,116 @@ def test_apply_account_defaults_empty(config_service, test_account_with_defaults
     assert updated_account.account_defaults is not None
     default_config = UserBotConfig()
     assert updated_account.account_defaults.temperature == default_config.temperature
+
+
+# ============================================================================
+# get_semantic_search_limit() / get_biographical_cache_limit() /
+# get_principles_cache_limit() / get_history_recent_full_turns() /
+# get_bio_keywords_query1/2/3() — 3-level priority (user > account > system)
+# ============================================================================
+
+def _cfg(**kwargs):
+    return UserBotConfig(**kwargs)
+
+
+class TestGetSemanticSearchLimit:
+    def test_user_override(self, config_service):
+        assert config_service.get_semantic_search_limit(_cfg(semantic_search_limit=80)) == 80
+
+    def test_account_default(self, config_service):
+        assert config_service.get_semantic_search_limit(
+            _cfg(), account_defaults=_cfg(semantic_search_limit=50)
+        ) == 50
+
+    def test_system_default(self, config_service):
+        from src.domain.settings import SearchConfig
+        assert config_service.get_semantic_search_limit(_cfg()) == SearchConfig().DEFAULT_SEMANTIC_SEARCH_LIMIT
+
+
+class TestGetBiographicalCacheLimit:
+    def test_user_override(self, config_service):
+        assert config_service.get_biographical_cache_limit(_cfg(biographical_cache_limit=90)) == 90
+
+    def test_account_default(self, config_service):
+        assert config_service.get_biographical_cache_limit(
+            _cfg(), account_defaults=_cfg(biographical_cache_limit=60)
+        ) == 60
+
+    def test_system_default(self, config_service):
+        from src.domain.settings import SearchConfig
+        assert config_service.get_biographical_cache_limit(_cfg()) == SearchConfig().DEFAULT_BIOGRAPHICAL_CACHE_LIMIT
+
+
+class TestGetPrinciplesCacheLimit:
+    def test_user_override(self, config_service):
+        assert config_service.get_principles_cache_limit(_cfg(principles_cache_limit=25)) == 25
+
+    def test_account_default(self, config_service):
+        assert config_service.get_principles_cache_limit(
+            _cfg(), account_defaults=_cfg(principles_cache_limit=18)
+        ) == 18
+
+    def test_system_default(self, config_service):
+        from src.domain.settings import SearchConfig
+        assert config_service.get_principles_cache_limit(_cfg()) == SearchConfig().DEFAULT_PRINCIPLES_CACHE_LIMIT
+
+
+class TestGetHistoryRecentFullTurns:
+    def test_user_override(self, config_service):
+        assert config_service.get_history_recent_full_turns(_cfg(history_recent_full_turns=8)) == 8
+
+    def test_account_default(self, config_service):
+        assert config_service.get_history_recent_full_turns(
+            _cfg(), account_defaults=_cfg(history_recent_full_turns=4)
+        ) == 4
+
+    def test_system_default(self, config_service):
+        from src.domain.settings import SearchConfig
+        assert config_service.get_history_recent_full_turns(_cfg()) == SearchConfig().DEFAULT_HISTORY_RECENT_FULL_TURNS
+
+
+class TestGetBioKeywords:
+    def test_query1_user_override(self, config_service):
+        kw = ["identity", "name"]
+        assert config_service.get_bio_keywords_query1(_cfg(bio_keywords_query1=kw)) == kw
+
+    def test_query1_account_default(self, config_service):
+        kw = ["identity"]
+        assert config_service.get_bio_keywords_query1(
+            _cfg(), account_defaults=_cfg(bio_keywords_query1=kw)
+        ) == kw
+
+    def test_query1_system_default(self, config_service):
+        from src.domain.settings import SearchConfig
+        result = config_service.get_bio_keywords_query1(_cfg())
+        assert result == SearchConfig().DEFAULT_BIO_KEYWORDS_QUERY1
+
+    def test_query2_user_override(self, config_service):
+        kw = ["medical", "health"]
+        assert config_service.get_bio_keywords_query2(_cfg(bio_keywords_query2=kw)) == kw
+
+    def test_query2_account_default(self, config_service):
+        kw = ["health"]
+        assert config_service.get_bio_keywords_query2(
+            _cfg(), account_defaults=_cfg(bio_keywords_query2=kw)
+        ) == kw
+
+    def test_query2_system_default(self, config_service):
+        from src.domain.settings import SearchConfig
+        result = config_service.get_bio_keywords_query2(_cfg())
+        assert result == SearchConfig().DEFAULT_BIO_KEYWORDS_QUERY2
+
+    def test_query3_user_override(self, config_service):
+        kw = ["assets", "vehicles"]
+        assert config_service.get_bio_keywords_query3(_cfg(bio_keywords_query3=kw)) == kw
+
+    def test_query3_account_default(self, config_service):
+        kw = ["finance"]
+        assert config_service.get_bio_keywords_query3(
+            _cfg(), account_defaults=_cfg(bio_keywords_query3=kw)
+        ) == kw
+
+    def test_query3_system_default(self, config_service):
+        from src.domain.settings import SearchConfig
+        result = config_service.get_bio_keywords_query3(_cfg())
+        assert result == SearchConfig().DEFAULT_BIO_KEYWORDS_QUERY3

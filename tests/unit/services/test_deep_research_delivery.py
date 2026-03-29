@@ -8,7 +8,11 @@ import pytest
 
 from src.ports.task_queue import TaskQueue
 from src.ports.media_storage_port import MediaStoragePort
-from src.services.deep_research_delivery import deliver_deep_research, _build_html_page_query
+from src.services.deep_research_delivery import (
+    deliver_deep_research,
+    _build_html_page_query,
+    upload_html_report,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -158,3 +162,137 @@ async def test_two_pass_uploads_both_rounds():
     labels = [c.kwargs["label"] for c in notification.notify_document_link.call_args_list]
     assert "Round 1 — raw research" in labels
     assert "Round 2 — verified report" in labels
+
+
+# ---------------------------------------------------------------------------
+# upload_html_report()
+# ---------------------------------------------------------------------------
+
+async def test_upload_html_report_no_storage_returns_none():
+    result = await upload_html_report("# Report", "u1", media_storage=None)
+    assert result is None
+
+
+async def test_upload_html_report_uploads_html():
+    media_storage = AsyncMock(spec=MediaStoragePort)
+    media_storage.store.return_value = "https://storage/report.html"
+    result = await upload_html_report("# Deep Research", "u1", media_storage=media_storage)
+    assert result == "https://storage/report.html"
+    kwargs = media_storage.store.call_args.kwargs
+    assert kwargs["content_type"] == "text/html; charset=utf-8"
+    assert "deep_research/u1/" in kwargs["key"]
+    assert kwargs["key"].endswith(".html")
+
+
+async def test_upload_html_report_escapes_html():
+    media_storage = AsyncMock(spec=MediaStoragePort)
+    media_storage.store.return_value = "https://storage/x.html"
+    await upload_html_report("<script>alert('xss')</script>", "u1", media_storage=media_storage)
+    data = media_storage.store.call_args.kwargs["data"]
+    assert b"<script>" not in data
+    assert b"&lt;script&gt;" in data
+
+
+async def test_upload_html_report_exception_returns_none():
+    media_storage = AsyncMock(spec=MediaStoragePort)
+    media_storage.store.side_effect = Exception("GCS down")
+    result = await upload_html_report("report", "u1", media_storage=media_storage)
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# deliver_deep_research — exception paths in notify_document_link
+# ---------------------------------------------------------------------------
+
+async def test_single_pass_notify_exception_does_not_raise():
+    """notify_document_link failure in single-pass path must not propagate."""
+    task_queue = AsyncMock(spec=TaskQueue)
+    media_storage = AsyncMock(spec=MediaStoragePort)
+    media_storage.store.return_value = "https://storage/report.md"
+    notification = AsyncMock()
+    notification.notify_document_link.side_effect = RuntimeError("notify failed")
+
+    await deliver_deep_research(
+        result_text="Final report",
+        user_id="u1", account_id="a1", query="topic",
+        task_queue=task_queue,
+        round1_text="",
+        media_storage=media_storage,
+        notification=notification,
+    )
+    # Still enqueues HTML page task despite notify error
+    task_queue.enqueue_agent_task.assert_called_once()
+
+
+async def test_two_pass_notify_round1_exception_does_not_raise():
+    """notify_document_link failure for round1 must not stop round2 or HTML task."""
+    task_queue = AsyncMock(spec=TaskQueue)
+    media_storage = AsyncMock(spec=MediaStoragePort)
+    media_storage.store.side_effect = ["https://r1.md", "https://r2.md"]
+    notification = AsyncMock()
+    notification.notify_document_link.side_effect = [
+        RuntimeError("notify failed"),  # round1
+        None,                           # round2 succeeds
+    ]
+
+    await deliver_deep_research(
+        result_text="Round 2", user_id="u1", account_id="a1", query="topic",
+        task_queue=task_queue,
+        round1_text="Round 1",
+        media_storage=media_storage,
+        notification=notification,
+    )
+    task_queue.enqueue_agent_task.assert_called_once()
+
+
+async def test_two_pass_notify_round2_exception_does_not_raise():
+    """notify_document_link failure for round2 must not stop HTML task."""
+    task_queue = AsyncMock(spec=TaskQueue)
+    media_storage = AsyncMock(spec=MediaStoragePort)
+    media_storage.store.side_effect = ["https://r1.md", "https://r2.md"]
+    notification = AsyncMock()
+    notification.notify_document_link.side_effect = [
+        None,                           # round1 succeeds
+        RuntimeError("notify r2 fail"), # round2 throws
+    ]
+
+    await deliver_deep_research(
+        result_text="Round 2", user_id="u1", account_id="a1", query="topic",
+        task_queue=task_queue,
+        round1_text="Round 1",
+        media_storage=media_storage,
+        notification=notification,
+    )
+    task_queue.enqueue_agent_task.assert_called_once()
+
+
+async def test_upload_round_exception_does_not_raise():
+    """_upload_round failure (GCS down) → url is None → notify_document_link skipped."""
+    task_queue = AsyncMock(spec=TaskQueue)
+    media_storage = AsyncMock(spec=MediaStoragePort)
+    media_storage.store.side_effect = Exception("GCS down")
+    notification = AsyncMock()
+
+    await deliver_deep_research(
+        result_text="report", user_id="u1", account_id="a1", query="topic",
+        task_queue=task_queue,
+        media_storage=media_storage,
+        notification=notification,
+    )
+    notification.notify_document_link.assert_not_called()
+    task_queue.enqueue_agent_task.assert_called_once()
+
+
+async def test_no_media_storage_skips_upload():
+    """media_storage=None → skips round uploads, still enqueues HTML task."""
+    task_queue = AsyncMock(spec=TaskQueue)
+    notification = AsyncMock()
+
+    await deliver_deep_research(
+        result_text="report", user_id="u1", account_id="a1", query="topic",
+        task_queue=task_queue,
+        media_storage=None,
+        notification=notification,
+    )
+    notification.notify_document_link.assert_not_called()
+    task_queue.enqueue_agent_task.assert_called_once()

@@ -189,3 +189,95 @@ class TestIAMServiceAuthorization:
 
         assert decision.action == "reject"
         assert "revoked" in decision.message.lower()
+
+
+class TestIAMServiceAuthorizationExtended:
+    """Tests for previously uncovered authorize() branches and _create_new_user()."""
+
+    @pytest.fixture
+    def repos(self):
+        return {
+            "user_repo": AsyncMock(),
+            "account_repo": AsyncMock(),
+            "whitelist_repo": AsyncMock(),
+        }
+
+    @pytest.fixture
+    def svc(self, repos):
+        return IAMService(**repos)
+
+    def _whitelist(self, *, allowed=True):
+        from src.domain.whitelist import WhitelistEntry
+        if allowed:
+            return WhitelistEntry(allowed_emails={"user@example.com"}, allowed_domains={"example.com"})
+        return WhitelistEntry(allowed_emails=set(), allowed_domains=set())
+
+    # ------------------------------------------------------------------
+    # Line 193: user found but email is empty → ValueError
+    # ------------------------------------------------------------------
+
+    async def test_platform_user_with_no_email_raises(self, svc, repos):
+        corrupt_user = UserProfile(user_id="u1", email="", account_id="acc-1")
+        repos["user_repo"].get_user_by_platform_id = AsyncMock(return_value=corrupt_user)
+
+        with pytest.raises(ValueError, match="DATA CORRUPTION"):
+            await svc.authorize(platform="telegram", platform_user_id="123")
+
+    # ------------------------------------------------------------------
+    # Lines 240-276: OAuth branch
+    # ------------------------------------------------------------------
+
+    async def test_oauth_existing_user_allowed(self, svc, repos):
+        existing = UserProfile(user_id="u2", email="user@example.com", account_id="acc-2")
+        repos["user_repo"].get_user_by_email = AsyncMock(return_value=existing)
+
+        decision = await svc.authorize(platform="oauth", email="user@example.com")
+
+        assert decision.action == "allow"
+        assert decision.user.user_id == "u2"
+
+    async def test_oauth_new_user_not_in_whitelist_rejected(self, svc, repos):
+        repos["user_repo"].get_user_by_email = AsyncMock(return_value=None)
+        repos["whitelist_repo"].get_whitelist = AsyncMock(return_value=self._whitelist(allowed=False))
+
+        decision = await svc.authorize(platform="oauth", email="outsider@spam.com")
+
+        assert decision.action == "reject"
+        assert "authorized" in decision.message.lower() or "not" in decision.message.lower()
+
+    async def test_oauth_new_user_in_whitelist_creates_account(self, svc, repos):
+        repos["user_repo"].get_user_by_email = AsyncMock(return_value=None)
+        repos["whitelist_repo"].get_whitelist = AsyncMock(return_value=self._whitelist(allowed=True))
+        new_user = UserProfile(user_id="u-new", email="user@example.com", account_id="acc-new")
+        repos["user_repo"].create_user = AsyncMock(return_value=new_user)
+        repos["account_repo"].create_account = AsyncMock()
+
+        decision = await svc.authorize(platform="oauth", email="user@example.com")
+
+        assert decision.action == "create_account"
+        assert decision.user.user_id == "u-new"
+
+    # ------------------------------------------------------------------
+    # Default branch: invalid parameters → reject
+    # ------------------------------------------------------------------
+
+    async def test_invalid_params_default_reject(self, svc, repos):
+        decision = await svc.authorize(platform="oauth")  # no email, no platform_user_id
+
+        assert decision.action == "reject"
+        assert "Invalid parameters" in decision.message
+
+    # ------------------------------------------------------------------
+    # Lines 296-320: _create_new_user
+    # ------------------------------------------------------------------
+
+    async def test_create_new_user_creates_account_and_user(self, svc, repos):
+        created = UserProfile(user_id="u-fresh", email="new@example.com", account_id="acc-fresh")
+        repos["user_repo"].create_user = AsyncMock(return_value=created)
+        repos["account_repo"].create_account = AsyncMock()
+
+        result = await svc._create_new_user("new@example.com")
+
+        repos["account_repo"].create_account.assert_called_once()
+        repos["user_repo"].create_user.assert_called_once()
+        assert result.user_id == "u-fresh"
