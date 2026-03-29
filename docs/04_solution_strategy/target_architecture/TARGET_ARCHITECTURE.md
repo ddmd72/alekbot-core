@@ -179,7 +179,7 @@ The system is composed of 11 core building blocks, each documented in detail:
 
 ### 7.2 ✅ Implemented (Milestones 2–4, completed)
 
-- **BillingAgent** — usage aggregation per-user, asyncio.Lock, threshold-based flush to QuotaService, `start()`/`shutdown()` lifecycle
+- **BillingAgent** — usage aggregation per `account_id`, asyncio.Lock, threshold-based flush to `QuotaService`, `start()`/`shutdown()` lifecycle. `BaseAgent` accumulates tokens in `_call_llm()` and flushes via `coordinator` after every `process()` — universal billing for all agents with zero per-agent code.
 - **LoggerAgent** — centralized log buffer with asyncio.Lock, periodic flush to GcpLogSink (prod) / stdout (dev), `start()`/`shutdown()` lifecycle
 - **Graceful shutdown** (SIGTERM/SIGINT) — task draining, agent shutdown sequence ~~GAP-005~~ ✅
 - **Composition Root** — `ServiceContainer` extracts shared service creation from `UserAgentFactory`; factory now owns only per-user agent lifecycle

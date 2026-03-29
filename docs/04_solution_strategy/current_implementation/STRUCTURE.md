@@ -124,7 +124,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── observation_agent.py      # ⚠️ LEGACY (replaced by session-based consolidation)
 │   ├── consolidation_agent.py    # Knowledge synthesis specialist ("Life Chronicler")
 │   ├── infrastructure/ # 🆕 Infrastructure Support Agents
-│   │   ├── billing_agent.py # Usage reporting (Stub)
+│   │   ├── billing_agent.py # Usage aggregation per account_id → QuotaService flush
 │   │   └── logger_agent.py  # Centralized logging (Stub)
 │   └── core/           # Core business agents (routing + response)
 │       ├── __init__.py
@@ -300,12 +300,12 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`firestore_consolidation_queue.py`**: 🆕 Manages batches of messages for cold-storage processing.
 -   **`fact_management_adapter.py`**: 🆕 `FactManagementAdapter` — implements `FactManagementPort`. Orchestrates `FactRepository`, `EmbeddingService`, `FactWriteService`, `SearchEnrichmentService` for deliberate fact management (search/create/update/merge/discard). Per-user — created via `ServiceContainer.create_fact_management_adapter()`.
 -   **`firestore_dedup_store.py`**: 🆕 Deduplication store for external events (e.g., Slack retry attempts).
--   **`firestore_quota_service.py`**: Firestore implementation of `QuotaService` for non-blocking usage tracking.
+-   **`firestore_quota_service.py`**: Firestore implementation of `QuotaService`. Takes `AccountRepository` via DI; calls `increment_account_usage(account_id, tokens, cost)` directly — no user→account lookup.
 -   **`firestore_repo.py`**: Firestore implementation of `FactRepository`. Supports SCD Type 2 and native vector search. Receives `SmartDeduplicationService` via DI (no lazy imports).
 -   **`firestore_session_store.py`**: Session persistence with **90-day TTL** and sliding window overflow logic.
 -   **`platform/`**: Platform adapter factory:
     -   `factory.py`: `PlatformAdapterFactory` — registry of `PlatformPort` implementations; `create(platform, **kwargs)`. The `PlatformPort` ABC lives in `ports/platform_port.py`.
--   **`openai_adapter.py`**: 🆕 `OpenAIAdapter(LLMPort)` — OpenAI Chat Completions API implementation. Supports function calling, JSON mode, streaming, and vision. Tier mapping: ECO→gpt-5-nano, BALANCED→gpt-5-mini, PERFORMANCE→gpt-5.
+-   **`openai_adapter.py`**: 🆕 `OpenAIAdapter(LLMPort)` — OpenAI Chat Completions API implementation. Supports function calling, JSON mode, streaming, and vision. Tier mapping: ECO→gpt-5.4-nano, BALANCED→gpt-5.4-mini, PERFORMANCE→gpt-5.4.
 -   **`openai_deep_research_adapter.py`**: 🆕 `OpenAIDeepResearchAdapter(DeepResearchPort)` — Responses API with background mode. Webhook-based push delivery (no polling Cloud Tasks). Metadata (user_id, account_id, query) embedded at submit time and echoed back by OpenAI in the webhook payload. Tier mapping: ECO/BALANCED→o4-mini-deep-research, PERFORMANCE→o3-deep-research.
 -   **`node_puppeteer_runner.py`**: 🆕 `NodePuppeteerRunner(PuppeteerRunnerPort)` — pipes HTML to `pdf_generator/runner.js` via stdin, captures raw PDF bytes from stdout. Error cases: non-zero exit code, timeout, or empty stdout → `PuppeteerRunnerError`. Temp file cleanup guaranteed in `finally` block.
 -   **`playwright_html_renderer.py`**: 🆕 `PlaywrightHtmlRenderer(HtmlRendererPort)` — headless Chromium singleton. Renders HTML to PNG via `element.screenshot(omit_background=True)`. Detects widget structure (bare fragment vs full-page) via `body.children.length`. Lazy init, auto-reconnect, `--no-sandbox` on Cloud Run.
@@ -374,7 +374,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`iam_port.py`**: `IAMPort` ABC. Role-based access control (OWNER/MEMBER/VIEWER, resource-level permissions). Adapter: `FirestoreIAMAdapter`.
 -   **`invite_code_repository.py`**: Port for invite code management (create, consume, list). Adapter: `FirestoreInviteCodeRepository`.
 -   **`whitelist_repository.py`**: Port for email/domain whitelist management. Adapter: `FirestoreWhitelistRepository`.
--   **`quota_service.py`**: Port for non-blocking usage tracking and quota management. Adapter: `FirestoreQuotaService`.
+-   **`quota_service.py`**: Port for non-blocking usage tracking and quota management. Key method: `record_usage(account_id, model, tokens, cost)`. Adapter: `FirestoreQuotaService`.
 
 **Platform & Handler Ports:**
 -   **`conversation_handler_port.py`**: `ConversationHandlerPort` ABC — injected into all platform adapters (Slack, Telegram). Decouples adapters from the concrete `ConversationHandler` in `handlers/`.
@@ -448,7 +448,8 @@ The multi-agent system enables specialized task handling with different LLM mode
     Breaker, Retries, Timeouts). Owns all cross-cutting agent behavior:
     - Lifecycle hooks: `_on_agent_start`, `_on_agent_success(output_text)`, `_on_agent_error`, `_on_delegation` — agents call these; infrastructure (logging, metrics) lives here only.
     - Debug helpers: `_debug_prompt`, `_debug_response`, `_format_history_for_debug` — centralizes all `DEBUG_PROMPTS` logging. Agents never import `get_debug_logger()` directly.
--   **`infrastructure/billing_agent.py`**: Aggregates usage per-user, flushes to QuotaService when threshold reached. asyncio.Lock protects the buffer, `start()` launches periodic flush.
+    - **Universal billing hook**: `_call_llm()` accumulates `prompt_tokens`, `completion_tokens`, `cache_read_tokens`, `cache_creation_tokens` from every LLM response. `process()` resets accumulators at request start and calls `_flush_billing()` after execute (success or exhausted retries). `_flush_billing()` fires a fire-and-forget `AgentMessage(INFORM)` to `billing_agent` via `coordinator`. No-op when `coordinator` or `account_id` not set. All agents get billing automatically — no per-agent `_track_usage` needed.
+-   **`infrastructure/billing_agent.py`**: Aggregates usage per `account_id`, flushes to `QuotaService` when threshold reached or periodic interval fires. `asyncio.Lock` protects the buffer. `start()` launches periodic flush task. Required payload fields: `account_id`, `tokens`, `cost`, `model`.
 -   **`infrastructure/logger_agent.py`**: Centralized log buffer with asyncio.Lock. `start()` launches periodic flush to GcpLogSink (prod) or stdout (dev).
 
 **Core Agents (`agents/core/`):**
