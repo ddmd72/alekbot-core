@@ -598,6 +598,13 @@ class UserAgentFactory:
             except Exception as e:
                 logger.warning(f"Failed to preload prompt cache for user {user_id[:8]}: {e}")
 
+        # Inject coordinator into all agents so billing works universally.
+        # Quick/Smart/Router already set self.coordinator in their constructors;
+        # overwriting with the same value is harmless.
+        for agent in agents_to_register:
+            if agent is not None:
+                agent.coordinator = self.coordinator
+
         cached = {
             "last_used": time.time(),
             "search_enrichment": search_enrichment_service,

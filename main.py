@@ -179,7 +179,7 @@ async def main():
         agent_worker_handler = AgentWorkerHandler(coordinator=coordinator)
 
         logger.info("💳 Initializing Billing Agent...")
-        quota_service = FirestoreQuotaService(user_repo)
+        quota_service = FirestoreQuotaService(account_repo)
         billing_agent = BillingAgent(
             config=AgentConfig(
                 agent_id="billing_agent",

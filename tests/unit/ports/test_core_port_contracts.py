@@ -923,7 +923,7 @@ class TestQuotaServiceContract:
     def test_record_usage_signature(self):
         sig = inspect.signature(QuotaService.record_usage)
         params = list(sig.parameters.keys())
-        assert params == ["self", "user_id", "model", "tokens", "cost"]
+        assert params == ["self", "account_id", "model", "tokens", "cost"]
 
 
 class TestQuotaServiceMockImplementation:

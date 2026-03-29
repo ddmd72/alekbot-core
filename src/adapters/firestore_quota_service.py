@@ -1,32 +1,31 @@
 import asyncio
 from ..ports.quota_service import QuotaService
-from ..ports.user_repository import UserRepository
+from ..ports.account_repository import AccountRepository
 from ..utils.logger import logger
+
 
 class FirestoreQuotaService(QuotaService):
     """
     Firestore implementation of QuotaService.
-    Delegates actual storage updates to UserRepository (which cascades to AccountRepository).
+    Writes usage directly to the account — no user→account indirection.
     Implements fire-and-forget pattern via asyncio.create_task.
     """
 
-    def __init__(self, user_repo: UserRepository):
-        self.user_repo = user_repo
+    def __init__(self, account_repo: AccountRepository):
+        self.account_repo = account_repo
 
-    async def record_usage(self, user_id: str, model: str, tokens: int, cost: float) -> None:
+    async def record_usage(self, account_id: str, model: str, tokens: int, cost: float) -> None:
         """
         Records usage asynchronously without blocking the caller.
         """
         try:
-            # Schedule the update as a background task
-            asyncio.create_task(self._record_usage_impl(user_id, tokens, cost))
+            asyncio.create_task(self._record_usage_impl(account_id, tokens, cost))
         except Exception as e:
-            # Fallback logging if task creation fails (unlikely)
-            logger.error(f"Failed to schedule usage recording for user {user_id}: {e}")
+            logger.error(f"Failed to schedule usage recording for account {account_id}: {e}")
 
-    async def _record_usage_impl(self, user_id: str, tokens: int, cost: float) -> None:
+    async def _record_usage_impl(self, account_id: str, tokens: int, cost: float) -> None:
         try:
-            await self.user_repo.increment_usage(user_id, tokens, cost)
-            logger.debug(f"📊 Usage recorded for {user_id}: {tokens} tokens, ${cost:.6f}")
+            await self.account_repo.increment_account_usage(account_id, tokens, cost)
+            logger.debug(f"📊 Usage recorded for account {account_id}: {tokens} tokens, ${cost:.6f}")
         except Exception as e:
-            logger.error(f"❌ Failed to record usage for user {user_id}: {e}")
+            logger.error(f"❌ Failed to record usage for account {account_id}: {e}")

@@ -43,7 +43,7 @@ PROD_USER_ID ?= $(USER_ID)
 .PHONY: start stop restart start-dev stop-dev
 .PHONY: logs logs-dev logs-tail logs-perf logs-dev-tail logs-job-dev list-jobs-dev logs-execution-dev cancel-job-dev fetch-logs-dev fetch-logs-job-dev
 .PHONY: services status auth
-.PHONY: check-models
+.PHONY: check-models check-pricing
 .PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
 .PHONY: check
 .PHONY: delete-prod delete-dev delete-all
@@ -411,6 +411,11 @@ status: ## Show service status
 check-models: ## Check available Gemini models
 	@echo "🔍 Checking available models..."
 	@$(PYTHON) scripts/validation/check_models.py
+
+check-pricing: ## Fetch live model prices (OpenRouter) and audit billing.py → scripts/memory/pricing_report.md
+	@echo "💰 Fetching live model prices and auditing billing.py..."
+	@$(PYTHON) scripts/validation/check_pricing.py
+	@echo "📄 Open: scripts/memory/pricing_report.md"
 
 # E2E tests (production flow)
 

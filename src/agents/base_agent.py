@@ -134,6 +134,12 @@ class BaseAgent(ABC):
         self.config = config
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
         self._agent_execution_context = None  # set via _set_execution_context()
+        self.coordinator = None  # injected post-construction by UserAgentFactory for all agents
+        self._billing_account_id: Optional[str] = None
+        self._billing_prompt_tokens: int = 0
+        self._billing_completion_tokens: int = 0
+        self._billing_cache_read_tokens: int = 0
+        self._billing_cache_creation_tokens: int = 0
 
         logger.info(
             f"🤖 Agent initialized: {config.agent_id} "
@@ -380,6 +386,12 @@ class BaseAgent(ABC):
             )
         
         # 3. Execute with retry
+        self._billing_account_id = message.context.get("account_id")
+        self._billing_prompt_tokens = 0
+        self._billing_completion_tokens = 0
+        self._billing_cache_read_tokens = 0
+        self._billing_cache_creation_tokens = 0
+
         max_retries = self.config.max_retries
         last_error = None
         
@@ -394,12 +406,13 @@ class BaseAgent(ABC):
                 
                 # Success - record and return
                 self.circuit_breaker.record_success(self.agent_id)
-                
+                await self._flush_billing()
+
                 logger.info(
                     f"✅ {self.agent_id} completed task {message.task_id[:8]} "
                     f"(status={response.status}, confidence={response.confidence:.2f})"
                 )
-                
+
                 return response
                 
             except asyncio.TimeoutError:
@@ -420,9 +433,10 @@ class BaseAgent(ABC):
                 logger.debug(f"⏳ Waiting {backoff_seconds}s before retry...")
                 await asyncio.sleep(backoff_seconds)
         
-        # All retries exhausted - record failure
+        # All retries exhausted - record failure and flush any partial billing
         self.circuit_breaker.record_failure(self.agent_id)
-        
+        await self._flush_billing()
+
         return AgentResponse.failure(
             task_id=message.task_id,
             agent_id=self.agent_id,
@@ -488,6 +502,40 @@ class BaseAgent(ABC):
                 response=output_text,
                 metadata={"type": "output", "tokens": token_count, "chars": char_count},
             )
+
+    async def _flush_billing(self) -> None:
+        """Fire-and-forget usage report to billing_agent. No-op if coordinator/account_id not set."""
+        if not self.coordinator or not self._billing_account_id:
+            return
+        if not (self._billing_prompt_tokens or self._billing_completion_tokens
+                or self._billing_cache_read_tokens or self._billing_cache_creation_tokens):
+            return
+        from ..domain.billing import calculate_cost
+        from ..domain.agent import AgentMessage, AgentIntent
+        model = getattr(self, "model_name", None) or self.config.llm_model or "unknown"
+        asyncio.create_task(
+            self.coordinator.route_message(
+                AgentMessage.create(
+                    sender=self.agent_id,
+                    recipient="billing_agent",
+                    intent=AgentIntent.INFORM,
+                    payload={
+                        "account_id": self._billing_account_id,
+                        "tokens": (self._billing_prompt_tokens + self._billing_completion_tokens
+                                   + self._billing_cache_read_tokens + self._billing_cache_creation_tokens),
+                        "cost": calculate_cost(
+                            model=model,
+                            prompt_tokens=self._billing_prompt_tokens,
+                            completion_tokens=self._billing_completion_tokens,
+                            cache_read_tokens=self._billing_cache_read_tokens,
+                            cache_creation_tokens=self._billing_cache_creation_tokens,
+                        ),
+                        "model": model,
+                    },
+                    context={},
+                )
+            )
+        )
 
     def _on_agent_error(self, error: Exception, context: str = "execute") -> None:
         """Lifecycle hook: called in the except block of execute().
@@ -722,6 +770,15 @@ class BaseAgent(ABC):
             else:
                 raise
         self._debug_llm_response(response, turn=turn)
+        if response.usage_metadata:
+            m = response.usage_metadata
+            try:
+                self._billing_prompt_tokens += m.prompt_tokens
+                self._billing_completion_tokens += m.completion_tokens
+                self._billing_cache_read_tokens += getattr(m, "cache_read_tokens", 0)
+                self._billing_cache_creation_tokens += getattr(m, "cache_creation_tokens", 0)
+            except (TypeError, AttributeError):
+                pass  # non-conforming usage_metadata (e.g. test mocks) — skip billing accumulation
         return response
 
     @staticmethod

@@ -4,7 +4,7 @@ Unit tests for BillingAgent reliability (P1 fixes).
 Covers:
 - start() creates the flush task (not __init__)
 - asyncio.Lock protects pending_records under concurrent access
-- _flush_user pops records atomically and performs I/O outside lock
+- _flush_account pops records atomically and performs I/O outside lock
 - shutdown flushes remaining records before exit
 - periodic_flush iterates snapshot of keys (safe concurrent modification)
 """
@@ -30,11 +30,11 @@ def _make_config(agent_id="billing_agent"):
     )
 
 
-def _make_message(user_id="u1", tokens=100, cost=0.01, model="gemini-flash"):
+def _make_message(account_id="u1", tokens=100, cost=0.01, model="gemini-flash"):
     return AgentMessage(
         intent=AgentIntent.INFORM,
         payload={
-            "user_id": user_id,
+            "account_id": account_id,
             "tokens": tokens,
             "cost": cost,
             "model": model,
@@ -100,7 +100,7 @@ class TestBillingAgentLifecycle:
         await agent.shutdown()
 
         quota_service.record_usage.assert_awaited_once_with(
-            user_id="u1",
+            account_id="u1",
             model="m",
             tokens=50,
             cost=0.005,
@@ -121,7 +121,7 @@ class TestBillingAgentCanHandle:
         agent, _ = _make_agent()
         msg = AgentMessage(
             intent=AgentIntent.QUERY,
-            payload={"user_id": "u", "tokens": 1, "cost": 0.0, "model": "m"},
+            payload={"account_id": "u", "tokens": 1, "cost": 0.0, "model": "m"},
             sender="x", recipient="billing_agent", task_id="t", context={}
         )
         assert not await agent.can_handle(msg)
@@ -130,7 +130,7 @@ class TestBillingAgentCanHandle:
         agent, _ = _make_agent()
         msg = AgentMessage(
             intent=AgentIntent.INFORM,
-            payload={"user_id": "u", "tokens": 1},  # missing cost + model
+            payload={"account_id": "u", "tokens": 1},  # missing cost + model
             sender="x", recipient="billing_agent", task_id="t", context={}
         )
         assert not await agent.can_handle(msg)
@@ -144,7 +144,7 @@ class TestBillingAgentExecute:
 
     async def test_execute_accumulates_record(self):
         agent, quota_service = _make_agent(flush_threshold=10)
-        await agent.execute(_make_message(user_id="u1", tokens=100))
+        await agent.execute(_make_message(account_id="u1", tokens=100))
 
         assert len(agent.pending_records["u1"]) == 1
         quota_service.record_usage.assert_not_awaited()
@@ -152,7 +152,7 @@ class TestBillingAgentExecute:
     async def test_execute_flushes_when_threshold_reached(self):
         agent, quota_service = _make_agent(flush_threshold=3)
         for _ in range(3):
-            await agent.execute(_make_message(user_id="u1", tokens=50, cost=0.005))
+            await agent.execute(_make_message(account_id="u1", tokens=50, cost=0.005))
 
         quota_service.record_usage.assert_awaited_once()
         call_kwargs = quota_service.record_usage.await_args.kwargs
@@ -167,11 +167,11 @@ class TestBillingAgentExecute:
         assert response.success
         assert response.result == "recorded"
 
-    async def test_execute_isolated_per_user(self):
-        """Records for different users don't mix."""
+    async def test_execute_isolated_per_account(self):
+        """Records for different accounts don't mix."""
         agent, quota_service = _make_agent(flush_threshold=5)
-        await agent.execute(_make_message(user_id="ua", tokens=100))
-        await agent.execute(_make_message(user_id="ub", tokens=200))
+        await agent.execute(_make_message(account_id="ua", tokens=100))
+        await agent.execute(_make_message(account_id="ub", tokens=200))
 
         assert len(agent.pending_records["ua"]) == 1
         assert len(agent.pending_records["ub"]) == 1
@@ -192,7 +192,7 @@ class TestBillingAgentConcurrency:
         agent, quota_service = _make_agent(flush_threshold=100)  # No auto-flush
 
         async def one_execute():
-            await agent.execute(_make_message(user_id="u1", tokens=10, cost=0.001))
+            await agent.execute(_make_message(account_id="u1", tokens=10, cost=0.001))
 
         await asyncio.gather(*[one_execute() for _ in range(50)])
 
@@ -216,8 +216,8 @@ class TestBillingAgentConcurrency:
 
         # Trigger two concurrent flushes
         await asyncio.gather(
-            agent._flush_user("u1"),
-            agent._flush_user("u1"),
+            agent._flush_account("u1"),
+            agent._flush_account("u1"),
         )
 
         # The lock must guarantee exactly one flush call: second concurrent flush

@@ -33,9 +33,9 @@ def test_openai_capabilities():
 def test_openai_model_for_tier():
     adapter = OpenAIAdapter(api_key="test-key")
 
-    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gpt-5-nano"
-    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gpt-5-mini"
-    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-5.2"
+    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gpt-5.4-nano"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gpt-5.4-mini"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-5.4"
 
 
 def test_openai_unsupported_tier_raises():

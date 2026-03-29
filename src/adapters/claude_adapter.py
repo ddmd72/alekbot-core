@@ -12,7 +12,6 @@ from ..ports.llm_port import (
     PromptCacheConfig,
     AutomaticFunctionCallingConfig,
     ProviderCapabilities,
-    CacheMetadata,
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
 )
@@ -317,7 +316,8 @@ class ClaudeAdapter(LLMPort):
         pause_count = 0
         total_input = 0
         total_output = 0
-        cache_metadata = None
+        total_cache_read = 0
+        total_cache_creation = 0
 
         while True:
             kwargs = {**call_kwargs, "messages": messages}
@@ -348,14 +348,8 @@ class ClaudeAdapter(LLMPort):
             if hasattr(response, "usage") and response.usage:
                 total_input += response.usage.input_tokens or 0
                 total_output += response.usage.output_tokens or 0
-                if hasattr(response.usage, "cache_read_input_tokens") or \
-                        hasattr(response.usage, "cache_creation_input_tokens"):
-                    cache_metadata = CacheMetadata(
-                        provider="anthropic",
-                        cache_hit=getattr(response.usage, "cache_read_input_tokens", 0) > 0,
-                        tokens_saved=getattr(response.usage, "cache_read_input_tokens", 0),
-                        created_at=time.time(),
-                    )
+                total_cache_read += getattr(response.usage, "cache_read_input_tokens", 0)
+                total_cache_creation += getattr(response.usage, "cache_creation_input_tokens", 0)
 
             accumulated_content.extend(response.content)
 
@@ -406,8 +400,9 @@ class ClaudeAdapter(LLMPort):
                 prompt_tokens=total_input,
                 completion_tokens=total_output,
                 total_tokens=total_input + total_output,
+                cache_read_tokens=total_cache_read,
+                cache_creation_tokens=total_cache_creation,
             ),
-            cache_metadata=cache_metadata,
         )
 
     def supports_caching(self) -> bool:
@@ -678,27 +673,19 @@ class ClaudeAdapter(LLMPort):
                     thought_signature=content.id # Use ID as signature for Claude
                 ))
 
-        # Parse usage and cache metadata
+        # Parse usage metadata — cache tokens included directly
         usage = response.usage
         usage_metadata = UsageMetadata(
             prompt_tokens=usage.input_tokens,
             completion_tokens=usage.output_tokens,
-            total_tokens=usage.input_tokens + usage.output_tokens
+            total_tokens=usage.input_tokens + usage.output_tokens,
+            cache_read_tokens=getattr(usage, 'cache_read_input_tokens', 0),
+            cache_creation_tokens=getattr(usage, 'cache_creation_input_tokens', 0),
         )
-
-        cache_metadata = None
-        if hasattr(usage, 'cache_creation_input_tokens') or hasattr(usage, 'cache_read_input_tokens'):
-            cache_metadata = CacheMetadata(
-                provider="anthropic",
-                cache_hit=getattr(usage, 'cache_read_input_tokens', 0) > 0,
-                tokens_saved=getattr(usage, 'cache_read_input_tokens', 0),
-                created_at=time.time()
-            )
 
         return LLMResponse(
             text=text,
             tool_calls=tool_calls,
             raw_content=response,
             usage_metadata=usage_metadata,
-            cache_metadata=cache_metadata
         )
