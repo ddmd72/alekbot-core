@@ -1,9 +1,6 @@
-import logging
 from enum import Enum
 from typing import List, Dict, TYPE_CHECKING, Optional
 from .language import LanguageCode
-
-_log = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from uuid import uuid4
 from pydantic import BaseModel, Field
@@ -130,7 +127,6 @@ def calculate_cost(
     """
     pricing = _PRICING_PER_MILLION_TOKENS.get(model)
     if not pricing:
-        _log.warning("Unknown model pricing for %s; cost set to 0.0", model)
         return 0.0
     input_price = pricing["input"]
     cost = (

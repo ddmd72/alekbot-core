@@ -1115,13 +1115,18 @@ def test_no_silent_exception_swallowing():
 # ---------------------------------------------------------------------------
 
 _LOGGING_GETLOGGER_LAYERS = [
-    "src/ports", "src/services", "src/agents", "src/handlers",
+    "src/domain", "src/ports", "src/services", "src/agents", "src/handlers",
 ]
 
 
 @pytest.mark.requirement("REQ-ARCH-28")
 def test_no_direct_logging_getlogger_in_core_layers():
-    """ports/, services/, agents/, handlers/ must use project logger, not logging.getLogger()."""
+    """domain/, ports/, services/, agents/, handlers/ must not use logging.getLogger().
+
+    domain/ cannot import src.utils.logger (stdlib-only per REQ-ARCH-01), so it must
+    not log at all — pure data and algorithms have no business emitting log messages.
+    Other layers must use 'from src.utils.logger import logger'.
+    """
     violations = []
     for layer in _LOGGING_GETLOGGER_LAYERS:
         for fp in _iter_py_files(layer):
