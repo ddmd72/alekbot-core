@@ -13,6 +13,7 @@ import json
 import re
 from typing import Tuple, Optional
 from ..domain.messaging import RichContent
+from .logger import logger
 
 
 def _repair_unescaped_quotes(text: str) -> Optional[str]:
@@ -76,7 +77,7 @@ def _load_json(candidate: str) -> Optional[dict]:
     try:
         return json.loads(candidate)
     except (json.JSONDecodeError, ValueError):
-        pass
+        logger.debug("Initial JSON parse failed, attempting quote repair")
 
     repaired = _repair_unescaped_quotes(candidate)
     try:

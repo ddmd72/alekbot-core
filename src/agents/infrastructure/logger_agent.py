@@ -114,6 +114,6 @@ class LoggerAgent(BaseAgent):
             try:
                 await self._flush_task
             except asyncio.CancelledError:
-                pass
+                logger.debug("Logger flush task cancelled during shutdown")
 
         await self._flush_logs()

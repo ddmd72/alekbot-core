@@ -81,4 +81,4 @@ class NodeDocxRunner(DocxRunnerPort):
             try:
                 os.unlink(tmp.name)
             except OSError:
-                pass
+                logger.debug("Failed to remove temp script file %s", tmp.name)

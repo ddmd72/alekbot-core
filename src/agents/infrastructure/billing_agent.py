@@ -122,7 +122,7 @@ class BillingAgent(BaseAgent):
             try:
                 await self._flush_task
             except asyncio.CancelledError:
-                pass
+                logger.debug("Billing flush task cancelled during shutdown")
 
         async with self._lock:
             account_ids = list(self.pending_records.keys())

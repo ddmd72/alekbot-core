@@ -26,7 +26,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional, Tuple
-from zoneinfo import ZoneInfo
+
 
 if TYPE_CHECKING:
     from ..services.email_review_service import EmailReviewService
@@ -261,7 +261,7 @@ class WorkerHandler:
             try:
                 job_port = self._job_registry.get(provider)
             except ValueError:
-                pass
+                logger.debug("No deep research job port registered for provider %r", provider)
         if not job_port or not self._task_dispatch:
             logger.error(
                 f"[DeepResearch] Missing dependencies in WorkerHandler "
@@ -406,7 +406,7 @@ class WorkerHandler:
         if not self._task_setup or not self._task_dispatch:
             logger.warning("[Worker] renew_all_task_subscriptions: task_setup or task_queue not configured")
             return {"error": "task_setup not configured"}, 501
-        user_ids = await self._oauth.list_users_by_provider("microsoft_todo")
+        user_ids = await self._task_setup.list_microsoft_users()
         for user_id in user_ids:
             await self._task_dispatch.enqueue_worker_task(
                 "renew_task_subscriptions", {"user_id": user_id}
@@ -439,40 +439,23 @@ class WorkerHandler:
         and whose gmail_daily_review_hour matches the current hour in their timezone.
         Called by Cloud Scheduler hourly.
         """
-        if not self._oauth or not self._email_review or not self._task_dispatch:
+        if not self._email_review or not self._task_dispatch:
             logger.warning("[Worker] start_daily_email_review: required services not configured")
             return {"error": "services not configured"}, 501
 
-        user_ids = await self._oauth.list_users_by_provider("gmail")
         now_utc = datetime.now(timezone.utc)
-        started, skipped = 0, 0
+        eligible = await self._email_review.find_eligible_users(self._user_repo, now_utc)
 
-        for user_id in user_ids:
-            profile = await self._user_repo.get_user(user_id)
-            if not profile:
-                skipped += 1
-                continue
-
-            cfg = profile.config
-            if not cfg.gmail_daily_review:
-                skipped += 1
-                continue
-
-            user_tz = ZoneInfo(cfg.timezone or "UTC")
-            local_hour = now_utc.astimezone(user_tz).hour
-            if local_hour != cfg.gmail_daily_review_hour:
-                skipped += 1
-                continue
-
+        for user_id, account_id in eligible:
             await self._task_dispatch.enqueue_worker_task(
                 "daily_email_review",
-                {"user_id": user_id, "account_id": profile.account_id},
+                {"user_id": user_id, "account_id": account_id},
             )
             logger.info(f"[Worker] start_daily_email_review: enqueued for {user_id[:8]}")
-            started += 1
 
-        logger.info(f"[Worker] start_daily_email_review complete: started={started}, skipped={skipped}")
-        return {"started": started, "skipped": skipped}, 200
+        started = len(eligible)
+        logger.info(f"[Worker] start_daily_email_review complete: started={started}")
+        return {"started": started}, 200
 
     async def _handle_daily_email_review(self, payload: dict) -> Tuple[dict, int]:
         """

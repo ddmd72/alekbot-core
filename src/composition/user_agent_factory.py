@@ -661,7 +661,7 @@ class UserAgentFactory:
             try:
                 await self._sweep_task
             except asyncio.CancelledError:
-                pass
+                logger.debug("Cache sweep task cancelled during shutdown")
 
     async def _evict_expired_cache(self) -> None:
         """Periodically evict expired user-agent sets to bound memory usage."""

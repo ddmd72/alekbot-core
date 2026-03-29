@@ -365,7 +365,7 @@ class ConversationHandler(ConversationHandlerPort):
                 try:
                     await ui_task
                 except asyncio.CancelledError:
-                    pass
+                    logger.debug("Status update task cancelled")
 
         try:
             # FALLBACK: If no text but has attachments → use localized file prompt
@@ -653,14 +653,14 @@ class ConversationHandler(ConversationHandlerPort):
                     thread_id=context.thread_id,
                 )
             except Exception:
-                pass
+                logger.warning("Failed to send error response to user", exc_info=True)
 
         finally:
             for path in temp_files:
                 try:
                     os.remove(path)
                 except Exception:
-                    pass
+                    logger.debug("Failed to remove temp file %s", path)
 
     async def _save_history_with_retry(
         self,

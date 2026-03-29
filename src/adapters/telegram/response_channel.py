@@ -471,8 +471,7 @@ class TelegramResponseChannel(ResponseChannel):
             status_text = f"⏳ {phrase}{dots}"
             await self.update_message(message_id, status_text)
         except Exception:
-            # Non-critical, animation can fail silently
-            pass
+            logger.debug("Status animation update failed (non-critical)")
 
     async def update_status(
         self,
@@ -506,8 +505,7 @@ class TelegramResponseChannel(ResponseChannel):
             status_text = f"⏳ {phrase}{dots}"
             await self.update_message(message_id, status_text)
         except Exception:
-            # Non-critical, animation can fail silently
-            pass
+            logger.debug("Status animation update failed (non-critical)")
 
     async def send_document_link(self, url: str, label: str, thread_id: Optional[str] = None) -> None:
         """Send a named document link using Telegram Markdown format."""
