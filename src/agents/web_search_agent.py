@@ -49,26 +49,6 @@ class WebSearchAgent(BaseAgent):
 
     TEMPERATURE = WEB_SEARCH.temperature
 
-    _FALLBACK_SEARCH_SYSTEM = (
-        "class SearchAgent extends GoogleSearchAgent {\n"
-        "  archetype: 'Meticulous Researcher. Loves exhaustive lists. Hates ambiguity.'\n\n"
-        "  cognitive_process {\n"
-        "    steps: [\n"
-        "      '1. ANALYZE: Extract Object and Criteria from user_query.',\n"
-        "      '2. EXECUTE: Perform grounding search using Google Search.',\n"
-        "      '3. VERIFY: Check results against Criteria.',\n"
-        "      '4. REFINE: If insufficient, refine search and retry.',\n"
-        "      '5. COMPILE: Aggregate ALL non-contradictory results.',\n"
-        "      '6. DELIVER: Present final list with summary.'\n"
-        "    ]\n"
-        "  }\n\n"
-        "  output_format {\n"
-        "    style: 'Slack mrkdwn (no headers, use *bold*)'\n"
-        "    structure: 'List of Options -> Summary'\n"
-        "  }\n"
-        "}"
-    )
-
     _FALLBACK_FETCH_SYSTEM = (
         "Fetch the provided URL and return its full content in detail. "
         "Return the complete page text without omissions. "
@@ -118,16 +98,13 @@ class WebSearchAgent(BaseAgent):
         try:
             current_time_str = datetime.now(timezone.utc).strftime('%A, %d %B %Y, %H:%M %Z')
 
-            if self.prompt_builder:
-                account_id = message.context.get("account_id") if message.context else None
-                system_instruction = await self.prompt_builder.build_for_agent(
-                    agent_type="websearch",
-                    user_id=self.user_id,
-                    account_id=account_id,
-                    routing_metadata=None,
-                )
-            else:
-                system_instruction = self._FALLBACK_SEARCH_SYSTEM
+            account_id = message.context.get("account_id") if message.context else None
+            system_instruction = await self.prompt_builder.build_for_agent(
+                agent_type="websearch",
+                user_id=self.user_id,
+                account_id=account_id,
+                routing_metadata=None,
+            )
 
             system_instruction = f"current_date_time: {current_time_str}\n\n{system_instruction}"
             return await self._call_grounded_llm(message, system_instruction, query, start_time, context=query)

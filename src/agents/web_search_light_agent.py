@@ -3,10 +3,10 @@ Web Search Light Agent
 ======================
 
 Lightweight single-pass web search agent for use by QuickResponseAgent.
-Returns plain Slack mrkdwn — no multi-step refinement, no JSON output.
+Returns formatted text — no multi-step refinement, no JSON output.
 
 No biographical context is injected — routing_metadata=None.
-System instruction = cognitive process prompt (from PromptBuilder or fallback).
+System instruction = cognitive process prompt (from PromptBuilder).
 User message = raw query.
 """
 
@@ -27,25 +27,13 @@ class WebSearchLightAgent(BaseAgent):
     """
     Lightweight web search agent called as a tool by QuickResponseAgent.
 
-    Single provider-native grounded call → plain Slack mrkdwn result.
+    Single provider-native grounded call → formatted text result.
     Sets use_grounding=True in LLMRequest — each adapter injects its own native search tool.
     Uses PromptBuilder for system prompt (agent_type="websearch_light").
     No biographical context — routing_metadata=None.
     """
 
     TEMPERATURE = WEB_SEARCH_LIGHT.temperature
-
-    _FALLBACK_SYSTEM = (
-        "cognitive_process {\n"
-        "    instruction: \"Answer the query with a single grounded web search. "
-        "Return only the answer — no preamble, no meta-commentary.\"\n"
-        "    rules: [\n"
-        "        \"Single pass only. No source attribution prose.\",\n"
-        "        \"Structured data → bullet list or table. Single-fact → plain prose.\",\n"
-        "        \"Slack mrkdwn only. No JSON. No code blocks.\"\n"
-        "    ]\n"
-        "}"
-    )
 
     def __init__(
         self,
@@ -84,16 +72,13 @@ class WebSearchLightAgent(BaseAgent):
         try:
             current_time_str = datetime.now(timezone.utc).strftime("%A, %d %B %Y, %H:%M %Z")
 
-            if self.prompt_builder:
-                account_id = message.context.get("account_id") if message.context else None
-                system_instruction = await self.prompt_builder.build_for_agent(
-                    agent_type="websearch_light",
-                    user_id=self.user_id,
-                    account_id=account_id,
-                    routing_metadata=None,
-                )
-            else:
-                system_instruction = self._FALLBACK_SYSTEM
+            account_id = message.context.get("account_id") if message.context else None
+            system_instruction = await self.prompt_builder.build_for_agent(
+                agent_type="websearch_light",
+                user_id=self.user_id,
+                account_id=account_id,
+                routing_metadata=None,
+            )
 
             system_instruction = f"current_date_time: {current_time_str}\n\n{system_instruction}"
             request = LLMRequest(
