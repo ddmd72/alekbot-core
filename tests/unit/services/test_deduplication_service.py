@@ -6,7 +6,7 @@ Tests the intelligent deduplication algorithm with number-aware comparison.
 """
 
 import pytest
-from src.services.deduplication_service import SmartDeduplication
+from src.domain.deduplication_service import SmartDeduplication
 
 
 class TestSmartDeduplication:
