@@ -72,6 +72,7 @@ from ..agents.doc_planner_agent import DocPlannerAgent
 from ..agents.doc_generator_agent import DocGeneratorAgent
 from ..agents.pdf_generator_agent import PdfGeneratorAgent
 from ..agents.html_page_generator_agent import HtmlPageGeneratorAgent
+from ..agents.help_agent import HelpAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
@@ -546,6 +547,15 @@ class UserAgentFactory:
             indexed_email_repo=self.indexed_email_repo,
         )
 
+        help_agent = HelpAgent(
+            config=AgentConfig(
+                agent_id=f"help_agent_{user_id}",
+                agent_type="help",
+                timeout_ms=5_000,
+                capabilities=["system_help"],
+            ),
+        )
+
         agents_to_register = [
             router_agent,
             quick_agent,
@@ -561,6 +571,7 @@ class UserAgentFactory:
             pdf_generator_agent,
             html_page_generator_agent,
             consolidation_agent,
+            help_agent,
         ]
         if notes_agent:
             agents_to_register.append(notes_agent)
@@ -608,6 +619,7 @@ class UserAgentFactory:
             "pdf_generator_agent": pdf_generator_agent,
             "html_page_generator_agent": html_page_generator_agent,
             "consolidation_agent": consolidation_agent,
+            "help_agent": help_agent,
         }
         self._cache[user_id] = cached
         return cached
