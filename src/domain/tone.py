@@ -2,8 +2,6 @@
 
 from enum import Enum
 from .agent import RoutingMetadata
-import logging
-logger = logging.getLogger(__name__)
 
 
 class UserTone(str, Enum):
@@ -32,7 +30,6 @@ class UserTone(str, Enum):
         """Validate tone string and fall back to friendly on invalid input."""
         if tone in cls._value2member_map_:
             return str(tone)
-        logger.warning("Invalid tone '%s', defaulting to '%s'", tone, cls.FRIENDLY.value)
         return str(cls.FRIENDLY.value)
 
 

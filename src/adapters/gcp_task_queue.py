@@ -9,6 +9,7 @@ import datetime
 from typing import Dict, Any, Optional
 
 from google.cloud import tasks_v2
+from google.api_core.exceptions import NotFound
 from google.protobuf import timestamp_pb2, duration_pb2
 
 from ..ports.task_queue import TaskQueue
@@ -97,8 +98,8 @@ class GcpTaskQueue(TaskQueue):
                 self.client.get_queue(name=self.queue_path)
                 logger.info(f"✅ Queue {self.queue_name} already exists")
                 return
-            except Exception:
-                logger.debug("Queue %s not found or inaccessible, will attempt to create", self.queue_name)
+            except NotFound:
+                logger.debug("Queue %s not found, will create it", self.queue_name)
 
             parent = self.client.common_location_path(self.project_id, self.location)
             queue = {
