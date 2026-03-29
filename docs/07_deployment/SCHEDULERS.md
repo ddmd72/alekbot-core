@@ -63,6 +63,21 @@ Region: `us-central1`. Attempt deadline: `60s` for all `/worker` jobs.
 
 ---
 
+### Daily Email Review
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `alek-bot-{env}-start-daily-email-review` |
+| **Schedule** | `0 * * * *` (every hour, on the hour) |
+| **HTTP** | `POST /worker` |
+| **Payload** | `{"task_type": "start_daily_email_review"}` |
+| **Purpose** | Fan-out: for every Gmail user with `config.gmail_daily_review=True`, checks if `current_hour_in_user_tz == config.gmail_daily_review_hour`. If yes, enqueues a `daily_email_review` Cloud Task. Fetches last 24h emails (up to 200), passes structured payload to SmartAgent. SmartAgent delivers an HTML page + short chat message. |
+| **Handler** | `WorkerHandler._handle_start_daily_email_review()` → `WorkerHandler._handle_daily_email_review()` |
+| **User setting** | Toggle + hour picker in Cabinet UI > Integrations > Gmail |
+| **Env** | dev + prod |
+
+---
+
 ### Email Indexing Watchdog
 
 | Field | Value |

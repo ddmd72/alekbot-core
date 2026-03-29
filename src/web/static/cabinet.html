@@ -1350,6 +1350,12 @@
           "toast.team_joined": "Successfully joined team",
           "toast.gmail_connected": "Gmail connected",
           "toast.todo_connected": "To Do connected",
+          "gmail.auto_index": "Daily auto-index",
+          "gmail.daily_review": "Daily email review",
+          "gmail.run_at": "Run at",
+          "gmail.in_your_tz": "in your timezone",
+          "toast.daily_review_saved": "Daily review saved",
+          "toast.daily_review_failed": "Failed to save daily review settings",
         },
         uk: {
           "nav.integrations": "Інтеграції",
@@ -1399,6 +1405,12 @@
           "toast.team_joined": "Успішно приєднано до команди",
           "toast.gmail_connected": "Gmail підключено",
           "toast.todo_connected": "To Do підключено",
+          "gmail.auto_index": "Щоденна індексація",
+          "gmail.daily_review": "Щоденний огляд пошти",
+          "gmail.run_at": "Запускати о",
+          "gmail.in_your_tz": "у вашому часовому поясі",
+          "toast.daily_review_saved": "Налаштування збережено",
+          "toast.daily_review_failed": "Не вдалося зберегти налаштування",
         },
         fr: {
           "nav.integrations": "Int\u00e9grations",
@@ -1448,6 +1460,12 @@
           "toast.team_joined": "Rejoint l'\u00e9quipe",
           "toast.gmail_connected": "Gmail connect\u00e9",
           "toast.todo_connected": "To Do connect\u00e9",
+          "gmail.auto_index": "Indexation quotidienne",
+          "gmail.daily_review": "Revue quotidienne des emails",
+          "gmail.run_at": "Lancer \u00e0",
+          "gmail.in_your_tz": "dans votre fuseau horaire",
+          "toast.daily_review_saved": "Param\u00e8tres enregistr\u00e9s",
+          "toast.daily_review_failed": "\u00c9chec de la sauvegarde",
         },
         es: {
           "nav.integrations": "Integraciones",
@@ -1497,6 +1515,12 @@
           "toast.team_joined": "Unido al equipo",
           "toast.gmail_connected": "Gmail conectado",
           "toast.todo_connected": "To Do conectado",
+          "gmail.auto_index": "Indexaci\u00f3n diaria",
+          "gmail.daily_review": "Revisi\u00f3n diaria de correos",
+          "gmail.run_at": "Ejecutar a las",
+          "gmail.in_your_tz": "en tu zona horaria",
+          "toast.daily_review_saved": "Ajustes guardados",
+          "toast.daily_review_failed": "Error al guardar los ajustes",
         },
       };
 
@@ -2060,9 +2084,10 @@
 
       async function loadGmailStatus() {
         try {
-          const [statusRes, autoIndexRes] = await Promise.all([
+          const [statusRes, autoIndexRes, dailyReviewRes] = await Promise.all([
             fetch(`${API}/api/gmail/status`, { credentials: "include" }),
             fetch(`${API}/api/gmail/auto-index`, { credentials: "include" }),
+            fetch(`${API}/api/gmail/daily-review`, { credentials: "include" }),
           ]);
           if (!statusRes.ok) throw new Error();
           const data = await statusRes.json();
@@ -2071,9 +2096,29 @@
             data.auto_index_enabled = ai.enabled;
             data.auto_index_hour = ai.hour;
           }
+          if (dailyReviewRes.ok) {
+            const dr = await dailyReviewRes.json();
+            data.daily_review_enabled = dr.enabled;
+            data.daily_review_hour = dr.hour;
+          }
           renderGmailStatus(data);
         } catch {
           // Graceful degradation
+        }
+      }
+
+      async function saveDailyReview(enabled, hour) {
+        try {
+          const res = await fetch(`${API}/api/gmail/daily-review`, {
+            method: "PUT",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled, hour }),
+          });
+          if (!res.ok) throw new Error();
+          showToast(t("toast.daily_review_saved"), "success");
+        } catch {
+          showToast(t("toast.daily_review_failed"), "error");
         }
       }
 
@@ -2124,27 +2169,51 @@
         }
 
         let autoIndexHtml = "";
+        let dailyReviewHtml = "";
         if (linked) {
+          const makeHourOptions = (selectedHour) =>
+            Array.from({length: 24}, (_, h) =>
+              `<option value="${h}" ${h === selectedHour ? "selected" : ""}>${String(h).padStart(2,"0")}:00</option>`
+            ).join("");
+
           const aiEnabled = !!data.auto_index_enabled;
           const aiHour = data.auto_index_hour ?? 8;
-          const hourOptions = Array.from({length: 24}, (_, h) =>
-            `<option value="${h}" ${h === aiHour ? "selected" : ""}>${String(h).padStart(2,"0")}:00</option>`
-          ).join("");
           autoIndexHtml = `
             <div style="margin-bottom:16px; padding:12px 16px; background:var(--bg-active); border-radius:12px;">
               <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-                <label style="font-size:14px; font-weight:500; cursor:pointer;" for="ai-toggle">Daily auto-index</label>
+                <label style="font-size:14px; font-weight:500; cursor:pointer;" for="ai-toggle">${t("gmail.auto_index")}</label>
                 <input type="checkbox" id="ai-toggle" ${aiEnabled ? "checked" : ""}
                   onchange="document.getElementById('ai-hour-row').style.display=this.checked?'flex':'none'; saveGmailAutoIndex(this.checked, parseInt(document.getElementById('ai-hour').value))"
                   style="width:18px;height:18px;cursor:pointer;">
               </div>
               <div id="ai-hour-row" style="display:${aiEnabled ? "flex" : "none"}; align-items:center; gap:8px; margin-top:10px;">
-                <span style="font-size:13px; color:var(--text-muted);">Run at</span>
+                <span style="font-size:13px; color:var(--text-muted);">${t("gmail.run_at")}</span>
                 <select id="ai-hour" onchange="saveGmailAutoIndex(true, parseInt(this.value))"
                   style="font-size:13px; padding:4px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-primary);">
-                  ${hourOptions}
+                  ${makeHourOptions(aiHour)}
                 </select>
-                <span style="font-size:13px; color:var(--text-muted);">in your timezone</span>
+                <span style="font-size:13px; color:var(--text-muted);">${t("gmail.in_your_tz")}</span>
+              </div>
+            </div>
+          `;
+
+          const drEnabled = !!data.daily_review_enabled;
+          const drHour = data.daily_review_hour ?? 9;
+          dailyReviewHtml = `
+            <div style="margin-bottom:16px; padding:12px 16px; background:var(--bg-active); border-radius:12px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                <label style="font-size:14px; font-weight:500; cursor:pointer;" for="dr-toggle">${t("gmail.daily_review")}</label>
+                <input type="checkbox" id="dr-toggle" ${drEnabled ? "checked" : ""}
+                  onchange="document.getElementById('dr-hour-row').style.display=this.checked?'flex':'none'; saveDailyReview(this.checked, parseInt(document.getElementById('dr-hour').value))"
+                  style="width:18px;height:18px;cursor:pointer;">
+              </div>
+              <div id="dr-hour-row" style="display:${drEnabled ? "flex" : "none"}; align-items:center; gap:8px; margin-top:10px;">
+                <span style="font-size:13px; color:var(--text-muted);">${t("gmail.run_at")}</span>
+                <select id="dr-hour" onchange="saveDailyReview(true, parseInt(this.value))"
+                  style="font-size:13px; padding:4px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-primary);">
+                  ${makeHourOptions(drHour)}
+                </select>
+                <span style="font-size:13px; color:var(--text-muted);">${t("gmail.in_your_tz")}</span>
               </div>
             </div>
           `;
@@ -2171,6 +2240,7 @@
 
             ${metaHtml}
             ${autoIndexHtml}
+            ${dailyReviewHtml}
 
             <div class="integration-actions">
               ${actionButtons}

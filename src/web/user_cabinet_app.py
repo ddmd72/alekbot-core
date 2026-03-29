@@ -821,6 +821,48 @@ def create_user_cabinet_blueprint(
             logger.error(f"Error updating auto-index settings: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
+    @bp.route("/api/gmail/daily-review", methods=["GET"])
+    @auth_required
+    async def gmail_daily_review_get():
+        """Return current daily review schedule settings for the authenticated user."""
+        try:
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            return jsonify({
+                "enabled": user.config.gmail_daily_review,
+                "hour": user.config.gmail_daily_review_hour,
+            }), 200
+        except Exception as exc:
+            logger.error(f"Error fetching daily-review settings: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/gmail/daily-review", methods=["PUT"])
+    @auth_required
+    async def gmail_daily_review_set():
+        """Update daily review schedule. Body: {\"enabled\": bool, \"hour\": 0-23}"""
+        try:
+            body = await request.get_json(force=True) or {}
+            enabled = body.get("enabled")
+            hour = body.get("hour")
+
+            if enabled is None or not isinstance(enabled, bool):
+                return jsonify({"error": "enabled (bool) required"}), 400
+            if hour is None or not isinstance(hour, int) or not (0 <= hour <= 23):
+                return jsonify({"error": "hour must be integer 0-23"}), 400
+
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+
+            user.config.gmail_daily_review = enabled
+            user.config.gmail_daily_review_hour = hour
+            await user_repo.update_user(user)
+            return jsonify({"enabled": enabled, "hour": hour}), 200
+        except Exception as exc:
+            logger.error(f"Error updating daily-review settings: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
     # =========================================================================
     # Tasks integration endpoints
     # =========================================================================
