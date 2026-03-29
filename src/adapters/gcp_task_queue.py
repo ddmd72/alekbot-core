@@ -98,7 +98,7 @@ class GcpTaskQueue(TaskQueue):
                 logger.info(f"✅ Queue {self.queue_name} already exists")
                 return
             except Exception:
-                pass
+                logger.debug("Queue %s not found or inaccessible, will attempt to create", self.queue_name)
 
             parent = self.client.common_location_path(self.project_id, self.location)
             queue = {

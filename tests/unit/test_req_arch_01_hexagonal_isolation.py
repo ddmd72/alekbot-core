@@ -1035,3 +1035,229 @@ def test_handlers_do_not_import_ports_directly():
         "Handler imports port directly — extract port call into a service:\n"
         + "\n".join(violations)
     )
+
+
+# ---------------------------------------------------------------------------
+# REQ-ARCH-26 — No time.sleep() inside async def
+#
+# time.sleep() is a blocking call that stalls the event loop. All waiting
+# in async functions must use asyncio.sleep(). A single time.sleep() in a
+# hot coroutine can degrade the entire service (see: Cloud Run CPU throttling
+# incident — background task starvation traced to blocking calls in async paths).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("REQ-ARCH-26")
+def test_no_time_sleep_in_async_functions():
+    """time.sleep() must not be called inside async def — use asyncio.sleep()."""
+    violations = []
+    for fp in _iter_py_files("src"):
+        tree = _parse(fp)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            for child in ast.walk(node):
+                if not isinstance(child, ast.Call):
+                    continue
+                func = child.func
+                if (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "sleep"
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "time"
+                ):
+                    violations.append(
+                        f"  {fp}:{child.lineno} time.sleep() in async def {node.name}"
+                    )
+    assert not violations, (
+        "time.sleep() in async function (blocks event loop — use asyncio.sleep()):\n"
+        + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# REQ-ARCH-27 — No silent exception swallowing
+#
+# CLAUDE.md: "Errors log before re-raise. Do not silently swallow exceptions."
+# An except block whose entire body is `pass` hides errors from observability
+# tooling. Every caught exception must be at minimum logged at debug level.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("REQ-ARCH-27")
+def test_no_silent_exception_swallowing():
+    """except blocks must not consist solely of pass — log before swallowing."""
+    violations = []
+    for fp in _iter_py_files("src"):
+        tree = _parse(fp)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
+                exc_name = (
+                    node.type.id if isinstance(node.type, ast.Name) else
+                    ast.unparse(node.type) if node.type else "bare"
+                )
+                violations.append(f"  {fp}:{node.lineno} silent except {exc_name}: pass")
+    assert not violations, (
+        "Silent exception swallowing (add at minimum logger.debug() before pass):\n"
+        + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# REQ-ARCH-28 — No logging.getLogger() in ports/, services/, agents/, handlers/
+#
+# These layers can import src.utils.logger and must use the project-wide logger
+# for consistent log formatting, level control, and structured output.
+# Direct logging.getLogger() creates a parallel logger hierarchy that bypasses
+# the project's log configuration.
+# Excluded: domain/ (cannot import src.utils.logger per REQ-ARCH-01 — stdlib only).
+# Excluded: adapters/ (infrastructure boundary, may suppress noisy SDK loggers).
+# ---------------------------------------------------------------------------
+
+_LOGGING_GETLOGGER_LAYERS = [
+    "src/ports", "src/services", "src/agents", "src/handlers",
+]
+
+
+@pytest.mark.requirement("REQ-ARCH-28")
+def test_no_direct_logging_getlogger_in_core_layers():
+    """ports/, services/, agents/, handlers/ must use project logger, not logging.getLogger()."""
+    violations = []
+    for layer in _LOGGING_GETLOGGER_LAYERS:
+        for fp in _iter_py_files(layer):
+            for node in ast.walk(_parse(fp)):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                is_getlogger = (
+                    isinstance(func, ast.Attribute) and func.attr == "getLogger"
+                ) or (
+                    isinstance(func, ast.Name) and func.id == "getLogger"
+                )
+                if is_getlogger:
+                    violations.append(
+                        f"  {fp}:{node.lineno} logging.getLogger()"
+                    )
+    assert not violations, (
+        "Direct logging.getLogger() in core layer "
+        "(use 'from src.utils.logger import logger'):\n"
+        + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# REQ-ARCH-29 — No asyncio.run() in src/
+#
+# asyncio.run() creates a new event loop and raises RuntimeError when called
+# from within a running event loop. It is an entrypoint primitive — it belongs
+# only in main.py and job_main.py. Any use inside src/ is a latent runtime error.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("REQ-ARCH-29")
+def test_no_asyncio_run_in_src():
+    """asyncio.run() must not appear in src/ — only allowed in main.py / job_main.py."""
+    violations = []
+    for fp in _iter_py_files("src"):
+        for node in ast.walk(_parse(fp)):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "run"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "asyncio"
+            ):
+                violations.append(
+                    f"  {fp}:{node.lineno} asyncio.run()"
+                )
+    assert not violations, (
+        "asyncio.run() in src/ (use await instead — asyncio.run() only belongs in main.py):\n"
+        + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# REQ-ARCH-30 — *Agent classes must only be defined in agents/
+#
+# Complement to REQ-ARCH-03 (which checks inheritance inside agents/).
+# This rule catches agent classes accidentally placed in services/, handlers/,
+# adapters/, or other layers — bypassing agent registration and the coordinator.
+# ---------------------------------------------------------------------------
+
+_AGENT_OUTSIDE_AGENTS_WHITELIST = {
+    "BaseAgent",
+    "CircuitBreaker",
+    "ToolResponse",
+    "AgentLoopResult",
+    "_QuickLoopResult",
+    "_TrackingFactManagement",
+}
+
+
+@pytest.mark.requirement("REQ-ARCH-30")
+def test_no_agent_classes_outside_agents_layer():
+    """*Agent classes must only be defined in src/agents/ — not in other layers."""
+    violations = []
+    agents_path = os.path.normpath("src/agents")
+    for fp in _iter_py_files("src"):
+        if os.path.normpath(fp).startswith(agents_path):
+            continue
+        for node in ast.walk(_parse(fp)):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if node.name.endswith("Agent") and node.name not in _AGENT_OUTSIDE_AGENTS_WHITELIST:
+                violations.append(f"  {fp}:{node.lineno} class {node.name} outside agents/")
+    assert not violations, (
+        "*Agent class defined outside agents/ layer "
+        "(agent classes must be registered via AgentManifest):\n"
+        + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# REQ-ARCH-31 — No assert statements in src/
+#
+# assert is disabled when Python runs with the -O (optimize) flag, making it
+# unreliable for runtime validation. Use explicit raise with a descriptive
+# exception instead. assert is appropriate in tests/ only.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("REQ-ARCH-31")
+def test_no_assert_in_src():
+    """assert statements must not appear in src/ — use explicit raise for runtime validation."""
+    violations = []
+    for fp in _iter_py_files("src"):
+        for node in ast.walk(_parse(fp)):
+            if isinstance(node, ast.Assert):
+                violations.append(f"  {fp}:{node.lineno} assert (use explicit raise)")
+    assert not violations, (
+        "assert in src/ (disabled by python -O — use explicit raise instead):\n"
+        + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# REQ-ARCH-32 — No *Service classes in domain/
+#
+# domain/ contains pure data models, value objects, and enums. Classes with
+# a *Service suffix imply business logic coordination and belong in services/.
+# Pure domain algorithms (no I/O, no external deps) should be named without
+# the *Service suffix to reflect their nature as pure functions / value types.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.requirement("REQ-ARCH-32")
+def test_no_service_classes_in_domain():
+    """*Service classes must not be defined in domain/ — move to services/ or rename."""
+    violations = []
+    for fp in _iter_py_files("src/domain"):
+        for node in ast.walk(_parse(fp)):
+            if isinstance(node, ast.ClassDef) and node.name.endswith("Service"):
+                violations.append(
+                    f"  {fp}:{node.lineno} class {node.name} — move to services/ or rename"
+                )
+    assert not violations, (
+        "*Service class in domain/ "
+        "(domain/ is for models and pure algorithms — name without *Service suffix):\n"
+        + "\n".join(violations)
+    )

@@ -318,7 +318,7 @@ class PromptDebugLogger:
                     sections.append(f"=== TOKENS: {data['tokens']} ===")
                 text_body = "\n\n".join(sections) if sections else response
             except (json.JSONDecodeError, Exception):
-                pass  # fall back to raw response string
+                logger.debug("Could not parse structured response for debug formatting, using raw string")
 
             filename = f"{timestamp}_response.txt"
 

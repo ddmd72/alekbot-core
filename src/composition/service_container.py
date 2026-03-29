@@ -23,7 +23,7 @@ from ..adapters.firestore_prompt_repository import FirestorePromptComponentRepos
 from ..adapters.groovy_prompt_assembler import GroovyPromptAssembler
 from ..adapters.xml_prompt_assembler import XmlPromptAssembler
 from ..adapters.fact_management_adapter import FactManagementAdapter
-from ..domain.deduplication_service import SmartDeduplicationService
+from ..domain.deduplication_service import SmartDeduplication
 from ..services.configuration_service import ConfigurationService
 from ..services.biographical_context_service import BiographicalContextService
 from ..services.fact_write_service import FactWriteService
@@ -145,7 +145,7 @@ class ServiceContainer:
             env_config,
             embedding_service=self.embedding_service,
             biographical_context_service=self.biographical_context_service,
-            dedup_service=SmartDeduplicationService(),
+            dedup_service=SmartDeduplication(),
         )
 
         # Resolve circular dep: BiographicalContextService → repository

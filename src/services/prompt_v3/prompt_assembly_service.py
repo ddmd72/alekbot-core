@@ -9,7 +9,6 @@ PERFORMANCE OPTIMIZATION (2026-02-04):
 - See: docs/10_rfcs/PROMPT_ASSEMBLY_CACHING_RFC.md
 """
 
-import logging
 import time
 import asyncio
 from collections import defaultdict
@@ -27,8 +26,7 @@ from src.domain.prompt_v3.profile_slot import ProfileToken
 from src.domain.prompt_v3.slot import OwnerType
 from src.services.prompt_v3.biographical_formatter import BiographicalFactsFormatter
 from src.services.prompt_v3.context_formatter import ContextFormatter
-
-logger = logging.getLogger(__name__)
+from src.utils.logger import logger
 
 
 class PromptAssemblyService:

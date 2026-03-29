@@ -22,7 +22,7 @@ import re
 from typing import List, Tuple
 
 
-class SmartDeduplicationService:
+class SmartDeduplication:
     """
     Intelligent deduplication for LLM-generated facts.
     
@@ -87,7 +87,7 @@ class SmartDeduplicationService:
             - False, reason → NOT duplicate (add new fact)
             
         Examples:
-            >>> service = SmartDeduplicationService()
+            >>> service = SmartDeduplication()
             
             # Different values
             >>> service.is_duplicate(

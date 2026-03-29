@@ -7,7 +7,7 @@ from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from ..domain.entities import FactEntity, FactType
 from ..domain.vector_math import cosine_similarity
-from ..domain.deduplication_service import SmartDeduplicationService
+from ..domain.deduplication_service import SmartDeduplication
 from ..ports.repository import FactRepository
 from ..config.environment import EnvironmentConfig
 from ..utils.timer import log_execution_time
@@ -55,7 +55,7 @@ class FirestoreFactRepository(FactRepository):
         env_config: EnvironmentConfig,
         embedding_service: Optional[EmbeddingService] = None,
         biographical_context_service: Optional["BiographicalContextService"] = None,
-        dedup_service: Optional[SmartDeduplicationService] = None,
+        dedup_service: Optional[SmartDeduplication] = None,
     ):
         """
         Initialize repository with database client and environment config.
@@ -69,13 +69,13 @@ class FirestoreFactRepository(FactRepository):
             env_config: Environment configuration for collection isolation
             embedding_service: Service for generating embeddings (DI)
             biographical_context_service: Service for biographical cache refresh (DI, NEW)
-            dedup_service: Smart deduplication logic (DI; defaults to SmartDeduplicationService())
+            dedup_service: Smart deduplication logic (DI; defaults to SmartDeduplication())
         """
         self.db = db_client
         self.env_config = env_config
         self._embedding_service = embedding_service
         self._biographical_context_service = biographical_context_service
-        self._dedup_service = dedup_service or SmartDeduplicationService()
+        self._dedup_service = dedup_service or SmartDeduplication()
 
         # Environment-aware collection names (ADR-006 Semantic Naming)
         # Note: observations are legacy/deprecated, keeping logic for now but marking as such
@@ -647,7 +647,7 @@ class FirestoreFactRepository(FactRepository):
         - Length-based heuristic for detail preservation
         - Philosophy: Better to add duplicate than lose important information
         
-        Algorithm (SmartDeduplicationService):
+        Algorithm (SmartDeduplication):
         1. similarity < 0.96 → NOT duplicate
         2. Numbers differ (sorted) → NOT duplicate
         3. similarity < 0.98 AND new more detailed → NOT duplicate
@@ -698,7 +698,7 @@ class FirestoreFactRepository(FactRepository):
             # Calculate exact similarity using domain utility
             similarity = cosine_similarity(fact.vector, existing_fact.vector)
             
-            # Use SmartDeduplicationService for intelligent comparison
+            # Use SmartDeduplication for intelligent comparison
             is_duplicate, reason = self._dedup_service.is_duplicate(
                 fact.text,
                 existing_fact.text,
