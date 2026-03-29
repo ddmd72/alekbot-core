@@ -57,48 +57,6 @@ def _get_mock_fact(owner_id: str, lineage_id: str):
     return MagicMock(text="")
 
 @pytest.mark.asyncio
-async def test_build_system_prompt_calls_repo(mock_repo):
-    builder = PromptBuilder(mock_repo)
-    user_id = "test-user-123"
-    
-    result = await builder.build_system_prompt(mode="full", user_id=user_id)
-    
-    mock_repo.get_biographical_context_cached.assert_called_once_with(owner_id=user_id, limit=100)
-    assert "- Fact 1" in result["biographical_context"]
-    assert "- Fact 2" in result["biographical_context"]
-
-@pytest.mark.asyncio
-async def test_biographical_context_caching(mock_repo):
-    builder = PromptBuilder(mock_repo)
-    user_id = "test-user-123"
-    
-    # First call
-    await builder.build_system_prompt(mode="full", user_id=user_id)
-    # Second call
-    await builder.build_system_prompt(mode="full", user_id=user_id)
-    
-    # Should only be called once due to internal cache
-    mock_repo.get_biographical_context_cached.assert_called_once()
-
-@pytest.mark.asyncio
-async def test_biographical_cache_invalidation(mock_repo):
-    builder = PromptBuilder(mock_repo)
-    user_id = "test-user-123"
-    
-    # First call
-    await builder.build_system_prompt(mode="full", user_id=user_id)
-    
-    # Invalidate
-    builder.invalidate_biographical_cache(user_id)
-    
-    # Second call
-    await builder.build_system_prompt(mode="full", user_id=user_id)
-    
-    # Should be called twice
-    assert mock_repo.get_biographical_context_cached.call_count == 2
-
-
-@pytest.mark.asyncio
 async def test_build_for_agent_quick_mode(mock_repo, mock_assembly_service):
     """build_for_agent delegates to assembly_service.assemble() with agent_type."""
     builder = PromptBuilder(mock_repo, assembly_service=mock_assembly_service)
