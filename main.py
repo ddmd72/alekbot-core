@@ -512,7 +512,7 @@ async def main():
             task_setup=task_setup_service,
             task_indexing=container.task_indexing,
             notes_port=container.notes_adapter,
-            email_provider=container.gmail_provider,
+            email_review=container.email_review_service,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

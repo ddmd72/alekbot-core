@@ -35,6 +35,7 @@ from ..services.prompt_component_service import PromptComponentService
 from ..services.search_enrichment_service import SearchEnrichmentService
 from ..services.email_search_service import EmailSearchService
 from ..services.email_indexing_service import EmailIndexingService
+from ..services.email_review_service import EmailReviewService
 from ..services.prompt_builder import PromptBuilder
 from ..adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from ..adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
@@ -217,6 +218,10 @@ class ServiceContainer:
             exclusions_repo=self.email_exclusions_repo,
             classifier=self.email_classifier,
             embedding=self.embedding_service,
+        )
+        self.email_review_service = EmailReviewService(
+            email_provider=self.gmail_provider,
+            oauth_credentials=self.oauth_credentials,
         )
 
         # ------------------------------------------------------------------
