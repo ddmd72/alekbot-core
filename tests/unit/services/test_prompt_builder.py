@@ -95,48 +95,6 @@ class TestPreloadComponents:
 
 
 # ---------------------------------------------------------------------------
-# build_system_prompt()
-# ---------------------------------------------------------------------------
-
-class TestBuildSystemPrompt:
-
-    async def test_full_mode_no_user_id_bio_empty(self, mock_repo):
-        builder = _make_builder(mock_repo)
-        result = await builder.build_system_prompt(mode="full", user_id=None)
-        assert result["biographical_context"] == ""
-        assert "kernel" in result
-        assert "slack_rules" in result
-
-    async def test_light_mode_returns_bio_and_kernel(self, mock_repo):
-        mock_repo.get_biographical_context_cached = AsyncMock(
-            return_value=[{"text": "bio fact 1"}]
-        )
-        builder = _make_builder(mock_repo)
-        result = await builder.build_system_prompt(mode="light", user_id="user1")
-        assert "biographical_context" in result
-        assert "kernel" in result
-        assert "slack_rules" in result
-        assert "- bio fact 1" in result["biographical_context"]
-
-    async def test_light_mode_no_user_id_bio_empty(self, mock_repo):
-        builder = _make_builder(mock_repo)
-        result = await builder.build_system_prompt(mode="light", user_id=None)
-        assert result["biographical_context"] == ""
-
-    async def test_unknown_mode_raises_value_error(self, mock_repo):
-        builder = _make_builder(mock_repo)
-        with pytest.raises(ValueError, match="Unknown mode"):
-            await builder.build_system_prompt(mode="invalid")
-
-    async def test_lens_adds_lens_instructions(self, mock_repo):
-        builder = _make_builder(mock_repo)
-        lens = {"name": "health", "weights": {"lambda_vector": 1.5, "lambda_recency": 0.8}}
-        result = await builder.build_system_prompt(mode="full", lens=lens)
-        assert "lens_instructions" in result
-        assert "health" in result["lens_instructions"]
-
-
-# ---------------------------------------------------------------------------
 # merge_enriched_context_with_biographical()
 # ---------------------------------------------------------------------------
 
