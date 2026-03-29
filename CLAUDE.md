@@ -157,14 +157,22 @@ background process extracts new facts from the conversation → bot gets smarter
 - `UserNotificationService` — sends background notifications to user's last active channel.
   `notify()`: routes `system_alert` through QuickAgent → formatted delivery + session history save.
   `notify_raw()`: direct text delivery, no agent reformatting. Stores last active channel per user
-  in `user_notification_state`. Callers: reminders worker, email indexing, deep research, async docs.
+  in `user_notification_state`. Callers: reminders worker, deep research, async docs, daily email review.
 - `WorkerHandler` — dispatches `/worker` Cloud Tasks by `task_type`:
   `agent_execution`, `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`,
   `consolidation`, `deep_research_polling`, `fire_due_reminders`, `setup_microsoft_todo`,
-  `reindex_task_list`, `renew_task_subscriptions`, `renew_all_task_subscriptions`
+  `reindex_task_list`, `renew_task_subscriptions`, `renew_all_task_subscriptions`,
+  `start_daily_email_review`, `daily_email_review`
   See `docs/07_deployment/SCHEDULERS.md` for full scheduler reference.
 - Watchdog: Cloud Scheduler fires `email_indexing_watchdog` every 2h; marks stale `running`
   jobs as `failed`
+- **Daily Email Review** — `gmail_daily_review` + `gmail_daily_review_hour` in `UserBotConfig`.
+  Cloud Scheduler hourly → `start_daily_email_review` fan-out → `daily_email_review` per-user Cloud Task.
+  Worker fetches last 24h emails via `GmailProviderAdapter` (`list_emails` + `batch_get_full_content(deep=False)`),
+  caps at 200 emails, truncates body to 500 chars. Passes structured JSON array
+  `[{email_id, from, subject, date, snippet, body, attachments}]` to SmartAgent via `notify()`.
+  SmartAgent has full tool access: `get_email_details`, `get_email_attachment`, `search_web`.
+  Expected output: HTML page via `create_html_page` delivered as GCS link to user's channel.
 
 **Consolidation** — analogous to long-term memory formation:
 - Sliding window fills → batch goes to queue. Thresholds (configurable per user):
