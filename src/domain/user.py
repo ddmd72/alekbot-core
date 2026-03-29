@@ -54,7 +54,7 @@ class PromptPreferences(BaseModel):
 # stored agent_tiers dicts will pick up the new defaults automatically.
 _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "router": PerformanceTier.ECO,
-    "quick": PerformanceTier.BALANCED,
+    "quick": PerformanceTier.ECO,
     "smart": PerformanceTier.PERFORMANCE,
     "consolidation": PerformanceTier.PERFORMANCE,
     "web_search": PerformanceTier.BALANCED,
@@ -63,8 +63,8 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "email_search": PerformanceTier.ECO,
     "postprocessing": PerformanceTier.BALANCED,
     "email_classifier": PerformanceTier.BALANCED,
-    "deep_research": PerformanceTier.BALANCED,  # BALANCED → o4-mini; PERFORMANCE → o3
-    "doc_planner": PerformanceTier.BALANCED,     # JSON layout spec
+    "deep_research": PerformanceTier.BALANCED,       # BALANCED → claude-sonnet; PERFORMANCE → claude-opus
+    "doc_planner": PerformanceTier.PERFORMANCE,      # JSON layout spec — max quality
     "doc_generator": PerformanceTier.BALANCED,   # JS code generation + retries
     "doc_planner_pdf": PerformanceTier.PERFORMANCE, # PDF layout spec (CSS/HTML units)
     "pdf_generator": PerformanceTier.BALANCED,      # HTML+CSS generation → Puppeteer

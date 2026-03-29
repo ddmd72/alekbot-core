@@ -99,6 +99,27 @@ HTTP_CLIENT_WHITELIST_FILES: set[str] = {
 
 
 # ---------------------------------------------------------------------------
+# TD-V8 — Handler implementing its own primary port
+#
+# Root cause: ConversationHandler implements ConversationHandlerPort, which is
+# a primary (driving) port — a contract for the delivery layer (Slack, Telegram)
+# to call into the application core. The handler must import the port to declare
+# its conformance. This is a valid hexagonal pattern, not a violation.
+#
+# No fix needed. Do not remove unless the pattern itself is eliminated.
+#
+# Format: (normalized_file_path, resolved_absolute_module)
+# Consumed by REQ-ARCH-25.
+# ---------------------------------------------------------------------------
+HANDLER_IMPLEMENTS_PORT_WHITELIST: set[tuple[str, str]] = {
+    (
+        "src/handlers/conversation_handler.py",
+        "src.ports.conversation_handler_port",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
 # TD-V7 — Platform-specific formatting references in agents/services
 #
 # Root cause: fallback system prompts in web search agents contain

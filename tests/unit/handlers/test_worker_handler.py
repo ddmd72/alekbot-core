@@ -1,21 +1,23 @@
 """
 Unit tests for WorkerHandler.
 
-Key invariant under test:
+Key invariant under test (deep research polling):
   ensure_agents_for_user() MUST be called before any notify() / deliver_deep_research()
   invocation so that per-user agents are registered in the coordinator before routing.
 
 Coverage:
   _handle_email_indexing
-    - completed job  → ensure_agents + notify called
-    - paginated job  → ensure_agents NOT called, next page enqueued
-    - job not found  → 404, no agent/notify side-effects
-    - non-running job → skipped, no agent/notify side-effects
-    - missing creds  → 400, no agent/notify side-effects
-    - notify raises  → warning logged, 200 still returned
+    - completed job        → 200, has_more=False, run_indexing_job called
+    - paginated job        → 200, next page re-enqueued via task_dispatch
+    - job not found        → 404
+    - non-running job      → 200, skipped with reason
+    - missing creds        → 400
+    - run_indexing raises  → 200, status=failed
+    - invalid_grant raises → 200, status=failed (no retry by Cloud Tasks)
+    - generic error raises → 200, status=failed
 
   _handle_deep_research_polling
-    - missing job_port / task_queue → 500, ensure_agents NOT called
+    - missing job_port / task_dispatch → 500, ensure_agents NOT called
     - timeout         → ensure_agents + notify called
     - in_progress     → ensure_agents called, re-enqueued
     - completed       → ensure_agents called, deliver_deep_research called
@@ -30,9 +32,6 @@ from datetime import datetime
 
 from src.domain.email import IndexingJob
 from src.handlers.worker_handler import WorkerHandler
-from src.ports.email_indexing_job_repository import EmailIndexingJobRepository
-from src.ports.oauth_credentials_port import OAuthCredentialsPort
-from src.ports.task_queue import TaskQueue
 from src.services.email_indexing_service import EmailIndexingService
 
 
@@ -72,23 +71,23 @@ def _make_worker(
     Build a WorkerHandler with all dependencies mocked.
     Returns (worker, mocks_namespace).
     """
-    email_job_repo = AsyncMock(spec=EmailIndexingJobRepository)
-    email_job_repo.get_job.return_value = job if job is not None else _make_job()
+    _job = job if job is not None else _make_job()
+    _creds = creds
 
     email_indexing = MagicMock(spec=EmailIndexingService)
+    email_indexing.load_job_for_execution = AsyncMock(
+        return_value=(_job, _creds, None)
+    )
     email_indexing.run_indexing_job = AsyncMock(
         return_value=run_result if run_result is not None else _make_job(status="completed")
     )
     email_indexing.completion_alert = MagicMock(return_value="Job done!")
 
-    oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.get_credentials.return_value = creds
-
     notification = AsyncMock()  # NotificationPort protocol — no ABC to spec against
     notification.notify = AsyncMock()
     notification.notify_raw = AsyncMock()
 
-    task_queue = AsyncMock(spec=TaskQueue)
+    task_dispatch = AsyncMock()
 
     agent_factory = MagicMock()
     agent_factory.ensure_agents_for_user = AsyncMock()
@@ -99,11 +98,9 @@ def _make_worker(
     job_registry.list_available = MagicMock(return_value=["gemini"])
 
     ns = MagicMock()
-    ns.email_job_repo = email_job_repo
     ns.email_indexing = email_indexing
-    ns.oauth = oauth
     ns.notification = notification
-    ns.task_queue = task_queue
+    ns.task_dispatch = task_dispatch
     ns.agent_factory = agent_factory
     ns.job_registry = job_registry
     ns.job_port = job_port
@@ -111,15 +108,13 @@ def _make_worker(
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
         email_indexing_service=email_indexing,
-        email_job_repo=email_job_repo,
-        oauth_credentials=oauth,
         notification_service=notification,
-        consolidation_queue=MagicMock(),
+        consolidation_service=MagicMock(),
         coordinator=MagicMock(),
         agent_factory=agent_factory,
         indexed_email_repo=None,
         user_repo=MagicMock(),
-        task_queue=task_queue,
+        task_dispatch=task_dispatch,
         job_registry=job_registry,
     )
     return worker, ns
@@ -131,32 +126,25 @@ def _make_worker(
 
 class TestHandleEmailIndexing:
 
-    async def test_completed_job_calls_ensure_agents_then_notify(self):
-        """ensure_agents_for_user is called before notify when job completes."""
+    async def test_completed_job_returns_200_with_has_more_false(self):
+        """Job with no next_page_token: 200, has_more=False, no re-enqueue."""
         completed = _make_job(status="completed", next_page_token=None)
         worker, ns = _make_worker(run_result=completed)
-        call_order = []
-        ns.agent_factory.ensure_agents_for_user.side_effect = lambda uid: call_order.append("ensure")
-        ns.notification.notify.side_effect = lambda **kw: call_order.append("notify")
 
         result, status = await worker._handle_email_indexing({"job_id": _JOB_ID})
 
         assert status == 200
-        assert call_order == ["ensure", "notify"], (
-            "ensure_agents_for_user must be called BEFORE notify"
-        )
-        ns.agent_factory.ensure_agents_for_user.assert_called_once_with(_USER_ID)
-        ns.notification.notify.assert_called_once()
+        assert result["has_more"] is False
+        ns.task_dispatch.enqueue_email_indexing_task.assert_not_called()
 
-    async def test_completed_job_notify_receives_correct_user(self):
+    async def test_completed_job_calls_run_indexing_job(self):
+        """Handler delegates execution to email_indexing_service.run_indexing_job."""
         completed = _make_job(status="completed")
         worker, ns = _make_worker(run_result=completed)
 
         await worker._handle_email_indexing({"job_id": _JOB_ID})
 
-        _, kwargs = ns.notification.notify.call_args
-        assert kwargs["user_id"] == _USER_ID
-        assert kwargs["account_id"] == _ACCOUNT_ID
+        ns.email_indexing.run_indexing_job.assert_called_once()
 
     async def test_paginated_job_does_not_call_ensure_agents(self):
         """More pages remain — no notification, no agent registration."""
@@ -168,11 +156,11 @@ class TestHandleEmailIndexing:
         assert status == 200
         ns.agent_factory.ensure_agents_for_user.assert_not_called()
         ns.notification.notify.assert_not_called()
-        ns.task_queue.enqueue_email_indexing_task.assert_called_once_with(_JOB_ID)
+        ns.task_dispatch.enqueue_email_indexing_task.assert_called_once_with(_JOB_ID)
 
     async def test_job_not_found_returns_404(self):
         worker, ns = _make_worker()
-        ns.email_job_repo.get_job.return_value = None
+        ns.email_indexing.load_job_for_execution.return_value = (None, None, "not_found")
 
         result, status = await worker._handle_email_indexing({"job_id": _JOB_ID})
 
@@ -181,8 +169,8 @@ class TestHandleEmailIndexing:
         ns.notification.notify.assert_not_called()
 
     async def test_non_running_job_is_skipped(self):
-        already_done = _make_job(status="completed")
-        worker, ns = _make_worker(job=already_done)
+        worker, ns = _make_worker()
+        ns.email_indexing.load_job_for_execution.return_value = (None, None, "completed")
 
         result, status = await worker._handle_email_indexing({"job_id": _JOB_ID})
 
@@ -192,7 +180,8 @@ class TestHandleEmailIndexing:
         ns.notification.notify.assert_not_called()
 
     async def test_missing_oauth_returns_400(self):
-        worker, ns = _make_worker(creds=None)
+        worker, ns = _make_worker()
+        ns.email_indexing.load_job_for_execution.return_value = (None, None, "failed_auth")
 
         result, status = await worker._handle_email_indexing({"job_id": _JOB_ID})
 
@@ -207,17 +196,15 @@ class TestHandleEmailIndexing:
 
         assert status == 400
 
-    async def test_notify_exception_returns_200_with_warning(self):
-        """Notification failure must not surface as an HTTP error."""
-        completed = _make_job(status="completed")
-        worker, ns = _make_worker(run_result=completed)
-        ns.notification.notify.side_effect = RuntimeError("channel unavailable")
+    async def test_run_indexing_exception_returns_200_and_reports_failed(self):
+        """Exception from run_indexing_job: 200 returned, status='failed' in body."""
+        worker, ns = _make_worker()
+        ns.email_indexing.run_indexing_job.side_effect = RuntimeError("unexpected")
 
         result, status = await worker._handle_email_indexing({"job_id": _JOB_ID})
 
         assert status == 200
-        # ensure_agents was still called (exception came from notify, not from ensure)
-        ns.agent_factory.ensure_agents_for_user.assert_called_once_with(_USER_ID)
+        assert result["status"] == "failed"
 
     async def test_run_indexing_job_invalid_grant_returns_200_not_500(self):
         """
@@ -300,7 +287,7 @@ class TestHandleDeepResearchPolling:
         assert result["status"] == "polling"
         ns.agent_factory.ensure_agents_for_user.assert_called_once_with(_USER_ID)
         ns.notification.notify.assert_not_called()
-        ns.task_queue.enqueue_deep_research_polling.assert_called_once()
+        ns.task_dispatch.enqueue_deep_research_polling.assert_called_once()
 
     async def test_completed_calls_ensure_agents_and_delivers(self):
         worker, ns = _make_worker()

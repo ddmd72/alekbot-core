@@ -128,4 +128,20 @@ Note: `update` uses `--update-headers`, `create` uses `--headers`. This is a `gc
 Each scheduler job invocation costs ~$0.10/month per job (first 3 jobs free).
 Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 
-**Last Updated:** 2026-03-22
+---
+
+### Billing Daily Summary
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `alek-bot-dev-billing-daily-summary` |
+| **Schedule** | `0 9 * * *` (daily at 09:00 Europe/Madrid, DST-aware) |
+| **HTTP** | `POST /worker` |
+| **Payload** | `{"task_type": "billing_daily_summary"}` |
+| **Purpose** | Sends a daily billing report to each account owner with activity today. Shows daily / monthly / total token consumption and cost per account. Skips accounts with zero daily usage. |
+| **Handler** | `WorkerHandler._handle_billing_daily_summary()` |
+| **Env** | dev only (add to cloudbuild-prod.yaml when ready for prod) |
+
+---
+
+**Last Updated:** 2026-03-29

@@ -22,7 +22,7 @@ from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..ports.platform_auth_port import PlatformAuthPort
 from ..ports.file_service import FileService
 from ..ports.language_service_port import LanguageServicePort
-from ..ports.localization_port import LocalizationPort
+from ..services.localization_service import LocalizationService
 from ..utils.logger import logger
 
 
@@ -52,7 +52,7 @@ class TelegramAdapterFactory:
         indexed_email_repo=None,
         user_repo=None,
         language_service: Optional[LanguageServicePort] = None,
-        localization: Optional[LocalizationPort] = None,
+        localization: Optional[LocalizationService] = None,
     ) -> TelegramWebhookAdapter:
         """
         Create TelegramWebhookAdapter with RichContentService wired in.

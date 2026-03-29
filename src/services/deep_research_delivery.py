@@ -13,10 +13,9 @@ Shared by WorkerHandler, AgentWorkerHandler, and deep_research_webhooks.
 
 import html as html_lib
 from datetime import datetime
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 
 from ..ports.media_storage_port import MediaStoragePort
-from ..ports.task_queue import TaskQueue
 from ..utils.logger import logger
 
 
@@ -139,7 +138,7 @@ async def deliver_deep_research(
     user_id: str,
     account_id: str,
     query: str,
-    task_queue: Optional[TaskQueue],
+    task_queue: Optional[Any],  # TaskQueue or TaskDispatchService — duck-typed
     session_id: str = "",
     round1_text: str = "",
     media_storage: Optional[MediaStoragePort] = None,

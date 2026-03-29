@@ -23,8 +23,8 @@ def test_get_tier_for_agent_returns_specific_tier():
 def test_get_tier_for_agent_falls_back_to_class_defaults_when_key_missing():
     # Simulates a user with stale stored agent_tiers that lacks a new agent type.
     config = UserBotConfig(agent_tiers={})
-    # "quick" has a class-level default of BALANCED, not default_tier (ECO).
-    assert config.get_tier_for_agent("quick") == PerformanceTier.BALANCED
+    # "quick" has a class-level default of ECO, not default_tier (ECO).
+    assert config.get_tier_for_agent("quick") == PerformanceTier.ECO
 
 
 def test_get_tier_for_agent_returns_default_tier_for_unknown_agent():

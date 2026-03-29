@@ -75,7 +75,7 @@ class TestAccountRepositoryContract:
             name for name, method in inspect.getmembers(AccountRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 6, f"Expected 6 abstract methods, got {abstract_methods}"
 
 
 class TestAccountRepositoryMockImplementation:

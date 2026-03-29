@@ -28,7 +28,7 @@ class AgentProviderStrategy:
             "fallback": "gemini"
         },
         "quick": {
-            "default_provider": "gemini",
+            "default_provider": "claude",
             "allowed_providers": ["grok", "gemini", "claude", "openai"],
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
@@ -106,7 +106,7 @@ class AgentProviderStrategy:
         # NOT called for this agent type. This entry exists solely for unified default/allowed
         # provider declaration. UserAgentFactory reads default_provider from here.
         "deep_research": {
-            "default_provider": "openai",
+            "default_provider": "claude",
             "allowed_providers": ["gemini", "openai", "claude"],
             "required_capabilities": [],
             "fallback": None

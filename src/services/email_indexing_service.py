@@ -10,7 +10,8 @@ Pipeline per chunk (100 emails/page):
 import asyncio
 import uuid
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from ..domain.email import (
     EmailClassificationResult,
@@ -28,6 +29,7 @@ from ..ports.email_provider_port import EmailProviderPort
 from ..ports.embedding_service import EmbeddingService
 from ..ports.email_classifier_port import EmailClassifierPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
+from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..utils.logger import logger
 
 # Gmail search filter applied to every indexing job.
@@ -52,6 +54,7 @@ class EmailIndexingService:
         exclusions_repo: EmailExclusionsPort,
         classifier: EmailClassifierPort,
         embedding: EmbeddingService,
+        oauth: Optional[OAuthCredentialsPort] = None,
     ):
         self._gmail = gmail
         self._email_repo = email_repo
@@ -59,6 +62,7 @@ class EmailIndexingService:
         self._exclusions_repo = exclusions_repo
         self._classifier = classifier
         self._embedding = embedding
+        self._oauth = oauth
         logger.info("📧 EmailIndexingService initialized")
 
     # ------------------------------------------------------------------
@@ -129,6 +133,142 @@ class EmailIndexingService:
             mode=mode,
             backfill_until=backfill_until,
         )
+
+    # ------------------------------------------------------------------
+    # Worker-facing methods (called by WorkerHandler via Cloud Tasks)
+    # ------------------------------------------------------------------
+
+    async def start_indexing_for_eligible_users(
+        self, user_repo: Any, now_utc: datetime
+    ) -> Tuple[List[str], int, int]:
+        """
+        Fan-out: create and persist indexing jobs for all eligible Gmail users.
+
+        Eligibility criteria:
+          - gmail_auto_index enabled in user config
+          - current local hour matches gmail_auto_index_hour
+          - no indexing job already running
+          - OAuth credentials present
+
+        Returns (job_ids_to_enqueue, started, skipped). Caller enqueues the jobs.
+        Requires oauth injected in constructor.
+        """
+        if not self._oauth:
+            logger.warning("[EmailIndexing] start_indexing_for_eligible_users: oauth not configured")
+            return [], 0, 0
+
+        user_ids = await self._oauth.list_users_by_provider("gmail")
+        job_ids: List[str] = []
+        started = skipped = 0
+
+        for user_id in user_ids:
+            profile = await user_repo.get_user(user_id)
+            if not profile:
+                skipped += 1
+                continue
+
+            cfg = profile.config
+            if not cfg.gmail_auto_index:
+                skipped += 1
+                continue
+
+            user_tz = ZoneInfo(cfg.timezone or "UTC")
+            local_hour = now_utc.astimezone(user_tz).hour
+            if local_hour != cfg.gmail_auto_index_hour:
+                skipped += 1
+                continue
+
+            latest_job = await self._job_repo.get_latest_job(user_id, "gmail")
+            if latest_job and latest_job.status == "running":
+                logger.info(
+                    "[EmailIndexing] job already running for %s, skipping", user_id[:8]
+                )
+                skipped += 1
+                continue
+
+            creds = await self._oauth.get_credentials(user_id, "gmail")
+            if not creds:
+                logger.warning(
+                    "[EmailIndexing] no credentials for %s", user_id[:8]
+                )
+                skipped += 1
+                continue
+
+            job = self.create_job(
+                user_id=user_id,
+                provider="gmail",
+                triggered_by="scheduler",
+                mode="incremental",
+                account_id=profile.account_id,
+            )
+            await self._job_repo.create_job(job)
+            job_ids.append(job.job_id)
+            logger.info(
+                "[EmailIndexing] created job %s for %s", job.job_id[:8], user_id[:8]
+            )
+            started += 1
+
+        logger.info(
+            "[EmailIndexing] start_indexing_for_eligible_users: started=%d, skipped=%d",
+            started, skipped,
+        )
+        return job_ids, started, skipped
+
+    async def load_job_for_execution(
+        self, job_id: str
+    ) -> Tuple[Optional[IndexingJob], Optional[OAuthCredentials], Optional[str]]:
+        """
+        Load a job and its OAuth credentials for page execution.
+
+        Returns (job, creds, None) if ready to execute.
+        Returns (None, None, skip_reason) if the job should be skipped:
+          - "not_found"    — job does not exist
+          - job.status     — job is not 'running' (e.g. "completed", "failed")
+          - "failed_auth"  — credentials missing; job status updated to 'failed_auth'
+          - "no_oauth"     — oauth port not injected
+
+        Requires oauth injected in constructor.
+        """
+        if not self._oauth:
+            logger.warning("[EmailIndexing] load_job_for_execution: oauth not configured")
+            return None, None, "no_oauth"
+
+        job = await self._job_repo.get_job(job_id)
+        if not job:
+            logger.warning("[EmailIndexing] load_job_for_execution: job %s not found", job_id[:8])
+            return None, None, "not_found"
+        if job.status != "running":
+            logger.info(
+                "[EmailIndexing] job %s is %s, skipping", job_id[:8], job.status
+            )
+            return None, None, job.status  # actual status: "completed", "failed", etc.
+
+        creds = await self._oauth.get_credentials(job.user_id, job.provider)
+        if not creds:
+            await self._job_repo.update_job(
+                job_id, {"status": "failed_auth", "updated_at": datetime.utcnow()}
+            )
+            return None, None, "failed_auth"
+
+        return job, creds, None
+
+    async def mark_stale_jobs_failed(self, stale_threshold: datetime) -> int:
+        """
+        Mark all 'running' jobs older than stale_threshold as 'failed'.
+        Returns the count of jobs marked.
+        """
+        stale_jobs = await self._job_repo.get_stale_running_jobs(stale_threshold)
+        marked = 0
+        for stale_job in stale_jobs:
+            await self._job_repo.update_job(stale_job.job_id, {
+                "status": "failed",
+                "updated_at": datetime.utcnow(),
+            })
+            marked += 1
+            logger.warning(
+                "[EmailIndexing] Marked stale job %s as failed", stale_job.job_id[:8]
+            )
+        return marked
 
     async def run_indexing_job(
         self,
