@@ -24,7 +24,6 @@ from ..utils.logger import logger
 
 
 _MAX_EMAILS = 200
-_MAX_BODY_CHARS = 500
 
 
 class EmailReviewService:
@@ -86,7 +85,7 @@ class EmailReviewService:
                 "date": meta.date.isoformat(),
                 "snippet": meta.snippet,
                 "body": (
-                    full_content[meta.email_id].body_text[:_MAX_BODY_CHARS]
+                    full_content[meta.email_id].body_text
                     if meta.email_id in full_content and full_content[meta.email_id].body_text
                     else ""
                 ),
@@ -112,7 +111,7 @@ class EmailReviewService:
             f"Language rule: write the entire report and response message in the user's language. "
             f"You know which language the user communicates in — use it throughout.\n"
             f"\n"
-            f"Each entry contains: email_id, from, subject, date, snippet, body (first 500 chars), "
+            f"Each entry contains: email_id, from, subject, date, snippet, body (full cleaned text), "
             f"attachments (filenames only). Newsletter/digest bodies are often mostly links — "
             f"rely on subject + snippet for initial triage.\n"
             f"\n"
