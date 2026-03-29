@@ -123,17 +123,20 @@ GROUNDING_INJECTS_SEARCH_TOOL = ContractRule(
         "When LLMRequest.use_grounding=True, the adapter must inject the provider's "
         "native search tool into the API call. The search tool should be the first "
         "element so it takes priority over domain function tools. "
-        "Claude: web_search_20250305 tool in tools list. "
+        "Claude: web_search_20260209 (Sonnet/Opus) or web_search_20250305 (Haiku) in tools list. "
         "Gemini: Tool with google_search in config.tools. "
         "Grok/OpenAI: {'type':'web_search'} tool in tools list."
     ),
     validators={
         "claude": lambda kw: _true(
             any(
-                isinstance(t, dict) and t.get("type") == "web_search_20250305"
+                isinstance(t, dict) and t.get("type") in (
+                    "web_search_20260209",
+                    "web_search_20250305",
+                )
                 for t in (kw.get("tools") or [])
             ),
-            "Claude: web_search_20250305 tool missing from tools when use_grounding=True",
+            "Claude: web_search tool (20260209 or 20250305) missing from tools when use_grounding=True",
         ),
         "gemini": lambda kw: _true(
             any(

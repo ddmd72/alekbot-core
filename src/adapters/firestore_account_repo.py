@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from google.cloud import firestore
+from google.cloud.firestore import FieldFilter
 
 from ..domain.billing import BillingAccount
 from ..ports.account_repository import AccountRepository
@@ -99,6 +100,15 @@ class FirestoreAccountRepository(AccountRepository):
 
         transaction = self.db_client.transaction()
         await _transaction(transaction)
+
+    async def list_all_accounts(self) -> List[BillingAccount]:
+        docs = self.accounts_collection.where(
+            filter=FieldFilter("is_active", "==", True)
+        ).stream()
+        result = []
+        async for doc in docs:
+            result.append(BillingAccount(**doc.to_dict()))
+        return result
 
     async def check_quota(self, account_id: str) -> Tuple[bool, str]:
         account = await self.get_account(account_id)

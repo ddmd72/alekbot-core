@@ -11,6 +11,7 @@ from tests.unit.arch_tech_debt import (
     MODEL_NAME_WHITELIST_FILES,
     HTTP_CLIENT_WHITELIST_FILES,
     PLATFORM_FORMAT_WHITELIST_FILES,
+    HANDLER_IMPLEMENTS_PORT_WHITELIST,
 )
 
 
@@ -1017,5 +1018,20 @@ def test_handlers_do_not_import_ports_directly():
     Ports are infrastructure contracts owned by services. Handlers receive
     wired service objects via constructor injection and call service methods —
     they never call port methods directly.
+
+    Exception: a handler may import its own primary (driving) port to declare
+    that it implements that interface — see arch_tech_debt.py →
+    HANDLER_IMPLEMENTS_PORT_WHITELIST.
     """
-    _assert_no_forbidden("src/handlers", ["src.ports"])
+    violations = []
+    for fp, module, lineno in _collect_imports("src/handlers"):
+        if not module.startswith("src.ports"):
+            continue
+        fp_norm = fp.replace(os.sep, "/")
+        if (fp_norm, module) in HANDLER_IMPLEMENTS_PORT_WHITELIST:
+            continue
+        violations.append(f"  {fp}:{lineno} imports {module}")
+    assert not violations, (
+        "Handler imports port directly — extract port call into a service:\n"
+        + "\n".join(violations)
+    )

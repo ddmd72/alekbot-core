@@ -2,6 +2,8 @@
 Platform-agnostic conversation handler.
 Contains all business logic for processing messages from any platform.
 """
+from __future__ import annotations
+
 import base64
 import os
 import json
@@ -13,19 +15,19 @@ from typing import Callable, Coroutine, List, Optional, Any, TYPE_CHECKING
 from ..domain.messaging import MessageContext, ResponseChannel, SmartResponse, RichContent
 from ..domain.ui_messages import StatusType
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus, DeliveryItem
-from ..ports.llm_port import Message, MessagePart
-from ..ports.file_service import FileService
+from ..domain.llm import Message, MessagePart
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..infrastructure.agent_config import ENABLE_HISTORY_OPTIMIZATION
+from ..ports.conversation_handler_port import ConversationHandlerPort
+from ..services.localization_service import LocalizationService
 
 if TYPE_CHECKING:
     from ..composition.user_agent_factory import UserAgentFactory
+    from ..ports.file_service import FileService
+    from ..ports.audio_transcription_port import AudioTranscriptionPort
 from ..utils.file_conversion import (
     convert_file_to_text, is_native_binary, make_history_stub,
 )
-from ..ports.audio_transcription_port import AudioTranscriptionPort
-from ..ports.conversation_handler_port import ConversationHandlerPort
-from ..ports.localization_port import LocalizationPort
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 from ..utils.logging_context import set_log_context
@@ -93,7 +95,7 @@ class ConversationHandler(ConversationHandlerPort):
         # Previously: `from src.handlers.consolidation_handler import process_user_batches_on_overflow`
         # That was a horizontal coupling between two handlers. Now wired in composition/.
         overflow_callback: Optional[Callable[..., Coroutine]] = None,
-        localization: Optional[LocalizationPort] = None,
+        localization: Optional[LocalizationService] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory

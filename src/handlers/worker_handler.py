@@ -21,35 +21,31 @@ Supported task_types:
   - daily_email_review            → fetch last 24h emails, deliver structured payload to SmartAgent for analysis
 """
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from dateutil.relativedelta import relativedelta
-
 if TYPE_CHECKING:
     from ..services.email_review_service import EmailReviewService
     from ..services.task_indexing_service import TaskIndexingService
     from ..services.task_setup_service import TaskSetupService
-
-from ..domain.agent_note import ReminderRecurrence
-from ..ports.agent_note_port import AgentNotePort
+    from ..ports.indexed_email_repository import IndexedEmailRepository
+    from ..ports.media_storage_port import MediaStoragePort
+    from ..ports.account_repository import AccountRepository
 
 from ..domain.agent import AgentIntent, AgentMessage, AgentStatus
 from ..handlers.agent_worker_handler import AgentWorkerHandler
-from ..handlers.consolidation_handler import process_user_batches_on_overflow
 from ..services.deep_research_delivery import (
     NotificationPort, deliver_deep_research,
 )
-from ..ports.consolidation_queue import ConsolidationQueue
-from ..ports.media_storage_port import MediaStoragePort
+from ..services.consolidation_service import ConsolidationService
 from ..services.provider_registry import ProviderRegistry
-from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
-from ..ports.indexed_email_repository import IndexedEmailRepository
-from ..ports.oauth_credentials_port import OAuthCredentialsPort
-from ..ports.task_queue import TaskQueue
 from ..services.email_indexing_service import EmailIndexingService
+from ..services.reminders_service import RemindersService
+from ..services.task_dispatch_service import TaskDispatchService
 from ..utils.logger import logger
 from ..utils.debug_logger import get_debug_logger
 
@@ -66,39 +62,39 @@ class WorkerHandler:
         self,
         agent_worker_handler: AgentWorkerHandler,
         email_indexing_service: EmailIndexingService,
-        email_job_repo: EmailIndexingJobRepository,
-        oauth_credentials: OAuthCredentialsPort,
         notification_service: NotificationPort,
-        consolidation_queue: ConsolidationQueue,
+        consolidation_service: Optional[ConsolidationService],
         coordinator: Any,  # AgentCoordinator (avoid infrastructure import in handlers)
         agent_factory: Any,  # UserAgentFactory
         indexed_email_repo: Optional[IndexedEmailRepository],
         user_repo: Any,  # UserRepository
-        task_queue: Optional[TaskQueue] = None,
+        task_dispatch: Optional[TaskDispatchService] = None,
         job_registry: Optional[ProviderRegistry] = None,
         media_storage: Optional[MediaStoragePort] = None,
         task_setup: "Optional[TaskSetupService]" = None,
         task_indexing: "Optional[TaskIndexingService]" = None,
-        notes_port: Optional[AgentNotePort] = None,
+        reminders_service: Optional[RemindersService] = None,
         email_review: "Optional[EmailReviewService]" = None,
+        account_repo: "Optional[AccountRepository]" = None,
+        billing_webhook: Any = None,  # SlackWebhookAdapter
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
-        self._email_job_repo = email_job_repo
-        self._oauth = oauth_credentials
         self._notification = notification_service
-        self._consolidation_queue = consolidation_queue
+        self._consolidation = consolidation_service
         self._coordinator = coordinator
         self._agent_factory = agent_factory
         self._indexed_email_repo = indexed_email_repo
         self._user_repo = user_repo
-        self._task_queue = task_queue
+        self._task_dispatch = task_dispatch
         self._job_registry: Optional[ProviderRegistry] = job_registry
         self._media_storage = media_storage
         self._task_setup = task_setup
         self._task_indexing = task_indexing
-        self._notes_port = notes_port
+        self._reminders_service = reminders_service
         self._email_review = email_review
+        self._account_repo = account_repo
+        self._billing_webhook = billing_webhook
 
     async def handle(self, payload: dict) -> Optional[Tuple[dict, int]]:
         """
@@ -138,6 +134,8 @@ class WorkerHandler:
             return await self._handle_start_daily_email_review()
         elif task_type == "daily_email_review":
             return await self._handle_daily_email_review(payload)
+        elif task_type == "billing_daily_summary":
+            return await self._handle_billing_daily_summary()
         return None  # unknown task_type — caller handles fallback
 
     # ------------------------------------------------------------------
@@ -146,59 +144,21 @@ class WorkerHandler:
 
     async def _handle_start_email_indexing(self) -> Tuple[dict, int]:
         """
-        Fan-out: start incremental indexing for all Gmail users with auto_index enabled
-        and whose auto_index_hour matches the current hour in their timezone.
+        Fan-out: start incremental indexing for all eligible Gmail users.
+        Delegates eligibility check and job creation to EmailIndexingService.
         Called by Cloud Scheduler hourly.
         """
-        if not self._oauth or not self._email_job_repo or not self._task_queue:
-            logger.warning("[Worker] start_email_indexing: required services not configured")
-            return {"error": "services not configured"}, 501
+        if not self._task_dispatch:
+            logger.warning("[Worker] start_email_indexing: task_queue not configured")
+            return {"error": "task_queue not configured"}, 501
 
-        user_ids = await self._oauth.list_users_by_provider("gmail")
         now_utc = datetime.now(timezone.utc)
-        started, skipped = 0, 0
-
-        for user_id in user_ids:
-            profile = await self._user_repo.get_user(user_id)
-            if not profile:
-                skipped += 1
-                continue
-
-            cfg = profile.config
-            if not cfg.gmail_auto_index:
-                skipped += 1
-                continue
-
-            user_tz = ZoneInfo(cfg.timezone or "UTC")
-            local_hour = now_utc.astimezone(user_tz).hour
-            if local_hour != cfg.gmail_auto_index_hour:
-                skipped += 1
-                continue
-
-            # Check no indexing job already running
-            latest_job = await self._email_job_repo.get_latest_job(user_id, "gmail")
-            if latest_job and latest_job.status == "running":
-                logger.info(f"[Worker] start_email_indexing: job already running for {user_id[:8]}, skipping")
-                skipped += 1
-                continue
-
-            creds = await self._oauth.get_credentials(user_id, "gmail")
-            if not creds:
-                logger.warning(f"[Worker] start_email_indexing: no credentials for {user_id[:8]}")
-                skipped += 1
-                continue
-
-            job = self._email_indexing.create_job(
-                user_id=user_id,
-                provider="gmail",
-                triggered_by="scheduler",
-                mode="incremental",
-                account_id=profile.account_id,
-            )
-            await self._email_job_repo.create_job(job)
-            await self._task_queue.enqueue_email_indexing_task(job.job_id)
-            logger.info(f"[Worker] start_email_indexing: enqueued job {job.job_id[:8]} for {user_id[:8]}")
-            started += 1
+        job_ids, started, skipped = await self._email_indexing.start_indexing_for_eligible_users(
+            self._user_repo, now_utc
+        )
+        for job_id in job_ids:
+            await self._task_dispatch.enqueue_email_indexing_task(job_id)
+            logger.info(f"[Worker] start_email_indexing: enqueued job {job_id[:8]}")
 
         logger.info(f"[Worker] start_email_indexing complete: started={started}, skipped={skipped}")
         return {"started": started, "skipped": skipped}, 200
@@ -206,27 +166,20 @@ class WorkerHandler:
     async def _handle_email_indexing(self, payload: dict) -> Tuple[dict, int]:
         """
         Process one page of email indexing. Re-enqueues if more pages remain.
-        Sends user notification on completion.
+        Delegates job/credential loading to EmailIndexingService.
         """
         job_id = payload.get("job_id")
         logger.info(f"📧 [Worker] email_indexing received: job_id={job_id}")
         if not job_id:
             return {"error": "missing job_id"}, 400
 
-        job = await self._email_job_repo.get_job(job_id)
-        if not job:
-            return {"error": "job not found"}, 404
-        if job.status != "running":
-            logger.info(f"📧 [Worker] Job {job_id[:8]} is {job.status}, skipping")
-            return {"status": "skipped", "reason": job.status}, 200
-
-        creds = await self._oauth.get_credentials(job.user_id, job.provider)
-        if not creds:
-            await self._email_job_repo.update_job(
-                job_id, {"status": "failed_auth", "updated_at": datetime.utcnow()}
-            )
-            return {"error": "oauth credentials missing"}, 400
-
+        job, creds, skip_reason = await self._email_indexing.load_job_for_execution(job_id)
+        if skip_reason:
+            if skip_reason == "not_found":
+                return {"error": "job not found"}, 404
+            if skip_reason == "failed_auth":
+                return {"error": "oauth credentials missing"}, 400
+            return {"status": "skipped", "reason": skip_reason}, 200
         try:
             job = await self._email_indexing.run_indexing_job(
                 job=job,
@@ -237,13 +190,11 @@ class WorkerHandler:
                 backfill_until=job.backfill_until,
             )
         except Exception as exc:
-            # Service already updated job status (failed_auth / failed) and logged the error.
-            # Return 200 so Cloud Tasks does not retry — retrying a failed_auth job is pointless.
             logger.warning(f"⚠️ [Worker] Indexing job {job_id[:8]} raised (status updated by service): {exc}")
             return {"status": "failed", "error": str(exc)}, 200
 
-        if job.next_page_token and self._task_queue:
-            await self._task_queue.enqueue_email_indexing_task(job.job_id)
+        if job.next_page_token and self._task_dispatch:
+            await self._task_dispatch.enqueue_email_indexing_task(job.job_id)
             logger.info(f"📬 [Worker] Re-enqueued email indexing page for job {job.job_id[:8]}")
         elif not job.next_page_token:
             logger.info(f"✅ [Worker] Indexing job {job_id[:8]} complete: stored={job.emails_stored}, failed={job.emails_failed}")
@@ -255,17 +206,9 @@ class WorkerHandler:
     # ------------------------------------------------------------------
 
     async def _handle_watchdog(self) -> Tuple[dict, int]:
-        """Mark stale 'running' jobs as failed. Triggered by Cloud Scheduler."""
+        """Mark stale 'running' jobs as failed. Delegates to EmailIndexingService."""
         stale_threshold = datetime.utcnow() - timedelta(hours=2)
-        stale_jobs = await self._email_job_repo.get_stale_running_jobs(stale_threshold)
-        marked = 0
-        for stale_job in stale_jobs:
-            await self._email_job_repo.update_job(stale_job.job_id, {
-                "status": "failed",
-                "updated_at": datetime.utcnow(),
-            })
-            marked += 1
-            logger.warning(f"⏰ [Watchdog] Marked stale job {stale_job.job_id[:8]} as failed")
+        marked = await self._email_indexing.mark_stale_jobs_failed(stale_threshold)
         return {"status": "ok", "marked_failed": marked}, 200
 
     # ------------------------------------------------------------------
@@ -278,20 +221,15 @@ class WorkerHandler:
         One batch per HTTP request → each Cloud Task gets full CPU on Cloud Run.
         """
         user_id = payload.get("user_id")
-        if not user_id or self._agent_factory is None:
-            return {"error": "missing user_id or factory not ready"}, 400
+        if not user_id or self._consolidation is None:
+            return {"error": "missing user_id or consolidation service not ready"}, 400
 
-        has_more = await process_user_batches_on_overflow(
+        has_more = await self._consolidation.process_user_batches(
             user_id=user_id,
-            coordinator=self._coordinator,
-            agent_factory=self._agent_factory,
-            queue=self._consolidation_queue,
             max_batches=1,
-            indexed_email_repo=self._indexed_email_repo,
-            user_repo=self._user_repo,
         )
-        if has_more and self._task_queue:
-            await self._task_queue.enqueue_consolidation_task(user_id=user_id)
+        if has_more and self._task_dispatch:
+            await self._task_dispatch.enqueue_consolidation_task(user_id=user_id)
             logger.info(f"📬 [Worker] Re-enqueued next consolidation task for user {user_id[:8]}")
         return {"status": "ok"}, 200
 
@@ -324,7 +262,7 @@ class WorkerHandler:
                 job_port = self._job_registry.get(provider)
             except ValueError:
                 pass
-        if not job_port or not self._task_queue:
+        if not job_port or not self._task_dispatch:
             logger.error(
                 f"[DeepResearch] Missing dependencies in WorkerHandler "
                 f"(provider={provider!r}, available="
@@ -365,7 +303,7 @@ class WorkerHandler:
                 )
                 return {"status": "dead", "attempt": attempt}, 200
 
-            await self._task_queue.enqueue_deep_research_polling(
+            await self._task_dispatch.enqueue_deep_research_polling(
                 interaction_id=interaction_id,
                 user_id=user_id,
                 account_id=account_id,
@@ -379,7 +317,7 @@ class WorkerHandler:
             return {"status": "retry", "attempt": attempt + 1}, 200
 
         if status == "in_progress":
-            await self._task_queue.enqueue_deep_research_polling(
+            await self._task_dispatch.enqueue_deep_research_polling(
                 interaction_id=interaction_id,
                 user_id=user_id,
                 account_id=account_id,
@@ -405,7 +343,7 @@ class WorkerHandler:
                 user_id=user_id,
                 account_id=account_id,
                 query=query,
-                task_queue=self._task_queue,
+                task_queue=self._task_dispatch,
                 session_id=session_id,
             )
 
@@ -465,12 +403,12 @@ class WorkerHandler:
 
     async def _handle_renew_all_task_subscriptions(self) -> Tuple[dict, int]:
         """Daily fan-out: enqueue renew_task_subscriptions for every MS To Do user."""
-        if not self._task_setup or not self._task_queue:
+        if not self._task_setup or not self._task_dispatch:
             logger.warning("[Worker] renew_all_task_subscriptions: task_setup or task_queue not configured")
             return {"error": "task_setup not configured"}, 501
         user_ids = await self._oauth.list_users_by_provider("microsoft_todo")
         for user_id in user_ids:
-            await self._task_queue.enqueue_worker_task(
+            await self._task_dispatch.enqueue_worker_task(
                 "renew_task_subscriptions", {"user_id": user_id}
             )
         logger.info(f"[Worker] renew_all_task_subscriptions: enqueued {len(user_ids)} renewal tasks")
@@ -480,81 +418,16 @@ class WorkerHandler:
     # Self-reminders: fire_due_reminders
     # ------------------------------------------------------------------
 
-    _CRON_WINDOW_SECONDS = 4 * 60  # 4 min — idempotency guard for 5-min cron
-
     async def _handle_fire_due_reminders(self) -> Tuple[dict, int]:
         """
         Fire all reminders with due <= now.
-
-        For each due note:
-          1. Resolve user account_id (skip if user not found).
-          2. Idempotency: skip if already fired within the current cron window.
-          3. Fire: notify() sends instruction to QuickAgent → delivers to user's channel.
-          4. Reschedule (recurrent) or delete (one-time).
-
+        Delegates to RemindersService which owns the AgentNotePort interaction.
         Called by Cloud Scheduler every 15 minutes.
         """
-        if not self._notes_port:
-            logger.warning("[Worker] fire_due_reminders: notes_port not configured")
-            return {"error": "notes_port not configured"}, 501
-
-        now = datetime.now(timezone.utc)
-        due_notes = await self._notes_port.list_due_reminders(as_of=now)
-        logger.info(f"[Worker] fire_due_reminders: {len(due_notes)} due note(s) at {now.isoformat()}")
-
-        fired, skipped = 0, 0
-        for note in due_notes:
-            # Idempotency: skip if fired recently (prevents double-fire on cron overlap)
-            if note.last_fired and (now - note.last_fired).total_seconds() < self._CRON_WINDOW_SECONDS:
-                skipped += 1
-                continue
-
-            # Resolve account_id
-            user_profile = await self._user_repo.get_user(note.user_id)
-            if not user_profile or not user_profile.account_id:
-                logger.warning(
-                    "[Worker] fire_due_reminders: user not found or no account_id: %s",
-                    note.user_id[:8],
-                )
-                skipped += 1
-                continue
-
-            account_id = user_profile.account_id
-            user_tz = ZoneInfo(user_profile.config.timezone or "UTC")
-
-            try:
-                await self._agent_factory.ensure_agents_for_user(note.user_id)
-                await self._notification.notify(
-                    user_id=note.user_id,
-                    account_id=account_id,
-                    system_alert=_build_reminder_alert(note),
-                    agent_id_override=f"smart_response_agent_{note.user_id}",
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[Worker] fire_due_reminders: notify failed for user=%s note=%s: %s",
-                    note.user_id[:8], note.note_id, exc,
-                )
-                # Still reschedule/delete — notification failure is not a reason to skip.
-
-            if note.recurrence:
-                next_due = _compute_next_due(note.due, note.recurrence, user_tz)
-                await self._notes_port.reschedule(note.note_id, next_due, last_fired=now)
-                logger.info(
-                    "[Worker] Rescheduled reminder %s → %s (user=%s)",
-                    note.note_id, next_due.isoformat(), note.user_id[:8],
-                )
-            else:
-                await self._notes_port.delete_note(note.note_id, note.user_id)
-                logger.info(
-                    "[Worker] Deleted one-time reminder %s (user=%s)",
-                    note.note_id, note.user_id[:8],
-                )
-
-            fired += 1
-
-        logger.info(f"[Worker] fire_due_reminders complete: fired={fired}, skipped={skipped}")
-        return {"fired": fired, "skipped": skipped}, 200
+        if not self._reminders_service:
+            logger.warning("[Worker] fire_due_reminders: reminders_service not configured")
+            return {"error": "reminders_service not configured"}, 501
+        return await self._reminders_service.fire_due_reminders()
 
     # ------------------------------------------------------------------
     # Daily email review
@@ -566,7 +439,7 @@ class WorkerHandler:
         and whose gmail_daily_review_hour matches the current hour in their timezone.
         Called by Cloud Scheduler hourly.
         """
-        if not self._oauth or not self._email_review or not self._task_queue:
+        if not self._oauth or not self._email_review or not self._task_dispatch:
             logger.warning("[Worker] start_daily_email_review: required services not configured")
             return {"error": "services not configured"}, 501
 
@@ -591,7 +464,7 @@ class WorkerHandler:
                 skipped += 1
                 continue
 
-            await self._task_queue.enqueue_worker_task(
+            await self._task_dispatch.enqueue_worker_task(
                 "daily_email_review",
                 {"user_id": user_id, "account_id": profile.account_id},
             )
@@ -639,74 +512,57 @@ class WorkerHandler:
         )
         return {"status": "ok", "emails": len(emails)}, 200
 
+    # ------------------------------------------------------------------
+    # Billing daily summary
+    # ------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Utility: build system alert text for fired reminders
-# ---------------------------------------------------------------------------
+    async def _handle_billing_daily_summary(self) -> Tuple[dict, int]:
+        """
+        Send daily billing summary to a Slack channel via incoming webhook.
+        Aggregates all accounts with activity today into one message.
+        Called by Cloud Scheduler at 09:00 Europe/Madrid.
+        Requires billing_webhook (SlackWebhookAdapter) to be wired at startup.
+        """
+        if not self._billing_webhook:
+            logger.warning("[Worker] billing_daily_summary: billing_webhook not configured")
+            return {"error": "billing_webhook not configured"}, 501
 
-def _build_reminder_alert(note: "AgentNote") -> str:
-    if note.recurrence:
-        interval = note.recurrence.interval or 1
-        schedule = f"this reminder recurs every {interval} {note.recurrence.type} — it will fire again on the next cycle."
-    else:
-        schedule = "this was a one-time reminder, it fires once."
+        if not self._account_repo:
+            logger.warning("[Worker] billing_daily_summary: account_repo not configured")
+            return {"error": "account_repo not configured"}, 501
 
-    return (
-        f'[SELF-REMINDER] "{note.text}"\n'
-        f"note_id: {note.note_id}\n"
-        f"This reminder was set by you for yourself at an earlier point.\n"
-        f"The instruction below is your own prior intent — you wrote it then so you could act on it now.\n"
-        f"Schedule: {schedule}\n"
-        f"\n"
-        f"{note.instruction}\n"
-        f"\n"
-        f"---\n"
-        f"You have full context on why you set this — the instruction above is yours.\n"
-        f"The manage_self_reminders intent is available if you decide to update or delete it.\n"
-        f"Having received this execution context, you have an opportunity to act in the user's interest — "
-        f"not only on the reminder itself, but on anything you judge valuable right now.\n"
-        f"To decide what is worth doing right now, start with conversation history — "
-        f"it is the primary signal: patterns, unfinished threads, recurring topics. "
-        f"From there you have access to: user memory (search_memory), "
-        f"active reminders (manage_self_reminders), user tasks (manage_user_tasks), "
-        f"web (search_web), email archive (search_emails)."
-    )
+        accounts = await self._account_repo.list_all_accounts()
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+        lines = [f"📊 *Billing Summary — {date_str}*\n"]
+        reported = 0
 
-# ---------------------------------------------------------------------------
-# Utility: compute next due datetime for recurrent reminders
-# ---------------------------------------------------------------------------
+        for account in accounts:
+            u = account.usage
+            if u.daily_tokens == 0 and u.daily_cost == 0.0:
+                continue
 
-def _compute_next_due(
-    current_due: datetime,
-    recurrence: ReminderRecurrence,
-    user_tz: ZoneInfo,
-) -> datetime:
-    """
-    Compute next UTC due datetime after firing.
+            owner_id = next(
+                (uid for uid, role in account.iam_policy.items() if role == "owner"),
+                None,
+            )
+            profile = await self._user_repo.get_user(owner_id) if owner_id else None
+            name = profile.display_name if profile else account.account_id[:8]
 
-    - hourly: pure UTC arithmetic (DST-safe by definition)
-    - daily / weekly / monthly: arithmetic in user timezone to preserve wall-clock time
-      (e.g. "every day at 9am" stays at 9am local even across DST transitions)
-    """
-    interval = recurrence.interval or 1
+            lines.append(
+                f"*{name}*\n"
+                f"  Today:   {u.daily_tokens:,} tok / ${u.daily_cost:.4f}\n"
+                f"  Month:   {u.monthly_tokens:,} tok / ${u.monthly_cost:.4f}\n"
+                f"  Total:   {u.total_tokens:,} tok / ${u.total_cost:.4f}"
+            )
+            reported += 1
 
-    if recurrence.type == "hourly":
-        return current_due + timedelta(hours=interval)
+        if reported == 0:
+            logger.info("[Worker] billing_daily_summary: no accounts with activity today")
+            return {"reported": 0}, 200
 
-    # Convert to user's local time, compute next, convert back to UTC
-    local_due = current_due.astimezone(user_tz)
+        await self._billing_webhook.post("\n\n".join(lines))
+        logger.info(f"[Worker] billing_daily_summary: reported {reported} accounts")
+        return {"reported": reported}, 200
 
-    if recurrence.type == "daily":
-        next_local = local_due + timedelta(days=interval)
-    elif recurrence.type == "weekly":
-        next_local = local_due + timedelta(weeks=interval)
-    elif recurrence.type == "monthly":
-        next_local = local_due + relativedelta(months=interval)
-    else:
-        # Unknown type — fall back to daily
-        logger.warning("[compute_next_due] Unknown recurrence type %r, defaulting to daily", recurrence.type)
-        next_local = local_due + timedelta(days=interval)
-
-    return next_local.astimezone(timezone.utc)
 
