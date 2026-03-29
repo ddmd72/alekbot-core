@@ -11,7 +11,7 @@ injection and call process_user_batches() — they never import ConsolidationQue
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
 from ..domain.consolidation import BatchStatus
@@ -19,10 +19,6 @@ from ..ports.consolidation_queue import ConsolidationQueue
 from ..utils.logger import logger
 
 _INTENT_CONSOLIDATE_FULL = "consolidate_full"  # mirrors Intent.CONSOLIDATE_FULL
-
-if TYPE_CHECKING:
-    from ..composition.user_agent_factory import UserAgentFactory
-    from ..infrastructure.agent_coordinator import AgentCoordinator
 
 
 class ConsolidationService:
