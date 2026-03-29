@@ -16,12 +16,15 @@ Supported task_types:
   - reindex_task_list             → TaskIndexingService.reindex_list(user_id, list_id)
   - renew_task_subscriptions      → TaskSetupService.renew_expiring_subscriptions(user_id)
   - renew_all_task_subscriptions  → fan-out: enqueue renew_task_subscriptions for all MS To Do users
-  - start_email_indexing         → fan-out: start incremental indexing for all Gmail users with auto_index enabled
+  - start_email_indexing          → fan-out: start incremental indexing for all Gmail users with auto_index enabled
+  - start_daily_email_review      → fan-out: enqueue daily_email_review for all Gmail users with gmail_daily_review enabled
+  - daily_email_review            → fetch last 24h emails, deliver structured payload to SmartAgent for analysis
 """
 
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from dateutil.relativedelta import relativedelta
@@ -43,6 +46,7 @@ from ..ports.consolidation_queue import ConsolidationQueue
 from ..ports.media_storage_port import MediaStoragePort
 from ..services.provider_registry import ProviderRegistry
 from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
+from ..ports.email_provider_port import EmailProviderPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.task_queue import TaskQueue
@@ -77,6 +81,7 @@ class WorkerHandler:
         task_setup: "Optional[TaskSetupService]" = None,
         task_indexing: "Optional[TaskIndexingService]" = None,
         notes_port: Optional[AgentNotePort] = None,
+        email_provider: Optional[EmailProviderPort] = None,
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -94,6 +99,7 @@ class WorkerHandler:
         self._task_setup = task_setup
         self._task_indexing = task_indexing
         self._notes_port = notes_port
+        self._email_provider = email_provider
 
     async def handle(self, payload: dict) -> Optional[Tuple[dict, int]]:
         """
@@ -129,6 +135,10 @@ class WorkerHandler:
             return await self._handle_fire_due_reminders()
         elif task_type == "start_email_indexing":
             return await self._handle_start_email_indexing()
+        elif task_type == "start_daily_email_review":
+            return await self._handle_start_daily_email_review()
+        elif task_type == "daily_email_review":
+            return await self._handle_daily_email_review(payload)
         return None  # unknown task_type — caller handles fallback
 
     # ------------------------------------------------------------------
@@ -547,6 +557,141 @@ class WorkerHandler:
         logger.info(f"[Worker] fire_due_reminders complete: fired={fired}, skipped={skipped}")
         return {"fired": fired, "skipped": skipped}, 200
 
+    # ------------------------------------------------------------------
+    # Daily email review
+    # ------------------------------------------------------------------
+
+    async def _handle_start_daily_email_review(self) -> Tuple[dict, int]:
+        """
+        Fan-out: enqueue daily_email_review for all Gmail users with gmail_daily_review enabled
+        and whose gmail_daily_review_hour matches the current hour in their timezone.
+        Called by Cloud Scheduler hourly.
+        """
+        if not self._oauth or not self._email_provider or not self._task_queue:
+            logger.warning("[Worker] start_daily_email_review: required services not configured")
+            return {"error": "services not configured"}, 501
+
+        user_ids = await self._oauth.list_users_by_provider("gmail")
+        now_utc = datetime.now(timezone.utc)
+        started, skipped = 0, 0
+
+        for user_id in user_ids:
+            profile = await self._user_repo.get_user(user_id)
+            if not profile:
+                skipped += 1
+                continue
+
+            cfg = profile.config
+            if not cfg.gmail_daily_review:
+                skipped += 1
+                continue
+
+            user_tz = ZoneInfo(cfg.timezone or "UTC")
+            local_hour = now_utc.astimezone(user_tz).hour
+            if local_hour != cfg.gmail_daily_review_hour:
+                skipped += 1
+                continue
+
+            await self._task_queue.enqueue_worker_task(
+                "daily_email_review",
+                {"user_id": user_id, "account_id": profile.account_id},
+            )
+            logger.info(f"[Worker] start_daily_email_review: enqueued for {user_id[:8]}")
+            started += 1
+
+        logger.info(f"[Worker] start_daily_email_review complete: started={started}, skipped={skipped}")
+        return {"started": started, "skipped": skipped}, 200
+
+    async def _handle_daily_email_review(self, payload: dict) -> Tuple[dict, int]:
+        """
+        Fetch last 24h emails for a user, build a structured payload,
+        and deliver to SmartAgent for secretary-style analysis.
+        SmartAgent produces an HTML page via create_html_page.
+        """
+        user_id = payload.get("user_id")
+        account_id = payload.get("account_id")
+        if not user_id or not account_id:
+            return {"error": "missing user_id or account_id"}, 400
+
+        if not self._email_provider:
+            logger.warning("[Worker] daily_email_review: email_provider not configured")
+            return {"error": "email_provider not configured"}, 501
+
+        creds = await self._oauth.get_credentials(user_id, "gmail")
+        if not creds:
+            logger.warning(f"[Worker] daily_email_review: no credentials for {user_id[:8]}")
+            return {"error": "no credentials"}, 200
+
+        # Refresh token if expired or expiring within 5 minutes
+        now_utc = datetime.now(timezone.utc)
+        if creds.token_expiry and creds.token_expiry <= now_utc + timedelta(minutes=5):
+            try:
+                creds = await self._email_provider.refresh_token(creds)
+                await self._oauth.save_credentials(creds)
+            except Exception as exc:
+                logger.warning(f"[Worker] daily_email_review: token refresh failed for {user_id[:8]}: {exc}")
+                return {"error": "token refresh failed"}, 200
+
+        # Fetch all emails from the last 24 hours (paginated, cap at 200)
+        date_from = now_utc - timedelta(hours=24)
+        all_metadata = []
+        page_token = None
+        _MAX_EMAILS = 200
+        while len(all_metadata) < _MAX_EMAILS:
+            batch, page_token = await self._email_provider.list_emails(
+                credentials=creds,
+                date_from=date_from,
+                date_to=now_utc,
+                page_token=page_token,
+                max_results=min(100, _MAX_EMAILS - len(all_metadata)),
+            )
+            all_metadata.extend(batch)
+            if not page_token:
+                break
+
+        if not all_metadata:
+            logger.info(f"[Worker] daily_email_review: no emails in last 24h for {user_id[:8]}")
+            return {"status": "no_emails"}, 200
+
+        # Fetch full content (body text + attachment names, no binaries)
+        email_ids = [m.email_id for m in all_metadata]
+        full_content = await self._email_provider.batch_get_full_content(
+            credentials=creds,
+            email_ids=email_ids,
+            deep=False,
+        )
+
+        # Build structured list for Smart
+        _MAX_BODY_CHARS = 500
+        emails_data: List[dict] = []
+        for meta in all_metadata:
+            content = full_content.get(meta.email_id)
+            emails_data.append({
+                "email_id": meta.email_id,
+                "from": meta.from_address,
+                "subject": meta.subject,
+                "date": meta.date.isoformat(),
+                "snippet": meta.snippet,
+                "body": content.body_text[:_MAX_BODY_CHARS] if content and content.body_text else "",
+                "attachments": content.attachments if content else [],
+            })
+
+        date_str = now_utc.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%d")
+        system_alert = _build_email_review_alert(date_str, emails_data)
+
+        await self._agent_factory.ensure_agents_for_user(user_id)
+        await self._notification.notify(
+            user_id=user_id,
+            account_id=account_id,
+            system_alert=system_alert,
+            agent_id_override=f"smart_response_agent_{user_id}",
+        )
+
+        logger.info(
+            f"[Worker] daily_email_review: delivered {len(emails_data)} emails to Smart for {user_id[:8]}"
+        )
+        return {"status": "ok", "emails": len(emails_data)}, 200
+
 
 # ---------------------------------------------------------------------------
 # Utility: build system alert text for fired reminders
@@ -578,6 +723,25 @@ def _build_reminder_alert(note: "AgentNote") -> str:
         f"From there you have access to: user memory (search_memory), "
         f"active reminders (manage_self_reminders), user tasks (manage_user_tasks), "
         f"web (search_web), email archive (search_emails)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Utility: build system alert text for daily email review
+# ---------------------------------------------------------------------------
+
+def _build_email_review_alert(date_str: str, emails: List[dict]) -> str:
+    return (
+        f"[DAILY EMAIL REVIEW] {date_str}\n"
+        f"{len(emails)} emails received in the last 24 hours.\n"
+        f"\n"
+        f"{json.dumps(emails, ensure_ascii=False, indent=2)}\n"
+        f"\n"
+        f"---\n"
+        f"This is the user's inbox for today. You know who the user is — draw on that knowledge.\n"
+        f"The email_id field lets you fetch full content (get_email_details) or attachments "
+        f"(get_email_attachment) for anything worth investigating further.\n"
+        f"Deliver your findings as an HTML page (create_html_page)."
     )
 
 

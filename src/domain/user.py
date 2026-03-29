@@ -182,6 +182,12 @@ class UserBotConfig(BaseModel):
     # gmail_auto_index_hour: local hour (0-23) in user's timezone when indexing fires
     gmail_auto_index: bool = False
     gmail_auto_index_hour: int = 8
+
+    # Gmail daily email review
+    # gmail_daily_review: enable daily Smart-agent inbox analysis
+    # gmail_daily_review_hour: local hour (0-23) in user's timezone when review fires
+    gmail_daily_review: bool = False
+    gmail_daily_review_hour: int = 9
     
     # ========================================================================
     # NEW Biographical Keywords (2026-02-07): Configurable query keywords
