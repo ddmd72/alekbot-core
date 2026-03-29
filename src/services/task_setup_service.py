@@ -49,6 +49,10 @@ class TaskSetupService:
     # setup
     # ------------------------------------------------------------------
 
+    async def list_microsoft_users(self) -> List[str]:
+        """Return all user_ids with stored Microsoft To Do credentials."""
+        return await self._oauth_credentials.list_users_by_provider(_MS_PROVIDER)
+
     async def setup(self, user_id: str) -> None:
         """
         Full onboarding flow:

@@ -208,8 +208,6 @@ class RouterAgent(BaseAgent):
         self.prompt_builder = prompt_builder
         self.notes_port = notes_port
         self._cached_triage_prompt: Optional[str] = None
-        if self.user_id and self.agent_id == "router_agent":
-            self.agent_id = f"router_agent_{self.user_id}"
 
         logger.info(
             "🎯 RouterAgent initialized "
@@ -653,7 +651,6 @@ class RouterAgent(BaseAgent):
                         task_id="admin_cache_reset",
                         agent_id=self.agent_id,
                         error=f"Cache reset failed: {str(e)}",
-                        metadata={"command": "admin_cache_reset", "error": str(e)}
                     )
         
         # Assembly service not available
