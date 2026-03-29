@@ -296,8 +296,9 @@ async def main():
         logger.info("🌐 Initializing Language Services...")
         from src.adapters.file_localization_adapter import FileLocalizationAdapter
         from src.services.language_preference_service import LanguagePreferenceService
+        from src.services.localization_service import LocalizationService as _LocalizationService
         from src.domain.language import LanguageCode
-        _localization = FileLocalizationAdapter()
+        _localization = _LocalizationService(FileLocalizationAdapter())
         _system_lang = LanguageCode.from_str(
             config.get("SYSTEM_DEFAULT_LANGUAGE", "en"), default=LanguageCode.EN
         )
@@ -494,25 +495,52 @@ async def main():
             language_service=_language_service,
         )
 
-        # Worker handler — dispatches Cloud Tasks to appropriate handlers
-        worker_handler = WorkerHandler(
-            agent_worker_handler=agent_worker_handler,
-            email_indexing_service=email_indexing_service,
-            email_job_repo=email_job_repo,
-            oauth_credentials=oauth_credentials_port,
-            notification_service=notification_service,
-            consolidation_queue=consolidation_queue,
+        # Services for WorkerHandler — wrap ports so the handler never imports ports directly
+        from src.services.consolidation_service import ConsolidationService
+        from src.services.reminders_service import RemindersService
+        from src.services.task_dispatch_service import TaskDispatchService
+        _consolidation_service = ConsolidationService(
+            queue=consolidation_queue,
             coordinator=coordinator,
             agent_factory=agent_factory,
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
-            task_queue=agent_task_queue,
+        ) if consolidation_queue else None
+        _reminders_service = RemindersService(
+            notes_port=container.notes_adapter,
+            user_repo=user_repo,
+            notification_service=notification_service,
+            agent_factory=agent_factory,
+        ) if container.notes_adapter else None
+        _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
+
+        # Billing webhook — optional, wired only when BILLING_SLACK_WEBHOOK_URL is set
+        _billing_webhook = None
+        _billing_webhook_url = os.getenv("BILLING_SLACK_WEBHOOK_URL")
+        if _billing_webhook_url:
+            from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
+            _billing_webhook = SlackWebhookAdapter(_billing_webhook_url)
+            logger.info("✅ Billing Slack webhook configured")
+
+        # Worker handler — dispatches Cloud Tasks to appropriate handlers
+        worker_handler = WorkerHandler(
+            agent_worker_handler=agent_worker_handler,
+            email_indexing_service=email_indexing_service,
+            notification_service=notification_service,
+            consolidation_service=_consolidation_service,
+            coordinator=coordinator,
+            agent_factory=agent_factory,
+            indexed_email_repo=indexed_email_repo,
+            user_repo=user_repo,
+            task_dispatch=_task_dispatch_service,
             job_registry=job_registry,
             media_storage=gcs_media_adapter,
             task_setup=task_setup_service,
             task_indexing=container.task_indexing,
-            notes_port=container.notes_adapter,
+            reminders_service=_reminders_service,
             email_review=container.email_review_service,
+            account_repo=account_repo,
+            billing_webhook=_billing_webhook,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

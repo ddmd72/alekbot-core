@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from ..domain.billing import BillingAccount
 
@@ -30,6 +30,11 @@ class AccountRepository(ABC):
     @abstractmethod
     async def check_quota(self, account_id: str) -> Tuple[bool, str]:
         """Return (has_quota, reason) based on account usage vs limits."""
+        pass
+
+    @abstractmethod
+    async def list_all_accounts(self) -> List[BillingAccount]:
+        """Return all active billing accounts."""
         pass
 
     # ========================================================================

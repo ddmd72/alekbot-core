@@ -13,19 +13,23 @@ Deep research delivery:
   HtmlPageGenerator Cloud Task to produce the final styled report.
 """
 
+from __future__ import annotations
+
 import base64
-from typing import Dict, Any, Optional
+from typing import TYPE_CHECKING, Dict, Any, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
 from ..services.deep_research_delivery import (
     NotificationPort, deliver_deep_research,
 )
 from ..services.document_delivery_service import DocumentDeliveryService
+from ..services.task_dispatch_service import TaskDispatchService
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..infrastructure.agent_manifest import Intent
-from ..ports.media_storage_port import MediaStoragePort
-from ..ports.task_queue import TaskQueue
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from ..ports.media_storage_port import MediaStoragePort
 
 
 class AgentWorkerHandler:
@@ -47,7 +51,7 @@ class AgentWorkerHandler:
         coordinator: AgentCoordinator,
         notification_service: Optional[NotificationPort] = None,
         media_storage: Optional[MediaStoragePort] = None,
-        task_queue: Optional[TaskQueue] = None,
+        task_queue: Optional[TaskDispatchService] = None,
         doc_delivery_service: Optional[DocumentDeliveryService] = None,
     ) -> None:
         self._coordinator = coordinator

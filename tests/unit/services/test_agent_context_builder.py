@@ -48,14 +48,14 @@ def builder(registry):
 
 def test_build_default_strategy(builder):
     config = UserBotConfig()
-    # quick agent defaults to gemini, tier BALANCED (from agent_tiers default)
+    # quick agent defaults to claude, tier ECO (from agent_tiers default)
     ctx = builder.build("quick", config)
 
     assert ctx.agent_type == "quick"
-    assert ctx.provider.name == "gemini"
-    assert ctx.tier == PerformanceTier.BALANCED
-    assert ctx.model_name == "gemini-model-for-balanced"
-    assert ctx.capabilities.native_tools is True
+    assert ctx.provider.name == "claude"
+    assert ctx.tier == PerformanceTier.ECO
+    assert ctx.model_name == "claude-model-for-eco"
+    assert ctx.capabilities.context_caching is True
 
 
 def test_build_respects_user_provider_preference(builder):
@@ -80,7 +80,7 @@ def test_build_respects_agent_tier_override(builder):
     ctx = builder.build("quick", config)
 
     assert ctx.tier == PerformanceTier.PERFORMANCE
-    assert ctx.model_name == "gemini-model-for-performance"
+    assert ctx.model_name == "claude-model-for-performance"
 
 
 def test_build_respects_model_override(builder):
@@ -190,7 +190,7 @@ def test_build_no_wrapping_without_cache_strategy(builder):
 def test_build_no_wrapping_for_non_caching_provider(builder_with_cache):
     """Gemini (non-caching) → no wrapping even with cache strategy."""
     config = UserBotConfig()
-    ctx = builder_with_cache.build("quick", config)  # quick defaults to gemini
+    ctx = builder_with_cache.build("web_search", config)  # web_search defaults to gemini
 
     # Gemini has context_caching=False, so strategy returns None
     assert not isinstance(ctx.provider, CachingLLMProxy)

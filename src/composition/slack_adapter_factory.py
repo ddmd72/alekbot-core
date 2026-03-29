@@ -28,7 +28,7 @@ from ..services.user_notification_service import UserNotificationService
 from ..ports.file_service import FileService
 from ..ports.html_renderer_port import HtmlRendererPort
 from ..ports.language_service_port import LanguageServicePort
-from ..ports.localization_port import LocalizationPort
+from ..services.localization_service import LocalizationService
 from ..utils.logger import logger
 
 
@@ -60,7 +60,7 @@ class SlackAdapterFactory:
         indexed_email_repo=None,
         user_repo=None,
         language_service: Optional[LanguageServicePort] = None,
-        localization: Optional[LocalizationPort] = None,
+        localization: Optional[LocalizationService] = None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
