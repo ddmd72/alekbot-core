@@ -329,6 +329,15 @@ docx_generator/ — Node.js project with docx npm library. NodeDocxRunner writes
                   here so node_modules/docx resolves at execution time. Not a Python package.
 ```
 
+## File Size Convention
+
+One public class per file. If a file contains more than one public class — split it.
+File length is not a constraint; mixed responsibilities are.
+
+For files over ~600 lines: put the public interface (class + method signatures with docstrings)
+at the top of the file, implementation below. This allows reading the contract in the first
+50 lines without scrolling through the implementation.
+
 ## Layer Semantics (when in doubt, use this to decide where a new class goes)
 
 - **`domain/`** — pure data and algorithms. No I/O, no side effects, no logging. If a class only
