@@ -20,7 +20,13 @@ class TestWebSearchAgent:
         return llm
 
     @pytest.fixture
-    def agent(self, mock_llm):
+    def mock_prompt_builder(self):
+        pb = MagicMock()
+        pb.build_for_agent = AsyncMock(return_value="cognitive_process {}")
+        return pb
+
+    @pytest.fixture
+    def agent(self, mock_llm, mock_prompt_builder):
         config = AgentConfig(
             agent_id="web_agent",
             agent_type="web_search",
@@ -36,6 +42,7 @@ class TestWebSearchAgent:
         return WebSearchAgent(
             config=config,
             execution_context=ec,
+            prompt_builder=mock_prompt_builder,
         )
 
     # ------------------------------------------------------------------ #

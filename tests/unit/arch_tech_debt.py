@@ -135,9 +135,8 @@ HANDLER_IMPLEMENTS_PORT_WHITELIST: set[tuple[str, str]] = {
 # Consumed by REQ-ARCH-20.
 # ---------------------------------------------------------------------------
 PLATFORM_FORMAT_WHITELIST_FILES: set[str] = {
-    # Fallback system prompts contain "Slack mrkdwn" instructions.
+    # _FALLBACK_FETCH_SYSTEM is a minimal hardcoded prompt for fetch_url (acceptable by design).
     os.path.normpath("src/agents/web_search_agent.py"),
-    os.path.normpath("src/agents/web_search_light_agent.py"),
     # Prompt builder assembles platform-specific formatting rules by design.
     os.path.normpath("src/services/prompt_builder.py"),
 }
