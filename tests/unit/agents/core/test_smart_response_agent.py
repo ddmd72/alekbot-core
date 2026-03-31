@@ -435,6 +435,50 @@ class TestExecuteEdgeCases:
         response = await smart_agent.execute(msg)
         assert response.status == AgentStatus.SUCCESS
 
+    async def test_email_for_triage_passed_as_extra_static_blocks(self, smart_agent, mock_llm_port):
+        """email_for_triage in context must be passed as extra_static_blocks to build_for_agent."""
+        emails = [{"email_id": "e1", "subject": "Hello", "from": "a@b.com"}]
+        mock_llm_port.generate_content = AsyncMock(
+            return_value=build_llm_response("Done", [])
+        )
+        msg = AgentMessage.create(
+            sender="notification_service",
+            recipient="smart_response_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": ""},
+            context={
+                "user_id": "u1",
+                "account_id": "acc1",
+                "session_id": "s1",
+                "current_message_parts": [],
+                "email_for_triage": emails,
+            },
+        )
+        await smart_agent.execute(msg)
+
+        build_call = smart_agent.prompt_builder.build_for_agent.call_args
+        extra = build_call[1].get("extra_static_blocks")
+        assert extra is not None and len(extra) == 1
+        assert "email_for_triage" in extra[0]
+        assert "e1" in extra[0]
+
+    async def test_no_email_for_triage_passes_none(self, smart_agent, mock_llm_port):
+        """Without email_for_triage in context, extra_static_blocks must be None."""
+        mock_llm_port.generate_content = AsyncMock(
+            return_value=build_llm_response("Done", [])
+        )
+        msg = AgentMessage.create(
+            sender="router",
+            recipient="smart_response_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "Hello"},
+            context={"user_id": "u1", "account_id": "acc1", "session_id": "s1"},
+        )
+        await smart_agent.execute(msg)
+
+        build_call = smart_agent.prompt_builder.build_for_agent.call_args
+        assert build_call[1].get("extra_static_blocks") is None
+
     async def test_execute_history_contexts_in_metadata(self, smart_agent, mock_llm_port):
         """loop_result.history_contexts should be merged into metadata."""
         tool_call = ToolCall(

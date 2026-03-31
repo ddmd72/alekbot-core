@@ -69,6 +69,7 @@ class PromptAssemblyService:
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         user_timezone: str = "UTC",
+        extra_static_blocks: Optional[List[str]] = None,
     ) -> str:
         """Full prompt assembly with class-collection model + caching.
 
@@ -128,6 +129,7 @@ class PromptAssemblyService:
             kb_preamble=kb_preamble,
             agent_notes=agent_notes,
             user_timezone=user_timezone,
+            extra_static_blocks=extra_static_blocks,
         )
 
         logger.info(f"✅ Assembled prompt: {len(final_prompt)} chars")
@@ -349,6 +351,7 @@ class PromptAssemblyService:
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         user_timezone: str = "UTC",
+        extra_static_blocks: Optional[List[str]] = None,
     ) -> str:
         """Inject RUNTIME data with SecurityPort validation.
 
@@ -430,10 +433,13 @@ class PromptAssemblyService:
             kb_block = "knowledge_base {\n" + "\n\n".join(kb_parts) + "\n}"
             if kb_preamble:
                 # Preamble: context first, instructions last → better recency for cognitive_process
-                prompt = kb_block + "\n\n" + prompt
+                extra = ("\n\n" + "\n\n".join(extra_static_blocks)) if extra_static_blocks else ""
+                prompt = kb_block + extra + "\n\n" + prompt
             else:
                 # Postamble: default — knowledge_base appended after blueprint
                 prompt = prompt + "\n\n" + kb_block
+        elif extra_static_blocks and kb_preamble:
+            prompt = "\n\n".join(extra_static_blocks) + "\n\n" + prompt
 
         # Append cache boundary + dynamic content
         dynamic_parts = []

@@ -271,6 +271,28 @@ class TestNotifyEarlyExits:
         coordinator.route_message.assert_not_awaited()
 
 
+class TestNotifyRequestContext:
+    """notify() sets RequestContext with correct user_id/account_id during route_message."""
+
+    async def test_request_context_set_during_route_message(self, service, coordinator, response_channel):
+        """RequestContext must be active with correct IDs when coordinator.route_message is called."""
+        from src.domain.request_context import get_current_user_id, get_current_account_id
+
+        captured = {}
+
+        async def capture_context(message):
+            captured["user_id"] = get_current_user_id()
+            captured["account_id"] = get_current_account_id()
+            return _make_success_response(SmartResponse(text="ok"))
+
+        coordinator.route_message.side_effect = capture_context
+
+        await service.notify(_USER_ID, _ACCOUNT_ID, "test alert")
+
+        assert captured["user_id"] == _USER_ID
+        assert captured["account_id"] == _ACCOUNT_ID
+
+
 class TestNotifyRaw:
     """notify_raw() delivers text directly without agent routing."""
 

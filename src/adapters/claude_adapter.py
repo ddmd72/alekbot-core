@@ -238,7 +238,7 @@ class ClaudeAdapter(LLMPort):
         if effort and any(m in model_name for m in self._THINKING_MODELS):
             thinking_param = {"type": "adaptive"}
             temperature = 1.0
-            logger.debug(
+            logger.info(
                 f"[ClaudeAdapter] Adaptive thinking enabled, effort={effort}, model={model_name}"
             )
 

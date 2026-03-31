@@ -35,7 +35,7 @@ from ...ports.llm_port import (
     ToolCall,
     Message,
     MessagePart,
-    LLMRequest
+    LLMRequest,
 )
 from ...ports.session_store import SessionStore
 from ...ports.prompt_builder_port import PromptBuilderPort
@@ -169,6 +169,7 @@ class SmartResponseAgent(BaseAgent):
         account_id = message.context.get("account_id")
         routing_metadata = RoutingMetadata.from_dict(message.context.get("routing", {}))
         self.config.metadata["user_tone"] = routing_metadata.user_tone
+        thinking_effort: Optional[str] = message.context.get("thinking_effort")
 
         self._on_agent_start(text)
 
@@ -200,6 +201,16 @@ class SmartResponseAgent(BaseAgent):
 
             agent_notes = message.context.get("agent_notes") or []
             prompt_user_id = self.user_id or user_id
+
+            email_for_triage = message.context.get("email_for_triage")
+            extra_static_blocks = None
+            if email_for_triage:
+                extra_static_blocks = [
+                    "email_for_triage {\n"
+                    + json.dumps(email_for_triage, ensure_ascii=False, indent=2)
+                    + "\n}"
+                ]
+
             system_prompt = await self.prompt_builder.build_for_agent(
                 agent_type="smart",
                 user_id=prompt_user_id,
@@ -209,6 +220,7 @@ class SmartResponseAgent(BaseAgent):
                 biographical_facts=biographical_facts,
                 kb_preamble=True,
                 agent_notes=agent_notes,
+                extra_static_blocks=extra_static_blocks,
             )
 
             current_message_parts = message.context.get("current_message_parts", [])
@@ -226,7 +238,8 @@ class SmartResponseAgent(BaseAgent):
                 account_id=account_id,
                 system_prompt=system_prompt,
                 history=clean_history,
-                tool_declarations=self._get_tool_declarations()
+                tool_declarations=self._get_tool_declarations(),
+                thinking_effort=thinking_effort,
             )
 
             if loop_result.failed:
@@ -327,6 +340,7 @@ class SmartResponseAgent(BaseAgent):
         history: List[Message],
         tool_declarations: List[Dict[str, Any]],
         account_id: Optional[str] = None,
+        thinking_effort: Optional[str] = None,
     ) -> AgentLoopResult:
         """
         Agent-based delegation loop with smart ordering:
@@ -361,6 +375,7 @@ class SmartResponseAgent(BaseAgent):
                     # response_mime_type omitted: Gemini rejects JSON mime type + function calling
                     # simultaneously. Output format enforced via response_schema + OUTPUT_FORMAT token.
                     response_schema=self._RESPONSE_SCHEMA,
+                    thinking=thinking_effort,
                 )
                 response: LLMResponse = await self._call_llm(request, turn=turn + 1)
             except Exception as e:
