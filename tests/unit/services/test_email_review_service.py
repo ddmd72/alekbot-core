@@ -276,22 +276,16 @@ class TestFetchReviewPayload:
 class TestBuildAlert:
 
     def test_contains_date_and_email_count(self):
-        emails = [{"email_id": "e1", "subject": "Hello"}]
-        result = EmailReviewService.build_alert("2026-01-15", emails)
+        result = EmailReviewService.build_alert("2026-01-15", 1)
         assert "2026-01-15" in result
         assert "1 emails" in result
 
-    def test_contains_json_of_emails(self):
-        emails = [{"email_id": "e42", "subject": "Test"}]
-        result = EmailReviewService.build_alert("2026-01-15", emails)
-        assert "e42" in result
-        assert "Test" in result
-
-    def test_contains_phase_headers(self):
-        result = EmailReviewService.build_alert("2026-01-15", [])
-        assert "PHASE 0" in result
-        assert "PHASE 1" in result
-        assert "PHASE 2" in result
+    def test_contains_key_instructions(self):
+        result = EmailReviewService.build_alert("2026-01-15", 5)
+        assert "ACTION" in result
+        assert "search_memory" in result
+        assert "get_email_attachment" in result
+        assert "HTML page creation" in result
 
 
 # ---------------------------------------------------------------------------

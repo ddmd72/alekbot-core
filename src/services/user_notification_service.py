@@ -20,6 +20,7 @@ from typing import Optional, Protocol
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus
 from ..domain.llm import Message, MessagePart
 from ..domain.messaging import SmartResponse
+from ..domain.request_context import RequestContext
 from ..ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from ..ports.notification_state_port import NotificationStatePort
 from ..ports.platform_media_port import PlatformMediaPort
@@ -113,6 +114,9 @@ class UserNotificationService:
         agent_id_override: Optional[str] = None,
         session_id: Optional[str] = None,
         save_history: bool = True,
+        framing_suffix: str = " Your response to this message will be read by the user. Inform them of the event details in your usual manner of communication.",
+        thinking_effort: Optional[str] = None,
+        email_for_triage: Optional[list] = None,
     ) -> None:
         """
         Send a background notification to the user's last active channel.
@@ -145,7 +149,7 @@ class UserNotificationService:
 
         recipient = agent_id_override or f"quick_response_agent_{user_id}"
         effective_session_id = session_id if session_id is not None else user_id
-        framed = MessagePart(text=f"[System: {system_alert} Your response to this message will be read by the user. Inform them of the event details in your usual manner of communication.]")
+        framed = MessagePart(text=f"[System: {system_alert}{framing_suffix}]")
         message = AgentMessage.create(
             sender="notification_service",
             recipient=recipient,
@@ -157,11 +161,14 @@ class UserNotificationService:
                 "session_id": effective_session_id,
                 "thread_id": None,
                 "current_message_parts": [framed],
+                **({"thinking_effort": thinking_effort} if thinking_effort else {}),
+                **({"email_for_triage": email_for_triage} if email_for_triage else {}),
             },
         )
 
         try:
-            response = await self._coordinator.route_message(message)
+            async with RequestContext(user_id=user_id, account_id=account_id):
+                response = await self._coordinator.route_message(message)
             if response.status != AgentStatus.SUCCESS:
                 logger.warning(
                     f"[Notification] Agent returned {response.status} for user {user_id[:8]}"

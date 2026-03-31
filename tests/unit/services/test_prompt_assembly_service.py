@@ -189,6 +189,46 @@ async def test_kb_preamble_true_prepends_knowledge_base_before_template():
     assert kb_pos < template_pos  # knowledge_base comes BEFORE template
 
 
+@pytest.mark.asyncio
+async def test_extra_static_blocks_placed_after_kb_before_blueprint():
+    """extra_static_blocks with kb_preamble=True: block appears after knowledge_base {} and before blueprint."""
+    service = _make_service()
+    static_fact = {"text": "Born in Kyiv", "tags": []}
+    result = await service._inject_runtime_context(
+        prompt=TEMPLATE,
+        biographical_facts=[static_fact],
+        conversation_history=[],
+        user_id="test_user",
+        kb_preamble=True,
+        extra_static_blocks=["email_for_triage {\n[{\"id\": \"e1\"}]\n}"],
+    )
+    boundary_pos = result.index(PROMPT_CACHE_BOUNDARY)
+    static_part = result[:boundary_pos]
+    kb_pos = static_part.index("knowledge_base")
+    triage_pos = static_part.index("email_for_triage")
+    template_pos = static_part.index("class Alek")
+    assert kb_pos < triage_pos < template_pos
+
+
+@pytest.mark.asyncio
+async def test_extra_static_blocks_without_kb():
+    """extra_static_blocks with kb_preamble=True and no bio facts: block still placed before blueprint."""
+    service = _make_service()
+    result = await service._inject_runtime_context(
+        prompt=TEMPLATE,
+        biographical_facts=[],
+        conversation_history=[],
+        user_id="test_user",
+        kb_preamble=True,
+        extra_static_blocks=["email_for_triage {\ndata\n}"],
+    )
+    boundary_pos = result.index(PROMPT_CACHE_BOUNDARY)
+    static_part = result[:boundary_pos]
+    triage_pos = static_part.index("email_for_triage")
+    template_pos = static_part.index("class Alek")
+    assert triage_pos < template_pos
+
+
 def test_normalize_whitespace_removes_empty_blocks():
     """_normalize_whitespace must remove structural blocks left empty by token removal."""
     service = _make_service()

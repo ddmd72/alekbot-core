@@ -838,6 +838,9 @@ class TestHandleDailyEmailReview:
             system_alert=ns.email_review.build_alert.return_value,
             agent_id_override=f"smart_response_agent_{_USER_A}",
             save_history=False,
+            framing_suffix="",
+            thinking_effort="medium",
+            email_for_triage=emails,
         )
 
 
