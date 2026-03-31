@@ -88,7 +88,7 @@ class QuickAgentConfig:
     max_agent_retries: int = 1
     retry_backoff_seconds: float = 0.5
     # LLM temperature for the delegation loop
-    delegation_temperature: float = 0.9
+    delegation_temperature: float = 1.0
     # AgentConfig fields (timeout / outer retry for the whole agent execution)
     # 300 s: covers PDF attachment parsing via markitdown (confirmed >60 s in production)
     timeout_ms: int = 300_000
@@ -110,7 +110,7 @@ class SmartAgentConfig:
     max_delegation_turns: int = 8
     max_agent_retries: int = 2
     retry_backoff_seconds: float = 1.0
-    delegation_temperature: float = 0.8
+    delegation_temperature: float = 1.0
     # 300 s: raised from 120 s to accommodate slower reasoning models (e.g. GPT-5)
     timeout_ms: int = 300_000
     # No retry: a retry doubles wall time → terrible UX

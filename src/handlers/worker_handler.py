@@ -479,7 +479,7 @@ class WorkerHandler:
             return {"status": "no_emails"}, 200
 
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        system_alert = self._email_review.build_alert(date_str, emails)
+        system_alert = self._email_review.build_alert(date_str, len(emails))
 
         await self._agent_factory.ensure_agents_for_user(user_id)
         await self._notification.notify(
@@ -488,6 +488,9 @@ class WorkerHandler:
             system_alert=system_alert,
             agent_id_override=f"smart_response_agent_{user_id}",
             save_history=False,
+            framing_suffix="",
+            thinking_effort="medium",
+            email_for_triage=emails,
         )
 
         logger.info(

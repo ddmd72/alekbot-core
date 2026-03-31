@@ -3,6 +3,21 @@
 Personal exocortex — a knowledge management system powered by LLMs.
 Solo developer. Production on GCP (Cloud Run + Firestore).
 
+## Dev User IDs
+
+When you need user_id / account_id for manual triggers, gcloud commands, or scripts — read from memory (`project_infra.md`). Never ask the user for these values.
+
+## Manual Triggers (dev)
+
+User IDs for the commands below: read from memory (`project_infra.md`).
+
+```bash
+# Trigger daily email review for dev user
+curl -s -X POST https://dev.alekbot.app/worker \
+  -H "Content-Type: application/json" \
+  -d '{"task_type": "daily_email_review", "user_id": "<DEV_USER_ID>", "account_id": "<DEV_ACCOUNT_ID>"}'
+```
+
 ## Commands
 
 ```bash
@@ -198,6 +213,17 @@ background process extracts new facts from the conversation → bot gets smarter
 - Static template cached in-memory (24h TTL, 5ms vs 110ms cold)
 - Runtime context (biographical facts, conversation history) appended as `knowledge_base {}` block
 - `PROMPT_CACHE_BOUNDARY` splits the final prompt: static prefix cached by Anthropic (5 min), dynamic suffix (datetime + Q-S context) sent fresh every request
+
+**Injecting large static content into a system prompt** — when a background task needs to pass
+a large static dataset (e.g. email triage payload, document corpus) into the agent's context:
+- Place it in the **static section** (before `PROMPT_CACHE_BOUNDARY`), right after `knowledge_base {}`.
+  This ensures the LLM sees it before instructions, and it gets cached by the provider.
+- Use `extra_static_blocks: List[str]` parameter on `build_for_agent()` → `assemble()` →
+  `_inject_runtime_context()`. The block is injected between `knowledge_base {}` and the blueprint.
+- Format as a named Groovy-style block: `block_name {\n<content>\n}`. Reference it by name
+  in the user-message instruction (e.g. `"Full data is in email_for_triage {} in your system context"`).
+- Never embed large payloads in the user message — it pollutes conversation history and
+  bypasses prompt caching.
 
 **Multilingual Support** — two independent language axes:
 - **Agent response language** — controlled via prompt tokens (`LANG_MIRROR`, `LANG_FIXED_UK`,
@@ -408,6 +434,25 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   See **Adding a New Specialist Agent** below for the complete checklist.
 - **Intent** — typed string constants for all agent intent names. Defined in `agent_manifest.py`
   as `class Intent`. Import `Intent.SEARCH_MEMORY` etc. instead of raw string literals everywhere.
+- **Specialist delegation** — the LLM has a single delegation tool: `delegate_to_specialist(intent, query, context?)`.
+  Semantically it operates as **commissioning**: the LLM issues an assignment to a specialist
+  who owns that capability. The LLM selects the specialist by matching purpose to manifest
+  `capability_descriptions`, not by naming intent strings directly.
+  Intent names must semantically reflect the nature of the operation being commissioned —
+  the name is the primary signal the LLM uses to match a delegation need to the right specialist.
+
+  **`query` field** — natural language commission text: self-contained, goal-oriented, describing
+  what needs to be done and with what content. **Never put JSON or structured data in `query`** —
+  that breaks the commissioning model. Structured inputs go in `context` (typed fields declared
+  in `AgentDescriptor.context_schemas`). Plain content (report text, analysis) goes in `query`.
+
+  **Formulating instructions for LLM** — all three forms are valid and understood by the LLM
+  in the context of the tool declaration:
+  - `"Use intent search_memory to retrieve facts about X"` — explicit intent name
+  - `"Delegate to specialist with intent get_email_attachment"` — explicit intent name
+  - `"Delegate to specialist for HTML page creation"` — purpose-based (LLM resolves intent)
+  Use explicit intent names when precision matters (e.g. `search_memory` vs `search_web`).
+  Use purpose-based phrasing when the specialist owns the decision (e.g. document creation).
 - **BaseAgent lifecycle hooks** — `_on_agent_start(text)`, `_on_agent_success(char_count, token_count,
   output_text)`, `_on_agent_error(error, context)`, `_on_delegation(intent, query)`. All agents
   call these instead of direct `logger.*` calls. Changing infrastructure logging = edit BaseAgent

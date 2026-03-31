@@ -33,6 +33,7 @@ class PromptBuilderPort(ABC):
         include_biographical: bool = True,
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
+        extra_static_blocks: Optional[List[str]] = None,
     ) -> str:
         """
         Build complete system prompt string for the given agent type.

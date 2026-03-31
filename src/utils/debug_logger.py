@@ -156,6 +156,7 @@ class PromptDebugLogger:
             payload: Dict[str, Any] = {
                 "model": getattr(request, "model_name", ""),
                 "temperature": getattr(request, "temperature", None),
+                "thinking": getattr(request, "thinking", None),
                 "use_grounding": getattr(request, "use_grounding", False),
                 "messages": messages,
             }
