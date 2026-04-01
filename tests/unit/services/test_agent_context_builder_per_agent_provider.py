@@ -280,18 +280,33 @@ def test_empty_agent_providers_dict(builder):
 def test_unknown_agent_type_uses_quick_strategy(builder):
     """
     Unknown agent types should use 'quick' strategy as fallback.
-    
+
     Scenario: User creates custom agent type not in STRATEGIES.
     """
     config = UserBotConfig(
-        provider_preference="gemini",
         default_tier=PerformanceTier.BALANCED
     )
-    
-    context = builder.build(agent_type="custom_agent", config=config)
-    
-    # Should use quick strategy (gemini default)
-    assert context.provider.get_model_for_tier.return_value == "gemini-flash-lite-latest"
+
+    strategy = AgentProviderStrategy.get_strategy("custom_agent")
+    quick_strategy = AgentProviderStrategy.STRATEGIES["quick"]
+    assert strategy is quick_strategy
+
+
+def test_facts_memory_uses_gemini_not_quick_fallback(builder):
+    """
+    facts_memory must resolve to gemini, not fall through to quick (claude).
+
+    Regression guard: before this strategy was added, facts_memory silently
+    inherited quick's default (claude). Claude ignores response_mime_type →
+    LLM returns markdown-wrapped JSON → parse failure → degraded search.
+    """
+    config = UserBotConfig(default_tier=PerformanceTier.ECO)
+
+    context = builder.build(agent_type="facts_memory", config=config)
+
+    # Must be gemini (native_tools=True, context_caching=False), not claude
+    caps = context.provider.get_capabilities()
+    assert caps.context_caching is False  # gemini, not claude
 
 
 def test_per_agent_provider_with_model_override(builder):
@@ -317,3 +332,70 @@ def test_per_agent_provider_with_model_override(builder):
     assert context.provider.get_capabilities().context_caching is True  # Claude capability
     # Model should be overridden
     assert context.model_name == "claude-sonnet-4-5"
+
+
+# ---------------------------------------------------------------------------
+# Guard: every agent_type used in UserAgentFactory must have a STRATEGIES entry
+# ---------------------------------------------------------------------------
+
+# All agent_types passed to context_builder.build() in UserAgentFactory.
+# This list is the single source of truth for the guard test.
+# Update when adding a new agent to UserAgentFactory.
+_FACTORY_AGENT_TYPES = [
+    "router",
+    "quick",
+    "smart",
+    "consolidation",
+    "postprocessing",
+    "notes",
+    "facts_memory",
+    "web_search",
+    "web_search_light",
+    "email_search",
+    "maps_search",
+    "compute",
+    "tasks",
+    "doc_generator",
+    "doc_planner",
+    "pdf_generator",
+    "html_page",
+]
+
+
+def test_all_factory_agent_types_have_strategy():
+    """Every agent_type used in UserAgentFactory must have an explicit STRATEGIES entry.
+
+    Silent fallback to 'quick' strategy caused a production regression when quick's
+    default_provider changed from gemini to claude (facts_memory agent broke because
+    Claude ignores response_mime_type). This test prevents that class of bug.
+    """
+    missing = [
+        t for t in _FACTORY_AGENT_TYPES
+        if t not in AgentProviderStrategy.STRATEGIES
+    ]
+    assert missing == [], (
+        f"Agent types used in UserAgentFactory but missing from "
+        f"AgentProviderStrategy.STRATEGIES: {missing}. "
+        f"Add an explicit strategy entry for each."
+    )
+
+
+def test_strategies_has_no_orphans():
+    """Every STRATEGIES entry should be used somewhere (factory, ServiceContainer, or docs).
+
+    Entries that exist only in STRATEGIES are dead code or documentation-only.
+    Keep this list explicit — known non-factory entries must be listed.
+    """
+    # Agent types that are in STRATEGIES but not in UserAgentFactory.build():
+    # - email_classifier: created in ServiceContainer (singleton, not per-user)
+    # - deep_research: uses DeepResearchPort, not LLMPort; entry is for provider resolution
+    _NON_FACTORY_STRATEGIES = {"email_classifier", "deep_research"}
+
+    all_strategies = set(AgentProviderStrategy.STRATEGIES.keys())
+    factory_set = set(_FACTORY_AGENT_TYPES)
+    orphans = all_strategies - factory_set - _NON_FACTORY_STRATEGIES
+
+    assert orphans == set(), (
+        f"STRATEGIES entries not used in factory and not in the known exceptions list: {orphans}. "
+        f"Either add to _FACTORY_AGENT_TYPES or _NON_FACTORY_STRATEGIES."
+    )
