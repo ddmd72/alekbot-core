@@ -66,7 +66,6 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "deep_research": PerformanceTier.BALANCED,       # BALANCED → claude-sonnet; PERFORMANCE → claude-opus
     "doc_planner": PerformanceTier.PERFORMANCE,      # JSON layout spec — max quality
     "doc_generator": PerformanceTier.BALANCED,   # JS code generation + retries
-    "doc_planner_pdf": PerformanceTier.PERFORMANCE, # PDF layout spec (CSS/HTML units)
     "pdf_generator": PerformanceTier.BALANCED,      # HTML+CSS generation → Puppeteer
     "html_page": PerformanceTier.PERFORMANCE,        # Full HTML+CSS+JS page — max quality
     "notes": PerformanceTier.ECO,                    # Simple CRUD, single tool call
