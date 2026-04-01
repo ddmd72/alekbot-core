@@ -853,6 +853,8 @@ def _make_account(
     owner_id: str,
     daily_tokens: int = 0,
     daily_cost: float = 0.0,
+    prev_daily_tokens: int = 0,
+    prev_daily_cost: float = 0.0,
 ) -> BillingAccount:
     return BillingAccount(
         account_id=account_id,
@@ -860,6 +862,8 @@ def _make_account(
         usage=AccountUsageStats(
             daily_tokens=daily_tokens,
             daily_cost=daily_cost,
+            prev_daily_tokens=prev_daily_tokens,
+            prev_daily_cost=prev_daily_cost,
         ),
     )
 
@@ -885,7 +889,7 @@ class TestHandleBillingDailySummary:
     async def test_no_accounts_with_activity_returns_reported_zero(self):
         worker, ns = _make_full_worker()
         ns.account_repo.list_all_accounts.return_value = [
-            _make_account("acc-x", _USER_A, daily_tokens=0, daily_cost=0.0),
+            _make_account("acc-x", _USER_A, prev_daily_tokens=0, prev_daily_cost=0.0),
         ]
 
         result, status = await worker._handle_billing_daily_summary()
@@ -897,8 +901,8 @@ class TestHandleBillingDailySummary:
     async def test_active_accounts_posts_to_webhook(self):
         worker, ns = _make_full_worker()
         ns.account_repo.list_all_accounts.return_value = [
-            _make_account(_ACC_A, _USER_A, daily_tokens=1000, daily_cost=0.05),
-            _make_account(_ACC_B, _USER_B, daily_tokens=500,  daily_cost=0.02),
+            _make_account(_ACC_A, _USER_A, prev_daily_tokens=1000, prev_daily_cost=0.05),
+            _make_account(_ACC_B, _USER_B, prev_daily_tokens=500,  prev_daily_cost=0.02),
         ]
         profile_a = UserProfile(user_id=_USER_A, display_name="Alice")
         ns.user_repo.get_user.side_effect = lambda uid: (
@@ -913,3 +917,4 @@ class TestHandleBillingDailySummary:
         posted_text = ns.billing_webhook.post.call_args[0][0]
         assert "Alice" in posted_text
         assert "1,000" in posted_text
+        assert "Yesterday" in posted_text

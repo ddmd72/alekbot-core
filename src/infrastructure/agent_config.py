@@ -69,7 +69,7 @@ class RouterAgentConfig:
     # Biographical context fetch limit
     biographical_limit: int = 100
     # Routing thresholds: complexity <= threshold → Quick; > threshold → Smart
-    complexity_threshold: int = 6
+    complexity_threshold: int = 5
     # Routing safety net: confidence < threshold → always fall back to Smart
     confidence_threshold: float = 0.75
 

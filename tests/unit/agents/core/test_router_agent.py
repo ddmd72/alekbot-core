@@ -1366,7 +1366,7 @@ class TestVisionRefVsNativeBinary:
             sender="ch",
             recipient="router_agent",
             intent=AgentIntent.QUERY,
-            payload={"text": "summarise this"},
+            payload={"text": "thanks"},
             context={
                 "user_id": "user1",
                 "current_message_parts": [ref_part],
@@ -1374,7 +1374,7 @@ class TestVisionRefVsNativeBinary:
         )
 
         response = await agent.execute(message)
-        # PDF ref should not force smart routing
+        # PDF ref should not force smart routing (no vision override)
         assert response.result["routed_to"] == "quick_agent"
 
     @pytest.mark.asyncio
@@ -1436,7 +1436,7 @@ class TestVisionRefVsNativeBinary:
             sender="ch",
             recipient="router_agent",
             intent=AgentIntent.QUERY,
-            payload={"text": "Summarise this document"},
+            payload={"text": "ok thanks"},
             context={
                 "user_id": "user1",
                 "current_message_parts": [ref_part],
@@ -1444,4 +1444,5 @@ class TestVisionRefVsNativeBinary:
         )
 
         response = await agent.execute(message)
+        # DOCX ref should not force smart routing (no vision override)
         assert response.result["routed_to"] == "quick_agent"

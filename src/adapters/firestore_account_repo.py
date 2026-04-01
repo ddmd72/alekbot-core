@@ -73,7 +73,10 @@ class FirestoreAccountRepository(AccountRepository):
             }
 
             if daily_needs_reset:
+                # Snapshot yesterday's totals before resetting
                 updates.update({
+                    "usage.prev_daily_tokens": usage.get("daily_tokens", 0),
+                    "usage.prev_daily_cost": usage.get("daily_cost", 0.0),
                     "usage.daily_tokens": tokens,
                     "usage.daily_cost": cost,
                     "usage.daily_reset_at": now,

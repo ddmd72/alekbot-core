@@ -37,7 +37,7 @@ class ClaudeAdapter(LLMPort):
     MODEL_TIERS = {
         PerformanceTier.ECO: "claude-haiku-4-5-20251001",
         PerformanceTier.BALANCED: "claude-sonnet-4-6",
-        PerformanceTier.PERFORMANCE: "claude-sonnet-4-6",
+        PerformanceTier.PERFORMANCE: "claude-opus-4-6",
     }
 
     # Models that support adaptive thinking (Sonnet 4.6+, Opus 4.6+).

@@ -28,6 +28,9 @@ class AccountUsageStats(BaseModel):
     daily_cost: float = 0.0
     daily_reset_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    prev_daily_tokens: int = 0
+    prev_daily_cost: float = 0.0
+
     monthly_tokens: int = 0
     monthly_cost: float = 0.0
     monthly_reset_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
