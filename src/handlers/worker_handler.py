@@ -518,14 +518,17 @@ class WorkerHandler:
             return {"error": "account_repo not configured"}, 501
 
         accounts = await self._account_repo.list_all_accounts()
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        from datetime import timedelta
+        yesterday_str = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
 
-        lines = [f"📊 *Billing Summary — {date_str}*\n"]
+        lines = [f"📊 *Billing Summary — {yesterday_str}*\n"]
         reported = 0
 
         for account in accounts:
             u = account.usage
-            if u.daily_tokens == 0 and u.daily_cost == 0.0:
+            prev_tokens = u.prev_daily_tokens
+            prev_cost = u.prev_daily_cost
+            if prev_tokens == 0 and prev_cost == 0.0:
                 continue
 
             owner_id = next(
@@ -537,14 +540,14 @@ class WorkerHandler:
 
             lines.append(
                 f"*{name}*\n"
-                f"  Today:   {u.daily_tokens:,} tok / ${u.daily_cost:.4f}\n"
-                f"  Month:   {u.monthly_tokens:,} tok / ${u.monthly_cost:.4f}\n"
-                f"  Total:   {u.total_tokens:,} tok / ${u.total_cost:.4f}"
+                f"  Yesterday: {prev_tokens:,} tok / ${prev_cost:.4f}\n"
+                f"  Month:     {u.monthly_tokens:,} tok / ${u.monthly_cost:.4f}\n"
+                f"  Total:     {u.total_tokens:,} tok / ${u.total_cost:.4f}"
             )
             reported += 1
 
         if reported == 0:
-            logger.info("[Worker] billing_daily_summary: no accounts with activity today")
+            logger.info("[Worker] billing_daily_summary: no accounts with activity yesterday")
             return {"reported": 0}, 200
 
         await self._billing_webhook.post("\n\n".join(lines))
