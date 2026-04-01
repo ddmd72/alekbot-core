@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from ..composition.user_agent_factory import UserAgentFactory
     from ..ports.file_service import FileService
     from ..ports.audio_transcription_port import AudioTranscriptionPort
+    from ..services.file_conversion_service import FileConversionService
 from ..utils.file_conversion import (
     convert_file_to_text, is_native_binary, make_history_stub,
 )
@@ -96,10 +97,12 @@ class ConversationHandler(ConversationHandlerPort):
         # That was a horizontal coupling between two handlers. Now wired in composition/.
         overflow_callback: Optional[Callable[..., Coroutine]] = None,
         localization: Optional[LocalizationService] = None,
+        file_conversion_service: Optional["FileConversionService"] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
         self.file_service = file_service
+        self._file_conversion_service = file_conversion_service
         self.consolidation_queue = consolidation_queue
         self.global_config = global_config or ConsolidationSettings()
         self.security_port = security_port  # Phase 4: v3 OUTPUT validation
@@ -410,14 +413,22 @@ class ConversationHandler(ConversationHandlerPort):
                     )
                     if local_path:
                         temp_files.append(local_path)
-                        if is_native_binary(attachment.mime_type):
-                            # Images and PDFs: adapters handle natively as binary
+                        if self._file_conversion_service:
+                            # New path: upload to GCS, return reference-only MessagePart
+                            file_part = await self._file_conversion_service.process_attachment(
+                                local_path,
+                                attachment.filename or "unknown",
+                                attachment.mime_type,
+                                user_id=context.user_id,
+                            )
+                        elif is_native_binary(attachment.mime_type):
+                            # Legacy fallback: images and PDFs as binary
                             file_part = MessagePart(file_data={
                                 "path": local_path,
                                 "mime_type": attachment.mime_type
                             })
                         else:
-                            # All other types: convert to text once, works for all adapters
+                            # Legacy fallback: convert to text inline
                             text = await convert_file_to_text(
                                 local_path,
                                 attachment.filename or "unknown",
@@ -571,13 +582,19 @@ class ConversationHandler(ConversationHandlerPort):
             # Adapter already processed them during request (uploaded to API or encoded)
             clean_message_parts = []
             for part in message_parts:
-                if part.file_data and "path" in part.file_data:
-                    # Skip temporary files - they won't exist on next request
+                if part.file_data and "ref" in part.file_data and "path" in part.file_data:
+                    # GCS-backed file: strip temp path, keep reference
+                    clean_file_data = {k: v for k, v in part.file_data.items() if k != "path"}
+                    clean_message_parts.append(MessagePart(
+                        text=part.text,
+                        file_data=clean_file_data,
+                    ))
+                elif part.file_data and "path" in part.file_data:
+                    # Legacy: temporary file without GCS ref — skip entirely
                     logger.debug(f"Skipping temporary file from history: {part.file_data.get('path')}")
                     continue
                 elif id(part) in file_part_stubs:
-                    # Converted text files: text=stub (older turns), full_text=full (recent turns)
-                    # BaseAgent._apply_history_tier() resolves which to use per turn distance
+                    # Legacy: converted text files — text=stub, full_text=full
                     clean_message_parts.append(MessagePart(
                         text=file_part_stubs[id(part)],
                         full_text=part.text,

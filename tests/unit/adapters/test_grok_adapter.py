@@ -373,3 +373,24 @@ async def test_upload_file_raises_not_implemented():
 
     with pytest.raises(NotImplementedError):
         await adapter.upload_file("/some/path.jpg", "image/jpeg")
+
+
+# ---------------------------------------------------------------------------
+# GCS reference file_data — graceful handling
+# ---------------------------------------------------------------------------
+
+def test_gcs_ref_file_data_no_error():
+    """file_data with 'ref' key should not raise — it's a GCS reference with no binary."""
+    adapter = GrokAdapter(api_key="test-key")
+    messages = [
+        Message(role="user", parts=[
+            MessagePart(text='[File: "report.docx" (45KB)]'),
+            MessagePart(file_data={"ref": "report.docx", "mime_type": "text/plain", "size_bytes": 45000}),
+        ]),
+    ]
+
+    # Should not raise — ref-only file_data is silently handled
+    result = adapter._convert_messages(messages, system_instruction=None)
+
+    assert len(result) == 1
+    assert result[0]["role"] == "user"

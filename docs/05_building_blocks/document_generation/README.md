@@ -882,7 +882,32 @@ injected for them.
 
 ---
 
-## 13. Status
+## 13. File Reference Support (file_ref)
+
+Document generation agents (DocPlanner, PdfGenerator, HtmlPageGenerator) support `file_ref`-based
+source content via `context_schemas`:
+
+**Flow:**
+1. LLM includes `context={"file_ref": "<filename>"}` in `delegate_to_specialist` call
+2. `AgentCoordinator._resolve_file_refs()` downloads the file from GCS via `FileConversionService.resolve_content()`
+3. Resolved text is injected as `file_content` into the agent's payload before dispatch
+4. Agent reads `file_content` from payload and appends to the query
+
+This enables workflows like: "Convert this uploaded DOCX to PDF" where the source file was
+uploaded earlier in the conversation.
+
+**Manifest declarations:** All three generator descriptors in `agent_manifest.py` declare
+`file_ref` in `context_schemas` — the orchestrator can discover and use the parameter.
+
+**Limitation:** Resolution is text-only — binary files (images, PDFs) are converted to text
+via markitdown. For image-heavy source material, the orchestrator should use
+`open_file` intent separately to obtain the binary for LLM vision.
+
+See [File Storage Building Block](../file_storage/README.md) for the full file storage architecture.
+
+---
+
+## 14. Status
 
 **Status:** ✅ Production Ready (DOCX, PDF) | ✅ Production Ready (HTML page, with Unsplash integration)
-**Last Updated:** 2026-03-17
+**Last Updated:** 2026-04-01

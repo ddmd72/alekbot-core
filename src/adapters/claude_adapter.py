@@ -634,6 +634,9 @@ class ClaudeAdapter(LLMPort):
                                 logger.info(f"📎 [ClaudeAdapter]   Part {part_idx}: {content_type} encoded ({mime_type}, {len(base64_data)} chars)")
                         except Exception as e:
                             logger.error(f"❌ [ClaudeAdapter]   Part {part_idx}: Failed to encode file: {e}")
+                    elif "ref" in p.file_data:
+                        # GCS reference — no content to display, text label already in message
+                        logger.debug(f"[ClaudeAdapter]   Part {part_idx}: file ref '{p.file_data['ref']}' (no binary content)")
                     else:
                         logger.warning(f"[ClaudeAdapter]   Part {part_idx}: Unsupported file_data format: {list(p.file_data.keys())}")
 

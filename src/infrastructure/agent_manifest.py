@@ -69,6 +69,9 @@ class Intent:
     CREATE_HTML_PAGE = "create_html_page"
     # User-facing guide — returns what the system can do for the end user
     USER_GUIDE = "user_guide"
+    # File storage — retrieve and manage user file attachments
+    OPEN_FILE           = "open_file"
+    DELETE_FILE         = "delete_file"
 
 
 # ---------------------------------------------------------------------------
@@ -362,9 +365,16 @@ DOC_PLANNER = AgentDescriptor(
     description="Creates structured Word documents (DOCX) from natural language requests",
     capability_descriptions={
         Intent.CREATE_DOCUMENT: (
-            "Creates a Word document (DOCX) delivered as a file attachment. "
-            "payload: {\"query\": \"<user instruction + full source content verbatim>\"}"
+            "Creates a Word document (DOCX). Async — result is delivered directly to the user. "
+            "If the source is a user's file, pass the filename from [File: name (size)] "
+            "as context.file_ref — the content is fetched and delivered to the specialist automatically. "
+            'Requires: context={"file_ref": "<filename>"}'
         ),
+    },
+    context_schemas={
+        Intent.CREATE_DOCUMENT: {
+            "file_ref": "Filename from [File: name (size)] label — source file for the document (optional)",
+        },
     },
     internal=False,
     dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
@@ -389,10 +399,17 @@ PDF_GENERATOR = AgentDescriptor(
         Intent.CREATE_PDF: (
             "Creates a professional PDF document — proposals, reports, memos, briefs, "
             "summaries, contracts, manuals, or any other formal document. "
-            "The result is delivered as a PDF file in the chat and stored in the cloud. "
+            "Async — result is delivered directly to the user. "
             "Use when the user explicitly requests a PDF document or formatted file. "
-            "payload: {\"query\": \"<document creation request with all relevant context>\"}"
+            "If the source is a user's file, pass the filename from [File: name (size)] "
+            "as context.file_ref — the content is fetched and delivered to the specialist automatically. "
+            'Requires: context={"file_ref": "<filename>"}'
         ),
+    },
+    context_schemas={
+        Intent.CREATE_PDF: {
+            "file_ref": "Filename from [File: name (size)] label — source file for the PDF (optional)",
+        },
     },
     internal=False,
     dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
@@ -426,13 +443,52 @@ HTML_PAGE_GENERATOR = AgentDescriptor(
         Intent.CREATE_HTML_PAGE: (
             "Creates a professional single-page HTML layout — landing pages, product showcases, "
             "portfolios, documentation pages, dashboards, or any visual web page. "
-            "Result delivered as a public link. Mobile-responsive with animations. "
+            "Async — result is delivered directly to the user. "
             "Use when the user asks for an HTML page, web page, landing page, or visual layout. "
-            "payload: {\"query\": \"<page creation request with all relevant context>\"}"
+            "If the source is a user's file, pass the filename from [File: name (size)] "
+            "as context.file_ref — the content is fetched and delivered to the specialist automatically. "
+            'Requires: context={"file_ref": "<filename>"}'
         ),
+    },
+    context_schemas={
+        Intent.CREATE_HTML_PAGE: {
+            "file_ref": "Filename from [File: name (size)] label — source file for the page (optional)",
+        },
     },
     internal=False,
     dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
+)
+
+
+FILE_MANAGEMENT = AgentDescriptor(
+    agent_id="file_management_agent",
+    agent_type="file_management",
+    capabilities={
+        Intent.OPEN_FILE: ExecutionMode.SYNC,
+        Intent.DELETE_FILE:        ExecutionMode.SYNC,
+    },
+    description="File storage archivist: opens and reads user-uploaded files, no analysis",
+    capability_descriptions={
+        Intent.OPEN_FILE: (
+            "Open a file the user uploaded earlier and return its raw content. "
+            "Returns text for documents, binary for images and PDFs. "
+            "The file reference is visible in the conversation as [File: name (size)]. "
+            'Requires: context={"file_ref": "<filename from file label>"}'
+        ),
+        Intent.DELETE_FILE: (
+            "Delete a file from storage. "
+            'Requires: context={"file_ref": "<filename>"}'
+        ),
+    },
+    context_schemas={
+        Intent.OPEN_FILE: {
+            "file_ref": "Filename from the file label in conversation (e.g. 'report.docx')",
+        },
+        Intent.DELETE_FILE: {
+            "file_ref": "Filename of the file to delete (e.g. 'report.docx')",
+        },
+    },
+    internal=False,
 )
 
 
@@ -451,4 +507,5 @@ ALL_DESCRIPTORS = [
     PDF_GENERATOR,
     HTML_PAGE_GENERATOR,
     HELP,
+    FILE_MANAGEMENT,
 ]

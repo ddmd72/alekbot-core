@@ -34,6 +34,7 @@ class AgentCoordinator:
         self,
         registry: Optional[AgentRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
+        file_ref_resolver: Optional[Any] = None,
     ):
         """
         Initialize coordinator.
@@ -43,10 +44,14 @@ class AgentCoordinator:
                       If None, handle_delegation() will always return failure.
             task_queue: TaskQueue port for async intent execution.
                         Required when any registered intent uses ExecutionMode.ASYNC.
+            file_ref_resolver: Optional async callable(ref, user_id, mime_type) -> str.
+                               Resolves GCS file references to text content before
+                               dispatching to specialist agents.
         """
         self.agents: Dict[str, BaseAgent] = {}
         self._registry = registry
         self._task_queue = task_queue
+        self._file_ref_resolver = file_ref_resolver
         logger.info("🎯 AgentCoordinator initialized")
     
     def register_agent(self, agent: BaseAgent) -> None:
@@ -367,6 +372,10 @@ class AgentCoordinator:
         # Extra params from SmartAgent's delegate_to_specialist context.params field
         extra_payload = context.get("params", {})
 
+        # Resolve file_ref in context before dispatching to specialist.
+        # Specialist receives resolved text content, never knows about GCS.
+        await self._resolve_file_refs(extra_payload, user_id)
+
         message = AgentMessage.create(
             sender="coordinator",
             recipient=agent_id,
@@ -385,6 +394,10 @@ class AgentCoordinator:
         deadline_seconds: Optional[int] = None,
     ) -> AgentResponse:
         """Enqueue ASYNC intent to Cloud Tasks, return immediate ack."""
+        # Resolve file_ref before enqueue — content goes into the Cloud Task payload
+        extra_payload = context.get("params", {})
+        await self._resolve_file_refs(extra_payload, context.get("user_id", ""))
+
         if self._task_queue is None:
             logger.error(
                 f"ASYNC intent '{intent}' requested but no TaskQueue configured"
@@ -412,6 +425,31 @@ class AgentCoordinator:
                 "message": "Task started in background. You will be notified when complete.",
             },
         )
+
+    async def _resolve_file_refs(self, params: Dict[str, Any], user_id: str) -> None:
+        """
+        Resolve file_ref in delegation params before dispatching to specialist.
+
+        If params contains file_ref and a resolver is configured, downloads the file
+        from GCS and injects file_content into params. Specialist sees resolved text.
+        """
+        if not self._file_ref_resolver:
+            return
+        file_ref = params.get("file_ref")
+        if not file_ref or not user_id:
+            return
+        try:
+            content = await self._file_ref_resolver(file_ref, user_id)
+            params["file_content"] = content
+            logger.info(
+                "📎 [Coordinator] Resolved file_ref '%s' → %d chars",
+                file_ref, len(content),
+            )
+        except Exception as e:
+            logger.error(
+                "❌ [Coordinator] Failed to resolve file_ref '%s': %s",
+                file_ref, e, exc_info=True,
+            )
 
     def get_available_intents(self) -> List[Dict[str, str]]:
         """

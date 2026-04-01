@@ -1338,3 +1338,110 @@ class TestGetAlternativeAgents:
 
     def test_get_alternative_agents_returns_none(self, router_agent):
         assert router_agent._get_alternative_agents() is None
+
+
+# ============================================================================
+# GCS reference vs native binary vision detection (lines 282-289)
+# ============================================================================
+
+class TestVisionRefVsNativeBinary:
+    """Ref-only files (GCS references) should NOT trigger vision.
+    Only native binary images should."""
+
+    @pytest.mark.asyncio
+    async def test_ref_only_pdf_not_treated_as_vision(self, router_config):
+        """file_data with ref key and non-image mime → no vision override."""
+        ref_part = MessagePart(
+            text='[File: "doc.pdf" (1.2MB)]',
+            file_data={"ref": "doc.pdf", "mime_type": "application/pdf", "size_bytes": 1200000},
+        )
+
+        agent = RouterAgent(
+            config=router_config,
+            quick_agent_id="quick_agent",
+            smart_agent_id="smart_agent",
+        )
+
+        message = AgentMessage.create(
+            sender="ch",
+            recipient="router_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "summarise this"},
+            context={
+                "user_id": "user1",
+                "current_message_parts": [ref_part],
+            },
+        )
+
+        response = await agent.execute(message)
+        # PDF ref should not force smart routing
+        assert response.result["routed_to"] == "quick_agent"
+
+    @pytest.mark.asyncio
+    async def test_ref_only_image_treated_as_vision(self, router_config, mock_llm, mock_prompt_builder):
+        """file_data with ref key AND image/ mime → vision IS detected."""
+        mock_llm.generate_content.return_value = MagicMock(
+            text='{"needs_memory_search":false,"confidence":0.9,"reasoning":"img","search_intent":"none","relevant_domains":[],"semantic_lens":[],"search_phrase":"","metadata":{"user_tone":"casual","complexity_score":2}}'
+        )
+        ec = AgentExecutionContext(
+            agent_type="router",
+            provider=mock_llm,
+            model_name="gemini-flash",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities()
+        )
+        agent = RouterAgent(
+            config=router_config,
+            execution_context=ec,
+            prompt_builder=mock_prompt_builder,
+            smart_agent_id="smart_agent",
+            quick_agent_id="quick_agent",
+        )
+
+        ref_image_part = MessagePart(
+            text='[File: "photo.png" (500KB)]',
+            file_data={"ref": "photo.png", "mime_type": "image/png", "size_bytes": 500000, "path": "/tmp/photo.png"},
+        )
+
+        message = AgentMessage.create(
+            sender="ch",
+            recipient="router_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "What is in this image?"},
+            context={
+                "user_id": "user1",
+                "session_id": None,
+                "current_message_parts": [ref_image_part],
+            },
+        )
+
+        response = await agent.execute(message)
+        assert response.result["routed_to"] == "smart_agent"
+
+    @pytest.mark.asyncio
+    async def test_ref_only_docx_not_treated_as_vision(self, router_config):
+        """DOCX ref should not trigger vision override."""
+        ref_part = MessagePart(
+            text='[File: "report.docx" (45KB)]',
+            file_data={"ref": "report.docx", "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "size_bytes": 45000},
+        )
+
+        agent = RouterAgent(
+            config=router_config,
+            quick_agent_id="quick_agent",
+            smart_agent_id="smart_agent",
+        )
+
+        message = AgentMessage.create(
+            sender="ch",
+            recipient="router_agent",
+            intent=AgentIntent.QUERY,
+            payload={"text": "Summarise this document"},
+            context={
+                "user_id": "user1",
+                "current_message_parts": [ref_part],
+            },
+        )
+
+        response = await agent.execute(message)
+        assert response.result["routed_to"] == "quick_agent"

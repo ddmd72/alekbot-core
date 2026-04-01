@@ -172,7 +172,10 @@ async def main():
             logger.info("📬 Agent task queue: disabled (socket mode or no GCP project)")
 
         logger.info("🎯 Initializing Agent Coordinator...")
-        coordinator = AgentCoordinator(registry=agent_registry, task_queue=agent_task_queue)
+        coordinator = AgentCoordinator(
+            registry=agent_registry,
+            task_queue=agent_task_queue,
+        )
 
         logger.info("🔧 Initializing Agent Worker Handler...")
         # notification_service and media_storage wired below after they are created
@@ -292,6 +295,10 @@ async def main():
         )
         file_service = FileUploadService(container.llm_port)
         session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
+
+        # Wire file ref resolver into coordinator for specialist delegation
+        if container.file_conversion_service:
+            coordinator._file_ref_resolver = container.file_conversion_service.resolve_content
 
         logger.info("🌐 Initializing Language Services...")
         from src.adapters.file_localization_adapter import FileLocalizationAdapter
@@ -611,6 +618,7 @@ async def main():
             user_repo=user_repo,
             language_service=_language_service,
             localization=_localization,
+            file_conversion_service=container.file_conversion_service,
         )
         notification_channel_factory.register_factory(
             "slack",
@@ -693,6 +701,7 @@ async def main():
                             user_repo=user_repo,
                             language_service=_language_service,
                             localization=_localization,
+                            file_conversion_service=container.file_conversion_service,
                         )
                         def _make_telegram_channel(adapter, channel_id):
                             try:

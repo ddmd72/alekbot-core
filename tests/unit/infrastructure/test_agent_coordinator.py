@@ -358,3 +358,56 @@ class TestGetStatus:
         assert status["total_agents"] == 1
         assert "a1" in status["agents"]
         assert status["agents"]["a1"] == {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# _resolve_file_refs()
+# ---------------------------------------------------------------------------
+
+class TestResolveFileRefs:
+
+    async def test_injects_file_content(self):
+        resolver = AsyncMock(return_value="resolved file text")
+        coord = AgentCoordinator(file_ref_resolver=resolver)
+        params = {"file_ref": "report.docx", "query": "summarise"}
+
+        await coord._resolve_file_refs(params, "user1")
+
+        assert params["file_content"] == "resolved file text"
+        resolver.assert_called_once_with("report.docx", "user1")
+
+    async def test_no_file_ref_noop(self):
+        resolver = AsyncMock()
+        coord = AgentCoordinator(file_ref_resolver=resolver)
+        params = {"query": "hello"}
+
+        await coord._resolve_file_refs(params, "user1")
+
+        assert "file_content" not in params
+        resolver.assert_not_called()
+
+    async def test_no_resolver_noop(self):
+        coord = AgentCoordinator(file_ref_resolver=None)
+        params = {"file_ref": "report.docx"}
+
+        await coord._resolve_file_refs(params, "user1")
+
+        assert "file_content" not in params
+
+    async def test_resolver_error_does_not_crash(self):
+        resolver = AsyncMock(side_effect=RuntimeError("download failed"))
+        coord = AgentCoordinator(file_ref_resolver=resolver)
+        params = {"file_ref": "broken.docx"}
+
+        await coord._resolve_file_refs(params, "user1")
+
+        assert "file_content" not in params
+
+    async def test_no_user_id_noop(self):
+        resolver = AsyncMock()
+        coord = AgentCoordinator(file_ref_resolver=resolver)
+        params = {"file_ref": "report.docx"}
+
+        await coord._resolve_file_refs(params, "")
+
+        resolver.assert_not_called()
