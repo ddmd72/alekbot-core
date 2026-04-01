@@ -334,6 +334,8 @@ class GeminiAdapter(LLMPort):
                             mime_type=uploaded_file.mime_type
                         )))
                         logger.info(f"📎 [GeminiAdapter] Uploaded file: {uploaded_file.uri}")
+                    elif "ref" in p.file_data:
+                        logger.debug(f"[GeminiAdapter] file ref '{p.file_data['ref']}' (no binary content)")
                     else:
                         logger.warning(f"⚠️ [GeminiAdapter] Unsupported file_data format: {list(p.file_data.keys())}")
             gemini_contents.append(types.Content(role=msg.role, parts=parts))

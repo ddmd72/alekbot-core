@@ -65,6 +65,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── gemini_adapter.py # Google Gemini Implementation
 │   ├── gemini_deep_research_adapter.py # 🆕 GeminiDeepResearchAdapter — wraps Gemini Deep Research SDK (google-genai)
 │   ├── gemini_embedding_adapter.py # Text embedding via text-embedding-004
+│   ├── gcs_file_storage_adapter.py # 🆕 GcsFileStorageAdapter — FileStoragePort impl; user file attachments with Finder-style dedup
 │   ├── gcs_media_adapter.py # 🆕 GCS bucket adapter for public media URLs (map images, Deep Research HTML reports)
 │   ├── grok_adapter.py     # 🆕 Grok (xAI) LLMPort implementation
 │   ├── gmail_provider_adapter.py # 🆕 Gmail API — list_emails, batch_get_full_content, token refresh
@@ -121,6 +122,9 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                             #    final artifact. PromptBuilder mandatory (agent_type="html_page").
 │   │                             #    Filename from <title> tag. Returns one DeliveryItem("document"):
 │   │                             #    HTML (GCS public URL → Slack link, file_upload=False).
+│   ├── file_management_agent.py  # 🆕 Zero-LLM file storage agent (intents: open_file,
+│   │                             #    delete_file). Downloads from GCS + converts (text) or returns
+│   │                             #    binary via file_data metadata (LLM vision). No LLM calls.
 │   ├── observation_agent.py      # ⚠️ LEGACY (replaced by session-based consolidation)
 │   ├── consolidation_agent.py    # Knowledge synthesis specialist ("Life Chronicler")
 │   ├── infrastructure/ # 🆕 Infrastructure Support Agents
@@ -225,6 +229,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                         #    original_query) → interaction_id. Delivery is adapter-specific:
 │   │                         #    Gemini adapter enqueues Cloud Task; OpenAI adapter uses webhook metadata.
 │   ├── file_service.py # File upload port
+│   ├── file_storage_port.py # 🆕 FileStoragePort ABC — user file attachments (upload/download/delete/exists/get_url)
 │   ├── audio_transcription_port.py # Audio transcription port (inactive)
 │   ├── html_renderer_port.py # 🆕 HtmlRendererPort ABC + HtmlRenderError
 │   ├── platform_media_port.py # 🆕 PlatformMediaPort ABC (upload_image, upload_file)
@@ -266,6 +271,8 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── gmail_oauth_service.py # 🆕 Gmail OAuth flow (authorization URL, token exchange)
 │   ├── document_delivery_service.py # 🆕 Stores document bytes (HTML, PDF) to GCS via MediaStoragePort.
 │   │                                #    Key format: docs/{uuid4()}-{filename}. Used by PdfGeneratorAgent.
+│   ├── file_conversion_service.py # 🆕 Centralized file upload to GCS + on-demand content resolution.
+│   │                              #    process_attachment → reference-only MessagePart; resolve_content → text.
 │   ├── rich_content_service.py # 🆕 File conversion + widget render + media dispatch
 │   ├── search_enrichment_service.py # 🆕 Triple search & weighted merge
 │   └── user_notification_service.py # 🆕 Sends Slack/Telegram alerts; stores last active channel

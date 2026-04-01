@@ -89,6 +89,16 @@ After every create/update/delete you receive an immediate confirmation message.
 
 ---
 
+*File attachments*
+Send me files directly in the chat — documents, images, PDFs, spreadsheets. I store them securely and can:
+- Read and analyse the content on any subsequent turn (no need to re-upload)
+- Use files as source material for document generation (PDF, DOCX, HTML page) — e.g. "create a PDF from this file"
+- Delete files when you no longer need them
+
+Files are kept for 90 days. Supported: anything that can be converted to text (DOCX, PDF, CSV, TXT, XLSX, etc.) plus images for visual analysis.
+
+---
+
 *Documents*
 I create formatted documents delivered directly in the chat.
 

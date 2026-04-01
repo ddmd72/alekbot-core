@@ -366,3 +366,24 @@ async def test_tool_calls_parsed_from_response():
     tc = result.tool_calls[0]
     assert tc.name == "search_memory"
     assert tc.args == {"query": "test"}
+
+
+# ---------------------------------------------------------------------------
+# GCS reference file_data — graceful handling
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_gcs_ref_file_data_no_error():
+    """file_data with 'ref' key should not raise — it's a GCS reference with no binary."""
+    adapter = GeminiAdapter(api_key="test-key")
+    messages = [
+        Message(role="user", parts=[
+            MessagePart(text='[File: "report.docx" (45KB)]'),
+            MessagePart(file_data={"ref": "report.docx", "mime_type": "text/plain", "size_bytes": 45000}),
+        ]),
+    ]
+
+    # Should not raise — ref-only file_data is silently handled
+    result = await adapter._convert_messages(messages)
+
+    assert len(result) == 1

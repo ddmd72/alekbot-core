@@ -277,8 +277,17 @@ class RouterAgent(BaseAgent):
         classification = await self._classify_request_with_fallback(text, message, history)
         routing_metadata = build_routing_metadata(classification)
         
-        # Vision override: if message has attachments, it's complex and needs Smart agent
-        if any(p.file_data for p in current_parts):
+        # Vision override: native binary images need Smart agent for vision capabilities.
+        # file_data with "ref" only (GCS reference without binary) is NOT vision — just a file label.
+        has_vision = any(
+            p.file_data and (
+                p.file_data.get("mime_type", "").startswith("image/")
+                if "ref" in p.file_data
+                else True  # legacy file_data with path/base64 = native binary
+            )
+            for p in current_parts if p.file_data
+        )
+        if has_vision:
             logger.info("📸 [RouterAgent] Vision detected, forcing complexity=7")
             routing_metadata.complexity_score = max(routing_metadata.complexity_score, 7)
 

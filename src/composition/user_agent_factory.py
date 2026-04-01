@@ -73,6 +73,7 @@ from ..agents.doc_generator_agent import DocGeneratorAgent
 from ..agents.pdf_generator_agent import PdfGeneratorAgent
 from ..agents.html_page_generator_agent import HtmlPageGeneratorAgent
 from ..agents.help_agent import HelpAgent
+from ..agents.file_management_agent import FileManagementAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
@@ -129,6 +130,8 @@ class UserAgentFactory:
         job_registry: Optional[ProviderRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
         anthropic_client: Optional[object] = None,
+        file_conversion_service: Optional[object] = None,
+        file_storage: Optional[object] = None,
     ) -> None:
         self.config = config
         self.env_config = env_config
@@ -159,6 +162,8 @@ class UserAgentFactory:
         self.job_registry: Optional[ProviderRegistry] = job_registry
         self.task_queue = task_queue
         self.anthropic_client = anthropic_client
+        self.file_conversion_service = file_conversion_service
+        self.file_storage = file_storage
 
         unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
         self._image_search = UnsplashAdapter(unsplash_key) if unsplash_key else None
@@ -556,6 +561,19 @@ class UserAgentFactory:
             ),
         )
 
+        file_management_agent = None
+        if self.file_conversion_service and self.file_storage:
+            file_management_agent = FileManagementAgent(
+                config=AgentConfig(
+                    agent_id=f"file_management_agent_{user_id}",
+                    agent_type="file_management",
+                    timeout_ms=30_000,
+                    capabilities=["file_storage"],
+                ),
+                conversion_service=self.file_conversion_service,
+                storage=self.file_storage,
+            )
+
         agents_to_register = [
             router_agent,
             quick_agent,
@@ -581,6 +599,8 @@ class UserAgentFactory:
             agents_to_register.append(deep_research_agent)
         if claude_runner_agent:
             agents_to_register.append(claude_runner_agent)
+        if file_management_agent:
+            agents_to_register.append(file_management_agent)
         self._register_agents(agents_to_register)
 
         # Preload prompt assembly cache (warm-up optimization, non-critical)
@@ -627,6 +647,7 @@ class UserAgentFactory:
             "html_page_generator_agent": html_page_generator_agent,
             "consolidation_agent": consolidation_agent,
             "help_agent": help_agent,
+            "file_management_agent": file_management_agent,
         }
         self._cache[user_id] = cached
         return cached

@@ -354,10 +354,13 @@ class GrokAdapter(LLMPort):
                         "content": str(part.tool_response.get("response", "")),
                     })
                 elif part.file_data:
-                    logger.warning(
-                        "[GrokAdapter] File attachment ignored - Grok does not support vision yet. "
-                        f"file_data keys: {list(part.file_data.keys())}"
-                    )
+                    if "ref" in part.file_data:
+                        logger.debug(f"[GrokAdapter] file ref '{part.file_data['ref']}' (no binary content)")
+                    else:
+                        logger.warning(
+                            "[GrokAdapter] File attachment ignored - Grok does not support vision yet. "
+                            f"file_data keys: {list(part.file_data.keys())}"
+                        )
 
             # Build the message only if there's content or tool calls
             if content_parts:

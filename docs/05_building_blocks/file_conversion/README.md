@@ -16,15 +16,25 @@ Platform Adapter (Slack/Telegram)
         ▼
 ConversationHandler
         │
-        ├── is_native_binary(mime_type)?
+        ├── FileConversionService present? (GCS path — preferred)
+        │       YES → process_attachment() → GCS upload → reference-only MessagePart
+        │             (no file content in history — see file_storage building block)
+        │
+        ├── is_native_binary(mime_type)? (legacy fallback)
         │       YES → MessagePart(file_data) → adapters handle natively
         │       NO  → convert_file_to_text() → MessagePart(text)
         │
         ▼
 AgentCoordinator → RouterAgent → Quick/Smart/WebSearch
+        │
+        ├── delegate with file_ref? → _resolve_file_refs() → download + convert → inject file_content
+        └── open_file intent? → FileManagementAgent → resolve_content/download
 ```
 
 Layer: **`src/utils/`** — pure utility functions (no class, no port, no I/O).
+
+> **See also:** [../file_storage/README.md](../file_storage/README.md) — GCS-backed file storage,
+> `FileConversionService`, and `FileManagementAgent`.
 
 ---
 

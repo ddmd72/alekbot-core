@@ -49,6 +49,8 @@ from ..adapters.firestore_task_config_repository import FirestoreTaskConfigRepos
 from ..adapters.firestore_task_search_index import FirestoreTaskSearchIndex
 from ..adapters.microsoft_todo_adapter import MicrosoftToDoAdapter
 from ..services.task_indexing_service import TaskIndexingService
+from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
+from ..services.file_conversion_service import FileConversionService
 from ..agents.email_classification_agent import EmailClassificationAgent
 from ..domain.agent import AgentConfig
 from ..domain.user import UserBotConfig
@@ -236,6 +238,16 @@ class ServiceContainer:
             overflow_callback=overflow_callback,
         )
 
+        # ------------------------------------------------------------------
+        # File storage
+        # ------------------------------------------------------------------
+        gcs_bucket = config.get("GCS_MEDIA_BUCKET", "")
+        self.file_storage = GcsFileStorageAdapter(gcs_bucket) if gcs_bucket else None
+        self.file_conversion_service = (
+            FileConversionService(storage=self.file_storage)
+            if self.file_storage else None
+        )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -263,6 +275,8 @@ class ServiceContainer:
             "tasks_provider": self.ms_todo_adapter,
             "task_indexing": self.task_indexing,
             "notes_provider": self.notes_adapter,
+            "file_conversion_service": self.file_conversion_service,
+            "file_storage": self.file_storage,
         }
 
     def create_fact_management_adapter(

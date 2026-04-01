@@ -86,6 +86,9 @@ class HtmlPageGeneratorAgent(BaseAgent):
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
         raw_query = message.payload.get("query", "")
+        file_content = message.payload.get("file_content")
+        if file_content:
+            raw_query = f"{raw_query}\n\n{file_content}" if raw_query else file_content
         if not raw_query:
             self._on_agent_error(ValueError("No query provided"), "empty_query")
             return AgentResponse.failure(
@@ -129,6 +132,7 @@ class HtmlPageGeneratorAgent(BaseAgent):
         response = await self._call_llm(request, turn=0)
 
         html_code = (response.text or "").strip()
+
         html_code = _strip_markdown_fences(html_code)
 
         if not html_code:
