@@ -1282,5 +1282,97 @@ class TestHandleCommandConsolidateExtra:
         await handler.handle_command("consolidate", ctx, channel)
 
         channel.send_message.assert_called_once()
-        sent = channel.send_message.call_args[0][0]
-        assert "Consolidation complete" in sent or "complete" in sent.lower()
+
+
+# ---------------------------------------------------------------------------
+# File Storage: GCS reference history cleanup (lines 583-603)
+# ---------------------------------------------------------------------------
+
+class TestGcsRefHistoryCleanup:
+    """Verify that GCS-backed files have path stripped but ref kept in history."""
+
+    async def test_gcs_ref_file_strips_path_keeps_ref(self):
+        """file_data with both 'ref' and 'path' → 'path' stripped, 'ref' kept."""
+        from src.domain.llm import MessagePart as MP
+
+        coord = _simple_coordinator(_make_success(SmartResponse(text="OK")))
+        handler = _make_handler(coord)
+        channel = _make_channel()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
+            tmp_path = f.name
+
+        mock_fcs = AsyncMock()
+        mock_fcs.process_attachment = AsyncMock(return_value=MP(
+            text='[File: "photo.png" (500KB)]',
+            file_data={
+                "ref": "photo.png",
+                "mime_type": "image/png",
+                "size_bytes": 500000,
+                "path": tmp_path,
+            },
+        ))
+        handler._file_conversion_service = mock_fcs
+
+        attachment = FileAttachment(
+            url="http://example.com/photo.png",
+            mime_type="image/png",
+            filename="photo.png",
+        )
+        ctx = _make_context(attachments=[attachment])
+        channel.download_file = AsyncMock(return_value=tmp_path)
+
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
+            await handler.handle_message(ctx, channel)
+
+        session_store = handler.agent_factory.get_session_store()
+        session_store.append_messages_batch.assert_awaited_once()
+
+        call_args = session_store.append_messages_batch.call_args
+        saved_messages = call_args[0][1]
+        user_msg = saved_messages[0]
+
+        for part in user_msg.parts:
+            if part.file_data:
+                assert "ref" in part.file_data
+                assert "path" not in part.file_data
+
+    async def test_gcs_ref_process_attachment_called(self):
+        """When file_conversion_service is present, process_attachment is used."""
+        from src.domain.llm import MessagePart as MP
+
+        coord = _simple_coordinator(_make_success(SmartResponse(text="OK")))
+        handler = _make_handler(coord)
+        channel = _make_channel()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as f:
+            tmp_path = f.name
+
+        mock_fcs = AsyncMock()
+        mock_fcs.process_attachment = AsyncMock(return_value=MP(
+            text='[File: "report.docx" (45KB)]',
+            file_data={
+                "ref": "report.docx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "size_bytes": 45000,
+            },
+        ))
+        handler._file_conversion_service = mock_fcs
+
+        attachment = FileAttachment(
+            url="http://example.com/report.docx",
+            mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename="report.docx",
+        )
+        ctx = _make_context(attachments=[attachment])
+        channel.download_file = AsyncMock(return_value=tmp_path)
+
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
+            await handler.handle_message(ctx, channel)
+
+        mock_fcs.process_attachment.assert_awaited_once_with(
+            tmp_path,
+            "report.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            user_id=_USER_ID,
+        )

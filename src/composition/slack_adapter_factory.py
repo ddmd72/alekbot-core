@@ -61,6 +61,7 @@ class SlackAdapterFactory:
         user_repo=None,
         language_service: Optional[LanguageServicePort] = None,
         localization: Optional[LocalizationService] = None,
+        file_conversion_service=None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -112,6 +113,7 @@ class SlackAdapterFactory:
             user_repo=user_repo,
             overflow_callback=process_user_batches_on_overflow,
             localization=localization,
+            file_conversion_service=file_conversion_service,
         )
 
         if env_config.is_socket_mode:

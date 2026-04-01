@@ -1046,3 +1046,99 @@ class TestSanitizeToolHistoryReplace:
         # model msg + 1 user msg (the tool_response one replaced the plain one)
         assert len(cleaned) == 2
         assert any(p.tool_response for p in cleaned[1].parts)
+
+
+# =========================================================================
+# ToolResponse.file_data in delegation loop
+# =========================================================================
+
+class TestToolResponseFileData:
+
+    def test_file_data_creates_extra_message_part(self, smart_agent):
+        """When tool_response has file_data, tool_parts should include both
+        the tool_response part AND a file_data part."""
+        tool_responses = [
+            ToolResponse(
+                name="delegate_to_specialist",
+                result_str="File content attached.",
+                file_data={"path": "/tmp/photo.png", "mime_type": "image/png"},
+            ),
+        ]
+
+        # Build tool_parts exactly as the execute loop does
+        tool_parts = []
+        for tr in tool_responses:
+            tool_parts.append(MessagePart(tool_response={
+                "name": tr.name,
+                "response": {"result": tr.result_str}
+            }))
+            if tr.file_data:
+                tool_parts.append(MessagePart(file_data=tr.file_data))
+
+        assert len(tool_parts) == 2
+        assert tool_parts[0].tool_response is not None
+        assert tool_parts[1].file_data["mime_type"] == "image/png"
+
+    def test_no_file_data_single_part(self, smart_agent):
+        """Without file_data, only one MessagePart per tool response."""
+        tool_responses = [
+            ToolResponse(
+                name="delegate_to_specialist",
+                result_str="Some text result",
+            ),
+        ]
+
+        tool_parts = []
+        for tr in tool_responses:
+            tool_parts.append(MessagePart(tool_response={
+                "name": tr.name,
+                "response": {"result": tr.result_str}
+            }))
+            if tr.file_data:
+                tool_parts.append(MessagePart(file_data=tr.file_data))
+
+        assert len(tool_parts) == 1
+
+
+class TestDelegateExtractsFileData:
+
+    async def test_file_data_from_metadata(self, smart_agent):
+        """When coordinator returns file_data in metadata, ToolResponse captures it."""
+        mock_coord = AsyncMock()
+        smart_agent.coordinator = mock_coord
+
+        file_data = {"path": "/tmp/img.jpg", "mime_type": "image/jpeg"}
+        mock_coord.handle_delegation = AsyncMock(return_value=AgentResponse.success(
+            task_id="t1",
+            agent_id="file_management_agent_user1",
+            result="File attached.",
+            metadata={"file_data": file_data},
+        ))
+
+        tool_call = ToolCall(
+            name="delegate_to_specialist",
+            args={"intent": "open_file", "query": "get photo", "context": {"file_ref": "photo.jpg"}}
+        )
+        result = await smart_agent._delegate_to_agent_with_retry(tool_call, "user1", "session1")
+
+        assert result.file_data == file_data
+
+    async def test_no_file_data_in_metadata(self, smart_agent):
+        """When no file_data in metadata, ToolResponse.file_data is None."""
+        mock_coord = AsyncMock()
+        smart_agent.coordinator = mock_coord
+
+        mock_coord.handle_delegation = AsyncMock(return_value=AgentResponse.success(
+            task_id="t1",
+            agent_id="memory_agent_user1",
+            result="Found facts.",
+            metadata={},
+        ))
+
+        tool_call = ToolCall(
+            name="delegate_to_specialist",
+            args={"intent": "search_memory", "query": "find facts"}
+        )
+        result = await smart_agent._delegate_to_agent_with_retry(tool_call, "user1", "session1")
+
+        assert result.file_data is None

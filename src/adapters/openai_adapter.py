@@ -422,6 +422,8 @@ class OpenAIAdapter(LLMPort):
                                 })
                         except Exception as e:
                             logger.error(f"[OpenAIAdapter] Failed to encode file from path: {e}")
+                    elif "ref" in part.file_data:
+                        logger.debug(f"[OpenAIAdapter] file ref '{part.file_data['ref']}' (no binary content)")
                     else:
                         logger.warning(f"[OpenAIAdapter] Unsupported file_data format: {list(part.file_data.keys())}")
 

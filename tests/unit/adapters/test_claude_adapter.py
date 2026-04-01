@@ -874,3 +874,25 @@ async def test_api_status_400_re_raises_as_is():
                 messages=_MESSAGES,
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# GCS reference file_data — graceful handling (no binary, no error)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_gcs_ref_file_data_no_error():
+    """file_data with 'ref' key should not raise — it's a GCS reference with no binary."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="user", parts=[
+            MessagePart(text='[File: "report.docx" (45KB)]'),
+            MessagePart(file_data={"ref": "report.docx", "mime_type": "text/plain", "size_bytes": 45000}),
+        ]),
+    ]
+
+    result = await adapter._convert_messages(messages)
+
+    # Should have one user message; ref part is silently skipped (only text part emits content)
+    assert len(result) == 1
+    assert result[0]["role"] == "user"

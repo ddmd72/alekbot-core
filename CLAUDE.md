@@ -103,6 +103,12 @@ background process extracts new facts from the conversation → bot gets smarter
   Port: `ImageSearchPort` (`src/ports/image_search_port.py`).
   Adapter: `UnsplashAdapter` (`src/adapters/unsplash_adapter.py`).
   See docs/05_building_blocks/document_generation/README.md § 11.
+- FileManagement (SYNC, zero-LLM) — `FileManagementAgent` (`file_management_agent.py`).
+  Two intents: `open_file` (download from GCS + convert to text or return binary for
+  LLM vision), `delete_file` (remove from GCS). Zero LLM calls — direct port operations via
+  `FileConversionService` and `FileStoragePort`. Context_schemas: `file_ref` (filename from
+  `[File: name (size)]` label in conversation). Binary files (images, PDFs) returned as temp file
+  + metadata for LLM vision. See docs/05_building_blocks/file_storage/README.md.
 - Proactive Self-Reminders (ECO tier) — `NotesAgent` backed by `FirestoreAgentNoteAdapter`.
   Intent `manage_self_reminders`. Paradigm: **deferred instructions for the orchestrator itself** —
   not a user-facing notepad, but a mechanism where the system sets reminders that fire autonomously
@@ -225,6 +231,13 @@ a large static dataset (e.g. email triage payload, document corpus) into the age
 - Never embed large payloads in the user message — it pollutes conversation history and
   bypasses prompt caching.
 
+**File Storage Pipeline** — upload path: ConversationHandler → FileConversionService.process_attachment()
+→ GCS upload → reference-only MessagePart (no content in history). Fetch path: specialist delegation
+with file_ref → AgentCoordinator._resolve_file_refs() intercepts, downloads + converts, injects
+file_content into params. FileManagementAgent handles direct open_file and delete_file intents.
+GcsFileStorageAdapter: Finder-style dedup (report.docx → report (1).docx), filename sanitization.
+Conditional on `GCS_MEDIA_BUCKET` env var. See docs/05_building_blocks/file_storage/README.md.
+
 **Multilingual Support** — two independent language axes:
 - **Agent response language** — controlled via prompt tokens (`LANG_MIRROR`, `LANG_FIXED_UK`,
   `LANG_FIXED_EN`, `LANG_FIXED_FR`, `LANG_FIXED_ES`). Mirror mode (default): LLM responds in the
@@ -275,6 +288,8 @@ src/
                   (task_search_index.py), TaskConfigPort (task_config_port.py),
                   TaskLifecyclePort (task_lifecycle_port.py).
                   Maps ports: MapsToolsPort (maps_tools_port.py).
+                  File storage ports: FileStoragePort (file_storage_port.py) — user file
+                  attachments (upload/download/delete/exists/get_url).
                   Language ports: LanguageServicePort (language_service_port.py),
                   LocalizationPort (localization_port.py).
   adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, OpenAI, Slack, Telegram,
@@ -294,6 +309,8 @@ src/
                   FirestoreTaskSearchIndex (firestore_task_search_index.py) — 2-vector RRF.
                   FirestoreTaskConfigRepository (firestore_task_config_repository.py).
                   Language adapters: FileLocalizationAdapter (file_localization_adapter.py).
+                  File storage adapter: GcsFileStorageAdapter (gcs_file_storage_adapter.py) —
+                  FileStoragePort impl; Finder-style dedup, filename sanitization, lazy GCS client.
   services/     — Business logic. Receive ports via DI.
                   prompt_builder.py includes both PromptBuilder and UserPromptBuilder
                   (merged from former user_prompt_builder.py).
@@ -302,6 +319,8 @@ src/
                   Tasks services: TaskIndexingService (embed→index + resolve_short_id),
                   TaskSetupService (lifecycle: setup/disconnect/ensure_subscriptions).
                   Language services: LanguagePreferenceService (write path + prompt token swap).
+                  File services: FileConversionService (file_conversion_service.py) — centralized
+                  file upload to GCS + on-demand content resolution.
   agents/       — Multi-agent system. core/ — agents, infrastructure/ — billing/logging.
                   Email agents: EmailSearchAgent, EmailClassificationAgent.
                   Document agents: DocPlannerAgent (doc_planner_agent.py, intent create_document,
@@ -316,6 +335,8 @@ src/
                   Maps agents: MapsSearchAgent (maps_search_agent.py, intent maps_query, SYNC).
                   Compute agents: ComputeAgent (compute_agent.py, intents compute_math,
                   compute_datetime, compute_finance, compute; SYNC, code_execution sandbox).
+                  File agents: FileManagementAgent (file_management_agent.py, intents
+                  open_file + delete_file, SYNC, zero-LLM). See Key Mechanisms above.
   handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler, WorkerHandler).
                   WorkerHandler dispatches /worker Cloud Tasks by task_type.
   infrastructure/ — AgentCoordinator, queues, agent_config.py (central behavior params),

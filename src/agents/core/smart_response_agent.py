@@ -55,6 +55,7 @@ class ToolResponse:
     structured_data: Optional[RichContent] = None
     history_context: Optional[Dict[str, Any]] = None
     delivery_items: List[DeliveryItem] = field(default_factory=list)
+    file_data: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -518,16 +519,16 @@ class SmartResponseAgent(BaseAgent):
                         accumulated_history.setdefault(key, []).append(value)
                 all_delivery_items.extend(tool_response.delivery_items)
 
-            history.append(Message(
-                role="user",
-                parts=[
-                    MessagePart(tool_response={
-                        "name": tool_response.name,
-                        "response": {"result": tool_response.result_str}
-                    })
-                    for tool_response in tool_responses
-                ]
-            ))
+            tool_parts = []
+            for tool_response in tool_responses:
+                tool_parts.append(MessagePart(tool_response={
+                    "name": tool_response.name,
+                    "response": {"result": tool_response.result_str}
+                }))
+                # Attach binary file (image/PDF) so LLM sees it natively
+                if tool_response.file_data:
+                    tool_parts.append(MessagePart(file_data=tool_response.file_data))
+            history.append(Message(role="user", parts=tool_parts))
 
         return AgentLoopResult(
             smart_response=SmartResponse(text="", structured_data=structured_data),
@@ -672,12 +673,14 @@ class SmartResponseAgent(BaseAgent):
                     f"✅ [SmartResponseAgent] delegate_to_specialist result: intent={intent}\n"
                     f"   result: {result_str}"
                 )
+                file_data = response.metadata.get("file_data") if response.metadata else None
                 return ToolResponse(
                     name=tool_call.name,
                     result_str=result_str,
                     structured_data=structured_data,
                     history_context=response.history_context,
                     delivery_items=response.delivery_items,
+                    file_data=file_data,
                 )
 
             # FAILED — validation or business logic rejection. Retrying won't help.
