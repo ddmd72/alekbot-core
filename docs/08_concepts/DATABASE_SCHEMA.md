@@ -1,8 +1,8 @@
 # Firestore Collections (Production Audit)
 
-**Last Updated:** 2026-03-19
+**Last Updated:** 2026-04-02
 **Status:** ✅ Production Validated
-**Version:** 3.5 (Tasks Integration)
+**Version:** 3.6 (File Storage + Billing Snapshot + Event Dedup TTL)
 
 ---
 
@@ -209,6 +209,9 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
     
 
     
+    
+    
+
     
     
 
@@ -511,13 +514,15 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 
 
 
-**Purpose:** Slack event deduplication (idempotency).  
-**Document ID:** `event_id` (Slack event ID)  
+
+
+
 
 
 ```json
 {
-  .0 // TTL managed by Firestore policy
+  .0,
+  
 }
 ```
 
