@@ -501,10 +501,15 @@ class OpenAIAdapter(LLMPort):
 
         usage_metadata = None
         if completion.usage:
+            cached = 0
+            ptd = getattr(completion.usage, "prompt_tokens_details", None)
+            if ptd:
+                cached = getattr(ptd, "cached_tokens", 0) or 0
             usage_metadata = UsageMetadata(
                 prompt_tokens=completion.usage.prompt_tokens,
                 completion_tokens=completion.usage.completion_tokens,
                 total_tokens=completion.usage.total_tokens,
+                cache_read_tokens=cached,
             )
 
         logger.info(
