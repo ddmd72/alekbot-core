@@ -402,6 +402,31 @@ Bot responds:
 
 ---
 
+## Bot Reminders (Settings tab)
+
+CRUD management of orchestrator self-reminders directly from Cabinet UI.
+
+**API Endpoints:**
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/user/reminders` | List all reminders for user (due times in user's timezone) |
+| POST | `/api/user/reminders` | Create reminder (body: `{text, instruction, due, recurrence?}`) |
+| PUT | `/api/user/reminders/<note_id>` | Update reminder (PATCH: any subset of fields) |
+| DELETE | `/api/user/reminders/<note_id>` | Delete reminder |
+
+**DI:** `AgentNotePort` injected into cabinet blueprint from `ServiceContainer.notes_adapter`.
+
+**Timezone handling:** `due` stored as UTC in Firestore. API returns ISO-8601 in user's timezone.
+Create/update: naive datetime interpreted as user's local time, converted to UTC before storage.
+
+**UI:** Card in Settings section with:
+- Reminders list: label, instruction (with newline rendering), due date, recurrence badge
+- Edit/Delete buttons per reminder
+- Create form: label input, instruction textarea, datetime-local picker, recurrence dropdown
+- i18n: en, uk, fr, es
+
+---
+
 ## Dependencies
 
 | Dependency | Type | Purpose |
