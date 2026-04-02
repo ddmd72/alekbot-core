@@ -1,8 +1,8 @@
 # Firestore Database Schema (Production Audit)
 
-**Last Updated:** 2026-03-19
+**Last Updated:** 2026-04-02
 **Status:** ✅ Production Validated
-**Version:** 3.5 (Tasks Integration)
+**Version:** 3.6 (File Storage + Billing Snapshot + Event Dedup TTL)
 
 ---
 
@@ -211,6 +211,9 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
     "daily_tokens": 5000,
     "daily_cost": 0.15,
     "daily_reset_at": "timestamp",
+
+    "prev_daily_tokens": 12000,     // yesterday's snapshot (for billing daily summary)
+    "prev_daily_cost": 0.42,        // saved at daily reset, read by morning report
 
     "monthly_tokens": 100000,
     "monthly_cost": 3.0,
@@ -511,13 +514,15 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
 
 ### 5.2 Event Dedup (`{prefix}event_dedup`)
 
-**Purpose:** Slack event deduplication (idempotency).  
-**Document ID:** `event_id` (Slack event ID)  
+**Purpose:** Slack/Telegram event deduplication (idempotency).
+**Document ID:** `event_id` (platform event ID)
 **Code Reference:** `src/adapters/firestore_dedup_store.py`
+**TTL Policy:** `expires_at` field, Firestore native TTL (ACTIVE). Auto-deletes after 1 hour.
 
 ```json
 {
-  "created_at": 1234567890.0 // TTL managed by Firestore policy
+  "created_at": 1234567890.0,
+  "expires_at": "2026-04-02T01:00:00Z"  // Firestore Timestamp — TTL policy auto-deletes
 }
 ```
 
