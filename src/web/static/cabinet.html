@@ -1286,6 +1286,55 @@
               <button id="settings-lang-save" onclick="saveLanguage()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">Save</button>
             </div>
           </div>
+
+          <!-- Bot Reminders -->
+          <div class="card reveal" style="max-width: 640px; margin-top: 20px">
+            <div class="card-body">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                <div>
+                  <h3 id="settings-rem-title" style="font-size:18px;font-weight:600;margin-bottom:4px">Bot Reminders</h3>
+                  <p id="settings-rem-desc" style="font-size:14px;color:var(--text-muted);margin:0">Scheduled actions the bot executes automatically.</p>
+                </div>
+                <button class="btn btn-primary" style="padding:8px 16px;font-size:14px" onclick="showReminderForm()">+ New</button>
+              </div>
+
+              <!-- Create/Edit form (hidden by default) -->
+              <div id="reminder-form" style="display:none;background:var(--bg-hover);border-radius:var(--radius-sm);padding:16px;margin-bottom:16px">
+                <input type="hidden" id="rem-edit-id" value="">
+                <div style="margin-bottom:12px">
+                  <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Label</label>
+                  <input id="rem-text" class="inp" placeholder="Short label (e.g. Check email)" style="width:100%;margin-top:4px">
+                </div>
+                <div style="margin-bottom:12px">
+                  <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Instruction</label>
+                  <textarea id="rem-instruction" class="inp" rows="3" placeholder="What the bot should do when this fires..." style="width:100%;margin-top:4px;resize:vertical;font-family:inherit"></textarea>
+                </div>
+                <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+                  <div style="flex:1;min-width:180px">
+                    <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Due (your time)</label>
+                    <input id="rem-due" type="datetime-local" class="inp" style="width:100%;margin-top:4px">
+                  </div>
+                  <div style="flex:1;min-width:140px">
+                    <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Repeat</label>
+                    <select id="rem-recurrence" class="inp" style="width:100%;margin-top:4px;padding:10px">
+                      <option value="">Once</option>
+                      <option value="hourly">Hourly</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </div>
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end">
+                  <button class="btn btn-secondary" style="padding:8px 16px;font-size:14px" onclick="hideReminderForm()">Cancel</button>
+                  <button class="btn btn-primary" style="padding:8px 16px;font-size:14px" onclick="saveReminder()">Save</button>
+                </div>
+              </div>
+
+              <!-- Reminders list -->
+              <div id="reminders-list" style="font-size:14px;color:var(--text-muted)">Loading...</div>
+            </div>
+          </div>
         </section>
       </main>
     </div>
@@ -1341,6 +1390,8 @@
           "settings.lang.bot_label": "Bot responds in",
           "settings.lang.mirror": "Mirror input",
           "settings.lang.fixed": "Fixed language",
+          "settings.rem.title": "Bot Reminders",
+          "settings.rem.desc": "Scheduled actions the bot executes automatically.",
           "btn.save": "Save",
           "toast.lang_saved": "Language saved",
           "toast.lang_failed": "Failed to save language",
@@ -1396,6 +1447,8 @@
           "settings.lang.bot_label": "Бот відповідає",
           "settings.lang.mirror": "Мова запиту",
           "settings.lang.fixed": "Фіксована мова",
+          "settings.rem.title": "Нагадування бота",
+          "settings.rem.desc": "Заплановані дії, які бот виконує автоматично.",
           "btn.save": "Зберегти",
           "toast.lang_saved": "Мову збережено",
           "toast.lang_failed": "Не вдалося зберегти мову",
@@ -1451,6 +1504,8 @@
           "settings.lang.bot_label": "Alek r\u00e9pond en",
           "settings.lang.mirror": "Langue de la requ\u00eate",
           "settings.lang.fixed": "Langue fixe",
+          "settings.rem.title": "Rappels du bot",
+          "settings.rem.desc": "Actions planifi\u00e9es ex\u00e9cut\u00e9es automatiquement par le bot.",
           "btn.save": "Enregistrer",
           "toast.lang_saved": "Langue enregistr\u00e9e",
           "toast.lang_failed": "\u00c9chec de la sauvegarde",
@@ -1506,6 +1561,8 @@
           "settings.lang.bot_label": "Alek responde en",
           "settings.lang.mirror": "Idioma del mensaje",
           "settings.lang.fixed": "Idioma fijo",
+          "settings.rem.title": "Recordatorios del bot",
+          "settings.rem.desc": "Acciones programadas que el bot ejecuta autom\u00e1ticamente.",
           "btn.save": "Guardar",
           "toast.lang_saved": "Idioma guardado",
           "toast.lang_failed": "Error al guardar",
@@ -1555,6 +1612,8 @@
         "#settings-lang-save":        "btn.save",
         "#lang-mirror-btn":           "settings.lang.mirror",
         "#lang-fixed-btn":            "settings.lang.fixed",
+        "#settings-rem-title":        "settings.rem.title",
+        "#settings-rem-desc":         "settings.rem.desc",
       };
 
       const I18N_PLACEHOLDERS = {
@@ -1682,6 +1741,7 @@
           showToast("Failed to load settings", "error");
         }
         await loadLanguage();
+        await loadReminders();
       }
 
       async function saveTimezone() {
@@ -1755,6 +1815,104 @@
         } catch {
           showToast(t("toast.lang_failed"), "error");
         }
+      }
+
+      /* ── Bot Reminders ────────────────────────────────── */
+      let _remindersData = [];
+
+      async function loadReminders() {
+        const list = document.getElementById("reminders-list");
+        try {
+          const res = await fetch(`${API}/api/user/reminders`, { credentials: "include" });
+          if (res.status === 501) { list.textContent = "Reminders not available."; return; }
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          _remindersData = data.reminders || [];
+          renderReminders();
+        } catch {
+          list.textContent = "Failed to load reminders.";
+        }
+      }
+
+      function renderReminders() {
+        const list = document.getElementById("reminders-list");
+        if (!_remindersData.length) {
+          list.innerHTML = `<p style="color:var(--text-subtle);font-style:italic">No reminders yet.</p>`;
+          return;
+        }
+        list.innerHTML = _remindersData.map(r => {
+          const due = r.due ? new Date(r.due).toLocaleString(undefined, {dateStyle:"medium",timeStyle:"short"}) : "—";
+          const rec = r.recurrence ? `🔁 ${r.recurrence.type}${r.recurrence.interval > 1 ? ` (every ${r.recurrence.interval})` : ""}` : "once";
+          const instr = (r.instruction || "").replace(/\n/g, "<br>");
+          return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+              <div style="flex:1">
+                <div style="font-weight:600;color:var(--text-main);font-size:15px">${esc(r.text)}</div>
+                <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${due} · ${rec}</div>
+                <div style="font-size:13px;color:var(--text-subtle);margin-top:6px;line-height:1.5">${instr}</div>
+              </div>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                <button class="btn btn-secondary" style="padding:4px 10px;font-size:13px" onclick="editReminder('${r.note_id}')">Edit</button>
+                <button class="btn btn-danger" style="padding:4px 10px;font-size:13px" onclick="deleteReminder('${r.note_id}')">Delete</button>
+              </div>
+            </div>
+          </div>`;
+        }).join("");
+      }
+
+      function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+      function showReminderForm(note) {
+        document.getElementById("rem-edit-id").value = note ? note.note_id : "";
+        document.getElementById("rem-text").value = note ? note.text : "";
+        document.getElementById("rem-instruction").value = note ? note.instruction : "";
+        if (note && note.due) {
+          const d = new Date(note.due);
+          const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+          document.getElementById("rem-due").value = local;
+        } else {
+          document.getElementById("rem-due").value = "";
+        }
+        document.getElementById("rem-recurrence").value = note?.recurrence?.type || "";
+        document.getElementById("reminder-form").style.display = "block";
+      }
+
+      function hideReminderForm() {
+        document.getElementById("reminder-form").style.display = "none";
+      }
+
+      function editReminder(noteId) {
+        const note = _remindersData.find(r => r.note_id === noteId);
+        if (note) showReminderForm(note);
+      }
+
+      async function saveReminder() {
+        const editId = document.getElementById("rem-edit-id").value;
+        const text = document.getElementById("rem-text").value.trim();
+        const instruction = document.getElementById("rem-instruction").value.trim();
+        const due = document.getElementById("rem-due").value;
+        const recType = document.getElementById("rem-recurrence").value;
+        if (!text || !instruction || !due) { showToast("Fill in all fields", "error"); return; }
+        const body = { text, instruction, due, recurrence: recType ? { type: recType, interval: 1 } : null };
+        try {
+          const url = editId ? `${API}/api/user/reminders/${editId}` : `${API}/api/user/reminders`;
+          const method = editId ? "PUT" : "POST";
+          const res = await fetch(url, { method, credentials: "include", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });
+          if (!res.ok) { const e = await res.json().catch(()=>({})); showToast(e.error || "Failed", "error"); return; }
+          hideReminderForm();
+          showToast(editId ? "Reminder updated" : "Reminder created", "success");
+          await loadReminders();
+        } catch { showToast("Failed to save reminder", "error"); }
+      }
+
+      async function deleteReminder(noteId) {
+        if (!confirm("Delete this reminder?")) return;
+        try {
+          const res = await fetch(`${API}/api/user/reminders/${noteId}`, { method: "DELETE", credentials: "include" });
+          if (!res.ok) { showToast("Failed to delete", "error"); return; }
+          showToast("Reminder deleted", "success");
+          await loadReminders();
+        } catch { showToast("Failed to delete", "error"); }
       }
 
       /* ── Init ────────────────────────────────────────── */

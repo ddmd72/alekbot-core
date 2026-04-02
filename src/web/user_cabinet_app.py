@@ -16,6 +16,7 @@ from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
 from ..ports.task_queue import TaskQueue
 from ..ports.language_service_port import LanguageServicePort
+from ..ports.agent_note_port import AgentNotePort
 from ..utils.logger import logger
 
 # Documentation owner (loaded from environment variable - Secret Manager)
@@ -38,6 +39,7 @@ def create_user_cabinet_blueprint(
     task_setup=None,
     tasks_provider=None,
     language_service: Optional[LanguageServicePort] = None,
+    agent_note_port: Optional[AgentNotePort] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -453,6 +455,155 @@ def create_user_cabinet_blueprint(
             }), 200
         except Exception as e:
             logger.error(f"Error updating language preference: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    # ------------------------------------------------------------------
+    # Bot Reminders (self-reminders / orchestrator notes)
+    # ------------------------------------------------------------------
+
+    @bp.route("/api/user/reminders", methods=["GET"])
+    @auth_required
+    async def list_reminders():
+        """Return all reminders for the user."""
+        if not agent_note_port:
+            return jsonify({"error": "Reminders not configured"}), 501
+        try:
+            from datetime import timezone as tz
+            notes = await agent_note_port.list_active_notes(
+                g.user_id, datetime(1970, 1, 1, tzinfo=tz.utc),
+            )
+            user = await user_repo.get_user(g.user_id)
+            user_tz_name = user.config.timezone if user else "UTC"
+            from zoneinfo import ZoneInfo
+            user_tz = ZoneInfo(user_tz_name)
+            return jsonify({
+                "reminders": [
+                    {
+                        "note_id": n.note_id,
+                        "text": n.text,
+                        "instruction": n.instruction,
+                        "due": n.due.astimezone(user_tz).isoformat() if n.due else None,
+                        "recurrence": (
+                            {"type": n.recurrence.type, "interval": n.recurrence.interval}
+                            if n.recurrence else None
+                        ),
+                        "created_at": n.created_at.isoformat() if n.created_at else None,
+                    }
+                    for n in notes
+                ],
+                "timezone": user_tz_name,
+            }), 200
+        except Exception as e:
+            logger.error(f"Error listing reminders: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/reminders", methods=["POST"])
+    @auth_required
+    async def create_reminder():
+        """Create a new reminder. Body: {text, instruction, due (ISO), recurrence?}"""
+        if not agent_note_port:
+            return jsonify({"error": "Reminders not configured"}), 501
+        from ..domain.agent_note import NoteCreate, ReminderRecurrence
+        from zoneinfo import ZoneInfo
+        try:
+            body = await request.get_json(force=True) or {}
+            text = (body.get("text") or "").strip()
+            instruction = (body.get("instruction") or "").strip()
+            due_raw = body.get("due")
+            if not text or not instruction or not due_raw:
+                return jsonify({"error": "text, instruction, and due are required"}), 400
+
+            user = await user_repo.get_user(g.user_id)
+            user_tz = ZoneInfo(user.config.timezone if user else "UTC")
+            due = datetime.fromisoformat(due_raw)
+            if due.tzinfo is None:
+                due = due.replace(tzinfo=user_tz)
+            from datetime import timezone as tz
+            due_utc = due.astimezone(tz.utc)
+
+            recurrence = None
+            rec = body.get("recurrence")
+            if rec and isinstance(rec, dict) and rec.get("type"):
+                recurrence = ReminderRecurrence(
+                    type=rec["type"],
+                    interval=rec.get("interval", 1),
+                )
+
+            note = await agent_note_port.create_note(NoteCreate(
+                user_id=g.user_id,
+                text=text,
+                instruction=instruction,
+                due=due_utc,
+                recurrence=recurrence,
+            ))
+            return jsonify({"note_id": note.note_id, "status": "created"}), 201
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            logger.error(f"Error creating reminder: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/reminders/<note_id>", methods=["PUT"])
+    @auth_required
+    async def update_reminder(note_id: str):
+        """Update a reminder. Body: {text?, instruction?, due?, recurrence?}"""
+        if not agent_note_port:
+            return jsonify({"error": "Reminders not configured"}), 501
+        from ..domain.agent_note import NoteUpdate, ReminderRecurrence
+        from zoneinfo import ZoneInfo
+        try:
+            body = await request.get_json(force=True) or {}
+
+            user = await user_repo.get_user(g.user_id)
+            user_tz = ZoneInfo(user.config.timezone if user else "UTC")
+
+            due_utc = None
+            due_raw = body.get("due")
+            if due_raw:
+                due = datetime.fromisoformat(due_raw)
+                if due.tzinfo is None:
+                    due = due.replace(tzinfo=user_tz)
+                from datetime import timezone as tz
+                due_utc = due.astimezone(tz.utc)
+
+            recurrence = None
+            rec = body.get("recurrence")
+            if rec is not None:
+                if isinstance(rec, dict) and rec.get("type"):
+                    recurrence = ReminderRecurrence(
+                        type=rec["type"],
+                        interval=rec.get("interval", 1),
+                    )
+
+            update = NoteUpdate(
+                note_id=note_id,
+                user_id=g.user_id,
+                text=body.get("text"),
+                instruction=body.get("instruction"),
+                due=due_utc,
+                recurrence=recurrence,
+            )
+            note = await agent_note_port.update_note(update)
+            return jsonify({"note_id": note.note_id, "status": "updated"}), 200
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            logger.error(f"Error updating reminder: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/reminders/<note_id>", methods=["DELETE"])
+    @auth_required
+    async def delete_reminder(note_id: str):
+        """Delete a reminder."""
+        if not agent_note_port:
+            return jsonify({"error": "Reminders not configured"}), 501
+        try:
+            deleted = await agent_note_port.delete_note(note_id, g.user_id)
+            if not deleted:
+                return jsonify({"error": "Reminder not found"}), 404
+            return jsonify({"note_id": note_id, "status": "deleted"}), 200
+        except Exception as e:
+            logger.error(f"Error deleting reminder: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
     @bp.route("/api/user/facts", methods=["GET"])
