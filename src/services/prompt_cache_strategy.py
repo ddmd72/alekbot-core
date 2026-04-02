@@ -17,15 +17,15 @@ class PromptCacheStrategy(PromptCacheStrategyPort):
     """Default prompt cache strategy.
 
     Business rules:
-    - Consolidation, Smart, Quick agents benefit from caching
+    - Consolidation, Smart, Quick, WebSearch agents benefit from caching
       (static/semi-static system prompts, multi-turn reuse).
-    - Router and WebSearch do not benefit
-      (short/empty prompts, single-shot).
+    - Router does not benefit
+      (short prompt, single-shot).
     - Provider must support context_caching
       (Claude yes, Gemini/Grok no).
     """
 
-    CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick"})
+    CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick", "websearch"})
 
     def resolve(
         self, agent_type: str, capabilities: ProviderCapabilities

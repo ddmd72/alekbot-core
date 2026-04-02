@@ -292,6 +292,65 @@ class ClaudeAdapter(LLMPort):
                     cache_metadata=llm_response.cache_metadata,
                 )
 
+        # Force respond: when response_schema is active but the model returned end_turn
+        # without calling respond (happens with grounding — web_search satisfies tool_choice:any).
+        # Second call with tool_choice forced to respond; pass first response as assistant turn
+        # so the model sees its own search results and reformats into JSON.
+        if _schema_tool_active and not _use_dynamic_search:
+            has_respond = llm_response.tool_calls and any(
+                tc.name == "respond" for tc in llm_response.tool_calls
+            )
+            if not has_respond and response is not None:
+                logger.debug("[ClaudeAdapter] respond not called — forcing second turn")
+                force_messages = list(claude_messages) + [
+                    {"role": "assistant", "content": response.content}
+                ]
+                force_kwargs = {
+                    "model": model_name,
+                    "max_tokens": max_tokens,
+                    "system": system_parts,
+                    "messages": force_messages,
+                    "tools": claude_tools,
+                    "tool_choice": {"type": "tool", "name": "respond"},
+                    "temperature": temperature,
+                }
+                if beta_headers:
+                    force_kwargs["betas"] = beta_headers
+                try:
+                    async with self.client.messages.stream(**force_kwargs) as stream:
+                        force_response = await stream.get_final_message()
+                except anthropic.RateLimitError as e:
+                    raise LLMRateLimitError(str(e), http_status=429) from e
+                except anthropic.APIStatusError as e:
+                    if e.status_code == 503:
+                        raise LLMUnavailableError(str(e), http_status=503) from e
+                    raise
+
+                force_parsed = self._parse_response(force_response)
+                # Merge usage from both calls
+                total_usage = UsageMetadata(
+                    prompt_tokens=(llm_response.usage_metadata.prompt_tokens or 0) + (force_parsed.usage_metadata.prompt_tokens or 0),
+                    completion_tokens=(llm_response.usage_metadata.completion_tokens or 0) + (force_parsed.usage_metadata.completion_tokens or 0),
+                    total_tokens=(llm_response.usage_metadata.total_tokens or 0) + (force_parsed.usage_metadata.total_tokens or 0),
+                    cache_read_tokens=(llm_response.usage_metadata.cache_read_tokens or 0) + (force_parsed.usage_metadata.cache_read_tokens or 0),
+                    cache_creation_tokens=(llm_response.usage_metadata.cache_creation_tokens or 0) + (force_parsed.usage_metadata.cache_creation_tokens or 0),
+                )
+                respond_call = next(
+                    (tc for tc in force_parsed.tool_calls if tc.name == "respond"), None
+                )
+                if respond_call:
+                    import json
+                    return LLMResponse(
+                        text=json.dumps(respond_call.args or {}, ensure_ascii=False),
+                        tool_calls=[],
+                        raw_content=force_parsed.raw_content,
+                        usage_metadata=total_usage,
+                        cache_metadata=llm_response.cache_metadata,
+                    )
+                # Fallback: respond still not called — return force_parsed as-is
+                force_parsed.usage_metadata = total_usage
+                return force_parsed
+
         return llm_response
 
     async def _grounded_stream_loop(self, create_kwargs: dict) -> LLMResponse:
