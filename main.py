@@ -507,6 +507,7 @@ async def main():
             task_setup=task_setup_service,
             tasks_provider=container.ms_todo_adapter,
             language_service=_language_service,
+            agent_note_port=container.notes_adapter,
         )
 
         # Services for WorkerHandler — wrap ports so the handler never imports ports directly
