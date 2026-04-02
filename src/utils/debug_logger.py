@@ -316,7 +316,12 @@ class PromptDebugLogger:
                 if data.get("finish_reason"):
                     sections.append(f"=== FINISH: {data['finish_reason']} ===")
                 if data.get("tokens"):
-                    sections.append(f"=== TOKENS: {data['tokens']} ===")
+                    token_line = f"=== TOKENS: {data['tokens']}"
+                    cache = data.get("cache")
+                    if cache and (cache.get("read") or cache.get("creation")):
+                        token_line += f" (cache_read={cache.get('read', 0)}, cache_creation={cache.get('creation', 0)})"
+                    token_line += " ==="
+                    sections.append(token_line)
                 text_body = "\n\n".join(sections) if sections else response
             except (json.JSONDecodeError, Exception):
                 logger.debug("Could not parse structured response for debug formatting, using raw string")

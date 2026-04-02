@@ -420,10 +420,12 @@ class GeminiAdapter(LLMPort):
 
         usage_metadata = None
         if hasattr(response, "usage_metadata") and response.usage_metadata:
+            um = response.usage_metadata
             usage_metadata = UsageMetadata(
-                prompt_tokens=response.usage_metadata.prompt_token_count or 0,
-                completion_tokens=response.usage_metadata.candidates_token_count or 0,
-                total_tokens=response.usage_metadata.total_token_count or 0
+                prompt_tokens=um.prompt_token_count or 0,
+                completion_tokens=(um.response_token_count or um.candidates_token_count or 0),
+                total_tokens=um.total_token_count or 0,
+                cache_read_tokens=um.cached_content_token_count or 0,
             )
 
         grounding_metadata = getattr(candidate, "grounding_metadata", None)

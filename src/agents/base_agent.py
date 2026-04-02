@@ -682,7 +682,15 @@ class BaseAgent(ABC):
                 for tc in response.tool_calls
             ]
         if response.usage_metadata:
-            data["tokens"] = response.usage_metadata.total_tokens
+            m = response.usage_metadata
+            data["tokens"] = m.total_tokens
+            try:
+                cr = int(m.cache_read_tokens or 0)
+                cc = int(m.cache_creation_tokens or 0)
+                if cr or cc:
+                    data["cache"] = {"read": cr, "creation": cc}
+            except (TypeError, ValueError):
+                logger.debug("Non-numeric cache tokens in usage_metadata — skipping cache debug")
         meta = {"turn": turn} if turn else None
         debug.log_response(
             agent_name=self.agent_type or self.agent_id,
