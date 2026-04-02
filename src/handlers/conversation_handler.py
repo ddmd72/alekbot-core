@@ -633,11 +633,11 @@ class ConversationHandler(ConversationHandlerPort):
 
             # Attach consolidation_text from save_to_memory delegations to the user message.
             # consolidation_text is invisible to agents/adapters; only the consolidation
-            # serializer reads it (p.full_text or p.consolidation_text or p.text).
+            # serializer reads it (p.consolidation_text or p.text for user parts).
             consolidation_texts = (response.metadata or {}).get("consolidation_text", [])
             if consolidation_texts:
                 combined = "\n".join(consolidation_texts) if isinstance(consolidation_texts, list) else str(consolidation_texts)
-                clean_message_parts.append(MessagePart(consolidation_text=combined))
+                clean_message_parts.append(MessagePart(consolidation_text="\n\n" + combined))
                 logger.info(
                     "💾 [History] consolidation_text attached to user message (%d chars)", len(combined)
                 )
@@ -770,13 +770,19 @@ class ConversationHandler(ConversationHandlerPort):
                      await response_channel.send_message("ℹ️ Not enough messages to consolidate.", thread_id=context.thread_id)
                      return
 
-                # Serialize
+                # Serialize for consolidation.
+                # Model: summary (p.text), not full_text (verbose + web_search_context).
+                # User: consolidation_text (explicit save) or user text.
                 serialized = []
                 for msg in old_messages:
+                    if msg.role == "model":
+                        parts = [{"text": p.text} for p in msg.parts if p.text]
+                    else:
+                        parts = [{"text": p.consolidation_text or p.text} for p in msg.parts if p.consolidation_text or p.text]
                     serialized.append({
                         "role": msg.role,
-                        "parts": [{"text": p.full_text or p.consolidation_text or p.text} for p in msg.parts if p.full_text or p.consolidation_text or p.text],
-                        "created_at": msg.created_at
+                        "parts": parts,
+                        "created_at": msg.created_at,
                     })
 
                 from src.domain.consolidation import ConsolidationBatch

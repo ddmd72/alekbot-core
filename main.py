@@ -243,13 +243,20 @@ async def main():
                 return
 
             try:
-                # 1. Serialize messages for storage
+                # 1. Serialize messages for consolidation.
+                # Model parts: use summary (p.text), NOT full_text — full_text contains
+                # verbose responses + web_search_context JSON that pollute consolidation.
+                # User parts: consolidation_text (explicit fact save) or user text.
                 serialized = []
                 for msg in messages:
+                    if msg.role == "model":
+                        parts = [{"text": p.text} for p in msg.parts if p.text]
+                    else:
+                        parts = [{"text": p.consolidation_text or p.text} for p in msg.parts if p.consolidation_text or p.text]
                     serialized.append({
                         "role": msg.role,
-                        "parts": [{"text": p.full_text or p.consolidation_text or p.text} for p in msg.parts if p.full_text or p.consolidation_text or p.text],
-                        "created_at": msg.created_at
+                        "parts": parts,
+                        "created_at": msg.created_at,
                     })
 
                 # 2. Create a lightweight batch
