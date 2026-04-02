@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from google.cloud.firestore_v1.async_client import AsyncClient
 from ..ports.dedup_store import DedupStore
@@ -43,14 +44,20 @@ class FirestoreDedupStore(DedupStore):
             return False
         return True
 
+    def _make_doc(self) -> dict:
+        """Build dedup document with expires_at for Firestore TTL policy."""
+        now = datetime.now(timezone.utc)
+        return {
+            "created_at": time.time(),
+            "expires_at": now + timedelta(seconds=self.ttl_seconds),
+        }
+
     async def mark_processed(self, event_id: Optional[str]) -> None:
         """Legacy non-atomic mark."""
         if not event_id:
             return
         doc_ref = self.db_client.collection(self.collection_name).document(event_id)
-        await doc_ref.set({
-            "created_at": time.time()
-        })
+        await doc_ref.set(self._make_doc())
         logger.debug(f"🧹 Dedup mark stored for event {event_id[:12]}...")
 
     async def try_mark_processed(self, event_id: Optional[str]) -> bool:
@@ -62,15 +69,10 @@ class FirestoreDedupStore(DedupStore):
             return False
         try:
             doc_ref = self.db_client.collection(self.collection_name).document(event_id)
-            # create() fails if document already exists
-            await doc_ref.create({
-                "created_at": time.time()
-            })
+            await doc_ref.create(self._make_doc())
             logger.debug(f"✅ Atomic dedup mark stored for event {event_id[:12]}...")
             return True
         except Exception:
-            # Document already exists or other Firestore error
-            # We check if it's actually a duplicate or just a transient error
             is_dup = await self.is_duplicate(event_id)
             if is_dup:
                 logger.info(f"⏭️ Atomic check confirmed duplicate for event {event_id[:12]}...")
