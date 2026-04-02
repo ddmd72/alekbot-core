@@ -171,6 +171,12 @@ Language:
    - "Fixed language" — I always respond in the language selected above, regardless of your input language
 3. Click "Save" to apply
 
+Bot Reminders:
+- View all your scheduled reminders (both self-set and bot-created)
+- Create new reminders: set a label, instruction (what the bot should do), due date/time, and optionally a recurrence (hourly, daily, weekly, monthly)
+- Edit existing reminders: change any field
+- Delete reminders you no longer need
+
 *Team tab* (account owner only)
 1. Click "Generate New Invite Link" → enter the person's email → an invite code and shareable link are generated
 2. Copy the link and send it to them

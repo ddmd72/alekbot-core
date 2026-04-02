@@ -45,7 +45,7 @@ background process extracts new facts from the conversation → bot gets smarter
 ## Key Mechanisms
 
 **Multi-agent network** — not one LLM for everything, but specialists:
-- Router (Gemini) — LLM triage on every request: classifies complexity (1–6 → Quick, 7–10 → Smart),
+- Router (Gemini) — LLM triage on every request: classifies complexity (1–5 → Quick, 6–10 → Smart),
   extracts semantic lens and search intent, triggers memory/web enrichment before routing.
   Rule-based `_classify_request` is a fallback only (LLM unavailable or failed).
   Confidence safety net: low confidence always falls back to Smart.
@@ -183,8 +183,12 @@ background process extracts new facts from the conversation → bot gets smarter
   `agent_execution`, `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`,
   `consolidation`, `deep_research_polling`, `fire_due_reminders`, `setup_microsoft_todo`,
   `reindex_task_list`, `renew_task_subscriptions`, `renew_all_task_subscriptions`,
-  `start_daily_email_review`, `daily_email_review`
+  `start_daily_email_review`, `daily_email_review`, `billing_daily_summary`
   See `docs/07_deployment/SCHEDULERS.md` for full scheduler reference.
+- **Billing daily summary** — Cloud Scheduler 09:00 Europe/Madrid → `billing_daily_summary`.
+  Reads `prev_daily_tokens/prev_daily_cost` (yesterday's snapshot, saved at daily counter reset)
+  → posts to Slack webhook. Per-provider cache pricing: Claude 0.1×, OpenAI 0.5×, Gemini 0.25×.
+  All adapters populate `cache_read_tokens` in `UsageMetadata`.
 - Watchdog: Cloud Scheduler fires `email_indexing_watchdog` every 2h; marks stale `running`
   jobs as `failed`
 - **Daily Email Review** — `gmail_daily_review` + `gmail_daily_review_hour` in `UserBotConfig`.
@@ -211,6 +215,9 @@ background process extracts new facts from the conversation → bot gets smarter
 - Deduplication (threshold 0.96, number-aware) — a duplicate is better than a loss
 - 3 vectors per fact (text, tags, metadata) + SCD2 versioning
 - Biographical cache updated → next conversation already knows the new facts
+- **Serialization for consolidation:** model parts use `p.text` (summary), NOT `p.full_text`
+  (verbose response + web_search_context). User parts: `p.consolidation_text or p.text`.
+  `consolidation_text` prefixed with `\n\n` separator.
 
 **Prompt Builder (Token System)** — not hardcoded prompts, but assembly:
 - Tokens — verified fragments from a library (humor, style, voice, cognitive process, etc.)
@@ -368,6 +375,8 @@ src/
                   /api/user/facts/search, /api/user/facts/<id>/invalidate,
                   /api/user/timezone (GET/PUT — IANA timezone setting),
                   /api/user/language (GET/POST — UI + bot response language).
+                  Reminders: /api/user/reminders (GET/POST),
+                  /api/user/reminders/<note_id> (PUT/DELETE).
                   Cabinet UI: /cabinet, /cabinet/docs, /cabinet/docs/<path>.
                   Other: /health, deep_research_webhooks (OpenAI async results).
                   Runs as a shared Quart app (all blueprints on port 8080).
