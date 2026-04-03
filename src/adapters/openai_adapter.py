@@ -278,7 +278,11 @@ class OpenAIAdapter(LLMPort):
                 raw = msg.raw_content
                 # Responses API format: list of output items
                 if isinstance(raw, list):
-                    items.extend(raw)
+                    for item in raw:
+                        # Skip message items with empty content — API rejects them on input
+                        if getattr(item, "type", None) == "message" and not getattr(item, "content", None):
+                            continue
+                        items.append(item)
                     continue
                 # Pre-migration Chat Completions format: ChatCompletionMessage object
                 if hasattr(raw, "tool_calls") and raw.tool_calls:
