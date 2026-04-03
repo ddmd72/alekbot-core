@@ -468,7 +468,7 @@ class PromptAssemblyService:
                     timing_str = ""
                 line = f"    - {text}{timing_str} [id: {note_id}]"
                 note_lines.append(line)
-            header = "    // Summary view of reminders you scheduled for yourself. Not visible to the user. Snapshot from turn start.\n    // Full execution context (instruction) is stored internally — not shown here. Use note_id to update or delete via manage_self_reminders.\n    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time."
+            header = "    // Reminders you set for yourself. Not visible to the user. Snapshot from turn start.\n    // Full execution context is stored internally. To update or delete — delegate with the id shown in brackets.\n    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time."
             dynamic_parts.append("active_reminders {\n" + header + "\n" + "\n".join(note_lines) + "\n}")
 
         dynamic_parts.append(f"current_date_time {{\n    {current_datetime}\n}}")
