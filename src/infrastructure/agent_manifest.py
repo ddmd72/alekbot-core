@@ -351,7 +351,7 @@ NOTES = AgentDescriptor(
             "Full CRUD for proactive self-reminders (create, update, delete, list). "
             "Reminders fire automatically on schedule; each carries a self-contained instruction "
             "executed in a new conversation with no session memory.\n"
-            "payload: {\"query\": \"<briefing: operation, timing, full context, note_id if updating/deleting>\"}"
+            "payload: {\"query\": \"<briefing: operation, timing, full context, id from active_reminders if updating/deleting>\"}"
         ),
     },
     internal=False,
