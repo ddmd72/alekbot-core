@@ -510,6 +510,7 @@ class UserAgentFactory:
                     tier=tier,
                     prompt_builder=prompt_builder,
                     user_id=user_id,
+                    second_pass=user_profile.config.deep_research_second_pass,
                 )
             except ValueError:
                 logger.warning(

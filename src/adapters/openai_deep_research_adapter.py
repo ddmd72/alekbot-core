@@ -82,6 +82,7 @@ class OpenAIDeepResearchAdapter(DeepResearchPort):
         tier: PerformanceTier = PerformanceTier.BALANCED,
         system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
+        second_pass: bool = False,
     ) -> str:
         """
         Submit job with webhook delivery. Adapter owns result routing via metadata.

@@ -11,7 +11,8 @@ Environment variables (static — set at job deploy time):
   APP_ENV                   "development" | "production" (determines queue suffix).
   DEBUG_PROMPTS             "true" | "false" — enables GCS debug prompt uploads.
   DEBUG_PROMPTS_BUCKET      GCS bucket name for debug uploads.
-  DEEP_RESEARCH_SECOND_PASS "true" | "false" — enable/disable second-pass critic.
+  GCS_MEDIA_BUCKET          GCS bucket for raw research result uploads (optional).
+  DEEP_RESEARCH_SECOND_PASS "true" | "false" — enable/disable second-pass critic (fallback).
 
 Environment variables (per-run — injected as overrides by CloudRunJobsAdapter):
   JOB_QUERY        Research query (full text, may include critic query for second pass).
@@ -31,6 +32,7 @@ import sys
 import anthropic
 
 from src.adapters.gcp_task_queue import GcpTaskQueue
+from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.agents.claude_deep_research_runner_agent import ClaudeDeepResearchRunnerAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.infrastructure.agent_manifest import Intent
@@ -67,6 +69,10 @@ async def main() -> None:
         api_key=os.environ["ANTHROPIC_API_KEY"]
     )
     task_queue = _build_task_queue()
+
+    # GCS media storage for raw research result uploads
+    media_bucket = os.environ.get("GCS_MEDIA_BUCKET")
+    media_storage = GcsMediaAdapter(media_bucket) if media_bucket else None
 
     agent = ClaudeDeepResearchRunnerAgent(
         config=AgentConfig(
@@ -109,6 +115,11 @@ async def main() -> None:
             query=result.get("query", context.get("original_query", "")),
             task_queue=task_queue,
             session_id=context.get("session_id", ""),
+            round1_text=result.get("round1_text", ""),
+            media_storage=media_storage,
+            model=result.get("model", ""),
+            total_tokens=result.get("total_tokens", 0),
+            second_pass=result.get("second_pass", False),
         )
     except Exception as exc:
         logger.error(

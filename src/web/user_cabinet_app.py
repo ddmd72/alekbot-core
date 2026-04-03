@@ -1015,6 +1015,47 @@ def create_user_cabinet_blueprint(
             return jsonify({"error": "Internal server error"}), 500
 
     # =========================================================================
+    # Deep Research settings
+    # =========================================================================
+
+    @bp.route("/api/user/deep-research", methods=["GET"])
+    @auth_required
+    async def deep_research_get():
+        """Return deep research settings for the authenticated user."""
+        try:
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            return jsonify({
+                "second_pass": user.config.deep_research_second_pass,
+            }), 200
+        except Exception as exc:
+            logger.error(f"Error fetching deep-research settings: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/deep-research", methods=["PUT"])
+    @auth_required
+    async def deep_research_set():
+        """Update deep research settings. Body: {\"second_pass\": bool}"""
+        try:
+            body = await request.get_json(force=True) or {}
+            second_pass = body.get("second_pass")
+
+            if second_pass is None or not isinstance(second_pass, bool):
+                return jsonify({"error": "second_pass (bool) required"}), 400
+
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+
+            user.config.deep_research_second_pass = second_pass
+            await user_repo.update_user(user)
+            return jsonify({"second_pass": second_pass}), 200
+        except Exception as exc:
+            logger.error(f"Error updating deep-research settings: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    # =========================================================================
     # Tasks integration endpoints
     # =========================================================================
 

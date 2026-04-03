@@ -32,6 +32,7 @@ class DeepResearchPort(ABC):
         tier: PerformanceTier = PerformanceTier.BALANCED,
         system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
+        second_pass: bool = False,
     ) -> str:
         """
         Submit a deep research job and arrange for result delivery.

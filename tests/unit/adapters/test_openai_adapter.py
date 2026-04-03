@@ -222,8 +222,8 @@ def test_convert_input_vision_base64():
     assert "data:image/jpeg;base64,abc123" in result[0]["content"][0]["image_url"]
 
 
-def test_convert_input_vision_non_image_skipped():
-    """Non-image MIME types are skipped."""
+def test_convert_input_pdf_as_input_file():
+    """PDF files are sent as input_file with base64 data."""
     adapter = OpenAIAdapter(api_key="test-key")
     messages = [Message(
         role="user",
@@ -232,7 +232,9 @@ def test_convert_input_vision_non_image_skipped():
 
     result = adapter._convert_input(messages)
 
-    assert len(result) == 0
+    assert len(result) == 1
+    assert result[0]["content"][0]["type"] == "input_file"
+    assert "data:application/pdf;base64,abc123" in result[0]["content"][0]["file_data"]
 
 
 def test_convert_input_gcs_ref_no_error():

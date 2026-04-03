@@ -274,10 +274,27 @@ class OpenAIAdapter(LLMPort):
             role = "assistant" if msg.role == "model" else msg.role
 
             # Model messages with raw_content: pass output items through directly
-            # (raw_content stores the Responses API output list from previous calls)
-            if msg.role == "model" and msg.raw_content is not None and isinstance(msg.raw_content, list):
-                items.extend(msg.raw_content)
-                continue
+            if msg.role == "model" and msg.raw_content is not None:
+                raw = msg.raw_content
+                # Responses API format: list of output items
+                if isinstance(raw, list):
+                    items.extend(raw)
+                    continue
+                # Pre-migration Chat Completions format: ChatCompletionMessage object
+                if hasattr(raw, "tool_calls") and raw.tool_calls:
+                    if raw.content:
+                        items.append({"role": "assistant", "content": raw.content})
+                    for tc in raw.tool_calls:
+                        items.append({
+                            "type": "function_call",
+                            "call_id": tc.id,
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        })
+                    continue
+                if hasattr(raw, "content") and raw.content:
+                    items.append({"role": "assistant", "content": raw.content})
+                    continue
 
             content_parts: List[Any] = []
             function_calls: List[dict] = []
@@ -302,32 +319,27 @@ class OpenAIAdapter(LLMPort):
                         "output": str(part.tool_response.get("response", "")),
                     })
                 elif part.file_data:
-                    # Vision: inline base64 image
-                    if "base64" in part.file_data:
-                        mime = part.file_data["mime_type"]
+                    mime = part.file_data.get("mime_type", "application/octet-stream")
+                    b64 = part.file_data.get("base64")
+                    if not b64 and "path" in part.file_data:
+                        try:
+                            import base64 as _b64
+                            with open(part.file_data["path"], "rb") as f:
+                                b64 = _b64.b64encode(f.read()).decode("utf-8")
+                        except Exception as e:
+                            logger.error(f"[OpenAIAdapter] Failed to encode file from path: {e}")
+                    if b64:
                         if mime.startswith("image/"):
                             content_parts.append({
                                 "type": "input_image",
-                                "image_url": f"data:{mime};base64,{part.file_data['base64']}",
+                                "image_url": f"data:{mime};base64,{b64}",
                             })
                         else:
-                            logger.warning(
-                                f"[OpenAIAdapter] Skipping unsupported MIME type '{mime}' "
-                                f"(OpenAI vision accepts image/* only)"
-                            )
-                    elif "path" in part.file_data:
-                        try:
-                            import base64
-                            with open(part.file_data["path"], "rb") as f:
-                                b64 = base64.b64encode(f.read()).decode("utf-8")
-                            mime = part.file_data["mime_type"]
-                            if mime.startswith("image/"):
-                                content_parts.append({
-                                    "type": "input_image",
-                                    "image_url": f"data:{mime};base64,{b64}",
-                                })
-                        except Exception as e:
-                            logger.error(f"[OpenAIAdapter] Failed to encode file from path: {e}")
+                            # PDF, DOCX, text etc. — use input_file with base64 data
+                            content_parts.append({
+                                "type": "input_file",
+                                "file_data": f"data:{mime};base64,{b64}",
+                            })
                     elif "ref" in part.file_data:
                         logger.debug(f"[OpenAIAdapter] file ref '{part.file_data['ref']}' (no binary content)")
 
@@ -355,11 +367,18 @@ class OpenAIAdapter(LLMPort):
             if prev.role != "model":
                 continue
 
-            # Check raw_content for Responses API output items
-            if prev.raw_content is not None and isinstance(prev.raw_content, list):
-                for item in prev.raw_content:
-                    if getattr(item, "type", None) == "function_call" and getattr(item, "name", "") == tool_name:
-                        return item.call_id
+            if prev.raw_content is not None:
+                raw = prev.raw_content
+                # Responses API format: list of output items
+                if isinstance(raw, list):
+                    for item in raw:
+                        if getattr(item, "type", None) == "function_call" and getattr(item, "name", "") == tool_name:
+                            return item.call_id
+                # Pre-migration Chat Completions format
+                elif hasattr(raw, "tool_calls") and raw.tool_calls:
+                    for tc in raw.tool_calls:
+                        if tc.function.name == tool_name:
+                            return tc.id
 
             # thought_signature stored in parts
             for part in prev.parts:
