@@ -211,10 +211,10 @@ class TestRichContentDelivery:
         with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(_make_context(), channel)
 
-        # Text with link_list goes to update_message (replaces status bubble)
-        channel.update_message.assert_awaited_once()
-        update_kwargs = channel.update_message.call_args[1]
-        assert update_kwargs.get("link_list") == _LINK_LIST
+        # Text with link_list goes to send_chunked_message (replaces status bubble, supports long text)
+        channel.send_chunked_message.assert_awaited_once()
+        chunked_kwargs = channel.send_chunked_message.call_args[1]
+        assert chunked_kwargs.get("link_list") == _LINK_LIST
 
         # Table goes to send_rich_content
         channel.send_rich_content.assert_awaited_once_with(rich, thread_id=None)

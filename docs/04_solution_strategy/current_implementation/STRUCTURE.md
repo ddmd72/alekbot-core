@@ -73,7 +73,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── node_puppeteer_runner.py # 🆕 NodePuppeteerRunner — PuppeteerRunnerPort impl; pipes HTML to
 │   │                            #    pdf_generator/runner.js via stdin, captures PDF bytes from stdout
 │   ├── notification_channel_factory.py # 🆕 Wires Slack/Telegram adapters for UserNotificationService
-│   ├── openai_adapter.py  # 🆕 OpenAI Chat Completions LLMPort (gpt-5-nano/mini/full)
+│   ├── openai_adapter.py  # 🆕 OpenAI Responses API LLMPort (gpt-5.4-nano/mini/full)
 │   ├── openai_deep_research_adapter.py # 🆕 OpenAI Responses API DeepResearchPort (webhook delivery)
 │   ├── playwright_html_renderer.py # 🆕 HTML → PNG via headless Chromium (HtmlRendererPort)
 │   ├── slack/          # Slack integration subsystem
@@ -312,7 +312,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`firestore_session_store.py`**: Session persistence with **90-day TTL** and sliding window overflow logic.
 -   **`platform/`**: Platform adapter factory:
     -   `factory.py`: `PlatformAdapterFactory` — registry of `PlatformPort` implementations; `create(platform, **kwargs)`. The `PlatformPort` ABC lives in `ports/platform_port.py`.
--   **`openai_adapter.py`**: 🆕 `OpenAIAdapter(LLMPort)` — OpenAI Chat Completions API implementation. Supports function calling, JSON mode, streaming, and vision. Tier mapping: ECO→gpt-5.4-nano, BALANCED→gpt-5.4-mini, PERFORMANCE→gpt-5.4.
+-   **`openai_adapter.py`**: 🆕 `OpenAIAdapter(LLMPort)` — OpenAI Responses API implementation. Native web search with agentic reasoning, function calling, JSON mode, vision. Tier mapping: ECO→gpt-5.4-nano, BALANCED→gpt-5.4-mini, PERFORMANCE→gpt-5.4.
 -   **`openai_deep_research_adapter.py`**: 🆕 `OpenAIDeepResearchAdapter(DeepResearchPort)` — Responses API with background mode. Webhook-based push delivery (no polling Cloud Tasks). Metadata (user_id, account_id, query) embedded at submit time and echoed back by OpenAI in the webhook payload. Tier mapping: ECO/BALANCED→o4-mini-deep-research, PERFORMANCE→o3-deep-research.
 -   **`node_puppeteer_runner.py`**: 🆕 `NodePuppeteerRunner(PuppeteerRunnerPort)` — pipes HTML to `pdf_generator/runner.js` via stdin, captures raw PDF bytes from stdout. Error cases: non-zero exit code, timeout, or empty stdout → `PuppeteerRunnerError`. Temp file cleanup guaranteed in `finally` block.
 -   **`playwright_html_renderer.py`**: 🆕 `PlaywrightHtmlRenderer(HtmlRendererPort)` — headless Chromium singleton. Renders HTML to PNG via `element.screenshot(omit_background=True)`. Detects widget structure (bare fragment vs full-page) via `body.children.length`. Lazy init, auto-reconnect, `--no-sandbox` on Cloud Run.

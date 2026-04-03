@@ -52,7 +52,7 @@ assert captured["tool_choice"] == "required"
 | `ClaudeAdapter` | `adapter.client.messages.stream` — callable returning async context manager |
 | `GeminiAdapter` | `adapter.client.aio.models.generate_content` — async function |
 | `GrokAdapter` | `adapter.client.chat.completions.create` — async function |
-| `OpenAIAdapter` | `adapter.client.chat.completions.create` — async function |
+| `OpenAIAdapter` | `adapter.client.responses.create` — async function |
 
 **Claude-specific detail:** `messages.stream()` returns an async context manager, not a
 coroutine. The mock must be a plain callable (not `AsyncMock`) that returns a context manager

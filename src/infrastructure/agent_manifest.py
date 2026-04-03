@@ -327,7 +327,7 @@ QUICK_RESPONSE = AgentDescriptor(
     agent_type="quick_response",
     capabilities={},        # Quick does not offer intents to other agents
     allowed_intents=None,   # can call all non-internal intents
-    intent_remap={Intent.SEARCH_WEB: Intent.SEARCH_WEB_LIGHT},
+    intent_remap={},  # was: SEARCH_WEB → SEARCH_WEB_LIGHT (disabled — adaptive cognitive process handles depth)
 )
 
 SMART_RESPONSE = AgentDescriptor(

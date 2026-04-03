@@ -15,6 +15,41 @@ from src.ports.llm_port import (
 
 
 # ============================================================================
+# Helpers — mock Responses API response object
+# ============================================================================
+
+def _make_response(text="", output=None, usage=None, function_calls=None):
+    """Build a mock Responses API response object."""
+    resp = MagicMock()
+
+    if output is None:
+        output = []
+        if text:
+            msg_item = MagicMock()
+            msg_item.type = "message"
+            text_block = MagicMock()
+            text_block.type = "output_text"
+            text_block.text = text
+            text_block.annotations = []
+            msg_item.content = [text_block]
+            output.append(msg_item)
+        if function_calls:
+            for fc in function_calls:
+                fc_item = MagicMock()
+                fc_item.type = "function_call"
+                fc_item.name = fc["name"]
+                fc_item.arguments = fc["arguments"]
+                fc_item.call_id = fc["call_id"]
+                output.append(fc_item)
+
+    resp.output = output
+    resp.output_text = text
+    resp.usage = usage
+    resp.model = "gpt-5-mini"
+    return resp
+
+
+# ============================================================================
 # Capabilities and tier mapping
 # ============================================================================
 
@@ -28,6 +63,7 @@ def test_openai_capabilities():
     assert caps.supports_json_mode is True
     assert caps.supports_system_prompt is True
     assert caps.max_context_window == 1047576
+    assert caps.native_grounding is True
 
 
 def test_openai_model_for_tier():
@@ -90,7 +126,7 @@ def test_is_reasoning_model_gpt4_turbo_is_false():
 
 
 # ============================================================================
-# _convert_tools — tool schema conversion
+# _convert_tools — Responses API internally-tagged format
 # ============================================================================
 
 def test_convert_tools_basic():
@@ -111,9 +147,9 @@ def test_convert_tools_basic():
 
     assert len(result) == 1
     assert result[0]["type"] == "function"
-    assert result[0]["function"]["name"] == "search_memory"
-    assert result[0]["function"]["description"] == "Search personal knowledge base"
-    assert result[0]["function"]["parameters"]["properties"]["query"]["type"] == "string"
+    assert result[0]["name"] == "search_memory"
+    assert result[0]["description"] == "Search personal knowledge base"
+    assert result[0]["parameters"]["properties"]["query"]["type"] == "string"
 
 
 def test_convert_tools_empty():
@@ -127,139 +163,110 @@ def test_convert_tools_no_description():
 
     result = adapter._convert_tools(tools)
 
-    assert result[0]["function"]["description"] == ""
+    assert result[0]["name"] == "foo"
+    assert result[0]["description"] == ""
 
 
 # ============================================================================
-# _convert_messages — message format conversion
+# _convert_input — Responses API input items
 # ============================================================================
 
-def test_convert_messages_system_instruction():
-    adapter = OpenAIAdapter(api_key="test-key")
-    messages = [Message(role="user", parts=[MessagePart(text="Hello")])]
-
-    result = adapter._convert_messages(messages, system_instruction="You are helpful.")
-
-    assert result[0]["role"] == "system"
-    assert result[0]["content"] == "You are helpful."
-    assert result[1]["role"] == "user"
-
-
-def test_convert_messages_no_system_instruction():
-    adapter = OpenAIAdapter(api_key="test-key")
-    messages = [Message(role="user", parts=[MessagePart(text="Hello")])]
-
-    result = adapter._convert_messages(messages)
-
-    assert result[0]["role"] == "user"
-    assert len(result) == 1
-
-
-def test_convert_messages_user_text():
+def test_convert_input_user_text():
     adapter = OpenAIAdapter(api_key="test-key")
     messages = [Message(role="user", parts=[MessagePart(text="What is 2+2?")])]
 
-    result = adapter._convert_messages(messages)
+    result = adapter._convert_input(messages)
 
     assert result[0]["role"] == "user"
     assert result[0]["content"] == "What is 2+2?"
 
 
-def test_convert_messages_model_text():
+def test_convert_input_model_text():
     adapter = OpenAIAdapter(api_key="test-key")
     messages = [Message(role="model", parts=[MessagePart(text="The answer is 4.")])]
 
-    result = adapter._convert_messages(messages)
+    result = adapter._convert_input(messages)
 
     assert result[0]["role"] == "assistant"
     assert result[0]["content"] == "The answer is 4."
 
 
-def test_convert_messages_model_with_raw_content():
-    """raw_content (OpenAI ChatCompletionMessage) is reconstructed directly to preserve tool_call IDs."""
+def test_convert_input_model_with_responses_raw_content():
+    """Responses API output items are passed through directly."""
     adapter = OpenAIAdapter(api_key="test-key")
 
-    raw = MagicMock()
-    raw.content = "Let me search."
-    raw.tool_calls = []
+    output_items = [
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Hello"}]},
+        {"type": "function_call", "call_id": "call_123", "name": "search", "arguments": "{}"},
+    ]
 
-    messages = [Message(role="model", parts=[], raw_content=raw)]
-    result = adapter._convert_messages(messages)
+    messages = [Message(role="model", parts=[], raw_content=output_items)]
+    result = adapter._convert_input(messages)
 
-    assert result[0]["role"] == "assistant"
-    assert result[0]["content"] == "Let me search."
-
-
-def test_convert_messages_model_with_raw_content_and_tool_calls():
-    """tool_call IDs from raw_content are preserved exactly."""
-    adapter = OpenAIAdapter(api_key="test-key")
-
-    tc = MagicMock()
-    tc.id = "call_abc123"
-    tc.function.name = "search_memory"
-    tc.function.arguments = '{"query": "birthday"}'
-
-    raw = MagicMock()
-    raw.content = None
-    raw.tool_calls = [tc]
-
-    messages = [Message(role="model", parts=[], raw_content=raw)]
-    result = adapter._convert_messages(messages)
-
-    assert result[0]["tool_calls"][0]["id"] == "call_abc123"
-    assert result[0]["tool_calls"][0]["function"]["name"] == "search_memory"
+    assert len(result) == 2
+    assert result[0]["type"] == "message"
+    assert result[1]["type"] == "function_call"
 
 
-def test_convert_messages_vision_base64():
-    """Base64 images are wrapped in image_url format."""
+def test_convert_input_vision_base64():
+    """Base64 images are wrapped in input_image format."""
     adapter = OpenAIAdapter(api_key="test-key")
     messages = [Message(
         role="user",
         parts=[MessagePart(file_data={"base64": "abc123", "mime_type": "image/jpeg"})]
     )]
 
-    result = adapter._convert_messages(messages)
+    result = adapter._convert_input(messages)
 
-    assert result[0]["content"][0]["type"] == "image_url"
-    assert "data:image/jpeg;base64,abc123" in result[0]["content"][0]["image_url"]["url"]
+    assert result[0]["content"][0]["type"] == "input_image"
+    assert "data:image/jpeg;base64,abc123" in result[0]["content"][0]["image_url"]
 
 
-def test_convert_messages_vision_non_image_skipped():
-    """Non-image MIME types are skipped (OpenAI vision accepts image/* only)."""
+def test_convert_input_vision_non_image_skipped():
+    """Non-image MIME types are skipped."""
     adapter = OpenAIAdapter(api_key="test-key")
     messages = [Message(
         role="user",
         parts=[MessagePart(file_data={"base64": "abc123", "mime_type": "application/pdf"})]
     )]
 
-    result = adapter._convert_messages(messages)
+    result = adapter._convert_input(messages)
 
-    # No content parts should have been added — message is empty or dropped
-    assert len(result) == 0 or result[0].get("content") is None
+    assert len(result) == 0
+
+
+def test_convert_input_gcs_ref_no_error():
+    """file_data with 'ref' key should not raise — it's a GCS reference with no binary."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    messages = [
+        Message(role="user", parts=[
+            MessagePart(text='[File: "report.docx" (45KB)]'),
+            MessagePart(file_data={"ref": "report.docx", "mime_type": "text/plain", "size_bytes": 45000}),
+        ]),
+    ]
+
+    result = adapter._convert_input(messages)
+
+    assert len(result) == 1
+    assert result[0]["role"] == "user"
 
 
 # ============================================================================
-# _convert_messages — PROMPT_CACHE_BOUNDARY stripped
+# generate_content — Responses API call path (mocked)
 # ============================================================================
 
 @pytest.mark.asyncio
 async def test_cache_boundary_stripped_from_system_instruction():
-    """PROMPT_CACHE_BOUNDARY must not reach the OpenAI API (stripped before the SDK call)."""
+    """PROMPT_CACHE_BOUNDARY must not reach the OpenAI API."""
     adapter = OpenAIAdapter(api_key="test-key")
-
-    mock_completion = MagicMock()
-    mock_completion.choices = [MagicMock()]
-    mock_completion.choices[0].message.content = "OK"
-    mock_completion.choices[0].message.tool_calls = None
-    mock_completion.usage = None
 
     captured_kwargs = {}
 
     async def mock_create(**kwargs):
         captured_kwargs.update(kwargs)
-        return mock_completion
+        return _make_response(text="OK")
 
-    adapter.client.chat.completions.create = mock_create
+    adapter.client.responses.create = mock_create
 
     static = "You are a helpful assistant."
     dynamic = "Current date: 2026-03-04"
@@ -271,36 +278,24 @@ async def test_cache_boundary_stripped_from_system_instruction():
         messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
     )
 
-    sent_system = captured_kwargs.get("messages", [{}])[0].get("content", "")
-    assert PROMPT_CACHE_BOUNDARY not in sent_system, (
-        f"PROMPT_CACHE_BOUNDARY must be stripped before sending to OpenAI; got: {sent_system!r}"
-    )
-    assert static in sent_system
-    assert dynamic in sent_system
+    sent_instructions = captured_kwargs.get("instructions", "")
+    assert PROMPT_CACHE_BOUNDARY not in sent_instructions
+    assert static in sent_instructions
+    assert dynamic in sent_instructions
 
-
-# ============================================================================
-# generate_content — API call path (mocked)
-# ============================================================================
 
 @pytest.mark.asyncio
 async def test_generate_content_excludes_temperature_for_gpt5():
-    """Temperature must not be sent for gpt-5 family (400 error from API)."""
+    """Temperature must not be sent for gpt-5 family."""
     adapter = OpenAIAdapter(api_key="test-key")
-
-    mock_completion = MagicMock()
-    mock_completion.choices = [MagicMock()]
-    mock_completion.choices[0].message.content = "Hello"
-    mock_completion.choices[0].message.tool_calls = None
-    mock_completion.usage = None
 
     captured_kwargs = {}
 
     async def mock_create(**kwargs):
         captured_kwargs.update(kwargs)
-        return mock_completion
+        return _make_response(text="Hello")
 
-    adapter.client.chat.completions.create = mock_create
+    adapter.client.responses.create = mock_create
 
     await adapter.generate_content(
         model_name="gpt-5-mini",
@@ -317,19 +312,13 @@ async def test_generate_content_includes_temperature_for_gpt4():
     """Temperature must be included for non-gpt-5 models."""
     adapter = OpenAIAdapter(api_key="test-key")
 
-    mock_completion = MagicMock()
-    mock_completion.choices = [MagicMock()]
-    mock_completion.choices[0].message.content = "Hello"
-    mock_completion.choices[0].message.tool_calls = None
-    mock_completion.usage = None
-
     captured_kwargs = {}
 
     async def mock_create(**kwargs):
         captured_kwargs.update(kwargs)
-        return mock_completion
+        return _make_response(text="Hello")
 
-    adapter.client.chat.completions.create = mock_create
+    adapter.client.responses.create = mock_create
 
     await adapter.generate_content(
         model_name="gpt-4o",
@@ -344,22 +333,16 @@ async def test_generate_content_includes_temperature_for_gpt4():
 
 @pytest.mark.asyncio
 async def test_generate_content_json_mode():
-    """response_mime_type=application/json activates response_format=json_object."""
+    """response_mime_type=application/json activates text.format=json_object."""
     adapter = OpenAIAdapter(api_key="test-key")
-
-    mock_completion = MagicMock()
-    mock_completion.choices = [MagicMock()]
-    mock_completion.choices[0].message.content = '{"answer": 42}'
-    mock_completion.choices[0].message.tool_calls = None
-    mock_completion.usage = None
 
     captured_kwargs = {}
 
     async def mock_create(**kwargs):
         captured_kwargs.update(kwargs)
-        return mock_completion
+        return _make_response(text='{"answer": 42}')
 
-    adapter.client.chat.completions.create = mock_create
+    adapter.client.responses.create = mock_create
 
     await adapter.generate_content(
         model_name="gpt-5-mini",
@@ -368,29 +351,22 @@ async def test_generate_content_json_mode():
         response_mime_type="application/json",
     )
 
-    assert captured_kwargs.get("response_format") == {"type": "json_object"}
+    assert captured_kwargs.get("text") == {"format": {"type": "json_object"}}
 
 
 @pytest.mark.asyncio
 async def test_generate_content_returns_tool_calls():
-    """Tool calls in API response are mapped to domain ToolCall objects."""
+    """Function calls in API response are mapped to domain ToolCall objects."""
     adapter = OpenAIAdapter(api_key="test-key")
 
-    tc_mock = MagicMock()
-    tc_mock.id = "call_xyz"
-    tc_mock.function.name = "search_memory"
-    tc_mock.function.arguments = '{"query": "vacation plans"}'
-
-    mock_completion = MagicMock()
-    mock_completion.choices = [MagicMock()]
-    mock_completion.choices[0].message.content = ""
-    mock_completion.choices[0].message.tool_calls = [tc_mock]
-    mock_completion.usage = None
-
     async def mock_create(**kwargs):
-        return mock_completion
+        return _make_response(function_calls=[{
+            "name": "search_memory",
+            "arguments": '{"query": "vacation plans"}',
+            "call_id": "call_xyz",
+        }])
 
-    adapter.client.chat.completions.create = mock_create
+    adapter.client.responses.create = mock_create
 
     response = await adapter.generate_content(
         model_name="gpt-5-mini",
@@ -405,23 +381,17 @@ async def test_generate_content_returns_tool_calls():
 
 
 @pytest.mark.asyncio
-async def test_generate_content_uses_max_completion_tokens():
-    """max_completion_tokens (not max_tokens) must be used in API call."""
+async def test_generate_content_uses_max_output_tokens():
+    """max_output_tokens must be used in API call."""
     adapter = OpenAIAdapter(api_key="test-key")
-
-    mock_completion = MagicMock()
-    mock_completion.choices = [MagicMock()]
-    mock_completion.choices[0].message.content = "OK"
-    mock_completion.choices[0].message.tool_calls = None
-    mock_completion.usage = None
 
     captured_kwargs = {}
 
     async def mock_create(**kwargs):
         captured_kwargs.update(kwargs)
-        return mock_completion
+        return _make_response(text="OK")
 
-    adapter.client.chat.completions.create = mock_create
+    adapter.client.responses.create = mock_create
 
     await adapter.generate_content(
         request=LLMRequest(
@@ -432,9 +402,29 @@ async def test_generate_content_uses_max_completion_tokens():
         ),
     )
 
-    assert "max_completion_tokens" in captured_kwargs
-    assert captured_kwargs["max_completion_tokens"] == 1000
-    assert "max_tokens" not in captured_kwargs
+    assert "max_output_tokens" in captured_kwargs
+    assert captured_kwargs["max_output_tokens"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_generate_content_store_true():
+    """store=True must always be set (dashboard visibility)."""
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    captured_kwargs = {}
+
+    async def mock_create(**kwargs):
+        captured_kwargs.update(kwargs)
+        return _make_response(text="OK")
+
+    adapter.client.responses.create = mock_create
+
+    await adapter.generate_content(
+        model_name="gpt-5-mini",
+        messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+    )
+
+    assert captured_kwargs.get("store") is True
 
 
 # ============================================================================
@@ -446,19 +436,13 @@ async def test_use_grounding_injects_web_search_tool():
     """use_grounding=True must prepend {"type": "web_search"} to tools."""
     adapter = OpenAIAdapter(api_key="test-key")
 
-    mock_completion = MagicMock()
-    mock_completion.choices = [MagicMock()]
-    mock_completion.choices[0].message.content = "Search result"
-    mock_completion.choices[0].message.tool_calls = None
-    mock_completion.usage = None
-
     captured_kwargs = {}
 
     async def mock_create(**kwargs):
         captured_kwargs.update(kwargs)
-        return mock_completion
+        return _make_response(text="Search result")
 
-    adapter.client.chat.completions.create = mock_create
+    adapter.client.responses.create = mock_create
 
     request = LLMRequest(
         model_name="gpt-5-mini",
@@ -478,47 +462,94 @@ async def test_use_grounding_false_does_not_inject_web_search():
     """use_grounding=False (default) must NOT inject web_search tool."""
     adapter = OpenAIAdapter(api_key="test-key")
 
-    mock_completion = MagicMock()
-    mock_completion.choices = [MagicMock()]
-    mock_completion.choices[0].message.content = "Answer"
-    mock_completion.choices[0].message.tool_calls = None
-    mock_completion.usage = None
-
     captured_kwargs = {}
 
     async def mock_create(**kwargs):
         captured_kwargs.update(kwargs)
-        return mock_completion
+        return _make_response(text="Answer")
 
-    adapter.client.chat.completions.create = mock_create
+    adapter.client.responses.create = mock_create
 
     await adapter.generate_content(
         model_name="gpt-5-mini",
         messages=[Message(role="user", parts=[MessagePart(text="Hello")])],
     )
 
-    tools_sent = captured_kwargs.get("tools")
-    assert tools_sent is None or not any(
-        isinstance(t, dict) and t.get("type") == "web_search" for t in (tools_sent or [])
+    tools_sent = captured_kwargs.get("tools", [])
+    assert not any(
+        isinstance(t, dict) and t.get("type") == "web_search" for t in tools_sent
     )
 
 
-# ---------------------------------------------------------------------------
-# GCS reference file_data — graceful handling
-# ---------------------------------------------------------------------------
+# ============================================================================
+# _parse_response — annotations extraction
+# ============================================================================
 
-def test_gcs_ref_file_data_no_error():
-    """file_data with 'ref' key should not raise — it's a GCS reference with no binary."""
+def test_parse_response_extracts_url_citations():
+    """url_citation annotations from web search are appended as Sources block."""
     adapter = OpenAIAdapter(api_key="test-key")
-    messages = [
-        Message(role="user", parts=[
-            MessagePart(text='[File: "report.docx" (45KB)]'),
-            MessagePart(file_data={"ref": "report.docx", "mime_type": "text/plain", "size_bytes": 45000}),
-        ]),
-    ]
 
-    # Should not raise — ref-only file_data is silently handled
-    result = adapter._convert_messages(messages, system_instruction=None)
+    ann1 = MagicMock()
+    ann1.type = "url_citation"
+    ann1.title = "Example Page"
+    ann1.url = "https://example.com"
 
-    assert len(result) == 1
-    assert result[0]["role"] == "user"
+    ann2 = MagicMock()
+    ann2.type = "url_citation"
+    ann2.title = "Another Page"
+    ann2.url = "https://another.com"
+
+    text_block = MagicMock()
+    text_block.type = "output_text"
+    text_block.text = "Some findings"
+    text_block.annotations = [ann1, ann2]
+
+    msg_item = MagicMock()
+    msg_item.type = "message"
+    msg_item.content = [text_block]
+
+    resp = MagicMock()
+    resp.output = [msg_item]
+    resp.output_text = "Some findings"
+    resp.usage = None
+    resp.model = "gpt-5-mini"
+
+    result = adapter._parse_response(resp)
+
+    assert "[Example Page](https://example.com)" in result.text
+    assert "[Another Page](https://another.com)" in result.text
+    assert "*Sources:*" in result.text
+
+
+def test_parse_response_deduplicates_citations():
+    """Duplicate url_citation annotations are deduplicated."""
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    ann1 = MagicMock()
+    ann1.type = "url_citation"
+    ann1.title = "Same Page"
+    ann1.url = "https://same.com"
+
+    ann2 = MagicMock()
+    ann2.type = "url_citation"
+    ann2.title = "Same Page"
+    ann2.url = "https://same.com"
+
+    text_block = MagicMock()
+    text_block.type = "output_text"
+    text_block.text = "Findings"
+    text_block.annotations = [ann1, ann2]
+
+    msg_item = MagicMock()
+    msg_item.type = "message"
+    msg_item.content = [text_block]
+
+    resp = MagicMock()
+    resp.output = [msg_item]
+    resp.output_text = "Findings"
+    resp.usage = None
+    resp.model = "gpt-5-mini"
+
+    result = adapter._parse_response(resp)
+
+    assert result.text.count("https://same.com") == 1

@@ -1,6 +1,6 @@
 """Test adaptive WebSearch cognitive process on OpenAI web_search.
 
-Uses Chat Completions API with web_search_preview tool.
+Uses Responses API with native web_search tool.
 Extracts annotations (url_citation) from responses.
 
 Usage:
