@@ -298,6 +298,7 @@ class OpenAIAdapter(LLMPort):
 
             content_parts: List[Any] = []
             function_calls: List[dict] = []
+            used_call_ids: Set[str] = set()
 
             for part in msg.parts:
                 if part.text:
@@ -312,7 +313,8 @@ class OpenAIAdapter(LLMPort):
                 elif part.tool_response:
                     # Function call output — find call_id from preceding function_call
                     tool_name = part.tool_response.get("name", "")
-                    call_id = self._find_call_id(messages, tool_name, idx)
+                    call_id = self._find_call_id(messages, tool_name, idx, used_call_ids)
+                    used_call_ids.add(call_id)
                     items.append({
                         "type": "function_call_output",
                         "call_id": call_id,
@@ -363,8 +365,12 @@ class OpenAIAdapter(LLMPort):
         messages: List[Message],
         tool_name: str,
         current_idx: int,
+        used_ids: Set[str],
     ) -> str:
-        """Find the call_id for a function call by name from preceding model messages."""
+        """Find the call_id for a function call by name from preceding model messages.
+
+        Tracks used_ids to handle multiple calls to the same function in one turn.
+        """
         for i in range(current_idx - 1, -1, -1):
             prev = messages[i]
             if prev.role != "model":
@@ -376,17 +382,21 @@ class OpenAIAdapter(LLMPort):
                 if isinstance(raw, list):
                     for item in raw:
                         if getattr(item, "type", None) == "function_call" and getattr(item, "name", "") == tool_name:
-                            return item.call_id
+                            cid = item.call_id
+                            if cid not in used_ids:
+                                return cid
                 # Pre-migration Chat Completions format
                 elif hasattr(raw, "tool_calls") and raw.tool_calls:
                     for tc in raw.tool_calls:
-                        if tc.function.name == tool_name:
+                        if tc.function.name == tool_name and tc.id not in used_ids:
                             return tc.id
 
             # thought_signature stored in parts
             for part in prev.parts:
                 if part.tool_call and part.tool_call.name == tool_name and part.tool_call.thought_signature:
-                    return part.tool_call.thought_signature
+                    sig = part.tool_call.thought_signature
+                    if sig not in used_ids:
+                        return sig
 
         raise ValueError(f"[OpenAIAdapter] call_id not found for function '{tool_name}'")
 
