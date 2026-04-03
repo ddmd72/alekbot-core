@@ -596,14 +596,14 @@ class TestQuickResponseAgentIntegration:
 # ============================================================================
 
 class TestQuickAgentIntentRemap:
-    """Verify that _delegate_quick remaps search_web → search_web_light."""
+    """Verify that _delegate_quick passes intents through (no remap)."""
 
     @pytest.mark.asyncio
-    async def test_search_web_remapped_to_search_web_light(self, quick_agent):
-        """search_web must be remapped to search_web_light before coordinator call."""
+    async def test_search_web_not_remapped(self, quick_agent):
+        """search_web must pass through without remapping (adaptive agent handles depth)."""
         coordinator = MagicMock()
         coordinator.handle_delegation = AsyncMock(return_value=AgentResponse.success(
-            task_id="t", agent_id="web_search_light_agent", result="ok"
+            task_id="t", agent_id="web_search_agent", result="ok"
         ))
         quick_agent.coordinator = coordinator
 
@@ -612,8 +612,8 @@ class TestQuickAgentIntentRemap:
 
         coordinator.handle_delegation.assert_called_once()
         actual_intent = coordinator.handle_delegation.call_args.kwargs["intent"]
-        assert actual_intent == "search_web_light", (
-            f"Remap failed: coordinator received intent={actual_intent!r}, expected 'search_web_light'"
+        assert actual_intent == "search_web", (
+            f"Expected search_web to pass through, got intent={actual_intent!r}"
         )
 
     @pytest.mark.asyncio

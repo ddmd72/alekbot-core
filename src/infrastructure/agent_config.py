@@ -135,7 +135,7 @@ class MemorySearchAgentConfig:
 
 @dataclass
 class WebSearchAgentConfig:
-    temperature: float = 0.5
+    temperature: float = 1.0
     timeout_ms: int = 90_000
 
 
@@ -145,7 +145,7 @@ class WebSearchAgentConfig:
 
 @dataclass
 class WebSearchLightAgentConfig:
-    temperature: float = 0.5     # lighter than full web search
+    temperature: float = 1.0
     timeout_ms: int = 30_000
 
 

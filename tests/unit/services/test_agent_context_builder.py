@@ -38,6 +38,7 @@ def registry():
     reg = ProviderRegistry()
     reg.register("gemini", FakeProvider("gemini"))
     reg.register("claude", FakeProvider("claude"))
+    reg.register("openai", FakeProvider("openai"))
     return reg
 
 
@@ -71,8 +72,8 @@ def test_build_ignores_unsupported_provider_preference(builder):
     config = UserBotConfig(provider_preference="unsupported_provider")
     ctx = builder.build("web_search", config)
 
-    # web_search only allows gemini
-    assert ctx.provider.name == "gemini"
+    # web_search default is openai, unsupported preference ignored
+    assert ctx.provider.name == "openai"
 
 
 def test_build_respects_agent_tier_override(builder):

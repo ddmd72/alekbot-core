@@ -160,6 +160,9 @@ class WebSearchAgent(BaseAgent):
         llm_duration = time.time() - llm_start
         logger.debug(f"   ✓ LLM responded in {llm_duration:.2f}s")
 
+        # Log search queries to debug bucket (web_search_call items from raw_content)
+        self._debug_search_queries(response)
+
         result_text = response.text
 
         rendered_content = None
@@ -225,6 +228,35 @@ class WebSearchAgent(BaseAgent):
             delivery_items=delivery_items,
             history_context={"web_search_context": {"query": context, "result": result_text}},
         )
+
+    def _debug_search_queries(self, response) -> None:
+        """Extract and log search queries from raw_content to debug bucket."""
+        from ..utils.debug_logger import get_debug_logger
+        debug = get_debug_logger()
+        if not debug.enabled:
+            return
+        raw = response.raw_content
+        if not raw or not isinstance(raw, list):
+            return
+        queries = []
+        for item in raw:
+            if getattr(item, "type", None) == "web_search_call":
+                action = getattr(item, "action", None)
+                if not action:
+                    continue
+                action_type = getattr(action, "type", "")
+                if action_type == "search":
+                    for q in getattr(action, "queries", []) or []:
+                        queries.append(f"[search] {q}")
+                elif action_type == "open_page":
+                    queries.append(f"[open_page] {getattr(action, 'url', '')}")
+                elif action_type == "find_in_page":
+                    queries.append(f"[find_in_page] {getattr(action, 'query', '')}")
+        if queries:
+            debug.log_response(
+                agent_name=self.agent_type or self.agent_id,
+                response="Search queries:\n" + "\n".join(queries),
+            )
 
     def _get_alternative_agents(self) -> list[str]:
         return ["facts_memory_agent", "reasoning_agent"]

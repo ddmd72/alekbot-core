@@ -2,12 +2,13 @@
 OpenAI Adapter
 ==============
 
-Adapter for OpenAI Chat Completions API.
+Adapter for OpenAI Responses API.
 Implements the LLMPort port with full feature parity with GeminiAdapter and ClaudeAdapter.
 
 Supported features:
-- Native function/tool calling
-- JSON mode (response_format=json_object)
+- Native function/tool calling (internally-tagged, strict by default)
+- Web search (native {"type": "web_search"} tool with url_citation annotations)
+- JSON mode (text.format)
 - Streaming
 - Vision (multimodal, base64 images)
 - Large context window (1M tokens on gpt-5 family)
@@ -17,6 +18,16 @@ Verify model IDs at https://platform.openai.com/docs/models before changing.
 
 Sampling parameters (temperature, top_p, etc.) are not supported by the gpt-5 family.
 Use _is_reasoning_model() to check before including them in API calls.
+
+Migration from Chat Completions to Responses API (2026-04):
+- client.chat.completions.create → client.responses.create
+- messages → instructions + input
+- tools: nested function wrapper removed (internally-tagged)
+- response: choices[0].message → output items + output_text
+- tool results: role=tool → type=function_call_output
+- web_search: native tool with url_citation annotations in output
+- response_format → text.format
+- store=False for privacy (no server-side storage)
 """
 
 import json
@@ -43,7 +54,7 @@ from ..utils.logger import logger
 
 class OpenAIAdapter(LLMPort):
     """
-    Adapter for OpenAI Chat Completions API.
+    Adapter for OpenAI Responses API.
     Uses official openai SDK. No custom base_url (api.openai.com).
     """
 
@@ -76,6 +87,7 @@ class OpenAIAdapter(LLMPort):
         max_context_window=1047576,
         supports_system_prompt=True,
         supports_json_mode=True,
+        native_grounding=True,  # {"type": "web_search"} with url_citation annotations
     )
 
     def __init__(self, api_key: str) -> None:
@@ -100,10 +112,11 @@ class OpenAIAdapter(LLMPort):
         cache_config: Optional[PromptCacheConfig] = None,
         automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None,
     ) -> LLMResponse:
-        """Generate content using OpenAI Chat Completions API."""
+        """Generate content using OpenAI Responses API."""
 
         # Unpack LLMRequest (primary path)
         force_tool_use = False
+        use_grounding = False
         if request:
             model_name = request.model_name
             system_instruction = request.system_instruction
@@ -115,79 +128,71 @@ class OpenAIAdapter(LLMPort):
             cache_config = request.cache_config
             automatic_function_calling = request.automatic_function_calling
             force_tool_use = request.force_tool_use
+            use_grounding = request.use_grounding
             stream_callback = None
 
         if not model_name or messages is None:
             raise ValueError("model_name and messages are required for OpenAI generate_content")
 
-        # OpenAI does not support prompt caching (as of implementation date)
-        if cache_config and cache_config.enabled:
-            logger.warning("[OpenAIAdapter] Prompt caching not supported. Ignoring cache_config.")
-
-        # Strip PROMPT_CACHE_BOUNDARY marker — OpenAI doesn't use it and the comment
-        # would appear literally in the system prompt. Replace with a newline.
+        # Strip PROMPT_CACHE_BOUNDARY marker — OpenAI doesn't use it.
         if system_instruction and PROMPT_CACHE_BOUNDARY in system_instruction:
             system_instruction = system_instruction.replace(PROMPT_CACHE_BOUNDARY, "\n")
 
-        # Convert messages to OpenAI format
-        openai_messages = self._convert_messages(messages, system_instruction)
+        # Convert domain messages to Responses API input items
+        input_items = self._convert_input(messages)
 
-        # Convert tools to OpenAI format
-        openai_tools = self._convert_tools(tools) if tools else None
+        # Convert tools to Responses API format (internally-tagged, no nested function wrapper)
+        api_tools = self._convert_tools(tools) if tools else []
 
-        # Inject native OpenAI web search tool when grounding is requested.
-        # Bypasses _convert_tools() — native tool is already in the correct dict format.
-        if request and request.use_grounding:
-            openai_native = [{"type": "web_search"}]
-            openai_tools = openai_native + (openai_tools or [])
+        # Inject native web search tool when grounding is requested.
+        # Responses API supports {"type": "web_search"} natively on all models.
+        # Results include url_citation annotations with source URLs.
+        # Reasoning is enabled at "low" effort — gpt-5.4 defaults to "none" which
+        # disables agentic search (iterative search, open_page, find_in_page).
+        if use_grounding:
+            api_tools = [{"type": "web_search"}] + api_tools
 
-        # Build response_format for JSON mode.
-        # Triggers: response_mime_type="application/json" OR response_schema provided.
-        # response_schema itself is not forwarded — OpenAI json_object mode enforces valid JSON;
-        # the schema structure is enforced by the OUTPUT_FORMAT prompt token.
-        response_format = None
+        # Build text format for JSON mode.
+        # Responses API uses text.format instead of response_format.
+        # OpenAI requires the word "json" in instructions or input when json_object is active.
+        text_format = None
         if response_mime_type == "application/json" or response_schema is not None:
-            response_format = {"type": "json_object"}
+            text_format = {"format": {"type": "json_object"}}
+            # OpenAI requires the word "json" in input items (not instructions).
+            # Prepend a developer message to satisfy this API requirement.
+            input_items.insert(0, {"role": "developer", "content": "Respond in JSON."})
 
         logger.info(
-            "🔍 [OpenAIAdapter] Request: model=%s messages=%s tools=%s json_mode=%s",
+            "🔍 [OpenAIAdapter] Request: model=%s input_items=%s tools=%s json_mode=%s grounding=%s",
             model_name,
-            len(openai_messages),
-            len(openai_tools) if openai_tools else 0,
-            response_format is not None,
+            len(input_items),
+            len(api_tools),
+            text_format is not None,
+            use_grounding,
         )
 
-        # Streaming path
-        if stream_callback:
-            return await self._generate_streaming(
-                model_name=model_name,
-                openai_messages=openai_messages,
-                openai_tools=openai_tools,
-                temperature=temperature,
-                response_format=response_format,
-                force_tool_use=force_tool_use,
-                stream_callback=stream_callback,
-            )
-
-        # Build kwargs — tool_choice only when tools present (API rejects otherwise)
-        # Note: gpt-5 family requires max_completion_tokens (not max_tokens) and
-        # does not support sampling params (temperature, top_p, etc.).
+        # Build create kwargs
         create_kwargs: dict = dict(
             model=model_name,
-            messages=openai_messages,
+            input=input_items,
+            store=True,  # Store responses in OpenAI dashboard for debugging/analysis
         )
+        if system_instruction:
+            create_kwargs["instructions"] = system_instruction
         if request and request.max_tokens:
-            create_kwargs["max_completion_tokens"] = request.max_tokens
+            create_kwargs["max_output_tokens"] = request.max_tokens
         if not self._is_reasoning_model(model_name):
             create_kwargs["temperature"] = temperature
-        if openai_tools:
-            create_kwargs["tools"] = openai_tools
+        if api_tools:
+            create_kwargs["tools"] = api_tools
             create_kwargs["tool_choice"] = "required" if force_tool_use else "auto"
-        if response_format:
-            create_kwargs["response_format"] = response_format
+        if use_grounding:
+            create_kwargs["reasoning"] = {"effort": "low"}
+        if text_format:
+            create_kwargs["text"] = text_format
 
         try:
-            completion = await self.client.chat.completions.create(**create_kwargs)
+            response = await self.client.responses.create(**create_kwargs)
         except openai.RateLimitError as e:
             raise LLMRateLimitError(str(e), http_status=429) from e
         except openai.APIStatusError as e:
@@ -207,47 +212,7 @@ class OpenAIAdapter(LLMPort):
             )
             raise
 
-        return self._parse_response(completion)
-
-    async def _generate_streaming(
-        self,
-        model_name: str,
-        openai_messages: List[dict],
-        openai_tools: Optional[List[dict]],
-        temperature: float,
-        response_format: Optional[dict],
-        force_tool_use: bool,
-        stream_callback: Any,
-    ) -> LLMResponse:
-        """
-        Handle streaming response via OpenAI beta context manager.
-
-        Uses client.chat.completions.stream() — wrapper over create(stream=True).
-        Provides text_stream for incremental callbacks + get_final_completion() for
-        tool calls and usage metadata (no double API call).
-        """
-        create_kwargs: dict = dict(
-            model=model_name,
-            messages=openai_messages,
-        )
-        if not self._is_reasoning_model(model_name):
-            create_kwargs["temperature"] = temperature
-        if openai_tools:
-            create_kwargs["tools"] = openai_tools
-            create_kwargs["tool_choice"] = "required" if force_tool_use else "auto"
-        if response_format:
-            create_kwargs["response_format"] = response_format
-
-        full_text = ""
-        async with self.client.chat.completions.stream(**create_kwargs) as stream:
-            async for event in stream:
-                if event.type == "content.delta":
-                    full_text += event.delta
-                    await stream_callback(full_text)
-
-            final = await stream.get_final_completion()
-
-        return self._parse_response(final)
+        return self._parse_response(response)
 
     def _is_reasoning_model(self, model_name: str) -> bool:
         """Return True for models that do not support sampling params (temperature etc.)."""
@@ -288,104 +253,53 @@ class OpenAIAdapter(LLMPort):
         })
 
     # ------------------------------------------------------------------
-    # Message conversion
+    # Input conversion (domain Messages → Responses API input items)
     # ------------------------------------------------------------------
 
-    def _find_tool_call_id(
-        self,
-        messages: List[Message],
-        tool_name: str,
-        current_idx: int,
-        used_ids: Set[str],
-    ) -> str:
-        """Find the OpenAI tool_call_id for a given tool from preceding model messages."""
-        for i in range(current_idx - 1, -1, -1):
-            prev = messages[i]
-            if prev.role != "model":
-                continue
-
-            # Primary: raw_content from OpenAI ChatCompletionMessage
-            if prev.raw_content is not None and hasattr(prev.raw_content, "tool_calls") and prev.raw_content.tool_calls:
-                for tc in prev.raw_content.tool_calls:
-                    if tc.function.name == tool_name and tc.id not in used_ids:
-                        return tc.id
-
-            # Fallback: thought_signature stored in parts
-            for part in prev.parts:
-                if part.tool_call and part.tool_call.name == tool_name:
-                    sig = part.tool_call.thought_signature
-                    if sig and sig not in used_ids:
-                        return sig
-
-        logger.warning(f"[OpenAIAdapter] Could not find tool_call_id for '{tool_name}'")
-        return f"call_{tool_name}"
-
-    def _convert_messages(
-        self,
-        messages: List[Message],
-        system_instruction: Optional[str] = None,
-    ) -> List[dict]:
+    def _convert_input(self, messages: List[Message]) -> List[dict]:
         """
-        Convert domain Message objects to OpenAI message format.
+        Convert domain Message objects to Responses API input format.
 
-        System instruction is prepended as a system message.
-        Model messages with raw_content (OpenAI ChatCompletionMessage) are reconstructed
-        directly to preserve tool_call IDs.
+        Responses API input is a list of items:
+        - User messages:   {"role": "user", "content": "..."}
+        - Model messages:  {"role": "assistant", "content": "..."}
+        - Function calls:  {"type": "function_call", "call_id": "...", "name": "...", "arguments": "..."}
+        - Function results: {"type": "function_call_output", "call_id": "...", "output": "..."}
+
+        System instruction is NOT included — it goes into the separate `instructions` parameter.
         """
-        openai_messages = []
-
-        if system_instruction:
-            openai_messages.append({
-                "role": "system",
-                "content": system_instruction,
-            })
+        items: List[dict] = []
 
         for idx, msg in enumerate(messages):
-            # Model messages: preserve raw_content if available (keeps tool_call IDs intact)
-            if msg.role == "model" and msg.raw_content is not None and hasattr(msg.raw_content, "tool_calls"):
-                raw = msg.raw_content
-                assistant_msg: dict = {"role": "assistant", "content": raw.content}
-                if raw.tool_calls:
-                    assistant_msg["tool_calls"] = [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in raw.tool_calls
-                    ]
-                openai_messages.append(assistant_msg)
-                continue
-
             role = "assistant" if msg.role == "model" else msg.role
 
-            used_tool_ids: Set[str] = set()
+            # Model messages with raw_content: pass output items through directly
+            # (raw_content stores the Responses API output list from previous calls)
+            if msg.role == "model" and msg.raw_content is not None and isinstance(msg.raw_content, list):
+                items.extend(msg.raw_content)
+                continue
+
             content_parts: List[Any] = []
-            tool_calls = []
+            function_calls: List[dict] = []
 
             for part in msg.parts:
                 if part.text:
-                    content_parts.append({"type": "text", "text": part.text})
+                    content_parts.append({"type": "input_text", "text": part.text})
                 elif part.tool_call:
-                    tool_calls.append({
-                        "id": part.tool_call.thought_signature or f"call_{len(tool_calls)}",
-                        "type": "function",
-                        "function": {
-                            "name": part.tool_call.name,
-                            "arguments": json.dumps(part.tool_call.args),
-                        },
+                    function_calls.append({
+                        "type": "function_call",
+                        "call_id": part.tool_call.thought_signature or f"call_{len(function_calls)}",
+                        "name": part.tool_call.name,
+                        "arguments": json.dumps(part.tool_call.args),
                     })
                 elif part.tool_response:
+                    # Function call output — find call_id from preceding function_call
                     tool_name = part.tool_response.get("name", "")
-                    tool_call_id = self._find_tool_call_id(messages, tool_name, idx, used_tool_ids)
-                    used_tool_ids.add(tool_call_id)
-                    openai_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": str(part.tool_response.get("response", "")),
+                    call_id = self._find_call_id(messages, tool_name, idx)
+                    items.append({
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": str(part.tool_response.get("response", "")),
                     })
                 elif part.file_data:
                     # Vision: inline base64 image
@@ -393,11 +307,8 @@ class OpenAIAdapter(LLMPort):
                         mime = part.file_data["mime_type"]
                         if mime.startswith("image/"):
                             content_parts.append({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime};base64,{part.file_data['base64']}",
-                                    "detail": "auto",
-                                },
+                                "type": "input_image",
+                                "image_url": f"data:{mime};base64,{part.file_data['base64']}",
                             })
                         else:
                             logger.warning(
@@ -405,8 +316,6 @@ class OpenAIAdapter(LLMPort):
                                 f"(OpenAI vision accepts image/* only)"
                             )
                     elif "path" in part.file_data:
-                        # Legacy path — new code should call upload_file() before building messages.
-                        # _convert_messages is sync, so we use plain synchronous I/O here.
                         try:
                             import base64
                             with open(part.file_data["path"], "rb") as f:
@@ -414,102 +323,163 @@ class OpenAIAdapter(LLMPort):
                             mime = part.file_data["mime_type"]
                             if mime.startswith("image/"):
                                 content_parts.append({
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:{mime};base64,{b64}",
-                                        "detail": "auto",
-                                    },
+                                    "type": "input_image",
+                                    "image_url": f"data:{mime};base64,{b64}",
                                 })
                         except Exception as e:
                             logger.error(f"[OpenAIAdapter] Failed to encode file from path: {e}")
                     elif "ref" in part.file_data:
                         logger.debug(f"[OpenAIAdapter] file ref '{part.file_data['ref']}' (no binary content)")
-                    else:
-                        logger.warning(f"[OpenAIAdapter] Unsupported file_data format: {list(part.file_data.keys())}")
 
-            # Build message
+            # Build item
             if content_parts:
-                # Flatten to plain string if only text parts (no vision)
-                if all(p.get("type") == "text" for p in content_parts):
-                    content = " ".join(p["text"] for p in content_parts)
+                # Single text part → plain string content
+                if len(content_parts) == 1 and content_parts[0].get("type") == "input_text":
+                    items.append({"role": role, "content": content_parts[0]["text"]})
                 else:
-                    content = content_parts  # List form for multimodal
+                    items.append({"role": role, "content": content_parts})
+            if function_calls:
+                items.extend(function_calls)
 
-                msg_dict: dict = {"role": role, "content": content}
-                if tool_calls:
-                    msg_dict["tool_calls"] = tool_calls
-                openai_messages.append(msg_dict)
-            elif tool_calls:
-                openai_messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": tool_calls,
-                })
-            # tool_response parts already appended inline above
+        return items
 
-        return openai_messages
+    def _find_call_id(
+        self,
+        messages: List[Message],
+        tool_name: str,
+        current_idx: int,
+    ) -> str:
+        """Find the call_id for a function call by name from preceding model messages."""
+        for i in range(current_idx - 1, -1, -1):
+            prev = messages[i]
+            if prev.role != "model":
+                continue
+
+            # Check raw_content for Responses API output items
+            if prev.raw_content is not None and isinstance(prev.raw_content, list):
+                for item in prev.raw_content:
+                    if getattr(item, "type", None) == "function_call" and getattr(item, "name", "") == tool_name:
+                        return item.call_id
+
+            # thought_signature stored in parts
+            for part in prev.parts:
+                if part.tool_call and part.tool_call.name == tool_name and part.tool_call.thought_signature:
+                    return part.tool_call.thought_signature
+
+        raise ValueError(f"[OpenAIAdapter] call_id not found for function '{tool_name}'")
 
     def _convert_tools(self, tools: List[Any]) -> List[dict]:
-        """Convert domain tool definitions to OpenAI function calling format."""
-        openai_tools = []
+        """Convert domain tool definitions to Responses API format.
+
+        Responses API uses internally-tagged format (no nested function wrapper):
+        {"type": "function", "name": "...", "parameters": {...}}
+        """
+        api_tools = []
         for tool in tools:
             if isinstance(tool, dict):
-                openai_tools.append({
+                api_tools.append({
                     "type": "function",
-                    "function": {
-                        "name": tool["name"],
-                        "description": tool.get("description", ""),
-                        "parameters": tool.get("parameters", {
-                            "type": "object",
-                            "properties": {},
-                        }),
-                    },
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("parameters", {
+                        "type": "object",
+                        "properties": {},
+                    }),
                 })
-        return openai_tools
+        return api_tools
 
-    def _parse_response(self, completion) -> LLMResponse:
-        """Parse OpenAI ChatCompletion into domain LLMResponse."""
-        choice = completion.choices[0]
-        message = choice.message
+    def _parse_response(self, response) -> LLMResponse:
+        """Parse Responses API response into domain LLMResponse.
 
-        text = message.content or ""
+        Response structure:
+        - response.output: list of output items (message, function_call, web_search_call)
+        - response.output_text: helper for concatenated text content
+        - response.usage: token usage
+        - output_text items may contain annotations (url_citation from web search)
+        """
+        text = response.output_text or ""
 
-        if not text and choice.finish_reason != "tool_calls":
-            logger.warning(
-                "⚠️ [OpenAIAdapter] Empty content: model=%s finish_reason=%s refusal=%r",
-                completion.model,
-                choice.finish_reason,
-                getattr(message, "refusal", None),
-            )
+        # Log web search queries for debugging
+        for item in response.output:
+            item_type = getattr(item, "type", None)
+            if item_type == "web_search_call":
+                action = getattr(item, "action", None)
+                if action:
+                    action_type = getattr(action, "type", "")
+                    queries = getattr(action, "queries", None)
+                    if queries:
+                        for q in queries:
+                            logger.info(f"🔍 [OpenAIAdapter] web_search [{action_type}]: {q}")
+                    elif action_type == "open_page":
+                        url = getattr(action, "url", "")
+                        logger.info(f"🔍 [OpenAIAdapter] web_search [open_page]: {url}")
 
+        # Extract url_citation annotations from output items.
+        # Append as a sources block so downstream agents receive URLs.
+        annotations = []
+        for item in response.output:
+            item_type = getattr(item, "type", None)
+            if item_type == "message":
+                for content_block in getattr(item, "content", []):
+                    block_type = getattr(content_block, "type", None)
+                    if block_type == "output_text":
+                        for ann in getattr(content_block, "annotations", []) or []:
+                            if getattr(ann, "type", None) == "url_citation":
+                                title = getattr(ann, "title", "") or ""
+                                url = getattr(ann, "url", "") or ""
+                                if url:
+                                    annotations.append(f"- [{title}]({url})" if title else f"- {url}")
+
+        if annotations:
+            # Deduplicate while preserving order
+            seen = set()
+            unique = []
+            for a in annotations:
+                if a not in seen:
+                    seen.add(a)
+                    unique.append(a)
+            text += "\n\n*Sources:*\n" + "\n".join(unique)
+
+        # Extract function calls from output items
         tool_calls = []
-        if message.tool_calls:
-            for tc in message.tool_calls:
+        for item in response.output:
+            item_type = getattr(item, "type", None)
+            if item_type == "function_call":
+                name = getattr(item, "name", "")
+                arguments = getattr(item, "arguments", "")
+                call_id = getattr(item, "call_id", "")
                 try:
-                    args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                    args = json.loads(arguments) if arguments else {}
                 except json.JSONDecodeError:
                     logger.warning(
-                        f"[OpenAIAdapter] Failed to parse tool args for {tc.function.name}: "
-                        f"{tc.function.arguments}"
+                        f"[OpenAIAdapter] Failed to parse tool args for {name}: {arguments}"
                     )
                     args = {}
                 tool_calls.append(ToolCall(
-                    name=tc.function.name,
+                    name=name,
                     args=args,
-                    thought_signature=tc.id,
+                    thought_signature=call_id,
                 ))
 
+        # Usage metadata
         usage_metadata = None
-        if completion.usage:
+        if response.usage:
             cached = 0
-            ptd = getattr(completion.usage, "prompt_tokens_details", None)
-            if ptd:
-                cached = getattr(ptd, "cached_tokens", 0) or 0
+            itd = getattr(response.usage, "input_tokens_details", None)
+            if itd:
+                cached = getattr(itd, "cached_tokens", 0) or 0
             usage_metadata = UsageMetadata(
-                prompt_tokens=completion.usage.prompt_tokens,
-                completion_tokens=completion.usage.completion_tokens,
-                total_tokens=completion.usage.total_tokens,
+                prompt_tokens=getattr(response.usage, "input_tokens", 0) or 0,
+                completion_tokens=getattr(response.usage, "output_tokens", 0) or 0,
+                total_tokens=(getattr(response.usage, "input_tokens", 0) or 0) + (getattr(response.usage, "output_tokens", 0) or 0),
                 cache_read_tokens=cached,
+            )
+
+        if not text and not tool_calls:
+            logger.warning(
+                "⚠️ [OpenAIAdapter] Empty response: model=%s output_items=%s",
+                getattr(response, "model", "?"),
+                len(response.output),
             )
 
         logger.info(
@@ -522,6 +492,6 @@ class OpenAIAdapter(LLMPort):
         return LLMResponse(
             text=text,
             tool_calls=tool_calls,
-            raw_content=message,
+            raw_content=response.output,  # Store output items for multi-turn
             usage_metadata=usage_metadata,
         )

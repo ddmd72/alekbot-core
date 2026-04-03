@@ -40,10 +40,10 @@ class AgentProviderStrategy:
             "fallback": "gemini"
         },
         "web_search": {
-            "default_provider": "gemini",
-            "allowed_providers": ["gemini", "openai", "claude"],
+            "default_provider": "openai",
+            "allowed_providers": ["openai", "gemini", "claude"],
             "required_capabilities": ["native_tools"],
-            "fallback": None
+            "fallback": "gemini"
         },
         "web_search_light": {
             "default_provider": "gemini",
