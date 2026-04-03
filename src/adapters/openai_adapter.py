@@ -508,9 +508,22 @@ class OpenAIAdapter(LLMPort):
             usage_metadata.total_tokens if usage_metadata else 0,
         )
 
+        # Sanitize output items for reuse as input in multi-turn conversations.
+        # The API returns message items with empty content (e.g. when the model
+        # calls a function without producing text), but rejects them on input.
+        # Drop empty-content messages; keep function_call, web_search_call etc.
+        sanitized_output = []
+        for item in response.output:
+            item_type = getattr(item, "type", None)
+            if item_type == "message":
+                content = getattr(item, "content", None)
+                if not content:
+                    continue
+            sanitized_output.append(item)
+
         return LLMResponse(
             text=text,
             tool_calls=tool_calls,
-            raw_content=response.output,  # Store output items for multi-turn
+            raw_content=sanitized_output,  # Sanitized output items for multi-turn
             usage_metadata=usage_metadata,
         )
