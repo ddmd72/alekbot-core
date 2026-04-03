@@ -127,9 +127,10 @@ async def test_single_pass_uploads_report_round():
         notification=notification,
     )
 
-    media_storage.store.assert_called_once()
-    key_arg = media_storage.store.call_args.kwargs["key"]
-    assert key_arg.endswith("-report.md")
+    assert media_storage.store.call_count == 2  # report.md + meta.json
+    keys = [c.kwargs["key"] for c in media_storage.store.call_args_list]
+    assert any(k.endswith("-report.md") for k in keys)
+    assert any(k.endswith("-meta.json") for k in keys)
     notification.notify_document_link.assert_called_once()
     assert notification.notify_document_link.call_args.kwargs["label"] == "Research report (raw)"
 
@@ -144,6 +145,7 @@ async def test_two_pass_uploads_both_rounds():
     media_storage.store.side_effect = [
         "https://storage/round1.md",
         "https://storage/round2.md",
+        "https://storage/meta.json",
     ]
     notification = AsyncMock()
 
@@ -158,7 +160,7 @@ async def test_two_pass_uploads_both_rounds():
         notification=notification,
     )
 
-    assert media_storage.store.call_count == 2
+    assert media_storage.store.call_count == 3  # round1 + round2 + meta.json
     labels = [c.kwargs["label"] for c in notification.notify_document_link.call_args_list]
     assert "Round 1 — raw research" in labels
     assert "Round 2 — verified report" in labels

@@ -47,10 +47,11 @@ class TestDeepResearchPortContract:
     def test_create_interaction_signature(self):
         sig = inspect.signature(DeepResearchPort.create_interaction)
         params = list(sig.parameters.keys())
-        assert params == ["self", "query", "user_id", "account_id", "original_query", "tier", "system_prompt", "session_id"]
+        assert params == ["self", "query", "user_id", "account_id", "original_query", "tier", "system_prompt", "session_id", "second_pass"]
         assert sig.parameters["tier"].default == PerformanceTier.BALANCED
         assert sig.parameters["system_prompt"].default is None
         assert sig.parameters["session_id"].default is None
+        assert sig.parameters["second_pass"].default is False
 
     def test_get_status_signature(self):
         sig = inspect.signature(DeepResearchPort.get_status)
