@@ -59,9 +59,14 @@ background process extracts new facts from the conversation → bot gets smarter
 - WebSearchLight — single-pass provider-native search (`use_grounding=True`). Separate agent
   because Gemini cannot combine grounding + function calling in one request.
   Remapped from `search_web` by Quick. Internal (`internal=True`).
-- WebSearch — provider-native web search with synthesis prompt. Called by Smart.
+- WebSearch — provider-native web search with adaptive cognitive process. Called by Smart.
   `use_grounding=True` — each adapter injects its own tool: Gemini → Google Search,
-  OpenAI → web_search, Claude → web_search_20250305 + web_fetch_20250910.
+  OpenAI → `{"type": "web_search"}` (Responses API, agentic search with reasoning),
+  Claude → web_search_20250305 + web_fetch_20250910.
+  Cognitive process: QUICK/RESEARCH triage — simple queries get one search, complex queries
+  get multi-angle coverage with source evaluation and persistence.
+  JSON output format with required URL fields (findings/source/url) enforced via
+  `response_schema` → `respond` tool on Claude, `text.format` on OpenAI.
   Two intents: `search_web` (real-time web search) + `fetch_url` (fetch and extract content
   from a specific URL provided by the user).
 - Memory (LLM key formulation + vector search) — MemorySearchAgent: ECO-tier LLM extracts

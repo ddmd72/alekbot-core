@@ -536,10 +536,11 @@ class ConversationHandler(ConversationHandlerPort):
                 response_text = await self.validate_model_output(response_text, context.user_id)
                 
                 if structured_data:
-                    # Text + Rich Content
-                    await response_channel.update_message(
-                        status_message_id,
+                    # Text + Rich Content (chunked text, then table/list as separate message)
+                    await response_channel.send_chunked_message(
                         response_text,
+                        status_message_id,
+                        thread_id=context.thread_id,
                         link_list=response_link_list or None,
                     )
                     await self._deliver_rich_content(
