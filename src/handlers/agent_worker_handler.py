@@ -170,6 +170,9 @@ class AgentWorkerHandler:
             session_id=context.get("session_id", ""),
             media_storage=self._media_storage,
             notification=self._notification,
+            model=result.get("model", ""),
+            total_tokens=result.get("total_tokens", 0),
+            second_pass=result.get("second_pass", False),
         )
 
     async def _deliver_docx_result(self, response: Any, context: Dict[str, Any]) -> None:

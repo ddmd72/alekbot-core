@@ -118,6 +118,7 @@ class GeminiDeepResearchAdapter(DeepResearchPort):
         tier: PerformanceTier = PerformanceTier.BALANCED,
         system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
+        second_pass: bool = False,
     ) -> str:
         """Submit job and enqueue polling Cloud Task. Adapter owns delivery."""
         if self._task_queue is None:

@@ -270,7 +270,10 @@ class HTTPModeAdapter(SlackAdapter):
             slack_user_id = event.get("user", "unknown")
 
             if files:
-                logger.info(f"📎 Message contains {len(files)} file(s)")
+                logger.info(
+                    f"📎 Message contains {len(files)} file(s), subtype={subtype}, "
+                    f"text_len={len(text)}, text_preview={text[:100]!r}"
+                )
 
             if (not text or not text.strip()) and not files:
                 logger.warning(f"⚠️ Empty text and no files in message event, skipping")

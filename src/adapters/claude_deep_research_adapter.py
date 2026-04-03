@@ -72,6 +72,7 @@ class ClaudeDeepResearchAdapter(DeepResearchPort):
         tier: PerformanceTier = PerformanceTier.BALANCED,
         system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
+        second_pass: bool = False,
     ) -> str:
         """
         Trigger a Cloud Run Job execution for ClaudeDeepResearchRunnerAgent.
@@ -89,6 +90,7 @@ class ClaudeDeepResearchAdapter(DeepResearchPort):
             "model": self._resolve_model(tier),
             "job_id": job_id,
             "session_id": session_id or "",
+            "second_pass": second_pass,
         }
         await self._job_runner.run_job(
             job_name=self._job_name,

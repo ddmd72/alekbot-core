@@ -19,7 +19,14 @@ _INVALID_GCS_CHARS = re.compile(r'[#?\[\]*\n\r\t]')
 
 
 def sanitize_filename(filename: str) -> str:
-    """Replace GCS-prohibited characters with underscore. UTF-8 (incl. Cyrillic) is allowed."""
+    """Normalize Unicode to NFC and replace GCS-prohibited characters with underscore.
+
+    NFC normalization is critical: Slack sends filenames in NFD (decomposed, e.g. "і" + combining
+    diaeresis for "ї"), GCS stores as-is. Without NFC, upload and download paths diverge on
+    Cyrillic characters with diacritics.
+    """
+    import unicodedata
+    filename = unicodedata.normalize("NFC", filename)
     return _INVALID_GCS_CHARS.sub('_', filename)
 
 
@@ -49,6 +56,8 @@ class GcsFileStorageAdapter(FileStoragePort):
         return final_name
 
     async def download(self, filename: str, user_id: str) -> bytes:
+        import unicodedata
+        filename = unicodedata.normalize("NFC", filename)
         key = self._key(filename, user_id)
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, partial(self._download_sync, key))

@@ -51,6 +51,7 @@ class DeepResearchAgent(BaseAgent):
         tier: PerformanceTier = PerformanceTier.BALANCED,
         prompt_builder: Optional[PromptBuilderPort] = None,
         user_id: Optional[str] = None,
+        second_pass: bool = False,
     ) -> None:
         """
         Args:
@@ -68,6 +69,7 @@ class DeepResearchAgent(BaseAgent):
         self._tier = tier
         self._prompt_builder = prompt_builder
         self._user_id = user_id
+        self._second_pass = second_pass
 
     async def can_handle(self, message: AgentMessage) -> bool:
         return (
@@ -110,6 +112,7 @@ class DeepResearchAgent(BaseAgent):
                 tier=self._tier,
                 system_prompt=system_prompt or None,
                 session_id=message.context.get("session_id"),
+                second_pass=self._second_pass,
             )
         except Exception as exc:
             self._on_agent_error(exc, "create_interaction")

@@ -143,11 +143,15 @@ async def deliver_deep_research(
     round1_text: str = "",
     media_storage: Optional[MediaStoragePort] = None,
     notification: Optional["NotificationPort"] = None,
+    model: str = "",
+    total_tokens: int = 0,
+    second_pass: bool = False,
 ) -> None:
     """
     Deliver deep research result:
-      1. Upload round markdown files to GCS and send named links to the user.
-      2. Enqueue HtmlPageGenerator Cloud Task → styled HTML report delivered to user.
+      1. Upload round markdown files + meta.json to GCS.
+      2. Send named links to the user (if notification configured).
+      3. Enqueue HtmlPageGenerator Cloud Task → styled HTML report delivered to user.
 
     round1_text — raw first-pass result before the critic second pass.
                   If equal to result_text (second pass disabled), uploaded once as "report".
@@ -155,10 +159,10 @@ async def deliver_deep_research(
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     has_two_rounds = bool(round1_text) and round1_text != result_text
 
-    if media_storage and notification:
+    if media_storage:
         if has_two_rounds:
             url1 = await _upload_round(round1_text, user_id, timestamp, "round1", media_storage)
-            if url1:
+            if url1 and notification:
                 try:
                     await notification.notify_document_link(
                         user_id=user_id, account_id=account_id,
@@ -168,7 +172,7 @@ async def deliver_deep_research(
                     logger.error("[DeepResearch] notify_document_link round1 failed: %s", exc, exc_info=True)
 
             url2 = await _upload_round(result_text, user_id, timestamp, "round2", media_storage)
-            if url2:
+            if url2 and notification:
                 try:
                     await notification.notify_document_link(
                         user_id=user_id, account_id=account_id,
@@ -178,7 +182,7 @@ async def deliver_deep_research(
                     logger.error("[DeepResearch] notify_document_link round2 failed: %s", exc, exc_info=True)
         else:
             url = await _upload_round(result_text, user_id, timestamp, "report", media_storage)
-            if url:
+            if url and notification:
                 try:
                     await notification.notify_document_link(
                         user_id=user_id, account_id=account_id,
@@ -186,10 +190,28 @@ async def deliver_deep_research(
                     )
                 except Exception as exc:
                     logger.error("[DeepResearch] notify_document_link report failed: %s", exc, exc_info=True)
+        # Upload meta.json alongside round files
+        import json as _json
+        meta = {
+            "query": query,
+            "timestamp": timestamp,
+            "model": model,
+            "total_tokens": total_tokens,
+            "second_pass": second_pass,
+            "rounds": 2 if has_two_rounds else 1,
+            "result_chars": len(result_text),
+        }
+        try:
+            meta_key = f"deep_research/{user_id}/{timestamp}-meta.json"
+            await media_storage.store(
+                data=_json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8"),
+                key=meta_key,
+                content_type="application/json",
+            )
+        except Exception as exc:
+            logger.error("[DeepResearch] meta.json upload failed: %s", exc, exc_info=True)
     else:
-        logger.warning(
-            "[DeepResearch] media_storage or notification not configured — skipping round uploads"
-        )
+        logger.warning("[DeepResearch] media_storage not configured — skipping round uploads")
 
     if not task_queue:
         logger.warning("[DeepResearch] No task_queue configured — HTML page delivery skipped")

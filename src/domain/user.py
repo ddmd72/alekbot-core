@@ -187,6 +187,9 @@ class UserBotConfig(BaseModel):
     # gmail_daily_review_hour: local hour (0-23) in user's timezone when review fires
     gmail_daily_review: bool = False
     gmail_daily_review_hour: int = 9
+
+    # Deep Research: two-pass mode (second pass = critic reviews first result)
+    deep_research_second_pass: bool = False
     
     # ========================================================================
     # NEW Biographical Keywords (2026-02-07): Configurable query keywords

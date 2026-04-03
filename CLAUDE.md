@@ -157,8 +157,8 @@ background process extracts new facts from the conversation → bot gets smarter
   by adapter: polling every 120s (Gemini), webhook (OpenAI). `ClaudeDeepResearchRunnerAgent`
   wraps Claude's native extended thinking; runs as a **Cloud Run Job** (not Cloud Task) via
   `JobRunnerPort` + `CloudRunJobsAdapter`. Entrypoint: `job_main.py`. task-timeout=18000s (5h).
-  Two-pass critic controlled by `DEEP_RESEARCH_SECOND_PASS` env var AND `_SECOND_PASS_ENABLED`
-  class flag (currently `False` — second pass disabled in code). max_tokens=64K for thinking
+  Two-pass critic: per-user via `UserBotConfig.deep_research_second_pass` (default False,
+  Cabinet UI toggle). Fallback: `DEEP_RESEARCH_SECOND_PASS` env var. max_tokens=64K for thinking
   models (claude-sonnet-4-6/opus-4-6), 32K for others. Beta: `output-128k-2025-02-19`.
   Logs: `resource.type=cloud_run_job`,
   `make logs-research-job-dev-tail`. Debug prompts saved to GCS at `end_turn` and `max_tokens`.
@@ -382,6 +382,7 @@ src/
                   /api/user/language (GET/POST — UI + bot response language).
                   Reminders: /api/user/reminders (GET/POST),
                   /api/user/reminders/<note_id> (PUT/DELETE).
+                  Deep Research: /api/user/deep-research (GET/PUT — second_pass toggle).
                   Cabinet UI: /cabinet, /cabinet/docs, /cabinet/docs/<path>.
                   Other: /health, deep_research_webhooks (OpenAI async results).
                   Runs as a shared Quart app (all blueprints on port 8080).
