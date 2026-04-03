@@ -179,8 +179,14 @@ instruction before sending to OpenAI.
 
 ### Vision
 
-Images encoded as `file_data.base64` in MessagePart are converted to OpenAI's
-`input_image` format (`data:<mime>;base64,<data>`). Supports `image/*` MIME types only.
+### Files
+
+**Images**: inline base64 as `input_image` (`data:<mime>;base64,<data>`).
+
+**Non-image files** (PDF, DOCX, etc.): uploaded via OpenAI Files API (`client.files.create()`)
+→ referenced by `file_id` in input items as `{"type": "input_file", "file_id": "..."}`.
+Same pattern as Gemini (`client.files.upload()`). Adapter handles upload transparently
+from `file_data.path` (temp file from FileManagementAgent).
 
 ---
 
@@ -222,6 +228,7 @@ Adapters are pure API clients — no Cloud Task or queue logic.
 - Response parsing: `choices[0].message` → `response.output` items + `response.output_text`
 - Web search: native `{"type": "web_search"}` with `reasoning={"effort": "low"}` for agentic search
 - URL citations: `url_citation` annotations extracted and appended as `*Sources:*` block
+- Files: non-image files uploaded via Files API (`file_id`), images inline base64
 - JSON mode: `response_format` → `text.format`
 - `max_completion_tokens` → `max_output_tokens`
 - `store=True` for dashboard visibility (OpenAI does not use stored data for training)

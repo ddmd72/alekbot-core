@@ -171,27 +171,30 @@ def test_convert_tools_no_description():
 # _convert_input — Responses API input items
 # ============================================================================
 
-def test_convert_input_user_text():
+@pytest.mark.asyncio
+async def test_convert_input_user_text():
     adapter = OpenAIAdapter(api_key="test-key")
     messages = [Message(role="user", parts=[MessagePart(text="What is 2+2?")])]
 
-    result = adapter._convert_input(messages)
+    result = await adapter._convert_input(messages)
 
     assert result[0]["role"] == "user"
     assert result[0]["content"] == "What is 2+2?"
 
 
-def test_convert_input_model_text():
+@pytest.mark.asyncio
+async def test_convert_input_model_text():
     adapter = OpenAIAdapter(api_key="test-key")
     messages = [Message(role="model", parts=[MessagePart(text="The answer is 4.")])]
 
-    result = adapter._convert_input(messages)
+    result = await adapter._convert_input(messages)
 
     assert result[0]["role"] == "assistant"
     assert result[0]["content"] == "The answer is 4."
 
 
-def test_convert_input_model_with_responses_raw_content():
+@pytest.mark.asyncio
+async def test_convert_input_model_with_responses_raw_content():
     """Responses API output items are passed through directly."""
     adapter = OpenAIAdapter(api_key="test-key")
 
@@ -201,14 +204,15 @@ def test_convert_input_model_with_responses_raw_content():
     ]
 
     messages = [Message(role="model", parts=[], raw_content=output_items)]
-    result = adapter._convert_input(messages)
+    result = await adapter._convert_input(messages)
 
     assert len(result) == 2
     assert result[0]["type"] == "message"
     assert result[1]["type"] == "function_call"
 
 
-def test_convert_input_vision_base64():
+@pytest.mark.asyncio
+async def test_convert_input_vision_base64():
     """Base64 images are wrapped in input_image format."""
     adapter = OpenAIAdapter(api_key="test-key")
     messages = [Message(
@@ -216,28 +220,39 @@ def test_convert_input_vision_base64():
         parts=[MessagePart(file_data={"base64": "abc123", "mime_type": "image/jpeg"})]
     )]
 
-    result = adapter._convert_input(messages)
+    result = await adapter._convert_input(messages)
 
     assert result[0]["content"][0]["type"] == "input_image"
     assert "data:image/jpeg;base64,abc123" in result[0]["content"][0]["image_url"]
 
 
-def test_convert_input_pdf_as_input_file():
-    """PDF files are sent as input_file with base64 data."""
+@pytest.mark.asyncio
+async def test_convert_input_pdf_upload():
+    """PDF files are uploaded via Files API and referenced by file_id."""
     adapter = OpenAIAdapter(api_key="test-key")
+
+    mock_file = MagicMock()
+    mock_file.id = "file-test123"
+    adapter.client.files.create = AsyncMock(return_value=mock_file)
+
     messages = [Message(
         role="user",
-        parts=[MessagePart(file_data={"base64": "abc123", "mime_type": "application/pdf"})]
+        parts=[MessagePart(file_data={"path": "/tmp/test.pdf", "mime_type": "application/pdf"})]
     )]
 
-    result = adapter._convert_input(messages)
+    # Mock open to avoid actual file read
+    import builtins
+    from unittest.mock import mock_open
+    with patch.object(builtins, "open", mock_open(read_data=b"fake pdf")):
+        result = await adapter._convert_input(messages)
 
     assert len(result) == 1
     assert result[0]["content"][0]["type"] == "input_file"
-    assert "data:application/pdf;base64,abc123" in result[0]["content"][0]["file_data"]
+    assert result[0]["content"][0]["file_id"] == "file-test123"
 
 
-def test_convert_input_gcs_ref_no_error():
+@pytest.mark.asyncio
+async def test_convert_input_gcs_ref_no_error():
     """file_data with 'ref' key should not raise — it's a GCS reference with no binary."""
     adapter = OpenAIAdapter(api_key="test-key")
     messages = [
@@ -247,7 +262,7 @@ def test_convert_input_gcs_ref_no_error():
         ]),
     ]
 
-    result = adapter._convert_input(messages)
+    result = await adapter._convert_input(messages)
 
     assert len(result) == 1
     assert result[0]["role"] == "user"

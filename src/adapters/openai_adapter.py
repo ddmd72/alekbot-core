@@ -139,7 +139,7 @@ class OpenAIAdapter(LLMPort):
             system_instruction = system_instruction.replace(PROMPT_CACHE_BOUNDARY, "\n")
 
         # Convert domain messages to Responses API input items
-        input_items = self._convert_input(messages)
+        input_items = await self._convert_input(messages)
 
         # Convert tools to Responses API format (internally-tagged, no nested function wrapper)
         api_tools = self._convert_tools(tools) if tools else []
@@ -256,7 +256,7 @@ class OpenAIAdapter(LLMPort):
     # Input conversion (domain Messages → Responses API input items)
     # ------------------------------------------------------------------
 
-    def _convert_input(self, messages: List[Message]) -> List[dict]:
+    async def _convert_input(self, messages: List[Message]) -> List[dict]:
         """
         Convert domain Message objects to Responses API input format.
 
@@ -278,11 +278,7 @@ class OpenAIAdapter(LLMPort):
                 raw = msg.raw_content
                 # Responses API format: list of output items
                 if isinstance(raw, list):
-                    for item in raw:
-                        # Skip message items with empty content — API rejects them on input
-                        if getattr(item, "type", None) == "message" and not getattr(item, "content", None):
-                            continue
-                        items.append(item)
+                    items.extend(raw)
                     continue
                 # Pre-migration Chat Completions format: ChatCompletionMessage object
                 if hasattr(raw, "tool_calls") and raw.tool_calls:
@@ -324,25 +320,28 @@ class OpenAIAdapter(LLMPort):
                     })
                 elif part.file_data:
                     mime = part.file_data.get("mime_type", "application/octet-stream")
-                    b64 = part.file_data.get("base64")
-                    if not b64 and "path" in part.file_data:
-                        try:
-                            import base64 as _b64
-                            with open(part.file_data["path"], "rb") as f:
-                                b64 = _b64.b64encode(f.read()).decode("utf-8")
-                        except Exception as e:
-                            logger.error(f"[OpenAIAdapter] Failed to encode file from path: {e}")
-                    if b64:
-                        if mime.startswith("image/"):
+                    if mime.startswith("image/"):
+                        # Images: inline base64
+                        b64 = part.file_data.get("base64")
+                        if not b64 and "path" in part.file_data:
+                            try:
+                                import base64 as _b64
+                                with open(part.file_data["path"], "rb") as f:
+                                    b64 = _b64.b64encode(f.read()).decode("utf-8")
+                            except Exception as e:
+                                logger.error(f"[OpenAIAdapter] Failed to encode image: {e}")
+                        if b64:
                             content_parts.append({
                                 "type": "input_image",
                                 "image_url": f"data:{mime};base64,{b64}",
                             })
-                        else:
-                            # PDF, DOCX, text etc. — use input_file with base64 data
+                    elif "path" in part.file_data or "base64" in part.file_data:
+                        # Non-image files (PDF, DOCX etc.): upload via Files API → file_id
+                        file_id = await self._upload_file_for_input(part.file_data)
+                        if file_id:
                             content_parts.append({
                                 "type": "input_file",
-                                "file_data": f"data:{mime};base64,{b64}",
+                                "file_id": file_id,
                             })
                     elif "ref" in part.file_data:
                         logger.debug(f"[OpenAIAdapter] file ref '{part.file_data['ref']}' (no binary content)")
@@ -390,6 +389,34 @@ class OpenAIAdapter(LLMPort):
                     return part.tool_call.thought_signature
 
         raise ValueError(f"[OpenAIAdapter] call_id not found for function '{tool_name}'")
+
+    async def _upload_file_for_input(self, file_data: dict) -> Optional[str]:
+        """Upload a file via OpenAI Files API for use in Responses API input.
+
+        Accepts file_data with 'path' (local temp file) or 'base64' (encoded bytes).
+        Returns file_id on success, None on failure.
+        """
+        try:
+            if "path" in file_data:
+                uploaded = await self.client.files.create(
+                    file=open(file_data["path"], "rb"),
+                    purpose="assistants",
+                )
+            elif "base64" in file_data:
+                import base64 as _b64
+                import io
+                raw_bytes = _b64.b64decode(file_data["base64"])
+                uploaded = await self.client.files.create(
+                    file=io.BytesIO(raw_bytes),
+                    purpose="assistants",
+                )
+            else:
+                return None
+            logger.info(f"[OpenAIAdapter] Uploaded file: {uploaded.id}")
+            return uploaded.id
+        except Exception as e:
+            logger.error(f"[OpenAIAdapter] File upload failed: {e}")
+            return None
 
     def _convert_tools(self, tools: List[Any]) -> List[dict]:
         """Convert domain tool definitions to Responses API format.
@@ -512,22 +539,9 @@ class OpenAIAdapter(LLMPort):
             usage_metadata.total_tokens if usage_metadata else 0,
         )
 
-        # Sanitize output items for reuse as input in multi-turn conversations.
-        # The API returns message items with empty content (e.g. when the model
-        # calls a function without producing text), but rejects them on input.
-        # Drop empty-content messages; keep function_call, web_search_call etc.
-        sanitized_output = []
-        for item in response.output:
-            item_type = getattr(item, "type", None)
-            if item_type == "message":
-                content = getattr(item, "content", None)
-                if not content:
-                    continue
-            sanitized_output.append(item)
-
         return LLMResponse(
             text=text,
             tool_calls=tool_calls,
-            raw_content=sanitized_output,  # Sanitized output items for multi-turn
+            raw_content=response.output,  # Store output items for multi-turn
             usage_metadata=usage_metadata,
         )
