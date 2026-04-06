@@ -120,11 +120,26 @@ Agents are instantiated and managed per user to ensure strict data isolation and
 
 ### 4.1 Per-User Isolation
 
-- **Factory:** `UserAgentFactory` builds a complete set of agents for each user.
+- **Factory:** `UserAgentFactory` builds agents for each user using a two-tier strategy:
+  - **Eager agents** — created on first request: Router, Quick, Smart, Memory, WebSearch, WebSearchLight, EmailSearch, Maps, Compute, Consolidation, Help, and conditionally Notes/Tasks.
+  - **Lazy agents** — created on first delegation via `AgentFactoryPort`: DocGenerator, DocPlanner, PdfGenerator, HtmlPageGenerator, DeepResearch, ClaudeDeepResearchRunner, FileManagement. These are rarely used specialists that save ~40% of per-user initialization time.
 - **Caching:** Agent instances are cached for **1 hour (TTL)** to optimize "warm starts".
 - **Configuration:** 3-level inheritance (USER > ACCOUNT > SYSTEM) is resolved during instantiation. Resolved values include `semantic_search_limit`, `biographical_cache_limit`, `principles_cache_limit`, and `history_recent_full_turns` (how many recent model turns receive full context vs. compressed summary; system default: 2, applied to both Quick and Smart).
 
-### 4.2 Prompt Integration
+### 4.2 Lazy Agent Instantiation
+
+Agents marked with `eager=False` in their `AgentDescriptor` are not created during `ensure_agents_for_user()`. Instead:
+
+1. `AgentDescriptor` is registered in `AgentRegistry` at startup → intents appear in LLM tool lists.
+2. On first delegation (`handle_delegation`) or ASYNC callback (`route_message`), `AgentCoordinator` detects the agent is missing and calls `AgentFactoryPort.create_agent_on_demand(agent_type, user_id)`.
+3. `UserAgentFactory` (which implements `AgentFactoryPort`) creates the agent using cached `_UserContext` (user profile + prompt builder), registers it with the coordinator, and tracks its `agent_id` for eviction.
+4. Subsequent delegations find the agent already registered — no overhead.
+
+**Concurrency safety:** per-user `asyncio.Lock` in the factory prevents duplicate creation when concurrent delegations target the same lazy agent. The coordinator checks `get_agent(expected_id)` before calling the factory.
+
+**Eviction:** lazy agents are tracked in `_lazy_agent_ids` list per user cache entry. The background TTL sweep unregisters them alongside eager agents.
+
+### 4.3 Prompt Integration
 
 - Agents use `UserPromptBuilder` to assemble their system instructions.
 - **v3 Integration:** Supports token-based prompt assembly with security validation.

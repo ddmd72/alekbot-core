@@ -167,7 +167,7 @@ sequenceDiagram
 
 **Responsibilities:**
 1. **File Processing:** Download attachments, upload to LLM-compatible format
-2. **Agent Initialization:** Ensure user's agent instances exist (`UserAgentFactory`)
+2. **Agent Initialization:** Ensure user's eager agent instances exist (`UserAgentFactory`). Lazy agents (doc generation, deep research, file management) are created on demand at delegation time by `AgentCoordinator` via `AgentFactoryPort`.
 3. **Message Creation:** Create `AgentMessage` with intent=QUERY
 4. **Routing:** Send message to `router_agent_{user_id}` via `AgentCoordinator`
 5. **Response Handling:** Parse response, send to platform via `ResponseChannel`
@@ -177,9 +177,11 @@ sequenceDiagram
 **Code:** `src/infrastructure/agent_coordinator.py`
 
 **Routing Strategies:**
-1. **Explicit Routing:** `recipient = specific_agent_id` → route directly
+1. **Explicit Routing:** `recipient = specific_agent_id` → route directly. If recipient unknown and a matching non-eager descriptor exists, lazy-loads the agent via `AgentFactoryPort` first.
 2. **Broadcast Routing:** `recipient = "broadcast"` → find agents by capability
 3. **Fallback:** Return error if no route found
+
+**Lazy Loading:** On `handle_delegation()`, if the descriptor has `eager=False`, coordinator calls `AgentFactoryPort.create_agent_on_demand()` before dispatch. On `route_message()` for unknown recipients, parses `{base_agent_id}_{user_id}` and lazy-loads if descriptor is non-eager (covers ASYNC Cloud Tasks callbacks).
 
 #### Step 4: Router Agent (Triage)
 **Code:** `src/agents/core/router_agent.py`
