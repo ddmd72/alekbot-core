@@ -95,52 +95,57 @@ class ChannelBindingPort(ABC):
 
 Port justified: Firestore in prod, dict in tests, potential Redis in future.
 
-### 3.4 Routing — one branch in ConversationHandler
+### 3.4 SessionMode — unified flow with 5 decision points
+
+There is **one** `handle_message()` method, not two code paths. At the top,
+`SessionMode` is resolved from channel binding. All downstream logic checks
+`mode` instead of knowing about bindings directly.
 
 ```python
-# ConversationHandler.handle_message(), before Router dispatch
-channel_id = context.metadata.get("channel") or context.session_id
-binding = await self._channel_binding_service.get(channel_id)
+# src/domain/session_mode.py
+@dataclass(frozen=True)
+class SessionMode:
+    history_source: str = "session_store"         # "session_store" | "platform"
+    route_intent: Optional[str] = None            # None = Router, "intent" = direct
+    write_session: bool = True
+    write_consolidation: bool = True
+    update_notification_channel: bool = True
+    use_threads: bool = True
 
-if binding:
-    await self._handle_bound_channel(context, response_channel, binding)
-    return
-# ... existing Router flow unchanged (unbound channels ALWAYS go through Router)
+    @property
+    def is_bound(self) -> bool:
+        return self.route_intent is not None
 ```
 
-**Bound channels** bypass Router entirely — the routing decision is already made
-(channel → agent). `_handle_bound_channel`:
-1. `ensure_agents_for_user(user_id)` — standard
-2. `coordinator.handle_delegation(intent=binding.intent, query=context.text, context=...)` — same path as Smart delegation
-3. Deliver response
-4. **No consolidation** — bound channels never feed the consolidation pipeline
-5. Session store write — TBD per agent needs (Phase 2)
+**Resolution (top of handle_message):**
+```python
+binding = await self._channel_binding.get(channel_id)
+mode = self._resolve_session_mode(channel_id, binding)
+```
 
-**Unbound channels** always go through the full Router pipeline — semantic lens
-enrichment, complexity triage, Quick/Smart selection. This is the existing flow and
-must not change. Multiple unbound channels = multiple independent Router sessions,
-each with their own session history and enrichment.
+**5 decision points where mode controls behaviour:**
+
+| # | Location in handle_message | Unbound (default) | Bound |
+|---|---------------------------|-------------------|-------|
+| 1 | **Notification channel update** | `save_channel()` — updates last-active for system notifications | Skip — bound channels must not become notification target |
+| 2 | **Status message threading** | `thread_id=context.thread_id` — replies in thread | `thread_id=None` — top-level, so bot messages stay in `conversations.history` |
+| 3 | **Routing** | `coordinator.route_message()` → Router → Quick/Smart → delegation | `coordinator.handle_delegation(intent=mode.route_intent)` — direct to agent |
+| 4 | **Response delivery** | `send_chunked_message()` — thread-aware, chunks as thread replies | `send_flat_response()` — all chunks top-level, visible in platform history |
+| 5 | **Session persistence** | `_save_history_with_retry()` — writes to SessionStore | Skip — platform chat IS the session, no Firestore persistence |
+
+**Everything else is shared:** file processing, attachment upload to GCS, file
+prompt fallback, output validation, rich content delivery, delivery items,
+history optimization, consolidation_text attachment, error handling, temp file
+cleanup. One code path, no duplication.
 
 **Multi-user bound channels:** `user_id` comes from the Slack event, not the channel.
 `ensure_agents_for_user(user_id)` creates the agent for the specific user who sent
 the message. Each user in the channel gets their own agent instance.
 
-### 3.5 Session behaviour — bound vs unbound
-
-| | Unbound channel | Bound channel |
-|---|---|---|
-| **History source** | SessionStore (Firestore) | Platform API (Slack `conversations.history`) |
-| **Session write** | Yes (normal flow) | No |
-| **Consolidation** | Yes (normal flow) | Never |
-| **Bio context** | Yes (Router enrichment) | Agent decides (most skip) |
-
-Bound channels are stateless from the system's perspective. The platform chat IS
-the session. On each message, `_handle_bound_channel` fetches the last N messages
-via Slack API and passes them as conversation history to the agent. No Firestore
-reads or writes for history.
-
-This makes bound channels inherently incognito-like: no persistent trace in the
-system beyond billing counters and application logs.
+**History source for bound channels:** on each message, `SlackChannelHistorySource`
+fetches the last N messages via Slack API. `$new` / `$reset` commands act as topic
+markers — history fetch stops at the marker. Current user message is excluded from
+history (agent receives it as `query`).
 
 ### 3.5 Commands
 
