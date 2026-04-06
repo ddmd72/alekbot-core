@@ -366,3 +366,18 @@ class HtmlPageGeneratorAgentConfig:
 
 
 HTML_PAGE_GENERATOR = HtmlPageGeneratorAgentConfig()
+
+
+# ---------------------------------------------------------------------------
+# DomainResearcherAgent (src/agents/domain_researcher_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DomainResearcherAgentConfig:
+    temperature: float = 1.0      # Creative analysis + structured output
+    max_tokens: int = 8_000       # Competency lists can be lengthy
+    timeout_ms: int = 60_000      # Single LLM call, generous for long prompts
+    context_window: int = 30      # Bound channel history messages to fetch
+
+
+DOMAIN_RESEARCHER = DomainResearcherAgentConfig()
