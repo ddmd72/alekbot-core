@@ -364,6 +364,17 @@ class ConversationHandler(ConversationHandlerPort):
         temp_files = []
         file_part_stubs: dict[int, str] = {}  # id(part) → history stub for converted files
 
+        # Fetch platform history BEFORE sending status message.
+        # Status message goes to the channel and becomes raw[0] in Slack API response.
+        # If fetched after, exclude_last drops status instead of current user message.
+        platform_history = []
+        if mode.history_source == "platform" and self._channel_history:
+            fetch_channel = channel_id or context.metadata.get("channel", "")
+            if fetch_channel:
+                platform_history = await self._channel_history.fetch(
+                    channel_id=fetch_channel, limit=30,
+                )
+
         stop_event = asyncio.Event()
         current_status_phrase = ""
         dots_count = 1
@@ -487,13 +498,6 @@ class ConversationHandler(ConversationHandlerPort):
             ):
                 await self.agent_factory.ensure_agents_for_user(context.user_id)
                 session_store = self.agent_factory.get_session_store()
-
-                # Fetch platform history for bound channels
-                platform_history = []
-                if mode.history_source == "platform" and self._channel_history and channel_id:
-                    platform_history = await self._channel_history.fetch(
-                        channel_id=channel_id, limit=30,
-                    )
 
                 agent_context = {
                     "session_id": context.session_id,
