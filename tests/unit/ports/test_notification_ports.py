@@ -98,7 +98,7 @@ class TestNotificationStatePortContract:
             name for name, method in inspect.getmembers(NotificationStatePort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 2, f"Expected 2 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 4, f"Expected 4 abstract methods, got {abstract_methods}"
 
     def test_save_signature(self):
         sig = inspect.signature(NotificationStatePort.save)
