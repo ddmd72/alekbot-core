@@ -189,7 +189,7 @@ domain/
 Two composition roots with different scopes:
 
 - **ServiceContainer** (`composition/`) — shared, singleton-per-worker. Creates all infra adapters and shared services once.
-- **UserAgentFactory** (`composition/`) — per-user. Creates agents per user, using shared services injected from ServiceContainer. Lives in `composition/` (not `services/`) because it imports agent classes and config — composition-root logic.
+- **UserAgentFactory(AgentFactoryPort)** (`composition/`) — per-user. Creates agents per user, using shared services injected from ServiceContainer. Lives in `composition/` (not `services/`) because it imports agent classes and config — composition-root logic. Implements `AgentFactoryPort` for lazy agent creation: agents marked `eager=False` in `AgentDescriptor` are not created at session start, but on first delegation via `AgentCoordinator`.
 
 ### Example
 
@@ -274,6 +274,7 @@ class UserAgentFactory:
 3. Shared services (no per-user deps) → created once in ServiceContainer
 4. Per-user services (depend on user config) → created per-request in `_create_and_cache_agents`
 5. Per-user adapters with per-user deps → factory callable from ServiceContainer
+6. Lazy agents (`eager=False`) — created on first delegation via `AgentFactoryPort.create_agent_on_demand()`. Coordinator depends on the port, not the factory class — preserving hexagonal layering (infrastructure/ → ports/, not infrastructure/ → composition/)
 
 ---
 

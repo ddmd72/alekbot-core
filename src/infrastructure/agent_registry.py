@@ -87,6 +87,10 @@ class AgentDescriptor:
     # Cloud Tasks dispatch deadline for ASYNC intents (seconds). None = Cloud Tasks default (600s).
     dispatch_deadline_s: Optional[int] = None
 
+    # Lifecycle: eager agents are created at session start; lazy agents are
+    # instantiated on first delegation.  Default True preserves existing behavior.
+    eager: bool = True
+
 
 # Backward-compatible alias — existing callers using AgentManifest continue to work.
 AgentManifest = AgentDescriptor
@@ -127,6 +131,10 @@ class AgentRegistry:
             f"Registered agent descriptor: {descriptor.agent_id} "
             f"(intents={list(descriptor.capabilities.keys())}, internal={descriptor.internal})"
         )
+
+    def get_descriptor(self, agent_id: str) -> Optional[AgentDescriptor]:
+        """Return the descriptor for the given agent_id, or None."""
+        return self._agents.get(agent_id)
 
     def get_agent_for_intent(self, intent: str) -> Optional[AgentDescriptor]:
         """Return the descriptor for the agent that handles this intent, or None."""

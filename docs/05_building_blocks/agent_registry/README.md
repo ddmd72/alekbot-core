@@ -147,29 +147,61 @@ def get_available_intents_for(self, descriptor: AgentDescriptor) -> List[Dict[st
     None → all non-internal; frozenset → only those matching the set."""
 ```
 
-### 3.4 Current Registry (as of 2026-03-14)
+### 3.4 Current Registry (as of 2026-04-06)
 
-All agents registered via `main.py` at startup. `GcpTaskQueue` only instantiated in HTTP mode.
+All descriptors registered via `main.py` at startup. `GcpTaskQueue` only instantiated in HTTP mode.
+Agents marked `eager=False` are **not** instantiated per user until first delegation — see §3.5.
 
-| Agent ID | Intent(s) | Mode | `internal` | Caller |
-|----------|-----------|------|-----------|--------|
-| `facts_memory_agent` | `search_memory`, `save_to_memory` | SYNC | False | Quick, Smart |
-| `web_search_agent` | `search_web` | SYNC | False | Smart |
-| `web_search_light_agent` | `search_web_light` | SYNC | **True** | Quick (via `intent_remap`) |
-| `email_search_agent` | `search_emails`, `get_email_details`, `get_email_attachment` | SYNC | False | Quick, Smart |
-| `maps_search_agent` | `maps_query` | SYNC | False | Quick, Smart |
-| `compute_agent` | `compute_math`, `compute_datetime`, `compute_finance`, `compute` | SYNC | False | Quick, Smart |
-| `deep_research_agent` | `deep_research` | SYNC | False | Smart |
-| `doc_planner_agent` | `create_document` | ASYNC | False | Quick, Smart |
-| `doc_generator_agent` | `generate_docx_code` | ASYNC | **True** | DocPlannerAgent only |
-| `pdf_generator_agent` | `create_pdf` | ASYNC | False | Quick, Smart |
-| `html_page_generator_agent` | `create_html_page` | ASYNC | False | Quick, Smart |
+| Agent ID | Intent(s) | Mode | `internal` | `eager` | Caller |
+|----------|-----------|------|-----------|---------|--------|
+| `facts_memory_agent` | `search_memory`, `save_to_memory` | SYNC | False | True | Quick, Smart |
+| `web_search_agent` | `search_web` | SYNC | False | True | Smart |
+| `web_search_light_agent` | `search_web_light` | SYNC | **True** | True | Quick (via `intent_remap`) |
+| `email_search_agent` | `search_emails`, `get_email_details`, `get_email_attachment` | SYNC | False | True | Quick, Smart |
+| `maps_search_agent` | `maps_query` | SYNC | False | True | Quick, Smart |
+| `compute_agent` | `compute_math`, `compute_datetime`, `compute_finance`, `compute` | SYNC | False | True | Quick, Smart |
+| `deep_research_agent` | `deep_research` | SYNC | False | **False** | Smart |
+| `doc_planner_agent` | `create_document` | ASYNC | False | **False** | Quick, Smart |
+| `doc_generator_agent` | `generate_docx_code` | ASYNC | **True** | **False** | DocPlannerAgent only |
+| `pdf_generator_agent` | `create_pdf` | ASYNC | False | **False** | Quick, Smart |
+| `html_page_generator_agent` | `create_html_page` | ASYNC | False | **False** | Quick, Smart |
+| `help_agent` | `user_guide` | SYNC | False | True | Quick, Smart |
+| `file_management_agent` | `open_file`, `delete_file` | SYNC | False | **False** | Quick, Smart |
+| `claude_deep_research_runner` | `execute_deep_research_claude` | ASYNC | **True** | **False** | DeepResearchAgent (Cloud Task) |
+| `notes_agent` | `manage_self_reminders` | SYNC | False | True | Quick, Smart |
+| `tasks_agent` | `manage_user_tasks` | SYNC | False | True | Quick, Smart |
+| `consolidation_agent` | `consolidate`, `consolidate_cluster`, `consolidate_email`, `consolidate_full` | ASYNC | **True** | True | ConversationHandler (overflow) |
 
 `web_search_light_agent` is `internal=True` — it never appears in LLM tool lists. Quick reaches it
 via `intent_remap: {"search_web": "search_web_light"}` at dispatch time.
 
 `doc_generator_agent` is `internal=True` — never shown in LLM tool lists. It is enqueued
 exclusively by `DocPlannerAgent` as a second ASYNC Cloud Task.
+
+### 3.5 Lazy Agent Loading
+
+Agents marked with `eager=False` on their `AgentDescriptor` are **not** instantiated during
+`UserAgentFactory.ensure_agents_for_user()`. Their descriptors are still registered in
+`AgentRegistry` at startup, so intents appear in LLM tool declarations immediately.
+
+**Trigger:** when `AgentCoordinator.handle_delegation()` encounters a non-eager descriptor, it
+calls `AgentFactoryPort.create_agent_on_demand(agent_type, user_id)` before dispatching.
+For ASYNC Cloud Tasks callbacks via `route_message()`, the coordinator parses the recipient
+(`{base_agent_id}_{user_id}`), looks up the descriptor via `registry.get_descriptor(base_id)`,
+and lazy-loads if `eager=False`.
+
+**Port:** `AgentFactoryPort` (`src/ports/agent_factory_port.py`) — one abstract method
+`create_agent_on_demand(agent_type, user_id) -> bool`. `UserAgentFactory` implements it.
+The coordinator depends on the port (not on the factory class), preserving hexagonal layering.
+
+**Wiring:** `main.py` calls `coordinator.set_agent_factory(agent_factory)` after both objects
+exist. Before this call, lazy loading is a no-op (factory is `None`).
+
+**Concurrency:** per-user `asyncio.Lock` prevents duplicate instantiation.
+`coordinator.get_agent(expected_id)` check provides idempotency.
+
+**Eviction:** `_lazy_agent_ids` list tracks created lazy agents per user. Background TTL sweep
+unregisters them alongside eager agents.
 
 ---
 
@@ -537,7 +569,13 @@ class FooAgent(BaseAgent):
 
 ### Step 5 — `src/composition/user_agent_factory.py`
 
-Wire the agent into the factory. Four touch points:
+Wire the agent into the factory. Choose **eager** or **lazy** based on usage frequency.
+
+**Eager agents** (called on most requests: memory, web search, email search, compute, maps)
+are created in `_create_and_cache_agents()`. **Lazy agents** (called rarely: doc generation,
+deep research, file management) are created on first delegation. See §3.5 for architecture.
+
+#### Option A — Eager agent (4 touch points)
 
 ```python
 # 1. Import at top
@@ -565,6 +603,38 @@ self._register_agents([..., foo_agent])
 cached = {..., "foo_agent": foo_agent}
 # In _evict_expired_cache: add "foo_agent" to the key tuple
 ```
+
+#### Option B — Lazy agent (3 touch points)
+
+Set `eager=False` on the `AgentDescriptor` in `agent_manifest.py` (Step 1), then:
+
+```python
+# 1. Import at top (same as eager)
+from ..infrastructure.agent_config import FOO as FOO_CFG
+from ..agents.foo_agent import FooAgent
+
+# 2. Add builder method:
+def _build_foo(self, user_id: str, ctx: _UserContext) -> FooAgent:
+    execution_context = self.context_builder.build("foo", ctx.user_profile.config)
+    return FooAgent(
+        config=AgentConfig(
+            agent_id=f"foo_agent_{user_id}",
+            agent_type="foo",
+            timeout_ms=FOO_CFG.timeout_ms,
+            capabilities=["..."],
+        ),
+        execution_context=execution_context,
+        prompt_builder=ctx.prompt_builder,
+        user_id=user_id,
+    )
+
+# 3. Register in dispatch tables:
+_LAZY_BUILDERS = {..., "foo": _build_foo}
+_LAZY_AGENT_IDS = {..., "foo": "foo_agent"}
+```
+
+No cache dict entry needed — lazy agents are tracked via `_lazy_agent_ids` automatically.
+Eviction is handled generically by the factory.
 
 ### Step 6 — `tests/unit/agents/test_foo_agent.py`
 
@@ -610,8 +680,9 @@ make test-e2e-all   # Quick and Smart delegate correctly to the new agent
 
 - `src/infrastructure/agent_manifest.py` — **Single source of truth** for all agent declarations: `Intent` constants, `AgentDescriptor` instances for every agent (specialists + orchestrators), `ALL_DESCRIPTORS` list. Start here when adding or understanding any agent.
 - `src/infrastructure/agent_config.py` — Central config registry: typed `@dataclass` per agent (`QUICK`, `SMART`, `ROUTER`, `MEMORY_SEARCH`, `WEB_SEARCH`, `WEB_SEARCH_LIGHT`, `CONSOLIDATION`, `EMAIL_SEARCH`, `EMAIL_CLASSIFICATION`, `MAPS_SEARCH`, `COMPUTE`, `PDF_PLANNER`, `PDF_GENERATOR`). Holds all tunable behavior params: delegation turns, timeouts, temperatures, and thinking config. `MapsSearchAgentConfig.model_name` is pinned to `gemini-2.5-flash` (Maps grounding unsupported on Gemini 3.x). `ComputeAgentConfig.temperature=0.0` (deterministic computation). `ConsolidationAgentConfig.thinking_effort="high"` + `max_tokens=32_000` (complex multi-turn reasoning; Claude Sonnet 4.6). `PdfGeneratorAgentConfig.max_tokens=64_000` (full HTML+CSS document can be large). `HtmlPageGeneratorAgentConfig.temperature=1.0` + `max_tokens=64_000` (high creativity for layout/design; full HTML+CSS+JS document).
-- `src/infrastructure/agent_registry.py` — `AgentDescriptor` dataclass (alias: `AgentManifest`), `AgentRegistry` mechanics, `ExecutionMode`, `get_available_intents()`, `get_available_intents_for(descriptor)`. Descriptor instances live in `agent_manifest.py`.
-- `src/infrastructure/agent_coordinator.py` — handle_delegation(), _execute_sync(), _execute_async(), get_available_intents(), get_available_intents_for()
+- `src/infrastructure/agent_registry.py` — `AgentDescriptor` dataclass (alias: `AgentManifest`; includes `eager: bool` field), `AgentRegistry` mechanics, `ExecutionMode`, `get_available_intents()`, `get_available_intents_for(descriptor)`, `get_descriptor(agent_id)`. Descriptor instances live in `agent_manifest.py`.
+- `src/infrastructure/agent_coordinator.py` — handle_delegation(), _execute_sync(), _execute_async(), _ensure_lazy_agent(), _try_lazy_load(), get_available_intents(), get_available_intents_for(). Accepts `AgentFactoryPort` for lazy agent instantiation.
+- `src/ports/agent_factory_port.py` — `AgentFactoryPort` ABC with `create_agent_on_demand(agent_type, user_id) -> bool`. Implemented by `UserAgentFactory`.
 - `src/agents/base_agent.py` — lifecycle hooks, `_debug_prompt`, `_debug_response`
 - `src/agents/core/smart_response_agent.py` — delegate_to_specialist tool, memory-first parallel scheduling. Class-level `_descriptor = SMART_RESPONSE`.
 - `src/agents/core/quick_response_agent.py` — `MAX_DELEGATION_TURNS=5`, `_execute_quick_delegation_loop`, `_execute_quick_parallel`, `_clean_history_for_quick`. Class-level `_descriptor = QUICK_RESPONSE` (intent_remap lives in descriptor).

@@ -411,6 +411,7 @@ async def main():
             anthropic_client=anthropic_client,
         )
         _agent_factory_ref[0] = agent_factory  # Wire deferred reference for overflow_callback
+        coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
         _language_service._ensure_agents = agent_factory.ensure_agents_for_user
         await agent_factory.start()
 

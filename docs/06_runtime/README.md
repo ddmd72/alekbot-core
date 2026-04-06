@@ -167,7 +167,7 @@ transcribed into the user's own text; other attachments go through `FileConversi
 
 **Responsibilities:**
 enqueued as an `agent_execution` Cloud Task and returns an acknowledgement; its result is delivered later by
-2. **Agent Initialization:** Ensure user's agent instances exist (`UserAgentFactory`)
+`AgentWorkerHandler` to the channel that asked. Local tools (skills, workspace, memory-fact drafts, long-turn
 jobs) are served by the engine itself. Intents, modes and agents: `src/infrastructure/agent_manifest.py`,
 `src/agents/CLAUDE.md`.
 5. **Delivery and history.** The handler sends the answer and its delivery items (files, links, rich content) and
@@ -177,9 +177,11 @@ writes the user/model pair to the session `{user_id}:{channel_id}`.
 the finished run posts a late answer with a link. Before the mark a failed Smart turn falls back to Quick
 
 `decisions/long_running_turns.md`.
-1. **Explicit Routing:** `recipient = specific_agent_id` → route directly
+
 ## 2. Memory formation
 
+
+`consolidation` Cloud Task is enqueued. On `/worker`, `ConsolidationService` takes the account's memory-write lease and
 
 `docs/05_building_blocks/memory/README.md` §3.
 

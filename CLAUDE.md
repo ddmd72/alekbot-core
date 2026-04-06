@@ -304,6 +304,8 @@ src/
                   attachments (upload/download/delete/exists/get_url).
                   Language ports: LanguageServicePort (language_service_port.py),
                   LocalizationPort (localization_port.py).
+                  Agent lifecycle ports: AgentFactoryPort (agent_factory_port.py) — on-demand
+                  lazy agent creation. Implemented by UserAgentFactory in composition/.
   adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, OpenAI, Slack, Telegram,
                   Gmail). Email adapters: GmailProviderAdapter, FirestoreIndexedEmailRepository,
                   FirestoreEmailJobRepository, FirestoreEmailExclusionsAdapter,
@@ -352,10 +354,11 @@ src/
   handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler, WorkerHandler).
                   WorkerHandler dispatches /worker Cloud Tasks by task_type.
   infrastructure/ — AgentCoordinator, queues, agent_config.py (central behavior params),
-                  agent_registry.py (AgentDescriptor dataclass + AgentRegistry mechanics),
+                  agent_registry.py (AgentDescriptor dataclass with `eager: bool` field + AgentRegistry mechanics),
                   agent_manifest.py (Intent constants + all agent declarations — single source of truth).
-  composition/  — ServiceContainer + UserAgentFactory + SlackAdapterFactory + TelegramAdapterFactory.
+  composition/  — ServiceContainer + UserAgentFactory(AgentFactoryPort) + SlackAdapterFactory + TelegramAdapterFactory.
                   UserAgentFactory lives in composition/ (NOT services/).
+                  Implements AgentFactoryPort for lazy agent creation on demand.
   locales/      — Per-language UI string modules (uk.py, en.py, fr.py, es.py).
                   Loaded by FileLocalizationAdapter. Add new file per new language.
   config/       — EnvironmentConfig, Settings, AuthConfig.
@@ -464,6 +467,10 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   `context` params at delegation time instead of passing a bare `query` string. Used by
   `save_to_memory` (text), `get_email_details` (email_id), `get_email_attachment` (email_id,
   filename). `AgentManifest` is a backward-compatible alias.
+  `eager: bool` (default True) — controls lifecycle. Eager agents are created during
+  `ensure_agents_for_user()`. Lazy agents (`eager=False`) are created on first delegation
+  via `AgentFactoryPort.create_agent_on_demand()`. Currently lazy: DocGenerator, DocPlanner,
+  PdfGenerator, HtmlPageGenerator, DeepResearch, ClaudeDeepResearchRunner, FileManagement.
   Specialists: declared in `agent_manifest.py` → registered via `ALL_DESCRIPTORS` in `main.py`.
   Orchestrators (Quick, Smart): declared in `agent_manifest.py`, set as class-level `_descriptor`
   in the agent class — coordinator never routes TO them via registry.

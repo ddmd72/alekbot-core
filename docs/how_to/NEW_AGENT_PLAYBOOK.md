@@ -41,6 +41,7 @@ Add `AgentDescriptor` after existing specialists:
 FOO = AgentDescriptor(
     agent_id="foo_agent",
     agent_type="foo",           # matches profile document ID in Firestore
+    eager=True,                 # True = created on session start; False = created on first delegation
     capabilities={Intent.FOO: ExecutionMode.SYNC},
     description="One-line description for logs",
     capability_descriptions={
@@ -55,6 +56,11 @@ FOO = AgentDescriptor(
 
 ALL_DESCRIPTORS = [..., FOO]    # append to the existing list
 ```
+
+**When to use `eager=False`:** agents called on <10% of requests (document generation, deep
+research, file management). The descriptor is still registered at startup — intents appear in
+LLM tool lists immediately. The agent instance is created on first delegation via
+`AgentFactoryPort`. See [Agent Registry §3.5](../05_building_blocks/agent_registry/README.md).
 
 Both Quick and Smart automatically discover the new intent — no changes to either orchestrator.
 
@@ -253,7 +259,11 @@ the expected structure. Fail fast, don't degrade silently.
 
 ### Step 5 — `src/composition/user_agent_factory.py`
 
-Four touch points (search for an existing agent like `compute_agent` and mirror the pattern):
+Choose **eager** or **lazy** based on the `eager` flag you set in Step 1.
+
+#### If `eager=True` (default) — 4 touch points
+
+Mirror an existing eager agent like `compute_agent`:
 
 ```python
 # 1. Imports at top
@@ -281,6 +291,38 @@ self._register_agents([..., foo_agent])
 cached = {..., "foo_agent": foo_agent}
 # In _evict_expired_cache: add "foo_agent" to the key tuple
 ```
+
+#### If `eager=False` — 3 touch points
+
+Mirror an existing lazy agent like `_build_pdf_generator`:
+
+```python
+# 1. Imports at top (same as eager)
+from ..infrastructure.agent_config import FOO as FOO_CFG
+from ..agents.foo_agent import FooAgent
+
+# 2. Add builder method (uses typed _UserContext, not untyped dict):
+def _build_foo(self, user_id: str, ctx: _UserContext) -> FooAgent:
+    execution_context = self.context_builder.build("foo", ctx.user_profile.config)
+    return FooAgent(
+        config=AgentConfig(
+            agent_id=f"foo_agent_{user_id}",
+            agent_type="foo",
+            timeout_ms=FOO_CFG.timeout_ms,
+            capabilities=["foo"],
+        ),
+        execution_context=execution_context,
+        prompt_builder=ctx.prompt_builder,
+        user_id=user_id,
+    )
+
+# 3. Register in dispatch tables:
+_LAZY_BUILDERS = {..., "foo": _build_foo}
+_LAZY_AGENT_IDS = {..., "foo": "foo_agent"}
+```
+
+No cache dict or eviction changes needed — lazy agents are tracked automatically via
+`_lazy_agent_ids`. The coordinator triggers creation on first delegation via `AgentFactoryPort`.
 
 ### Step 6 — `tests/unit/agents/test_foo_agent.py`
 
@@ -547,11 +589,12 @@ make deploy
 
 ```
 Code (6 files):
-  src/infrastructure/agent_manifest.py     Intent + AgentDescriptor + ALL_DESCRIPTORS
+  src/infrastructure/agent_manifest.py     Intent + AgentDescriptor (+ eager flag) + ALL_DESCRIPTORS
   src/infrastructure/agent_config.py       @dataclass config + singleton
   src/services/agent_context_builder.py    "foo" entry in STRATEGIES
   src/agents/foo_agent.py                  FooAgent class
-  src/composition/user_agent_factory.py    import + instantiate + register + cache
+  src/composition/user_agent_factory.py    eager: instantiate + register + cache
+                                           lazy:  _build_foo + _LAZY_BUILDERS + _LAZY_AGENT_IDS
   tests/unit/agents/test_foo_agent.py      6 minimum tests
 
 Prompt files (4 files):
