@@ -29,6 +29,8 @@ from ..ports.file_service import FileService
 from ..ports.html_renderer_port import HtmlRendererPort
 from ..ports.language_service_port import LanguageServicePort
 from ..services.localization_service import LocalizationService
+from ..services.channel_binding_service import ChannelBindingService
+from ..adapters.slack.channel_history import SlackChannelHistorySource
 from ..utils.logger import logger
 
 
@@ -62,6 +64,7 @@ class SlackAdapterFactory:
         language_service: Optional[LanguageServicePort] = None,
         localization: Optional[LocalizationService] = None,
         file_conversion_service=None,
+        channel_binding_service: Optional[ChannelBindingService] = None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -100,6 +103,12 @@ class SlackAdapterFactory:
             html_renderer=html_renderer,
         )
 
+        # Channel history source for bound channel sessions (Slack API)
+        bot_user_id = config.get("SLACK_BOT_USER_ID", "")
+        channel_history_source = SlackChannelHistorySource(
+            slack_client=app.client, bot_user_id=bot_user_id,
+        ) if bot_user_id else None
+
         conversation_handler = ConversationHandler(
             coordinator=coordinator,
             agent_factory=agent_factory,
@@ -114,6 +123,8 @@ class SlackAdapterFactory:
             overflow_callback=process_user_batches_on_overflow,
             localization=localization,
             file_conversion_service=file_conversion_service,
+            channel_binding_service=channel_binding_service,
+            channel_history_source=channel_history_source,
         )
 
         if env_config.is_socket_mode:

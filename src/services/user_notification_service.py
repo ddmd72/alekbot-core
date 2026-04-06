@@ -60,25 +60,67 @@ class UserNotificationService:
         except Exception as exc:
             logger.warning(f"[Notification] Failed to save channel for {user_id[:8]}: {exc}")
 
+    async def save_primary(self, user_id: str, platform: str, channel_id: str) -> None:
+        """Set the primary notification channel. Called by $primary command."""
+        try:
+            await self._state_repo.save_primary(user_id, platform, channel_id)
+            logger.info(
+                f"📌 [Notification] Primary channel set: {platform}/{channel_id} "
+                f"for user {user_id[:8]}"
+            )
+        except Exception as exc:
+            logger.warning(f"[Notification] Failed to save primary for {user_id[:8]}: {exc}")
+
+    async def _resolve_channel(
+        self, user_id: str, channel_id_override: Optional[str] = None,
+        platform_override: Optional[str] = None,
+    ) -> Optional["NotificationChannel"]:
+        """
+        Resolve notification destination. Fallback chain:
+        1. Explicit override (origin_channel_id from async task)
+        2. Primary channel ($primary command)
+        3. Last active channel (legacy fallback)
+        """
+        from ..domain.notification import NotificationChannel as NC
+        if channel_id_override and platform_override:
+            return NC(
+                user_id=user_id,
+                platform=platform_override,
+                channel_id=channel_id_override,
+                updated_at=__import__("datetime").datetime.utcnow(),
+            )
+
+        # Try primary first
+        try:
+            primary = await self._state_repo.get_primary(user_id)
+            if primary:
+                return primary
+        except Exception as exc:
+            logger.debug("[Notification] get_primary failed for %s: %s", user_id[:8], exc)
+
+        # Fallback to last active
+        try:
+            return await self._state_repo.get(user_id)
+        except Exception as exc:
+            logger.warning(f"[Notification] Failed to load channel for {user_id[:8]}: {exc}")
+            return None
+
     async def notify_raw(
         self,
         user_id: str,
         account_id: str,
         text: str,
+        channel_id_override: Optional[str] = None,
+        platform_override: Optional[str] = None,
     ) -> None:
         """
-        Deliver text directly to user's last active channel. No agent reformatting.
+        Deliver text directly to user's channel. No agent reformatting.
 
-        Used for long-form outputs (Deep Research HTML report URLs) where the content
-        must arrive as-is. Contrast with notify() which routes through QuickAgent
-        for conversational formatting.
+        Uses fallback chain: override → primary → last active.
         """
-        try:
-            channel_info = await self._state_repo.get(user_id)
-        except Exception as exc:
-            logger.warning(f"[Notification] Failed to load channel for {user_id[:8]}: {exc}")
-            return
-
+        channel_info = await self._resolve_channel(
+            user_id, channel_id_override, platform_override,
+        )
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping")
             return
@@ -117,22 +159,23 @@ class UserNotificationService:
         framing_suffix: str = " Your response to this message will be read by the user. Inform them of the event details in your usual manner of communication.",
         thinking_effort: Optional[str] = None,
         email_for_triage: Optional[list] = None,
+        channel_id_override: Optional[str] = None,
+        platform_override: Optional[str] = None,
     ) -> None:
         """
-        Send a background notification to the user's last active channel.
+        Send a background notification to the user's channel.
+        Uses fallback chain: override → primary → last active.
         The system_alert is formatted by QuickAgent in the user's communication style.
-        Silently skips if no channel is stored or platform not configured.
 
         session_id: if provided, reuses the original conversation session
                     (e.g. deep research delivering back to the user's thread).
                     Defaults to a new UUID for standalone background notifications.
+        channel_id_override: if provided, delivers to this channel instead of primary/last-active.
+                             Used for async results that should go back to the originating channel.
         """
-        try:
-            channel_info = await self._state_repo.get(user_id)
-        except Exception as exc:
-            logger.warning(f"[Notification] Failed to load channel for {user_id[:8]}: {exc}")
-            return
-
+        channel_info = await self._resolve_channel(
+            user_id, channel_id_override, platform_override,
+        )
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping")
             return
@@ -233,18 +276,16 @@ class UserNotificationService:
         account_id: str,
         url: str,
         label: str,
+        channel_id_override: Optional[str] = None,
+        platform_override: Optional[str] = None,
     ) -> None:
         """
-        Send a named document link to the user's last active channel.
-        Used by AgentWorkerHandler to deliver async PDF/HTML results.
-        Platform-specific link formatting is delegated to ResponseChannel.send_document_link().
+        Send a named document link to the user's channel.
+        Uses fallback chain: override → primary → last active.
         """
-        try:
-            channel_info = await self._state_repo.get(user_id)
-        except Exception as exc:
-            logger.warning(f"[Notification] Failed to load channel for {user_id[:8]}: {exc}")
-            return
-
+        channel_info = await self._resolve_channel(
+            user_id, channel_id_override, platform_override,
+        )
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping document link delivery")
             return
@@ -292,11 +333,12 @@ class UserNotificationService:
         file_bytes: bytes,
         filename: str,
         title: str,
+        channel_id_override: Optional[str] = None,
+        platform_override: Optional[str] = None,
     ) -> None:
         """
-        Upload a file to the user's last active channel via PlatformMediaPort.
-        Used by AgentWorkerHandler to deliver async DOCX results.
-        Silently skips if platform_media is not configured or no channel is stored.
+        Upload a file to the user's channel via PlatformMediaPort.
+        Uses fallback chain: override → primary → last active.
 
         Channel ID resolution:
         The stored channel_id may be a Slack user ID (U...) — see ConversationHandler.
@@ -312,12 +354,9 @@ class UserNotificationService:
             )
             return
 
-        try:
-            channel_info = await self._state_repo.get(user_id)
-        except Exception as exc:
-            logger.warning(f"[Notification] Failed to load channel for {user_id[:8]}: {exc}")
-            return
-
+        channel_info = await self._resolve_channel(
+            user_id, channel_id_override, platform_override,
+        )
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping file delivery")
             return

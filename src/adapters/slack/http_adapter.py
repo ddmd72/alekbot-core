@@ -319,7 +319,7 @@ class HTTPModeAdapter(SlackAdapter):
                     user_id=user_id,
                     account_id=account_id,  # SESSION_26
                     language=ui_lang.value,
-                    metadata={"event_type": "command", "slack_user_id": slack_user_id}
+                    metadata={"event_type": "command", "slack_user_id": slack_user_id, "channel": channel}
                 )
                 await self.conversation_handler.handle_command(command, context, response_channel)
                 return
@@ -335,6 +335,7 @@ class HTTPModeAdapter(SlackAdapter):
                 metadata={
                     "event_type": "message",
                     "channel_type": event.get("channel_type", "im"),
+                    "channel": channel,
                     "slack_user_id": slack_user_id,
                     "preferred_language": preferred_language,
                     "agent_mirror": agent_mirror,
