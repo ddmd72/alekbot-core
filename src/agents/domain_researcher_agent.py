@@ -107,6 +107,7 @@ class DomainResearcherAgent(BaseAgent):
                 messages=messages,
                 temperature=self.TEMPERATURE,
                 max_tokens=DOMAIN_RESEARCHER.max_tokens,
+                thinking=DOMAIN_RESEARCHER.thinking_effort,
             )
             response = await self._call_llm(request)
 
