@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 from ..adapters.mcp.mcp_client import MCPClient
@@ -83,13 +84,21 @@ from ..ports.agent_note_port import AgentNotePort
 from ..services.email_search_service import EmailSearchService
 from ..services.task_indexing_service import TaskIndexingService
 from ..ports.indexed_email_repository import IndexedEmailRepository
+from ..ports.agent_factory_port import AgentFactoryPort
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..infrastructure.agent_coordinator import AgentCoordinator
 
 
-class UserAgentFactory:
+@dataclass
+class _UserContext:
+    """Per-user shared context cached for lazy agent creation."""
+    user_profile: UserProfile
+    prompt_builder: UserPromptBuilder
+
+
+class UserAgentFactory(AgentFactoryPort):
     """
     Factory for per-user agent instances.
 
@@ -433,105 +442,6 @@ class UserAgentFactory:
                 user_id=user_id,
             )
 
-        doc_generator_context = self.context_builder.build("doc_generator", user_profile.config)
-        doc_generator_agent = DocGeneratorAgent(
-            config=AgentConfig(
-                agent_id=f"doc_generator_agent_{user_id}",
-                agent_type="doc_generator",
-                timeout_ms=DOC_GENERATOR_CFG.timeout_ms,
-                capabilities=["docx_code_generation"],
-                max_retries=0,
-            ),
-            execution_context=doc_generator_context,
-            docx_runner=NodeDocxRunner(),
-            prompt_builder=prompt_builder,
-            user_id=user_id,
-        )
-
-        doc_planner_context = self.context_builder.build("doc_planner", user_profile.config)
-        doc_planner_agent = DocPlannerAgent(
-            config=AgentConfig(
-                agent_id=f"doc_planner_agent_{user_id}",
-                agent_type="doc_planner",
-                timeout_ms=DOC_PLANNER_CFG.timeout_ms,
-                capabilities=["document_creation"],
-                max_retries=0,
-            ),
-            execution_context=doc_planner_context,
-            coordinator=self.coordinator,
-            prompt_builder=prompt_builder,
-            user_id=user_id,
-        )
-
-        pdf_generator_context = self.context_builder.build("pdf_generator", user_profile.config)
-        pdf_generator_agent = PdfGeneratorAgent(
-            config=AgentConfig(
-                agent_id=f"pdf_generator_agent_{user_id}",
-                agent_type="pdf_generator",
-                timeout_ms=PDF_GENERATOR_CFG.timeout_ms,
-                capabilities=["pdf_generation"],
-                max_retries=0,
-            ),
-            execution_context=pdf_generator_context,
-            pdf_runner=NodePuppeteerRunner(),
-            prompt_builder=prompt_builder,
-            user_id=user_id,
-        )
-
-        html_page_context = self.context_builder.build("html_page", user_profile.config)
-        html_page_generator_agent = HtmlPageGeneratorAgent(
-            config=AgentConfig(
-                agent_id=f"html_page_generator_agent_{user_id}",
-                agent_type="html_page",
-                timeout_ms=HTML_PAGE_GENERATOR_CFG.timeout_ms,
-                capabilities=["html_page_generation"],
-                max_retries=0,
-            ),
-            execution_context=html_page_context,
-            prompt_builder=prompt_builder,
-            user_id=user_id,
-            image_search=self._image_search,
-        )
-
-        deep_research_agent = None
-        if self.job_registry:
-            try:
-                job_port, tier, _ = self.context_builder.resolve_async_context(
-                    "deep_research", self.job_registry, user_profile.config
-                )
-                deep_research_agent = DeepResearchAgent(
-                    config=AgentConfig(
-                        agent_id=f"deep_research_agent_{user_id}",
-                        agent_type="deep_research",
-                        timeout_ms=DEEP_RESEARCH_CFG.timeout_ms,
-                        capabilities=["deep_research"],
-                    ),
-                    job_port=job_port,
-                    tier=tier,
-                    prompt_builder=prompt_builder,
-                    user_id=user_id,
-                    second_pass=user_profile.config.deep_research_second_pass,
-                )
-            except ValueError:
-                logger.warning(
-                    "[UserAgentFactory] Deep research provider not registered, skipping"
-                )
-
-        # Claude deep research runner — created only when anthropic_client is available.
-        # internal=True: registered in coordinator but never shown to LLMs.
-        # Delivery is handled externally by AgentWorkerHandler + notification service.
-        claude_runner_agent = None
-        if self.anthropic_client:
-            claude_runner_agent = ClaudeDeepResearchRunnerAgent(
-                config=AgentConfig(
-                    agent_id=f"claude_deep_research_runner_{user_id}",
-                    agent_type="claude_deep_research_runner",
-                    timeout_ms=CLAUDE_DEEP_RESEARCH_RUNNER_CFG.timeout_ms,
-                    capabilities=["execute_deep_research_claude"],
-                ),
-                anthropic_client=self.anthropic_client,
-            )
-
         fact_management_adapter = self.fact_management_adapter_factory(search_enrichment_service)
 
         consolidation_agent = ConsolidationAgent(
@@ -562,19 +472,6 @@ class UserAgentFactory:
             ),
         )
 
-        file_management_agent = None
-        if self.file_conversion_service and self.file_storage:
-            file_management_agent = FileManagementAgent(
-                config=AgentConfig(
-                    agent_id=f"file_management_agent_{user_id}",
-                    agent_type="file_management",
-                    timeout_ms=30_000,
-                    capabilities=["file_storage"],
-                ),
-                conversion_service=self.file_conversion_service,
-                storage=self.file_storage,
-            )
-
         agents_to_register = [
             router_agent,
             quick_agent,
@@ -585,10 +482,6 @@ class UserAgentFactory:
             email_search_agent,
             maps_agent,
             compute_agent,
-            doc_generator_agent,
-            doc_planner_agent,
-            pdf_generator_agent,
-            html_page_generator_agent,
             consolidation_agent,
             help_agent,
         ]
@@ -596,12 +489,6 @@ class UserAgentFactory:
             agents_to_register.append(notes_agent)
         if tasks_agent:
             agents_to_register.append(tasks_agent)
-        if deep_research_agent:
-            agents_to_register.append(deep_research_agent)
-        if claude_runner_agent:
-            agents_to_register.append(claude_runner_agent)
-        if file_management_agent:
-            agents_to_register.append(file_management_agent)
         self._register_agents(agents_to_register)
 
         # Preload prompt assembly cache (warm-up optimization, non-critical)
@@ -628,6 +515,8 @@ class UserAgentFactory:
 
         cached = {
             "last_used": time.time(),
+            "_user_context": _UserContext(user_profile=user_profile, prompt_builder=prompt_builder),
+            "_lazy_agent_ids": [],  # tracks lazy agents for eviction
             "search_enrichment": search_enrichment_service,
             "router_agent": router_agent,
             "quick_agent": quick_agent,
@@ -640,15 +529,8 @@ class UserAgentFactory:
             "compute_agent": compute_agent,
             "notes_agent": notes_agent,
             "tasks_agent": tasks_agent,
-            "deep_research_agent": deep_research_agent,
-            "claude_runner_agent": claude_runner_agent,
-            "doc_generator_agent": doc_generator_agent,
-            "doc_planner_agent": doc_planner_agent,
-            "pdf_generator_agent": pdf_generator_agent,
-            "html_page_generator_agent": html_page_generator_agent,
             "consolidation_agent": consolidation_agent,
             "help_agent": help_agent,
-            "file_management_agent": file_management_agent,
         }
         self._cache[user_id] = cached
         return cached
@@ -667,6 +549,206 @@ class UserAgentFactory:
                 self.coordinator.register_agent(agent)
             except ValueError:
                 continue
+
+    # ------------------------------------------------------------------
+    # Lazy agent instantiation (AgentFactoryPort implementation)
+    # ------------------------------------------------------------------
+
+    async def create_agent_on_demand(self, agent_type: str, user_id: str) -> bool:
+        """
+        Create a single lazy agent on first delegation.
+
+        Looks up user's cached context, constructs the agent, registers it
+        with the coordinator, and tracks it for later eviction.
+        Returns True if the agent was created or already existed.
+        """
+        cached = self._cache.get(user_id)
+        if cached is None:
+            # Eager agents not yet created — caller should have called
+            # ensure_agents_for_user() first. Do it now as safety net.
+            await self.ensure_agents_for_user(user_id)
+            cached = self._cache[user_id]
+
+        builder = self._LAZY_BUILDERS.get(agent_type)
+        if builder is None:
+            logger.warning(
+                "[UserAgentFactory] No lazy builder for agent_type='%s'", agent_type,
+            )
+            return False
+
+        # Per-user lock prevents duplicate instantiation on concurrent delegations
+        lock = self._creation_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            ctx: _UserContext = cached["_user_context"]
+
+            # Check if already registered in coordinator (idempotent)
+            expected_id = f"{self._LAZY_AGENT_IDS[agent_type]}_{user_id}"
+            if self.coordinator.get_agent(expected_id) is not None:
+                return True
+
+            agent = builder(self, user_id, ctx)
+            if agent is None:
+                return False
+
+            agent.coordinator = self.coordinator
+            try:
+                self.coordinator.register_agent(agent)
+            except ValueError:
+                return True  # already registered by concurrent call
+
+            cached["_lazy_agent_ids"].append(agent.agent_id)
+            logger.info(
+                "🦥 [AgentFactory] Lazy-created %s for user %s",
+                agent_type, user_id[:8],
+            )
+            return True
+
+    # -- Builder methods: one per lazy agent type -----------------------
+
+    def _build_doc_generator(self, user_id: str, ctx: _UserContext) -> DocGeneratorAgent:
+        execution_context = self.context_builder.build("doc_generator", ctx.user_profile.config)
+        return DocGeneratorAgent(
+            config=AgentConfig(
+                agent_id=f"doc_generator_agent_{user_id}",
+                agent_type="doc_generator",
+                timeout_ms=DOC_GENERATOR_CFG.timeout_ms,
+                capabilities=["docx_code_generation"],
+                max_retries=0,
+            ),
+            execution_context=execution_context,
+            docx_runner=NodeDocxRunner(),
+            prompt_builder=ctx.prompt_builder,
+            user_id=user_id,
+        )
+
+    def _build_doc_planner(self, user_id: str, ctx: _UserContext) -> DocPlannerAgent:
+        execution_context = self.context_builder.build("doc_planner", ctx.user_profile.config)
+        return DocPlannerAgent(
+            config=AgentConfig(
+                agent_id=f"doc_planner_agent_{user_id}",
+                agent_type="doc_planner",
+                timeout_ms=DOC_PLANNER_CFG.timeout_ms,
+                capabilities=["document_creation"],
+                max_retries=0,
+            ),
+            execution_context=execution_context,
+            coordinator=self.coordinator,
+            prompt_builder=ctx.prompt_builder,
+            user_id=user_id,
+        )
+
+    def _build_pdf_generator(self, user_id: str, ctx: _UserContext) -> PdfGeneratorAgent:
+        execution_context = self.context_builder.build("pdf_generator", ctx.user_profile.config)
+        return PdfGeneratorAgent(
+            config=AgentConfig(
+                agent_id=f"pdf_generator_agent_{user_id}",
+                agent_type="pdf_generator",
+                timeout_ms=PDF_GENERATOR_CFG.timeout_ms,
+                capabilities=["pdf_generation"],
+                max_retries=0,
+            ),
+            execution_context=execution_context,
+            pdf_runner=NodePuppeteerRunner(),
+            prompt_builder=ctx.prompt_builder,
+            user_id=user_id,
+        )
+
+    def _build_html_page(self, user_id: str, ctx: _UserContext) -> HtmlPageGeneratorAgent:
+        execution_context = self.context_builder.build("html_page", ctx.user_profile.config)
+        return HtmlPageGeneratorAgent(
+            config=AgentConfig(
+                agent_id=f"html_page_generator_agent_{user_id}",
+                agent_type="html_page",
+                timeout_ms=HTML_PAGE_GENERATOR_CFG.timeout_ms,
+                capabilities=["html_page_generation"],
+                max_retries=0,
+            ),
+            execution_context=execution_context,
+            prompt_builder=ctx.prompt_builder,
+            user_id=user_id,
+            image_search=self._image_search,
+        )
+
+    def _build_deep_research(
+        self, user_id: str, ctx: _UserContext,
+    ) -> Optional[DeepResearchAgent]:
+        if not self.job_registry:
+            return None
+        try:
+            job_port, tier, _ = self.context_builder.resolve_async_context(
+                "deep_research", self.job_registry, ctx.user_profile.config
+            )
+        except ValueError:
+            logger.warning(
+                "[UserAgentFactory] Deep research provider not registered, skipping"
+            )
+            return None
+        return DeepResearchAgent(
+            config=AgentConfig(
+                agent_id=f"deep_research_agent_{user_id}",
+                agent_type="deep_research",
+                timeout_ms=DEEP_RESEARCH_CFG.timeout_ms,
+                capabilities=["deep_research"],
+            ),
+            job_port=job_port,
+            tier=tier,
+            prompt_builder=ctx.prompt_builder,
+            user_id=user_id,
+            second_pass=ctx.user_profile.config.deep_research_second_pass,
+        )
+
+    def _build_claude_runner(
+        self, user_id: str, ctx: _UserContext,
+    ) -> Optional[ClaudeDeepResearchRunnerAgent]:
+        if not self.anthropic_client:
+            return None
+        return ClaudeDeepResearchRunnerAgent(
+            config=AgentConfig(
+                agent_id=f"claude_deep_research_runner_{user_id}",
+                agent_type="claude_deep_research_runner",
+                timeout_ms=CLAUDE_DEEP_RESEARCH_RUNNER_CFG.timeout_ms,
+                capabilities=["execute_deep_research_claude"],
+            ),
+            anthropic_client=self.anthropic_client,
+        )
+
+    def _build_file_management(
+        self, user_id: str, ctx: _UserContext,
+    ) -> Optional[FileManagementAgent]:
+        if not (self.file_conversion_service and self.file_storage):
+            return None
+        return FileManagementAgent(
+            config=AgentConfig(
+                agent_id=f"file_management_agent_{user_id}",
+                agent_type="file_management",
+                timeout_ms=30_000,
+                capabilities=["file_storage"],
+            ),
+            conversion_service=self.file_conversion_service,
+            storage=self.file_storage,
+        )
+
+    # -- Dispatch table: agent_type → builder method + base agent_id ----
+
+    _LAZY_BUILDERS: Dict[str, Callable] = {
+        "doc_generator": _build_doc_generator,
+        "doc_planner": _build_doc_planner,
+        "pdf_generator": _build_pdf_generator,
+        "html_page": _build_html_page,
+        "deep_research": _build_deep_research,
+        "claude_deep_research_runner": _build_claude_runner,
+        "file_management": _build_file_management,
+    }
+
+    _LAZY_AGENT_IDS: Dict[str, str] = {
+        "doc_generator": "doc_generator_agent",
+        "doc_planner": "doc_planner_agent",
+        "pdf_generator": "pdf_generator_agent",
+        "html_page": "html_page_generator_agent",
+        "deep_research": "deep_research_agent",
+        "claude_deep_research_runner": "claude_deep_research_runner",
+        "file_management": "file_management_agent",
+    }
 
     # ------------------------------------------------------------------
     # Lifecycle: start / shutdown / TTL sweep
@@ -701,13 +783,14 @@ class UserAgentFactory:
                 for key in ("router_agent", "quick_agent", "smart_agent",
                             "memory_agent", "web_agent", "web_search_light_agent",
                             "email_search_agent", "maps_agent", "compute_agent",
-                            "tasks_agent", "deep_research_agent", "claude_runner_agent",
-                            "doc_generator_agent", "doc_planner_agent",
-                            "pdf_generator_agent", "html_page_generator_agent",
-                            "consolidation_agent"):
+                            "tasks_agent", "notes_agent",
+                            "consolidation_agent", "help_agent"):
                     agent = entry.get(key)
                     if agent and hasattr(agent, "agent_id"):
                         self.coordinator.unregister_agent(agent.agent_id)
+                # Evict any lazy agents that were created on demand
+                for agent_id in entry.get("_lazy_agent_ids", []):
+                    self.coordinator.unregister_agent(agent_id)
                 logger.info("♻️ [AgentFactory] Evicted expired cache for user %s", uid[:8])
 
     # ------------------------------------------------------------------

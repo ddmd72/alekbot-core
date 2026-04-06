@@ -123,10 +123,12 @@ Changing a token or blueprint in Firestore results in stale prompts for up to 24
 
 ### Agent Lifecycle (MEDIUM)
 
-- Each user creates ~13 agent instances + per-user `PromptBuilder`, `MCPClient`,
-  `MCPMapsAdapter` — the `MCPClient` per user is notable (HTTP client per user)
+- Each user creates ~13 **eager** agent instances + per-user `PromptBuilder`, `MCPClient`,
+  `MCPMapsAdapter` — the `MCPClient` per user is notable (HTTP client per user).
+  7 additional agents (doc generation, deep research, file management) are **lazy** — created
+  on first delegation via `AgentFactoryPort`, reducing per-user initialization by ~40%.
 - 1h TTL + 5min sweep interval appropriate for Cloud Run auto-scale-to-zero
-- Eviction calls `coordinator.unregister_agent()` but does not cancel any in-flight
+- Eviction calls `coordinator.unregister_agent()` (both eager and lazy agents) but does not cancel any in-flight
   agent tasks that hold references to evicted agents
 
 ### Concurrency (MEDIUM-HIGH)

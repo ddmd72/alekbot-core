@@ -185,6 +185,7 @@ The system is composed of 11 core building blocks, each documented in detail:
 - **Composition Root** — `ServiceContainer` extracts shared service creation from `UserAgentFactory`; factory now owns only per-user agent lifecycle
 - **Per-user asyncio.Lock** in `UserAgentFactory` — prevents duplicate agent creation under concurrent requests
 - **TTL sweep** in `UserAgentFactory` — background eviction of expired user-agent sets (5min interval)
+- **Lazy agent loading** — `AgentFactoryPort` (`src/ports/agent_factory_port.py`) enables on-demand creation of rarely-used agents (doc generation, deep research, file management). `AgentDescriptor.eager=False` marks lazy agents; `AgentCoordinator` triggers creation on first delegation. Saves ~40% per-user initialization cost while keeping intents visible in LLM tool lists from startup
 - **Overflow safety** — `FirestoreSessionStore` overflow tracked via `_pending_tasks`, `while` loop handles multi-batch overflow
 - **Hexagonal Architecture Cleanup** (2026-02-21) — 5 new ports created (`ConversationHandlerPort`, `PlatformAuthPort`, `PromptBuilderPort`, `FactWritePort`, `SearchEnrichmentPort`), `SlackAdapterFactory` moved to `composition/`, import violations reduced from 29 to 3, all port contracts verified complete (28 ports, 34 contract tests)
 - **Gmail Email Indexing** (2026-02-28) — 5 email ABCs, 4 Firestore/Gmail adapters, `EmailIndexingService`, `EmailSearchService`, `EmailClassificationAgent`, `UserNotificationService`, web blueprints (Cabinet UI + Gmail OAuth)

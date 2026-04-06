@@ -13,6 +13,7 @@ from ..domain.agent import AgentMessage, AgentResponse, AgentStatus, AgentIntent
 from ..utils.logger import logger
 from .agent_registry import AgentRegistry, AgentDescriptor, ExecutionMode
 from ..ports.task_queue import TaskQueue
+from ..ports.agent_factory_port import AgentFactoryPort
 
 if TYPE_CHECKING:
     from ..agents.base_agent import BaseAgent
@@ -35,6 +36,7 @@ class AgentCoordinator:
         registry: Optional[AgentRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
         file_ref_resolver: Optional[Any] = None,
+        agent_factory: Optional[AgentFactoryPort] = None,
     ):
         """
         Initialize coordinator.
@@ -47,13 +49,21 @@ class AgentCoordinator:
             file_ref_resolver: Optional async callable(ref, user_id, mime_type) -> str.
                                Resolves GCS file references to text content before
                                dispatching to specialist agents.
+            agent_factory: Optional factory port for lazy agent instantiation.
+                           When set, non-eager agents are created on first delegation
+                           instead of at session start.
         """
         self.agents: Dict[str, BaseAgent] = {}
         self._registry = registry
         self._task_queue = task_queue
         self._file_ref_resolver = file_ref_resolver
+        self._agent_factory = agent_factory
         logger.info("🎯 AgentCoordinator initialized")
-    
+
+    def set_agent_factory(self, factory: AgentFactoryPort) -> None:
+        """Wire the factory port post-construction (composition bootstrapping)."""
+        self._agent_factory = factory
+
     def register_agent(self, agent: BaseAgent) -> None:
         """
         Register an agent with the coordinator.
@@ -149,6 +159,11 @@ class AgentCoordinator:
             f"(intent={message.intent})"
         )
         
+        # Lazy loading: if recipient is unknown, try to instantiate on demand.
+        # Covers ASYNC Cloud Tasks callbacks where the agent hasn't been created yet.
+        if message.recipient not in self.agents:
+            await self._try_lazy_load(message.recipient, message.context)
+
         # Strategy 1: Explicit routing
         if message.recipient in self.agents:
             agent = self.agents[message.recipient]
@@ -353,10 +368,56 @@ class AgentCoordinator:
             f"mode={mode} (from {calling_agent_id})"
         )
 
+        # Lazy agents: instantiate on first delegation
+        if not manifest.eager:
+            await self._ensure_lazy_agent(manifest.agent_type, context)
+
         if mode == ExecutionMode.SYNC:
             return await self._execute_sync(manifest.agent_id, intent, query, context)
         else:
             return await self._execute_async(manifest.agent_id, intent, query, context, manifest.dispatch_deadline_s)
+
+    async def _ensure_lazy_agent(
+        self, agent_type: str, context: Dict[str, Any],
+    ) -> None:
+        """Instantiate a lazy agent via the factory port if not yet registered."""
+        if self._agent_factory is None:
+            return
+        user_id = context.get("user_id", "")
+        if not user_id:
+            return
+        try:
+            await self._agent_factory.create_agent_on_demand(agent_type, user_id)
+        except Exception as e:
+            logger.error(
+                "❌ Lazy instantiation failed for %s (user=%s): %s",
+                agent_type, user_id[:8], e, exc_info=True,
+            )
+
+    async def _try_lazy_load(
+        self, recipient: str, context: Dict[str, Any],
+    ) -> None:
+        """
+        Attempt lazy loading for a recipient not yet in self.agents.
+
+        Extracts the base agent_id by stripping the _{user_id} suffix,
+        looks up the descriptor in the registry, and creates the agent
+        if it is non-eager. Used by route_message() to cover ASYNC
+        Cloud Tasks callbacks.
+        """
+        if self._agent_factory is None or self._registry is None:
+            return
+        user_id = context.get("user_id", "")
+        if not user_id:
+            return
+        suffix = f"_{user_id}"
+        if not recipient.endswith(suffix):
+            return
+        base_id = recipient[: -len(suffix)]
+        descriptor = self._registry.get_descriptor(base_id)
+        if descriptor is None or descriptor.eager:
+            return
+        await self._ensure_lazy_agent(descriptor.agent_type, context)
 
     async def _execute_sync(
         self,
