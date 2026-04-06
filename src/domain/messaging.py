@@ -125,6 +125,19 @@ class ResponseChannel(Protocol):
         ...
 
     @abstractmethod
+    async def send_flat_response(self, text: str, status_message_id: str) -> None:
+        """
+        Send a response as top-level messages (no threads).
+
+        Replaces status_message_id with the first chunk. If text exceeds platform
+        limits, sends remaining chunks as separate top-level messages. All messages
+        stay in channel history (visible to conversations.history API).
+
+        Used by bound channel sessions where history is fetched from platform API.
+        """
+        ...
+
+    @abstractmethod
     async def send_rich_content(self, content: RichContent, thread_id: Optional[str] = None) -> Any:
         """
         Send structured rich content to the user.

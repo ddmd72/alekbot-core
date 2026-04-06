@@ -341,7 +341,8 @@ class ConversationHandler(ConversationHandlerPort):
                 )
 
             status_msg_id, _ = await response_channel.send_status_with_phrase(
-                StatusType.THINKING, thread_id=context.thread_id,
+                StatusType.THINKING,
+                # thread_id=None → top-level, so bot response stays in conversations.history
             )
 
             response = await self.coordinator.handle_delegation(
@@ -362,27 +363,18 @@ class ConversationHandler(ConversationHandlerPort):
             )
 
         if response.status != AgentStatus.SUCCESS:
-            try:
-                await response_channel.delete_message(status_msg_id)
-            except Exception:
-                logger.debug("Failed to delete status message %s", status_msg_id)
-            await response_channel.send_message(
-                f"Agent error: {response.error or 'unknown'}",
-                thread_id=context.thread_id,
+            await response_channel.update_message(
+                status_msg_id, f"Agent error: {response.error or 'unknown'}",
             )
             return
 
-        # Deliver response — chunked to handle long responses
+        # Deliver response as top-level channel messages (no threads).
+        # Bound channel responses must stay in conversations.history for next fetch.
         result_text = response.result if isinstance(response.result, str) else str(response.result)
         if result_text:
-            await response_channel.send_chunked_message(
-                result_text, status_msg_id, thread_id=context.thread_id,
-            )
+            await response_channel.send_flat_response(result_text, status_msg_id)
         else:
-            try:
-                await response_channel.delete_message(status_msg_id)
-            except Exception:
-                logger.debug("Failed to delete status message %s", status_msg_id)
+            await response_channel.update_message(status_msg_id, "*(empty response)*")
 
         # No session write, no consolidation — bound channel is stateless
 
@@ -930,6 +922,13 @@ class ConversationHandler(ConversationHandlerPort):
 
             elif command == "primary":
                 await self._handle_primary_command(context, response_channel)
+
+            elif command in ("new", "reset"):
+                # Topic marker — acknowledged by bot. SlackChannelHistorySource
+                # uses these as history boundaries (fetch stops at marker).
+                await response_channel.send_message(
+                    "New topic. History cleared.", thread_id=context.thread_id,
+                )
 
             else:
                 await response_channel.send_message(
