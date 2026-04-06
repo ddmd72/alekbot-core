@@ -39,6 +39,7 @@ from ..services.agent_fallback_service import AgentFallbackService
 from ..services.document_delivery_service import DocumentDeliveryService
 from ..services.channel_binding_service import ChannelBindingService
 from ..domain.channel_binding import ChannelBinding
+from ..domain.session_mode import SessionMode
 
 # Content types that require external fetch + platform upload (not Block Kit)
 _MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file", "widget"})
@@ -303,80 +304,18 @@ class ConversationHandler(ConversationHandlerPort):
             # On error, pass through original text (fail open to avoid breaking user experience)
             return response_text
 
-    async def _handle_bound_channel(
-        self,
-        context: MessageContext,
-        response_channel: ResponseChannel,
-        binding: ChannelBinding,
-    ) -> None:
-        """
-        Handle message in a bound channel — direct agent routing, no Router.
-
-        No SessionStore write, no consolidation. History from platform API.
-        """
-        from ..domain.request_context import RequestContext
-
-        channel_id = context.metadata.get("channel", "")
-        logger.info(
-            "🔗 [BoundChannel] channel=%s → agent_type=%s, intent=%s",
-            channel_id, binding.agent_type, binding.intent,
-        )
-
-        if context.attachments:
-            await response_channel.send_message(
-                "File attachments are not supported in bound channels yet.",
-                thread_id=context.thread_id,
+    def _resolve_session_mode(self, channel_id: Optional[str], binding: Optional[ChannelBinding]) -> SessionMode:
+        """Resolve processing mode based on channel binding."""
+        if binding:
+            return SessionMode(
+                history_source="platform",
+                route_intent=binding.intent,
+                write_session=False,
+                write_consolidation=False,
+                update_notification_channel=False,
+                use_threads=False,
             )
-            return
-
-        async with RequestContext(user_id=context.user_id, account_id=context.account_id):
-            await self.agent_factory.ensure_agents_for_user(context.user_id)
-
-            # Fetch conversation history from platform (Slack API)
-            history: List[Message] = []
-            if self._channel_history:
-                history = await self._channel_history.fetch(
-                    channel_id=channel_id,
-                    limit=30,  # default; future: read from agent's context_window
-                )
-
-            status_msg_id, _ = await response_channel.send_status_with_phrase(
-                StatusType.THINKING,
-                # thread_id=None → top-level, so bot response stays in conversations.history
-            )
-
-            response = await self.coordinator.handle_delegation(
-                intent=binding.intent,
-                query=context.text,
-                context={
-                    "user_id": context.user_id,
-                    "account_id": context.account_id,
-                    "session_id": context.session_id,
-                    "thread_id": context.thread_id,
-                    "metadata": context.metadata,
-                    "origin_channel_id": channel_id,
-                    "origin_platform": getattr(response_channel, "platform", "slack"),
-                    "current_message_parts": [MessagePart(text=context.text)],
-                    "history": [m.model_dump() for m in history] if history else [],
-                },
-                calling_agent_id="bound_channel",
-            )
-
-        if response.status != AgentStatus.SUCCESS:
-            await response_channel.update_message(
-                status_msg_id, f"Agent error: {response.error or 'unknown'}",
-            )
-            return
-
-        # Deliver response as top-level channel messages (no threads).
-        # Bound channel responses must stay in conversations.history for next fetch.
-        result_text = response.result if isinstance(response.result, str) else str(response.result)
-        if result_text:
-            await response_channel.send_flat_response(result_text, status_msg_id)
-        else:
-            await response_channel.update_message(status_msg_id, "*(empty response)*")
-
-        # No session write, no consolidation — bound channel is stateless
+        return SessionMode()  # default: full orchestrator flow
 
     async def handle_message(
         self,
@@ -389,20 +328,23 @@ class ConversationHandler(ConversationHandlerPort):
             logger.info(f"📥 Received text ({len(context.text)} chars)")
         start_time = time.time()
 
-        # --- Channel Binding: direct agent routing bypass ---
+        # --- Resolve session mode from channel binding ---
         channel_id = context.metadata.get("channel")
+        binding = None
         if self._channel_binding and channel_id:
             binding = await self._channel_binding.get(channel_id)
-            if binding:
-                await self._handle_bound_channel(context, response_channel, binding)
-                return
+        mode = self._resolve_session_mode(channel_id, binding)
+        if mode.is_bound:
+            logger.info(
+                "🔗 [BoundChannel] channel=%s → intent=%s",
+                channel_id, mode.route_intent,
+            )
 
         # Persist last active channel for background notifications (best-effort).
         # For Slack DMs, store the Slack user ID (U...) instead of the DM channel ID (D...).
         # chat.postMessage accepts user IDs directly, making notifications resilient to
         # stale DM channel IDs (e.g., after bot reinstall or token rotation).
-        # Bound channels skip this — they should not update notification target.
-        if self._notification_service and hasattr(response_channel, "platform"):
+        if mode.update_notification_channel and self._notification_service and hasattr(response_channel, "platform"):
             channel_id_for_notif = response_channel.channel_id
             if (
                 response_channel.platform == "slack"
@@ -425,9 +367,10 @@ class ConversationHandler(ConversationHandlerPort):
         stop_event = asyncio.Event()
         current_status_phrase = ""
         dots_count = 1
+        thread_id_for_reply = context.thread_id if mode.use_threads else None
         status_message_id, current_status_phrase = await response_channel.send_status_with_phrase(
             StatusType.THINKING,
-            thread_id=context.thread_id
+            thread_id=thread_id_for_reply
         )
 
         async def update_status_animation(message_id: str):
@@ -545,44 +488,66 @@ class ConversationHandler(ConversationHandlerPort):
                 await self.agent_factory.ensure_agents_for_user(context.user_id)
                 session_store = self.agent_factory.get_session_store()
 
-                message = AgentMessage.create(
-                    sender="conversation_handler",
-                    recipient=f"router_agent_{context.user_id}",
-                    intent=AgentIntent.QUERY,
-                    payload={
-                        "text": context.text or "",
-                        "attachments": [
-                            {
-                                "filename": attachment.filename,
-                                "mime_type": attachment.mime_type,
-                                "size_bytes": attachment.size_bytes
-                            }
-                            for attachment in context.attachments
-                        ]
-                    },
-                    context={
-                        "session_id": context.session_id,
-                        "user_id": context.user_id,
-                        "account_id": context.account_id,  # SESSION_26: Required for 4-level prompt resolution
-                        "thread_id": context.thread_id,
-                        "metadata": context.metadata,
-                        # Pass current message parts for agents to compose LLM context
-                        # (SessionStore history doesn't include current message due to batch write)
-                        "current_message_parts": message_parts
-                    },
-                    timeout_ms=None
-                )
-
-                with start_span("conversation.agent_response"):
-                    response = await self.coordinator.route_message(message)
-                    response = await self._fallback_service.try_quick_fallback(
-                        response, context, message_parts
+                # Fetch platform history for bound channels
+                platform_history = []
+                if mode.history_source == "platform" and self._channel_history and channel_id:
+                    platform_history = await self._channel_history.fetch(
+                        channel_id=channel_id, limit=30,
                     )
+
+                agent_context = {
+                    "session_id": context.session_id,
+                    "user_id": context.user_id,
+                    "account_id": context.account_id,
+                    "thread_id": context.thread_id,
+                    "metadata": context.metadata,
+                    "current_message_parts": message_parts,
+                    "origin_channel_id": channel_id,
+                    "origin_platform": getattr(response_channel, "platform", "slack"),
+                }
+                if platform_history:
+                    agent_context["history"] = [m.model_dump() for m in platform_history]
+
+                if mode.is_bound:
+                    # Direct delegation — bypass Router
+                    with start_span("conversation.bound_agent_response"):
+                        response = await self.coordinator.handle_delegation(
+                            intent=mode.route_intent,
+                            query=context.text,
+                            context=agent_context,
+                            calling_agent_id="bound_channel",
+                        )
+                else:
+                    # Standard flow — Router triage
+                    message = AgentMessage.create(
+                        sender="conversation_handler",
+                        recipient=f"router_agent_{context.user_id}",
+                        intent=AgentIntent.QUERY,
+                        payload={
+                            "text": context.text or "",
+                            "attachments": [
+                                {
+                                    "filename": attachment.filename,
+                                    "mime_type": attachment.mime_type,
+                                    "size_bytes": attachment.size_bytes
+                                }
+                                for attachment in context.attachments
+                            ]
+                        },
+                        context=agent_context,
+                        timeout_ms=None
+                    )
+
+                    with start_span("conversation.agent_response"):
+                        response = await self.coordinator.route_message(message)
+                        response = await self._fallback_service.try_quick_fallback(
+                            response, context, message_parts
+                        )
 
             await stop_status_updates()
 
             if response.status != AgentStatus.SUCCESS:
-                await response_channel.send_status(StatusType.ERROR, thread_id=context.thread_id)
+                await response_channel.send_status(StatusType.ERROR, thread_id=thread_id_for_reply)
                 return
 
             response_payload = response.result
@@ -610,7 +575,7 @@ class ConversationHandler(ConversationHandlerPort):
                     "✅ Відповідь готова."
                 )
                 await self._deliver_rich_content(
-                    structured_data, response_channel, context.thread_id
+                    structured_data, response_channel, thread_id_for_reply
                 )
 
                 # History fallback for rich-only responses
@@ -625,24 +590,21 @@ class ConversationHandler(ConversationHandlerPort):
                 # Validate User Output
                 response_text = await self.validate_model_output(response_text, context.user_id)
                 
-                if structured_data:
-                    # Text + Rich Content (chunked text, then table/list as separate message)
+                if mode.use_threads:
+                    # Standard: chunked with thread support
                     await response_channel.send_chunked_message(
                         response_text,
                         status_message_id,
                         thread_id=context.thread_id,
                         link_list=response_link_list or None,
-                    )
-                    await self._deliver_rich_content(
-                        structured_data, response_channel, context.thread_id
                     )
                 else:
-                    # Text Only
-                    await response_channel.send_chunked_message(
-                        response_text,
-                        status_message_id,
-                        thread_id=context.thread_id,
-                        link_list=response_link_list or None,
+                    # Bound channel: top-level flat response (stays in conversations.history)
+                    await response_channel.send_flat_response(response_text, status_message_id)
+
+                if structured_data:
+                    await self._deliver_rich_content(
+                        structured_data, response_channel, thread_id_for_reply
                     )
 
             # Resolve history_summary after Slack delivery (task was running concurrently)
@@ -735,19 +697,18 @@ class ConversationHandler(ConversationHandlerPort):
 
             # Dispatch typed delivery items (e.g. grounding attribution widget from WebSearchAgent).
             for item in response.delivery_items:
-                await self._deliver_item(item, response_channel, context.thread_id)
+                await self._deliver_item(item, response_channel, thread_id_for_reply)
 
-            # Save to History (without temporary file paths)
-            # text = summary (compressed) or full (when optimization disabled)
-            # full_text = always the full response, for tiered history loading
-            await self._save_history_with_retry(
-                session_store=session_store,
-                session_id=context.session_id,
-                user_parts=clean_message_parts,
-                history_text=history_text,
-                response_text=response_text,
-                owner_id=context.user_id,
-            )
+            # Save to History — skip for bound channels (platform API is the session store)
+            if mode.write_session:
+                await self._save_history_with_retry(
+                    session_store=session_store,
+                    session_id=context.session_id,
+                    user_parts=clean_message_parts,
+                    history_text=history_text,
+                    response_text=response_text,
+                    owner_id=context.user_id,
+                )
 
             logger.info(f"🏁 END ConversationHandler.handle_message ({time.time() - start_time:.2f}s)")
 
