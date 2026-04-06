@@ -69,6 +69,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "pdf_generator": PerformanceTier.BALANCED,      # HTML+CSS generation → Puppeteer
     "html_page": PerformanceTier.PERFORMANCE,        # Full HTML+CSS+JS page — max quality
     "notes": PerformanceTier.ECO,                    # Simple CRUD, single tool call
+    "domain_researcher": PerformanceTier.PERFORMANCE, # Deep analytical reasoning (OpenAI o3/o4)
 }
 
 
