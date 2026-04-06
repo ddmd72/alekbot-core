@@ -37,6 +37,8 @@ from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService
 from ..services.agent_fallback_service import AgentFallbackService
 from ..services.document_delivery_service import DocumentDeliveryService
+from ..services.channel_binding_service import ChannelBindingService
+from ..domain.channel_binding import ChannelBinding
 
 # Content types that require external fetch + platform upload (not Block Kit)
 _MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file", "widget"})
@@ -98,6 +100,8 @@ class ConversationHandler(ConversationHandlerPort):
         overflow_callback: Optional[Callable[..., Coroutine]] = None,
         localization: Optional[LocalizationService] = None,
         file_conversion_service: Optional["FileConversionService"] = None,
+        channel_binding_service: Optional[ChannelBindingService] = None,
+        channel_history_source: Optional[Any] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -115,6 +119,8 @@ class ConversationHandler(ConversationHandlerPort):
         self._overflow_callback = overflow_callback
         self._localization = localization
         self._fallback_service = AgentFallbackService(coordinator)
+        self._channel_binding = channel_binding_service
+        self._channel_history = channel_history_source
 
     async def _deliver_rich_content(
         self,
@@ -297,6 +303,89 @@ class ConversationHandler(ConversationHandlerPort):
             # On error, pass through original text (fail open to avoid breaking user experience)
             return response_text
 
+    async def _handle_bound_channel(
+        self,
+        context: MessageContext,
+        response_channel: ResponseChannel,
+        binding: ChannelBinding,
+    ) -> None:
+        """
+        Handle message in a bound channel — direct agent routing, no Router.
+
+        No SessionStore write, no consolidation. History from platform API.
+        """
+        from ..domain.request_context import RequestContext
+
+        channel_id = context.metadata.get("channel", "")
+        logger.info(
+            "🔗 [BoundChannel] channel=%s → agent_type=%s, intent=%s",
+            channel_id, binding.agent_type, binding.intent,
+        )
+
+        if context.attachments:
+            await response_channel.send_message(
+                "File attachments are not supported in bound channels yet.",
+                thread_id=context.thread_id,
+            )
+            return
+
+        async with RequestContext(user_id=context.user_id, account_id=context.account_id):
+            await self.agent_factory.ensure_agents_for_user(context.user_id)
+
+            # Fetch conversation history from platform (Slack API)
+            history: List[Message] = []
+            if self._channel_history:
+                history = await self._channel_history.fetch(
+                    channel_id=channel_id,
+                    limit=30,  # default; future: read from agent's context_window
+                )
+
+            status_msg_id, _ = await response_channel.send_status_with_phrase(
+                StatusType.THINKING, thread_id=context.thread_id,
+            )
+
+            response = await self.coordinator.handle_delegation(
+                intent=binding.intent,
+                query=context.text,
+                context={
+                    "user_id": context.user_id,
+                    "account_id": context.account_id,
+                    "session_id": context.session_id,
+                    "thread_id": context.thread_id,
+                    "metadata": context.metadata,
+                    "origin_channel_id": channel_id,
+                    "origin_platform": getattr(response_channel, "platform", "slack"),
+                    "current_message_parts": [MessagePart(text=context.text)],
+                    "history": [m.model_dump() for m in history] if history else [],
+                },
+                calling_agent_id="bound_channel",
+            )
+
+        if response.status != AgentStatus.SUCCESS:
+            try:
+                await response_channel.delete_message(status_msg_id)
+            except Exception:
+                logger.debug("Failed to delete status message %s", status_msg_id)
+            await response_channel.send_message(
+                f"Agent error: {response.error or 'unknown'}",
+                thread_id=context.thread_id,
+            )
+            return
+
+        # Deliver response — chunked to handle long responses
+        result_text = response.result if isinstance(response.result, str) else str(response.result)
+        if result_text:
+            await response_channel.send_chunked_message(
+                result_text, status_msg_id, thread_id=context.thread_id,
+            )
+        else:
+            try:
+                await response_channel.delete_message(status_msg_id)
+            except Exception:
+                logger.debug("Failed to delete status message %s", status_msg_id)
+
+        # No session write, no consolidation — bound channel is stateless
+
     async def handle_message(
         self,
         context: MessageContext,
@@ -308,10 +397,19 @@ class ConversationHandler(ConversationHandlerPort):
             logger.info(f"📥 Received text ({len(context.text)} chars)")
         start_time = time.time()
 
+        # --- Channel Binding: direct agent routing bypass ---
+        channel_id = context.metadata.get("channel")
+        if self._channel_binding and channel_id:
+            binding = await self._channel_binding.get(channel_id)
+            if binding:
+                await self._handle_bound_channel(context, response_channel, binding)
+                return
+
         # Persist last active channel for background notifications (best-effort).
         # For Slack DMs, store the Slack user ID (U...) instead of the DM channel ID (D...).
         # chat.postMessage accepts user IDs directly, making notifications resilient to
         # stale DM channel IDs (e.g., after bot reinstall or token rotation).
+        # Bound channels skip this — they should not update notification target.
         if self._notification_service and hasattr(response_channel, "platform"):
             channel_id_for_notif = response_channel.channel_id
             if (
@@ -827,8 +925,177 @@ class ConversationHandler(ConversationHandlerPort):
                         f"✅ Consolidation complete: {len(serialized)} messages processed.",
                         thread_id=context.thread_id
                     )
+            elif command.startswith("agent"):
+                await self._handle_agent_command(command, context, response_channel)
+
+            elif command == "primary":
+                await self._handle_primary_command(context, response_channel)
+
             else:
                 await response_channel.send_message(
                     f"Невідома команда: `{command}`",
                     thread_id=context.thread_id
                 )
+
+    # ------------------------------------------------------------------
+    # Channel Binding commands
+    # ------------------------------------------------------------------
+
+    async def _handle_agent_command(
+        self, command: str, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        """Handle $agent <type>, $agent off, $agent (status)."""
+        if not self._channel_binding:
+            await response_channel.send_message(
+                "Channel binding is not configured.", thread_id=context.thread_id,
+            )
+            return
+
+        channel_id = context.metadata.get("channel")
+        if not channel_id:
+            await response_channel.send_message(
+                "Cannot determine channel ID.", thread_id=context.thread_id,
+            )
+            return
+
+        parts = command.split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
+        registry = self.coordinator._registry
+
+        if not arg:
+            # $agent — show current binding status
+            binding = await self._channel_binding.get(channel_id)
+            if binding:
+                await response_channel.send_message(
+                    f"This channel is bound to `{binding.agent_type}` (intent: `{binding.intent}`).\n"
+                    f"Use `$agent off` to unbind.",
+                    thread_id=context.thread_id,
+                )
+            else:
+                await response_channel.send_message(
+                    "This channel is not bound.\n"
+                    "Use `$agent list` to see available agents.",
+                    thread_id=context.thread_id,
+                )
+            return
+
+        if arg == "list":
+            # $agent list — show bindable agents
+            if registry is None:
+                await response_channel.send_message(
+                    "Agent registry not available.", thread_id=context.thread_id,
+                )
+                return
+            available = sorted(
+                d.agent_type for d in registry.list_agents()
+                if not d.internal and d.capabilities
+            )
+            if available:
+                lines = [f"  `{a}`" for a in available]
+                await response_channel.send_message(
+                    f"Available agents:\n" + "\n".join(lines),
+                    thread_id=context.thread_id,
+                )
+            else:
+                await response_channel.send_message(
+                    "No agents available for binding.",
+                    thread_id=context.thread_id,
+                )
+            return
+
+        if arg == "off":
+            await self._channel_binding.unbind(channel_id)
+            await response_channel.send_message(
+                "Channel unbound. Normal routing restored.", thread_id=context.thread_id,
+            )
+            return
+
+        # $agent <agent_type> — bind channel
+        agent_type = arg
+        if registry is None:
+            await response_channel.send_message(
+                "Agent registry not available.", thread_id=context.thread_id,
+            )
+            return
+
+        # Find non-internal descriptor by agent_type
+        descriptor = None
+        for desc in registry.list_agents():
+            if desc.agent_type == agent_type and not desc.internal:
+                descriptor = desc
+                break
+
+        if descriptor is None:
+            available = sorted(
+                d.agent_type for d in registry.list_agents()
+                if not d.internal and d.capabilities
+            )
+            await response_channel.send_message(
+                f"Unknown or internal agent type: `{agent_type}`.\n"
+                f"Available: {', '.join(f'`{a}`' for a in available)}",
+                thread_id=context.thread_id,
+            )
+            return
+
+        # Use the first capability intent as primary
+        intent = next(iter(descriptor.capabilities), None)
+        if intent is None:
+            await response_channel.send_message(
+                f"Agent `{agent_type}` has no capabilities.", thread_id=context.thread_id,
+            )
+            return
+
+        binding = ChannelBinding(
+            channel_id=channel_id,
+            agent_type=agent_type,
+            intent=intent,
+            created_by=context.user_id,
+        )
+        await self._channel_binding.bind(binding)
+        await response_channel.send_message(
+            f"Channel bound to `{agent_type}` (intent: `{intent}`). "
+            f"All messages will go directly to this agent.\n"
+            f"Use `$agent off` to unbind.",
+            thread_id=context.thread_id,
+        )
+
+    async def _handle_primary_command(
+        self, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        """Handle $primary — set this channel as primary notification destination."""
+        if not self._notification_service:
+            await response_channel.send_message(
+                "Notification service not configured.", thread_id=context.thread_id,
+            )
+            return
+
+        channel_id = context.metadata.get("channel")
+        if not channel_id:
+            await response_channel.send_message(
+                "Cannot determine channel ID.", thread_id=context.thread_id,
+            )
+            return
+
+        # Bound channels cannot be primary
+        if self._channel_binding:
+            binding = await self._channel_binding.get(channel_id)
+            if binding:
+                await response_channel.send_message(
+                    "Bound channels cannot be primary. "
+                    "Run `$primary` in an unbound channel.",
+                    thread_id=context.thread_id,
+                )
+                return
+
+        platform = getattr(response_channel, "platform", "slack")
+        await self._notification_service.save_primary(
+            user_id=context.user_id,
+            platform=platform,
+            channel_id=channel_id,
+        )
+        await response_channel.send_message(
+            "This channel is now the primary notification destination.\n"
+            "Reminders, daily reviews, and system alerts will be delivered here.",
+            thread_id=context.thread_id,
+        )

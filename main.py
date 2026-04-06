@@ -43,7 +43,9 @@ from src.adapters.firebase_auth_adapter import FirebaseAuthAdapter
 from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
 from src.services.google_oauth_service import GoogleOAuthService, GMAIL_SCOPES
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
+from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindingAdapter
 from src.adapters.notification_channel_factory import NotificationChannelFactory
+from src.services.channel_binding_service import ChannelBindingService
 from src.adapters.slack.media_adapter import SlackMediaAdapter
 from src.adapters.slack.response_channel import SlackResponseChannel
 from src.adapters.telegram.response_channel import TelegramResponseChannel
@@ -365,6 +367,10 @@ async def main():
         notification_state_repo = FirestoreNotificationStateAdapter(
             db_client=db_client, env_config=env_config
         )
+        channel_binding_adapter = FirestoreChannelBindingAdapter(
+            db_client=db_client, env_config=env_config
+        )
+        channel_binding_service = ChannelBindingService(port=channel_binding_adapter)
         notification_channel_factory = NotificationChannelFactory()  # adapters wired below
         notification_service = UserNotificationService(
             state_repo=notification_state_repo,
@@ -628,6 +634,7 @@ async def main():
             language_service=_language_service,
             localization=_localization,
             file_conversion_service=container.file_conversion_service,
+            channel_binding_service=channel_binding_service,
         )
         notification_channel_factory.register_factory(
             "slack",

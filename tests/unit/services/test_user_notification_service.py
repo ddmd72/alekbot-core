@@ -72,6 +72,7 @@ def _make_success_response(result) -> AgentResponse:
 def state_repo() -> AsyncMock:
     repo = AsyncMock(spec=NotificationStatePort)
     repo.get.return_value = _make_channel_info()
+    repo.get_primary.return_value = None  # No explicit primary — fall through to last-active
     return repo
 
 

@@ -241,20 +241,29 @@ and origin is only set when the user explicitly sends a message there).
 - `$primary` — explicit notification destination
 - Async results delivered to origin channel, system notifications to primary
 
-### Phase 2 — forced orchestrator routing
+### Phase 2 — session-per-channel refactoring
+Currently `session_id` is resolved per `user_id` — all channels share one session.
+For true multi-channel isolation, `session_id` must include `channel_id`. This affects:
+`_resolve_session_id()` in Slack/Telegram adapters, `SessionStore` key format,
+consolidation overflow (batch keyed by session_id), history loading, notification
+service (`session_id` in `notify()`). Until this is done, multiple unbound channels
+share one conversation history. Bound channels are unaffected (they use Slack API
+history, not SessionStore).
+
+### Phase 3 — forced orchestrator routing
 `$route smart` / `$route quick` / `$route auto` — per-channel override for Router
 triage decision. Unbound channels only. Message still goes through full pipeline
 (enrichment, consolidation, session store) — only the Quick/Smart selection is forced.
 Use case: long thematic discussion that always needs Smart, without Router triage overhead.
 
-### Phase 3 — incognito (minimal delta)
+### Phase 4 — incognito (minimal delta)
 Bound channels already provide most of incognito: no SessionStore, no consolidation.
 Remaining gap: debug prompts in GCS and user content in application logs. This is a
 small addition (flag on binding or `$agent translator --incognito`), not a separate RFC.
 Adds: suppress `PromptDebugLogger` output, strip content from billing records,
 sanitize `_on_agent_start`/`_on_agent_success` log messages.
 
-### Phase 4 — account permissions
+### Phase 5 — account permissions
 `UserBotConfig.allowed_direct_agents: List[str]` — which agent types each
 account can activate via `$agent`. Admin controls access per-account via Cabinet UI.
 
@@ -382,16 +391,20 @@ if already bound (`$agent off` first).
     (origin → primary → last_active legacy)
 11. `WorkerHandler`: propagate origin channel to notification
 
-**Phase 2 — Isolation flags**
-8. Add flags to `ChannelBinding` (consolidation, bio, session store)
-9. ConversationHandler: check flags before enrichment/persistence
+**Phase 2 — Session-per-channel refactoring**
+12. `session_id = f"{user_id}:{channel_id}"` for non-DM channels (or all channels)
+13. Migrate SessionStore, consolidation overflow, history loading
+14. Validate notification service session_id usage
 
-**Phase 3 — Incognito (separate RFC)**
-10. No debug GCS, billing content stripping, log sanitization
+**Phase 3 — Forced orchestrator routing**
+15. `$route smart/quick/auto` command + per-channel Router override
 
-**Phase 4 — Account permissions**
-11. `allowed_direct_agents` on UserBotConfig
-12. Cabinet UI for admin management
+**Phase 4 — Incognito**
+16. Suppress debug GCS, strip billing content, sanitize logs
+
+**Phase 5 — Account permissions**
+17. `allowed_direct_agents` on UserBotConfig
+18. Cabinet UI for admin management
 
 ---
 
