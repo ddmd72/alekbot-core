@@ -64,6 +64,7 @@ class BaseAgentConfig:
 
 @dataclass
 class RouterAgentConfig:
+    temperature: float = 0.3
     # History turns passed to the triage LLM call
     context_window: int = 5
     # Biographical context fetch limit
@@ -123,7 +124,7 @@ class SmartAgentConfig:
 
 @dataclass
 class MemorySearchAgentConfig:
-    temperature: float = 0.0     # deterministic key extraction
+    temperature: float = 1.0
     max_tokens: int = 150
     result_limit: int = 10
     timeout_ms: int = 10_000
@@ -156,7 +157,7 @@ class WebSearchLightAgentConfig:
 @dataclass
 class ConsolidationAgentConfig:
     max_turns: int = 15          # max deliberation iterations; Stage 2 on large clusters (25+ facts) needs ~12 turns
-    temperature: float = 0.0
+    temperature: float = 1.0
     facts_limit: int = 50        # biographical cache limit passed at construction
     principles_limit: int = 15   # principles cache limit passed at construction
     max_tokens: int = 32_000         # output token limit; large enough for full fact JSON reports
@@ -181,7 +182,7 @@ class ConsolidationAgentConfig:
 
 @dataclass
 class EmailSearchAgentConfig:
-    temperature: float = 0.0     # deterministic key extraction
+    temperature: float = 1.0
     max_tokens: int = 250
     # 300 s: PDF attachment parsing via markitdown can be slow (confirmed >30 s in production)
     timeout_ms: int = 300_000
@@ -195,7 +196,7 @@ class EmailSearchAgentConfig:
 class EmailClassificationAgentConfig:
     max_turns: int = 4           # matches POC; LLM may call get_email_details() mid-loop
     max_parse_retries: int = 1   # one LLM retry on invalid JSON before giving up
-    temperature: float = 0.0     # deterministic classification
+    temperature: float = 1.0
     max_tokens: int = 65_535     # near Gemini limit; reasoning mode needs headroom
 
 
@@ -239,7 +240,7 @@ class ClaudeDeepResearchRunnerConfig:
 
 @dataclass
 class ComputeAgentConfig:
-    temperature: float = 0.0     # deterministic computation
+    temperature: float = 1.0
     timeout_ms: int = 30_000     # single code_execution call, same ceiling as WebSearchLight
 
 
@@ -253,7 +254,7 @@ class MapsSearchAgentConfig:
     # Provider resolved via AgentProviderStrategy — no model pin needed.
     # Pricing: free during experimental quota phase.
     # Timeout: allows for multi-turn tool loop (up to 4 turns).
-    temperature: float = 0.3
+    temperature: float = 1.0
     timeout_ms: int = 90_000
 
 
@@ -283,7 +284,7 @@ COMPUTE = ComputeAgentConfig()
 
 @dataclass
 class NotesAgentConfig:
-    temperature: float = 0.2      # Low: deterministic CRUD, not creative
+    temperature: float = 1.0
     max_tokens: int = 512         # Single tool call + brief confirmation
     timeout_ms: int = 10_000      # Fast: 1 tool call + 1 confirmation turn
 
@@ -297,7 +298,7 @@ NOTES = NotesAgentConfig()
 
 @dataclass
 class TasksAgentConfig:
-    temperature: float = 0.3      # Low: structured operations, not creative
+    temperature: float = 1.0
     max_tokens: int = 1024        # Tool-calling loop: tool calls + final text response
     timeout_ms: int = 30_000      # Multi-turn: up to 2 tool calls + final synthesis
 
@@ -326,7 +327,7 @@ DOC_PLANNER = DocPlannerAgentConfig()
 
 @dataclass
 class DocGeneratorAgentConfig:
-    temperature: float = 0.5      # Balanced: code precision + rendering simulation reasoning
+    temperature: float = 1.0
     max_tokens: int = 64_000      # Full Node.js script can be large
     timeout_ms: int = 600_000     # Background async task — allow 10 min for code generation
     node_timeout_s: int = 60      # Subprocess timeout
@@ -342,7 +343,7 @@ DOC_GENERATOR = DocGeneratorAgentConfig()
 
 @dataclass
 class PdfGeneratorAgentConfig:
-    temperature: float = 0.5      # Balanced: HTML precision + styling reasoning
+    temperature: float = 1.0
     max_tokens: int = 64_000      # Full HTML+CSS document can be large
     timeout_ms: int = 600_000     # Background async task — allow 10 min for generation
     node_timeout_s: int = 60  # Subprocess timeout

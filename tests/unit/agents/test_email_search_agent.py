@@ -281,7 +281,7 @@ class TestExtractSearchQueries:
         req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
                           mock_llm.generate_content.call_args.args[0]
         assert req.model_name == "gemini-test"
-        assert req.temperature == 0.0
+        assert req.temperature == 1.0
         assert req.max_tokens == 250
         assert req.response_mime_type == "application/json"
         assert req.disable_safety is True
