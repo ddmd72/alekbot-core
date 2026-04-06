@@ -104,10 +104,10 @@ class SlackAdapterFactory:
         )
 
         # Channel history source for bound channel sessions (Slack API)
-        bot_user_id = config.get("SLACK_BOT_USER_ID", "")
         channel_history_source = SlackChannelHistorySource(
-            slack_client=app.client, bot_user_id=bot_user_id,
-        ) if bot_user_id else None
+            slack_client=app.client,
+            bot_user_id=config.get("SLACK_BOT_USER_ID", ""),
+        )
 
         conversation_handler = ConversationHandler(
             coordinator=coordinator,
