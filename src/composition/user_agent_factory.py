@@ -53,6 +53,7 @@ from ..infrastructure.agent_config import (
     DOC_GENERATOR as DOC_GENERATOR_CFG,
     PDF_GENERATOR as PDF_GENERATOR_CFG,
     HTML_PAGE_GENERATOR as HTML_PAGE_GENERATOR_CFG,
+    DOMAIN_RESEARCHER as DOMAIN_RESEARCHER_CFG,
 )
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
@@ -75,6 +76,7 @@ from ..agents.pdf_generator_agent import PdfGeneratorAgent
 from ..agents.html_page_generator_agent import HtmlPageGeneratorAgent
 from ..agents.help_agent import HelpAgent
 from ..agents.file_management_agent import FileManagementAgent
+from ..agents.domain_researcher_agent import DomainResearcherAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
@@ -728,6 +730,20 @@ class UserAgentFactory(AgentFactoryPort):
             storage=self.file_storage,
         )
 
+    def _build_domain_researcher(self, user_id: str, ctx: _UserContext) -> DomainResearcherAgent:
+        execution_context = self.context_builder.build("domain_researcher", ctx.user_profile.config)
+        return DomainResearcherAgent(
+            config=AgentConfig(
+                agent_id=f"domain_researcher_agent_{user_id}",
+                agent_type="domain_researcher",
+                timeout_ms=DOMAIN_RESEARCHER_CFG.timeout_ms,
+                capabilities=["domain_research"],
+            ),
+            execution_context=execution_context,
+            prompt_builder=ctx.prompt_builder,
+            user_id=user_id,
+        )
+
     # -- Dispatch table: agent_type → builder method + base agent_id ----
 
     _LAZY_BUILDERS: Dict[str, Callable] = {
@@ -738,6 +754,7 @@ class UserAgentFactory(AgentFactoryPort):
         "deep_research": _build_deep_research,
         "claude_deep_research_runner": _build_claude_runner,
         "file_management": _build_file_management,
+        "domain_researcher": _build_domain_researcher,
     }
 
     _LAZY_AGENT_IDS: Dict[str, str] = {
@@ -748,6 +765,7 @@ class UserAgentFactory(AgentFactoryPort):
         "deep_research": "deep_research_agent",
         "claude_deep_research_runner": "claude_deep_research_runner",
         "file_management": "file_management_agent",
+        "domain_researcher": "domain_researcher_agent",
     }
 
     # ------------------------------------------------------------------

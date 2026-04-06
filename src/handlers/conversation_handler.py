@@ -981,7 +981,7 @@ class ConversationHandler(ConversationHandlerPort):
             return
 
         if arg == "list":
-            # $agent list — show bindable agents
+            # $agent list — show all bindable agents (internal flag is LLM visibility, not binding)
             if registry is None:
                 await response_channel.send_message(
                     "Agent registry not available.", thread_id=context.thread_id,
@@ -989,7 +989,7 @@ class ConversationHandler(ConversationHandlerPort):
                 return
             available = sorted(
                 d.agent_type for d in registry.list_agents()
-                if not d.internal and d.capabilities
+                if d.capabilities
             )
             if available:
                 lines = [f"  `{a}`" for a in available]
@@ -1019,17 +1019,17 @@ class ConversationHandler(ConversationHandlerPort):
             )
             return
 
-        # Find non-internal descriptor by agent_type
+        # Find descriptor by agent_type (any agent with capabilities is bindable)
         descriptor = None
         for desc in registry.list_agents():
-            if desc.agent_type == agent_type and not desc.internal:
+            if desc.agent_type == agent_type and desc.capabilities:
                 descriptor = desc
                 break
 
         if descriptor is None:
             available = sorted(
                 d.agent_type for d in registry.list_agents()
-                if not d.internal and d.capabilities
+                if d.capabilities
             )
             await response_channel.send_message(
                 f"Unknown or internal agent type: `{agent_type}`.\n"

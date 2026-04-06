@@ -440,6 +440,10 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
 - **Shared state** protect with `asyncio.Lock`. No exceptions.
 - **Errors** log before re-raise. Do not silently swallow exceptions.
 - **Do not use print()** — only `from src.utils.logger import logger`.
+- **No fallback prompts.** Agents must not contain inline/hardcoded fallback prompts.
+  If `PromptBuilder.build_for_agent()` fails — return `AgentResponse.failure()`, do not
+  degrade to an empty or inline prompt. The Firestore prompt (token + blueprint + profile)
+  is the single source of truth. Fail fast on missing prompts.
 
 ## Patterns
 

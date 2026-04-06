@@ -1,0 +1,7 @@
+{
+  "agent_id": "domain_researcher",
+  "blueprint_id": "single_cognitive_v1",
+  "tokens": {
+    "COGNITIVE_PROCESS_DOMAIN_RESEARCHER": {"order": 10, "non_overridable": true}
+  }
+}

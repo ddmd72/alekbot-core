@@ -359,6 +359,7 @@ _FACTORY_AGENT_TYPES = [
     "doc_planner",
     "pdf_generator",
     "html_page",
+    "domain_researcher",
 ]
 
 
