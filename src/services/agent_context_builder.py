@@ -110,10 +110,10 @@ class AgentProviderStrategy:
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },
-        # Conversational multi-turn agent. No tools. Provider-agnostic.
+        # Deep analytical work: domain decomposition, competency scoring. Reasoning model.
         "domain_researcher": {
-            "default_provider": "gemini",
-            "allowed_providers": ["gemini", "claude", "openai"],
+            "default_provider": "openai",
+            "allowed_providers": ["openai", "claude", "gemini"],
             "required_capabilities": [],
             "fallback": "gemini"
         },

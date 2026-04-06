@@ -374,10 +374,11 @@ HTML_PAGE_GENERATOR = HtmlPageGeneratorAgentConfig()
 
 @dataclass
 class DomainResearcherAgentConfig:
-    temperature: float = 1.0      # Creative analysis + structured output
-    max_tokens: int = 8_000       # Competency lists can be lengthy
-    timeout_ms: int = 60_000      # Single LLM call, generous for long prompts
+    temperature: float = 1.0      # Ignored by OpenAI reasoning models, kept for non-reasoning fallback
+    max_tokens: int = 32_000      # Complex analytical output — domain decomposition + scoring
+    timeout_ms: int = 120_000     # Reasoning models take longer (high effort)
     context_window: int = 30      # Bound channel history messages to fetch
+    thinking_effort: Optional[str] = "high"  # Deep analytical reasoning
 
 
 DOMAIN_RESEARCHER = DomainResearcherAgentConfig()
