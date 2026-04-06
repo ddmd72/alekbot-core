@@ -148,7 +148,7 @@ class TestEmailClassificationAgent:
         call_args = mock_llm.generate_content.call_args
         req: LLMRequest = call_args.kwargs.get("request") or call_args.args[0]
         assert req.model_name == "gemini-test"
-        assert req.temperature == 0.0
+        assert req.temperature == 1.0
         # No gmail injected → single-pass mode → JSON mode active
         assert req.response_mime_type == "application/json"
         assert req.disable_safety is True
