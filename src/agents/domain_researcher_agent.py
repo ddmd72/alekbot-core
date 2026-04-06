@@ -97,8 +97,12 @@ class DomainResearcherAgent(BaseAgent):
             if parts:
                 messages.append(Message(role=role, parts=parts))
 
-        # Append current user message
-        messages.append(Message(role="user", parts=[MessagePart(text=query)]))
+        # Append current user message with attachments (file_data etc.)
+        current_parts = message.context.get("current_message_parts", [])
+        if current_parts:
+            messages.append(Message(role="user", parts=current_parts))
+        else:
+            messages.append(Message(role="user", parts=[MessagePart(text=query)]))
 
         try:
             request = LLMRequest(
