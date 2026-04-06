@@ -167,7 +167,7 @@ class TestLLMCall:
 
         req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
                           mock_llm.generate_content.call_args.args[0]
-        assert req.temperature == 0.0
+        assert req.temperature == 1.0
 
     async def test_query_in_user_message(self, agent, mock_llm):
         msg = _make_message(query="sqrt(289)")
