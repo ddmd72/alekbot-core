@@ -110,6 +110,13 @@ class AgentProviderStrategy:
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },
+        # Conversational multi-turn agent. No tools. Provider-agnostic.
+        "domain_researcher": {
+            "default_provider": "gemini",
+            "allowed_providers": ["gemini", "claude", "openai"],
+            "required_capabilities": [],
+            "fallback": "gemini"
+        },
         # Deep research uses DeepResearchPort (not LLMPort) — AgentContextBuilder.build() is
         # NOT called for this agent type. This entry exists solely for unified default/allowed
         # provider declaration. UserAgentFactory reads default_provider from here.

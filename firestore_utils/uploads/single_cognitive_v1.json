@@ -1,0 +1,5 @@
+{
+  "blueprint_id": "single_cognitive_v1",
+  "outer_class": "Agent",
+  "class_order": ["cognitive_process"]
+}

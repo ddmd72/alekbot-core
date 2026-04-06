@@ -72,6 +72,8 @@ class Intent:
     # File storage — retrieve and manage user file attachments
     OPEN_FILE           = "open_file"
     DELETE_FILE         = "delete_file"
+    # Domain research — interactive competency stack definition for agent construction
+    DOMAIN_RESEARCH     = "domain_research"
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +501,25 @@ FILE_MANAGEMENT = AgentDescriptor(
 )
 
 
+DOMAIN_RESEARCHER = AgentDescriptor(
+    agent_id="domain_researcher_agent",
+    agent_type="domain_researcher",
+    eager=False,
+    internal=True,  # bound channel only — not exposed to orchestrators
+    capabilities={Intent.DOMAIN_RESEARCH: ExecutionMode.SYNC},
+    description="Interactive domain competency researcher for agent construction",
+    capability_descriptions={
+        Intent.DOMAIN_RESEARCH: (
+            "Interactive multi-turn research session that defines the 'Immutable Body of Knowledge' "
+            "for a given professional domain. Decomposes the domain into sub-domains, identifies "
+            "15-20 critical competencies, classifies each as KNOWLEDGE/ALGORITHM/CONSTRAINT/STYLE, "
+            "scores by importance, and produces a structured Domain Manifest for agent construction. "
+            "Designed for bound channel use with conversation history."
+        ),
+    },
+)
+
+
 ALL_DESCRIPTORS = [
     MEMORY_SEARCH,
     WEB_SEARCH,
@@ -515,4 +536,5 @@ ALL_DESCRIPTORS = [
     HTML_PAGE_GENERATOR,
     HELP,
     FILE_MANAGEMENT,
+    DOMAIN_RESEARCHER,
 ]
