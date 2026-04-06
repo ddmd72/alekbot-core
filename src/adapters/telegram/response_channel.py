@@ -383,6 +383,15 @@ class TelegramResponseChannel(ResponseChannel):
         for chunk in chunks:
             await self.send_message(chunk, thread_id=thread_id or message_id, link_list=link_list)
 
+    async def send_flat_response(self, text: str, status_message_id: str) -> None:
+        """Send response as top-level messages. First chunk replaces status message."""
+        chunks = self.chunker.split(text)
+        if not chunks:
+            return
+        await self.update_message(status_message_id, chunks[0])
+        for chunk in chunks[1:]:
+            await self.send_message(chunk)  # no thread_id → top-level
+
     async def send_rich_content(
         self,
         content: RichContent,

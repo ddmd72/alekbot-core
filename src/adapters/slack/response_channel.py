@@ -228,6 +228,16 @@ class SlackResponseChannel(ResponseChannel):
         for chunk in chunks:
             await self.send_message(chunk, thread_ts)
 
+    async def send_flat_response(self, text: str, status_message_id: str) -> None:
+        """Send response as top-level messages. First chunk replaces status message."""
+        formatted = self._format_for_platform(text)
+        chunks = self._split_into_chunks(formatted, SLACK_CHUNK_SIZE)
+        if not chunks:
+            return
+        await self.update_message(status_message_id, chunks[0])
+        for chunk in chunks[1:]:
+            await self.send_message(chunk)  # no thread_id → top-level
+
     async def send_rich_content(self, content: RichContent, thread_id: Optional[str] = None) -> Any:
         """
         Send structured rich content to Slack.
