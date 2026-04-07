@@ -85,21 +85,9 @@ class TelegramWebhookAdapter(PlatformPort):
         """Return Quart blueprint for registration in main.py."""
         return self.blueprint
 
-    async def _resolve_session_id(self, user_id: str) -> str:
-        """
-        Find the most recently active session for a given user.
-        
-        This ensures conversation continuity across multiple Telegram chats
-        (same pattern as Slack adapter).
-        
-        Args:
-            user_id: Internal user ID
-            
-        Returns:
-            Latest session_id or user_id if no session exists
-        """
-        latest = await self.session_store.get_latest_session_id(user_id)
-        return latest or user_id
+    def _resolve_session_id(self, user_id: str, chat_id: str) -> str:
+        """Deterministic session ID from user + channel (chat)."""
+        return f"{user_id}:{chat_id}"
 
     async def _verify_webhook_signature(self, request_obj) -> bool:
         """
@@ -178,8 +166,8 @@ class TelegramWebhookAdapter(PlatformPort):
             user_id = user_profile.user_id
             account_id = user_profile.account_id
 
-            # 3. Resolve session (SAME PATTERN AS SLACK)
-            session_id = await self._resolve_session_id(user_id)
+            # 3. Resolve session (deterministic: user_id:channel_id)
+            session_id = self._resolve_session_id(user_id, str(chat_id))
 
             logger.info(f"👤 Processing Telegram message for user {user_id}, session {session_id[:8]}...")
 

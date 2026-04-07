@@ -6,6 +6,7 @@ Concrete TaskQueue implementation for Google Cloud Tasks.
 """
 import json
 import datetime
+from pydantic import BaseModel
 from typing import Dict, Any, Optional
 
 from google.cloud import tasks_v2
@@ -13,6 +14,15 @@ from google.api_core.exceptions import NotFound
 from google.protobuf import timestamp_pb2, duration_pb2
 
 from ..ports.task_queue import TaskQueue
+
+
+class _DomainEncoder(json.JSONEncoder):
+    """JSON encoder that handles Pydantic models and other domain objects."""
+
+    def default(self, obj):
+        if isinstance(obj, BaseModel):
+            return obj.model_dump()
+        return super().default(obj)
 from ..utils.logger import logger
 
 
@@ -63,7 +73,7 @@ class GcpTaskQueue(TaskQueue):
                     "http_method": tasks_v2.HttpMethod.POST,
                     "url": f"{self.service_url}/worker",
                     "headers": headers,
-                    "body": json.dumps(payload).encode()
+                    "body": json.dumps(payload, cls=_DomainEncoder).encode()
                 }
             }
 
@@ -174,7 +184,7 @@ class GcpTaskQueue(TaskQueue):
                     "http_method": tasks_v2.HttpMethod.POST,
                     "url": f"{self.service_url}/worker",
                     "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps(payload).encode()
+                    "body": json.dumps(payload, cls=_DomainEncoder).encode()
                 }
             }
 
@@ -228,7 +238,7 @@ class GcpTaskQueue(TaskQueue):
                     "http_method": tasks_v2.HttpMethod.POST,
                     "url": f"{self.service_url}/worker",
                     "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps(payload).encode(),
+                    "body": json.dumps(payload, cls=_DomainEncoder).encode(),
                 }
             }
 
@@ -271,7 +281,7 @@ class GcpTaskQueue(TaskQueue):
                     "http_method": tasks_v2.HttpMethod.POST,
                     "url": f"{self.service_url}/worker",
                     "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps(payload).encode()
+                    "body": json.dumps(payload, cls=_DomainEncoder).encode()
                 }
             }
 
@@ -306,7 +316,7 @@ class GcpTaskQueue(TaskQueue):
                     "http_method": tasks_v2.HttpMethod.POST,
                     "url": f"{self.service_url}/worker",
                     "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps(task_payload).encode(),
+                    "body": json.dumps(task_payload, cls=_DomainEncoder).encode(),
                 }
             }
 
@@ -346,7 +356,7 @@ class GcpTaskQueue(TaskQueue):
                     "http_method": tasks_v2.HttpMethod.POST,
                     "url": f"{self.service_url}/worker",
                     "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps(payload).encode()
+                    "body": json.dumps(payload, cls=_DomainEncoder).encode()
                 },
                 # 30 min deadline — consolidate_full (Stage 1+2+3) can take ~11 min;
                 # must exceed ConsolidationAgentConfig.timeout_ms (900 s = 15 min).

@@ -470,8 +470,8 @@ class TestHandleMessageEdgeCases:
             user_id=_USER_ID, platform="slack", channel_id="C-main"
         )
 
-    async def test_notification_service_uses_slack_user_id_for_dm(self):
-        """Slack DM (channel_type=im + slack_user_id) → uses slack_user_id not channel_id."""
+    async def test_notification_service_uses_channel_id_for_dm(self):
+        """Slack DM — uses actual channel_id (D...), not slack_user_id (U...)."""
         notif = MagicMock()
         notif.save_channel = AsyncMock()
 
@@ -482,7 +482,7 @@ class TestHandleMessageEdgeCases:
         channel = _make_channel(channel_id="D-dm")  # DM channel starts with D
 
         ctx = _make_context(
-            metadata={"channel_type": "im", "slack_user_id": "U-slack-123"}
+            metadata={"channel": "D-dm", "channel_type": "im", "slack_user_id": "U-slack-123"}
         )
 
         with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
@@ -490,7 +490,7 @@ class TestHandleMessageEdgeCases:
 
         await asyncio.sleep(0.05)
         notif.save_channel.assert_awaited_once_with(
-            user_id=_USER_ID, platform="slack", channel_id="U-slack-123"
+            user_id=_USER_ID, platform="slack", channel_id="D-dm"
         )
 
     async def test_no_notification_service_no_crash(self):
