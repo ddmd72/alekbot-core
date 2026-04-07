@@ -18,6 +18,7 @@ from tests.integration.adapters.conftest import (
     ClaudeCapturingStub,
     GeminiCapturingStub,
     OpenAILikeCapturingStub,
+    OpenAIResponsesCapturingStub,
 )
 
 _MESSAGES = [Message(role="user", parts=[MessagePart(text="Hi")])]
@@ -80,7 +81,7 @@ async def test_grok_grounding_contract():
 async def test_openai_grounding_contract():
     """OpenAI: use_grounding=True → web_search in tools list."""
     adapter = OpenAIAdapter(api_key="test-key")
-    stub = OpenAILikeCapturingStub().install(adapter)
+    stub = OpenAIResponsesCapturingStub().install(adapter)
 
     await adapter.generate_content(
         request=LLMRequest(

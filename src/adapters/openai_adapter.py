@@ -190,6 +190,8 @@ class OpenAIAdapter(LLMPort):
             create_kwargs["reasoning"] = {"effort": "low"}
         if text_format:
             create_kwargs["text"] = text_format
+        if cache_config and cache_config.enabled:
+            create_kwargs["prompt_cache_retention"] = "24h"
 
         try:
             response = await self.client.responses.create(**create_kwargs)

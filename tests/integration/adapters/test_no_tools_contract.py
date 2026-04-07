@@ -16,6 +16,7 @@ from tests.contracts.adapter_contracts import FORCE_TOOL_USE_WITHOUT_TOOLS_OMITS
 from tests.integration.adapters.conftest import (
     ClaudeCapturingStub,
     OpenAILikeCapturingStub,
+    OpenAIResponsesCapturingStub,
 )
 
 _MESSAGES = [Message(role="user", parts=[MessagePart(text="Hi")])]
@@ -61,7 +62,7 @@ async def test_grok_no_tools_contract():
 async def test_openai_no_tools_contract():
     """OpenAI: force_tool_use=True but no tools → tool_choice absent from SDK call."""
     adapter = OpenAIAdapter(api_key="test-key")
-    stub = OpenAILikeCapturingStub().install(adapter)
+    stub = OpenAIResponsesCapturingStub().install(adapter)
 
     await adapter.generate_content(
         request=LLMRequest(
