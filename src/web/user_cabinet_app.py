@@ -410,6 +410,35 @@ def create_user_cabinet_blueprint(
             logger.error(f"Error updating timezone: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
+    @bp.route("/api/user/location", methods=["GET"])
+    @auth_required
+    async def get_location():
+        """Return the user's current location setting."""
+        try:
+            user = await user_repo.get_user(g.user_id)
+            loc = user.config.location if user else None
+            return jsonify({"location": loc or ""}), 200
+        except Exception as e:
+            logger.error(f"Error fetching location: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/location", methods=["PUT"])
+    @auth_required
+    async def set_location():
+        """Update the user's location. Body: {"location": "Valencia, Spain"}"""
+        try:
+            body = await request.get_json(force=True) or {}
+            location = body.get("location", "").strip()
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            user.config.location = location or None
+            await user_repo.update_user(user)
+            return jsonify({"location": location}), 200
+        except Exception as e:
+            logger.error(f"Error updating location: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
     @bp.route("/api/user/language", methods=["GET"])
     @auth_required
     async def get_language():

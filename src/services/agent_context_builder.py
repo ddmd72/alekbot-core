@@ -105,8 +105,8 @@ class AgentProviderStrategy:
             "fallback": "gemini"
         },
         "notes": {
-            "default_provider": "gemini",
-            "allowed_providers": ["gemini", "claude"],
+            "default_provider": "openai",
+            "allowed_providers": ["openai", "gemini", "claude"],
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },

@@ -114,7 +114,7 @@ background process extracts new facts from the conversation → bot gets smarter
   `FileConversionService` and `FileStoragePort`. Context_schemas: `file_ref` (filename from
   `[File: name (size)]` label in conversation). Binary files (images, PDFs) returned as temp file
   + metadata for LLM vision. See docs/05_building_blocks/file_storage/README.md.
-- Proactive Self-Reminders (ECO tier) — `NotesAgent` backed by `FirestoreAgentNoteAdapter`.
+- Proactive Self-Reminders (PERFORMANCE tier, OpenAI) — `NotesAgent` backed by `FirestoreAgentNoteAdapter`.
   Intent `manage_self_reminders`. Paradigm: **deferred instructions for the orchestrator itself** —
   not a user-facing notepad, but a mechanism where the system sets reminders that fire autonomously
   and execute as new conversations (the orchestrator talks to itself on a schedule).
@@ -123,7 +123,9 @@ background process extracts new facts from the conversation → bot gets smarter
   `WorkerHandler` enriches it with: note_id, schedule type (one-time vs recurring with interval),
   self-authorship framing ("you wrote this to yourself"), proactive guidance (conversation history
   as primary signal, available intents to act on).
-  3 tools: `create_self_reminder`, `update_self_reminder`, `delete_self_reminder`. Single LLM call.
+  4 tools: `create_self_reminder`, `update_self_reminder`, `delete_self_reminder`,
+  `delegate_to_specialist`. Multi-turn (max 3 turns) with chain delegation to compute specialists.
+  Recurrence enum includes `once` (default, one-time) — `_parse_recurrence` treats it as no recurrence.
   Firing: Cloud Scheduler every 15 min → `POST /worker {fire_due_reminders}` → `WorkerHandler` →
   `_build_reminder_alert(note)` → `UserNotificationService.notify(system_alert=..., agent_id_override=smart_response_agent_{user_id})` → SmartAgent executes as new conversation.
   One-time reminders: deleted after firing. Recurrent (`hourly/daily/weekly/monthly`): `reschedule()`
@@ -182,6 +184,7 @@ background process extracts new facts from the conversation → bot gets smarter
 - `EmailEmbeddingRepairService` — async repair job for emails stored without vectors
 - `UserNotificationService` — sends background notifications to user's last active channel.
   `notify()`: routes `system_alert` through QuickAgent → formatted delivery + session history save.
+  History: `text` = `response_summary` from agent metadata (compact), `full_text` = full response.
   `notify_raw()`: direct text delivery, no agent reformatting. Stores last active channel per user
   in `user_notification_state`. Callers: reminders worker, deep research, async docs, daily email review.
 - `WorkerHandler` — dispatches `/worker` Cloud Tasks by `task_type`:
@@ -230,7 +233,13 @@ background process extracts new facts from the conversation → bot gets smarter
 - 4 priority levels: USER > ACCOUNT > AGENT > SYSTEM
 - Static template cached in-memory (24h TTL, 5ms vs 110ms cold)
 - Runtime context (biographical facts, conversation history) appended as `knowledge_base {}` block
-- `PROMPT_CACHE_BOUNDARY` splits the final prompt: static prefix cached by Anthropic (5 min), dynamic suffix (datetime + Q-S context) sent fresh every request
+- `PROMPT_CACHE_BOUNDARY` splits the final prompt: static prefix cached by Anthropic (5 min), dynamic suffix (agent_notes + Q-S context) sent fresh every request
+- **Datetime injection disabled by default** (`include_datetime=False`). Instead, current time
+  is injected via `_inject_timestamps()` in user messages (user's local timezone from
+  `UserBotConfig.timezone`) and via UTC timestamp prefix on delegation queries
+  (`AgentCoordinator.handle_delegation`). Agents can opt in with `include_datetime=True`.
+- **User location** injected into `knowledge_base { user_location: '...' }` when set.
+  Free text field in `UserBotConfig.location`, set via Cabinet UI `/api/user/location`.
 
 **Injecting large static content into a system prompt** — when a background task needs to pass
 a large static dataset (e.g. email triage payload, document corpus) into the agent's context:
@@ -288,7 +297,8 @@ src/
   domain/       — Models, enums, value objects. ZERO external dependencies.
                   Includes: auth.py (TokenClaims, OAuthTokens, OAuthUserInfo, IAMDecision),
                   llm.py (LLMRequest, LLMResponse, Message, MessagePart, ToolCall, ProviderCapabilities,
-                  UsageMetadata, PromptCacheConfig, CacheMetadata, PROMPT_CACHE_BOUNDARY).
+                  UsageMetadata, PromptCacheConfig, CacheMetadata, PROMPT_CACHE_BOUNDARY,
+                  build_tool_turn — standard formatting for multi-turn tool calling history).
                   MessagePart includes `consolidation_text` field — visible only to consolidation
                   serializer; used by `save_to_memory` to attach facts to user messages.
   ports/        — ~51 ABC interfaces. Import only domain/ and stdlib.
@@ -387,6 +397,7 @@ src/
                   /api/user/join-team, /api/user/facts, /api/user/facts/browse,
                   /api/user/facts/search, /api/user/facts/<id>/invalidate,
                   /api/user/timezone (GET/PUT — IANA timezone setting),
+                  /api/user/location (GET/PUT — free text location, e.g. "Valencia, Spain"),
                   /api/user/language (GET/POST — UI + bot response language).
                   Reminders: /api/user/reminders (GET/POST),
                   /api/user/reminders/<note_id> (PUT/DELETE).
@@ -508,7 +519,9 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
 - **DelegationEngine** (`src/infrastructure/delegation_engine.py`) — reusable multi-turn
   tool-calling loop. Owns: loop iteration, tool dispatch via AgentCoordinator, memory-first
   parallel execution (search_memory sequential, others via asyncio.gather), history management
-  (model message with raw_content, tool response parts with file_data).
+  via `build_tool_turn()` (model message with raw_content, tool response parts with file_data).
+  **Delegation datetime:** `AgentCoordinator.handle_delegation()` prepends `[Mon DD, HH:MM UTC]`
+  timestamp to every delegation query so all specialists have temporal context.
   Does NOT own: LLM parameters (agent builds `LLMRequest`), response parsing (agent
   post-processes `DelegationResult`).
   API: `engine.execute(call_llm, base_request, context, max_turns, terminal_tool?, intent_remap?)`.
@@ -521,6 +534,11 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   output_text)`, `_on_agent_error(error, context)`, `_on_delegation(intent, query)`. All agents
   call these instead of direct `logger.*` calls. Changing infrastructure logging = edit BaseAgent
   only. `_on_agent_success(output_text=...)` auto-logs final text to debug bucket.
+- **`build_tool_turn(response, tool_results)`** — domain-level function (`src/domain/llm.py`)
+  for standard multi-turn tool history formatting. Builds model message (with `raw_content` for
+  adapter-specific serialization) + tool response messages (with `tool_response` parts).
+  `BaseAgent._build_tool_turn()` is a thin wrapper. Used by DelegationEngine and NotesAgent.
+  `tool_results`: list of `(ToolCall, result_str)` or `(ToolCall, result_str, file_data)` tuples.
 - **BaseAgent debug logging** — `_call_llm(request, turn)` is the single logging point for agents
   that use `LLMPort`. Before calling the provider it logs the full `LLMRequest` via
   `PromptDebugLogger.log_llm_request()` (model, temperature, use_grounding, messages with real

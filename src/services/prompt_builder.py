@@ -126,7 +126,7 @@ class PromptBuilder(PromptBuilderPort):
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         extra_static_blocks: Optional[List[str]] = None,
-        include_datetime: bool = True,
+        include_datetime: bool = False,
     ) -> str:
         """
         Build complete system prompt for agent using PromptAssemblyService.
@@ -191,8 +191,9 @@ class PromptBuilder(PromptBuilderPort):
         else:
             query_specific_context = None
 
-        user_timezone = getattr(self, "config", None)
-        user_timezone = user_timezone.timezone if user_timezone else "UTC"
+        _cfg = getattr(self, "config", None)
+        user_timezone = _cfg.timezone if _cfg else "UTC"
+        user_location = getattr(_cfg, "location", None) if _cfg else None
 
         return await self.assembly_service.assemble(
             agent_type=agent_type,
@@ -204,6 +205,7 @@ class PromptBuilder(PromptBuilderPort):
             kb_preamble=kb_preamble,
             agent_notes=agent_notes,
             user_timezone=user_timezone,
+            user_location=user_location,
             extra_static_blocks=extra_static_blocks,
             include_datetime=include_datetime,
         )

@@ -69,8 +69,9 @@ class PromptAssemblyService:
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         user_timezone: str = "UTC",
+        user_location: Optional[str] = None,
         extra_static_blocks: Optional[List[str]] = None,
-        include_datetime: bool = True,
+        include_datetime: bool = False,
     ) -> str:
         """Full prompt assembly with class-collection model + caching.
 
@@ -130,6 +131,7 @@ class PromptAssemblyService:
             kb_preamble=kb_preamble,
             agent_notes=agent_notes,
             user_timezone=user_timezone,
+            user_location=user_location,
             extra_static_blocks=extra_static_blocks,
             include_datetime=include_datetime,
         )
@@ -353,8 +355,9 @@ class PromptAssemblyService:
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         user_timezone: str = "UTC",
+        user_location: Optional[str] = None,
         extra_static_blocks: Optional[List[str]] = None,
-        include_datetime: bool = True,
+        include_datetime: bool = False,
     ) -> str:
         """Inject RUNTIME data with SecurityPort validation.
 
@@ -426,6 +429,8 @@ class PromptAssemblyService:
         # For smart/quick: validated_bio may be non-empty; validated_convo is always "".
         # For consolidation: validated_convo contains the history batch (fixed per run, cached).
         kb_parts = []
+        if user_location:
+            kb_parts.append(f"    user_location: '{user_location}'")
         if validated_bio:
             bio_header = "    // Personal facts about the user. Dates = when recorded. Treat older entries as potentially stale; conversation history takes precedence if contradictory."
             kb_parts.append(f"    biographical_context: '''\n{bio_header}\n{validated_bio}\n    '''")

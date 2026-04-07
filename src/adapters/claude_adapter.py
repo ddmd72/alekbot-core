@@ -139,10 +139,13 @@ class ClaudeAdapter(LLMPort):
         if cache_config and cache_config.enabled and system_instruction:
             if PROMPT_CACHE_BOUNDARY in system_instruction:
                 static_part, dynamic_part = system_instruction.split(PROMPT_CACHE_BOUNDARY, 1)
+                static_text = static_part.strip()
+                dynamic_text = dynamic_part.strip()
                 system_parts = [
-                    {"type": "text", "text": static_part.strip(), "cache_control": {"type": "ephemeral"}},
-                    {"type": "text", "text": dynamic_part.strip()},
+                    {"type": "text", "text": static_text, "cache_control": {"type": "ephemeral"}},
                 ]
+                if dynamic_text:
+                    system_parts.append({"type": "text", "text": dynamic_text})
             else:
                 system_parts = [{"type": "text", "text": system_instruction, "cache_control": {"type": "ephemeral"}}]
         else:

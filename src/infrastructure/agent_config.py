@@ -285,8 +285,9 @@ COMPUTE = ComputeAgentConfig()
 @dataclass
 class NotesAgentConfig:
     temperature: float = 1.0
-    max_tokens: int = 512         # Single tool call + brief confirmation
-    timeout_ms: int = 10_000      # Fast: 1 tool call + 1 confirmation turn
+    max_tokens: int = 1024        # Multi-turn: delegation + CRUD tool call
+    max_turns: int = 3            # delegation → compute → CRUD
+    timeout_ms: int = 30_000      # Multi-turn with chain delegation
 
 
 NOTES = NotesAgentConfig()

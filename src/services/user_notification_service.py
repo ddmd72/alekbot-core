@@ -250,12 +250,14 @@ class UserNotificationService:
 
                 if self._session_store and save_history:
                     try:
+                        meta = getattr(response, "metadata", None) or {}
+                        history_summary = meta.get("response_summary") or text
                         await self._session_store.append_messages_batch(
                             session_id=effective_session_id,
                             owner_id=user_id,
                             messages=[
                                 Message(role="user", parts=[MessagePart(text=system_alert)]),
-                                Message(role="model", parts=[MessagePart(text=text, full_text=text)]),
+                                Message(role="model", parts=[MessagePart(text=history_summary, full_text=text)]),
                             ],
                         )
                     except Exception as exc:

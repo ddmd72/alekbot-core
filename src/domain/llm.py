@@ -114,3 +114,37 @@ class LLMResponse(BaseModel):
     usage_metadata: Optional[UsageMetadata] = None
     cache_metadata: Optional[CacheMetadata] = None
     grounding_metadata: Optional[Any] = None  # Gemini grounding metadata (Maps widget token, search sources)
+
+
+def build_tool_turn(response: "LLMResponse", tool_results: list) -> List[Message]:
+    """Build message history entries from an LLM response with tool calls + their results.
+
+    Standard formatting for multi-turn tool calling. Handles adapter-specific
+    serialization (call_id, raw_content) so individual agents don't need to.
+
+    Args:
+        response: LLMResponse with tool_calls and raw_content.
+        tool_results: List of tuples, one per tool call in execution order.
+            Each tuple: (ToolCall, result_string) or (ToolCall, result_string, file_data_dict).
+
+    Returns:
+        List of Message objects to append to the conversation history.
+    """
+    messages: List[Message] = [
+        Message(
+            role="model",
+            parts=[MessagePart(tool_call=tc) for tc in response.tool_calls],
+            raw_content=response.raw_content,
+        ),
+    ]
+    tool_parts: List[MessagePart] = []
+    for entry in tool_results:
+        tc, result_str = entry[0], entry[1]
+        file_data = entry[2] if len(entry) > 2 else None
+        tool_parts.append(MessagePart(
+            tool_response={"name": tc.name, "response": {"result": result_str}},
+        ))
+        if file_data:
+            tool_parts.append(MessagePart(file_data=file_data))
+    messages.append(Message(role="user", parts=tool_parts))
+    return messages
