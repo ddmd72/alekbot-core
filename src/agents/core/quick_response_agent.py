@@ -96,7 +96,8 @@ class QuickResponseAgent(BaseAgent):
         coordinator: "AgentCoordinator" = None,  # type: ignore
         model_name: Optional[str] = None,
         history_recent_full_turns: int = 2,
-        history_summary_service: Optional[HistorySummaryService] = None
+        history_summary_service: Optional[HistorySummaryService] = None,
+        user_timezone: str = "UTC",
     ):
         """
         Initialize Quick Response Agent.
@@ -112,6 +113,7 @@ class QuickResponseAgent(BaseAgent):
             model_name: Model override; defaults to execution_context.model_name.
             history_recent_full_turns: Number of recent model turns to keep at full text.
             history_summary_service: Optional service for generating compact history summaries
+            user_timezone: IANA timezone for message timestamps (e.g. "Europe/Madrid")
         """
         super().__init__(config)
         self.execution_context = execution_context
@@ -125,6 +127,7 @@ class QuickResponseAgent(BaseAgent):
         self.model_name = model_name or execution_context.model_name
         self.history_recent_full_turns = history_recent_full_turns
         self.history_summary_service = history_summary_service
+        self._user_timezone = user_timezone
 
         # Extract user_id from config metadata
         self.user_id = config.metadata.get("user_id")
@@ -426,7 +429,8 @@ def create_quick_response_agent(
     user_id: Optional[str] = None,
     model_name: Optional[str] = None,
     history_recent_full_turns: int = 2,
-    history_summary_service: Optional[HistorySummaryService] = None
+    history_summary_service: Optional[HistorySummaryService] = None,
+    user_timezone: str = "UTC",
 ) -> QuickResponseAgent:
     """
     Factory function to create QuickResponseAgent.
@@ -466,5 +470,6 @@ def create_quick_response_agent(
         coordinator=coordinator,
         model_name=model_name,
         history_recent_full_turns=history_recent_full_turns,
-        history_summary_service=history_summary_service
+        history_summary_service=history_summary_service,
+        user_timezone=user_timezone,
     )

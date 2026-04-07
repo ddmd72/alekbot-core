@@ -100,7 +100,8 @@ class SmartResponseAgent(BaseAgent):
         coordinator: "AgentCoordinator" = None,  # type: ignore
         model_name: Optional[str] = None,
         history_recent_full_turns: int = 5,
-        history_summary_service: Optional[HistorySummaryService] = None
+        history_summary_service: Optional[HistorySummaryService] = None,
+        user_timezone: str = "UTC",
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -114,6 +115,7 @@ class SmartResponseAgent(BaseAgent):
         self.model_name = model_name or execution_context.model_name
         self.history_recent_full_turns = history_recent_full_turns
         self.history_summary_service = history_summary_service
+        self._user_timezone = user_timezone
 
         # Extract user_id from config metadata
         self.user_id = config.metadata.get("user_id")
@@ -468,7 +470,8 @@ def create_smart_response_agent(
     user_id: Optional[str] = None,
     model_name: Optional[str] = None,
     history_recent_full_turns: int = 5,
-    history_summary_service: Optional[HistorySummaryService] = None
+    history_summary_service: Optional[HistorySummaryService] = None,
+    user_timezone: str = "UTC",
 ) -> SmartResponseAgent:
     """Factory function to create SmartResponseAgent."""
     agent_id = f"smart_response_agent_{user_id}" if user_id else "smart_response_agent"
@@ -496,6 +499,7 @@ def create_smart_response_agent(
         coordinator=coordinator,
         model_name=model_name,
         history_recent_full_turns=history_recent_full_turns,
-        history_summary_service=history_summary_service
+        history_summary_service=history_summary_service,
+        user_timezone=user_timezone,
     )
 

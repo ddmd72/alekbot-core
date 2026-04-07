@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.messaging import SmartResponse
 from ..ports.llm_port import LLMRequest, LLMResponse, Message, MessagePart, ToolCall
+from ..domain.llm import build_tool_turn
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -207,15 +208,6 @@ class DelegationEngine:
                     messages=history,
                 )
 
-            # --- Append model message with tool calls ---
-            if response.raw_content:
-                history.append(Message(role="model", parts=[], raw_content=response.raw_content))
-            else:
-                history.append(Message(
-                    role="model",
-                    parts=[MessagePart(tool_call=tc) for tc in response.tool_calls],
-                ))
-
             # --- Execute tool calls (memory-first parallel) ---
             logger.info(
                 "🔄 [DelegationEngine] Turn %s — dispatching %s tool call(s)",
@@ -239,16 +231,12 @@ class DelegationEngine:
                         accumulated_contexts.setdefault(key, []).append(value)
                 all_delivery_items.extend(tr.delivery_items)
 
-            # --- Append tool responses to history ---
-            tool_parts: List[MessagePart] = []
-            for tr in tool_results:
-                tool_parts.append(MessagePart(tool_response={
-                    "name": tr.name,
-                    "response": {"result": tr.result_str},
-                }))
-                if tr.file_data:
-                    tool_parts.append(MessagePart(file_data=tr.file_data))
-            history.append(Message(role="user", parts=tool_parts))
+            # --- Append model message + tool responses to history ---
+            turn_entries = [
+                (tc, tr.result_str, tr.file_data)
+                for tc, tr in zip(response.tool_calls, tool_results)
+            ]
+            history.extend(build_tool_turn(response, turn_entries))
 
         # Max turns exhausted
         logger.warning(

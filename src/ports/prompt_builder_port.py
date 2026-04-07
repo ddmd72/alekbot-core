@@ -34,7 +34,7 @@ class PromptBuilderPort(ABC):
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         extra_static_blocks: Optional[List[str]] = None,
-        include_datetime: bool = True,
+        include_datetime: bool = False,
     ) -> str:
         """
         Build complete system prompt string for the given agent type.

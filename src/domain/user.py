@@ -68,7 +68,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "doc_generator": PerformanceTier.BALANCED,   # JS code generation + retries
     "pdf_generator": PerformanceTier.BALANCED,      # HTML+CSS generation → Puppeteer
     "html_page": PerformanceTier.PERFORMANCE,        # Full HTML+CSS+JS page — max quality
-    "notes": PerformanceTier.ECO,                    # Simple CRUD, single tool call
+    "notes": PerformanceTier.PERFORMANCE,              # Multi-turn with chain delegation to compute
     "domain_researcher": PerformanceTier.PERFORMANCE, # Deep analytical reasoning (OpenAI o3/o4)
 }
 
@@ -170,6 +170,10 @@ class UserBotConfig(BaseModel):
     # Timezone (IANA name, e.g. "Europe/Kyiv", "America/New_York")
     # Set via Cabinet UI. Used for: datetime injection in prompts, reminder due resolution, next_due computation.
     timezone: str = "UTC"
+
+    # Location (free text, e.g. "Valencia, Spain"). Set via Cabinet UI.
+    # Injected into knowledge_base {} for agent context (maps, weather, local awareness).
+    location: Optional[str] = None
 
     # Language preferences (RFC: MULTILINGUAL_SUPPORT_RFC.md §4.2)
     # preferred_language: None = use system default for UI; Set = override UI language.

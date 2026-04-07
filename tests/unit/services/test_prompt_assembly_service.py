@@ -71,9 +71,15 @@ async def test_boundary_marker_always_appended():
 
 @pytest.mark.asyncio
 async def test_current_datetime_after_boundary():
-    """Datetime block must appear AFTER the boundary marker."""
+    """Datetime block must appear AFTER the boundary marker when include_datetime=True."""
     service = _make_service()
-    result = await _inject(service)
+    result = await service._inject_runtime_context(
+        prompt=TEMPLATE,
+        biographical_facts=[],
+        conversation_history=[],
+        user_id="test_user",
+        include_datetime=True,
+    )
     boundary_pos = result.index(PROMPT_CACHE_BOUNDARY)
     dt_pos = result.index("(UTC)")
     assert dt_pos > boundary_pos

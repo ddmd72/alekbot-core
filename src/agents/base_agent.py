@@ -135,6 +135,7 @@ class BaseAgent(ABC):
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
         self._agent_execution_context = None  # set via _set_execution_context()
         self.coordinator = None  # injected post-construction by UserAgentFactory for all agents
+        self._user_timezone: str = "UTC"  # overridden by subclasses that receive user_timezone
         self._billing_account_id: Optional[str] = None
         self._billing_prompt_tokens: int = 0
         self._billing_completion_tokens: int = 0
@@ -244,18 +245,28 @@ class BaseAgent(ABC):
     
     HISTORY_FULL_TURNS = 2  # edit in src/infrastructure/agent_config.py → BaseAgentConfig.history_full_turns
 
-    @staticmethod
-    def _inject_timestamps(history: List[Message]) -> List[Message]:
-        """Prepend UTC timestamp to each user message for LLM temporal awareness.
+    def _inject_timestamps(self, history: List[Message]) -> List[Message]:
+        """Prepend timestamp in user's local timezone to each user message.
 
         Allows the model to distinguish a gap of 5 minutes from a gap of 5 days —
         critical for contextual responses (e.g., referencing yesterday's conversation).
         Only user messages are stamped; model responses are always immediate follow-ups.
+
+        Uses self._user_timezone (IANA, e.g. "Europe/Madrid") set by subclass constructors.
+        Falls back to UTC when timezone is unavailable or invalid.
         """
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            tz = ZoneInfo(self._user_timezone or "UTC")
+        except (ZoneInfoNotFoundError, KeyError):
+            tz = ZoneInfo("UTC")
+        tz_abbr = datetime.now(tz).strftime("%Z") or self._user_timezone or "UTC"
+
         result = []
         for msg in history:
             if msg.role == "user" and msg.created_at:
-                ts = datetime.fromtimestamp(msg.created_at, tz=timezone.utc).strftime("[%b %d, %H:%M UTC]")
+                local_dt = datetime.fromtimestamp(msg.created_at, tz=tz)
+                ts = local_dt.strftime(f"[%b %d, %H:%M {tz_abbr}]")
                 new_parts = []
                 for i, part in enumerate(msg.parts):
                     if i == 0 and part.text and not part.tool_call and not part.file_data:
@@ -559,6 +570,15 @@ class BaseAgent(ABC):
         """
         preview = f"'{query[:60]}...'" if len(query) > 60 else f"'{query}'"
         logger.info(f"[{self.agent_id}] → delegate: intent={intent} query={preview}")
+
+    @staticmethod
+    def _build_tool_turn(response, tool_results: list) -> list:
+        """Build message history entries from an LLM response with tool calls + results.
+
+        Delegates to domain-level build_tool_turn(). See its docstring for details.
+        """
+        from ..domain.llm import build_tool_turn
+        return build_tool_turn(response, tool_results)
 
     @staticmethod
     def _build_delegate_tool_declaration(available_intents: list) -> dict:
