@@ -70,6 +70,7 @@ class PromptAssemblyService:
         agent_notes: Optional[List[dict]] = None,
         user_timezone: str = "UTC",
         extra_static_blocks: Optional[List[str]] = None,
+        include_datetime: bool = True,
     ) -> str:
         """Full prompt assembly with class-collection model + caching.
 
@@ -130,6 +131,7 @@ class PromptAssemblyService:
             agent_notes=agent_notes,
             user_timezone=user_timezone,
             extra_static_blocks=extra_static_blocks,
+            include_datetime=include_datetime,
         )
 
         logger.info(f"✅ Assembled prompt: {len(final_prompt)} chars")
@@ -352,6 +354,7 @@ class PromptAssemblyService:
         agent_notes: Optional[List[dict]] = None,
         user_timezone: str = "UTC",
         extra_static_blocks: Optional[List[str]] = None,
+        include_datetime: bool = True,
     ) -> str:
         """Inject RUNTIME data with SecurityPort validation.
 
@@ -471,7 +474,8 @@ class PromptAssemblyService:
             header = "    // Reminders you set for yourself. Not visible to the user. Snapshot from turn start.\n    // Full execution context is stored internally. To update or delete — delegate with the id shown in brackets.\n    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time."
             dynamic_parts.append("active_reminders {\n" + header + "\n" + "\n".join(note_lines) + "\n}")
 
-        dynamic_parts.append(f"current_date_time {{\n    {current_datetime}\n}}")
+        if include_datetime:
+            dynamic_parts.append(f"current_date_time {{\n    {current_datetime}\n}}")
         if query_specific_str:
             dynamic_parts.append(f"query_specific_context: '''\n{query_specific_str}\n'''")
         prompt = prompt + "\n\n" + PROMPT_CACHE_BOUNDARY + "\n" + "\n\n".join(dynamic_parts)

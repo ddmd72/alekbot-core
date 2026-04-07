@@ -112,6 +112,27 @@ Specialist receives pre-resolved text content
 Orchestrator never sees raw file content
 ```
 
+### 2.3b Bound Channel File Handling
+
+For bound channels (`SessionMode.is_bound`), `ConversationHandler` strips the `path` field from
+`file_data` before passing `message_parts` to the agent. This prevents LLM adapters from inlining
+the binary file content. The GCS `ref` and label text (`[File: name (size)]`) are preserved.
+
+The bound agent sees the file label in its platform history (Slack conversations.history) and
+accesses the content on demand via `open_file` delegation (DelegationEngine → FileManagementAgent).
+
+```
+ConversationHandler (mode.is_bound):
+  process_attachment() → GCS upload → MessagePart with file_data={ref, path, mime_type}
+        |
+        v
+  Strip "path" from file_data → MessagePart with file_data={ref, mime_type, size_bytes}
+        |
+        v
+  Agent receives text label only: "[File: report.docx (2.3MB)]"
+  Agent calls open_file delegation when it needs the content
+```
+
 ### 2.4 History Save Flow
 
 ```

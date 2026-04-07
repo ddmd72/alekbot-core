@@ -21,7 +21,7 @@ This document MUST be updated when:
 
 - [ ] `AgentDescriptor.allowed_intents` or `intent_remap` for QuickAgent changes in `agent_manifest.py`.
 - [ ] `MAX_DELEGATION_TURNS` changes.
-- [ ] `_execute_quick_delegation_loop` or `_execute_quick_parallel` logic changes.
+- [ ] `DelegationEngine` loop mechanics, dispatch, or parallel execution changes.
 - [ ] The Firestore token `PROTOCOL_QUICK_AGENT_SELECTION` is updated.
 - [ ] `WebSearchLightAgent` model tier or output format changes.
 - [ ] `_clean_history_for_quick` behavior changes.
@@ -81,7 +81,12 @@ any LLM tool list. Controlled by `PROTOCOL_QUICK_AGENT_SELECTION` Firestore toke
 
 ## 2. Delegation Loop
 
-### 2.1 Entry Point: `_execute_quick_delegation_loop()`
+### 2.1 Entry Point: `DelegationEngine.execute()`
+
+Quick (and Smart) agents delegate loop mechanics to the shared `DelegationEngine`
+(`src/infrastructure/delegation_engine.py`). The agent builds the `LLMRequest` (model, temperature,
+schema, tools) and passes it to the engine. The engine owns the iteration, tool dispatch, history
+management, and parallel execution.
 
 ```
 execute()
@@ -93,27 +98,26 @@ execute()
   ├─ 3. Load conversation history (last 20 messages, tiered compression)
   ├─ 4. _clean_history_for_quick()
   │       └─ Removes all tool_call / tool_response turns from history
+  ├─ 5. Build LLMRequest (model, system_prompt, messages, tools, response_schema)
   │
-  └─ _execute_quick_delegation_loop() [loop up to MAX_DELEGATION_TURNS=5]
+  └─ DelegationEngine.execute(call_llm, base_request, context, ...) [up to MAX_DELEGATION_TURNS=5]
          Turn N:
-           a. Build delegate_to_specialist tool from get_available_intents_for(descriptor)
-           b. LLM call (BALANCED tier provider)
-           c. No tool_calls in response?
-              → parse_llm_response(response.text) → (full_response, summary, rich)
-              → return AgentResponse immediately
-           d. Has tool_calls?
-              → _execute_quick_parallel(tool_calls)
-              → Append tool results to history
-              → Next turn
-         If MAX_DELEGATION_TURNS (5) exhausted without final response → return partial
+           a. LLM call via agent's _call_llm (billing + debug handled by BaseAgent)
+           b. No tool_calls in response? → return DelegationResult(text=...)
+           c. Has tool_calls? → memory-first parallel dispatch → append to history → next turn
+         If MAX_DELEGATION_TURNS exhausted → return DelegationResult(failed=True)
+  │
+  Post-processing (in QuickAgent):
+    parse_llm_response(result.text) → (full_response, summary, rich)
+    → return AgentResponse
 ```
 
-### 2.2 Parallel Execution: `_execute_quick_parallel()`
+### 2.2 Parallel Execution (DelegationEngine)
 
-Tool calls within a single turn are executed with memory-first ordering:
+Tool calls within a single turn are executed with memory-first ordering inside the engine:
 
 ```
-_execute_quick_parallel(tool_calls)
+DelegationEngine._execute_tool_calls(tool_calls)
   │
   ├─ Separate: memory_calls = [c for c if intent="search_memory"]
   ├─ Separate: other_calls  = [c for c if intent!="search_memory"]
@@ -314,8 +318,9 @@ returns plain text instead of JSON (non-JSON path).
 | Registry | `AgentRegistry.get_available_intents_for(descriptor)` | `AgentRegistry.get_available_intents()` |
 | Prompt token | `PROTOCOL_QUICK_AGENT_SELECTION` | `PROTOCOL_SMART_AGENT_SELECTION` |
 | Web specialist | WebSearchLightAgent (ECO, single pass, `internal=True`) | WebSearchAgent (BALANCED, full synthesis) |
-| History cleaning | Yes (`_clean_history_for_quick`) | No |
-| Output format | JSON envelope always | `deliver_response` tool |
+| History cleaning | Yes (`_clean_history_for_quick`) | Yes (`_sanitize_tool_history`) |
+| Output format | JSON envelope always | `deliver_response` terminal tool |
+| Delegation engine | `DelegationEngine` (shared) | `DelegationEngine` (shared, `terminal_tool="deliver_response"`) |
 | History summary | From JSON field, HistorySummaryService as fallback | `HistorySummaryService` fire-and-forget |
 | Model tier | BALANCED | PERFORMANCE |
 
@@ -323,8 +328,9 @@ returns plain text instead of JSON (non-JSON path).
 
 ## 7. Code References
 
-- `src/agents/core/quick_response_agent.py` — `MAX_DELEGATION_TURNS=5`, `_INTENT_REMAP`, `_execute_quick_delegation_loop`, `_execute_quick_parallel`, `_clean_history_for_quick`, `_get_quick_tool_declarations`, `parse_llm_response`
-- `src/agents/base_agent.py` — lifecycle hooks + `_debug_prompt` / `_debug_response` (called by Quick, no direct `get_debug_logger()` import)
+- `src/agents/core/quick_response_agent.py` — `MAX_DELEGATION_TURNS=5`, `_clean_history_for_quick`, `_get_quick_tool_declarations`, `_sanitize_response`. Builds `LLMRequest` and delegates loop to `DelegationEngine`. Post-processes `DelegationResult.text` via `parse_llm_response`.
+- `src/infrastructure/delegation_engine.py` — `DelegationEngine.execute()` — reusable multi-turn tool-calling loop. Owns loop iteration, memory-first parallel dispatch, history management. Shared by Quick, Smart, and bound channel agents.
+- `src/agents/base_agent.py` — lifecycle hooks + `_call_llm` (billing + debug) + `_build_delegate_tool_declaration` (static, builds tool schema from registry)
 - `src/infrastructure/agent_registry.py` — `AgentDescriptor`, `get_available_intents_for(descriptor)`
 - `src/infrastructure/agent_config.py` — Central config registry for all agents. `QuickAgentConfig` (`QUICK` instance): `context_window`, `max_delegation_turns`, `intent_remap`, `timeout_ms`. All specialist agent timeouts also sourced from here via `user_agent_factory.py`.
 - `src/agents/web_search_light_agent.py` — WebSearchLightAgent implementation
@@ -339,4 +345,4 @@ returns plain text instead of JSON (non-JSON path).
 ## 8. Status
 
 **Status:** ✅ Production Ready
-**Last Updated:** 2026-03-05
+**Last Updated:** 2026-04-07 — DelegationEngine extraction (loop/dispatch/parallel moved from agent to infrastructure)

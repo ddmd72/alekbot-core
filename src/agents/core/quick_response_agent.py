@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Optional, Dict, Any, List
 from ..base_agent import BaseAgent
 from ...infrastructure.agent_config import QUICK, ENABLE_HISTORY_OPTIMIZATION
 from ...infrastructure.agent_manifest import QUICK_RESPONSE
+from ...infrastructure.delegation_engine import DelegationEngine, DelegationContext, DelegationResult
 from ...domain.agent import (
     AgentMessage,
     AgentResponse,
@@ -45,17 +46,6 @@ from ...domain.messaging import SmartResponse
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
-
-
-@dataclass
-class _QuickLoopResult:
-    smart_response: SmartResponse
-    total_tokens: int
-    history_summary: Optional[str] = None
-    history_contexts: Optional[Dict[str, List[Any]]] = field(default=None)
-    delivery_items: List[DeliveryItem] = field(default_factory=list)
-    raw_text: str = ""  # Raw LLM output before parse_llm_response, for debug logging
-    failed: bool = False
 
 
 class QuickResponseAgent(BaseAgent):
@@ -234,27 +224,43 @@ class QuickResponseAgent(BaseAgent):
             )
             
 
-            tool_declarations = self._get_quick_tool_declarations()
-            loop_result = await self._execute_quick_delegation_loop(
-                session_id=session_id,
-                user_id=user_id,
-                system_prompt=system_prompt,
-                history=clean_history,
-                tool_declarations=tool_declarations,
-                account_id=account_id,
+            engine = DelegationEngine(self.coordinator)
+            base_request = LLMRequest(
+                model_name=self.model_name,
+                system_instruction=system_prompt,
+                messages=clean_history,
+                tools=self._get_quick_tool_declarations(),
+                temperature=self.DELEGATION_TEMPERATURE,
+                response_schema=self._RESPONSE_SCHEMA,
+            )
+            delegation_result = await engine.execute(
+                call_llm=self._call_llm,
+                base_request=base_request,
+                context=DelegationContext(
+                    user_id=user_id,
+                    account_id=account_id,
+                    session_id=session_id,
+                ),
+                max_turns=self.MAX_DELEGATION_TURNS,
+                intent_remap=dict(self._descriptor.intent_remap),
+                calling_agent_id=self.agent_id,
+                max_retries=self.MAX_AGENT_RETRIES,
+                retry_backoff=self.RETRY_BACKOFF_SECONDS,
             )
 
-            if loop_result.failed:
+            if delegation_result.failed:
                 return AgentResponse.failure(
                     task_id=message.task_id,
                     agent_id=self.agent_id,
                     error="max_turns_exhausted",
                 )
 
-            smart_response = loop_result.smart_response
-            history_summary = loop_result.history_summary
-            total_tokens = loop_result.total_tokens
-            delivery_items = loop_result.delivery_items
+            # Parse response text into SmartResponse
+            user_text, history_summary, rich, link_list = parse_llm_response(delegation_result.text)
+            final_rich = rich if rich else delegation_result.structured_data
+            smart_response = SmartResponse(text=user_text or "", structured_data=final_rich, link_list=link_list)
+            total_tokens = delegation_result.total_tokens
+            delivery_items = delegation_result.delivery_items
 
             if smart_response.text:
                 smart_response.text = self._sanitize_response(smart_response.text)
@@ -266,7 +272,7 @@ class QuickResponseAgent(BaseAgent):
                     self.history_summary_service.summarize_model_response(smart_response.text)
                 )
 
-            self._on_agent_success(len(smart_response.text), total_tokens, output_text=loop_result.raw_text)
+            self._on_agent_success(len(smart_response.text), total_tokens, output_text=delegation_result.text)
 
             metadata = {
                 "model": self.model_name,
@@ -277,11 +283,11 @@ class QuickResponseAgent(BaseAgent):
                 metadata["response_summary"] = history_summary
             if summary_task:
                 metadata["response_summary_task"] = summary_task
-            if loop_result.history_contexts:
-                metadata.update(loop_result.history_contexts)
+            if delegation_result.history_contexts:
+                metadata.update(delegation_result.history_contexts)
                 logger.info(
                     "💾 [QuickResponseAgent] history_contexts set: %s",
-                    {k: len(v) for k, v in loop_result.history_contexts.items()}
+                    {k: len(v) for k, v in delegation_result.history_contexts.items()}
                 )
 
             return AgentResponse.success(
@@ -371,271 +377,6 @@ class QuickResponseAgent(BaseAgent):
         """Build tool declarations from AgentRegistry (all non-internal intents)."""
         available_intents = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
         return [self._build_delegate_tool_declaration(available_intents)]
-
-    async def _execute_quick_delegation_loop(
-        self,
-        session_id: str,
-        user_id: str,
-        system_prompt: str,
-        history: List[Message],
-        tool_declarations: List[Dict[str, Any]],
-        account_id: Optional[str] = None,
-    ) -> _QuickLoopResult:
-        """Agent delegation loop for Quick: max 2 turns, memory-first ordering."""
-        total_tokens = 0
-        accumulated_history: Dict[str, List[Any]] = {}
-        all_delivery_items: List[DeliveryItem] = []
-
-        for turn in range(self.MAX_DELEGATION_TURNS):
-            debug_history = history[-self.CONTEXT_WINDOW:]
-
-            logger.info(
-                "⚡ [QuickResponseAgent] Turn %s/%s - LLM call (history=%s)",
-                turn + 1, self.MAX_DELEGATION_TURNS, len(debug_history)
-            )
-
-            request = LLMRequest(
-                model_name=self.model_name,
-                system_instruction=system_prompt,
-                messages=debug_history,
-                tools=tool_declarations,
-                temperature=self.DELEGATION_TEMPERATURE,
-                # response_mime_type omitted: Gemini rejects JSON mime type + function calling
-                # simultaneously. Output format enforced via response_schema + OUTPUT_FORMAT token.
-                response_schema=self._RESPONSE_SCHEMA,
-            )
-            response = await self._call_llm(request, turn=turn + 1)
-
-            if response.usage_metadata:
-                total_tokens += response.usage_metadata.total_tokens
-
-            if not response.tool_calls:
-                # Final answer — parse and return
-                logger.info(
-                    "⚡ [QuickResponseAgent] Turn %s - LLM raw:\n%s",
-                    turn + 1,
-                    response.text or ""
-                )
-                user_text, summary, rich, link_list = parse_llm_response(response.text or "")
-                history.append(Message(
-                    role="model",
-                    parts=[MessagePart(text=(summary or user_text or ""))]
-                ))
-                return _QuickLoopResult(
-                    smart_response=SmartResponse(text=user_text or "", structured_data=rich, link_list=link_list),
-                    total_tokens=total_tokens,
-                    history_summary=summary,
-                    history_contexts=accumulated_history or None,
-                    delivery_items=all_delivery_items,
-                    raw_text=response.text or "",
-                )
-
-            # Append model tool calls to history
-            if response.raw_content:
-                history.append(Message(role="model", parts=[], raw_content=response.raw_content))
-            else:
-                history.append(Message(
-                    role="model",
-                    parts=[MessagePart(tool_call=tc) for tc in response.tool_calls]
-                ))
-
-            logger.info(
-                "⚡ [QuickResponseAgent] Turn %s - delegating to %s agents",
-                turn + 1, len(response.tool_calls)
-            )
-
-            tool_responses = await self._execute_quick_parallel(
-                tool_calls=response.tool_calls,
-                user_id=user_id,
-                session_id=session_id,
-                account_id=account_id,
-            )
-
-            for tr in tool_responses:
-                if tr.history_context:
-                    for key, value in tr.history_context.items():
-                        accumulated_history.setdefault(key, []).append(value)
-                all_delivery_items.extend(tr.delivery_items)
-
-            history.append(Message(
-                role="user",
-                parts=[
-                    MessagePart(tool_response={
-                        "name": tr.name,
-                        "response": {"result": tr.result_str}
-                    })
-                    for tr in tool_responses
-                ]
-            ))
-
-        # Max turns exhausted — signal failure so fallback service can handle gracefully
-        return _QuickLoopResult(
-            smart_response=SmartResponse(text=""),
-            total_tokens=total_tokens,
-            history_contexts=accumulated_history or None,
-            delivery_items=all_delivery_items,
-            failed=True,
-        )
-
-    async def _execute_quick_parallel(
-        self,
-        tool_calls: List[ToolCall],
-        user_id: str,
-        session_id: str,
-        account_id: Optional[str] = None,
-    ) -> List[Any]:
-        """Execute tool calls: memory-first, others in parallel."""
-        from dataclasses import dataclass as _dc
-
-        @_dc
-        class ToolResponse:
-            name: str
-            result_str: str
-            history_context: Optional[Dict[str, Any]] = None
-            delivery_items: List[DeliveryItem] = field(default_factory=list)
-
-        results: List[Optional[ToolResponse]] = [None] * len(tool_calls)
-        memory_context: List[str] = []
-
-        def _is_memory(tc: ToolCall) -> bool:
-            return (
-                tc.name == "delegate_to_specialist"
-                and (tc.args or {}).get("intent") == "search_memory"
-            )
-
-        memory_calls = [(i, tc) for i, tc in enumerate(tool_calls) if _is_memory(tc)]
-        other_calls = [(i, tc) for i, tc in enumerate(tool_calls) if not _is_memory(tc)]
-
-        for idx, tc in memory_calls:
-            result_str, history_ctx, sub_delivery = await self._delegate_quick(
-                tc, user_id, session_id, account_id
-            )
-            results[idx] = ToolResponse(name=tc.name, result_str=result_str, history_context=history_ctx, delivery_items=sub_delivery)
-            if result_str:
-                memory_context.append(result_str)
-
-        if other_calls:
-            tasks = [
-                self._delegate_quick(tc, user_id, session_id, account_id, memory_context)
-                for _, tc in other_calls
-            ]
-            parallel_results = await asyncio.gather(*tasks, return_exceptions=True)
-            for (idx, tc), result in zip(other_calls, parallel_results):
-                if isinstance(result, Exception):
-                    results[idx] = ToolResponse(name=tc.name, result_str=f"AGENT ERROR: {result}")
-                else:
-                    result_str, history_ctx, sub_delivery = result
-                    results[idx] = ToolResponse(name=tc.name, result_str=result_str, history_context=history_ctx, delivery_items=sub_delivery)
-
-        return [r for r in results if r is not None]
-
-    async def _delegate_quick(
-        self,
-        tool_call: ToolCall,
-        user_id: str,
-        session_id: str,
-        account_id: Optional[str] = None,
-        memory_context: Optional[List[str]] = None,
-    ) -> tuple:
-        """Delegate a single tool call via coordinator, with retry.
-
-        Returns (result_str, history_context, delivery_items).
-        history_context is taken directly from the specialist AgentResponse.
-        delivery_items carries typed artifacts (e.g. grounding attribution widget).
-        """
-        if not self.coordinator:
-            return "SYSTEM ERROR: AgentCoordinator not configured.", None, []
-
-        args = tool_call.args or {}
-        intent = args.get("intent", "")
-        query = args.get("query", "")
-        context_params = args.get("context", {})
-        # LLM may pass context as a free-form string (task reasoning/background).
-        # Wrap it so the specialist receives it as reasoning appended to the query.
-        if isinstance(context_params, str) and context_params:
-            context_params = {"reasoning": context_params}
-        elif not isinstance(context_params, dict):
-            context_params = {}
-
-        if not intent:
-            return f"SYSTEM ERROR: delegate_to_specialist called without 'intent'. args={args}", None, []
-
-        logger.debug(
-            "[QuickResponseAgent] _delegate_quick: intent before remap=%r, remap_dict=%r",
-            intent, self._descriptor.intent_remap,
-        )
-        intent = self._descriptor.intent_remap.get(intent, intent)
-        logger.debug("[QuickResponseAgent] _delegate_quick: intent after remap=%r", intent)
-
-        delegation_context: Dict[str, Any] = {
-            "user_id": user_id,
-            "account_id": account_id,
-            "session_id": session_id,
-            "memory_context": memory_context or [],
-            "params": context_params,
-        }
-
-        self._on_delegation(intent, query)
-
-        for attempt in range(self.MAX_AGENT_RETRIES + 1):
-            response = await self.coordinator.handle_delegation(
-                intent=intent,
-                query=query,
-                context=delegation_context,
-                calling_agent_id=self.agent_id,
-            )
-            if response.status == AgentStatus.SUCCESS:
-                result = response.result
-                if intent == "search_emails":
-                    result_str = self._format_email_search_compact(result)
-                else:
-                    result_str = (
-                        result.text if isinstance(result, SmartResponse)
-                        else "\n".join(str(i) for i in result) if isinstance(result, list)
-                        else str(result)
-                    )
-                logger.info(
-                    "✅ [QuickResponseAgent] delegation result: intent=%s, %s chars",
-                    intent, len(result_str)
-                )
-                return result_str, response.history_context, response.delivery_items
-
-            if attempt < self.MAX_AGENT_RETRIES:
-                await asyncio.sleep(self.RETRY_BACKOFF_SECONDS)
-                continue
-
-            return f"AGENT ERROR: {response.error}", None, []
-
-        return "AGENT ERROR: Max retries exceeded", None, []
-
-    @staticmethod
-    def _format_email_search_compact(result: Any) -> str:
-        """Compact text representation of search_emails results for LLM tool_response.
-
-        EmailSearchService.vector_search returns a JSON string:
-          {"count": N, "emails": [{"email_id":..., "from":..., "date":..., "text":..., "attachments":[...]}]}
-        or a plain "No emails found..." string.
-        """
-        if not isinstance(result, str):
-            return str(result)
-        try:
-            parsed = json.loads(result)
-        except (ValueError, TypeError):
-            return result
-        emails = parsed.get("emails") if isinstance(parsed, dict) else None
-        if not emails:
-            return result
-        lines = [f"Found {len(emails)} email(s):"]
-        for e in emails:
-            line = f"• [{e.get('email_id', '?')}] {e.get('from', '?')} | {e.get('date', '?')}"
-            atts = e.get("attachments") or []
-            if atts:
-                line += f" | 📎 {', '.join(atts)}"
-            lines.append(line)
-            text = e.get("text") or ""
-            if text:
-                lines.append(f"  → {text[:150]}")
-        return "\n".join(lines)
 
     def _sanitize_response(self, text: str) -> str:
         """Remove tool_code blocks, API references, and empty lines from LLM output."""

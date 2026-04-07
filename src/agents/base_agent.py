@@ -497,10 +497,15 @@ class BaseAgent(ABC):
         else:
             logger.info(f"✅ [{self.agent_id}] done ({char_count} chars)")
         if output_text:
+            meta = {"type": "output", "tokens": token_count, "chars": char_count}
+            if self._billing_cache_read_tokens:
+                meta["cache_read_tokens"] = self._billing_cache_read_tokens
+            if self._billing_cache_creation_tokens:
+                meta["cache_creation_tokens"] = self._billing_cache_creation_tokens
             get_debug_logger().log_response(
                 agent_name=self.agent_type or self.agent_id,
                 response=output_text,
-                metadata={"type": "output", "tokens": token_count, "chars": char_count},
+                metadata=meta,
             )
 
     async def _flush_billing(self) -> None:
