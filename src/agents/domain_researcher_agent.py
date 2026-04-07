@@ -115,7 +115,8 @@ class DomainResearcherAgent(BaseAgent):
         else:
             messages.append(Message(role="user", parts=[MessagePart(text=query)]))
 
-        messages = self._inject_timestamps(messages)
+        # No _inject_timestamps — bound channel is real-time conversation,
+        # and the LLM has no prompt token explaining the timestamp format.
 
         try:
             # Build tool declarations (empty if no coordinator/registry)
