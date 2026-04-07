@@ -39,7 +39,7 @@ from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.agent_note import NoteCreate, NoteUpdate, ReminderRecurrence
 from ..infrastructure.agent_config import NOTES as NOTES_CFG
-from ..infrastructure.agent_manifest import Intent
+from ..infrastructure.agent_manifest import Intent, NOTES as NOTES_DESCRIPTOR
 from ..ports.agent_note_port import AgentNotePort
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, MessagePart
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -76,11 +76,11 @@ _TOOL_DECLARATIONS = [
                 },
                 "recurrence": {
                     "type": "object",
-                    "description": "Optional. Repeat after firing.",
+                    "description": "Recurrence schedule. Use type='once' for one-time reminders (default). Only use repeating types when explicitly requested.",
                     "properties": {
                         "type": {
                             "type": "string",
-                            "enum": ["hourly", "daily", "weekly", "monthly"],
+                            "enum": ["once", "hourly", "daily", "weekly", "monthly"],
                         },
                         "interval": {
                             "type": "integer",
@@ -186,7 +186,7 @@ def _parse_dt(value: Optional[str], user_tz: ZoneInfo) -> Optional[datetime]:
 
 
 def _parse_recurrence(args: Optional[Dict[str, Any]]) -> Optional[ReminderRecurrence]:
-    if not args or not args.get("type"):
+    if not args or not args.get("type") or args.get("type") == "once":
         return None
     return ReminderRecurrence(
         type=args["type"],
@@ -200,8 +200,11 @@ class NotesAgent(BaseAgent):
     One LLM call to parse natural language → CRUD via AgentNotePort.
     """
 
+    _descriptor = NOTES_DESCRIPTOR
+
     TEMPERATURE = NOTES_CFG.temperature
     MAX_TOKENS = NOTES_CFG.max_tokens
+    MAX_TURNS = NOTES_CFG.max_turns
 
     def __init__(
         self,
@@ -245,12 +248,12 @@ class NotesAgent(BaseAgent):
                 error=result["error"],
             )
 
-        confirmation = result.get("status", "done")
-        self._on_agent_success(len(confirmation), 0, confirmation)
+        summary = result.get("summary", "done")
+        self._on_agent_success(len(summary), 0, summary)
         return AgentResponse.success(
             task_id=message.task_id,
             agent_id=self.agent_id,
-            result=confirmation,
+            result=summary,
             confidence=1.0,
             metadata={"duration_ms": duration_ms},
         )
@@ -279,21 +282,83 @@ class NotesAgent(BaseAgent):
                 lines.append(f"    instruction: {n.instruction}")
             system_prompt += "\n\nactive_reminders {\n" + "\n".join(lines) + "\n}"
 
-        request = LLMRequest(
-            model_name=self.model_name,
-            system_instruction=system_prompt,
-            messages=[Message(role="user", parts=[MessagePart(text=query or "(no instruction)")])],
-            tools=_TOOL_DECLARATIONS,
-            max_tokens=self.MAX_TOKENS,
-            temperature=self.TEMPERATURE,
-        )
-        response = await self._call_llm(request, turn=0)
+        # Build tool declarations: CRUD tools + delegation tool (if coordinator available)
+        tools = list(_TOOL_DECLARATIONS)
+        if self.coordinator:
+            available = self.coordinator.get_available_intents_for(self._descriptor)
+            if available:
+                tools.append(self._build_delegate_tool_declaration(available))
 
-        if not response.tool_calls:
-            return {"error": "LLM did not select a tool."}
+        messages = [Message(role="user", parts=[MessagePart(text=query or "(no instruction)")])]
 
-        tool_call = response.tool_calls[0]
-        return await self._execute_tool(tool_call.name, tool_call.args or {}, user_id, account_id)
+        for turn in range(self.MAX_TURNS):
+            request = LLMRequest(
+                model_name=self.model_name,
+                system_instruction=system_prompt,
+                messages=messages,
+                tools=tools,
+                max_tokens=self.MAX_TOKENS,
+                temperature=self.TEMPERATURE,
+            )
+            response = await self._call_llm(request, turn=turn)
+
+            # Text response (no tool calls) — LLM is returning an error or summary
+            if not response.tool_calls:
+                text = response.text or ""
+                if text:
+                    return {"summary": text}
+                return {"error": "LLM did not select a tool or provide a response."}
+
+            # Process ALL tool calls in this response
+            has_delegation = False
+            crud_results = []
+
+            # Execute all tool calls, collect results
+            tool_results = []
+            for tc in response.tool_calls:
+                if tc.name == "delegate_to_specialist":
+                    has_delegation = True
+                    args = tc.args or {}
+                    intent = args.get("intent", "")
+                    delegate_query = args.get("query", "")
+                    self._on_delegation(intent, delegate_query)
+                    delegate_response = await self.coordinator.handle_delegation(
+                        intent=intent,
+                        query=delegate_query,
+                        context={"user_id": user_id, "account_id": account_id},
+                        calling_agent_id=self.agent_id,
+                    )
+                    result_text = str(delegate_response.result) if delegate_response.result else "No result"
+                    tool_results.append((tc, result_text))
+                else:
+                    result = await self._execute_tool(tc.name, tc.args or {}, user_id, account_id)
+                    crud_results.append(result)
+                    tool_results.append((tc, str(result)))
+
+            # Append formatted tool turn to message history
+            messages.extend(self._build_tool_turn(response, tool_results))
+
+            if crud_results:
+                # Feed results back to LLM for a text summary (no tools — force text response)
+                summary_request = LLMRequest(
+                    model_name=self.model_name,
+                    system_instruction=system_prompt,
+                    messages=messages,
+                    max_tokens=self.MAX_TOKENS,
+                    temperature=self.TEMPERATURE,
+                )
+                summary_response = await self._call_llm(summary_request, turn=turn + 1)
+                summary = summary_response.text or "Operation completed."
+                # Check for errors in any CRUD result
+                errors = [r.get("error") for r in crud_results if isinstance(r, dict) and r.get("error")]
+                if errors:
+                    return {"error": "; ".join(errors)}
+                return {"summary": summary}
+
+            if has_delegation:
+                continue  # next turn — LLM will use delegation results
+
+        return {"error": "Max turns exceeded without completing the operation."}
 
     # ------------------------------------------------------------------
     # Tool execution

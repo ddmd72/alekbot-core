@@ -307,28 +307,33 @@ class TestLoadConversationContext:
 class TestInjectTimestamps:
     """Tests for BaseAgent._inject_timestamps."""
 
-    def test_user_message_gets_timestamp_prefix(self):
+    @pytest.fixture
+    def agent(self):
+        config = AgentConfig(agent_id="ts_agent", agent_type="mock")
+        return MockAgent(config)
+
+    def test_user_message_gets_timestamp_prefix(self, agent):
         """User messages with created_at get a timestamp prepended to the first part."""
         from src.ports.llm_port import Message, MessagePart
         msg = Message(role="user", parts=[MessagePart(text="hello")], created_at=1700000000)
-        result = BaseAgent._inject_timestamps([msg])
+        result = agent._inject_timestamps([msg])
         assert "hello" in result[0].parts[0].text
         assert result[0].parts[0].text != "hello"  # timestamp was prepended
 
-    def test_model_message_unchanged(self):
+    def test_model_message_unchanged(self, agent):
         from src.ports.llm_port import Message, MessagePart
         msg = Message(role="model", parts=[MessagePart(text="response")], created_at=1700000000)
-        result = BaseAgent._inject_timestamps([msg])
+        result = agent._inject_timestamps([msg])
         assert result[0].parts[0].text == "response"
 
-    def test_user_message_multiple_parts_only_first_gets_stamp(self):
+    def test_user_message_multiple_parts_only_first_gets_stamp(self, agent):
         from src.ports.llm_port import Message, MessagePart
         msg = Message(
             role="user",
             parts=[MessagePart(text="first"), MessagePart(text="second")],
             created_at=1700000000,
         )
-        result = BaseAgent._inject_timestamps([msg])
+        result = agent._inject_timestamps([msg])
         # Second part should be unchanged
         assert result[0].parts[1].text == "second"
 

@@ -279,6 +279,8 @@ class UserAgentFactory(AgentFactoryPort):
             total_limit=semantic_limit,
         )
 
+        user_timezone = user_profile.config.timezone
+
         quick_agent = create_quick_response_agent(
             execution_context=quick_context,
             session_store=self.session_store,
@@ -290,6 +292,7 @@ class UserAgentFactory(AgentFactoryPort):
             model_name=quick_context.model_name,
             history_recent_full_turns=history_recent_full_turns,
             history_summary_service=history_summary_service,
+            user_timezone=user_timezone,
         )
 
         smart_agent = create_smart_response_agent(
@@ -303,6 +306,7 @@ class UserAgentFactory(AgentFactoryPort):
             model_name=smart_context.model_name,
             history_recent_full_turns=history_recent_full_turns,
             history_summary_service=history_summary_service,
+            user_timezone=user_timezone,
         )
 
         notes_agent = None
@@ -742,6 +746,7 @@ class UserAgentFactory(AgentFactoryPort):
             execution_context=execution_context,
             prompt_builder=ctx.prompt_builder,
             user_id=user_id,
+            user_timezone=ctx.user_profile.config.timezone,
         )
 
     # -- Dispatch table: agent_type → builder method + base agent_id ----

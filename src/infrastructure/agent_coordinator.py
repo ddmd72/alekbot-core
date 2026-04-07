@@ -8,6 +8,7 @@ Central routing and coordination service for multi-agent architecture.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional, Any
 from ..domain.agent import AgentMessage, AgentResponse, AgentStatus, AgentIntent
 from ..utils.logger import logger
@@ -371,6 +372,11 @@ class AgentCoordinator:
         # Lazy agents: instantiate on first delegation
         if not manifest.eager:
             await self._ensure_lazy_agent(manifest.agent_type, context)
+
+        # Inject current datetime into query so specialists have temporal context.
+        # Analogous to _inject_timestamps for user messages.
+        ts = datetime.now(timezone.utc).strftime("[%b %d, %H:%M UTC]")
+        query = f"{ts} {query}"
 
         if mode == ExecutionMode.SYNC:
             return await self._execute_sync(manifest.agent_id, intent, query, context)

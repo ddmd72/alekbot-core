@@ -49,12 +49,14 @@ class DomainResearcherAgent(BaseAgent):
         execution_context: AgentExecutionContext,
         prompt_builder: Optional[PromptBuilderPort] = None,
         user_id: Optional[str] = None,
+        user_timezone: str = "UTC",
     ) -> None:
         super().__init__(config)
         self._llm = execution_context.provider
         self.model_name = execution_context.model_name
         self.prompt_builder = prompt_builder
         self.user_id = user_id
+        self._user_timezone = user_timezone
 
     async def can_handle(self, message: AgentMessage) -> bool:
         if message.intent != AgentIntent.QUERY:

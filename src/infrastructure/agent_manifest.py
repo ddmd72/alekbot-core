@@ -349,6 +349,10 @@ NOTES = AgentDescriptor(
     capabilities={
         Intent.MANAGE_SELF_REMINDERS: ExecutionMode.SYNC,
     },
+    allowed_intents=frozenset({
+        Intent.COMPUTE_DATETIME,
+        Intent.COMPUTE,
+    }),
     description="Full CRUD management of proactive self-reminders: create, update, delete, and list reminders that fire automatically at a scheduled time",
     capability_descriptions={
         Intent.MANAGE_SELF_REMINDERS: (

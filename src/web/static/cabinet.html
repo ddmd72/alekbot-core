@@ -1253,6 +1253,39 @@
 
           <div class="card reveal" style="max-width: 520px; margin-top: 20px">
             <div class="card-body">
+              <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Location</h3>
+              <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
+                Your current location — used for contextual awareness (maps, weather, local info).
+              </p>
+              <div style="display: flex; gap: 12px; align-items: center">
+                <input
+                  id="location-input"
+                  type="text"
+                  placeholder="e.g. Valencia, Spain"
+                  style="
+                    flex: 1;
+                    padding: 10px 14px;
+                    border-radius: var(--radius-sm);
+                    border: 1px solid var(--border-light);
+                    background: var(--bg-hover);
+                    color: var(--text-main);
+                    font-family: inherit;
+                    font-size: 15px;
+                    outline: none;
+                    transition: border-color var(--transition-fast);
+                  "
+                  onfocus="this.style.borderColor='var(--border-focus)'"
+                  onblur="this.style.borderColor='var(--border-light)'"
+                />
+                <button onclick="saveLocation()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card reveal" style="max-width: 520px; margin-top: 20px">
+            <div class="card-body">
               <h3 id="settings-lang-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Language</h3>
               <p id="settings-lang-desc" style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
                 UI language and the language Alek responds in.
@@ -1771,6 +1804,13 @@
         } catch {
           showToast("Failed to load settings", "error");
         }
+        try {
+          const locRes = await fetch(`${API}/api/user/location`, { credentials: "include" });
+          if (locRes.ok) {
+            const locData = await locRes.json();
+            document.getElementById("location-input").value = locData.location || "";
+          }
+        } catch { /* silent */ }
         await loadLanguage();
         await loadDeepResearch();
         await loadReminders();
@@ -1819,6 +1859,26 @@
           showToast(t("toast.tz_saved"), "success");
         } catch {
           showToast(t("toast.tz_failed"), "error");
+        }
+      }
+
+      async function saveLocation() {
+        const loc = document.getElementById("location-input").value.trim();
+        try {
+          const res = await fetch(`${API}/api/user/location`, {
+            method: "PUT",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ location: loc }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showToast(err.error || "Failed to save location", "error");
+            return;
+          }
+          showToast("Location saved", "success");
+        } catch {
+          showToast("Failed to save location", "error");
         }
       }
 

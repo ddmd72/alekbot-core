@@ -155,7 +155,7 @@ class TestCreateSelfReminder:
         assert call_arg.text == "Prague hotel booked"
         assert call_arg.user_id == _USER_ID
 
-    async def test_create_result_is_created_status(self):
+    async def test_create_result_is_success(self):
         agent, port = _make_agent()
         port.create_note.return_value = _make_note()
 
@@ -164,7 +164,7 @@ class TestCreateSelfReminder:
         )):
             response = await agent.execute(_make_message())
 
-        assert response.result == "created"
+        assert response.status == AgentStatus.SUCCESS
 
     async def test_create_missing_due_returns_failure(self):
         agent, port = _make_agent()
@@ -276,13 +276,14 @@ class TestDeleteSelfReminder:
 
 class TestNoToolCall:
 
-    async def test_no_tool_call_returns_failure(self):
+    async def test_no_tool_call_returns_text_response(self):
+        """LLM returning text without tool calls is valid — error messages, clarifications."""
         agent, _ = _make_agent()
 
         with patch.object(agent, "_call_llm", return_value=_no_tool_response()):
             response = await agent.execute(_make_message("do something unclear"))
 
-        assert response.status == AgentStatus.FAILED
+        assert response.status == AgentStatus.SUCCESS
 
 
 # =============================================================================
@@ -520,7 +521,6 @@ class TestCreateSoftThresholdAlert:
             response = await agent.execute(_make_message("remind me about dentist"))
 
         assert response.status == AgentStatus.SUCCESS
-        assert "alert" in response.metadata or response.result == "created"
         # Verify alert was set: re-run _execute_tool directly
         port.list_active_notes.return_value = [_make_note(note_id=str(i)) for i in range(_NOTES_SOFT_THRESHOLD)]
         result = await agent._execute_tool(
