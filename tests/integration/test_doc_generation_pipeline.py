@@ -267,7 +267,8 @@ class TestAsyncDispatch:
             context=_CONTEXT,
         )
         call_kwargs = pipeline.mock_task_queue.enqueue_agent_task.call_args.kwargs
-        assert call_kwargs["query"] == query
+        # Coordinator prepends [Mon DD, HH:MM UTC] timestamp to delegation queries
+        assert call_kwargs["query"].endswith(query)
 
     async def test_enqueued_task_ack_is_success(self, pipeline):
         response = await pipeline.coordinator.handle_delegation(
@@ -374,7 +375,8 @@ class TestRetryBehavior:
         response = await pipeline.coordinator.route_message(_delegate_message())
         assert response.status == AgentStatus.SUCCESS
         call_kwargs = pipeline.mock_task_queue.enqueue_agent_task.call_args.kwargs
-        assert call_kwargs["query"] == "not valid json {{{"
+        # Coordinator prepends [Mon DD, HH:MM UTC] timestamp to delegation queries
+        assert call_kwargs["query"].endswith("not valid json {{{")
 
     async def test_generator_exhausts_max_turns_returns_failed(self, pipeline):
         """DocGenerator returns FAILED when runner always errors out (MAX_TURNS exhausted)."""
