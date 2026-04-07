@@ -21,6 +21,7 @@ from tests.integration.adapters.conftest import (
     ClaudeCapturingStub,
     GeminiCapturingStub,
     OpenAILikeCapturingStub,
+    OpenAIResponsesCapturingStub,
 )
 
 _MESSAGES = [Message(role="user", parts=[MessagePart(text="Hi")])]
@@ -93,7 +94,7 @@ async def test_grok_force_tool_use_contract():
 async def test_openai_force_tool_use_contract():
     """OpenAIAdapter must use tool_choice='required' when force_tool_use=True."""
     adapter = OpenAIAdapter(api_key="test-key")
-    stub = OpenAILikeCapturingStub().install(adapter)
+    stub = OpenAIResponsesCapturingStub().install(adapter)
 
     await adapter.generate_content(
         request=LLMRequest(

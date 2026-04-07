@@ -186,7 +186,7 @@ class GeminiCapturingStub:
 class OpenAILikeCapturingStub:
     """
     Captures kwargs sent to client.chat.completions.create().
-    Works for both OpenAIAdapter and GrokAdapter (same SDK pattern).
+    Works for GrokAdapter (Chat Completions API).
     """
 
     def __init__(self, sdk_response=None):
@@ -207,3 +207,76 @@ class OpenAILikeCapturingStub:
     @classmethod
     def with_tool_response(cls, name, args, tc_id="call_1") -> "OpenAILikeCapturingStub":
         return cls(sdk_response=_openai_tool_response(name, args, tc_id))
+
+
+# ---- OpenAI Responses API mock responses ----
+
+def _openai_responses_text_response(text="OK"):
+    """Build a mock Responses API response with a text output item."""
+    output_text = MagicMock()
+    output_text.type = "output_text"
+    output_text.text = text
+    output_text.annotations = []
+
+    message = MagicMock()
+    message.type = "message"
+    message.content = [output_text]
+
+    usage = MagicMock()
+    usage.input_tokens = 10
+    usage.output_tokens = 5
+    usage.total_tokens = 15
+    usage.input_tokens_details = None
+
+    response = MagicMock()
+    response.output = [message]
+    response.output_text = text
+    response.usage = usage
+    return response
+
+
+def _openai_responses_tool_response(name, args, call_id="call_1"):
+    """Build a mock Responses API response with a function_call output item."""
+    fc = MagicMock()
+    fc.type = "function_call"
+    fc.name = name
+    fc.arguments = json.dumps(args)
+    fc.call_id = call_id
+
+    usage = MagicMock()
+    usage.input_tokens = 10
+    usage.output_tokens = 5
+    usage.total_tokens = 15
+    usage.input_tokens_details = None
+
+    response = MagicMock()
+    response.output = [fc]
+    response.output_text = ""
+    response.usage = usage
+    return response
+
+
+class OpenAIResponsesCapturingStub:
+    """
+    Captures kwargs sent to client.responses.create() (Responses API).
+    For OpenAIAdapter which uses the Responses API, not Chat Completions.
+    """
+
+    def __init__(self, sdk_response=None):
+        self.captured_kwargs: dict = {}
+        self._sdk_response = sdk_response or _openai_responses_text_response()
+
+    def install(self, adapter) -> "OpenAIResponsesCapturingStub":
+        stub = self
+
+        async def mock_create(**kwargs):
+            stub.captured_kwargs.update(kwargs)
+            return stub._sdk_response
+
+        adapter.client = MagicMock()
+        adapter.client.responses.create = mock_create
+        return self
+
+    @classmethod
+    def with_tool_response(cls, name, args, call_id="call_1") -> "OpenAIResponsesCapturingStub":
+        return cls(sdk_response=_openai_responses_tool_response(name, args, call_id))
