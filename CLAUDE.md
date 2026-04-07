@@ -249,6 +249,9 @@ with file_ref → AgentCoordinator._resolve_file_refs() intercepts, downloads + 
 file_content into params. FileManagementAgent handles direct open_file and delete_file intents.
 GcsFileStorageAdapter: Finder-style dedup (report.docx → report (1).docx), filename sanitization.
 Conditional on `GCS_MEDIA_BUCKET` env var. See docs/05_building_blocks/file_storage/README.md.
+**Bound channel file handling:** ConversationHandler strips `path` from `file_data` for bound channels
+(`mode.is_bound`) — adapters won't inline binary content. Agent sees `[File: name (size)]` label
+in platform history and accesses content via `open_file` delegation.
 
 **Multilingual Support** — two independent language axes:
 - **Agent response language** — controlled via prompt tokens (`LANG_MIRROR`, `LANG_FIXED_UK`,
@@ -355,7 +358,9 @@ src/
                   WorkerHandler dispatches /worker Cloud Tasks by task_type.
   infrastructure/ — AgentCoordinator, queues, agent_config.py (central behavior params),
                   agent_registry.py (AgentDescriptor dataclass with `eager: bool` field + AgentRegistry mechanics),
-                  agent_manifest.py (Intent constants + all agent declarations — single source of truth).
+                  agent_manifest.py (Intent constants + all agent declarations — single source of truth),
+                  delegation_engine.py (DelegationEngine — reusable multi-turn tool-calling loop,
+                  shared by Smart, Quick, and bound channel agents).
   composition/  — ServiceContainer + UserAgentFactory(AgentFactoryPort) + SlackAdapterFactory + TelegramAdapterFactory.
                   UserAgentFactory lives in composition/ (NOT services/).
                   Implements AgentFactoryPort for lazy agent creation on demand.
@@ -500,6 +505,18 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   - `"Delegate to specialist for HTML page creation"` — purpose-based (LLM resolves intent)
   Use explicit intent names when precision matters (e.g. `search_memory` vs `search_web`).
   Use purpose-based phrasing when the specialist owns the decision (e.g. document creation).
+- **DelegationEngine** (`src/infrastructure/delegation_engine.py`) — reusable multi-turn
+  tool-calling loop. Owns: loop iteration, tool dispatch via AgentCoordinator, memory-first
+  parallel execution (search_memory sequential, others via asyncio.gather), history management
+  (model message with raw_content, tool response parts with file_data).
+  Does NOT own: LLM parameters (agent builds `LLMRequest`), response parsing (agent
+  post-processes `DelegationResult`).
+  API: `engine.execute(call_llm, base_request, context, max_turns, terminal_tool?, intent_remap?)`.
+  Smart: `terminal_tool="deliver_response"` (structured JSON output via tool).
+  Quick: `intent_remap={"search_web": "search_web_light"}` (dispatch-time substitution).
+  Bound agents: plain text response, no terminal tool, no remap.
+  `DelegationResult` carries: `text`, `terminal_tool_args`, `total_tokens`, `delivery_items`,
+  `history_contexts`, `structured_data`, `messages`, `failed`.
 - **BaseAgent lifecycle hooks** — `_on_agent_start(text)`, `_on_agent_success(char_count, token_count,
   output_text)`, `_on_agent_error(error, context)`, `_on_delegation(intent, query)`. All agents
   call these instead of direct `logger.*` calls. Changing infrastructure logging = edit BaseAgent

@@ -138,9 +138,10 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │       │                           #   Two differences: (1) single-pass (no refinement loop);
 │       │                           #   (2) descriptor.intent_remap substitutes search_web→search_web_light.
 │       │                           #   Class-level _descriptor = QUICK_RESPONSE (from agent_manifest.py).
-│       │                           #   MAX_DELEGATION_TURNS=5. Memory-first parallel scheduling.
+│       │                           #   MAX_DELEGATION_TURNS=5. Delegates loop to DelegationEngine.
 │       └── smart_response_agent.py # Complex reasoning + specialist delegation via ACP v2 registry.
 │                                   #   Class-level _descriptor = SMART_RESPONSE (from agent_manifest.py).
+│                                   #   Delegates loop to DelegationEngine (terminal_tool="deliver_response").
 ├── config/
 │   ├── environment.py  # Environment detection & configuration
 │   └── settings.py     # Re-exports SearchConfig from domain/settings.py for backward compat
@@ -197,6 +198,12 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                        #    + requirements (allowed_intents, intent_remap). AgentManifest = alias.
 │   │                        #    get_available_intents() filters internal=True agents.
 │   │                        #    get_available_intents_for(descriptor) filters by allowed_intents.
+│   ├── delegation_engine.py # 🆕 Reusable multi-turn tool-calling loop. Owns loop iteration,
+│   │                        #    tool dispatch (via AgentCoordinator), memory-first parallel
+│   │                        #    execution, history management. Used by Quick, Smart, and bound
+│   │                        #    channel agents. Agent builds LLMRequest; engine updates only
+│   │                        #    messages each turn. DelegationResult carries text,
+│   │                        #    terminal_tool_args, delivery_items, structured_data.
 │   └── message_queue.py     # Async communication hub
 ├── locales/            # 🆕 Localization System
 │   ├── en.py           # English strings (Stub)

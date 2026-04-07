@@ -126,6 +126,7 @@ class PromptBuilder(PromptBuilderPort):
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         extra_static_blocks: Optional[List[str]] = None,
+        include_datetime: bool = True,
     ) -> str:
         """
         Build complete system prompt for agent using PromptAssemblyService.
@@ -204,6 +205,7 @@ class PromptBuilder(PromptBuilderPort):
             agent_notes=agent_notes,
             user_timezone=user_timezone,
             extra_static_blocks=extra_static_blocks,
+            include_datetime=include_datetime,
         )
 
     async def _get_biographical_component(self, user_id: str) -> str:
