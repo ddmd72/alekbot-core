@@ -173,16 +173,20 @@ class AgentWorkerHandler:
             model=result.get("model", ""),
             total_tokens=result.get("total_tokens", 0),
             second_pass=result.get("second_pass", False),
+            channel_id_override=context.get("origin_channel_id"),
+            platform_override=context.get("origin_platform"),
         )
 
     async def _deliver_docx_result(self, response: Any, context: Dict[str, Any]) -> None:
-        """Upload DOCX file(s) from delivery_items to the user's last active channel."""
+        """Upload DOCX file(s) from delivery_items to the originating channel."""
         if not self._notification:
             logger.warning("[AgentWorkerHandler] No notification service configured for DOCX delivery")
             return
 
         user_id = context.get("user_id", "")
         account_id = context.get("account_id", "")
+        origin_channel = context.get("origin_channel_id")
+        origin_platform = context.get("origin_platform")
 
         for item in getattr(response, "delivery_items", []):
             if item.type != "file_upload":
@@ -195,6 +199,8 @@ class AgentWorkerHandler:
                     file_bytes=file_bytes,
                     filename=item.data.get("filename", "document.docx"),
                     title=item.data.get("title", "Document"),
+                    channel_id_override=origin_channel,
+                    platform_override=origin_platform,
                 )
             except Exception as exc:
                 logger.error(
@@ -213,6 +219,8 @@ class AgentWorkerHandler:
 
         user_id = context.get("user_id", "")
         account_id = context.get("account_id", "")
+        origin_channel = context.get("origin_channel_id")
+        origin_platform = context.get("origin_platform")
 
         for item in getattr(response, "delivery_items", []):
             if item.type != "document":
@@ -225,7 +233,8 @@ class AgentWorkerHandler:
                     content, filename, item.data["content_type"]
                 )
                 await self._notification.notify_document_link(
-                    user_id=user_id, account_id=account_id, url=url, label=label
+                    user_id=user_id, account_id=account_id, url=url, label=label,
+                    channel_id_override=origin_channel, platform_override=origin_platform,
                 )
                 if item.data.get("file_upload"):
                     await self._notification.notify_file_bytes(
@@ -234,6 +243,8 @@ class AgentWorkerHandler:
                         file_bytes=content,
                         filename=filename,
                         title=label,
+                        channel_id_override=origin_channel,
+                        platform_override=origin_platform,
                     )
             except Exception as exc:
                 logger.error(
@@ -251,6 +262,8 @@ class AgentWorkerHandler:
             system_alert=(
                 f"Document creation did not complete — {error or 'an error occurred'}."
             ),
+            channel_id_override=context.get("origin_channel_id"),
+            platform_override=context.get("origin_platform"),
         )
 
     async def _notify_failure(self, context: Dict[str, Any]) -> None:
@@ -265,4 +278,6 @@ class AgentWorkerHandler:
                 "Deep research did not complete — "
                 "the Claude research loop encountered an error."
             ),
+            channel_id_override=context.get("origin_channel_id"),
+            platform_override=context.get("origin_platform"),
         )

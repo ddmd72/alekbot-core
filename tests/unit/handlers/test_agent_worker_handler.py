@@ -306,6 +306,8 @@ class TestDeliverDocxResult:
             file_bytes=raw,
             filename="doc.docx",
             title="My Doc",
+            channel_id_override=None,
+            platform_override=None,
         )
 
 
@@ -347,6 +349,8 @@ class TestDeliverDocumentResult:
             account_id=_ACCOUNT_ID,
             url="https://example.com/doc.pdf",
             label="Annual Report",
+            channel_id_override=None,
+            platform_override=None,
         )
         notification.notify_file_bytes.assert_not_called()
 
@@ -373,6 +377,8 @@ class TestDeliverDocumentResult:
             file_bytes=raw,
             filename="report.pdf",
             title="Report",
+            channel_id_override=None,
+            platform_override=None,
         )
 
     async def test_non_document_item_skipped(self):
@@ -409,6 +415,8 @@ class TestNotifyMethods:
             system_alert=pytest.approx("Deep research did not complete — "
                                         "the Claude research loop encountered an error.",
                                        abs=0),
+            channel_id_override=None,
+            platform_override=None,
         )
 
     async def test_notify_docx_failure_no_notification_is_noop(self):

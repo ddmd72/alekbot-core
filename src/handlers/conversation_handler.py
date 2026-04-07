@@ -341,22 +341,15 @@ class ConversationHandler(ConversationHandlerPort):
             )
 
         # Persist last active channel for background notifications (best-effort).
-        # For Slack DMs, store the Slack user ID (U...) instead of the DM channel ID (D...).
-        # chat.postMessage accepts user IDs directly, making notifications resilient to
-        # stale DM channel IDs (e.g., after bot reinstall or token rotation).
+        # Always store the actual channel ID (D... for DMs, C... for channels).
+        # chat.postMessage accepts both D... and C... IDs.
         if mode.update_notification_channel and self._notification_service and hasattr(response_channel, "platform"):
-            channel_id_for_notif = response_channel.channel_id
-            if (
-                response_channel.platform == "slack"
-                and context.metadata.get("channel_type") == "im"
-                and context.metadata.get("slack_user_id")
-            ):
-                channel_id_for_notif = context.metadata["slack_user_id"]
+            notif_channel_id = channel_id or getattr(response_channel, "channel_id", None)
             asyncio.create_task(
                 self._notification_service.save_channel(
                     user_id=context.user_id,
                     platform=response_channel.platform,
-                    channel_id=channel_id_for_notif,
+                    channel_id=notif_channel_id,
                 )
             )
 

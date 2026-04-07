@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Optional, Dict, Any, List, Iterable
 from ..base_agent import BaseAgent
 from ...infrastructure.agent_config import SMART, ENABLE_HISTORY_OPTIMIZATION
 from ...infrastructure.agent_manifest import SMART_RESPONSE
-from ...infrastructure.delegation_engine import DelegationEngine, DelegationContext, DelegationResult
+from ...infrastructure.delegation_engine import DelegationEngine, DelegationResult
 from ...domain.agent import (
     AgentMessage,
     AgentResponse,
@@ -228,11 +228,7 @@ class SmartResponseAgent(BaseAgent):
             delegation_result = await engine.execute(
                 call_llm=self._call_llm,
                 base_request=base_request,
-                context=DelegationContext(
-                    user_id=user_id,
-                    account_id=account_id,
-                    session_id=session_id,
-                ),
+                context=message.context,
                 max_turns=self.MAX_DELEGATION_TURNS,
                 terminal_tool="deliver_response",
                 calling_agent_id=self.agent_id,

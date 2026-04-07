@@ -191,7 +191,7 @@ set_preference(user_id, preferred_language=EN, agent_mirror=False)
     |   → next request rebuilds prompt from Firestore
     |
     └─ notify(system_alert=<LANG_FIXED_EN Groovy rule text>)
-        → agent receives alert in main session (session_id=user_id)
+        → agent receives alert in session (session_id=user_id:channel_id)
         → alert + agent response saved to conversation history
         → LLM context now contains the policy change
 ```
@@ -269,7 +269,7 @@ Slack/Telegram channel. The alert text is the Groovy rule content of the selecte
 **Flow:**
 1. `_ensure_agents(user_id)` — registers agents in coordinator (required before routing)
 2. `notify(user_id, account_id, system_alert=<token text>)` — routes alert through QuickAgent
-3. `session_id` defaults to `user_id` — alert + response saved to main session history
+3. `session_id` derived from delivery channel (`user_id:channel_id`) — alert + response saved to that channel's session history
 
 This injects the language policy into the LLM's context window at the moment of change,
 ensuring the next user message is answered in the correct language even if prior conversation
@@ -357,7 +357,7 @@ LanguagePreferenceService.set_preference()
         │
         ├─► PromptBuilderPort.invalidate_cache() (clears 24h in-memory cache)
         │
-        └─► ensure_agents() + notify()          (alert → QuickAgent → main session)
+        └─► ensure_agents() + notify()          (alert → QuickAgent → channel session)
 
 
 Next user message in Slack/Telegram

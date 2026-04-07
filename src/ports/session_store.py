@@ -33,5 +33,9 @@ class SessionStore(ABC):
 
     @abstractmethod
     async def get_latest_session_id(self, owner_id: str) -> Optional[str]:
-        """Return the latest active session id for a user, if any."""
+        """Return the latest active session id for a user, if any.
+
+        Deprecated: session_id is now deterministic (user_id:channel_id).
+        Kept for dev scripts that query existing sessions.
+        """
         raise NotImplementedError

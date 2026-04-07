@@ -262,6 +262,16 @@ Conditional on `GCS_MEDIA_BUCKET` env var. See docs/05_building_blocks/file_stor
 (`mode.is_bound`) — adapters won't inline binary content. Agent sees `[File: name (size)]` label
 in platform history and accesses content via `open_file` delegation.
 
+**Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic.
+Each channel (Slack C.../D..., Telegram chat_id) has its own session, history, and
+consolidation stream. No special cases for DMs — a DM is just another channel (D...).
+Adapters resolve session_id synchronously (no Firestore query). `get_latest_session_id()`
+deprecated. Async task delivery uses `origin_channel_id` from message context (propagated
+automatically via DelegationEngine context passthrough). System notifications (reminders,
+daily email) go to primary channel. `NotificationService` derives session_id from delivery
+channel when not explicitly provided. `GcpTaskQueue` uses `_DomainEncoder` for transparent
+Pydantic model serialization in Cloud Task payloads.
+
 **Multilingual Support** — two independent language axes:
 - **Agent response language** — controlled via prompt tokens (`LANG_MIRROR`, `LANG_FIXED_UK`,
   `LANG_FIXED_EN`, `LANG_FIXED_FR`, `LANG_FIXED_ES`). Mirror mode (default): LLM responds in the
@@ -524,6 +534,11 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   timestamp to every delegation query so all specialists have temporal context.
   Does NOT own: LLM parameters (agent builds `LLMRequest`), response parsing (agent
   post-processes `DelegationResult`).
+  **Context passthrough:** `execute()` accepts `message.context` dict directly (no intermediate
+  DTO). Engine spreads `**context` into delegation_context, adding only `memory_context` and
+  `params`. All context fields (`origin_channel_id`, `session_id`, etc.) propagate automatically
+  to downstream tasks including async Cloud Task payloads. Agents pass `context=message.context`
+  — zero knowledge of routing, channels, or session format.
   API: `engine.execute(call_llm, base_request, context, max_turns, terminal_tool?, intent_remap?)`.
   Smart: `terminal_tool="deliver_response"` (structured JSON output via tool).
   Quick: `intent_remap={"search_web": "search_web_light"}` (dispatch-time substitution).

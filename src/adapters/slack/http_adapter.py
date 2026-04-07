@@ -253,9 +253,8 @@ class HTTPModeAdapter(SlackAdapter):
             logger.error(f"❌ Error in worker task: {e}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
-    async def _resolve_session_id(self, user_id: str) -> str:
-        latest = await self.session_store.get_latest_session_id(user_id)
-        return latest or user_id
+    def _resolve_session_id(self, user_id: str, channel_id: str) -> str:
+        return f"{user_id}:{channel_id}"
 
     async def _process_message_event(self, event: Dict[str, Any], session_id: str):
         try:
@@ -296,7 +295,7 @@ class HTTPModeAdapter(SlackAdapter):
             user_profile = decision.user
             user_id = user_profile.user_id
             account_id = user_profile.account_id or ANONYMOUS_ACCOUNT_ID  # SESSION_26
-            session_id = await self._resolve_session_id(user_id)
+            session_id = self._resolve_session_id(user_id, channel)
             set_request_context(user_id=user_id, session_id=session_id)
             set_log_context(user_id=user_id, session_id=session_id)
             logger.info(f"👤 Processing message for user {user_id} ({user_profile.display_name})")
@@ -371,7 +370,7 @@ class HTTPModeAdapter(SlackAdapter):
             user_profile = decision.user
             user_id = user_profile.user_id
             account_id = user_profile.account_id or ANONYMOUS_ACCOUNT_ID  # SESSION_26
-            session_id = await self._resolve_session_id(user_id)
+            session_id = self._resolve_session_id(user_id, channel)
             set_request_context(user_id=user_id, session_id=session_id)
             set_log_context(user_id=user_id, session_id=session_id)
             logger.info(f"👤 Processing mention for user {user_id} ({user_profile.display_name})")

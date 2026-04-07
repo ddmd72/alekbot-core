@@ -406,10 +406,25 @@ if already bound (`$agent off` first).
 16. Platform history timestamps: `SlackChannelHistorySource` passes `ts` as `Message.created_at`.
 17. `include_datetime=False` on prompt builder for bound agents (timestamps in history instead).
 
-**Phase 2 — Session-per-channel refactoring**
-12. `session_id = f"{user_id}:{channel_id}"` for non-DM channels (or all channels)
-13. Migrate SessionStore, consolidation overflow, history loading
-14. Validate notification service session_id usage
+**Phase 2 — Session-per-channel refactoring** ✅ DONE (2026-04-07)
+12. `_resolve_session_id(user_id, channel_id)` → `f"{user_id}:{channel_id}"` in Slack and Telegram
+    adapters. Sync, deterministic, no Firestore query. All channels (including DMs) use the same
+    format — DM normalization removed (DMs use D... channel ID like any other channel).
+13. `NotificationService` derives `session_id` from delivery channel
+    (`f"{user_id}:{channel_info.channel_id}"`). `notify_document_link()` fixed — was hardcoding
+    `session_id=user_id`.
+14. Origin channel propagation: `AgentWorkerHandler` extracts `origin_channel_id`/`origin_platform`
+    from context, passes to all notification calls (DOCX, PDF/HTML, deep research).
+    `WorkerHandler` (Gemini polling path) extracts `origin_channel_id` from session_id format.
+15. `gcp_task_queue.py`: `_DomainEncoder` (JSON encoder for Pydantic BaseModel) so full message
+    context serializes transparently for Cloud Task payloads.
+16. `DelegationContext` dataclass removed — agents pass `message.context` dict directly to
+    `DelegationEngine`. Engine spreads `**context` into delegation_context.
+17. `SessionStore.get_latest_session_id()` deprecated — kept for dev scripts only.
+
+**Note:** This also supersedes `PLATFORM_SESSION_ISOLATION_RFC.md` — per-channel session_id
+(`user_id:channel_id`) covers platform isolation automatically, since Slack and Telegram
+channel IDs are naturally disjoint namespaces.
 
 **Phase 3 — Forced orchestrator routing**
 15. `$route smart/quick/auto` command + per-channel Router override

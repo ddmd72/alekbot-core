@@ -1,8 +1,14 @@
 # RFC: Platform Session Isolation
 
-**Status:** Draft — no implementation started
+**Status:** SUPERSEDED by per-channel session_id in [BOUND_THREAD_AGENTS_RFC.md](BOUND_THREAD_AGENTS_RFC.md) Phase 2 (2026-04-07)
 **Created:** 2026-03-29
 **Scope:** Session management, notification delivery, consolidation overflow
+
+> **Superseded.** Session ID is now `f"{user_id}:{channel_id}"` — resolved deterministically
+> in Slack and Telegram adapters with no Firestore query. Since Slack channel IDs (C.../D...)
+> and Telegram chat IDs are naturally disjoint, platform isolation is automatic. The namespace
+> prefix approach proposed below was never implemented. See BOUND_THREAD_AGENTS_RFC.md § 8
+> Phase 2 for the actual implementation.
 
 ---
 
