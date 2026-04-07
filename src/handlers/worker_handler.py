@@ -256,6 +256,9 @@ class WorkerHandler:
         provider           = payload.get("provider", "gemini")
         session_id         = payload.get("session_id", "")
 
+        # Derive origin channel from per-channel session_id (format: "user_id:channel_id")
+        origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
+
         job_port = None
         if self._job_registry:
             try:
@@ -278,6 +281,7 @@ class WorkerHandler:
                 user_id=user_id,
                 account_id=account_id,
                 system_alert="Deep research timed out after 60 minutes without producing a result.",
+                channel_id_override=origin_channel_id,
             )
             return {"status": "timeout"}, 200
 
@@ -300,6 +304,7 @@ class WorkerHandler:
                     user_id=user_id,
                     account_id=account_id,
                     system_alert="Deep research did not complete — the research session expired or encountered a persistent error.",
+                    channel_id_override=origin_channel_id,
                 )
                 return {"status": "dead", "attempt": attempt}, 200
 
@@ -345,6 +350,7 @@ class WorkerHandler:
                 query=query,
                 task_queue=self._task_dispatch,
                 session_id=session_id,
+                channel_id_override=origin_channel_id,
             )
 
             logger.info(f"[DeepResearch] Delivered to user={user_id[:8]}")
@@ -357,6 +363,7 @@ class WorkerHandler:
         await self._notification.notify(
             user_id=user_id, account_id=account_id,
             system_alert="Deep research did not complete — the AI provider returned an error.",
+            channel_id_override=origin_channel_id,
         )
         return {"status": "failed"}, 200
 

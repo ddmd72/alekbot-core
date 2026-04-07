@@ -33,14 +33,6 @@ if TYPE_CHECKING:
 # ------------------------------------------------------------------ #
 
 @dataclass
-class DelegationContext:
-    """Immutable identity context for a delegation session."""
-    user_id: str
-    account_id: Optional[str] = None
-    session_id: Optional[str] = None
-
-
-@dataclass
 class ToolResult:
     """Single tool call result collected during the loop."""
     name: str
@@ -126,7 +118,7 @@ class DelegationEngine:
         self,
         call_llm: Callable[[LLMRequest, int], Awaitable[LLMResponse]],
         base_request: LLMRequest,
-        context: DelegationContext,
+        context: Dict[str, Any],
         max_turns: int,
         terminal_tool: Optional[str] = None,
         intent_remap: Optional[Dict[str, str]] = None,
@@ -141,7 +133,8 @@ class DelegationEngine:
             base_request: LLMRequest built by the agent. Engine updates only
                           ``messages`` each turn — temperature, schema, thinking
                           etc. stay as the agent configured them.
-            context: Identity context (user_id, account_id, session_id).
+            context: Message context dict (from message.context). Passed through
+                     to coordinator on each delegation call.
             max_turns: Maximum delegation iterations.
             terminal_tool: Optional tool name that signals loop termination
                            (e.g. "deliver_response" for Smart).
@@ -260,7 +253,7 @@ class DelegationEngine:
     async def _execute_tool_calls(
         self,
         tool_calls: List[ToolCall],
-        context: DelegationContext,
+        context: Dict[str, Any],
         intent_remap: Dict[str, str],
         calling_agent_id: str,
         max_retries: int,
@@ -327,7 +320,7 @@ class DelegationEngine:
     async def _dispatch_single(
         self,
         tool_call: ToolCall,
-        context: DelegationContext,
+        context: Dict[str, Any],
         intent_remap: Dict[str, str],
         calling_agent_id: str,
         max_retries: int,
@@ -361,9 +354,7 @@ class DelegationEngine:
             )
 
         delegation_context: Dict[str, Any] = {
-            "user_id": context.user_id,
-            "account_id": context.account_id,
-            "session_id": context.session_id,
+            **context,
             "memory_context": memory_context or [],
             "params": context_params,
         }

@@ -112,12 +112,13 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
     assert response.status == AgentStatus.SUCCESS
     assert response.result.text == "Glove size is M"  # delegation loop returns final LLM text
     assert llm.generate_content.call_count == 2  # turn 1 (tool call) + turn 2 (final answer)
-    coordinator.handle_delegation.assert_called_once_with(
-        intent="search_memory",
-        query="glove size",
-        context={"user_id": user_id, "account_id": None, "session_id": "s1", "memory_context": [], "params": {}},
-        calling_agent_id="test",
-    )
+    call_kwargs = coordinator.handle_delegation.call_args.kwargs
+    assert call_kwargs["intent"] == "search_memory"
+    assert call_kwargs["query"] == "glove size"
+    assert call_kwargs["context"]["user_id"] == user_id
+    assert call_kwargs["context"]["session_id"] == "s1"
+    assert call_kwargs["context"]["memory_context"] == []
+    assert call_kwargs["context"]["params"] == {}
 
 @pytest.mark.asyncio
 async def test_quick_agent_stores_and_passes_user_id(mock_deps):

@@ -29,6 +29,8 @@ class NotificationPort(Protocol):
         system_alert: str,
         agent_id_override: Optional[str] = None,
         session_id: Optional[str] = None,
+        channel_id_override: Optional[str] = None,
+        platform_override: Optional[str] = None,
     ) -> None: ...
 
     async def notify_raw(
@@ -36,6 +38,8 @@ class NotificationPort(Protocol):
         user_id: str,
         account_id: str,
         text: str,
+        channel_id_override: Optional[str] = None,
+        platform_override: Optional[str] = None,
     ) -> None: ...
 
     async def notify_file_bytes(
@@ -45,6 +49,8 @@ class NotificationPort(Protocol):
         file_bytes: bytes,
         filename: str,
         title: str,
+        channel_id_override: Optional[str] = None,
+        platform_override: Optional[str] = None,
     ) -> None: ...
 
     async def notify_document_link(
@@ -53,6 +59,8 @@ class NotificationPort(Protocol):
         account_id: str,
         url: str,
         label: str,
+        channel_id_override: Optional[str] = None,
+        platform_override: Optional[str] = None,
     ) -> None: ...
 
 
@@ -146,6 +154,8 @@ async def deliver_deep_research(
     model: str = "",
     total_tokens: int = 0,
     second_pass: bool = False,
+    channel_id_override: Optional[str] = None,
+    platform_override: Optional[str] = None,
 ) -> None:
     """
     Deliver deep research result:
@@ -167,6 +177,8 @@ async def deliver_deep_research(
                     await notification.notify_document_link(
                         user_id=user_id, account_id=account_id,
                         url=url1, label="Round 1 — raw research",
+                        channel_id_override=channel_id_override,
+                        platform_override=platform_override,
                     )
                 except Exception as exc:
                     logger.error("[DeepResearch] notify_document_link round1 failed: %s", exc, exc_info=True)
@@ -177,6 +189,8 @@ async def deliver_deep_research(
                     await notification.notify_document_link(
                         user_id=user_id, account_id=account_id,
                         url=url2, label="Round 2 — verified report",
+                        channel_id_override=channel_id_override,
+                        platform_override=platform_override,
                     )
                 except Exception as exc:
                     logger.error("[DeepResearch] notify_document_link round2 failed: %s", exc, exc_info=True)
@@ -187,6 +201,8 @@ async def deliver_deep_research(
                     await notification.notify_document_link(
                         user_id=user_id, account_id=account_id,
                         url=url, label="Research report (raw)",
+                        channel_id_override=channel_id_override,
+                        platform_override=platform_override,
                     )
                 except Exception as exc:
                     logger.error("[DeepResearch] notify_document_link report failed: %s", exc, exc_info=True)
@@ -228,6 +244,8 @@ async def deliver_deep_research(
                 "user_id": user_id,
                 "account_id": account_id,
                 "session_id": session_id or "",
+                **({"origin_channel_id": channel_id_override} if channel_id_override else {}),
+                **({"origin_platform": platform_override} if platform_override else {}),
             },
             deadline_seconds=720,
         )

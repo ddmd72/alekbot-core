@@ -24,7 +24,7 @@ from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.llm import Message, MessagePart
 from ..infrastructure.agent_config import DOMAIN_RESEARCHER
 from ..infrastructure.agent_manifest import DOMAIN_RESEARCHER as DOMAIN_RESEARCHER_DESCRIPTOR
-from ..infrastructure.delegation_engine import DelegationEngine, DelegationContext
+from ..infrastructure.delegation_engine import DelegationEngine
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
@@ -143,11 +143,7 @@ class DomainResearcherAgent(BaseAgent):
                 result = await engine.execute(
                     call_llm=self._call_llm,
                     base_request=base_request,
-                    context=DelegationContext(
-                        user_id=self.user_id,
-                        account_id=message.context.get("account_id"),
-                        session_id=message.context.get("session_id"),
-                    ),
+                    context=message.context,
                     max_turns=DOMAIN_RESEARCHER.max_delegation_turns,
                     calling_agent_id=self.agent_id,
                 )

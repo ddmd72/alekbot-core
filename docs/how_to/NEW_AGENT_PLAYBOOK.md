@@ -193,7 +193,7 @@ Quick, Smart, and DomainResearcher agents.
 3. Set `_descriptor` class attribute on your agent.
 4. In `execute()`, build tool declarations and use the engine:
    ```python
-   from ..infrastructure.delegation_engine import DelegationEngine, DelegationContext
+   from ..infrastructure.delegation_engine import DelegationEngine
 
    tools = None
    if self.coordinator:
@@ -205,7 +205,7 @@ Quick, Smart, and DomainResearcher agents.
    engine = DelegationEngine(self.coordinator)
    result = await engine.execute(
        call_llm=self._call_llm, base_request=base_request,
-       context=DelegationContext(user_id=..., account_id=..., session_id=...),
+       context=message.context,  # dict from AgentMessage, spread as **context by engine
        max_turns=MY_AGENT.max_delegation_turns,
    )
    # result.text is the final LLM response

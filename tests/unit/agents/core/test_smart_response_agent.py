@@ -22,7 +22,6 @@ from src.agents.core.smart_response_agent import (
 from src.infrastructure.delegation_engine import (
     ToolResult as ToolResponse,
     DelegationEngine,
-    DelegationContext,
     _format_result,
     _format_email_search_compact,
 )
@@ -298,7 +297,7 @@ class TestSmartResponseAgentParallelExecution:
 
         results = await engine._execute_tool_calls(
             tool_calls=tool_calls,
-            context=DelegationContext(user_id="user123"),
+            context={"user_id": "user123"},
             intent_remap={},
             calling_agent_id="test",
             max_retries=0,
@@ -570,7 +569,7 @@ class TestDelegateToAgentWithRetry:
 
     @pytest.fixture
     def ctx(self):
-        return DelegationContext(user_id="u1", session_id="s1")
+        return {"user_id": "u1", "session_id": "s1"}
 
     async def test_no_intent_returns_error(self, engine, ctx):
         tc = ToolCall(name="delegate_to_specialist", args={"query": "q"})
@@ -827,7 +826,7 @@ class TestParallelExceptionHandling:
         ]
         results = await engine._execute_tool_calls(
             tool_calls=tool_calls,
-            context=DelegationContext(user_id="u1"),
+            context={"user_id": "u1"},
             intent_remap={},
             calling_agent_id="test",
             max_retries=0,
@@ -1134,7 +1133,7 @@ class TestDelegateExtractsFileData:
             args={"intent": "open_file", "query": "get photo", "context": {"file_ref": "photo.jpg"}}
         )
         result = await engine._dispatch_single(
-            tool_call, DelegationContext(user_id="user1"), {}, "test", 0, 0,
+            tool_call, {"user_id": "user1"}, {}, "test", 0, 0,
         )
         assert result.file_data == file_data
 
@@ -1154,6 +1153,6 @@ class TestDelegateExtractsFileData:
             args={"intent": "search_memory", "query": "find facts"}
         )
         result = await engine._dispatch_single(
-            tool_call, DelegationContext(user_id="user1"), {}, "test", 0, 0,
+            tool_call, {"user_id": "user1"}, {}, "test", 0, 0,
         )
         assert result.file_data is None
