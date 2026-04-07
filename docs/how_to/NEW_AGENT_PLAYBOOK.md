@@ -179,6 +179,45 @@ class FooAgent(BaseAgent):
         return ["web_search_agent"]
 ```
 
+### Agents with Specialist Delegation (Tool Calling)
+
+If your agent needs to call other specialists (search_memory, search_web, open_file, etc.),
+use `DelegationEngine` instead of building a custom loop. This is the same engine used by
+Quick, Smart, and DomainResearcher agents.
+
+1. Add `allowed_intents` to your `AgentDescriptor` in `agent_manifest.py`:
+   ```python
+   allowed_intents=frozenset({Intent.SEARCH_MEMORY, Intent.OPEN_FILE}),
+   ```
+2. Add `max_delegation_turns` to your agent config in `agent_config.py`.
+3. Set `_descriptor` class attribute on your agent.
+4. In `execute()`, build tool declarations and use the engine:
+   ```python
+   from ..infrastructure.delegation_engine import DelegationEngine, DelegationContext
+
+   tools = None
+   if self.coordinator:
+       available = self.coordinator.get_available_intents_for(self._descriptor)
+       if available:
+           tools = [self._build_delegate_tool_declaration(available)]
+
+   base_request = LLMRequest(model_name=..., system_instruction=..., messages=..., tools=tools, ...)
+   engine = DelegationEngine(self.coordinator)
+   result = await engine.execute(
+       call_llm=self._call_llm, base_request=base_request,
+       context=DelegationContext(user_id=..., account_id=..., session_id=...),
+       max_turns=MY_AGENT.max_delegation_turns,
+   )
+   # result.text is the final LLM response
+   # result.failed indicates max_turns exhausted
+   ```
+
+The engine handles: multi-turn iteration, memory-first parallel dispatch, history management,
+`raw_content` preservation, `file_data` forwarding. Your agent only builds the `LLMRequest`
+and post-processes the `DelegationResult`.
+
+Reference: `DomainResearcherAgent` (`src/agents/domain_researcher_agent.py`).
+
 **Provider-specific tools** — use flags on `LLMRequest`, never inject `types.Tool(...)` from agent or factory:
 - `use_code_execution=True` — Gemini sandbox Python execution (`ComputeAgent` reference)
 - `use_grounding=True` — Google Search grounding (`WebSearchAgent` reference)

@@ -379,6 +379,7 @@ class DomainResearcherAgentConfig:
     timeout_ms: int = 120_000     # Reasoning models take longer (high effort)
     context_window: int = 30      # Bound channel history messages to fetch
     thinking_effort: Optional[str] = "high"  # Deep analytical reasoning
+    max_delegation_turns: int = 5  # Multi-turn tool calling loop
 
 
 DOMAIN_RESEARCHER = DomainResearcherAgentConfig()

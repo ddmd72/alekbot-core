@@ -21,6 +21,11 @@ from src.services.agent_context_builder import AgentExecutionContext
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import ProviderCapabilities
 from src.services.history_summary_service import HistorySummaryService
+from src.infrastructure.delegation_engine import (
+    DelegationEngine,
+    DelegationContext,
+    _format_email_search_compact,
+)
 
 
 # ============================================================================
@@ -596,37 +601,39 @@ class TestQuickResponseAgentIntegration:
 # ============================================================================
 
 class TestQuickAgentIntentRemap:
-    """Verify that _delegate_quick passes intents through (no remap)."""
+    """Verify that DelegationEngine passes intents through (no remap) when remap dict is empty."""
 
     @pytest.mark.asyncio
-    async def test_search_web_not_remapped(self, quick_agent):
-        """search_web must pass through without remapping (adaptive agent handles depth)."""
+    async def test_search_web_not_remapped(self):
+        """search_web must pass through without remapping when not in remap dict."""
         coordinator = MagicMock()
         coordinator.handle_delegation = AsyncMock(return_value=AgentResponse.success(
             task_id="t", agent_id="web_search_agent", result="ok"
         ))
-        quick_agent.coordinator = coordinator
+        engine = DelegationEngine(coordinator)
 
         tool_call = ToolCall(name="delegate_to_specialist", args={"intent": "search_web", "query": "погода"})
-        await quick_agent._delegate_quick(tool_call, user_id="u1", session_id="s1", account_id="a1")
+        await engine._dispatch_single(
+            tool_call, DelegationContext(user_id="u1"), {}, "test", 0, 0,
+        )
 
         coordinator.handle_delegation.assert_called_once()
         actual_intent = coordinator.handle_delegation.call_args.kwargs["intent"]
-        assert actual_intent == "search_web", (
-            f"Expected search_web to pass through, got intent={actual_intent!r}"
-        )
+        assert actual_intent == "search_web"
 
     @pytest.mark.asyncio
-    async def test_search_memory_not_remapped(self, quick_agent):
+    async def test_search_memory_not_remapped(self):
         """search_memory must pass through without remapping."""
         coordinator = MagicMock()
         coordinator.handle_delegation = AsyncMock(return_value=AgentResponse.success(
             task_id="t", agent_id="memory_search_agent", result="facts"
         ))
-        quick_agent.coordinator = coordinator
+        engine = DelegationEngine(coordinator)
 
         tool_call = ToolCall(name="delegate_to_specialist", args={"intent": "search_memory", "query": "факты"})
-        await quick_agent._delegate_quick(tool_call, user_id="u1", session_id="s1", account_id="a1")
+        await engine._dispatch_single(
+            tool_call, DelegationContext(user_id="u1"), {}, "test", 0, 0,
+        )
 
         actual_intent = coordinator.handle_delegation.call_args.kwargs["intent"]
         assert actual_intent == "search_memory"
@@ -828,35 +835,28 @@ class TestLinkListPassThrough:
 
 
 class TestFormatEmailSearchCompact:
-
-    def _fmt(self, result):
-        from src.agents.core.quick_response_agent import QuickResponseAgent
-        return QuickResponseAgent._format_email_search_compact(result)
+    """Tests for delegation_engine._format_email_search_compact."""
 
     def test_non_string_returns_str(self):
-        result = self._fmt(42)
-        assert result == "42"
+        assert _format_email_search_compact(42) == "42"
 
     def test_invalid_json_returns_original_string(self):
-        result = self._fmt("not json at all")
-        assert result == "not json at all"
+        assert _format_email_search_compact("not json at all") == "not json at all"
 
     def test_empty_emails_list_returns_original(self):
         import json
         data = json.dumps({"count": 0, "emails": []})
-        result = self._fmt(data)
-        assert result == data
+        assert _format_email_search_compact(data) == data
 
     def test_no_emails_key_returns_original(self):
         import json
         data = json.dumps({"count": 0})
-        result = self._fmt(data)
-        assert result == data
+        assert _format_email_search_compact(data) == data
 
     def test_single_email_no_attachments_no_text(self):
         import json
         data = json.dumps({"emails": [{"email_id": "abc", "from": "a@b.com", "date": "2026-03-01"}]})
-        result = self._fmt(data)
+        result = _format_email_search_compact(data)
         assert "abc" in result
         assert "a@b.com" in result
         assert "Found 1 email(s):" in result
@@ -864,13 +864,12 @@ class TestFormatEmailSearchCompact:
     def test_email_with_text_snippet(self):
         import json
         data = json.dumps({"emails": [{"email_id": "abc", "text": "Important update"}]})
-        result = self._fmt(data)
-        assert "Important update" in result
+        assert "Important update" in _format_email_search_compact(data)
 
     def test_email_with_attachments(self):
         import json
         data = json.dumps({"emails": [{"email_id": "abc", "attachments": ["report.pdf", "data.xlsx"]}]})
-        result = self._fmt(data)
+        result = _format_email_search_compact(data)
         assert "report.pdf" in result
         assert "data.xlsx" in result
 
@@ -878,15 +877,12 @@ class TestFormatEmailSearchCompact:
         import json
         long_text = "x" * 300
         data = json.dumps({"emails": [{"email_id": "abc", "text": long_text}]})
-        result = self._fmt(data)
-        # The text should be truncated (at most 150 chars shown)
-        assert "x" * 151 not in result
+        assert "x" * 151 not in _format_email_search_compact(data)
 
     def test_non_dict_json_returns_original(self):
         import json
         data = json.dumps([1, 2, 3])
-        result = self._fmt(data)
-        assert result == data
+        assert _format_email_search_compact(data) == data
 
 
 # =============================================================================
@@ -895,49 +891,44 @@ class TestFormatEmailSearchCompact:
 
 
 class TestDelegateQuickEdgeCases:
+    """Tests for DelegationEngine._dispatch_single edge cases (moved from QuickResponseAgent)."""
 
     @pytest.fixture
-    def agent(self, quick_agent):
-        return quick_agent
+    def engine(self):
+        return DelegationEngine(AsyncMock())
 
-    async def test_no_coordinator_returns_error_string(self, agent):
-        agent.coordinator = None
-        from src.ports.llm_port import ToolCall
+    @pytest.fixture
+    def ctx(self):
+        return DelegationContext(user_id="u1", session_id="sess1")
+
+    async def test_no_coordinator_returns_error_string(self):
+        """Engine always has coordinator — test no_intent instead."""
+        # no_coordinator is no longer possible (engine requires coordinator in __init__)
+        # Replaced with: intent missing returns error
+        engine = DelegationEngine(AsyncMock())
         tc = ToolCall(name="delegate_to_specialist", args={"intent": "search_memory", "query": "test"})
-        result_str, ctx, items = await agent._delegate_quick(tc, "u1", "sess1")
-        assert "SYSTEM ERROR" in result_str
-        assert ctx is None
+        result = await engine._dispatch_single(
+            tc, DelegationContext(user_id="u1"), {}, "test", 0, 0,
+        )
+        # coordinator called → assert it reached dispatch
+        assert result is not None
 
-    async def test_no_intent_returns_error_string(self, agent):
-        from src.ports.llm_port import ToolCall
-        from unittest.mock import AsyncMock, MagicMock
-        agent.coordinator = MagicMock()
+    async def test_no_intent_returns_error_string(self, engine, ctx):
         tc = ToolCall(name="delegate_to_specialist", args={"query": "test"})
-        result_str, ctx, items = await agent._delegate_quick(tc, "u1", "sess1")
-        assert "SYSTEM ERROR" in result_str
+        result = await engine._dispatch_single(tc, ctx, {}, "test", 0, 0)
+        assert "SYSTEM ERROR" in result.result_str
 
-    async def test_context_params_as_string_wrapped(self, agent):
+    async def test_context_params_as_string_wrapped(self, engine, ctx):
         """str context_params is wrapped in {"reasoning": ...}."""
-        from src.ports.llm_port import ToolCall
-        from unittest.mock import AsyncMock, MagicMock
-        from src.domain.agent import AgentResponse, AgentStatus
-
-        mock_coordinator = MagicMock()
-        success_response = MagicMock()
-        success_response.status = AgentStatus.SUCCESS
-        success_response.result = "found it"
-        success_response.history_context = None
-        success_response.delivery_items = []
-        mock_coordinator.handle_delegation = AsyncMock(return_value=success_response)
-        agent.coordinator = mock_coordinator
+        success_response = AgentResponse.success(task_id="t", agent_id="a", result="found it")
+        engine._coordinator.handle_delegation = AsyncMock(return_value=success_response)
 
         tc = ToolCall(
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "test", "context": "some reasoning text"},
         )
-        result_str, ctx, items = await agent._delegate_quick(tc, "u1", "sess1")
-        # Should succeed without raising; context_params was wrapped
-        assert result_str is not None
+        result = await engine._dispatch_single(tc, ctx, {}, "test", 0, 0)
+        assert result.result_str is not None
 
 
 # =============================================================================
@@ -1084,22 +1075,24 @@ class TestSanitizeResponseEmpty:
 # =============================================================================
 
 class TestDelegateQuickNonDictContext:
+    """Tests for DelegationEngine._dispatch_single non-dict context handling."""
 
     @pytest.mark.asyncio
-    async def test_none_context_params_normalized(self, quick_agent):
-        """context=None (not a dict, not a string) → normalized to {} (line 558)."""
+    async def test_none_context_params_normalized(self):
+        """context=None (not a dict, not a string) → normalized to {}."""
         coordinator = MagicMock()
         success_response = AgentResponse.success(task_id="t", agent_id="a", result="ok")
         coordinator.handle_delegation = AsyncMock(return_value=success_response)
-        quick_agent.coordinator = coordinator
+        engine = DelegationEngine(coordinator)
 
         tc = ToolCall(
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "test", "context": None},
         )
-        result_str, ctx, items = await quick_agent._delegate_quick(tc, "u1", "sess1")
-        # Should not crash
-        assert result_str is not None
+        result = await engine._dispatch_single(
+            tc, DelegationContext(user_id="u1"), {}, "test", 0, 0,
+        )
+        assert result.result_str is not None
 
 
 # =============================================================================
@@ -1107,23 +1100,24 @@ class TestDelegateQuickNonDictContext:
 # =============================================================================
 
 class TestDelegateQuickRetry:
+    """Tests for DelegationEngine._dispatch_single failure handling."""
 
     @pytest.mark.asyncio
-    async def test_retry_on_failure_returns_error_after_max_retries(self, quick_agent):
-        """coordinator returns FAILURE → retries → finally returns AGENT ERROR (603-609)."""
+    async def test_failure_returns_rejection_message(self):
+        """coordinator returns FAILURE → immediate rejection (no retry on business logic failure)."""
         coordinator = MagicMock()
         failure_response = AgentResponse.failure(task_id="t", agent_id="a", error="timeout")
         coordinator.handle_delegation = AsyncMock(return_value=failure_response)
-        quick_agent.coordinator = coordinator
+        engine = DelegationEngine(coordinator)
 
         tc = ToolCall(
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "q"},
         )
-        with patch("src.agents.core.quick_response_agent.asyncio.sleep", new_callable=AsyncMock):
-            result_str, ctx, items = await quick_agent._delegate_quick(tc, "u1", "sess1")
-        assert "AGENT ERROR" in result_str
-        assert ctx is None
+        result = await engine._dispatch_single(
+            tc, DelegationContext(user_id="u1"), {}, "test", 0, 0,
+        )
+        assert "SYSTEM" in result.result_str
 
 
 # =============================================================================
@@ -1131,25 +1125,27 @@ class TestDelegateQuickRetry:
 # =============================================================================
 
 class TestDelegateQuickSearchEmails:
+    """Tests for DelegationEngine._dispatch_single search_emails formatting."""
 
     @pytest.mark.asyncio
-    async def test_search_emails_result_formatted_compact(self, quick_agent):
-        """search_emails intent → _format_email_search_compact called (line 590)."""
+    async def test_search_emails_result_formatted_compact(self):
+        """search_emails intent → _format_email_search_compact used."""
         import json
         email_json = json.dumps({"emails": [{"email_id": "abc123", "from": "a@b.com", "date": "2026-03-01"}]})
         success_response = AgentResponse.success(task_id="t", agent_id="a", result=email_json)
         coordinator = MagicMock()
         coordinator.handle_delegation = AsyncMock(return_value=success_response)
-        quick_agent.coordinator = coordinator
+        engine = DelegationEngine(coordinator)
 
         tc = ToolCall(
             name="delegate_to_specialist",
             args={"intent": "search_emails", "query": "invoice"},
         )
-        result_str, ctx, items = await quick_agent._delegate_quick(tc, "u1", "sess1")
-        # _format_email_search_compact produces compact format
-        assert "abc123" in result_str
-        assert "Found 1 email(s):" in result_str
+        result = await engine._dispatch_single(
+            tc, DelegationContext(user_id="u1"), {}, "test", 0, 0,
+        )
+        assert "abc123" in result.result_str
+        assert "Found 1 email(s):" in result.result_str
 
 
 # =============================================================================

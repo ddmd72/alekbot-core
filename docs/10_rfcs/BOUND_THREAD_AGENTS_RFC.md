@@ -381,7 +381,7 @@ if already bound (`$agent off` first).
 
 ## 8. Rollout Plan
 
-**Phase 1 — Channel binding + notification rework**
+**Phase 1 — Channel binding + notification rework** ✅ DONE
 1. `ChannelBinding` domain type
 2. `ChannelBindingPort` + Firestore adapter
 3. `ChannelBindingService` (cache + CRUD)
@@ -395,6 +395,16 @@ if already bound (`$agent off` first).
 10. `UserNotificationService`: `channel_id_override` + fallback chain
     (origin → primary → last_active legacy)
 11. `WorkerHandler`: propagate origin channel to notification
+
+**Phase 1b — Delegation tools for bound agents** ✅ DONE (2026-04-07)
+12. `DelegationEngine` (`src/infrastructure/delegation_engine.py`) — reusable multi-turn
+    tool-calling loop extracted from Smart/Quick agents. Shared by all agents.
+13. SmartResponseAgent + QuickResponseAgent migrated to DelegationEngine.
+14. `DomainResearcherAgent` uses DelegationEngine with `allowed_intents={open_file}`.
+15. `ConversationHandler`: strips `path` from `file_data` for bound channels —
+    agent accesses files via `open_file` delegation instead of inline conversion.
+16. Platform history timestamps: `SlackChannelHistorySource` passes `ts` as `Message.created_at`.
+17. `include_datetime=False` on prompt builder for bound agents (timestamps in history instead).
 
 **Phase 2 — Session-per-channel refactoring**
 12. `session_id = f"{user_id}:{channel_id}"` for non-DM channels (or all channels)
@@ -424,9 +434,9 @@ if already bound (`$agent off` first).
    For agents with multiple (compute → compute_math, compute_finance, etc.) —
    use the "generic" intent (`compute`), or let the agent decide internally?
 
-3. **File attachments.** Bound channel messages go through the normal
-   ConversationHandler flow — file processing already works. No special
-   handling needed unless isolation flags (Phase 2) skip file upload.
+3. **File attachments.** ✅ RESOLVED. Bound channels: file uploaded to GCS (shared flow),
+   but `path` stripped from `file_data` so adapters don't inline content. Agent sees
+   `[File: name (size)]` label in history, accesses content via `open_file` delegation.
 
 4. **Primary channel and Telegram.** Primary channel is persisted with platform
    info. If user uses both Slack and Telegram, should there be one primary

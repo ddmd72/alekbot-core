@@ -91,9 +91,10 @@ The central hub for all agent interactions.
 
 1. **Ingress:** `ConversationHandler` creates an `AgentMessage` and routes it to the `RouterAgent`.
 2. **Triage:** `RouterAgent` classifies the intent and delegates to `Quick` or `Smart` agents.
-3. **Specialization (Smart path):** `SmartResponseAgent` calls `delegate_to_specialist(intent, query)` → coordinator resolves via `AgentRegistry` → routes to specialist (`search_memory` or `search_web`).
-4. **Specialization (Quick path):** `QuickResponseAgent` calls `get_available_intents_for(descriptor)` to discover its available intents (same non-internal set as Smart). At dispatch time `intent_remap` substitutes `search_web` → `search_web_light`, routing to `WebSearchLightAgent`. `MAX_DELEGATION_TURNS=5`. See [Quick Agent Delegation](../quick_agent_delegation/README.md).
-5. **Aggregation:** Results are synthesized and returned to the user.
+3. **Specialization (Smart path):** `SmartResponseAgent` builds an `LLMRequest` with tools and passes it to `DelegationEngine.execute()`. The engine runs the multi-turn loop: LLM call → tool dispatch via `AgentCoordinator` → history update → repeat. Smart uses `terminal_tool="deliver_response"` to extract structured output. Post-processing converts `DelegationResult` into `SmartResponse`.
+4. **Specialization (Quick path):** Same `DelegationEngine.execute()` — builds `LLMRequest` with `intent_remap={"search_web": "search_web_light"}`. Engine handles loop, dispatch, parallel execution. Quick post-processes `DelegationResult.text` via `parse_llm_response`. See [Quick Agent Delegation](../quick_agent_delegation/README.md).
+5. **Specialization (Bound channel path):** `ConversationHandler` calls `coordinator.handle_delegation()` directly with the binding's intent. Bound agents (e.g. `DomainResearcherAgent`) use `DelegationEngine` for tool calling when `allowed_intents` is configured on their descriptor.
+6. **Aggregation:** Results are synthesized and returned to the user.
 
 ### 3.3 ACP v2: Agent Registry Pattern
 
@@ -105,6 +106,8 @@ ACP v1 had SmartAgent hardcoding tool schemas per specialist (tight coupling). A
 - **AgentRegistry** maps intents → descriptors. `get_available_intents()` returns non-internal intents. `get_available_intents_for(descriptor)` filters by descriptor's `allowed_intents`.
 - **SmartAgent** has 1 fixed tool: `delegate_to_specialist(intent, query, context)`. Never grows.
 - **QuickAgent** uses the same tool declaration, filtered via `get_available_intents_for`. Applies `intent_remap` at dispatch time.
+- **Bound agents** (e.g. `DomainResearcherAgent`) can declare `allowed_intents` on their descriptor to get a filtered tool set. Use `DelegationEngine` for multi-turn tool calling.
+- **DelegationEngine** (`src/infrastructure/delegation_engine.py`) — reusable multi-turn tool-calling loop. Shared by Smart, Quick, and bound agents. Owns: loop iteration, memory-first parallel dispatch via `AgentCoordinator`, tool response history management. Does NOT own: LLM parameters (agent's `LLMRequest`), response parsing (agent post-processes `DelegationResult`).
 - **AgentCoordinator** adds `handle_delegation()` — translates the generic tool call into a concrete AgentMessage routed to the right specialist.
 - **ExecutionMode:** SYNC (search queries, inline result) or ASYNC (long tasks, Cloud Tasks + callback).
 

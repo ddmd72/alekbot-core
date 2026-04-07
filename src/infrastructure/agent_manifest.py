@@ -517,6 +517,9 @@ DOMAIN_RESEARCHER = AgentDescriptor(
             "Designed for bound channel use with conversation history."
         ),
     },
+    allowed_intents=frozenset({
+        Intent.OPEN_FILE,
+    }),
 )
 
 

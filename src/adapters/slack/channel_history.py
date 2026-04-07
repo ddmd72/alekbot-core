@@ -72,7 +72,8 @@ class SlackChannelHistorySource:
                 continue
             # Bot's own messages → model role
             role = "model" if m.get("bot_id") or m.get("user") == self._bot_user_id else "user"
-            messages.append(Message(role=role, parts=[MessagePart(text=text)]))
+            ts = float(m["ts"]) if "ts" in m else None
+            messages.append(Message(role=role, parts=[MessagePart(text=text)], **({"created_at": ts} if ts else {})))
 
         logger.info(
             "📜 [ChannelHistory] Fetched %d messages from %s (raw=%d, after_marker=%d, limit=%d)",

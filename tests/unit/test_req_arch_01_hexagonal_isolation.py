@@ -251,9 +251,6 @@ def test_no_print_in_src():
 _AGENT_CLASS_WHITELIST = {
     "BaseAgent",
     "CircuitBreaker",
-    "ToolResponse",
-    "AgentLoopResult",
-    "_QuickLoopResult",
     "_TrackingFactManagement",
 }
 
@@ -1193,9 +1190,6 @@ def test_no_asyncio_run_in_src():
 _AGENT_OUTSIDE_AGENTS_WHITELIST = {
     "BaseAgent",
     "CircuitBreaker",
-    "ToolResponse",
-    "AgentLoopResult",
-    "_QuickLoopResult",
     "_TrackingFactManagement",
 }
 

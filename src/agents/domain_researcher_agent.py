@@ -11,6 +11,9 @@ classifies each as KNOWLEDGE/ALGORITHM/CONSTRAINT/STYLE, scores by importance,
 and produces a structured Domain Manifest for agent construction.
 
 The agent mirrors the user's language for all interactions.
+
+Supports specialist delegation via DelegationEngine (search_memory, search_web,
+open_file, etc.) — tools are available when coordinator is configured.
 """
 
 import time
@@ -19,10 +22,12 @@ from typing import Optional
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.llm import Message, MessagePart
+from ..infrastructure.agent_config import DOMAIN_RESEARCHER
+from ..infrastructure.agent_manifest import DOMAIN_RESEARCHER as DOMAIN_RESEARCHER_DESCRIPTOR
+from ..infrastructure.delegation_engine import DelegationEngine, DelegationContext
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
-from ..infrastructure.agent_config import DOMAIN_RESEARCHER
 
 
 class DomainResearcherAgent(BaseAgent):
@@ -30,9 +35,11 @@ class DomainResearcherAgent(BaseAgent):
     Multi-turn conversational agent for domain competency research.
 
     Receives conversation history via message.context["history"] (from bound
-    channel handler). Each invocation = one LLM call with full history context.
-    System prompt loaded via PromptBuilder (agent_type="domain_researcher").
+    channel handler). Uses DelegationEngine for tool calling when coordinator
+    is configured; falls back to single LLM call otherwise.
     """
+
+    _descriptor = DOMAIN_RESEARCHER_DESCRIPTOR
 
     TEMPERATURE = DOMAIN_RESEARCHER.temperature
 
@@ -78,6 +85,7 @@ class DomainResearcherAgent(BaseAgent):
                 account_id=message.context.get("account_id"),
                 routing_metadata=None,
                 include_biographical=False,
+                include_datetime=False,
             )
         except Exception as exc:
             self._on_agent_error(exc, "prompt_builder")
@@ -95,7 +103,10 @@ class DomainResearcherAgent(BaseAgent):
             parts_data = entry.get("parts", [])
             parts = [MessagePart(text=p.get("text", "")) for p in parts_data if p.get("text")]
             if parts:
-                messages.append(Message(role=role, parts=parts))
+                kwargs = {}
+                if "created_at" in entry:
+                    kwargs["created_at"] = entry["created_at"]
+                messages.append(Message(role=role, parts=parts, **kwargs))
 
         # Append current user message with attachments (file_data etc.)
         current_parts = message.context.get("current_message_parts", [])
@@ -104,19 +115,53 @@ class DomainResearcherAgent(BaseAgent):
         else:
             messages.append(Message(role="user", parts=[MessagePart(text=query)]))
 
+        messages = self._inject_timestamps(messages)
+
         try:
-            request = LLMRequest(
+            # Build tool declarations (empty if no coordinator/registry)
+            tools = None
+            if self.coordinator:
+                available = self.coordinator.get_available_intents_for(self._descriptor)
+                if available:
+                    tools = [self._build_delegate_tool_declaration(available)]
+
+            base_request = LLMRequest(
                 model_name=self.model_name,
                 system_instruction=system_prompt,
                 messages=messages,
+                tools=tools,
                 temperature=self.TEMPERATURE,
                 max_tokens=DOMAIN_RESEARCHER.max_tokens,
                 thinking=DOMAIN_RESEARCHER.thinking_effort,
             )
-            response = await self._call_llm(request)
 
-            result_text = response.text or "No response from model."
-            token_count = response.usage_metadata.total_tokens if response.usage_metadata else 0
+            if tools and self.coordinator:
+                # Multi-turn delegation loop
+                engine = DelegationEngine(self.coordinator)
+                result = await engine.execute(
+                    call_llm=self._call_llm,
+                    base_request=base_request,
+                    context=DelegationContext(
+                        user_id=self.user_id,
+                        account_id=message.context.get("account_id"),
+                        session_id=message.context.get("session_id"),
+                    ),
+                    max_turns=DOMAIN_RESEARCHER.max_delegation_turns,
+                    calling_agent_id=self.agent_id,
+                )
+                if result.failed:
+                    return AgentResponse.failure(
+                        task_id=message.task_id,
+                        agent_id=self.agent_id,
+                        error="max_turns_exhausted",
+                    )
+                result_text = result.text or "No response from model."
+            else:
+                # Single LLM call (no tools available)
+                response = await self._call_llm(base_request)
+                result_text = response.text or "No response from model."
+
+            token_count = 0
             self._on_agent_success(len(result_text), token_count, output_text=result_text)
 
             return AgentResponse.success(

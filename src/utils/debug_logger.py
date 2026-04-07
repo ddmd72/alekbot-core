@@ -336,8 +336,13 @@ class PromptDebugLogger:
                 if "model" in metadata:
                     lines.append(f"MODEL: {metadata['model']}")
                 if "tokens" in metadata:
-                    lines.append(f"TOKENS: {metadata['tokens']}")
-                rest = {k: v for k, v in metadata.items() if k not in ("model", "tokens")}
+                    token_str = str(metadata['tokens'])
+                    cache_r = metadata.get('cache_read_tokens')
+                    cache_c = metadata.get('cache_creation_tokens')
+                    if cache_r or cache_c:
+                        token_str += f" (cache_read={cache_r or 0}, cache_creation={cache_c or 0})"
+                    lines.append(f"TOKENS: {token_str}")
+                rest = {k: v for k, v in metadata.items() if k not in ("model", "tokens", "cache_read_tokens", "cache_creation_tokens")}
                 if rest:
                     lines.append(f"METADATA: {rest}")
             lines.append("=" * 80)

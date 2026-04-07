@@ -499,6 +499,13 @@ class ConversationHandler(ConversationHandlerPort):
                 await self.agent_factory.ensure_agents_for_user(context.user_id)
                 session_store = self.agent_factory.get_session_store()
 
+                # Bound channels: strip binary path so adapters don't inline file content.
+                # Agent accesses files via open_file delegation instead.
+                if mode.is_bound:
+                    for part in message_parts:
+                        if part.file_data and "path" in part.file_data:
+                            part.file_data = {k: v for k, v in part.file_data.items() if k != "path"}
+
                 agent_context = {
                     "session_id": context.session_id,
                     "user_id": context.user_id,

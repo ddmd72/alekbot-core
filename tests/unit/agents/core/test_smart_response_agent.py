@@ -17,8 +17,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.agents.core.smart_response_agent import (
     SmartResponseAgent,
-    ToolResponse,
     create_smart_response_agent
+)
+from src.infrastructure.delegation_engine import (
+    ToolResult as ToolResponse,
+    DelegationEngine,
+    DelegationContext,
+    _format_result,
+    _format_email_search_compact,
 )
 from src.domain.agent import AgentMessage, AgentConfig, AgentIntent, AgentStatus, AgentResponse
 from src.domain.messaging import SmartResponse
@@ -272,28 +278,31 @@ class TestSmartResponseAgentExecute:
 
 class TestSmartResponseAgentParallelExecution:
     @pytest.mark.asyncio
-    async def test_memory_first_then_parallel(self, smart_agent):
-        tool_calls = [
-            ToolCall(name="search_memory", args={"query": "bio"}),
-            ToolCall(name="ask_web_search_agent", args={"query": "news"}),
-            ToolCall(name="ask_web_search_agent", args={"query": "prices"})
-        ]
-
+    async def test_memory_first_then_parallel(self):
+        """DelegationEngine executes search_memory before other calls."""
         call_order = []
 
-        async def delegate_side_effect(tool_call, **kwargs):
-            call_order.append(tool_call.name)
-            if tool_call.name == "search_memory":
-                return ToolResponse(name=tool_call.name, result_str="memory")
-            await asyncio.sleep(0)
-            return ToolResponse(name=tool_call.name, result_str="web")
+        async def mock_handle_delegation(intent, query, context, calling_agent_id=""):
+            call_order.append(intent)
+            return AgentResponse.success(task_id="t", agent_id="a", result="ok")
 
-        smart_agent._delegate_to_agent_with_retry = AsyncMock(side_effect=delegate_side_effect)
+        mock_coordinator = AsyncMock()
+        mock_coordinator.handle_delegation = AsyncMock(side_effect=mock_handle_delegation)
 
-        results = await smart_agent._execute_agents_smart_parallel(
+        engine = DelegationEngine(mock_coordinator)
+        tool_calls = [
+            ToolCall(name="delegate_to_specialist", args={"intent": "search_memory", "query": "bio"}),
+            ToolCall(name="delegate_to_specialist", args={"intent": "search_web", "query": "news"}),
+            ToolCall(name="delegate_to_specialist", args={"intent": "search_web", "query": "prices"}),
+        ]
+
+        results = await engine._execute_tool_calls(
             tool_calls=tool_calls,
-            user_id="user123",
-            session_id="session123"
+            context=DelegationContext(user_id="user123"),
+            intent_remap={},
+            calling_agent_id="test",
+            max_retries=0,
+            retry_backoff=0,
         )
 
         assert call_order[0] == "search_memory"
@@ -552,62 +561,65 @@ class TestDeliverResponseTool:
 # =========================================================================
 
 class TestDelegateToAgentWithRetry:
+    """Tests for DelegationEngine._dispatch_single (moved from SmartResponseAgent)."""
 
-    async def test_no_coordinator_returns_error(self, smart_agent):
-        smart_agent.coordinator = None
-        tc = ToolCall(name="delegate_to_specialist", args={"intent": "search_memory", "query": "q"})
-        result = await smart_agent._delegate_to_agent_with_retry(tc, "u1", "s1")
-        assert "SYSTEM ERROR" in result.result_str
+    @pytest.fixture
+    def engine(self):
+        mock_coordinator = AsyncMock()
+        return DelegationEngine(mock_coordinator)
 
-    async def test_no_intent_returns_error(self, smart_agent):
+    @pytest.fixture
+    def ctx(self):
+        return DelegationContext(user_id="u1", session_id="s1")
+
+    async def test_no_intent_returns_error(self, engine, ctx):
         tc = ToolCall(name="delegate_to_specialist", args={"query": "q"})
-        result = await smart_agent._delegate_to_agent_with_retry(tc, "u1", "s1")
+        result = await engine._dispatch_single(tc, ctx, {}, "test", 0, 0)
         assert "SYSTEM ERROR" in result.result_str
 
-    async def test_str_context_params_wrapped_as_reasoning(self, smart_agent):
+    async def test_str_context_params_wrapped_as_reasoning(self, engine, ctx):
         """context as string is wrapped into {"reasoning": ...}."""
         success_resp = AgentResponse.success(task_id="t", agent_id="a", result="data")
-        smart_agent.coordinator.handle_delegation = AsyncMock(return_value=success_resp)
+        engine._coordinator.handle_delegation = AsyncMock(return_value=success_resp)
         tc = ToolCall(
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "q", "context": "some context reasoning"},
         )
-        result = await smart_agent._delegate_to_agent_with_retry(tc, "u1", "s1")
+        result = await engine._dispatch_single(tc, ctx, {}, "test", 0, 0)
         assert result.result_str == "data"
 
-    async def test_non_dict_context_params_becomes_empty(self, smart_agent):
+    async def test_non_dict_context_params_becomes_empty(self, engine, ctx):
         success_resp = AgentResponse.success(task_id="t", agent_id="a", result="data")
-        smart_agent.coordinator.handle_delegation = AsyncMock(return_value=success_resp)
+        engine._coordinator.handle_delegation = AsyncMock(return_value=success_resp)
         tc = ToolCall(
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "q", "context": 42},
         )
-        result = await smart_agent._delegate_to_agent_with_retry(tc, "u1", "s1")
+        result = await engine._dispatch_single(tc, ctx, {}, "test", 0, 0)
         assert result.result_str == "data"
 
-    async def test_failed_delegation_returns_error_result(self, smart_agent):
-        """Non-SUCCESS response returns a rejection ToolResponse without retry."""
+    async def test_failed_delegation_returns_error_result(self, engine, ctx):
+        """Non-SUCCESS response returns a rejection ToolResult without retry."""
         failed_resp = AgentResponse.failure(task_id="t", agent_id="a", error="not found")
-        smart_agent.coordinator.handle_delegation = AsyncMock(return_value=failed_resp)
+        engine._coordinator.handle_delegation = AsyncMock(return_value=failed_resp)
         tc = ToolCall(
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "q"},
         )
-        result = await smart_agent._delegate_to_agent_with_retry(tc, "u1", "s1")
+        result = await engine._dispatch_single(tc, ctx, {}, "test", 0, 0)
         assert "SYSTEM" in result.result_str
-        # Should only have been called once (no retry on FAILED)
-        smart_agent.coordinator.handle_delegation.assert_called_once()
+        engine._coordinator.handle_delegation.assert_called_once()
 
-    async def test_search_emails_uses_compact_formatter(self, smart_agent):
+    async def test_search_emails_uses_compact_formatter(self, engine, ctx):
         import json as _json
         email_json = _json.dumps({"emails": [{"email_id": "e1", "from": "x@y.com", "date": "2026"}]})
         success_resp = AgentResponse.success(task_id="t", agent_id="a", result=email_json)
-        smart_agent.coordinator.handle_delegation = AsyncMock(return_value=success_resp)
+        engine._coordinator.handle_delegation = AsyncMock(return_value=success_resp)
         tc = ToolCall(
             name="delegate_to_specialist",
             args={"intent": "search_emails", "query": "invoice"},
         )
-        result = await smart_agent._delegate_to_agent_with_retry(tc, "u1", "s1")
+        result = await engine._dispatch_single(tc, ctx, {}, "test", 0, 0)
         assert "e1" in result.result_str
         assert "x@y.com" in result.result_str
 
@@ -617,23 +629,24 @@ class TestDelegateToAgentWithRetry:
 # =========================================================================
 
 class TestFormatAgentResult:
+    """Tests for delegation_engine._format_result (moved from SmartResponseAgent)."""
 
-    def test_list_result(self, smart_agent):
-        result = smart_agent._format_agent_result(["item1", "item2"])
+    def test_list_result(self):
+        result = _format_result("search_memory", ["item1", "item2"])
         assert "item1" in result
         assert "item2" in result
 
-    def test_smart_response_result(self, smart_agent):
+    def test_smart_response_result(self):
         sr = SmartResponse(text="Formatted text")
-        result = smart_agent._format_agent_result(sr)
+        result = _format_result("search_memory", sr)
         assert result == "Formatted text"
 
-    def test_str_result(self, smart_agent):
-        result = smart_agent._format_agent_result("plain string")
+    def test_str_result(self):
+        result = _format_result("search_memory", "plain string")
         assert result == "plain string"
 
-    def test_int_result_converted(self, smart_agent):
-        result = smart_agent._format_agent_result(42)
+    def test_int_result_converted(self):
+        result = _format_result("search_memory", 42)
         assert result == "42"
 
 
@@ -642,20 +655,18 @@ class TestFormatAgentResult:
 # =========================================================================
 
 class TestFormatEmailSearchCompact:
-
-    def _fmt(self, result):
-        return SmartResponseAgent._format_email_search_compact(result)
+    """Tests for delegation_engine._format_email_search_compact."""
 
     def test_non_string_returns_str(self):
-        assert self._fmt(None) == "None"
+        assert _format_email_search_compact(None) == "None"
 
     def test_invalid_json_returns_original(self):
-        assert self._fmt("not json") == "not json"
+        assert _format_email_search_compact("not json") == "not json"
 
     def test_empty_emails_returns_original(self):
         import json as _json
         data = _json.dumps({"emails": []})
-        assert self._fmt(data) == data
+        assert _format_email_search_compact(data) == data
 
     def test_email_with_attachments_and_text(self):
         import json as _json
@@ -663,11 +674,10 @@ class TestFormatEmailSearchCompact:
             "email_id": "e1", "from": "a@b.com", "date": "2026",
             "attachments": ["report.pdf"], "text": "See attached"
         }]})
-        result = self._fmt(data)
+        result = _format_email_search_compact(data)
         assert "e1" in result
         assert "report.pdf" in result
         assert "See attached" in result
-        # Smart version adds instructions footer
         assert "get_email_details" in result
 
 
@@ -806,18 +816,22 @@ class TestSanitizeToolHistoryAdditional:
 
 class TestParallelExceptionHandling:
 
-    async def test_exception_in_parallel_wrapped_as_error(self, smart_agent):
+    async def test_exception_in_parallel_wrapped_as_error(self):
         """Exception in parallel agent call is captured, not propagated."""
+        mock_coordinator = AsyncMock()
+        mock_coordinator.handle_delegation = AsyncMock(side_effect=RuntimeError("agent crashed"))
+        engine = DelegationEngine(mock_coordinator)
+
         tool_calls = [
             ToolCall(name="delegate_to_specialist", args={"intent": "search_web", "query": "news"}),
         ]
-
-        async def fail(*args, **kwargs):
-            raise RuntimeError("agent crashed")
-
-        smart_agent._delegate_to_agent_with_retry = AsyncMock(side_effect=fail)
-        results = await smart_agent._execute_agents_smart_parallel(
-            tool_calls=tool_calls, user_id="u1", session_id="s1"
+        results = await engine._execute_tool_calls(
+            tool_calls=tool_calls,
+            context=DelegationContext(user_id="u1"),
+            intent_remap={},
+            calling_agent_id="test",
+            max_retries=0,
+            retry_backoff=0,
         )
         assert len(results) == 1
         assert "AGENT ERROR" in results[0].result_str
@@ -1101,44 +1115,45 @@ class TestToolResponseFileData:
 
 
 class TestDelegateExtractsFileData:
+    """Tests for DelegationEngine._dispatch_single file_data extraction."""
 
-    async def test_file_data_from_metadata(self, smart_agent):
-        """When coordinator returns file_data in metadata, ToolResponse captures it."""
-        mock_coord = AsyncMock()
-        smart_agent.coordinator = mock_coord
-
+    async def test_file_data_from_metadata(self):
+        """When coordinator returns file_data in metadata, ToolResult captures it."""
         file_data = {"path": "/tmp/img.jpg", "mime_type": "image/jpeg"}
+        mock_coord = AsyncMock()
         mock_coord.handle_delegation = AsyncMock(return_value=AgentResponse.success(
             task_id="t1",
             agent_id="file_management_agent_user1",
             result="File attached.",
             metadata={"file_data": file_data},
         ))
+        engine = DelegationEngine(mock_coord)
 
         tool_call = ToolCall(
             name="delegate_to_specialist",
             args={"intent": "open_file", "query": "get photo", "context": {"file_ref": "photo.jpg"}}
         )
-        result = await smart_agent._delegate_to_agent_with_retry(tool_call, "user1", "session1")
-
+        result = await engine._dispatch_single(
+            tool_call, DelegationContext(user_id="user1"), {}, "test", 0, 0,
+        )
         assert result.file_data == file_data
 
-    async def test_no_file_data_in_metadata(self, smart_agent):
-        """When no file_data in metadata, ToolResponse.file_data is None."""
+    async def test_no_file_data_in_metadata(self):
+        """When no file_data in metadata, ToolResult.file_data is None."""
         mock_coord = AsyncMock()
-        smart_agent.coordinator = mock_coord
-
         mock_coord.handle_delegation = AsyncMock(return_value=AgentResponse.success(
             task_id="t1",
             agent_id="memory_agent_user1",
             result="Found facts.",
             metadata={},
         ))
+        engine = DelegationEngine(mock_coord)
 
         tool_call = ToolCall(
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "find facts"}
         )
-        result = await smart_agent._delegate_to_agent_with_retry(tool_call, "user1", "session1")
-
+        result = await engine._dispatch_single(
+            tool_call, DelegationContext(user_id="user1"), {}, "test", 0, 0,
+        )
         assert result.file_data is None
