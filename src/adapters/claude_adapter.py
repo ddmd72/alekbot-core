@@ -296,14 +296,17 @@ class ClaudeAdapter(LLMPort):
                 )
 
         # Force respond: when response_schema is active but the model returned end_turn
-        # without calling respond (happens with grounding — web_search satisfies tool_choice:any).
-        # Second call with tool_choice forced to respond; pass first response as assistant turn
-        # so the model sees its own search results and reformats into JSON.
+        # with text only — no tool calls at all (happens with grounding — web_search
+        # satisfies tool_choice:any). Second call with tool_choice forced to respond; pass
+        # first response as assistant turn so the model reformats its own text into JSON.
+        #
+        # NB: must NOT trigger when the model returned real tool_calls (e.g.
+        # delegate_to_specialist). Those tool_use blocks have no paired tool_result yet —
+        # appending them as an assistant turn would produce a 400 from the API
+        # ("tool_use ids without tool_result blocks immediately after"). Real tool_calls
+        # are returned to DelegationEngine, which executes them and continues the loop.
         if _schema_tool_active and not _use_dynamic_search:
-            has_respond = llm_response.tool_calls and any(
-                tc.name == "respond" for tc in llm_response.tool_calls
-            )
-            if not has_respond and response is not None:
+            if not llm_response.tool_calls and response is not None:
                 logger.debug("[ClaudeAdapter] respond not called — forcing second turn")
                 force_messages = list(claude_messages) + [
                     {"role": "assistant", "content": response.content}
