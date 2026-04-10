@@ -1,39 +1,146 @@
 """
-END-TO-END test for 4-level prompt assembly with REAL Firestore and REAL components.
+END-TO-END test for 3-level prompt override with REAL Firestore and v4 PromptAssemblyService.
 
-SESSION_26: Validates USER > ACCOUNT > AGENT > SYSTEM priority resolution.
+Rewritten for v4 (token/blueprint/profile system).
+Validates USER > ACCOUNT > AGENT priority resolution.
+
+v4 changes from v3:
+- SYSTEM level merged into AGENT — only 3 levels remain
+- Override semantics: class+category match (not whole-component replacement)
+- non_overridable flag blocks account/user overrides
 
 Flow:
-1. Create REAL test components (SYSTEM, AGENT, ACCOUNT, USER)
-2. Upload to Firestore (test_ collections)
-3. Build prompt using REAL PromptBuilder
-4. Verify assembled prompt contains correct overrides
+1. Upload test tokens, blueprint, profile, and overrides to Firestore test collections
+2. Build PromptAssemblyService with REAL Firestore adapters
+3. Call assemble() and verify correct override behaviour
 
-Mock: Only the incoming Slack message
-Real: Firestore, Repository, Service, Builder, assembled prompt
+Mock: SecurityPort (pass-through), BiographicalFactsFormatter (empty)
+Real: Firestore, TokenRepository, BlueprintRepository, AgentProfileRepository, PromptAssemblyService
 """
 
 import pytest
 import os
-from pathlib import Path
 
 from google.cloud import firestore
+
 from src.config.environment import EnvironmentConfig, Environment
-from src.services.prompt_builder import PromptBuilder
-from src.services.prompt_component_service import PromptComponentService
-from src.adapters.firestore_prompt_repository import FirestorePromptComponentRepository
-from src.adapters.groovy_prompt_assembler import GroovyPromptAssembler
-from src.ports.repository import FactRepository
+from src.services.prompt_v3.prompt_assembly_service import PromptAssemblyService
+from src.services.prompt_v3.context_formatter import ContextFormatter
+from src.services.prompt_v3.biographical_formatter import BiographicalFactsFormatter
+from src.adapters.prompt_v3.firestore_token_repository import FirestoreTokenRepository
+from src.adapters.prompt_v3.firestore_blueprint_repository import FirestoreBlueprintRepository
+from src.adapters.prompt_v3.firestore_agent_profile_repository import FirestoreAgentProfileRepository
+from src.ports.security_port import SecurityPort, ValidationResult, RiskLevel, TrustZone
 
 
 # =============================================================================
-# Test fixtures - Real Firestore connection
+# Constants
+# =============================================================================
+
+TEST_ACCOUNT_ID = "test_integ_account"
+TEST_USER_ID = "test_integ_user"
+
+# Collection names — isolated test collections, cleaned up after each test
+_COL_TOKENS = "test_integ_prompt_tokens"
+_COL_BLUEPRINTS = "test_integ_prompt_blueprints"
+_COL_PROFILES = "test_integ_prompt_profiles"
+_COL_OVERRIDES = "test_integ_prompt_overrides"
+
+
+# =============================================================================
+# Mock SecurityPort (pass-through)
+# =============================================================================
+
+class _PassthroughSecurityPort(SecurityPort):
+    async def validate(self, text, context=None, zone=TrustZone.UNTRUSTED):
+        return ValidationResult(
+            sanitized_text=text,
+            risk_level=RiskLevel.SAFE,
+            risk_score=0.0,
+            patterns_detected=[],
+            action_taken="passed",
+            metadata={"adapter": "test_passthrough"},
+        )
+
+
+# =============================================================================
+# Test data — v4 token/blueprint/profile documents
+# =============================================================================
+
+# Tokens: 3 humor tokens (agent/account/user) + 1 cognitive process token
+_TOKENS = {
+    "TEST_HUMOR_AGENT": {
+        "token_id": "TEST_HUMOR_AGENT",
+        "category": "humor_engine",
+        "class": "properties",
+        "content": 'humor: "agent_default"',
+        "metadata": {"description": "Agent-level humor preset"},
+    },
+    "TEST_HUMOR_ACCOUNT": {
+        "token_id": "TEST_HUMOR_ACCOUNT",
+        "category": "humor_engine",
+        "class": "properties",
+        "content": 'humor: "account_override"',
+        "metadata": {"description": "Account-level humor override"},
+    },
+    "TEST_HUMOR_USER": {
+        "token_id": "TEST_HUMOR_USER",
+        "category": "humor_engine",
+        "class": "properties",
+        "content": 'humor: "user_personal"',
+        "metadata": {"description": "User-level humor override"},
+    },
+    "TEST_COGNITIVE_AGENT": {
+        "token_id": "TEST_COGNITIVE_AGENT",
+        "category": "cognitive_process",
+        "class": "cognitive_process",
+        "content": 'mode: "agent_standard"',
+        "metadata": {"description": "Agent cognitive process"},
+    },
+}
+
+_BLUEPRINT = {
+    "blueprint_id": "test_integ_blueprint_v1",
+    "outer_class": "TestBot extends Agent",
+    "class_order": ["properties", "cognitive_process"],
+}
+
+# Agent profile — base tokens (AGENT level)
+_AGENT_PROFILE = {
+    "blueprint_id": "test_integ_blueprint_v1",
+    "agent_id": "test_integ_agent",
+    "tokens": {
+        "TEST_HUMOR_AGENT": {"order": 10},
+        "TEST_COGNITIVE_AGENT": {"order": 20},
+    },
+}
+
+# Account override — replaces humor token
+_ACCOUNT_OVERRIDE = {
+    "owner_type": "ACCOUNT",
+    "owner_id": TEST_ACCOUNT_ID,
+    "tokens": {
+        "TEST_HUMOR_ACCOUNT": {"order": 10},
+    },
+}
+
+# User override — replaces humor token
+_USER_OVERRIDE = {
+    "owner_type": "USER",
+    "owner_id": TEST_USER_ID,
+    "tokens": {
+        "TEST_HUMOR_USER": {"order": 10},
+    },
+}
+
+
+# =============================================================================
+# Fixtures
 # =============================================================================
 
 @pytest.fixture(scope="function")
 async def real_firestore_db():
     """Real Firestore client connected to test environment."""
-    # Force test environment (restore on exit so other tests are not affected)
     original_app_env = os.environ.get("APP_ENV")
     os.environ["APP_ENV"] = "test"
     env_config = EnvironmentConfig()
@@ -45,11 +152,12 @@ async def real_firestore_db():
             os.environ.pop("APP_ENV", None)
         else:
             os.environ["APP_ENV"] = original_app_env
-        pytest.skip("GOOGLE_CLOUD_PROJECT not set - cannot run Firestore integration test")
+        pytest.skip("GOOGLE_CLOUD_PROJECT not set — cannot run Firestore integration test")
 
-    db = firestore.AsyncClient(project=project_id)
+    db_name = os.getenv("FIRESTORE_DATABASE", "us-production")
+    db = firestore.AsyncClient(project=project_id, database=db_name)
     yield db
-    # Restore APP_ENV so subsequent tests in the suite are not affected
+
     if original_app_env is None:
         os.environ.pop("APP_ENV", None)
     else:
@@ -57,258 +165,125 @@ async def real_firestore_db():
 
 
 @pytest.fixture(scope="function")
-async def prompt_repository(real_firestore_db):
-    """Real FirestorePromptComponentRepository."""
-    collection_name = "test_prompt_components"
-    return FirestorePromptComponentRepository(real_firestore_db, collection_name)
+async def seed_firestore(real_firestore_db):
+    """Upload test tokens, blueprint, and agent profile. Clean up after test."""
+    db = real_firestore_db
+
+    # Upload tokens
+    for token_id, token_data in _TOKENS.items():
+        await db.collection(_COL_TOKENS).document(token_id).set(token_data)
+
+    # Upload blueprint
+    await db.collection(_COL_BLUEPRINTS).document(_BLUEPRINT["blueprint_id"]).set(_BLUEPRINT)
+
+    # Upload agent profile (always present)
+    await db.collection(_COL_PROFILES).document("test_integ_agent").set(_AGENT_PROFILE)
+
+    yield db
+
+    # Cleanup: delete all test documents
+    for token_id in _TOKENS:
+        await db.collection(_COL_TOKENS).document(token_id).delete()
+    await db.collection(_COL_BLUEPRINTS).document(_BLUEPRINT["blueprint_id"]).delete()
+    await db.collection(_COL_PROFILES).document("test_integ_agent").delete()
+    await db.collection(_COL_OVERRIDES).document(f"ACCOUNT_{TEST_ACCOUNT_ID}").delete()
+    await db.collection(_COL_OVERRIDES).document(f"USER_{TEST_USER_ID}").delete()
 
 
-@pytest.fixture(scope="function")
-def prompt_service(prompt_repository):
-    """Real PromptComponentService with GroovyAssembler."""
-    assembler = GroovyPromptAssembler()
-    return PromptComponentService(
-        repository=prompt_repository,
-        assembler=assembler,
-        cache_ttl=0  # Disable cache for tests
-    )
-
-
-@pytest.fixture(scope="function")
-async def mock_fact_repository():
-    """Mock FactRepository (not testing facts, only prompts)."""
-    from unittest.mock import AsyncMock
-    mock_repo = AsyncMock(spec=FactRepository)
-    mock_repo.get_biographical_context_cached.return_value = []
-    mock_repo.get_active_facts.return_value = []
-    return mock_repo
-
-
-@pytest.fixture(scope="function")
-def prompt_builder(mock_fact_repository, prompt_service):
-    """Real PromptBuilder with component service."""
-    return PromptBuilder(
-        repo=mock_fact_repository,
-        cache_ttl=0,  # Disable cache for tests
-        assembly_service=prompt_service
+def _build_service(db) -> PromptAssemblyService:
+    """Build PromptAssemblyService with real Firestore adapters pointing to test collections."""
+    return PromptAssemblyService(
+        token_repo=FirestoreTokenRepository(
+            db=db,
+            system_collection=_COL_TOKENS,
+            user_collection=_COL_TOKENS,  # same collection for tests
+            security_port=_PassthroughSecurityPort(),
+        ),
+        blueprint_repo=FirestoreBlueprintRepository(db=db, collection_name=_COL_BLUEPRINTS),
+        profile_repo=FirestoreAgentProfileRepository(
+            db=db,
+            profiles_collection=_COL_PROFILES,
+            overrides_collection=_COL_OVERRIDES,
+        ),
+        security_port=_PassthroughSecurityPort(),
+        formatter=ContextFormatter(),
+        bio_formatter=BiographicalFactsFormatter(),
+        cache_ttl=0,  # disable cache for tests
     )
 
 
 # =============================================================================
-# Test data - Real component documents for Firestore
-# =============================================================================
-
-TEST_ACCOUNT_ID = "test_master_account"
-TEST_USER_ID = "test_dev_user"
-
-SYSTEM_PROPERTIES = {
-    "component_id": "properties",
-    "owner_type": "SYSTEM",
-    "owner_value": None,
-    "scope": "class.Alek.properties",
-    "order": 20,
-    "text": """properties {
-    archetype: "SYSTEM_DEFAULT"
-    vibe: "Default system vibe"
-    humor_engine {
-        status: "system_default"
-    }
-}
-""",
-    "is_enabled": True,
-    "version": "1.0",
-    "description": "System default properties"
-}
-
-AGENT_PROPERTIES = {
-    "component_id": "properties",
-    "owner_type": "AGENT",
-    "owner_value": "smart",
-    "scope": "class.Alek.properties",
-    "order": 20,
-    "text": """properties {
-    archetype: "AGENT_SMART_OVERRIDE"
-    vibe: "Smart agent specific"
-    humor_engine {
-        status: "agent_smart"
-    }
-}
-""",
-    "is_enabled": True,
-    "version": "1.0",
-    "description": "Smart agent override"
-}
-
-ACCOUNT_PROPERTIES = {
-    "component_id": "properties",
-    "owner_type": "ACCOUNT",
-    "owner_value": TEST_ACCOUNT_ID,
-    "scope": "class.Alek.properties",
-    "order": 20,
-    "text": """properties {
-    archetype: "ACCOUNT_MASTER_OVERRIDE"
-    vibe: "Master account vibe"
-    humor_engine {
-        status: "account_level"
-        preset: "family_friendly"
-    }
-}
-""",
-    "is_enabled": True,
-    "version": "1.0",
-    "description": "Master account override"
-}
-
-USER_PROPERTIES = {
-    "component_id": "properties",
-    "owner_type": "USER",
-    "owner_value": TEST_USER_ID,
-    "scope": "class.Alek.properties",
-    "order": 20,
-    "text": """properties {
-    archetype: "USER_DEV_OVERRIDE"
-    vibe: "Dev user personal"
-    humor_engine {
-        status: "user_custom"
-        preset: "ranevskaya"
-    }
-}
-""",
-    "is_enabled": True,
-    "version": "1.0",
-    "description": "Dev user personal override"
-}
-
-
-# =============================================================================
-# Helper functions
-# =============================================================================
-
-async def _upload_component(db: firestore.AsyncClient, collection_name: str, component: dict):
-    """Upload single component to Firestore."""
-    collection = db.collection(collection_name)
-
-    # Check if exists
-    query = (
-        collection
-        .where(filter=firestore.FieldFilter("component_id", "==", component["component_id"]))
-        .where(filter=firestore.FieldFilter("owner_type", "==", component["owner_type"]))
-        .where(filter=firestore.FieldFilter("owner_value", "==", component["owner_value"]))
-        .limit(1)
-    )
-
-    docs = [doc async for doc in query.stream()]
-
-    if docs:
-        # Update existing
-        await docs[0].reference.set(component)
-    else:
-        # Create new
-        await collection.document().set(component)
-
-
-async def _cleanup_test_components(db: firestore.AsyncClient, collection_prefix: str):
-    """Clean up test components after tests."""
-    collection_name = f"{collection_prefix}prompt_components"
-    collection = db.collection(collection_name)
-
-    # Delete test account components
-    query = collection.where(
-        filter=firestore.FieldFilter("owner_value", "==", TEST_ACCOUNT_ID)
-    )
-    docs = [doc async for doc in query.stream()]
-    for doc in docs:
-        await doc.reference.delete()
-
-    # Delete test user components
-    query = collection.where(
-        filter=firestore.FieldFilter("owner_value", "==", TEST_USER_ID)
-    )
-    docs = [doc async for doc in query.stream()]
-    for doc in docs:
-        await doc.reference.delete()
-
-
-# =============================================================================
-# Test Scenario 1: SYSTEM + ACCOUNT → ACCOUNT wins
+# Test Scenario 1: AGENT + ACCOUNT → ACCOUNT wins
 # =============================================================================
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-@pytest.mark.skip(reason="Written for v3 PromptComponentService; needs rewrite for v4 PromptAssemblyService (token/blueprint system)")
-async def test_e2e_system_plus_account(real_firestore_db, prompt_builder):
+async def test_e2e_agent_plus_account_override(seed_firestore):
     """
-    E2E: SYSTEM + ACCOUNT → ACCOUNT wins
+    AGENT + ACCOUNT override → ACCOUNT wins for matching class+category.
 
-    Setup:
-    - Upload SYSTEM properties
-    - Upload ACCOUNT properties
-    - NO USER properties
-
-    Flow:
-    - Call prompt_builder.build_for_agent() with account_id
-    - Verify assembled prompt contains ACCOUNT content
+    Setup: agent profile (humor=agent_default, cognitive=agent_standard)
+           + ACCOUNT override (humor=account_override)
+    Expect: humor → account_override, cognitive → agent_standard (untouched)
     """
-    # Upload components
-    await _upload_component(real_firestore_db, "test_prompt_components", SYSTEM_PROPERTIES)
-    await _upload_component(real_firestore_db, "test_prompt_components", ACCOUNT_PROPERTIES)
+    db = seed_firestore
 
-    # Build prompt (REAL call through entire stack)
-    assembled = await prompt_builder.build_for_agent(
-        agent_type="smart",
-        user_id="anonymous",  # No USER override
+    # Upload ACCOUNT override
+    await db.collection(_COL_OVERRIDES).document(f"ACCOUNT_{TEST_ACCOUNT_ID}").set(
+        _ACCOUNT_OVERRIDE
+    )
+
+    service = _build_service(db)
+    assembled = await service.assemble(
+        agent_type="test_integ_agent",
+        user_id=None,
         account_id=TEST_ACCOUNT_ID,
-        routing_metadata=None,
-        semantic_context=""
     )
 
-    # Verify ACCOUNT override wins
-    assert "ACCOUNT_MASTER_OVERRIDE" in assembled, "ACCOUNT archetype should be present"
-    assert "family_friendly" in assembled, "ACCOUNT humor preset should be present"
-
-    # Verify SYSTEM default NOT present
-    assert "SYSTEM_DEFAULT" not in assembled, "SYSTEM should be overridden"
+    # ACCOUNT humor override wins
+    assert 'humor: "account_override"' in assembled, "ACCOUNT humor should be present"
+    # Agent humor is replaced
+    assert 'humor: "agent_default"' not in assembled, "AGENT humor should be overridden"
+    # Cognitive process untouched (no override for it)
+    assert 'mode: "agent_standard"' in assembled, "AGENT cognitive should remain"
+    # Groovy structure present
+    assert "class TestBot extends Agent {" in assembled
 
 
 # =============================================================================
-# Test Scenario 2: SYSTEM + USER → USER wins
+# Test Scenario 2: AGENT + USER → USER wins
 # =============================================================================
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-@pytest.mark.skip(reason="Written for v3 PromptComponentService; needs rewrite for v4 PromptAssemblyService (token/blueprint system)")
-async def test_e2e_system_plus_user(real_firestore_db, prompt_builder):
+async def test_e2e_agent_plus_user_override(seed_firestore):
     """
-    E2E: SYSTEM + USER → USER wins
+    AGENT + USER override → USER wins for matching class+category.
 
-    Setup:
-    - Upload SYSTEM properties
-    - Upload USER properties
-    - NO ACCOUNT properties
-
-    Flow:
-    - Call prompt_builder.build_for_agent() with user_id
-    - Verify assembled prompt contains USER content
+    Setup: agent profile (humor=agent_default, cognitive=agent_standard)
+           + USER override (humor=user_personal)
+    Expect: humor → user_personal, cognitive → agent_standard (untouched)
     """
-    # Upload components
-    await _upload_component(real_firestore_db, "test_prompt_components", SYSTEM_PROPERTIES)
-    await _upload_component(real_firestore_db, "test_prompt_components", USER_PROPERTIES)
+    db = seed_firestore
 
-    # Build prompt (REAL call)
-    assembled = await prompt_builder.build_for_agent(
-        agent_type="smart",
-        user_id=TEST_USER_ID,
-        account_id="guest",  # No ACCOUNT override
-        routing_metadata=None,
-        semantic_context=""
+    # Upload USER override (no account override)
+    await db.collection(_COL_OVERRIDES).document(f"USER_{TEST_USER_ID}").set(
+        _USER_OVERRIDE
     )
 
-    # Verify USER override wins
-    assert "USER_DEV_OVERRIDE" in assembled, "USER archetype should be present"
-    assert "ranevskaya" in assembled, "USER humor preset should be present"
+    service = _build_service(db)
+    assembled = await service.assemble(
+        agent_type="test_integ_agent",
+        user_id=TEST_USER_ID,
+        account_id=None,
+    )
 
-    # Verify SYSTEM default NOT present
-    assert "SYSTEM_DEFAULT" not in assembled, "SYSTEM should be overridden"
+    # USER humor override wins
+    assert 'humor: "user_personal"' in assembled, "USER humor should be present"
+    # Agent humor is replaced
+    assert 'humor: "agent_default"' not in assembled, "AGENT humor should be overridden"
+    # Cognitive process untouched
+    assert 'mode: "agent_standard"' in assembled, "AGENT cognitive should remain"
 
 
 # =============================================================================
@@ -317,38 +292,35 @@ async def test_e2e_system_plus_user(real_firestore_db, prompt_builder):
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-@pytest.mark.skip(reason="Written for v3 PromptComponentService; needs rewrite for v4 PromptAssemblyService (token/blueprint system)")
-async def test_e2e_all_levels_user_wins(real_firestore_db, prompt_builder):
+async def test_e2e_all_levels_user_wins(seed_firestore):
     """
-    E2E: SYSTEM + AGENT + ACCOUNT + USER → USER wins
+    AGENT + ACCOUNT + USER → USER wins (highest priority).
 
-    Setup:
-    - Upload ALL 4 levels of properties
-
-    Flow:
-    - Call prompt_builder.build_for_agent() with user_id + account_id
-    - Verify assembled prompt contains ONLY USER content (highest priority)
+    Setup: agent profile (humor=agent_default, cognitive=agent_standard)
+           + ACCOUNT override (humor=account_override)
+           + USER override (humor=user_personal)
+    Expect: humor → user_personal (USER beats ACCOUNT beats AGENT)
     """
-    # Upload ALL components
-    await _upload_component(real_firestore_db, "test_prompt_components", SYSTEM_PROPERTIES)
-    await _upload_component(real_firestore_db, "test_prompt_components", AGENT_PROPERTIES)
-    await _upload_component(real_firestore_db, "test_prompt_components", ACCOUNT_PROPERTIES)
-    await _upload_component(real_firestore_db, "test_prompt_components", USER_PROPERTIES)
+    db = seed_firestore
 
-    # Build prompt (REAL call)
-    assembled = await prompt_builder.build_for_agent(
-        agent_type="smart",
-        user_id=TEST_USER_ID,
-        account_id=TEST_ACCOUNT_ID,
-        routing_metadata=None,
-        semantic_context=""
+    # Upload both ACCOUNT and USER overrides
+    await db.collection(_COL_OVERRIDES).document(f"ACCOUNT_{TEST_ACCOUNT_ID}").set(
+        _ACCOUNT_OVERRIDE
+    )
+    await db.collection(_COL_OVERRIDES).document(f"USER_{TEST_USER_ID}").set(
+        _USER_OVERRIDE
     )
 
-    # Verify USER override wins (highest priority)
-    assert "USER_DEV_OVERRIDE" in assembled, "USER archetype should be present"
-    assert "ranevskaya" in assembled, "USER humor preset should be present"
+    service = _build_service(db)
+    assembled = await service.assemble(
+        agent_type="test_integ_agent",
+        user_id=TEST_USER_ID,
+        account_id=TEST_ACCOUNT_ID,
+    )
 
-    # Verify lower priorities NOT present
-    assert "ACCOUNT_MASTER_OVERRIDE" not in assembled, "ACCOUNT should be overridden by USER"
-    assert "AGENT_SMART_OVERRIDE" not in assembled, "AGENT should be overridden by USER"
-    assert "SYSTEM_DEFAULT" not in assembled, "SYSTEM should be overridden by USER"
+    # USER override wins over both ACCOUNT and AGENT
+    assert 'humor: "user_personal"' in assembled, "USER humor should win"
+    assert 'humor: "account_override"' not in assembled, "ACCOUNT should be overridden by USER"
+    assert 'humor: "agent_default"' not in assembled, "AGENT should be overridden by USER"
+    # Cognitive process untouched (no override at any level)
+    assert 'mode: "agent_standard"' in assembled, "AGENT cognitive should remain"
