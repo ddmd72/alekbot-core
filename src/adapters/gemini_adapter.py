@@ -396,17 +396,37 @@ class GeminiAdapter(LLMPort):
             return LLMResponse(text="")
 
         candidate = response.candidates[0]
+        finish_reason = getattr(candidate, "finish_reason", None)
+        finish_message = getattr(candidate, "finish_message", None)
+        um_thoughts = (
+            getattr(response.usage_metadata, "thoughts_token_count", None)
+            if getattr(response, "usage_metadata", None) else None
+        )
         if not candidate.content or not candidate.content.parts:
-            finish_reason = getattr(candidate, "finish_reason", None)
+            safety = getattr(candidate, "safety_ratings", None)
             logger.warning(
-                "⚠️ [GeminiAdapter] Empty content/parts (finish_reason=%s)", finish_reason
+                "⚠️ [GeminiAdapter] Empty content/parts "
+                "(finish_reason=%s finish_message=%s thoughts=%s safety=%s)",
+                finish_reason, finish_message, um_thoughts, safety,
             )
             return LLMResponse(text="")
         text = "".join([p.text for p in candidate.content.parts if p.text])
+        # Detect "stalled" responses: parts present but no text and no function calls.
+        # This is the empty-Turn-2 failure mode we're hunting on flex tier.
+        has_function_call = any(p.function_call for p in candidate.content.parts)
+        if not text and not has_function_call:
+            logger.warning(
+                "⚠️ [GeminiAdapter] Stalled response: parts=%s but no text/fc "
+                "(finish_reason=%s finish_message=%s thoughts=%s)",
+                len(candidate.content.parts), finish_reason, finish_message, um_thoughts,
+            )
         logger.info(
-            "🔍 [GeminiAdapter] Parsed response: text_len=%s parts=%s",
+            "🔍 [GeminiAdapter] Parsed response: text_len=%s parts=%s "
+            "finish=%s thoughts=%s",
             len(text),
-            len(candidate.content.parts) if candidate.content and candidate.content.parts else 0
+            len(candidate.content.parts),
+            finish_reason,
+            um_thoughts,
         )
 
         tool_calls = []
