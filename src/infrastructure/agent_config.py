@@ -160,7 +160,13 @@ class ConsolidationAgentConfig:
     temperature: float = 1.0
     facts_limit: int = 50        # biographical cache limit passed at construction
     principles_limit: int = 15   # principles cache limit passed at construction
-    max_tokens: int = 32_000         # output token limit; large enough for full fact JSON reports
+    # Output token limit. On Gemini 3 Pro, thinking_tokens count against
+    # max_output_tokens — HIGH thinking on a complex consolidation turn can
+    # consume 20K-30K of thoughts before any tool/text output appears.
+    # 32K was tight; 64K leaves headroom for both thinking and the JSON report.
+    # Claude doesn't approach this limit (~5-10K typical), so the bump is
+    # Gemini-driven and safe across providers.
+    max_tokens: int = 64_000
     # Thinking effort: None | "low" | "medium" | "high". None = thinking disabled.
     # Adapters gate thinking on this value — None skips the thinking block entirely.
     thinking_effort: Optional[str] = "medium"
