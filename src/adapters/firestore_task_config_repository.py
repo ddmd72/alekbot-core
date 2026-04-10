@@ -9,7 +9,7 @@ set_primary_list_id_if_absent: Firestore transaction for safe concurrent writes.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from google.cloud import firestore
@@ -60,7 +60,7 @@ class FirestoreTaskConfigRepository(TaskConfigPort):
         return TaskSubscriptionConfig(
             sub_id=data["sub_id"],
             list_id=data["list_id"],
-            expires_at=expires_at or datetime.utcnow(),
+            expires_at=expires_at or datetime.now(timezone.utc),
         )
 
     def _to_domain(self, data: Dict[str, Any]) -> TaskUserConfig:

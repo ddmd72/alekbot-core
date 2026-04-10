@@ -207,7 +207,7 @@ class WorkerHandler:
 
     async def _handle_watchdog(self) -> Tuple[dict, int]:
         """Mark stale 'running' jobs as failed. Delegates to EmailIndexingService."""
-        stale_threshold = datetime.utcnow() - timedelta(hours=2)
+        stale_threshold = datetime.now(timezone.utc) - timedelta(hours=2)
         marked = await self._email_indexing.mark_stale_jobs_failed(stale_threshold)
         return {"status": "ok", "marked_failed": marked}, 200
 

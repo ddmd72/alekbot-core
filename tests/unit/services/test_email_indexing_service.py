@@ -2,7 +2,7 @@
 Unit tests for EmailIndexingService.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -89,7 +89,7 @@ def service(
 
 
 def _make_job(next_page_token=None):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     return IndexingJob(
         job_id="job-123",
         user_id="user-abc",
@@ -108,7 +108,7 @@ def _make_credentials():
         provider="gmail",
         access_token="tok",
         refresh_token="rtok",
-        token_expiry=datetime(2099, 1, 1),  # Far future — no refresh needed
+        token_expiry=datetime(2099, 1, 1, tzinfo=timezone.utc),  # Far future — no refresh needed
         scopes=["gmail.readonly"],
         email_address="test@example.com",
     )
@@ -120,7 +120,7 @@ def _make_meta(email_id: str) -> EmailMetadata:
         provider="gmail",
         subject="Booking confirmed",
         from_address="noreply@ryanair.com",
-        date=datetime.utcnow() - timedelta(hours=1),
+        date=datetime.now(timezone.utc) - timedelta(hours=1),
         labels=["INBOX"],
         snippet="Your flight booking is confirmed",
     )
@@ -151,7 +151,7 @@ class TestEmailIndexingServiceApplyExclusions:
         emails = [_make_meta("e1")]
         emails[0] = EmailMetadata(
             email_id="e1", provider="gmail", subject="Sale!",
-            from_address="promo@marketing.com", date=datetime.utcnow(),
+            from_address="promo@marketing.com", date=datetime.now(timezone.utc),
             labels=[], snippet=""
         )
         exclusion = EmailExclusion(
@@ -159,7 +159,7 @@ class TestEmailIndexingServiceApplyExclusions:
             pattern_type="sender_email",
             pattern="marketing.com",
             reason="spam",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         result = service._apply_exclusions(emails, [exclusion])
         assert result == []
@@ -168,7 +168,7 @@ class TestEmailIndexingServiceApplyExclusions:
         emails = [
             EmailMetadata(
                 email_id="e1", provider="gmail", subject="News",
-                from_address="noreply@linkedin.com", date=datetime.utcnow(),
+                from_address="noreply@linkedin.com", date=datetime.now(timezone.utc),
                 labels=[], snippet=""
             )
         ]
@@ -177,7 +177,7 @@ class TestEmailIndexingServiceApplyExclusions:
             pattern_type="sender_domain",
             pattern="linkedin.com",
             reason="social",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         result = service._apply_exclusions(emails, [exclusion])
         assert result == []
@@ -186,7 +186,7 @@ class TestEmailIndexingServiceApplyExclusions:
         emails = [
             EmailMetadata(
                 email_id="e1", provider="gmail", subject="Flash Sale - 50% off!",
-                from_address="shop@store.com", date=datetime.utcnow(),
+                from_address="shop@store.com", date=datetime.now(timezone.utc),
                 labels=[], snippet=""
             )
         ]
@@ -195,7 +195,7 @@ class TestEmailIndexingServiceApplyExclusions:
             pattern_type="subject_pattern",
             pattern="flash sale",
             reason="marketing",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         result = service._apply_exclusions(emails, [exclusion])
         assert result == []
@@ -207,7 +207,7 @@ class TestEmailIndexingServiceApplyExclusions:
             pattern_type="sender_email",
             pattern="spam@spam.com",
             reason="spam",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         result = service._apply_exclusions(emails, [exclusion])
         assert len(result) == 1

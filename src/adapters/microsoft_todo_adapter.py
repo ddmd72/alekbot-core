@@ -122,7 +122,7 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
             raise ValueError(f"No MS To Do credentials for user {user_id[:8]}")
 
         # Refresh if token expires within the next 5 minutes
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if creds.token_expiry <= now + timedelta(minutes=5):
             creds = await self._refresh_token(creds)
 
@@ -150,7 +150,7 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
             provider=_PROVIDER,
             access_token=payload["access_token"],
             refresh_token=payload.get("refresh_token", creds.refresh_token),
-            token_expiry=datetime.utcnow() + timedelta(seconds=expires_in),
+            token_expiry=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
             scopes=creds.scopes,
             email_address=creds.email_address,
         )
