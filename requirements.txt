@@ -2,7 +2,7 @@ slack_bolt
 google-cloud-firestore
 google-cloud-storage
 google-cloud-logging
-google-genai
+google-genai>=1.72.0
 anthropic
 openai>=1.0.0  # xAI Grok (OpenAI-compatible API)
 python-dotenv
