@@ -58,7 +58,7 @@ def test_openai_capabilities():
     caps = adapter.get_capabilities()
 
     assert caps.native_tools is True
-    assert caps.context_caching is False
+    assert caps.context_caching is True
     assert caps.vision is True
     assert caps.supports_json_mode is True
     assert caps.supports_system_prompt is True
