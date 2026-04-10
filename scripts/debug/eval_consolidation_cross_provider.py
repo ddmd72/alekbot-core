@@ -423,90 +423,45 @@ class StubRepo:
         return []
 
 
-def _patch_gemini_for_flex(adapter, request_timeout_s: int) -> None:
-    """Wrap adapter's underlying genai client to enable Flex Inference.
-
-    Modifications applied to every generate_content call:
-      - service_tier='flex' on the GenerateContentConfig
-      - thinking_config.thinking_budget=-1 (dynamic budget)
-      - HTTP timeout bumped to request_timeout_s seconds (Flex queues 1-15 min)
-      - 2 retries with 60s backoff on 503/429 (no automatic standard fallback)
-    """
-    from google.genai import types as gtypes
-    from google.genai import errors as gerrors
-
-    original_generate = adapter.client.aio.models.generate_content
-
-    async def flex_generate(*, model, contents, config=None):
-        # Mutate the config: inject service_tier and thinking_budget
-        if config is None:
-            config = gtypes.GenerateContentConfig()
-        # GenerateContentConfig is a pydantic model — mutate via copy.update
-        try:
-            patched = config.model_copy(update={"service_tier": "flex"})
-        except AttributeError:
-            # fallback for non-pydantic
-            config.service_tier = "flex"
-            patched = config
-
-        # ThinkingConfig: leave whatever the adapter set untouched.
-        # On Gemini 3.x, thinking_level=HIGH IS dynamic — there is no separate
-        # "budget=-1" mode for these models. Google docs (Vertex AI Thinking):
-        #     "By default, Gemini 3 models use dynamic thinking
-        #      (thinking_level.HIGH) to reason through prompts."
-        # And: "thinking_budget is accepted for backwards compatibility but
-        # using it with Gemini 3 Pro may result in suboptimal performance."
-        # Our adapter already maps request.thinking="high" → thinking_level=HIGH,
-        # which is the recommended path. We simply do NOT overwrite it here.
-
-        # Bump per-call HTTP timeout
-        if patched.http_options is None:
-            patched = patched.model_copy(
-                update={
-                    "http_options": gtypes.HttpOptions(
-                        timeout=request_timeout_s * 1000
-                    )
-                }
-            )
-        else:
-            patched_http = patched.http_options.model_copy(
-                update={"timeout": request_timeout_s * 1000}
-            )
-            patched = patched.model_copy(update={"http_options": patched_http})
-
-        last_exc: Optional[Exception] = None
-        for attempt in range(3):  # 1 try + 2 retries
-            try:
-                return await original_generate(
-                    model=model, contents=contents, config=patched
-                )
-            except gerrors.ClientError as e:
-                code = getattr(e, "code", None)
-                if code != 429:
-                    raise
-                last_exc = e
-                if attempt < 2:
-                    print(
-                        f"   ⏳ flex 429 on attempt {attempt + 1}/3 — "
-                        f"backing off 60s..."
-                    )
-                    await asyncio.sleep(60)
-            except gerrors.ServerError as e:
-                code = getattr(e, "code", None)
-                if code != 503:
-                    raise
-                last_exc = e
-                if attempt < 2:
-                    print(
-                        f"   ⏳ flex 503 on attempt {attempt + 1}/3 — "
-                        f"backing off 60s..."
-                    )
-                    await asyncio.sleep(60)
-        # Out of retries
-        assert last_exc is not None
-        raise last_exc
-
-    adapter.client.aio.models.generate_content = flex_generate  # type: ignore
+# =============================================================================
+# Flex tier — REMOVED. Findings from extended evaluation (April 2026):
+# =============================================================================
+#
+# We tested Gemini Flex tier (service_tier='flex') as a cost-optimization
+# path for ConsolidationAgent across ~30 runs against gemini-3.1-pro-preview
+# (both via gemini-pro-latest alias and explicit model name). Verdict:
+# UNFIT FOR MULTI-TURN TOOL CALLING CONSOLIDATION.
+#
+# Failure mode: "stalled response"
+#   - Server returns HTTP 200 OK with X-Gemini-Service-Tier: flex
+#   - candidate.finish_reason = STOP
+#   - candidate.content.parts = [single empty part] (no text, no function_call)
+#   - usage_metadata.thoughts_token_count = None
+#   - Adapter then returns LLMResponse(text="", tool_calls=[]) and
+#     ConsolidationAgent treats it as "final report received" → 0 ops total
+#
+# Empirical rates on session 2026-04-10/2026-04-10_10-32-29:
+#   flex + thinking_level=HIGH:  ~36% stalled (5/14 runs)
+#   flex + thinking_budget=-1:   ~18% stalled (2/11 runs)
+#   standard + thinking_level=HIGH: 0% stalled (0/3 runs)
+#
+# Always reproducible on Turn 2 of the consolidation loop — the heaviest turn,
+# right after the first batch of tool responses is appended to history.
+# Probable cause (per Google docs hints + observed pattern): flex backend
+# cannot guarantee compute slots that fit Turn 2's larger prompt + thinking
+# reservation. Rather than returning 503/429 it serves a placeholder 200 OK.
+# thinking_budget=-1 fares better because it lets the model adapt down;
+# thinking_level=HIGH locks a minimum threshold that fails more often.
+#
+# DO NOT add a flex flag back without addressing the stalled-response issue
+# at the adapter level (e.g. detect parts=1 + thoughts=None + finish=STOP →
+# raise a retry-able exception). For now: ConsolidationAgent stays on Claude
+# in production. Standard-tier Gemini may be a viable backup, pending
+# generalization tests on additional sessions.
+#
+# Diagnostic logging that surfaces stalled responses lives in
+# src/adapters/gemini_adapter.py::_parse_response (committed separately).
+# =============================================================================
 
 
 async def replay_through_provider(
@@ -517,7 +472,6 @@ async def replay_through_provider(
     unified_fact_pool: str,
     model_override: Optional[str] = None,
     thinking_override: Optional[str] = None,
-    flex: bool = False,
     max_tokens_override: Optional[int] = None,
     temperature_override: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -538,29 +492,14 @@ async def replay_through_provider(
     else:
         raise ValueError(f"Unsupported provider: {provider_name}")
 
-    if flex and provider_name != "gemini":
-        raise ValueError("--flex is only supported for gemini provider")
-
     model = model_override or adapter.MODEL_TIERS[PerformanceTier.PERFORMANCE]
-
-    # Flex tier can queue 1-15 min per call. ConsolidationAgent loop allows
-    # up to 15 turns → worst case 15×15min = 225 min total. Bump the agent
-    # config timeout accordingly so we don't bail before flex completes.
-    agent_timeout_ms = 14_400_000 if flex else 900_000  # 4h for flex, 15min std
-
-    if flex:
-        request_timeout_s = 1800  # 30 min per LLM call
-        _patch_gemini_for_flex(adapter, request_timeout_s=request_timeout_s)
-        print("   🪐 flex inference enabled (service_tier='flex', "
-              f"thinking_budget=-1, http_timeout={request_timeout_s}s, "
-              "retries=2x60s)")
 
     config = AgentConfig(
         agent_id=f"eval_consolidation_{provider_name}",
         agent_type="consolidation",
         llm_model=model,
         max_retries=0,
-        timeout_ms=agent_timeout_ms,
+        timeout_ms=900_000,  # 15 min — matches CONSOLIDATION.timeout_ms
     )
     ctx = AgentExecutionContext(
         agent_type="consolidation",
@@ -590,36 +529,22 @@ async def replay_through_provider(
         agent.TEMPERATURE = temperature_override
         print(f"   temperature override: {temperature_override}")
 
-    # Wrap _call_llm at BaseAgent level to bump per-call parameters:
-    #   - timeout: 500 → 1800s (only in flex mode, to match HTTP timeout —
-    #     ConsolidationAgent hardcodes timeout=500 in LLMRequest)
-    #   - max_tokens: only when --max-tokens is explicitly passed. Otherwise
-    #     CONSOLIDATION.max_tokens from prod config flows through naturally.
-    bump_timeout = flex
-    bump_max_tokens = max_tokens_override is not None
-    target_max_tokens = max_tokens_override or 0
-
-    if bump_timeout or bump_max_tokens:
+    # --max-tokens override (when explicitly passed): wrap _call_llm so the
+    # bumped value reaches the adapter via LLMRequest. CONSOLIDATION.max_tokens
+    # from prod config is the natural default when no override is given.
+    if max_tokens_override is not None:
+        target_max_tokens = max_tokens_override
         original_call_llm = agent._call_llm
 
-        async def call_llm_with_bumped_params(request, turn=0):
-            updates: Dict[str, Any] = {}
-            if bump_timeout:
-                updates["timeout"] = 1800
-            if bump_max_tokens:
-                updates["max_tokens"] = target_max_tokens
+        async def call_llm_with_bumped_max_tokens(request, turn=0):
             try:
-                request = request.model_copy(update=updates)
+                request = request.model_copy(update={"max_tokens": target_max_tokens})
             except AttributeError:
-                for k, v in updates.items():
-                    setattr(request, k, v)
+                request.max_tokens = target_max_tokens
             return await original_call_llm(request, turn=turn)
 
-        agent._call_llm = call_llm_with_bumped_params  # type: ignore
-        if bump_timeout:
-            print(f"   timeout override: 1800s")
-        if bump_max_tokens:
-            print(f"   max_tokens override: {target_max_tokens}")
+        agent._call_llm = call_llm_with_bumped_max_tokens  # type: ignore
+        print(f"   max_tokens override: {target_max_tokens}")
 
     # Reset billing counters (BaseAgent resets these in handle_message,
     # which we bypass by calling _run_consolidation_loop directly)
@@ -863,20 +788,13 @@ async def main() -> None:
              "(default: keep CONSOLIDATION.thinking_effort='medium')",
     )
     parser.add_argument(
-        "--flex",
-        action="store_true",
-        help="Enable Gemini Flex Inference (service_tier='flex', "
-             "30min HTTP timeout, 2x60s retry on 429/503, max_tokens=65500). "
-             "Only valid with --providers gemini.",
-    )
-    parser.add_argument(
         "--max-tokens",
         type=int,
         default=None,
         help="Override LLMRequest.max_tokens (default: keep "
-             "CONSOLIDATION.max_tokens=32_000). On Gemini 3 Pro, thinking "
-             "tokens count against max_output_tokens — bump to 65500 to give "
-             "thinking room. Auto-applied in --flex mode.",
+             "CONSOLIDATION.max_tokens). On Gemini 3 Pro, thinking tokens "
+             "count against max_output_tokens — explicit bump may help when "
+             "diagnosing truncation.",
     )
     parser.add_argument(
         "--temperature",
@@ -944,7 +862,6 @@ async def main() -> None:
             unified_pool_str,
             model_override=model_overrides.get(provider),
             thinking_override=args.thinking,
-            flex=args.flex,
             max_tokens_override=args.max_tokens,
             temperature_override=args.temperature,
         )
