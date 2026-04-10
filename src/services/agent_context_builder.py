@@ -53,7 +53,7 @@ class AgentProviderStrategy:
         },
         "consolidation": {
             "default_provider": "claude",
-            "allowed_providers": ["claude", "gemini"],
+            "allowed_providers": ["claude", "gemini", "openai"],
             "required_capabilities": ["context_caching"],
             "fallback": "gemini"
         },

@@ -82,7 +82,9 @@ class OpenAIAdapter(LLMPort):
     # ========================================================================
     CAPABILITIES = ProviderCapabilities(
         native_tools=True,
-        context_caching=False,
+        # Responses API automatically caches prompt prefixes ≥1024 tokens since late 2024.
+        # Fully transparent — no cache_control markers required from caller.
+        context_caching=True,
         vision=True,
         max_context_window=1047576,
         supports_system_prompt=True,
@@ -117,6 +119,7 @@ class OpenAIAdapter(LLMPort):
         # Unpack LLMRequest (primary path)
         force_tool_use = False
         use_grounding = False
+        thinking: Optional[str] = None
         if request:
             model_name = request.model_name
             system_instruction = request.system_instruction
@@ -129,6 +132,7 @@ class OpenAIAdapter(LLMPort):
             automatic_function_calling = request.automatic_function_calling
             force_tool_use = request.force_tool_use
             use_grounding = request.use_grounding
+            thinking = request.thinking
             stream_callback = None
 
         if not model_name or messages is None:
@@ -147,8 +151,10 @@ class OpenAIAdapter(LLMPort):
         # Inject native web search tool when grounding is requested.
         # Responses API supports {"type": "web_search"} natively on all models.
         # Results include url_citation annotations with source URLs.
-        # Reasoning is enabled at "low" effort — gpt-5.4 defaults to "none" which
-        # disables agentic search (iterative search, open_page, find_in_page).
+        # Reasoning effort handling lives below — when grounding is on without an
+        # explicit thinking value, we still must enable reasoning at "low" so that
+        # gpt-5.4 doesn't fall back to "none" (which disables agentic search:
+        # iterative search, open_page, find_in_page).
         if use_grounding:
             api_tools = [{"type": "web_search"}] + api_tools
 
@@ -163,12 +169,13 @@ class OpenAIAdapter(LLMPort):
             input_items.insert(0, {"role": "developer", "content": "Respond in JSON."})
 
         logger.info(
-            "🔍 [OpenAIAdapter] Request: model=%s input_items=%s tools=%s json_mode=%s grounding=%s",
+            "🔍 [OpenAIAdapter] Request: model=%s input_items=%s tools=%s json_mode=%s grounding=%s thinking=%s",
             model_name,
             len(input_items),
             len(api_tools),
             text_format is not None,
             use_grounding,
+            thinking or "none",
         )
 
         # Build create kwargs
@@ -186,8 +193,25 @@ class OpenAIAdapter(LLMPort):
         if api_tools:
             create_kwargs["tools"] = api_tools
             create_kwargs["tool_choice"] = "required" if force_tool_use else "auto"
-        if use_grounding:
-            create_kwargs["reasoning"] = {"effort": "low"}
+
+        # Reasoning effort: map unified `thinking` parameter to OpenAI
+        # `reasoning.effort`. Only reasoning models (gpt-5/o1/o3) accept it.
+        # Precedence:
+        #   1. Explicit `thinking` from caller (low/medium/high) — preferred.
+        #   2. Grounding without explicit thinking → force "low" so agentic
+        #      search stays enabled (gpt-5.4 default "none" disables it).
+        # Combined case (thinking + grounding): the explicit thinking value wins.
+        reasoning_effort: Optional[str] = None
+        if self._is_reasoning_model(model_name):
+            if thinking:
+                reasoning_effort = {"low": "low", "medium": "medium", "high": "high"}.get(
+                    thinking, "medium"
+                )
+            elif use_grounding:
+                reasoning_effort = "low"
+        if reasoning_effort:
+            create_kwargs["reasoning"] = {"effort": reasoning_effort}
+
         if text_format:
             create_kwargs["text"] = text_format
         if cache_config and cache_config.enabled:
