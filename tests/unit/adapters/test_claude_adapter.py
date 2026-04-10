@@ -794,6 +794,97 @@ async def test_respond_call_not_present_returns_original_tool_calls():
     assert result.tool_calls[0].name == "search_memory"
 
 
+@pytest.mark.asyncio
+async def test_real_tool_call_under_schema_does_not_force_second_turn():
+    """Regression: when response_schema is set and the model returns a real tool_call
+    (not 'respond'), the adapter must NOT enter the force-respond second-call branch.
+
+    Previously the adapter would append the assistant turn (containing the unmatched
+    tool_use block) to messages and re-call the API to force a respond — Anthropic
+    rejects this with 400 ('tool_use ids without tool_result blocks immediately
+    after'), which broke every Quick delegation request on Claude.
+    """
+    adapter = ClaudeAdapter(api_key="test-key")
+    cm = _make_claude_cm(_make_sdk_tool_response("search_memory", {"query": "test"}))
+
+    call_count = 0
+
+    def counting_stream(**kw):
+        nonlocal call_count
+        call_count += 1
+        return cm
+
+    adapter.client.messages.stream = counting_stream
+
+    result = await adapter.generate_content(
+        request=LLMRequest(
+            model_name="claude-sonnet-4-6",
+            system_instruction="test",
+            messages=_MESSAGES,
+            tools=_TOOLS,
+            response_schema={"type": "object", "properties": {"answer": {"type": "string"}}},
+        )
+    )
+
+    assert call_count == 1, (
+        f"Adapter must call client.messages.stream exactly once when the model "
+        f"returns a real tool_call under response_schema; got {call_count} calls"
+    )
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "search_memory"
+
+
+@pytest.mark.asyncio
+async def test_text_only_under_schema_forces_second_turn_with_respond():
+    """When response_schema is set and the model returns text-only (no tool_calls),
+    the adapter must force a second call with tool_choice={'type':'tool','name':'respond'}
+    to enforce structured output. Usage from both calls is summed.
+    """
+    adapter = ClaudeAdapter(api_key="test-key")
+
+    first_cm = _make_claude_cm(_make_sdk_response("plain text answer"))
+    second_cm = _make_claude_cm(
+        _make_sdk_tool_response("respond", {"answer": "structured"})
+    )
+
+    captured_calls = []
+    cms = [first_cm, second_cm]
+
+    def stream_with_history(**kw):
+        captured_calls.append(kw)
+        return cms[len(captured_calls) - 1]
+
+    adapter.client.messages.stream = stream_with_history
+
+    result = await adapter.generate_content(
+        request=LLMRequest(
+            model_name="claude-sonnet-4-6",
+            system_instruction="test",
+            messages=_MESSAGES,
+            tools=_TOOLS,
+            response_schema={"type": "object", "properties": {"answer": {"type": "string"}}},
+        )
+    )
+
+    assert len(captured_calls) == 2, (
+        f"Adapter must call stream twice (initial + force-respond) when the model "
+        f"returns text-only under response_schema; got {len(captured_calls)} calls"
+    )
+    second_kwargs = captured_calls[1]
+    assert second_kwargs.get("tool_choice") == {"type": "tool", "name": "respond"}
+    # Second call's messages must end with the appended assistant turn (text content,
+    # NOT an orphaned tool_use).
+    second_messages = second_kwargs.get("messages") or []
+    assert second_messages, "second call must send a non-empty messages list"
+    assert second_messages[-1]["role"] == "assistant"
+
+    parsed = json.loads(result.text)
+    assert parsed == {"answer": "structured"}
+    # Usage summed across both calls (10+10 input, 5+5 output per _make_sdk_response).
+    assert result.usage_metadata.prompt_tokens == 20
+    assert result.usage_metadata.completion_tokens == 10
+
+
 # ============================================================================
 # Error wrapping: SDK exceptions → domain exceptions
 # ============================================================================
