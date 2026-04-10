@@ -21,6 +21,8 @@ Existing documents without 'instruction' fall back to 'text'.
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 from ..config.environment import EnvironmentConfig
 from ..domain.agent_note import AgentNote, NoteCreate, NoteUpdate, ReminderRecurrence
 from ..ports.agent_note_port import AgentNotePort
@@ -133,7 +135,7 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
 
     async def list_active_notes(self, user_id: str, as_of: datetime) -> List[AgentNote]:
         """Return notes that have not yet fired (due > as_of)."""
-        docs = await self._col.where("user_id", "==", user_id).get()
+        docs = await self._col.where(filter=FieldFilter("user_id", "==", user_id)).get()
         result = []
         for doc in docs:
             note = self._dict_to_note(doc.id, doc.to_dict())
@@ -144,7 +146,7 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
 
     async def list_due_reminders(self, as_of: datetime) -> List[AgentNote]:
         """Cross-user: all notes with due <= as_of. Requires Firestore index on due ASC."""
-        docs = await self._col.where("due", "<=", as_of).get()
+        docs = await self._col.where(filter=FieldFilter("due", "<=", as_of)).get()
         return [self._dict_to_note(doc.id, doc.to_dict()) for doc in docs]
 
     async def reschedule(self, note_id: str, next_due: datetime, last_fired: datetime) -> None:
