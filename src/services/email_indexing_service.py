@@ -9,7 +9,7 @@ Pipeline per chunk (100 emails/page):
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -80,7 +80,7 @@ class EmailIndexingService:
         backfill_until: Optional[datetime] = None,
     ) -> IndexingJob:
         """Build a new IndexingJob (caller must persist via job_repo.create_job)."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         return IndexingJob(
             job_id=str(uuid.uuid4()),
             user_id=user_id,
@@ -246,7 +246,7 @@ class EmailIndexingService:
         creds = await self._oauth.get_credentials(job.user_id, job.provider)
         if not creds:
             await self._job_repo.update_job(
-                job_id, {"status": "failed_auth", "updated_at": datetime.utcnow()}
+                job_id, {"status": "failed_auth", "updated_at": datetime.now(timezone.utc)}
             )
             return None, None, "failed_auth"
 
@@ -262,7 +262,7 @@ class EmailIndexingService:
         for stale_job in stale_jobs:
             await self._job_repo.update_job(stale_job.job_id, {
                 "status": "failed",
-                "updated_at": datetime.utcnow(),
+                "updated_at": datetime.now(timezone.utc),
             })
             marked += 1
             logger.warning(
@@ -305,7 +305,7 @@ class EmailIndexingService:
         if mode == "reindex":
             # indexed_through is owned by incremental only — never clear it.
             if date_from is None:
-                date_from = datetime.utcnow() - timedelta(days=3 * 365)
+                date_from = datetime.now(timezone.utc) - timedelta(days=3 * 365)
             logger.info(
                 f"📧 Job {job.job_id[:8]} [reindex]: from={date_from.strftime('%Y-%m-%d')}"
             )
@@ -314,7 +314,7 @@ class EmailIndexingService:
             if backfill_until is not None:
                 date_from = backfill_until
             elif date_from is None:
-                date_from = datetime.utcnow() - timedelta(days=5 * 365)
+                date_from = datetime.now(timezone.utc) - timedelta(days=5 * 365)
             logger.info(
                 f"📧 Job {job.job_id[:8]} [backfill]: from={date_from.strftime('%Y-%m-%d')}"
             )
@@ -343,8 +343,8 @@ class EmailIndexingService:
                             f"bootstrapping from confirmed cursors → date_from={date_from.strftime('%Y-%m-%d')}"
                         )
                     else:
-                        now = datetime.utcnow()
-                        date_from = datetime(now.year, now.month, now.day)
+                        now = datetime.now(timezone.utc)
+                        date_from = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
                         logger.info(
                             f"📧 Job {job.job_id[:8]} [incremental]: no cursors, "
                             f"today only → date_from={date_from.strftime('%Y-%m-%d')}"
@@ -366,7 +366,7 @@ class EmailIndexingService:
         try:
             while True:
                 # Refresh token if expired before each page
-                if credentials.token_expiry <= datetime.utcnow():
+                if credentials.token_expiry <= datetime.now(timezone.utc):
                     credentials = await self._gmail.refresh_token(credentials)
 
                 # 1. Fetch page of email metadata (100 emails)
@@ -487,7 +487,7 @@ class EmailIndexingService:
                 job.emails_fetched += len(emails_page)
                 job.emails_stored += saved
                 job.next_page_token = next_page_token
-                job.updated_at = datetime.utcnow()
+                job.updated_at = datetime.now(timezone.utc)
                 await self._job_repo.update_job(
                     job.job_id,
                     {
@@ -527,7 +527,7 @@ class EmailIndexingService:
                 # All pages consumed — finalize cursor THEN mark completed.
                 await self._finalize_cursor(job=job, mode=mode, date_from=date_from)
                 job.status = "completed"
-                job.completed_at = datetime.utcnow()
+                job.completed_at = datetime.now(timezone.utc)
                 job.updated_at = job.completed_at
                 await self._job_repo.update_job(
                     job.job_id,
@@ -548,7 +548,7 @@ class EmailIndexingService:
                 k in error_msg for k in ("auth", "credentials", "token", "401", "403")
             )
             job.status = "failed_auth" if is_auth else "failed"
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.now(timezone.utc)
             await self._job_repo.update_job(
                 job.job_id,
                 {"status": job.status, "updated_at": job.updated_at},
@@ -747,9 +747,9 @@ class EmailIndexingService:
             },
             subject=meta.subject if meta else "",
             from_address=meta.from_address if meta else "",
-            email_date=meta.date if meta else datetime.utcnow(),
+            email_date=meta.date if meta else datetime.now(timezone.utc),
             attachments=attachments,
             state="current",
-            indexed_at=datetime.utcnow(),
+            indexed_at=datetime.now(timezone.utc),
             embedding_pending=embedding_pending,
         )

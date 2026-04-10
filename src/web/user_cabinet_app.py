@@ -1,7 +1,7 @@
 from quart import Blueprint, request, jsonify, g, send_file, redirect, abort, send_from_directory
 from functools import wraps
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 
 from ..services.invite_code_service import InviteCodeService
@@ -927,7 +927,7 @@ def create_user_cabinet_blueprint(
                 return jsonify({"error": f"Job is not running (status: {job.status})"}), 409
             await email_job_repo.update_job(job_id, {
                 "status": "cancelled",
-                "updated_at": __import__("datetime").datetime.utcnow(),
+                "updated_at": datetime.now(timezone.utc),
             })
             logger.info(f"📧 Job {job_id[:8]} cancelled by user {g.user_id[:8]}")
             return jsonify({"status": "cancelled"}), 200

@@ -246,7 +246,7 @@ class GmailProviderAdapter(EmailProviderPort):
             access_token=data["access_token"],
             # Google may not return a new refresh_token; keep the existing one
             refresh_token=data.get("refresh_token") or credentials.refresh_token,
-            token_expiry=datetime.utcnow() + timedelta(seconds=data["expires_in"]),
+            token_expiry=datetime.now(timezone.utc) + timedelta(seconds=data["expires_in"]),
             scopes=credentials.scopes,
             email_address=credentials.email_address,
         )
@@ -265,7 +265,7 @@ class GmailProviderAdapter(EmailProviderPort):
         try:
             email_date = parsedate_to_datetime(date_str).astimezone(timezone.utc).replace(tzinfo=None)
         except Exception:
-            email_date = datetime.utcnow()
+            email_date = datetime.now(timezone.utc)
 
         return EmailMetadata(
             email_id=msg["id"],

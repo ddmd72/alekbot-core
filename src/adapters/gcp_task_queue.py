@@ -59,7 +59,7 @@ class GcpTaskQueue(TaskQueue):
             payload = {
                 "event": event_data,
                 "session_id": session_id,
-                "enqueued_at": datetime.datetime.utcnow().isoformat()
+                "enqueued_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
 
             headers = {
@@ -85,7 +85,7 @@ class GcpTaskQueue(TaskQueue):
             if delay_seconds > 0:
                 timestamp = timestamp_pb2.Timestamp()
                 timestamp.FromDatetime(
-                    datetime.datetime.utcnow() + datetime.timedelta(seconds=delay_seconds)
+                    datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=delay_seconds)
                 )
                 task["schedule_time"] = timestamp
 
@@ -250,7 +250,7 @@ class GcpTaskQueue(TaskQueue):
             if delay_seconds > 0:
                 timestamp = timestamp_pb2.Timestamp()
                 timestamp.FromDatetime(
-                    datetime.datetime.utcnow() + datetime.timedelta(seconds=delay_seconds)
+                    datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=delay_seconds)
                 )
                 task["schedule_time"] = timestamp
 
@@ -328,7 +328,7 @@ class GcpTaskQueue(TaskQueue):
             if delay_seconds > 0:
                 timestamp = timestamp_pb2.Timestamp()
                 timestamp.FromDatetime(
-                    datetime.datetime.utcnow() + datetime.timedelta(seconds=delay_seconds)
+                    datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=delay_seconds)
                 )
                 task["schedule_time"] = timestamp
 
