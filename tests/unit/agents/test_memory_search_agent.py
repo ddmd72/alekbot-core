@@ -283,9 +283,9 @@ class TestSaveToMemory:
     # --- can_handle routing ---
 
     async def test_can_handle_accepts_payload_text(self):
-        """payload['text'] present (params-spread from context={"text":"..."}) → accepted."""
+        """payload with intent='save_to_memory' + text → accepted."""
         agent, *_ = _make_agent()
-        msg = _make_message({"text": "User weighs 80 kg. Mentioned in diet discussion."})
+        msg = _make_message({"intent": "save_to_memory", "text": "User weighs 80 kg. Mentioned in diet discussion."})
         assert await agent.can_handle(msg) is True
 
     async def test_can_handle_accepts_intent_flag(self):
@@ -297,19 +297,19 @@ class TestSaveToMemory:
     # --- execute routing and result ---
 
     async def test_execute_routes_to_save_when_text_present(self):
-        """execute() routes to _handle_save() when payload['text'] is set."""
+        """execute() routes to _handle_save() when intent='save_to_memory' + text."""
         agent, *_ = _make_agent()
         passage = "User weighs 80 kg. Mentioned in diet discussion."
-        msg = _make_message({"text": passage})
+        msg = _make_message({"intent": "save_to_memory", "text": passage})
         response = await agent.execute(msg)
         assert response.status == AgentStatus.SUCCESS
         assert response.result == {"saved": True}
 
     async def test_execute_uses_payload_text_as_consolidation_text(self):
-        """history_context contains the full passage from payload['text']."""
+        """history_context contains the full passage from payload['text'] (save_to_memory)."""
         agent, *_ = _make_agent()
         passage = "User weighs 80 kg. Mentioned in diet discussion."
-        msg = _make_message({"text": passage})
+        msg = _make_message({"intent": "save_to_memory", "text": passage})
         response = await agent.execute(msg)
         assert response.history_context == {"consolidation_text": passage}
 
