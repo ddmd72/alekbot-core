@@ -318,7 +318,7 @@ class ClaudeAdapter(LLMPort):
                     "temperature": temperature,
                 }
                 if beta_headers:
-                    force_kwargs["betas"] = beta_headers
+                    force_kwargs["extra_headers"] = {"anthropic-beta": ",".join(beta_headers)}
                 try:
                     async with self.client.messages.stream(**force_kwargs) as stream:
                         force_response = await stream.get_final_message()
