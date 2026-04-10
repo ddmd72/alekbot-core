@@ -566,7 +566,7 @@ class FirestoreFactRepository(FactRepository):
             observation: Observation data
             owner_id: Account ID (parameter name kept for backward compatibility)
         """
-        doc_id = observation.get("id") or f"obs_{datetime.datetime.utcnow().timestamp()}"
+        doc_id = observation.get("id") or f"obs_{datetime.datetime.now(datetime.timezone.utc).timestamp()}"
         # Store as account_id for new schema, but keep owner_id for backward compatibility
         observation['account_id'] = owner_id
         observation['owner_id'] = owner_id  # Keep for backward compatibility
@@ -607,7 +607,7 @@ class FirestoreFactRepository(FactRepository):
 
         # Use Firestore Batch API for atomic operations
         batch = self.db.batch()
-        archived_at = datetime.datetime.utcnow().isoformat()
+        archived_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         # First, read all observations to verify ownership
         observations_to_archive = []

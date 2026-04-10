@@ -14,7 +14,7 @@ Uses aiohttp (already a project dependency). Not a port — one implementation,
 called only by web endpoints in oauth_app.py and user_cabinet_app.py.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from urllib.parse import urlencode
 
@@ -102,7 +102,7 @@ class GoogleOAuthService:
             access_token = token_data["access_token"]
             refresh_token = token_data.get("refresh_token", "")
             expires_in = int(token_data.get("expires_in", 3600))
-            token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+            token_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
             # 2. Fetch email from userinfo
             email_address = ""

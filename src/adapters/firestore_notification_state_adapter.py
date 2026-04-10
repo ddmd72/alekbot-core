@@ -2,7 +2,7 @@
 FirestoreNotificationStateAdapter — persists the last active messaging channel per user.
 Collection: {env}_user_notification_state  (doc ID = user_id)
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from ..config.environment import EnvironmentConfig
@@ -28,7 +28,7 @@ class FirestoreNotificationStateAdapter(NotificationStatePort):
             "user_id": user_id,
             "platform": platform,
             "channel_id": channel_id,
-            "updated_at": datetime.utcnow(),
+            "updated_at": datetime.now(timezone.utc),
         })
 
     async def get(self, user_id: str) -> Optional[NotificationChannel]:
@@ -47,7 +47,7 @@ class FirestoreNotificationStateAdapter(NotificationStatePort):
             user_id=data["user_id"],
             platform=data["platform"],
             channel_id=data["channel_id"],
-            updated_at=updated_at or datetime.utcnow(),
+            updated_at=updated_at or datetime.now(timezone.utc),
         )
 
     async def save_primary(self, user_id: str, platform: str, channel_id: str) -> None:
@@ -55,7 +55,7 @@ class FirestoreNotificationStateAdapter(NotificationStatePort):
             "user_id": user_id,
             "platform": platform,
             "channel_id": channel_id,
-            "updated_at": datetime.utcnow(),
+            "updated_at": datetime.now(timezone.utc),
         })
 
     async def get_primary(self, user_id: str) -> Optional[NotificationChannel]:
@@ -74,5 +74,5 @@ class FirestoreNotificationStateAdapter(NotificationStatePort):
             user_id=data["user_id"],
             platform=data["platform"],
             channel_id=data["channel_id"],
-            updated_at=updated_at or datetime.utcnow(),
+            updated_at=updated_at or datetime.now(timezone.utc),
         )

@@ -17,7 +17,7 @@ OAuth scope required: https://www.googleapis.com/auth/tasks
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import aiohttp
@@ -150,7 +150,7 @@ class GoogleTasksAdapter(TasksProviderPort):
         if updates.status is not None:
             body["status"] = updates.status.value
             if updates.status == TaskStatus.COMPLETED:
-                body["completed"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                body["completed"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
         async with aiohttp.ClientSession() as session:
             async with session.patch(
@@ -229,7 +229,7 @@ class GoogleTasksAdapter(TasksProviderPort):
             )
 
         # Refresh if token expires within 5 minutes
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if creds.token_expiry and (creds.token_expiry - now).total_seconds() < 300:
             creds = await self._refresh_token(creds)
             await self._credentials_repo.save_credentials(creds)
@@ -262,7 +262,7 @@ class GoogleTasksAdapter(TasksProviderPort):
             provider=credentials.provider,
             access_token=data["access_token"],
             refresh_token=data.get("refresh_token") or credentials.refresh_token,
-            token_expiry=datetime.utcnow() + timedelta(seconds=data["expires_in"]),
+            token_expiry=datetime.now(timezone.utc) + timedelta(seconds=data["expires_in"]),
             scopes=credentials.scopes,
             email_address=credentials.email_address,
         )

@@ -14,7 +14,7 @@ Covers:
 - reindex_all: ensure_subscriptions + enqueue per subscription
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
@@ -36,7 +36,7 @@ _SUB_ID = "sub-1"
 
 def _future(hours: float) -> datetime:
     """Return a naive UTC datetime <hours> from now."""
-    return datetime.utcnow() + timedelta(hours=hours)
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=hours)
 
 
 def _make_sub(sub_id: str = _SUB_ID, list_id: str = _LIST_ID, hours_until_expiry: float = 72.0):

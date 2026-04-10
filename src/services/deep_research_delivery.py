@@ -12,7 +12,7 @@ Shared by WorkerHandler, AgentWorkerHandler, and deep_research_webhooks.
 """
 
 import html as html_lib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, Protocol
 
 from ..ports.media_storage_port import MediaStoragePort
@@ -88,7 +88,7 @@ async def upload_html_report(
             "font-size:inherit;margin:0}a{color:#0066cc}</style>"
             f"</head><body><pre>{escaped}</pre></body></html>"
         )
-        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         key = f"deep_research/{user_id}/{timestamp}.html"
         return await media_storage.store(
             data=html_page.encode("utf-8"),
@@ -166,7 +166,7 @@ async def deliver_deep_research(
     round1_text — raw first-pass result before the critic second pass.
                   If equal to result_text (second pass disabled), uploaded once as "report".
     """
-    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     has_two_rounds = bool(round1_text) and round1_text != result_text
 
     if media_storage:

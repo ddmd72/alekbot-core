@@ -15,6 +15,7 @@ Callers:
   - AgentWorkerHandler (async document delivery via notify_document_link / notify_file_bytes)
 """
 import uuid
+from datetime import datetime, timezone
 from typing import Optional, Protocol
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus
@@ -87,7 +88,7 @@ class UserNotificationService:
                 user_id=user_id,
                 platform=platform_override,
                 channel_id=channel_id_override,
-                updated_at=__import__("datetime").datetime.utcnow(),
+                updated_at=datetime.now(timezone.utc),
             )
 
         # Try primary first

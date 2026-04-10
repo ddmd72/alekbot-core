@@ -21,7 +21,7 @@ Covers:
 - 404 on get_task → ValueError
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -53,7 +53,7 @@ _VALID_CREDS = OAuthCredentials(
     provider="microsoft_todo",
     access_token="tok-valid",
     refresh_token="ref-valid",
-    token_expiry=datetime.utcnow() + timedelta(hours=1),
+    token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
     scopes=["Tasks.ReadWrite"],
     email_address="user@example.com",
 )
@@ -63,7 +63,7 @@ _EXPIRED_CREDS = OAuthCredentials(
     provider="microsoft_todo",
     access_token="tok-expired",
     refresh_token="ref-valid",
-    token_expiry=datetime.utcnow() - timedelta(hours=1),
+    token_expiry=datetime.now(timezone.utc) - timedelta(hours=1),
     scopes=["Tasks.ReadWrite"],
     email_address="user@example.com",
 )
@@ -494,17 +494,16 @@ class TestRegisterSubscription:
         post_resp = _mock_response({"id": "sub-1", "resource": "/me/todo/lists/x/tasks"})
         session = _mock_session({"post": post_resp})
 
-        before = datetime.utcnow()
+        before = datetime.now(timezone.utc)
         with _patch_session(session):
             result = await adapter.register_subscription(_USER_ID, _LIST_ID, "https://app.com")
-        after = datetime.utcnow()
+        after = datetime.now(timezone.utc)
 
         # expires_at should be roughly now + 4000 minutes
-        from datetime import timezone
-        expires_naive = result.expires_at.replace(tzinfo=None) if result.expires_at.tzinfo else result.expires_at
-        expected_min = before + __import__("datetime").timedelta(minutes=3999)
-        expected_max = after + __import__("datetime").timedelta(minutes=4001)
-        assert expected_min <= expires_naive <= expected_max
+        expires_aware = result.expires_at if result.expires_at.tzinfo else result.expires_at.replace(tzinfo=timezone.utc)
+        expected_min = before + timedelta(minutes=3999)
+        expected_max = after + timedelta(minutes=4001)
+        assert expected_min <= expires_aware <= expected_max
 
 
 # =============================================================================

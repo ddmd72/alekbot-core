@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ..agents.base_agent import BaseAgent
@@ -673,7 +673,7 @@ class TasksAgent(BaseAgent):
         """
         pattern_type = rec_args["pattern"]
         interval = rec_args.get("interval", 1)
-        due_dt = self._parse_datetime(due_datetime_str) or datetime.utcnow()
+        due_dt = self._parse_datetime(due_datetime_str) or datetime.now(timezone.utc)
 
         _WEEKDAY_NAMES = [
             "monday", "tuesday", "wednesday", "thursday",
@@ -705,7 +705,7 @@ class TasksAgent(BaseAgent):
             ),
             range=RecurrenceRange(
                 type="noEnd",
-                start_date=datetime.utcnow().date().isoformat(),
+                start_date=datetime.now(timezone.utc).date().isoformat(),
             ),
         )
 

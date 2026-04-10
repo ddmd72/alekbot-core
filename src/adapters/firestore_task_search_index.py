@@ -11,7 +11,7 @@ Mirrors FirestoreIndexedEmailRepository pattern for vector wrap/unwrap and RRF.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from google.cloud.firestore import FieldFilter
@@ -70,7 +70,7 @@ class FirestoreTaskSearchIndex(TaskSearchIndex):
     def _to_domain(self, data: dict) -> TaskSearchEntry:
         self._unwrap_vectors(data)
         if "indexed_at" in data:
-            data["indexed_at"] = self._strip_tz(data["indexed_at"]) or datetime.utcnow()
+            data["indexed_at"] = self._strip_tz(data["indexed_at"]) or datetime.now(timezone.utc)
         # Coerce enum strings
         if isinstance(data.get("status"), str):
             data["status"] = TaskStatus(data["status"])
