@@ -125,8 +125,9 @@ class FactsMemoryAgent(BaseAgent):
             logger.debug("🧠 [FactsMemoryAgent] can_handle=False (wrong intent)")
             return False
 
-        # save_to_memory path: "text" in payload (rich passage via context_schemas) OR intent flag
-        if message.payload.get("text") or message.payload.get("intent") == "save_to_memory":
+        # save_to_memory path: explicit intent flag only (not by "text" presence — LLMs
+        # may fill context fields for any intent, causing false routing to save path)
+        if message.payload.get("intent") == "save_to_memory":
             logger.debug("🧠 [FactsMemoryAgent] can_handle=True (save_to_memory)")
             return True
 
@@ -223,7 +224,7 @@ class FactsMemoryAgent(BaseAgent):
         - "intent"=="save_to_memory" without "text" → save_to_memory (fallback: query only)
         - otherwise → search_memory (multi-vector RRF)
         """
-        if message.payload.get("text") or message.payload.get("intent") == "save_to_memory":
+        if message.payload.get("intent") == "save_to_memory":
             return await self._handle_save(message)
 
         raw_query = message.payload.get("query", "")
