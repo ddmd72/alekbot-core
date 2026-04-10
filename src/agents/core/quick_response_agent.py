@@ -218,7 +218,10 @@ class QuickResponseAgent(BaseAgent):
                 current_message_parts=current_message_parts,
                 context_window=self.CONTEXT_WINDOW
             )
-            
+            # Inject behavioral anchor (information-gap + posture rules) into the
+            # latest user message — in-memory only, never persisted to history.
+            conversation_history = self._inject_user_turn_anchor(conversation_history)
+
             clean_history = self._clean_history_for_quick(conversation_history)
             
             logger.debug(
