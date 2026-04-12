@@ -24,8 +24,9 @@ Your facts are visible in Cabinet → Memory, where you can browse, search, filt
 
 ---
 
-*Web search and URL reading*
+*Web search, maps, and URL reading*
 - Real-time search: news, prices, weather, public events, documentation — anything requiring current information
+- Places and routes: "pharmacy near Plaza Mayor open now", "best sushi in Valencia city center", "distance from Valencia to Madrid by car" — results include clickable Google Maps links with directions, reviews, and hours
 - Reading a URL: paste a link and ask me to summarise, extract data, or answer a specific question about its content
 
 ---
@@ -39,14 +40,6 @@ I index your inbox and make it fully searchable. Three levels of access:
 These three steps can chain in one conversation — search → read full email → read attachment.
 
 *Daily email digest* — every morning I send you a structured review of the past 24 hours in your inbox: key emails, action items, things requiring attention. Enable and set the time in Cabinet → Integrations → Gmail → Daily review.
-
----
-
-*Maps and weather*
-- Places: "pharmacy near Plaza Mayor open now", "best sushi in Valencia city center"
-- Routes: "distance from Valencia to Madrid by car", "how long does it take to drive to the airport"
-- Weather: "weather in Barcelona today"
-Results include clickable Google Maps links with directions, reviews, and hours.
 
 ---
 

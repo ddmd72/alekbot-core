@@ -613,7 +613,7 @@ class TestQuickAgentIntentRemap:
 
         tool_call = ToolCall(name="delegate_to_specialist", args={"intent": "search_web", "query": "погода"})
         await engine._dispatch_single(
-            tool_call, {"user_id": "u1"}, {}, "test", 0, 0,
+            tool_call, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
 
         coordinator.handle_delegation.assert_called_once()
@@ -631,7 +631,7 @@ class TestQuickAgentIntentRemap:
 
         tool_call = ToolCall(name="delegate_to_specialist", args={"intent": "search_memory", "query": "факты"})
         await engine._dispatch_single(
-            tool_call, {"user_id": "u1"}, {}, "test", 0, 0,
+            tool_call, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
 
         actual_intent = coordinator.handle_delegation.call_args.kwargs["intent"]
@@ -907,14 +907,14 @@ class TestDelegateQuickEdgeCases:
         engine = DelegationEngine(AsyncMock())
         tc = ToolCall(name="delegate_to_specialist", args={"intent": "search_memory", "query": "test"})
         result = await engine._dispatch_single(
-            tc, {"user_id": "u1"}, {}, "test", 0, 0,
+            tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
         # coordinator called → assert it reached dispatch
         assert result is not None
 
     async def test_no_intent_returns_error_string(self, engine, ctx):
         tc = ToolCall(name="delegate_to_specialist", args={"query": "test"})
-        result = await engine._dispatch_single(tc, ctx, {}, "test", 0, 0)
+        result = await engine._dispatch_single(tc, ctx, {}, {}, "test", 0, 0)
         assert "SYSTEM ERROR" in result.result_str
 
     async def test_context_params_as_string_wrapped(self, engine, ctx):
@@ -926,7 +926,7 @@ class TestDelegateQuickEdgeCases:
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "test", "context": "some reasoning text"},
         )
-        result = await engine._dispatch_single(tc, ctx, {}, "test", 0, 0)
+        result = await engine._dispatch_single(tc, ctx, {}, {}, "test", 0, 0)
         assert result.result_str is not None
 
 
@@ -1089,7 +1089,7 @@ class TestDelegateQuickNonDictContext:
             args={"intent": "search_memory", "query": "test", "context": None},
         )
         result = await engine._dispatch_single(
-            tc, {"user_id": "u1"}, {}, "test", 0, 0,
+            tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
         assert result.result_str is not None
 
@@ -1114,7 +1114,7 @@ class TestDelegateQuickRetry:
             args={"intent": "search_memory", "query": "q"},
         )
         result = await engine._dispatch_single(
-            tc, {"user_id": "u1"}, {}, "test", 0, 0,
+            tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
         assert "SYSTEM" in result.result_str
 
@@ -1141,7 +1141,7 @@ class TestDelegateQuickSearchEmails:
             args={"intent": "search_emails", "query": "invoice"},
         )
         result = await engine._dispatch_single(
-            tc, {"user_id": "u1"}, {}, "test", 0, 0,
+            tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
         assert "abc123" in result.result_str
         assert "Found 1 email(s):" in result.result_str

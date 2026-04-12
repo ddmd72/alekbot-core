@@ -52,8 +52,10 @@ background process extracts new facts from the conversation → bot gets smarter
   Vision (file attachments): forces complexity ≥ 7.
 - Quick — functionally equivalent to Smart in tool access and intents.
   Two differences only: (1) no re-evaluation after tool results (Smart re-evaluates for follow-up
-  delegation; Quick does not); (2) tool remapping: `search_web` → `search_web_light` via
-  `intent_remap` at dispatch time. Handles complexity 1–6 (≈70% of requests), significantly cheaper.
+  delegation; Quick does not); (2) `intent_remap` at dispatch time (currently disabled).
+  Both Quick and Smart use `intent_fanout` to dispatch secondary specialists in parallel
+  (e.g. `search_web` auto-triggers `maps_query` via fan-out — see DelegationEngine below).
+  Handles complexity 1–6 (≈70% of requests), significantly cheaper.
 - Smart — provider-agnostic, model resolved from execution context per user config.
   Called only for complexity 7–10 requests. After tool results, re-evaluates for follow-up delegation.
 - WebSearchLight — single-pass provider-native search (`use_grounding=True`). Separate agent
@@ -169,6 +171,10 @@ background process extracts new facts from the conversation → bot gets smarter
   AI Grounding Lite (MCP). Multi-turn tool loop: LLM selects MCP tools, agent executes, LLM formats
   response with clickable Google Maps links. System prompt via PromptBuilder (`maps_search` profile).
   Backend injected via `MapsToolsPort`. See `docs/10_rfcs/MCP_INFRASTRUCTURE_RFC.md`.
+  **Internal agent (`internal=True`)** — not shown in LLM tool declarations. Triggered automatically
+  via `intent_fanout` when orchestrator dispatches `search_web`. Results merged with web search
+  under labeled sections (`[Primary specialist: Web Search]` / `[Additional specialist: Maps]`)
+  with a reconciliation hint for the orchestrator. See DelegationEngine `intent_fanout` below.
 - Compute (SYNC, ECO tier) — `ComputeAgent` (`compute_agent.py`). Four intents:
   `compute_math` (arithmetic, algebra, unit conversions), `compute_datetime` (date differences,
   day-of-week, age, timezone conversions, countdowns), `compute_finance` (loan/mortgage payments,
@@ -369,7 +375,8 @@ src/
                   HTML page agents: HtmlPageGeneratorAgent (html_page_generator_agent.py, intent
                   create_html_page, ASYNC, internal=False). HTML is final artifact; optional
                   ImageSearchPort (UnsplashAdapter) for post-generation image resolution.
-                  Maps agents: MapsSearchAgent (maps_search_agent.py, intent maps_query, SYNC).
+                  Maps agents: MapsSearchAgent (maps_search_agent.py, intent maps_query, SYNC,
+                  internal=True — triggered via intent_fanout on search_web).
                   Compute agents: ComputeAgent (compute_agent.py, intents compute_math,
                   compute_datetime, compute_finance, compute; SYNC, code_execution sandbox).
                   File agents: FileManagementAgent (file_management_agent.py, intents
@@ -539,12 +546,22 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   `params`. All context fields (`origin_channel_id`, `session_id`, etc.) propagate automatically
   to downstream tasks including async Cloud Task payloads. Agents pass `context=message.context`
   — zero knowledge of routing, channels, or session format.
-  API: `engine.execute(call_llm, base_request, context, max_turns, terminal_tool?, intent_remap?)`.
+  API: `engine.execute(call_llm, base_request, context, max_turns, terminal_tool?, intent_remap?,
+  intent_fanout?)`.
   Smart: `terminal_tool="deliver_response"` (structured JSON output via tool).
-  Quick: `intent_remap={"search_web": "search_web_light"}` (dispatch-time substitution).
-  Bound agents: plain text response, no terminal tool, no remap.
+  Quick: `intent_remap={}` (disabled), `intent_fanout` from descriptor.
+  Bound agents: plain text response, no terminal tool, no remap, no fanout.
   `DelegationResult` carries: `text`, `terminal_tool_args`, `total_tokens`, `delivery_items`,
   `history_contexts`, `structured_data`, `messages`, `failed`.
+  **Intent fan-out** (`intent_fanout`): declarative 1:N dispatch-time expansion. Configured via
+  `FanoutSpec(intents, hint)` on `AgentDescriptor`. When LLM dispatches an intent that has a
+  fan-out mapping (e.g. `search_web`), the engine runs the primary + all secondary intents
+  (e.g. `maps_query`) in parallel via `asyncio.gather`. Results merged into a single
+  `ToolResult` with labeled sections (`[Primary specialist: ...]`, `[Additional specialist: ...]`)
+  and a reconciliation hint for the LLM. Secondary failures silently skipped — primary always
+  returned. `FanoutSpec.hint` provides per-mapping conflict resolution instructions
+  (e.g. "trust Maps for geodata, trust Web for reviews"). Both Quick and Smart pass
+  `intent_fanout=dict(self._descriptor.intent_fanout)` to the engine.
 - **BaseAgent lifecycle hooks** — `_on_agent_start(text)`, `_on_agent_success(char_count, token_count,
   output_text)`, `_on_agent_error(error, context)`, `_on_delegation(intent, query)`. All agents
   call these instead of direct `logger.*` calls. Changing infrastructure logging = edit BaseAgent
