@@ -58,6 +58,14 @@ class AutomaticFunctionCallingConfig(BaseModel):
 class PromptCacheConfig(BaseModel):
     """Provider-agnostic cache configuration for prompt caching."""
     enabled: bool = False
+    # Multi-turn loop caching: when True, the adapter places an additional
+    # cache_control breakpoint on the last content block of the messages
+    # array. On the next turn the prefix up to (and including) that block is
+    # served from cache via Anthropic's automatic backward lookback. Only
+    # set this for agents whose loop is guaranteed multi-turn within the
+    # 5-minute ephemeral TTL — single-turn calls would pay the +25% cache
+    # write surcharge with no read to amortize it.
+    cache_last_message: bool = False
     ttl_seconds: Optional[int] = None   # Reserved: provider-managed TTL (Claude ephemeral = 5 min)
     cache_scope: str = "user"           # Reserved: future per-scope invalidation
     cache_key: Optional[str] = None     # Reserved: future manual cache key control
