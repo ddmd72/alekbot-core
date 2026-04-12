@@ -317,9 +317,18 @@ class PromptDebugLogger:
                     sections.append(f"=== FINISH: {data['finish_reason']} ===")
                 if data.get("tokens"):
                     token_line = f"=== TOKENS: {data['tokens']}"
-                    cache = data.get("cache")
-                    if cache and (cache.get("read") or cache.get("creation")):
-                        token_line += f" (cache_read={cache.get('read', 0)}, cache_creation={cache.get('creation', 0)})"
+                    pt = data.get("prompt_tokens")
+                    ct = data.get("completion_tokens")
+                    if pt or ct:
+                        token_line += f" (prompt={pt or 0}, completion={ct or 0}"
+                        cache = data.get("cache")
+                        if cache and (cache.get("read") or cache.get("creation")):
+                            token_line += f", cache_read={cache.get('read', 0)}, cache_creation={cache.get('creation', 0)}"
+                        token_line += ")"
+                    else:
+                        cache = data.get("cache")
+                        if cache and (cache.get("read") or cache.get("creation")):
+                            token_line += f" (cache_read={cache.get('read', 0)}, cache_creation={cache.get('creation', 0)})"
                     token_line += " ==="
                     sections.append(token_line)
                 text_body = "\n\n".join(sections) if sections else response
@@ -337,12 +346,24 @@ class PromptDebugLogger:
                     lines.append(f"MODEL: {metadata['model']}")
                 if "tokens" in metadata:
                     token_str = str(metadata['tokens'])
-                    cache_r = metadata.get('cache_read_tokens')
-                    cache_c = metadata.get('cache_creation_tokens')
-                    if cache_r or cache_c:
-                        token_str += f" (cache_read={cache_r or 0}, cache_creation={cache_c or 0})"
+                    pt = metadata.get('prompt_tokens')
+                    ct = metadata.get('completion_tokens')
+                    if pt or ct:
+                        token_str += f" (prompt={pt or 0}, completion={ct or 0}"
+                        cache_r = metadata.get('cache_read_tokens')
+                        cache_c = metadata.get('cache_creation_tokens')
+                        if cache_r or cache_c:
+                            token_str += f", cache_read={cache_r or 0}, cache_creation={cache_c or 0}"
+                        token_str += ")"
+                    else:
+                        cache_r = metadata.get('cache_read_tokens')
+                        cache_c = metadata.get('cache_creation_tokens')
+                        if cache_r or cache_c:
+                            token_str += f" (cache_read={cache_r or 0}, cache_creation={cache_c or 0})"
                     lines.append(f"TOKENS: {token_str}")
-                rest = {k: v for k, v in metadata.items() if k not in ("model", "tokens", "cache_read_tokens", "cache_creation_tokens")}
+                if metadata.get("cost"):
+                    lines.append(f"COST: ${metadata['cost']:.6f}")
+                rest = {k: v for k, v in metadata.items() if k not in ("model", "tokens", "prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_creation_tokens", "cost")}
                 if rest:
                     lines.append(f"METADATA: {rest}")
             lines.append("=" * 80)
