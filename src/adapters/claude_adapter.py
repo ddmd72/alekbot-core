@@ -154,7 +154,12 @@ class ClaudeAdapter(LLMPort):
             system_parts = [{"type": "text", "text": system_instruction}] if system_instruction else []
 
         # Convert messages to Anthropic format
-        claude_messages = await self._convert_messages(messages)
+        cache_last_message = bool(
+            cache_config and cache_config.enabled and cache_config.cache_last_message
+        )
+        claude_messages = await self._convert_messages(
+            messages, cache_last_message=cache_last_message
+        )
 
         # Convert tools to Anthropic format
         claude_tools = self._convert_tools(tools) if tools else []
@@ -601,7 +606,11 @@ class ClaudeAdapter(LLMPort):
         )
         return "unknown"
 
-    async def _convert_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
+    async def _convert_messages(
+        self,
+        messages: List[Message],
+        cache_last_message: bool = False,
+    ) -> List[Dict[str, Any]]:
         claude_messages = []
         for idx, msg in enumerate(messages):
             # ====================================================================
@@ -709,7 +718,63 @@ class ClaudeAdapter(LLMPort):
             role = "assistant" if msg.role == "model" else "user"
             logger.debug(f"[ClaudeAdapter] Created message: role={role}, content_parts={len(content_parts)}")
             claude_messages.append({"role": role, "content": content_parts})
-        
+
+        # Multi-turn loop caching: rolling sliding window of cache_control
+        # breakpoints on user messages.
+        #
+        # We place TWO breakpoints (BP_new + BP_prev) within the messages
+        # array on every multi-turn request:
+        #   BP_new  → last content block of the LAST user message
+        #             (write a fresh cache entry at the new frontier)
+        #   BP_prev → last content block of the previous user message
+        #             (re-affirms the prior turn's cache write — keeps the
+        #             lookback chain unbroken when a single turn produces
+        #             >20 content blocks of tool_use/tool_result, which can
+        #             happen on parallel batch tool calls)
+        #
+        # Why both markers (not just BP_new): Anthropic's lookback window is
+        # 20 blocks. A single consolidation turn with 12+ parallel tool calls
+        # easily produces 24+ blocks (tool_use × N + tool_result × N), pushing
+        # the previous user message past the lookback horizon. With BP_prev
+        # explicitly set on the same position the prior turn wrote, the new
+        # request anchors directly at the prior cache write — distance 0 in
+        # the lookback window, guaranteed HIT.
+        #
+        # Why on USER messages (not assistant): tool_result blocks live in
+        # user messages, and the heaviest content (long search outputs) is
+        # there. Caching at user-message boundaries gives the largest reusable
+        # prefix per write.
+        #
+        # Total breakpoints: 1 on system static + up to 2 on messages = max 3.
+        # Anthropic limit is 4 — leaves a slot for future use (e.g. dynamic
+        # system block, tools-list cache).
+        if cache_last_message and claude_messages:
+            user_indices = [
+                i for i, m in enumerate(claude_messages)
+                if m.get("role") == "user"
+            ]
+
+            def _mark_last_block(msg_idx: int, label: str) -> None:
+                content = claude_messages[msg_idx].get("content")
+                if not isinstance(content, list) or not content:
+                    return
+                last_block = content[-1]
+                if not isinstance(last_block, dict):
+                    return
+                last_block["cache_control"] = {"type": "ephemeral"}
+                logger.debug(
+                    "💾 [ClaudeAdapter] cache_control on %s user message "
+                    "(idx=%s, block_type=%s)",
+                    label, msg_idx, last_block.get("type"),
+                )
+
+            if user_indices:
+                # BP_new on the last user message
+                _mark_last_block(user_indices[-1], "last")
+                # BP_prev on the previous user message (sliding window)
+                if len(user_indices) >= 2:
+                    _mark_last_block(user_indices[-2], "prev")
+
         return claude_messages
 
     def _convert_tools(self, tools: List[Any]) -> List[Dict[str, Any]]:
