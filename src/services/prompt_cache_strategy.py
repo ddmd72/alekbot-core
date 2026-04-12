@@ -23,9 +23,22 @@ class PromptCacheStrategy(PromptCacheStrategyPort):
       (short prompt, single-shot).
     - Provider must support context_caching
       (Claude yes, Gemini/Grok no).
+
+    Multi-turn loop caching (cache_last_message):
+    - Consolidation: guaranteed 2-6 turn loop within 60-90s, well under
+      ephemeral TTL — second breakpoint amortizes on every subsequent turn.
+    - Smart: empirically always ≥2 turns because the agent is forced to
+      call the deliver_response terminal tool, and any non-trivial query
+      first delegates to a specialist (search_memory etc.). Cache write
+      reliably read at least once.
+    - Quick: most calls are single-turn (no terminal_tool, plain text
+      response when no delegation needed). Cache write would not be
+      amortized → pay the +25% surcharge for nothing. Skipped.
+    - WebSearch: single LLM call with native grounding, no follow-up.
     """
 
     CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick", "websearch"})
+    MULTI_TURN_AGENTS: frozenset = frozenset({"consolidation", "smart"})
 
     def resolve(
         self, agent_type: str, capabilities: ProviderCapabilities
@@ -36,8 +49,11 @@ class PromptCacheStrategy(PromptCacheStrategyPort):
         if agent_type not in self.CACHEABLE_AGENTS:
             return None
 
+        cache_last = agent_type in self.MULTI_TURN_AGENTS
+
         logger.debug(
-            "💾 [PromptCacheStrategy] Caching enabled for agent_type=%s",
-            agent_type,
+            "💾 [PromptCacheStrategy] Caching enabled for agent_type=%s "
+            "(cache_last_message=%s)",
+            agent_type, cache_last,
         )
-        return PromptCacheConfig(enabled=True)
+        return PromptCacheConfig(enabled=True, cache_last_message=cache_last)

@@ -66,3 +66,39 @@ def test_unknown_agent_type_returns_none(strategy, caching_capabilities):
     """Unknown agent type → None (safe default)."""
     result = strategy.resolve("future_agent", caching_capabilities)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# cache_last_message — multi-turn loop caching gate
+# ---------------------------------------------------------------------------
+
+def test_consolidation_enables_cache_last_message(strategy, caching_capabilities):
+    """Consolidation runs guaranteed multi-turn loop → second breakpoint on."""
+    result = strategy.resolve("consolidation", caching_capabilities)
+    assert result is not None
+    assert result.cache_last_message is True
+
+
+def test_smart_enables_cache_last_message(strategy, caching_capabilities):
+    """Smart is forced through deliver_response terminal tool — empirically
+    100% of recent runs are ≥2 turns → second breakpoint on."""
+    result = strategy.resolve("smart", caching_capabilities)
+    assert result is not None
+    assert result.cache_last_message is True
+
+
+def test_quick_does_not_enable_cache_last_message(strategy, caching_capabilities):
+    """Quick has no terminal tool — most calls are single-turn text responses.
+    Second breakpoint would pay +25% write surcharge with no read."""
+    result = strategy.resolve("quick", caching_capabilities)
+    assert result is not None
+    assert result.enabled is True
+    assert result.cache_last_message is False
+
+
+def test_websearch_does_not_enable_cache_last_message(strategy, caching_capabilities):
+    """WebSearch is single LLM call with native grounding — no follow-up turn."""
+    result = strategy.resolve("websearch", caching_capabilities)
+    assert result is not None
+    assert result.enabled is True
+    assert result.cache_last_message is False

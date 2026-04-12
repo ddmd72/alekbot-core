@@ -987,3 +987,139 @@ async def test_gcs_ref_file_data_no_error():
     # Should have one user message; ref part is silently skipped (only text part emits content)
     assert len(result) == 1
     assert result[0]["role"] == "user"
+
+
+# ---------------------------------------------------------------------------
+# cache_last_message — multi-turn loop caching breakpoint on the last block
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_cache_last_message_off_by_default():
+    """Without cache_last_message, no message blocks get cache_control."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="user", parts=[MessagePart(text="initial query")]),
+        Message(role="model", parts=[MessagePart(text="here is some context")]),
+        Message(role="user", parts=[MessagePart(text="follow-up")]),
+    ]
+
+    result = await adapter._convert_messages(messages)
+
+    for msg in result:
+        for block in msg["content"]:
+            assert "cache_control" not in block, (
+                f"unexpected cache_control on {msg['role']} block: {block}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_cache_last_message_marks_last_two_user_messages():
+    """With cache_last_message=True and ≥2 user messages, BOTH the last
+    user message AND the previous user message get cache_control on their
+    last content block (sliding-window pattern)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="user", parts=[MessagePart(text="initial query")]),
+        Message(role="model", parts=[MessagePart(text="response with context")]),
+        Message(role="user", parts=[MessagePart(text="follow-up question")]),
+    ]
+
+    result = await adapter._convert_messages(messages, cache_last_message=True)
+
+    # Assistant message: no cache_control
+    assistant_msg = result[1]
+    assert assistant_msg["role"] == "assistant"
+    for block in assistant_msg["content"]:
+        assert "cache_control" not in block
+
+    # First user message: BP_prev → cache_control on last block
+    first_user = result[0]
+    assert first_user["role"] == "user"
+    assert first_user["content"][-1].get("cache_control") == {"type": "ephemeral"}
+
+    # Second user message: BP_new → cache_control on last block
+    last_user = result[-1]
+    assert last_user["role"] == "user"
+    assert last_user["content"][-1].get("cache_control") == {"type": "ephemeral"}
+
+
+@pytest.mark.asyncio
+async def test_cache_last_message_single_user_marks_only_one():
+    """With only one user message in the history, only that message gets
+    cache_control. No 'previous' user message exists to mark."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="user", parts=[MessagePart(text="single turn query")]),
+    ]
+
+    result = await adapter._convert_messages(messages, cache_last_message=True)
+
+    assert len(result) == 1
+    assert result[0]["role"] == "user"
+    assert result[0]["content"][-1].get("cache_control") == {"type": "ephemeral"}
+
+
+@pytest.mark.asyncio
+async def test_cache_last_message_three_user_messages_marks_only_two_latest():
+    """With 3 user messages, only the LAST two get cache_control. The first
+    user message remains unmarked — its cache write (from earlier turns)
+    is reachable through Anthropic's automatic backward lookback."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="user", parts=[MessagePart(text="user(1)")]),
+        Message(role="model", parts=[MessagePart(text="model(1)")]),
+        Message(role="user", parts=[MessagePart(text="user(2)")]),
+        Message(role="model", parts=[MessagePart(text="model(2)")]),
+        Message(role="user", parts=[MessagePart(text="user(3)")]),
+    ]
+
+    result = await adapter._convert_messages(messages, cache_last_message=True)
+
+    user_msgs = [m for m in result if m["role"] == "user"]
+    assert len(user_msgs) == 3
+
+    # First user: NO cache_control (lookback finds it)
+    assert "cache_control" not in user_msgs[0]["content"][-1]
+    # Second user: BP_prev
+    assert user_msgs[1]["content"][-1].get("cache_control") == {"type": "ephemeral"}
+    # Third user: BP_new
+    assert user_msgs[2]["content"][-1].get("cache_control") == {"type": "ephemeral"}
+
+
+@pytest.mark.asyncio
+async def test_cache_last_message_marks_last_block_when_message_has_multiple_parts():
+    """When the last message has multiple content blocks (e.g. several
+    text parts), only the FINAL one gets cache_control."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="user", parts=[MessagePart(text="query")]),
+        Message(role="model", parts=[MessagePart(text="response")]),
+        Message(
+            role="user",
+            parts=[
+                MessagePart(text="first part"),
+                MessagePart(text="second part"),
+                MessagePart(text="third (final) part"),
+            ],
+        ),
+    ]
+
+    result = await adapter._convert_messages(messages, cache_last_message=True)
+
+    last_content = result[-1]["content"]
+    assert len(last_content) == 3
+
+    # First two: no cache_control
+    assert "cache_control" not in last_content[0]
+    assert "cache_control" not in last_content[1]
+
+    # Last one: cache_control
+    assert last_content[-1].get("cache_control") == {"type": "ephemeral"}
+
+
+@pytest.mark.asyncio
+async def test_cache_last_message_empty_messages_does_not_raise():
+    """Edge case: empty messages list with cache_last_message=True is a no-op."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    result = await adapter._convert_messages([], cache_last_message=True)
+    assert result == []
