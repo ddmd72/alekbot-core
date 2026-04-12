@@ -24,6 +24,8 @@ from ..ports.llm_port import LLMRequest, LLMResponse, Message, MessagePart, Tool
 from ..domain.llm import build_tool_turn
 from ..utils.logger import logger
 
+from .agent_registry import FanoutSpec
+
 if TYPE_CHECKING:
     from .agent_coordinator import AgentCoordinator
 
@@ -59,6 +61,18 @@ class DelegationResult:
 # ------------------------------------------------------------------ #
 # Result formatting                                                    #
 # ------------------------------------------------------------------ #
+
+_FANOUT_LABELS: Dict[str, str] = {
+    "search_web": "Web Search",
+    "maps_query": "Maps",
+}
+
+
+def _fanout_label(intent: str, primary: bool = False) -> str:
+    """Human-readable label for fan-out result sections."""
+    name = _FANOUT_LABELS.get(intent, intent)
+    return f"Primary specialist: {name}" if primary else f"Additional specialist: {name}"
+
 
 def _format_result(intent: str, result: Any) -> str:
     """Format AgentResponse.result into a string for the LLM tool_response."""
@@ -122,6 +136,7 @@ class DelegationEngine:
         max_turns: int,
         terminal_tool: Optional[str] = None,
         intent_remap: Optional[Dict[str, str]] = None,
+        intent_fanout: Optional[Dict[str, FanoutSpec]] = None,
         calling_agent_id: str = "delegation_engine",
         max_retries: int = 1,
         retry_backoff: float = 1.0,
@@ -140,6 +155,10 @@ class DelegationEngine:
                            (e.g. "deliver_response" for Smart).
             intent_remap: Optional dispatch-time intent substitution
                           (e.g. {"search_web": "search_web_light"} for Quick).
+            intent_fanout: Optional dispatch-time 1:N expansion.
+                           e.g. {"search_web": FanoutSpec(intents=["maps_query"],
+                           hint="...")} dispatches both in parallel and merges
+                           results into one tool response with the hint.
             calling_agent_id: For coordinator logging.
             max_retries: Retries per individual tool dispatch.
             retry_backoff: Seconds between retries.
@@ -150,6 +169,7 @@ class DelegationEngine:
         all_delivery_items: List[DeliveryItem] = []
         accumulated_structured: Any = None
         remap = intent_remap or {}
+        fanout = intent_fanout or {}
 
         for turn in range(max_turns):
             # Build request with current history
@@ -210,6 +230,7 @@ class DelegationEngine:
                 tool_calls=response.tool_calls,
                 context=context,
                 intent_remap=remap,
+                intent_fanout=fanout,
                 calling_agent_id=calling_agent_id,
                 max_retries=max_retries,
                 retry_backoff=retry_backoff,
@@ -255,6 +276,7 @@ class DelegationEngine:
         tool_calls: List[ToolCall],
         context: Dict[str, Any],
         intent_remap: Dict[str, str],
+        intent_fanout: Dict[str, FanoutSpec],
         calling_agent_id: str,
         max_retries: int,
         retry_backoff: float,
@@ -280,7 +302,7 @@ class DelegationEngine:
         for idx, tc in memory_calls:
             logger.info("🔄 [DelegationEngine] Priority execution: search_memory")
             result = await self._dispatch_single(
-                tc, context, intent_remap, calling_agent_id,
+                tc, context, intent_remap, intent_fanout, calling_agent_id,
                 max_retries, retry_backoff, memory_context,
             )
             results[idx] = result
@@ -295,7 +317,7 @@ class DelegationEngine:
             )
             tasks = [
                 self._dispatch_single(
-                    tc, context, intent_remap, calling_agent_id,
+                    tc, context, intent_remap, intent_fanout, calling_agent_id,
                     max_retries, retry_backoff, memory_context,
                 )
                 for _, tc in other_calls
@@ -322,6 +344,7 @@ class DelegationEngine:
         tool_call: ToolCall,
         context: Dict[str, Any],
         intent_remap: Dict[str, str],
+        intent_fanout: Dict[str, FanoutSpec],
         calling_agent_id: str,
         max_retries: int,
         retry_backoff: float,
@@ -359,6 +382,29 @@ class DelegationEngine:
             "params": context_params,
         }
 
+        # Fan-out: dispatch primary + secondary intents in parallel
+        fanout_spec = intent_fanout.get(intent)
+        if fanout_spec and fanout_spec.intents:
+            return await self._dispatch_with_fanout(
+                tool_call, intent, fanout_spec, query,
+                delegation_context, calling_agent_id,
+            )
+
+        return await self._dispatch_to_coordinator(
+            tool_call, intent, query, delegation_context,
+            calling_agent_id, max_retries,
+        )
+
+    async def _dispatch_to_coordinator(
+        self,
+        tool_call: ToolCall,
+        intent: str,
+        query: str,
+        delegation_context: Dict[str, Any],
+        calling_agent_id: str,
+        max_retries: int,
+    ) -> ToolResult:
+        """Dispatch a single intent to the coordinator and return a ToolResult."""
         for attempt in range(max_retries + 1):
             response = await self._coordinator.handle_delegation(
                 intent=intent,
@@ -400,4 +446,106 @@ class DelegationEngine:
         return ToolResult(
             name=tool_call.name,
             result_str="AGENT ERROR: Max retries exceeded",
+        )
+
+    # ------------------------------------------------------------------ #
+    # Fan-out dispatch                                                     #
+    # ------------------------------------------------------------------ #
+
+    async def _dispatch_with_fanout(
+        self,
+        tool_call: ToolCall,
+        primary_intent: str,
+        spec: FanoutSpec,
+        query: str,
+        delegation_context: Dict[str, Any],
+        calling_agent_id: str,
+    ) -> ToolResult:
+        """Dispatch primary + secondary intents in parallel, merge results."""
+        logger.info(
+            "⚡ [DelegationEngine] Fan-out: %s + %s",
+            primary_intent, spec.intents,
+        )
+
+        async def _delegate(intent: str):
+            return await self._coordinator.handle_delegation(
+                intent=intent,
+                query=query,
+                context=delegation_context,
+                calling_agent_id=calling_agent_id,
+            )
+
+        all_intents = [primary_intent, *spec.intents]
+        results = await asyncio.gather(
+            *[_delegate(i) for i in all_intents],
+            return_exceptions=True,
+        )
+
+        return self._merge_fanout_results(tool_call, all_intents, results, spec.hint)
+
+    def _merge_fanout_results(
+        self,
+        tool_call: ToolCall,
+        intents: List[str],
+        responses: List[Any],
+        hint: str = "",
+    ) -> ToolResult:
+        """Merge parallel fan-out responses into a single ToolResult.
+
+        First intent is primary (errors surfaced to LLM).
+        Subsequent intents are secondary (failures silently skipped).
+        """
+        preamble = "SYSTEM: This query was automatically dispatched to multiple specialists in parallel."
+        if hint:
+            preamble += f"\n{hint}"
+        sections: List[str] = [preamble]
+
+        all_delivery_items: List[DeliveryItem] = []
+        merged_history_context: Dict[str, Any] = {}
+        structured_data = None
+
+        for idx, (intent, response) in enumerate(zip(intents, responses)):
+            is_primary = idx == 0
+            label = _fanout_label(intent, primary=is_primary)
+
+            if isinstance(response, Exception):
+                logger.warning(
+                    "[DelegationEngine] Fan-out '%s' failed: %s", intent, response,
+                )
+                if is_primary:
+                    sections.append(f"[{label}]\nAGENT ERROR: {response}")
+                continue
+
+            if response.status != AgentStatus.SUCCESS:
+                logger.warning(
+                    "[DelegationEngine] Fan-out '%s' rejected: %s",
+                    intent, response.error,
+                )
+                if is_primary:
+                    sections.append(
+                        f"[{label}]\nSYSTEM: Specialist rejected: {response.error}"
+                    )
+                continue
+
+            result_text = _format_result(intent, response.result)
+            if result_text:
+                sections.append(f"[{label}]\n{result_text}")
+            all_delivery_items.extend(response.delivery_items)
+            if response.history_context:
+                merged_history_context.update(response.history_context)
+            if is_primary and response.metadata:
+                structured_data = response.metadata.get("structured_data")
+
+        combined_text = "\n\n".join(sections)
+        logger.info(
+            "✅ [DelegationEngine] Fan-out merged: %s sections, %s chars",
+            len(sections), len(combined_text),
+        )
+
+        return ToolResult(
+            name=tool_call.name,
+            result_str=combined_text,
+            structured_data=structured_data,
+            history_context=merged_history_context or None,
+            delivery_items=all_delivery_items,
         )

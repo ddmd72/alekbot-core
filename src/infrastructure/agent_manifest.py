@@ -29,7 +29,7 @@ To add a new specialist agent:
     3. Wire the agent class in user_agent_factory.py.
 """
 
-from .agent_registry import AgentDescriptor, ExecutionMode
+from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
 
 
 class Intent:
@@ -124,7 +124,8 @@ WEB_SEARCH = AgentDescriptor(
     capability_descriptions={
         Intent.SEARCH_WEB: (
             "Real-time web search — "
-            "news, prices, weather, world facts, public events, documentation"
+            "news, prices, weather, world facts, public events, documentation, "
+            "places and venues nearby, route computation, local business discovery"
         ),
         Intent.FETCH_URL: (
             "Fetch the content of a specific URL and return it in full detail. "
@@ -165,7 +166,7 @@ MAPS_SEARCH = AgentDescriptor(
             "payload: {\"query\": \"<natural language task>\"}"
         ),
     },
-    internal=False,
+    internal=True,
 )
 
 EMAIL_SEARCH = AgentDescriptor(
@@ -332,6 +333,21 @@ QUICK_RESPONSE = AgentDescriptor(
     capabilities={},        # Quick does not offer intents to other agents
     allowed_intents=None,   # can call all non-internal intents
     intent_remap={},  # was: SEARCH_WEB → SEARCH_WEB_LIGHT (disabled — adaptive cognitive process handles depth)
+    intent_fanout={
+        Intent.SEARCH_WEB: FanoutSpec(
+            intents=[Intent.MAPS_QUERY],
+            hint=(
+                "Two specialists answered: Web Search (general internet) and Maps (Google Maps database).\n"
+                "How to reconcile:\n"
+                "- Places, addresses, distances, routes, travel time, opening hours → Maps is authoritative (structured geodata).\n"
+                "- Reviews, ratings, editorial opinions, news about a place → Web Search is richer.\n"
+                "- If both return data about the same place and facts conflict → trust Maps for factual attributes "
+                "(location, hours, distance), trust Web for subjective content (reviews, recommendations).\n"
+                "- If Maps returned nothing useful — ignore it, use Web Search only.\n"
+                "Synthesize both into a single coherent answer for the user."
+            ),
+        ),
+    },
 )
 
 SMART_RESPONSE = AgentDescriptor(
@@ -340,6 +356,21 @@ SMART_RESPONSE = AgentDescriptor(
     capabilities={},        # Smart does not offer intents to other agents
     allowed_intents=None,   # can call all non-internal intents
     intent_remap={},
+    intent_fanout={
+        Intent.SEARCH_WEB: FanoutSpec(
+            intents=[Intent.MAPS_QUERY],
+            hint=(
+                "Two specialists answered: Web Search (general internet) and Maps (Google Maps database).\n"
+                "How to reconcile:\n"
+                "- Places, addresses, distances, routes, travel time, opening hours → Maps is authoritative (structured geodata).\n"
+                "- Reviews, ratings, editorial opinions, news about a place → Web Search is richer.\n"
+                "- If both return data about the same place and facts conflict → trust Maps for factual attributes "
+                "(location, hours, distance), trust Web for subjective content (reviews, recommendations).\n"
+                "- If Maps returned nothing useful — ignore it, use Web Search only.\n"
+                "Synthesize both into a single coherent answer for the user."
+            ),
+        ),
+    },
 )
 
 

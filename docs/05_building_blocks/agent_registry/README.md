@@ -119,6 +119,9 @@ class AgentDescriptor:
     allowed_intents: Optional[frozenset] = None
     intent_remap: Dict[str, str] = field(default_factory=dict)
     # e.g. {"search_web": "search_web_light"} — Quick uses cheaper variant
+    intent_fanout: Dict[str, FanoutSpec] = field(default_factory=dict)
+    # e.g. {"search_web": FanoutSpec(intents=["maps_query"], hint="...")}
+    # 1:N parallel dispatch — engine runs primary + secondaries, merges results
 
     description: str = ""
     requires_auth: bool = False
@@ -158,7 +161,7 @@ Agents marked `eager=False` are **not** instantiated per user until first delega
 | `web_search_agent` | `search_web` | SYNC | False | True | Smart |
 | `web_search_light_agent` | `search_web_light` | SYNC | **True** | True | Quick (via `intent_remap`) |
 | `email_search_agent` | `search_emails`, `get_email_details`, `get_email_attachment` | SYNC | False | True | Quick, Smart |
-| `maps_search_agent` | `maps_query` | SYNC | False | True | Quick, Smart |
+| `maps_search_agent` | `maps_query` | SYNC | **True** | True | Via `intent_fanout` on `search_web` |
 | `compute_agent` | `compute_math`, `compute_datetime`, `compute_finance`, `compute` | SYNC | False | True | Quick, Smart |
 | `deep_research_agent` | `deep_research` | SYNC | False | **False** | Smart |
 | `doc_planner_agent` | `create_document` | ASYNC | False | **False** | Quick, Smart |

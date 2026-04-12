@@ -41,11 +41,13 @@ the majority of Quick responses require no tool use, the agent supports a bounde
 using the same non-internal intents as SmartAgent (discovered via `AgentDescriptor.allowed_intents=None`):
 
 - `search_memory` — retrieve biographical facts from the user's memory base.
-- `search_web` — web search (remapped at dispatch to `search_web_light`, ECO tier).
+- `search_web` — web search + automatic maps fan-out (see below).
 - `search_emails` — semantic search in indexed email archive.
 - `get_email_details` — fetch full body of a specific email by ID.
 - `get_email_attachment` — parse an email attachment as text.
-- `maps_query` — location-aware queries via Google Maps grounding (place search, routing, discovery).
+
+Note: `maps_query` is `internal=True` — not shown in LLM tool declarations. Triggered automatically
+via `intent_fanout` when the orchestrator dispatches `search_web` (see § 3.5).
 
 **Key constraint:** The Quick path must stay fast. Delegation is bounded to `MAX_DELEGATION_TURNS=5`
 and the web search is limited to the ECO-tier specialist. Complex multi-step research stays in SmartAgent.
@@ -56,26 +58,26 @@ and the web search is limited to the ECO-tier specialist. Complex multi-step res
 RouterAgent
   ├─ Simple Query → QuickResponseAgent
   │       ├─ search_memory        → MemorySearchAgent    (shared)
-  │       ├─ search_web           → (remapped) → WebSearchLightAgent (Quick-only, internal)
+  │       ├─ search_web           → WebSearchAgent       (shared)
+  │       │       └─ [fan-out]    → MapsSearchAgent      (parallel, internal)
   │       ├─ search_emails        → EmailSearchAgent     (shared)
   │       ├─ get_email_details    → EmailSearchAgent     (shared)
-  │       ├─ get_email_attachment → EmailSearchAgent     (shared)
-  │       └─ maps_query           → MapsSearchAgent      (shared)
+  │       └─ get_email_attachment → EmailSearchAgent     (shared)
   └─ Complex Query → SmartResponseAgent
           ├─ search_memory        → MemorySearchAgent    (shared)
-          ├─ search_web           → WebSearchAgent       (Smart-only)
+          ├─ search_web           → WebSearchAgent       (shared)
+          │       └─ [fan-out]    → MapsSearchAgent      (parallel, internal)
           ├─ search_emails        → EmailSearchAgent     (shared)
           ├─ get_email_details    → EmailSearchAgent     (shared)
-          ├─ get_email_attachment → EmailSearchAgent     (shared)
-          └─ maps_query           → MapsSearchAgent      (shared)
+          └─ get_email_attachment → EmailSearchAgent     (shared)
 ```
 
 Both agents use the same `AgentRegistry`. Quick calls `get_available_intents_for(descriptor)` which
-returns the same non-internal intents as Smart (including `search_web`). At dispatch time,
-`QuickAgent._INTENT_REMAP = {"search_web": "search_web_light"}` silently substitutes the intent
-before routing. The LLM sees `search_web` in the tool list (same description as Smart); the remap
-is invisible to the LLM. `web_search_light_agent` is registered as `internal=True` — never shown in
-any LLM tool list. Controlled by `PROTOCOL_QUICK_AGENT_SELECTION` Firestore token.
+returns the same non-internal intents as Smart (including `search_web`). `intent_remap` is currently
+disabled on both orchestrators (`{}`). `intent_fanout` is configured on both:
+`{search_web: FanoutSpec(intents=[maps_query], hint="...")}` — when the LLM dispatches
+`search_web`, the DelegationEngine also dispatches `maps_query` in parallel and merges results
+into a single labeled tool response. Controlled by `PROTOCOL_QUICK_AGENT_SELECTION` Firestore token.
 
 ---
 
@@ -211,23 +213,54 @@ model history entry contains a JSON block:
 Use `id` from prior turns directly with `get_email_details` / `get_email_attachment` without
 re-searching. See [Multi-Agent System § 9](../multi_agent_system/README.md#9-conversationhandler-email-search-context-persistence).
 
-### 3.4 maps_query → MapsSearchAgent
+### 3.4 maps_query → MapsSearchAgent (via intent fan-out)
 
-Routes to `MapsSearchAgent` (shared with Smart path). Model pinned to `gemini-2.5-flash`
-(Maps grounding not supported on Gemini 3.x). Single NL passthrough — the full natural
-language query is sent verbatim to Maps grounding. No structured decomposition.
+`maps_query` is `internal=True` — the LLM never sees it in its tool list.
+Instead, it is triggered automatically by `intent_fanout` on `search_web`.
 
-When `google_maps_widget_context_token` is returned, MapsSearchAgent generates an HTML page
-with `<gmp-place-contextual>` and delivers it as `DeliveryItem(type="html_gcs_link")`.
-The delivery item is aggregated by the delegation loop and dispatched by `ConversationHandler`
-as a "📍 Open Map" link after the main text response.
+When the DelegationEngine dispatches `search_web`, it checks the orchestrator's `intent_fanout`
+config: `{search_web: FanoutSpec(intents=[maps_query], hint="...")}`. Both `search_web` and
+`maps_query` run in parallel via `asyncio.gather`. Results are merged into a single tool response:
 
-**When to call (per `PROTOCOL_QUICK_AGENT_SELECTION`):**
-- User asks for places nearby, directions, route planning, or business discovery.
-- Any location-aware query: "знайди аптеку поруч", "як дістатись від A до B", "де поїсти японську кухню в центрі".
+```
+SYSTEM: This query was automatically dispatched to multiple specialists in parallel.
+<reconciliation hint from FanoutSpec>
 
-**Anti-patterns:** Using for general knowledge questions without a geographic component;
-querying places in territories where Maps grounding is unavailable (CN, CU, IR, KP, VN).
+[Primary specialist: Web Search]
+<web search results>
+
+[Additional specialist: Maps]
+<maps results — places, routes, weather, Google Maps links>
+```
+
+The orchestrator LLM synthesizes both into a single response. The hint instructs it which source
+to trust for which data type (geodata → Maps, reviews → Web).
+
+MapsSearchAgent routes to `MapsSearchAgent` (shared with Smart path). Model pinned to
+`gemini-2.5-flash` (Maps grounding not supported on Gemini 3.x). Multi-turn MCP tool loop
+with cognitive process triage: FULL_MATCH (deep search), PARTIAL (enrichment), NO_MATCH
+(responds "no relevant geographic data").
+
+**Fan-out behavior:** If MapsSearchAgent fails or returns empty — secondary failure is silently
+skipped, web search result returned alone. The orchestrator never sees an error from maps.
+
+### 3.5 Intent Fan-out Mechanism
+
+`intent_fanout` is a declarative field on `AgentDescriptor`, analogous to `intent_remap`.
+Configured via `FanoutSpec(intents: List[str], hint: str)`. The engine applies it in
+`_dispatch_single()` after intent remap, before coordinator dispatch.
+
+Currently configured on both Quick and Smart:
+```python
+intent_fanout={Intent.SEARCH_WEB: FanoutSpec(
+    intents=[Intent.MAPS_QUERY],
+    hint="For places, distances, routes... trust Maps over Web..."
+)}
+```
+
+Each orchestrator can have independent fan-out config (different secondary intents, different
+hints). The `hint` field provides per-mapping conflict resolution instructions visible to the
+LLM in the tool response.
 
 ---
 
