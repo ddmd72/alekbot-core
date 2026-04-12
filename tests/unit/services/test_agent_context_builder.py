@@ -126,12 +126,13 @@ def test_build_router_respects_provider_preference(builder):
 
 
 def test_build_consolidation_defaults_to_claude_balanced(builder):
-    """Test consolidation uses PERFORMANCE tier (from agent_tiers default)"""
+    """Test consolidation uses BALANCED tier (claude-sonnet-4-6, from
+    _DEFAULT_AGENT_TIERS in src/domain/user.py)."""
     config = UserBotConfig()
     ctx = builder.build("consolidation", config)
 
     assert ctx.provider.name == "claude"
-    assert ctx.tier == PerformanceTier.PERFORMANCE
+    assert ctx.tier == PerformanceTier.BALANCED
 
 
 def test_build_with_default_tier_override(builder):
