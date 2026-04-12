@@ -58,6 +58,8 @@ background process extracts new facts from the conversation → bot gets smarter
   Handles complexity 1–6 (≈70% of requests), significantly cheaper.
 - Smart — provider-agnostic, model resolved from execution context per user config.
   Called only for complexity 7–10 requests. After tool results, re-evaluates for follow-up delegation.
+  Thinking/reasoning: configurable via `UserBotConfig.agent_thinking["smart"]` ("low"/"medium"/"high").
+  Priority: explicit `message.context["thinking_effort"]` (e.g. daily email worker) > config > None (disabled).
 - WebSearchLight — single-pass provider-native search (`use_grounding=True`). Separate agent
   because Gemini cannot combine grounding + function calling in one request.
   Remapped from `search_web` by Quick. Internal (`internal=True`).
@@ -201,8 +203,10 @@ background process extracts new facts from the conversation → bot gets smarter
   See `docs/07_deployment/SCHEDULERS.md` for full scheduler reference.
 - **Billing daily summary** — Cloud Scheduler 09:00 Europe/Madrid → `billing_daily_summary`.
   Reads `prev_daily_tokens/prev_daily_cost` (yesterday's snapshot, saved at daily counter reset)
-  → posts to Slack webhook. Per-provider cache pricing: Claude 0.1×, OpenAI 0.5×, Gemini 0.25×.
+  → posts to Slack webhook. Per-provider cache pricing: Claude 0.1×, OpenAI 0.1×, Gemini 0.25×.
   All adapters populate `cache_read_tokens` in `UsageMetadata`.
+  `prompt_tokens` in `UsageMetadata` always means uncached input tokens — OpenAI and Gemini
+  adapters subtract cached from total (providers include cached in their prompt_token_count).
 - Watchdog: Cloud Scheduler fires `email_indexing_watchdog` every 2h; marks stale `running`
   jobs as `failed`
 - **Daily Email Review** — `gmail_daily_review` + `gmail_daily_review_hour` in `UserBotConfig`.

@@ -133,6 +133,9 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
       "router": "eco",
       | `{p}companion_records` | companion memory records, scoped by session | record id | `src/adapters/firestore_companion_memory_repository.py` |
     },
+    | `{p}mcp_oauth_clients` | MCP OAuth clients (dynamic registration) | `client_id` | `src/adapters/firestore_mcp_client_repository.py` |
+      | `{p}mcp_auth_codes` | short-lived MCP authorization codes | the code | same |
+    },
     
 
     
