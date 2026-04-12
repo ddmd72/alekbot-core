@@ -29,6 +29,19 @@ class ExecutionMode(str, Enum):
 
 
 @dataclass
+class FanoutSpec:
+    """Configuration for intent fan-out (1:N parallel dispatch).
+
+    intents:  secondary intents dispatched alongside the primary.
+    hint:     optional instruction for the orchestrator on how to reconcile
+              results from primary and secondary specialists (e.g. conflict
+              resolution, trust ranking).
+    """
+    intents: List[str]
+    hint: str = ""
+
+
+@dataclass
 class AgentDescriptor:
     """
     Unified agent capability and requirement declaration.
@@ -50,6 +63,11 @@ class AgentDescriptor:
                           selection. e.g. {"search_web": "search_web_light"}
                           means: LLM picks search_web, coordinator receives
                           search_web_light. Purely internal routing.
+        intent_fanout:    dispatch-time 1:N expansion. e.g.
+                          {"search_web": FanoutSpec(intents=["maps_query"],
+                          hint="...")} means: when LLM picks search_web,
+                          engine also dispatches maps_query in parallel and
+                          merges results into one tool response with the hint.
 
     Example — specialist (only Part A):
         AgentDescriptor(
@@ -83,6 +101,7 @@ class AgentDescriptor:
     # Part B: What I need (orchestrators only)
     allowed_intents: Optional[frozenset] = None
     intent_remap: Dict[str, str] = field(default_factory=dict)
+    intent_fanout: Dict[str, "FanoutSpec"] = field(default_factory=dict)
 
     # Cloud Tasks dispatch deadline for ASYNC intents (seconds). None = Cloud Tasks default (600s).
     dispatch_deadline_s: Optional[int] = None

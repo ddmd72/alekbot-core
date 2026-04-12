@@ -234,6 +234,7 @@ class SmartResponseAgent(BaseAgent):
                 context=message.context,
                 max_turns=self.MAX_DELEGATION_TURNS,
                 terminal_tool="deliver_response",
+                intent_fanout=dict(self._descriptor.intent_fanout),
                 calling_agent_id=self.agent_id,
                 max_retries=self.MAX_AGENT_RETRIES,
                 retry_backoff=self.RETRY_BACKOFF_SECONDS,
