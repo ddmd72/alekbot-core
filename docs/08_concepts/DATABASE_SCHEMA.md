@@ -133,6 +133,9 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
       "router": "eco",
       "smart": "performance"
     },
+    "agent_thinking": {             // agent_type -> "low" | "medium" | "high" (null = disabled)
+      "smart": "medium"
+    },
     "temperature": 0.7,
 
     // Prompt Preferences
