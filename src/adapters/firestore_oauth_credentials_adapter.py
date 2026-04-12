@@ -6,7 +6,7 @@ Doc ID: {user_id}_{provider}
 Collection: {env}_oauth_credentials
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from google.cloud.firestore import FieldFilter
@@ -47,7 +47,8 @@ class FirestoreOAuthCredentialsAdapter(OAuthCredentialsPort):
         # Always construct a plain datetime — DatetimeWithNanoseconds.replace(tzinfo=None)
         # bypasses __init__ and leaves ._nanosecond unset, breaking write-back to Firestore.
         expiry = datetime(raw.year, raw.month, raw.day,
-                          raw.hour, raw.minute, raw.second, raw.microsecond)
+                          raw.hour, raw.minute, raw.second, raw.microsecond,
+                          tzinfo=timezone.utc)
         return OAuthCredentials(
             user_id=data["user_id"],
             provider=data["provider"],
