@@ -182,9 +182,7 @@ class EmailReviewService:
 
     async def _refresh_if_needed(self, creds: OAuthCredentials) -> Optional[OAuthCredentials]:
         now_utc = datetime.now(timezone.utc)
-        if creds.token_expiry:
-            expiry = creds.token_expiry.replace(tzinfo=timezone.utc) if creds.token_expiry.tzinfo is None else creds.token_expiry
-        if creds.token_expiry and expiry <= now_utc + timedelta(minutes=5):
+        if creds.token_expiry and creds.token_expiry <= now_utc + timedelta(minutes=5):
             try:
                 creds = await self._email_provider.refresh_token(creds)
                 await self._oauth.save_credentials(creds)
