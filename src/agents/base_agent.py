@@ -603,11 +603,27 @@ class BaseAgent(ABC):
         else:
             logger.info(f"✅ [{self.agent_id}] done ({char_count} chars)")
         if output_text:
-            meta = {"type": "output", "tokens": token_count, "chars": char_count}
+            from ..domain.billing import calculate_cost
+            model = getattr(self, "model_name", None) or self.config.llm_model or "unknown"
+            meta: dict = {
+                "type": "output",
+                "model": model,
+                "tokens": token_count,
+                "prompt_tokens": self._billing_prompt_tokens,
+                "completion_tokens": self._billing_completion_tokens,
+                "chars": char_count,
+            }
             if self._billing_cache_read_tokens:
                 meta["cache_read_tokens"] = self._billing_cache_read_tokens
             if self._billing_cache_creation_tokens:
                 meta["cache_creation_tokens"] = self._billing_cache_creation_tokens
+            meta["cost"] = calculate_cost(
+                model=model,
+                prompt_tokens=self._billing_prompt_tokens,
+                completion_tokens=self._billing_completion_tokens,
+                cache_read_tokens=self._billing_cache_read_tokens,
+                cache_creation_tokens=self._billing_cache_creation_tokens,
+            )
             get_debug_logger().log_response(
                 agent_name=self.agent_type or self.agent_id,
                 response=output_text,
@@ -805,12 +821,14 @@ class BaseAgent(ABC):
             m = response.usage_metadata
             data["tokens"] = m.total_tokens
             try:
+                data["prompt_tokens"] = int(m.prompt_tokens or 0)
+                data["completion_tokens"] = int(m.completion_tokens or 0)
                 cr = int(m.cache_read_tokens or 0)
                 cc = int(m.cache_creation_tokens or 0)
                 if cr or cc:
                     data["cache"] = {"read": cr, "creation": cc}
             except (TypeError, ValueError):
-                logger.debug("Non-numeric cache tokens in usage_metadata — skipping cache debug")
+                logger.debug("Non-numeric tokens in usage_metadata — skipping detailed debug")
         meta = {"turn": turn} if turn else None
         debug.log_response(
             agent_name=self.agent_type or self.agent_id,
