@@ -102,6 +102,7 @@ class SmartResponseAgent(BaseAgent):
         history_recent_full_turns: int = 5,
         history_summary_service: Optional[HistorySummaryService] = None,
         user_timezone: str = "UTC",
+        thinking_effort: Optional[str] = None,
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -116,6 +117,7 @@ class SmartResponseAgent(BaseAgent):
         self.history_recent_full_turns = history_recent_full_turns
         self.history_summary_service = history_summary_service
         self._user_timezone = user_timezone
+        self._default_thinking_effort = thinking_effort
 
         # Extract user_id from config metadata
         self.user_id = config.metadata.get("user_id")
@@ -151,7 +153,7 @@ class SmartResponseAgent(BaseAgent):
         account_id = message.context.get("account_id")
         routing_metadata = RoutingMetadata.from_dict(message.context.get("routing", {}))
         self.config.metadata["user_tone"] = routing_metadata.user_tone
-        thinking_effort: Optional[str] = message.context.get("thinking_effort")
+        thinking_effort: Optional[str] = message.context.get("thinking_effort") or self._default_thinking_effort
 
         self._on_agent_start(text)
 
@@ -472,6 +474,7 @@ def create_smart_response_agent(
     history_recent_full_turns: int = 5,
     history_summary_service: Optional[HistorySummaryService] = None,
     user_timezone: str = "UTC",
+    thinking_effort: Optional[str] = None,
 ) -> SmartResponseAgent:
     """Factory function to create SmartResponseAgent."""
     agent_id = f"smart_response_agent_{user_id}" if user_id else "smart_response_agent"
@@ -501,5 +504,6 @@ def create_smart_response_agent(
         history_recent_full_turns=history_recent_full_turns,
         history_summary_service=history_summary_service,
         user_timezone=user_timezone,
+        thinking_effort=thinking_effort,
     )
 
