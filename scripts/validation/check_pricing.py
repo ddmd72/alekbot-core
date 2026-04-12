@@ -135,6 +135,27 @@ def _load_billing_entries() -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 # Explicit overrides for IDs that don't auto-resolve.
+# Expected cache multipliers per provider (source: official pricing pages).
+# OpenRouter doesn't expose cache pricing, so we validate against known values.
+_EXPECTED_CACHE: dict[str, dict[str, float]] = {
+    "claude-":         {"cache_read": 0.10, "cache_write": 1.25},
+    "gemini-":         {"cache_read": 0.25},
+    "models/gemini-":  {"cache_read": 0.25},
+    "deep-research-":  {"cache_read": 0.25},
+    "gpt-":            {"cache_read": 0.10},
+    "o3-":             {"cache_read": 0.10},
+    "o4-":             {"cache_read": 0.10},
+}
+
+
+def _get_expected_cache(key: str) -> dict[str, float] | None:
+    """Return expected cache multipliers for a billing key, or None if no cache expected."""
+    for prefix, expected in _EXPECTED_CACHE.items():
+        if key.startswith(prefix):
+            return expected
+    return None
+
+
 _BILLING_TO_OR: dict[str, str] = {
     # Gemini aliases → resolved via generate call (model_version field)
     "gemini-flash-lite-latest":          "google/gemini-2.5-flash-lite",
@@ -320,6 +341,45 @@ def _build_report(
 
     lines.append(f"\n**Summary:** {ok} match · {mismatch} mismatch · {missing} not found · {skipped} no OR mapping\n")
 
+    # -------------------------------------------------------------------
+    # Section 5: cache multiplier audit
+    # -------------------------------------------------------------------
+    lines.append("\n## billing.py cache audit\n")
+    lines.append("Validates `cache_read` / `cache_write` multipliers against expected values per provider.\n")
+    lines.append("| billing.py key | cache_read | expected | cache_write | expected | Status |")
+    lines.append("|----------------|----------:|----------:|------------:|----------:|--------|")
+
+    c_ok = c_mis = c_skip = 0
+    for key, billed in sorted(billing.items()):
+        expected = _get_expected_cache(key)
+        if expected is None:
+            lines.append(
+                f"| `{key}` | — | — | — | — | ⏭ no cache expected |"
+            )
+            c_skip += 1
+            continue
+        cr_billed = billed.get("cache_read", 0)
+        cw_billed = billed.get("cache_write", 0)
+        cr_exp = expected.get("cache_read", 0)
+        cw_exp = expected.get("cache_write", 0)
+        cr_match = abs(cr_billed - cr_exp) < 0.001
+        cw_match = abs(cw_billed - cw_exp) < 0.001
+        if cr_match and cw_match:
+            status = "✅ match"
+            c_ok += 1
+        else:
+            status = "⚠️ MISMATCH"
+            c_mis += 1
+        cr_exp_s = f"{cr_exp:.2f}" if cr_exp else "—"
+        cw_exp_s = f"{cw_exp:.2f}" if cw_exp else "—"
+        cr_b_s = f"{cr_billed:.2f}" if cr_billed else "—"
+        cw_b_s = f"{cw_billed:.2f}" if cw_billed else "—"
+        lines.append(
+            f"| `{key}` | {cr_b_s} | {cr_exp_s} | {cw_b_s} | {cw_exp_s} | {status} |"
+        )
+
+    lines.append(f"\n**Cache summary:** {c_ok} match · {c_mis} mismatch · {c_skip} no cache\n")
+
     return "\n".join(lines) + "\n"
 
 
@@ -372,9 +432,9 @@ async def main(out_path: str) -> None:
 
     print(f"\nReport written to: {out_path}")
 
-    # Print audit summary to stdout for Makefile feedback
+    # Print audit summaries to stdout for Makefile feedback
     for line in report.splitlines():
-        if line.startswith("**Summary:**"):
+        if line.startswith("**Summary:**") or line.startswith("**Cache summary:**"):
             print(line)
 
 

@@ -124,7 +124,8 @@ class UserBotConfig(BaseModel):
     # Purpose: Allow different providers for different agents (e.g., Gemini for router, Claude for smart)
     # ========================================================================
     agent_providers: Optional[Dict[str, str]] = None  # agent_type -> provider_name
-    
+    agent_thinking: Optional[Dict[str, str]] = None   # agent_type -> thinking effort ("low"/"medium"/"high")
+
     model_overrides: Dict[str, str] = Field(default_factory=dict)  # agent_type -> model name
 
     temperature: float = 0.7
@@ -253,6 +254,12 @@ class UserBotConfig(BaseModel):
         if not self.agent_providers:
             return None
         return self.agent_providers.get(agent_type)
+
+    def get_thinking_for_agent(self, agent_type: str) -> Optional[str]:
+        """Return thinking effort override for specific agent type if exists."""
+        if not self.agent_thinking:
+            return None
+        return self.agent_thinking.get(agent_type)
 
 class UsageStats(BaseModel):
     """Resource usage tracking."""
