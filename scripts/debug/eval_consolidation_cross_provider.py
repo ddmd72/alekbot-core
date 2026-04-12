@@ -52,12 +52,15 @@ from uuid import uuid4
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from src.adapters.claude_adapter import ClaudeAdapter
 from src.adapters.gemini_adapter import GeminiAdapter
 from src.adapters.openai_adapter import OpenAIAdapter
 from src.agents.consolidation_agent import ConsolidationAgent, ToolResponse
 from src.domain.agent import AgentConfig
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, ToolCall
+from src.services.caching_llm_proxy import CachingLLMProxy
+from src.services.prompt_cache_strategy import PromptCacheStrategy
 
 
 GCS_BUCKET = "gen-lang-client-0554950952-debug-prompts"
@@ -480,7 +483,7 @@ async def replay_through_provider(
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY not set")
-        adapter = OpenAIAdapter(api_key=api_key)
+        raw_adapter = OpenAIAdapter(api_key=api_key)
     elif provider_name == "gemini":
         api_key = (
             os.environ.get("GOOGLE_API_KEY")
@@ -488,11 +491,40 @@ async def replay_through_provider(
         )
         if not api_key:
             raise RuntimeError("GOOGLE_API_KEY or GEMINI_API_KEY not set")
-        adapter = GeminiAdapter(api_key=api_key)
+        raw_adapter = GeminiAdapter(api_key=api_key)
+    elif provider_name == "claude":
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY not set")
+        raw_adapter = ClaudeAdapter(api_key=api_key)
     else:
         raise ValueError(f"Unsupported provider: {provider_name}")
 
-    model = model_override or adapter.MODEL_TIERS[PerformanceTier.PERFORMANCE]
+    # Wrap with CachingLLMProxy when the provider supports caching, mirroring
+    # the production wiring (ServiceContainer + PromptCacheStrategy). This is
+    # required to actually exercise the new cache_last_message logic — without
+    # the proxy, no cache_config is attached to LLMRequest and the adapter
+    # falls back to non-cached path.
+    caps = raw_adapter.get_capabilities()
+    cache_cfg = PromptCacheStrategy().resolve("consolidation", caps)
+    if cache_cfg is not None:
+        adapter = CachingLLMProxy(inner=raw_adapter, cache_config=cache_cfg)
+        print(
+            f"   💾 caching proxy enabled (enabled={cache_cfg.enabled}, "
+            f"cache_last_message={cache_cfg.cache_last_message})"
+        )
+    else:
+        adapter = raw_adapter
+
+    # Tier-to-model selection.
+    # Claude defaults to BALANCED (sonnet-4-6) — opus-4-6 is 5× more expensive
+    # without proportional consolidation quality. Other providers stay on
+    # PERFORMANCE since their tier maps differ.
+    if provider_name == "claude":
+        default_tier = PerformanceTier.BALANCED
+    else:
+        default_tier = PerformanceTier.PERFORMANCE
+    model = model_override or raw_adapter.MODEL_TIERS[default_tier]
 
     config = AgentConfig(
         agent_id=f"eval_consolidation_{provider_name}",

@@ -56,7 +56,11 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "router": PerformanceTier.ECO,
     "quick": PerformanceTier.ECO,
     "smart": PerformanceTier.PERFORMANCE,
-    "consolidation": PerformanceTier.PERFORMANCE,
+    # claude-sonnet-4-6 is sufficient for consolidation; opus-4-6 was 5x more
+    # expensive without proportional quality gain. Multi-turn cache markers in
+    # the Claude adapter (cache_last_message + sliding rolling window) further
+    # offset cost on the loop's later turns.
+    "consolidation": PerformanceTier.BALANCED,
     "web_search": PerformanceTier.BALANCED,
     "web_search_light": PerformanceTier.ECO,
     "facts_memory": PerformanceTier.ECO,
