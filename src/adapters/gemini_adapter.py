@@ -438,14 +438,18 @@ class GeminiAdapter(LLMPort):
                     # thought_signature not needed: raw_content carries Gemini history intact
                 ))
 
+        # Gemini: prompt_token_count INCLUDES cached_content_token_count (it's the total).
+        # Subtract cached so prompt_tokens = uncached only (matches billing formula).
         usage_metadata = None
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             um = response.usage_metadata
+            total_input = getattr(um, "prompt_token_count", 0) or 0
+            cached = getattr(um, "cached_content_token_count", 0) or 0
             usage_metadata = UsageMetadata(
-                prompt_tokens=getattr(um, "prompt_token_count", 0) or 0,
+                prompt_tokens=total_input - cached,
                 completion_tokens=getattr(um, "candidates_token_count", 0) or 0,
                 total_tokens=getattr(um, "total_token_count", 0) or 0,
-                cache_read_tokens=getattr(um, "cached_content_token_count", 0) or 0,
+                cache_read_tokens=cached,
             )
 
         grounding_metadata = getattr(candidate, "grounding_metadata", None)

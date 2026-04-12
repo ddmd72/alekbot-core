@@ -548,16 +548,19 @@ class OpenAIAdapter(LLMPort):
                 ))
 
         # Usage metadata
+        # OpenAI: input_tokens INCLUDES cached_tokens (it's the total).
+        # Subtract cached so prompt_tokens = uncached only (matches billing formula).
         usage_metadata = None
         if response.usage:
             cached = 0
             itd = getattr(response.usage, "input_tokens_details", None)
             if itd:
                 cached = getattr(itd, "cached_tokens", 0) or 0
+            total_input = getattr(response.usage, "input_tokens", 0) or 0
             usage_metadata = UsageMetadata(
-                prompt_tokens=getattr(response.usage, "input_tokens", 0) or 0,
+                prompt_tokens=total_input - cached,
                 completion_tokens=getattr(response.usage, "output_tokens", 0) or 0,
-                total_tokens=(getattr(response.usage, "input_tokens", 0) or 0) + (getattr(response.usage, "output_tokens", 0) or 0),
+                total_tokens=total_input + (getattr(response.usage, "output_tokens", 0) or 0),
                 cache_read_tokens=cached,
             )
 

@@ -307,6 +307,7 @@ class UserAgentFactory(AgentFactoryPort):
             history_recent_full_turns=history_recent_full_turns,
             history_summary_service=history_summary_service,
             user_timezone=user_timezone,
+            thinking_effort=user_profile.config.get_thinking_for_agent("smart"),
         )
 
         notes_agent = None
@@ -830,3 +831,11 @@ class UserAgentFactory(AgentFactoryPort):
 
     def get_session_store(self) -> SessionStore:
         return self.session_store
+
+    def get_user_config(self, user_id: str) -> Optional["UserBotConfig"]:
+        """Return cached UserBotConfig for a user, or None if not cached."""
+        cached = self._cache.get(user_id)
+        if not cached:
+            return None
+        ctx: Optional[_UserContext] = cached.get("_user_context")
+        return ctx.user_profile.config if ctx else None

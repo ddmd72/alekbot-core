@@ -87,7 +87,7 @@ class BillingAccount(BaseModel):
 # ---------------------------------------------------------------------------
 
 # cache_read: multiplier for cached input tokens vs full input price.
-# Claude: 0.1 (90% discount), OpenAI: 0.5 (50% discount), Gemini: 0.25 (75% discount).
+# Claude: 0.1 (90% discount), OpenAI: 0.1 (90% discount), Gemini: 0.25 (75% discount).
 # cache_write: multiplier for cache creation tokens. Claude: 1.25 (25% surcharge), others: 0.
 _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # --- Gemini ("latest" aliases resolve to current stable generation) ---
@@ -102,16 +102,16 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "claude-sonnet-4-6":                 {"input": 3.00,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-6":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
     # --- OpenAI (gpt-5.4 family, Mar 2026) ---
-    "gpt-5.4-nano":                      {"input": 0.20,  "output": 1.25,  "cache_read": 0.50},
-    "gpt-5.4-mini":                      {"input": 0.75,  "output": 4.50,  "cache_read": 0.50},
-    "gpt-5.4":                           {"input": 2.50,  "output": 15.00, "cache_read": 0.50},
+    "gpt-5.4-nano":                      {"input": 0.20,  "output": 1.25,  "cache_read": 0.10},
+    "gpt-5.4-mini":                      {"input": 0.75,  "output": 4.50,  "cache_read": 0.10},
+    "gpt-5.4":                           {"input": 2.50,  "output": 15.00, "cache_read": 0.10},
     # legacy model IDs (gpt-5 family, Aug–Dec 2025)
-    "gpt-5.2":                           {"input": 1.75,  "output": 14.00, "cache_read": 0.50},
-    "gpt-5-nano":                        {"input": 0.05,  "output": 0.40,  "cache_read": 0.50},
-    "gpt-5-mini":                        {"input": 0.25,  "output": 2.00,  "cache_read": 0.50},
-    "gpt-5":                             {"input": 1.25,  "output": 10.00, "cache_read": 0.50},
-    "o4-mini-deep-research-2025-06-26":  {"input": 2.00,  "output": 8.00,  "cache_read": 0.50},
-    "o3-deep-research-2025-06-26":       {"input": 10.00, "output": 40.00, "cache_read": 0.50},
+    "gpt-5.2":                           {"input": 1.75,  "output": 14.00, "cache_read": 0.10},
+    "gpt-5-nano":                        {"input": 0.05,  "output": 0.40,  "cache_read": 0.10},
+    "gpt-5-mini":                        {"input": 0.25,  "output": 2.00,  "cache_read": 0.10},
+    "gpt-5":                             {"input": 1.25,  "output": 10.00, "cache_read": 0.10},
+    "o4-mini-deep-research-2025-06-26":  {"input": 2.00,  "output": 8.00,  "cache_read": 0.10},
+    "o3-deep-research-2025-06-26":       {"input": 10.00, "output": 40.00, "cache_read": 0.10},
     # --- Grok ---
     "grok-4-1-fast-non-reasoning":       {"input": 0.20,  "output": 0.50},
     "grok-4-1-fast-reasoning":           {"input": 0.20,  "output": 0.50},

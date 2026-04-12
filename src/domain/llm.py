@@ -45,8 +45,8 @@ class UsageMetadata(BaseModel):
     prompt_tokens: int = 0          # non-cached input tokens
     completion_tokens: int = 0
     total_tokens: int = 0
-    cache_read_tokens: int = 0      # tokens read from cache (0.1× input price, Claude only)
-    cache_creation_tokens: int = 0  # tokens written to cache (1.25× input price, Claude only)
+    cache_read_tokens: int = 0      # tokens read from cache (multiplier per provider in billing.py)
+    cache_creation_tokens: int = 0  # tokens written to cache (Claude only: 1.25× input price)
 
 
 class AutomaticFunctionCallingConfig(BaseModel):
