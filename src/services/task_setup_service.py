@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 from ..domain.task import TaskSubscriptionConfig, TaskUserConfig
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.task_config_port import TaskConfigPort
-from ..ports.task_lifecycle_port import TaskLifecyclePort
+from ..ports.task_lifecycle_port import SubscriptionNotFoundError, TaskLifecyclePort
 from ..ports.task_queue import TaskQueue
 from ..ports.task_search_index import TaskSearchIndex
 from ..ports.tasks_provider_port import TasksProviderPort
@@ -131,7 +131,19 @@ class TaskSetupService:
             logger.debug(f"⏭️ Subscription {sub_id[:8]} still fresh — no renewal needed")
             return
 
-        updated = await self._lifecycle.renew_subscription(user_id, sub_id)
+        try:
+            updated = await self._lifecycle.renew_subscription(user_id, sub_id)
+        except SubscriptionNotFoundError:
+            replacement = await self._replace_orphan(user_id, sub)
+            if replacement is not None:
+                config.subscriptions = [
+                    replacement if s.sub_id == sub_id else s for s in config.subscriptions
+                ]
+            else:
+                config.subscriptions = [s for s in config.subscriptions if s.sub_id != sub_id]
+            await self._task_config.save_config(user_id, config)
+            return
+
         config.subscriptions = [updated if s.sub_id == sub_id else s for s in config.subscriptions]
         await self._task_config.save_config(user_id, config)
         logger.info(f"🔄 Renewed subscription {sub_id[:8]} for user {user_id[:8]}")
@@ -159,6 +171,12 @@ class TaskSetupService:
                         f"🔄 Renewed expiring subscription {sub.sub_id[:8]} "
                         f"for user {user_id[:8]}"
                     )
+                except SubscriptionNotFoundError:
+                    replacement = await self._replace_orphan(user_id, sub)
+                    if replacement is not None:
+                        renewed.append(replacement)
+                    # else: orphan dropped; next sweep will be a no-op for
+                    # this list_id; ensure_subscriptions/setup will recreate.
                 except Exception as e:
                     logger.error(
                         f"❌ Failed to renew subscription {sub.sub_id[:8]}: {e}", exc_info=True
@@ -248,6 +266,36 @@ class TaskSetupService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    async def _replace_orphan(
+        self, user_id: str, orphan: TaskSubscriptionConfig
+    ) -> "TaskSubscriptionConfig | None":
+        """
+        Register a fresh subscription for orphan.list_id and enqueue a reindex.
+        Returns the new sub, or None if re-registration fails (orphan is dropped
+        in either case — caller must not keep it). Used by both the daily sweep
+        and the webhook-triggered renewal paths.
+        """
+        try:
+            replacement = await self._lifecycle.register_subscription(
+                user_id, orphan.list_id, self._notification_url_base
+            )
+        except Exception as e:
+            logger.error(
+                f"❌ Failed to replace orphaned subscription {orphan.sub_id[:8]} "
+                f"(list {orphan.list_id[:8]}) for user {user_id[:8]}: {e}",
+                exc_info=True,
+            )
+            return None
+        await self._task_queue.enqueue_worker_task(
+            "reindex_task_list",
+            {"user_id": user_id, "list_id": orphan.list_id},
+        )
+        logger.info(
+            f"🔁 Replaced orphaned subscription {orphan.sub_id[:8]} → "
+            f"{replacement.sub_id[:8]} (list {orphan.list_id[:8]}) for user {user_id[:8]}"
+        )
+        return replacement
 
     @staticmethod
     def _find_sub(
