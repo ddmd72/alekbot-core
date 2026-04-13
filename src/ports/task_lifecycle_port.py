@@ -13,6 +13,14 @@ from abc import ABC, abstractmethod
 from ..domain.task import TaskSubscriptionConfig
 
 
+class SubscriptionNotFoundError(Exception):
+    """
+    Raised when a provider reports that a subscription no longer exists
+    (e.g. MS Graph 404 ResourceNotFound on PATCH). Signals the caller to
+    drop the orphan from local state and register a replacement.
+    """
+
+
 class TaskLifecyclePort(ABC):
     """Graph API operations for subscription management and initial list setup."""
 
@@ -43,6 +51,11 @@ class TaskLifecyclePort(ABC):
         PATCH /subscriptions/{sub_id} with new expirationDateTime.
         Returns updated TaskSubscriptionConfig.
         Does NOT persist — caller persists via TaskConfigPort.
+
+        Raises SubscriptionNotFoundError if the provider reports the
+        subscription does not exist (e.g. expired past provider retention).
+        Callers should treat this as a signal to drop the orphan and
+        register a fresh subscription for the same list.
         """
         ...
 

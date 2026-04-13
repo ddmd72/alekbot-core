@@ -22,7 +22,7 @@ import pytest
 from src.domain.task import TaskSubscriptionConfig, TaskUserConfig
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.ports.task_config_port import TaskConfigPort
-from src.ports.task_lifecycle_port import TaskLifecyclePort
+from src.ports.task_lifecycle_port import SubscriptionNotFoundError, TaskLifecyclePort
 from src.ports.task_queue import TaskQueue
 from src.ports.task_search_index import TaskSearchIndex
 from src.ports.tasks_provider_port import TasksProviderPort
@@ -211,6 +211,32 @@ class TestHandleSubscriptionRenewal:
         lifecycle.renew_subscription.assert_not_called()
         task_config.save_config.assert_not_called()
 
+    async def test_self_heals_on_subscription_not_found(self):
+        """
+        Webhook-triggered renewal path: if Graph reports 404, drop the orphan
+        and register a fresh subscription for the same list_id, enqueue reindex.
+        Mirrors the sweep path in renew_expiring_subscriptions.
+        """
+        orphan = _make_sub(sub_id="orphan-sub", hours_until_expiry=10.0)
+        config = TaskUserConfig(subscriptions=[orphan])
+        svc, lifecycle, task_config, _, _, _, queue = _make_service(config=config)
+
+        lifecycle.renew_subscription.side_effect = SubscriptionNotFoundError("orphan-sub")
+        replacement = _make_sub(sub_id="fresh-sub", hours_until_expiry=4320.0)
+        lifecycle.register_subscription.return_value = replacement
+
+        await svc.handle_subscription_renewal(_USER_ID, "orphan-sub")
+
+        lifecycle.register_subscription.assert_called_once_with(
+            _USER_ID, _LIST_ID, "https://example.com"
+        )
+        queue.enqueue_worker_task.assert_called_once_with(
+            "reindex_task_list",
+            {"user_id": _USER_ID, "list_id": _LIST_ID},
+        )
+        saved_config: TaskUserConfig = task_config.save_config.call_args.args[1]
+        assert [s.sub_id for s in saved_config.subscriptions] == ["fresh-sub"]
+
 
 # =============================================================================
 # renew_expiring_subscriptions
@@ -245,6 +271,71 @@ class TestRenewExpiringSubscriptions:
         await svc.renew_expiring_subscriptions(_USER_ID)
 
         task_config.save_config.assert_called_once()
+
+    async def test_self_heals_on_subscription_not_found(self):
+        """
+        Graph reports 404 → adapter raises SubscriptionNotFoundError → service
+        drops the orphan, registers a fresh subscription for the same list_id,
+        enqueues reindex, persists the replacement.
+
+        Regression guard for 2026-04-13: previous behaviour re-appended the
+        stale sub on any exception, so a missing Graph subscription failed
+        every daily sweep forever without self-healing.
+        """
+        orphan = _make_sub(sub_id="orphan-sub", hours_until_expiry=10.0)
+        config = TaskUserConfig(subscriptions=[orphan])
+        svc, lifecycle, task_config, _, _, _, queue = _make_service(config=config)
+
+        lifecycle.renew_subscription.side_effect = SubscriptionNotFoundError("orphan-sub")
+        replacement = _make_sub(sub_id="fresh-sub", hours_until_expiry=4320.0)
+        lifecycle.register_subscription.return_value = replacement
+
+        await svc.renew_expiring_subscriptions(_USER_ID)
+
+        lifecycle.register_subscription.assert_called_once_with(
+            _USER_ID, _LIST_ID, "https://example.com"
+        )
+        queue.enqueue_worker_task.assert_called_once_with(
+            "reindex_task_list",
+            {"user_id": _USER_ID, "list_id": _LIST_ID},
+        )
+        saved_config: TaskUserConfig = task_config.save_config.call_args.args[1]
+        assert [s.sub_id for s in saved_config.subscriptions] == ["fresh-sub"]
+
+    async def test_drops_orphan_when_replacement_registration_fails(self):
+        """
+        If renew raises SubscriptionNotFoundError AND re-registration also
+        fails, the orphan must be dropped (not re-appended). Next setup/
+        ensure_subscriptions call will recreate.
+        """
+        orphan = _make_sub(sub_id="orphan-sub", hours_until_expiry=10.0)
+        config = TaskUserConfig(subscriptions=[orphan])
+        svc, lifecycle, task_config, _, _, _, _ = _make_service(config=config)
+
+        lifecycle.renew_subscription.side_effect = SubscriptionNotFoundError("orphan-sub")
+        lifecycle.register_subscription.side_effect = Exception("graph 500")
+
+        await svc.renew_expiring_subscriptions(_USER_ID)
+
+        saved_config: TaskUserConfig = task_config.save_config.call_args.args[1]
+        assert saved_config.subscriptions == []
+
+    async def test_retains_stale_sub_on_generic_failure(self):
+        """
+        Regression guard: on a non-404 failure the stale sub is retained
+        (retried tomorrow). Only SubscriptionNotFoundError triggers self-heal.
+        """
+        stale = _make_sub(sub_id="stale-sub", hours_until_expiry=10.0)
+        config = TaskUserConfig(subscriptions=[stale])
+        svc, lifecycle, task_config, _, _, _, _ = _make_service(config=config)
+
+        lifecycle.renew_subscription.side_effect = Exception("graph 500")
+
+        await svc.renew_expiring_subscriptions(_USER_ID)
+
+        lifecycle.register_subscription.assert_not_called()
+        saved_config: TaskUserConfig = task_config.save_config.call_args.args[1]
+        assert [s.sub_id for s in saved_config.subscriptions] == ["stale-sub"]
 
 
 # =============================================================================

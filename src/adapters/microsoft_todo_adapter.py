@@ -40,7 +40,7 @@ from ..domain.task import (
 )
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.task_config_port import TaskConfigPort
-from ..ports.task_lifecycle_port import TaskLifecyclePort
+from ..ports.task_lifecycle_port import SubscriptionNotFoundError, TaskLifecyclePort
 from ..ports.tasks_provider_port import TasksProviderPort
 from ..utils.logger import logger
 
@@ -660,15 +660,28 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
     async def renew_subscription(
         self, user_id: str, sub_id: str
     ) -> TaskSubscriptionConfig:
-        """PATCH subscription with new expiry. Does NOT persist."""
+        """
+        PATCH subscription with new expiry. Does NOT persist.
+
+        Raises SubscriptionNotFoundError if Graph returns 404 —
+        the subscription was hard-deleted past provider retention and
+        must be replaced via register_subscription.
+        """
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=_SUB_EXPIRY_MINUTES)
-        data = await self._patch(
-            user_id,
-            f"/subscriptions/{sub_id}",
-            {"expirationDateTime": expires_at.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")},
-        )
+        path = f"/subscriptions/{sub_id}"
+        body = {"expirationDateTime": expires_at.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")}
+        headers = {**(await self._get_headers(user_id)), "Content-Type": "application/json"}
+        async with aiohttp.ClientSession() as session:
+            async with session.patch(
+                f"https://graph.microsoft.com/v1.0{path}", headers=headers, json=body
+            ) as resp:
+                if resp.status == 404:
+                    raise SubscriptionNotFoundError(sub_id)
+                if not resp.ok:
+                    text = await resp.text()
+                    raise ValueError(f"Graph PATCH {path} failed ({resp.status}): {text}")
+                data = await resp.json()
         list_id = ""
-        # Extract list_id from resource field if present
         resource = data.get("resource", "")
         if "/lists/" in resource and "/tasks" in resource:
             list_id = resource.split("/lists/")[1].split("/tasks")[0]
