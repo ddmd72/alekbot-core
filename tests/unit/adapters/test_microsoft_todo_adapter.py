@@ -41,7 +41,7 @@ from src.domain.task import (
 )
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.ports.task_config_port import TaskConfigPort
-from src.ports.task_lifecycle_port import TaskLifecyclePort
+from src.ports.task_lifecycle_port import SubscriptionNotFoundError, TaskLifecyclePort
 from src.ports.tasks_provider_port import TasksProviderPort
 
 _USER_ID = "user-abc123"
@@ -526,6 +526,26 @@ class TestSubscriptionLifecycle:
 
         assert isinstance(result, TaskSubscriptionConfig)
         assert result.sub_id == "sub-1"
+
+    async def test_renew_raises_subscription_not_found_on_404(self):
+        """
+        Graph hard-deletes expired subscriptions past retention. PATCH then
+        returns 404 ResourceNotFound. Adapter must raise the typed exception
+        so TaskSetupService can self-heal by registering a fresh subscription.
+
+        Regression guard for 2026-04-13: previously raised generic ValueError
+        which the service caught as "transient failure" and kept retrying forever.
+        """
+        adapter, _, _ = _make_adapter()
+        not_found_resp = _mock_response(
+            {"error": {"code": "ResourceNotFound", "message": "The object was not found."}},
+            status=404,
+        )
+        session = _mock_session({"patch": not_found_resp})
+
+        with _patch_session(session):
+            with pytest.raises(SubscriptionNotFoundError):
+                await adapter.renew_subscription(_USER_ID, "orphan-sub")
 
     async def test_delete_subscription_called(self):
         adapter, _, _ = _make_adapter()
