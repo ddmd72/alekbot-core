@@ -220,6 +220,7 @@ class ServiceContainer:
             exclusions_repo=self.email_exclusions_repo,
             classifier=self.email_classifier,
             embedding=self.embedding_service,
+            oauth=self.oauth_credentials,
         )
         self.email_review_service = EmailReviewService(
             email_provider=self.gmail_provider,

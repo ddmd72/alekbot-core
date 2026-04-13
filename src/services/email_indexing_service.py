@@ -54,7 +54,7 @@ class EmailIndexingService:
         exclusions_repo: EmailExclusionsPort,
         classifier: EmailClassifierPort,
         embedding: EmbeddingService,
-        oauth: Optional[OAuthCredentialsPort] = None,
+        oauth: Optional[OAuthCredentialsPort],
     ):
         self._gmail = gmail
         self._email_repo = email_repo

@@ -245,6 +245,7 @@ async def main(args):
         exclusions_repo=exclusions_repo,
         classifier=classifier,
         embedding=embedding,
+        oauth=None,
     )
 
     # --- Job ---

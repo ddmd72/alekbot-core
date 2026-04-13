@@ -85,6 +85,7 @@ def service(
         exclusions_repo=mock_exclusions_repo,
         classifier=mock_classifier,
         embedding=mock_embedding,
+        oauth=None,
     )
 
 
