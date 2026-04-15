@@ -184,6 +184,61 @@ background process extracts new facts from the conversation → bot gets smarter
   numeric analysis). All execute Python code via Gemini `code_execution` sandbox. Provider-agnostic:
   `LLMRequest.use_code_execution=True`. No external data access — compute-only.
 
+**Remote MCP Server** — expose memory search to claude.ai Custom Connectors:
+- Built on the `mcp` Python SDK (`mcp==1.27.*`, `FastMCP` from `mcp.server.fastmcp`).
+  alekbot acts as an MCP *server* — the inverse direction of `mcp_infrastructure/` (which
+  is alekbot as MCP *client* for Google Maps).
+- One tool exposed: `get_user_context(query, alternate_phrasing?, keywords?)`. Calls
+  `SearchEnrichmentService.enrich_context` directly (bypasses `MemorySearchAgent` + agent
+  stack) to minimize latency — claude.ai is already a smart orchestrator and formulates
+  good search queries itself. Target ~1.0–1.4s per call.
+- Full OAuth 2.1 authorization server in-process: AS metadata (RFC 8414), protected
+  resource metadata (RFC 9728 path-suffix form), DCR (RFC 7591), PKCE S256, RFC 8707
+  resource indicator, refresh token rotation. SDK handles all of it via
+  `OAuthAuthorizationServerProvider` protocol.
+- **Path layout (server root, not mounted):** `/mcp` (protocol), `/authorize`, `/token`,
+  `/register`, `/.well-known/oauth-authorization-server`,
+  `/.well-known/oauth-protected-resource/mcp`, plus `/mcp/consent` (Quart blueprint for the
+  approve/deny UI — the only piece the SDK does not own). `main.py` uses a plain ASGI
+  dispatcher (NOT Starlette `Mount`) that routes FastMCP-owned paths to the SDK sub-app
+  and everything else to Quart. Starlette `Mount` breaks this: doesn't match exact
+  `POST /mcp` without trailing slash, strips prefixes that conflict with the SDK's
+  absolute-path routes, and moves the RFC 9728 PRM path out of spec.
+- **Issuer at server root**, `resource_server_url = /mcp`. AS endpoints live at server root
+  so metadata URLs (`issuer_url + "/authorize"`) match the SDK's physical routes 1:1.
+- **Transport security**: FastMCP auto-enables DNS rebinding protection with a loopback
+  allow-list when `host` is `127.0.0.1` — blocks real public requests with "Invalid Host
+  header". Fix: explicit `TransportSecuritySettings` with public netloc from
+  `MCP_RESOURCE_URI` + localhost for dev.
+- **Consent binding** — user identity comes from the existing **Cabinet JWT cookie** at
+  the consent-page step, NOT from the OAuth flow itself. If no cookie → redirect to
+  `/auth/login` → Firebase OAuth → back to consent. The user who is logged into Cabinet
+  in their browser at the moment of clicking Approve is the identity bound to the
+  MCP token.
+- **Storage** — three Firestore collections, env-prefixed:
+  `mcp_oauth_clients` (DCR, plaintext `client_secret` — SDK constraint, see RFC § 6.4),
+  `mcp_auth_codes` (one-shot, 10 min TTL), `mcp_refresh_tokens` (rotated by sha256 hash,
+  30d TTL). Access tokens are stateless HS256 JWTs (reuses `oauth_session_secret`,
+  distinct `aud`). All lookups are doc-id — no composite indexes needed.
+- **Token carries user_id**: SDK's `AccessToken` is subclassed to `AlekAccessToken` with
+  `user_id` + `account_id` fields; tool handler reads them via
+  `ctx.request_context.request.user.access_token` and wraps the search call in
+  `RequestContext(user_id, account_id)` for proper account scoping.
+- **Hexagonal note**: the SDK shim `composition/mcp_sdk_oauth_provider.py` lives in
+  `composition/` (not `adapters/`) because REQ-ARCH-01 forbids adapters→services imports
+  and the shim delegates to `MCPAuthorizationService` on every method. Composition is
+  the only layer allowed to cross all boundaries.
+- **MVP scope** — dev only (no prod `MCP_RESOURCE_URI` env var yet). Experimental. Tool
+  description is load-bearing for claude.ai tool-use decisions; iterate on wording as
+  call patterns emerge.
+- Code: `src/domain/mcp.py`, `src/ports/mcp_client_repository.py`,
+  `src/adapters/firestore_mcp_client_repository.py`,
+  `src/services/mcp_authorization_service.py`,
+  `src/composition/mcp_sdk_oauth_provider.py`, `src/composition/mcp_setup.py`,
+  `src/web/mcp_consent_app.py`.
+- See `docs/05_building_blocks/remote_mcp_server/README.md` and
+  `docs/10_rfcs/REMOTE_MCP_SERVER_RFC.md`.
+
 **Gmail Email Indexing** — passive inbox-as-memory pipeline:
 - User connects Gmail via OAuth (`/auth/connect-gmail`); credentials stored in `oauth_credentials`
 - Indexing job triggered from Cabinet UI or Cloud Scheduler; runs as paginated Cloud Tasks
@@ -339,6 +394,8 @@ src/
                   LocalizationPort (localization_port.py).
                   Agent lifecycle ports: AgentFactoryPort (agent_factory_port.py) — on-demand
                   lazy agent creation. Implemented by UserAgentFactory in composition/.
+                  MCP ports: MCPClientRepository (mcp_client_repository.py) — storage contract
+                  for MCP OAuth clients / auth codes / refresh tokens (remote MCP server).
   adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, OpenAI, Slack, Telegram,
                   Gmail). Email adapters: GmailProviderAdapter, FirestoreIndexedEmailRepository,
                   FirestoreEmailJobRepository, FirestoreEmailExclusionsAdapter,
@@ -358,6 +415,9 @@ src/
                   Language adapters: FileLocalizationAdapter (file_localization_adapter.py).
                   File storage adapter: GcsFileStorageAdapter (gcs_file_storage_adapter.py) —
                   FileStoragePort impl; Finder-style dedup, filename sanitization, lazy GCS client.
+                  MCP adapters: FirestoreMCPClientRepository (firestore_mcp_client_repository.py) —
+                  three env-prefixed collections (mcp_oauth_clients, mcp_auth_codes,
+                  mcp_refresh_tokens); doc-id lookups only, no composite indexes.
   services/     — Business logic. Receive ports via DI.
                   prompt_builder.py includes both PromptBuilder and UserPromptBuilder
                   (merged from former user_prompt_builder.py).
@@ -368,6 +428,9 @@ src/
                   Language services: LanguagePreferenceService (write path + prompt token swap).
                   File services: FileConversionService (file_conversion_service.py) — centralized
                   file upload to GCS + on-demand content resolution.
+                  MCP services: MCPAuthorizationService (mcp_authorization_service.py) — OAuth 2.1
+                  business logic (DCR host allowlist, consent JWT, code lifecycle, refresh rotation,
+                  access JWT mint/verify). Pure DI — no config/ imports.
   agents/       — Multi-agent system. core/ — agents, infrastructure/ — billing/logging.
                   Email agents: EmailSearchAgent, EmailClassificationAgent.
                   Document agents: DocPlannerAgent (doc_planner_agent.py, intent create_document,
@@ -395,6 +458,10 @@ src/
   composition/  — ServiceContainer + UserAgentFactory(AgentFactoryPort) + SlackAdapterFactory + TelegramAdapterFactory.
                   UserAgentFactory lives in composition/ (NOT services/).
                   Implements AgentFactoryPort for lazy agent creation on demand.
+                  MCP wiring: mcp_setup.py (build_mcp_components — builds FastMCP + tool handler),
+                  mcp_sdk_oauth_provider.py (SDK shim implementing OAuthAuthorizationServerProvider;
+                  lives here instead of adapters/ because REQ-ARCH-01 forbids adapters→services
+                  imports and the shim delegates to MCPAuthorizationService on every method).
   locales/      — Per-language UI string modules (uk.py, en.py, fr.py, es.py).
                   Loaded by FileLocalizationAdapter. Add new file per new language.
   config/       — EnvironmentConfig, Settings, AuthConfig.
@@ -425,8 +492,18 @@ src/
                   Deep Research: /api/user/deep-research (GET/PUT — second_pass toggle).
                   Cabinet UI: /cabinet, /cabinet/docs, /cabinet/docs/<path>.
                   Other: /health, deep_research_webhooks (OpenAI async results).
-                  Runs as a shared Quart app (all blueprints on port 8080).
+                  MCP consent UI: /mcp/consent (GET/POST) — remote MCP server OAuth
+                  approve/deny page. Reads Cabinet JWT cookie to identify the user.
+                  Runs as a shared Quart app (all blueprints on port 8080); main.py
+                  wraps Quart + FastMCP in a plain ASGI dispatcher (NOT Starlette Mount)
+                  that routes FastMCP-owned paths (/mcp, /authorize, /token, /register,
+                  /.well-known/oauth-*) to the SDK sub-app and everything else to Quart.
 main.py         — Bootstrap: creates ServiceContainer + UserAgentFactory, graceful shutdown.
+                  Also wires the remote MCP server: builds a dedicated SearchEnrichmentService
+                  singleton (fixed limits, not per-user tier), calls build_mcp_components,
+                  registers /mcp/consent blueprint on main_app, and runs the parent ASGI
+                  dispatcher via hypercorn. FastMCP's session_manager.run() lives in the
+                  parent's lifespan.
 docx_generator/ — Node.js project with docx npm library. NodeDocxRunner writes temp scripts
                   here so node_modules/docx resolves at execution time. Not a Python package.
 ```
