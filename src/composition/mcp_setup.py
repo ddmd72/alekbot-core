@@ -231,7 +231,10 @@ def build_mcp_components(
         account_id = access_token.account_id
 
         logger.info(
-            f"🔎 MCP get_user_context: user={user_id[:8]} query={query[:80]!r}"
+            f"🔎 MCP get_user_context: user={user_id[:8]} "
+            f"query={query!r} "
+            f"alternate_phrasing={alternate_phrasing!r} "
+            f"keywords={keywords!r}"
         )
 
         with RequestContext(user_id=user_id, account_id=account_id):
