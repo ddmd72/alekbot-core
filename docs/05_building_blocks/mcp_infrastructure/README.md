@@ -1,5 +1,11 @@
 # MCP Infrastructure (Building Block)
 
+> **Direction note:** This block describes alekbot as an **MCP client** — it connects
+> OUT to external MCP servers (Google Maps AI Grounding Lite). The inverse direction —
+> alekbot as an **MCP server** consumed by claude.ai Custom Connectors — lives in
+> [`../remote_mcp_server/`](../remote_mcp_server/README.md). Don't confuse the two;
+> they share the name "MCP" but are fundamentally different surfaces.
+
 ## 📖 HowTo: Using This Document
 
 ### Purpose

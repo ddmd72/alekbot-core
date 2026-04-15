@@ -18,6 +18,7 @@ firebase-admin>=6.0.0  # OAuth Multi-Tenant Session 3: Firebase Auth adapter
 PyJWT>=2.8.0  # OAuth Multi-Tenant Session 4: JWT session management
 hypercorn>=0.14.0
 quart>=0.18.0
+mcp==1.27.*  # MCP Python SDK for remote MCP server exposed to claude.ai Custom Connectors
 google-cloud-tasks>=2.13.0
 numpy>=1.24.0
 lark>=1.1.9
