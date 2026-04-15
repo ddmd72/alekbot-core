@@ -85,6 +85,19 @@ class AuthConfig:
         self.access_token_ttl = int(self._get("ACCESS_TOKEN_TTL", "3600", config))  # 1 hour
         self.refresh_token_ttl = int(self._get("REFRESH_TOKEN_TTL", "2592000", config))  # 30 days
 
+        # MCP (remote MCP server exposed to claude.ai custom connectors)
+        # Canonical resource URI (RFC 8707) — must match public URL where /mcp is mounted.
+        # Issued access tokens carry aud=<mcp_resource_uri>; SDK validates on every request.
+        self.mcp_resource_uri = self._get(
+            "MCP_RESOURCE_URI",
+            "http://localhost:8080/mcp",  # Dev default
+            config,
+        )
+        self.mcp_access_token_ttl = int(self._get("MCP_ACCESS_TOKEN_TTL", "3600", config))       # 1h
+        self.mcp_refresh_token_ttl = int(self._get("MCP_REFRESH_TOKEN_TTL", "2592000", config))  # 30d
+        self.mcp_auth_code_ttl = int(self._get("MCP_AUTH_CODE_TTL", "600", config))              # 10min
+        self.mcp_consent_request_ttl = int(self._get("MCP_CONSENT_REQUEST_TTL", "600", config))  # 10min
+
     def _get(self, key: str, default: any, config: Optional[dict] = None) -> any:
         """Get value from config dict or environment variable."""
         if config and key in config:
