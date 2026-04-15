@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 
 from ..adapters.firestore_mcp_client_repository import FirestoreMCPClientRepository
@@ -158,6 +159,30 @@ def build_mcp_components(
     parsed_resource = urlparse(auth_config.mcp_resource_uri)
     issuer_root = f"{parsed_resource.scheme}://{parsed_resource.netloc}"
 
+    # Transport security: FastMCP's default constructor auto-enables DNS
+    # rebinding protection whenever `host` is a loopback address, which
+    # locks the allowed_hosts allowlist to 127.0.0.1/localhost/::1. Since
+    # we serve behind Cloud Run + Google Frontend under the public
+    # hostname `dev.alekbot.app`, that default rejects every real request
+    # with "Invalid Host header". Allowlist the public hostname(s) derived
+    # from mcp_resource_uri instead. DNS rebinding protection remains
+    # enabled — we just extend the allow-list.
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            parsed_resource.netloc,
+            f"{parsed_resource.netloc}:*",
+            "127.0.0.1:*",
+            "localhost:*",
+        ],
+        allowed_origins=[
+            f"{parsed_resource.scheme}://{parsed_resource.netloc}",
+            f"{parsed_resource.scheme}://{parsed_resource.netloc}:*",
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+        ],
+    )
+
     fastmcp = FastMCP(
         name="alekbot",
         instructions="alekbot exocortex — retrieve user's memory facts via get_user_context.",
@@ -173,6 +198,7 @@ def build_mcp_components(
                 default_scopes=[MCP_DEFAULT_SCOPE],
             ),
         ),
+        transport_security=transport_security,
         stateless_http=True,  # Cloud Run may route subsequent requests to different instances
     )
 
