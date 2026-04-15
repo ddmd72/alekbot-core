@@ -236,6 +236,33 @@ class EnvironmentConfig:
         return f"{prefix}oauth_credentials"
 
     @property
+    def mcp_oauth_clients_collection(self) -> str:
+        """
+        MCP OAuth clients (RFC 7591 DCR-registered clients). Doc id = client_id.
+        Dev: development_mcp_oauth_clients
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}mcp_oauth_clients"
+
+    @property
+    def mcp_auth_codes_collection(self) -> str:
+        """
+        MCP short-lived authorization codes. Doc id = code. TTL ~10min.
+        Dev: development_mcp_auth_codes
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}mcp_auth_codes"
+
+    @property
+    def mcp_refresh_tokens_collection(self) -> str:
+        """
+        MCP refresh tokens (rotated on use). Doc id = sha256(token).
+        Dev: development_mcp_refresh_tokens
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}mcp_refresh_tokens"
+
+    @property
     def email_indexing_state_collection(self) -> str:
         """
         Get email indexing state collection (cursor tracking per user/provider).
