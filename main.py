@@ -882,35 +882,51 @@ async def main():
                     hypercorn_config.errorlog = "-"
 
                     if mcp_components is not None:
-                        # Wrap main_app in a Starlette parent that mounts the
-                        # FastMCP ASGI app at /mcp. Everything else falls
-                        # through to the Quart app via the catch-all mount.
-                        # The parent's lifespan runs FastMCP's session
-                        # manager so Streamable HTTP sessions work. Quart
-                        # has no lifespan hooks in this project, so no
-                        # secondary lifespan chain is needed.
-                        from contextlib import asynccontextmanager
-                        from starlette.applications import Starlette
-                        from starlette.routing import Mount
-
+                        # Plain ASGI dispatcher routing by path.
+                        #
+                        # Starlette's Mount("/mcp", ...) strips the prefix and
+                        # requires a trailing slash — it does NOT match exact
+                        # "/mcp" for POST, which is what claude.ai sends. It
+                        # also conflicts with the SDK's absolute-path routes
+                        # (SDK builds /authorize, /token, /register and PRM at
+                        # server root, not under a mount prefix).
+                        #
+                        # So we forward the FastMCP-owned paths to the SDK
+                        # sub-app WITHOUT path rewriting, and everything else
+                        # falls through to the Quart app. Quart handles
+                        # /mcp/consent (the consent UI blueprint), /auth/*,
+                        # /api/*, /slack/*, /worker, /health, /cabinet.
                         _fastmcp = mcp_components.fastmcp
-                        # Build the streamable HTTP app once so the same
-                        # session manager instance is shared by the lifespan.
                         _mcp_asgi = _fastmcp.streamable_http_app()
 
-                        @asynccontextmanager
-                        async def _lifespan(_app):
-                            async with _fastmcp.session_manager.run():
-                                yield
+                        def _is_mcp_path(path: str) -> bool:
+                            if path == "/mcp" or path == "/mcp/":
+                                return True
+                            if path in ("/authorize", "/token", "/register", "/revoke"):
+                                return True
+                            if path == "/.well-known/oauth-authorization-server":
+                                return True
+                            if path.startswith("/.well-known/oauth-protected-resource"):
+                                return True
+                            return False
 
-                        parent_app = Starlette(
-                            routes=[
-                                Mount("/mcp", app=_mcp_asgi),
-                                Mount("/", app=main_app),
-                            ],
-                            lifespan=_lifespan,
-                        )
-                        await serve(parent_app, hypercorn_config)
+                        async def parent_asgi(scope, receive, send):
+                            if scope["type"] == "lifespan":
+                                async with _fastmcp.session_manager.run():
+                                    while True:
+                                        message = await receive()
+                                        if message["type"] == "lifespan.startup":
+                                            await send({"type": "lifespan.startup.complete"})
+                                        elif message["type"] == "lifespan.shutdown":
+                                            await send({"type": "lifespan.shutdown.complete"})
+                                            return
+                            path = scope.get("path", "")
+                            if _is_mcp_path(path):
+                                await _mcp_asgi(scope, receive, send)
+                            else:
+                                await main_app(scope, receive, send)
+
+                        await serve(parent_asgi, hypercorn_config)
                     else:
                         await serve(main_app, hypercorn_config)
 

@@ -139,15 +139,32 @@ def build_mcp_components(
     sdk_provider = MCPSdkOAuthProvider(mcp_service)
 
     # --- FastMCP instance with full AS+RS in-process ---
-    # streamable_http_path="/" so that when this sub-app is mounted at
-    # "/mcp" externally, the MCP endpoint lives at exactly "/mcp".
+    #
+    # Path layout (relative to the server root):
+    #   /mcp                                       — MCP protocol endpoint
+    #   /authorize, /token, /register              — OAuth AS endpoints
+    #   /.well-known/oauth-authorization-server    — AS metadata
+    #   /.well-known/oauth-protected-resource/mcp  — PRM metadata (RFC 9728
+    #                                                 path-suffix form)
+    #
+    # issuer_url is the server ROOT, not /mcp, because the SDK registers
+    # OAuth AS routes at absolute paths from the issuer's base. If we
+    # pointed issuer at /mcp the AS endpoints would be advertised as
+    # /mcp/authorize etc. but the SDK would still register them at
+    # /authorize — mismatch between metadata and the actual routes.
+    #
+    # resource_server_url is /mcp, so PRM is at the RFC 9728 path-suffix
+    # location and WWW-Authenticate points there correctly.
+    parsed_resource = urlparse(auth_config.mcp_resource_uri)
+    issuer_root = f"{parsed_resource.scheme}://{parsed_resource.netloc}"
+
     fastmcp = FastMCP(
         name="alekbot",
         instructions="alekbot exocortex — retrieve user's memory facts via get_user_context.",
-        streamable_http_path="/",
+        # streamable_http_path defaults to "/mcp" — keep it.
         auth_server_provider=sdk_provider,
         auth=AuthSettings(
-            issuer_url=AnyHttpUrl(auth_config.mcp_resource_uri),
+            issuer_url=AnyHttpUrl(issuer_root),
             resource_server_url=AnyHttpUrl(auth_config.mcp_resource_uri),
             required_scopes=[MCP_DEFAULT_SCOPE],
             client_registration_options=ClientRegistrationOptions(
