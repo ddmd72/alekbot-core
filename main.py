@@ -33,6 +33,8 @@ from src.web.oauth_app import create_oauth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
+from src.web.mcp_consent_app import build_mcp_consent_blueprint
+from src.composition.mcp_setup import build_mcp_components
 from src.services.task_setup_service import TaskSetupService
 from src.services.authentication_service import AuthenticationService
 from src.services.session_service import SessionService
@@ -811,24 +813,123 @@ async def main():
                         return jsonify(body), status
                     # Unknown task_type — fall back to slack adapter handler
                     return await slack_adapter._handle_worker_task()
-                
+
+                # ====================================================================
+                # Remote MCP connector for claude.ai Custom Connectors
+                # AS+RS in-process via the `mcp` SDK's FastMCP.
+                # Mounted under /mcp in a Starlette parent alongside main_app.
+                # ====================================================================
+                mcp_components = None
+                try:
+                    # SearchEnrichmentService isn't a container singleton —
+                    # UserAgentFactory builds one per user with tier-specific
+                    # total_limit. For MCP we need a shared instance: default
+                    # SearchConfig limits, sensible total_limit=30. Same
+                    # repository + embedding_service as everyone else.
+                    from src.services.search_enrichment_service import (
+                        SearchEnrichmentService,
+                    )
+                    from src.domain.settings import SearchConfig
+                    _mcp_search_config = SearchConfig()
+                    mcp_search_enrichment = SearchEnrichmentService(
+                        repository=container.repository,
+                        embedding_service=container.embedding_service,
+                        keyword_limit=_mcp_search_config.DEFAULT_KEYWORD_LIMIT,
+                        phrase_one_limit=_mcp_search_config.DEFAULT_PHRASE_ONE_LIMIT,
+                        phrase_two_limit=_mcp_search_config.DEFAULT_PHRASE_TWO_LIMIT,
+                        total_limit=30,
+                    )
+                    mcp_components = build_mcp_components(
+                        db_client=db_client,
+                        env_config=env_config,
+                        auth_config=auth_config,
+                        search_enrichment_service=mcp_search_enrichment,
+                    )
+                    # Consent blueprint is built in main.py (not in
+                    # composition/) because composition must not depend
+                    # on the web layer. We pass the authorization service
+                    # built by build_mcp_components into the factory.
+                    mcp_consent_bp = build_mcp_consent_blueprint(
+                        mcp_service=mcp_components.authorization_service,
+                        session_service=session_service,
+                    )
+                    main_app.register_blueprint(mcp_consent_bp)
+                    logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")
+                except Exception as mcp_err:
+                    logger.error(
+                        f"❌ Failed to initialize MCP connector: {mcp_err}",
+                        exc_info=True,
+                    )
+                    logger.warning("🤖 Bot will continue without MCP connector")
+
                 logger.info("✅ All blueprints registered on shared app (port 8080)")
                 logger.info("   - /slack/events (Slack webhook)")
                 logger.info("   - /worker (Cloud Tasks)")
                 logger.info("   - /health (healthcheck)")
                 logger.info("   - /auth/* (OAuth)")
                 logger.info("   - /cabinet, /api/user/* (Cabinet)")
-                
+                if mcp_components is not None:
+                    logger.info("   - /mcp (remote MCP for claude.ai)")
+                    logger.info("   - /mcp/consent (OAuth consent UI)")
+
                 # Override start() to launch shared app instead of individual adapter
                 async def start_shared_app():
-                    logger.info("🚀 Starting shared Quart app on port 8080...")
+                    logger.info("🚀 Starting shared app on port 8080...")
                     hypercorn_config = HypercornConfig()
                     hypercorn_config.bind = ["0.0.0.0:8080"]
                     hypercorn_config.use_reloader = False
                     hypercorn_config.accesslog = None
                     hypercorn_config.errorlog = "-"
-                    await serve(main_app, hypercorn_config)
-                
+
+                    if mcp_components is not None:
+                        # Plain ASGI dispatcher routing by path.
+                        #
+                        # Starlette's Mount("/mcp", ...) strips the prefix and
+                        # requires a trailing slash — it does NOT match exact
+                        # "/mcp" for POST, which is what claude.ai sends. It
+                        # also conflicts with the SDK's absolute-path routes
+                        # (SDK builds /authorize, /token, /register and PRM at
+                        # server root, not under a mount prefix).
+                        #
+                        # So we forward the FastMCP-owned paths to the SDK
+                        # sub-app WITHOUT path rewriting, and everything else
+                        # falls through to the Quart app. Quart handles
+                        # /mcp/consent (the consent UI blueprint), /auth/*,
+                        # /api/*, /slack/*, /worker, /health, /cabinet.
+                        _fastmcp = mcp_components.fastmcp
+                        _mcp_asgi = _fastmcp.streamable_http_app()
+
+                        def _is_mcp_path(path: str) -> bool:
+                            if path == "/mcp" or path == "/mcp/":
+                                return True
+                            if path in ("/authorize", "/token", "/register", "/revoke"):
+                                return True
+                            if path == "/.well-known/oauth-authorization-server":
+                                return True
+                            if path.startswith("/.well-known/oauth-protected-resource"):
+                                return True
+                            return False
+
+                        async def parent_asgi(scope, receive, send):
+                            if scope["type"] == "lifespan":
+                                async with _fastmcp.session_manager.run():
+                                    while True:
+                                        message = await receive()
+                                        if message["type"] == "lifespan.startup":
+                                            await send({"type": "lifespan.startup.complete"})
+                                        elif message["type"] == "lifespan.shutdown":
+                                            await send({"type": "lifespan.shutdown.complete"})
+                                            return
+                            path = scope.get("path", "")
+                            if _is_mcp_path(path):
+                                await _mcp_asgi(scope, receive, send)
+                            else:
+                                await main_app(scope, receive, send)
+
+                        await serve(parent_asgi, hypercorn_config)
+                    else:
+                        await serve(main_app, hypercorn_config)
+
                 # Replace adapter's start with shared app start
                 slack_adapter.start = start_shared_app
                 
