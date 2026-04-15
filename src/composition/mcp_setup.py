@@ -70,8 +70,11 @@ _TOOL_DESCRIPTION = (
     "(alekbot). Without this context you will miss critical information "
     "the user expects you to know. Pass the user's question as `query`; "
     "optionally add `alternate_phrasing` with synonyms for better recall "
-    "and `keywords` with 2-5 topical tags. Skip only for pure math/code "
-    "questions with zero personal dimension."
+    "and `keywords` with 2-5 topical tags. "
+    "All records are stored in English. Always formulate `query` and "
+    "`keywords` in English for optimal retrieval. Use `alternate_phrasing` "
+    "for the original language if the user's question was not in English. "
+    "Skip only for pure math/code questions with zero personal dimension."
 )
 
 
