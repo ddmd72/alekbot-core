@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.email import EmailClassificationResult, EmailMetadata, OAuthCredentials
+from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
 from ..ports.email_classifier_port import EmailClassifierPort
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, LLMResponse, LLMPort, Message, MessagePart, PROMPT_CACHE_BOUNDARY, ToolCall
@@ -264,6 +265,14 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
             )
             return self._all_failed(emails)
 
+        except (LLMUnavailableError, LLMRateLimitError) as exc:
+            # Transient — let Cloud Tasks retry the whole page instead of silently
+            # marking all emails as failed.
+            logger.warning(
+                f"⚠️ classify_batch transient error ({type(exc).__name__}): {exc} — "
+                f"propagating for Cloud Tasks retry"
+            )
+            raise
         except Exception as exc:
             logger.error(f"💥 EmailClassificationAgent.classify_batch failed: {exc}")
             return self._all_failed(emails)
