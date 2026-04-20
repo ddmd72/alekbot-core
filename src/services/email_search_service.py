@@ -278,8 +278,10 @@ class EmailSearchService:
 
     async def _maybe_refresh(self, creds):
         """Refresh access token if expired."""
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(timezone.utc)
         expiry = creds.token_expiry
+        if expiry and expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
         if expiry and expiry <= now:
             logger.info("📧 EmailSearchService: refreshing expired Gmail token")
             creds = await self._gmail.refresh_token(creds)
