@@ -8,7 +8,8 @@ from src.services.prompt_builder import PromptBuilder
 from src.ports.llm_port import LLMPort, LLMResponse, UsageMetadata, ProviderCapabilities
 from src.ports.session_store import SessionStore
 from src.services.agent_context_builder import AgentExecutionContext
-from src.domain.user import PerformanceTier
+from src.domain.user import PerformanceTier, UserBotConfig
+from src.services.task_execution_resolver import TaskExecutionResolver
 
 
 def _read_env_value(key: str) -> str:
@@ -61,7 +62,9 @@ async def test_smart_agent_stores_and_passes_user_id(mock_deps):
         config=config,
         execution_context=execution_context,
         session_store=session_store,
-        prompt_builder=prompt_builder
+        prompt_builder=prompt_builder,
+        resolver=MagicMock(spec=TaskExecutionResolver),
+        user_config=UserBotConfig()
     )
     
     assert agent.user_id == user_id

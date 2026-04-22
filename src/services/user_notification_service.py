@@ -159,6 +159,7 @@ class UserNotificationService:
         save_history: bool = True,
         framing_suffix: str = " Your response to this message will be read by the user. Inform them of the event details in your usual manner of communication.",
         thinking_effort: Optional[str] = None,
+        task_complexity: Optional[str] = None,
         email_for_triage: Optional[list] = None,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
@@ -206,6 +207,7 @@ class UserNotificationService:
                 "thread_id": None,
                 "current_message_parts": [framed],
                 **({"thinking_effort": thinking_effort} if thinking_effort else {}),
+                **({"task_complexity": task_complexity} if task_complexity else {}),
                 **({"email_for_triage": email_for_triage} if email_for_triage else {}),
             },
         )

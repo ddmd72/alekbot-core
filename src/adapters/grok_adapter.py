@@ -39,9 +39,13 @@ class GrokAdapter(LLMPort):
     # Purpose: Decouple agent performance tier from concrete model names
     # ========================================================================
     MODEL_TIERS = {
-        PerformanceTier.ECO: "grok-4-1-fast-non-reasoning",
-        PerformanceTier.BALANCED: "grok-4-1-fast-reasoning",
-        PerformanceTier.PERFORMANCE: "grok-4-1-fast-reasoning"
+        PerformanceTier.ECO:         "grok-4-1-fast-non-reasoning",
+        PerformanceTier.BALANCED:    "grok-4-1-fast-reasoning",
+        PerformanceTier.PERFORMANCE: "grok-4-1-fast-reasoning",
+        PerformanceTier.ULTRA:       "grok-4-1-fast-reasoning",   # no separate ultra model yet
+        PerformanceTier.TIER1:       "grok-4-1-fast-non-reasoning",
+        PerformanceTier.TIER2:       "grok-4-1-fast-non-reasoning",
+        PerformanceTier.TIER3:       "grok-4-1-fast-non-reasoning",
     }
 
     # ========================================================================

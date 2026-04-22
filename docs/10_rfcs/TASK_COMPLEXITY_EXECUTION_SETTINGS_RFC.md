@@ -1,6 +1,6 @@
 # RFC: Task Complexity Classification & Dynamic Execution Settings
 
-**Status**: Draft / thinking
+**Status**: Accepted
 **Owner**: Dmytro
 **Date**: 2026-04-14
 
@@ -16,7 +16,8 @@
 **Идея**: роутер классифицирует вид задачи (семантически), а execution конфигурация (tier, thinking_effort, [опционально] provider) резолвится через таблицу, у которой есть дефолт в коде и user-level override. Smart становится единственным оркестратором, исполняющим с динамически подобранной конфигурацией. Quick — deprecated, удаляется отдельным PR.
 
 Ключевое разделение ответственности:
-- **Роутер** — понимает *вид задачи*, не знает об инфраструктуре.
+
+- **Роутер** — понимает _вид задачи_, не знает об инфраструктуре.
 - **Complexity settings table** — мапит вид → исполнительные параметры.
 - **Smart** — потребляет resolved settings per-call.
 
@@ -24,14 +25,14 @@
 
 Это критично для дизайна, потому что роутер сейчас покрывает только один из путей. Другие entry points либо задают параметры явно, либо идут на дефолтных.
 
-| Entry point | Source | Проходит через Router сейчас? | Как задан execution контекст сейчас |
-|---|---|---|---|
-| User message (chat) | Slack / Telegram adapter → ConversationHandler | **Да** | Router outputs `target_agent` (quick/smart) |
-| Reminder fire | Cloud Scheduler → WorkerHandler.fire_due_reminders → RemindersService → UserNotificationService.notify | **Нет** | Хардкод на Smart, `thinking_effort` не задан |
-| Daily email review | Cloud Scheduler → WorkerHandler._handle_daily_email_review → notify | **Нет** | Хардкод на Smart + `thinking_effort="medium"` |
-| Deep research result | Cloud Run Job → webhook/polling → notify | **Нет** | Хардкод на Smart |
-| Async doc/PDF delivery | AgentWorkerHandler → notify | **Нет** | Хардкод на Smart |
-| Agent → Agent delegation | DocPlanner → DocGenerator (coordinator) | **Нет** (роутера нет в цепочке) | Target агент фиксирован в coordinator; у каждого свой tier из AgentContextBuilder |
+| Entry point              | Source                                                                                                 | Проходит через Router сейчас?   | Как задан execution контекст сейчас                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------------------- | --------------------------------------------------------------------------------- |
+| User message (chat)      | Slack / Telegram adapter → ConversationHandler                                                         | **Да**                          | Router outputs `target_agent` (quick/smart)                                       |
+| Reminder fire            | Cloud Scheduler → WorkerHandler.fire_due_reminders → RemindersService → UserNotificationService.notify | **Нет**                         | Хардкод на Smart, `thinking_effort` не задан                                      |
+| Daily email review       | Cloud Scheduler → WorkerHandler.\_handle_daily_email_review → notify                                   | **Нет**                         | Хардкод на Smart + `thinking_effort="medium"`                                     |
+| Deep research result     | Cloud Run Job → webhook/polling → notify                                                               | **Нет**                         | Хардкод на Smart                                                                  |
+| Async doc/PDF delivery   | AgentWorkerHandler → notify                                                                            | **Нет**                         | Хардкод на Smart                                                                  |
+| Agent → Agent delegation | DocPlanner → DocGenerator (coordinator)                                                                | **Нет** (роутера нет в цепочке) | Target агент фиксирован в coordinator; у каждого свой tier из AgentContextBuilder |
 
 **Вывод**: роутер покрывает только user-chat путь. Любое единообразное решение должно либо (а) протащить роутер во все entry points, (б) дать альтернативный механизм задания complexity для не-user триггеров, либо (в) комбинировать оба — роутер для user messages, explicit hint для системных триггеров, propagation для agent-to-agent.
 
@@ -51,6 +52,7 @@ class TaskComplexity(str, Enum):
 class ComplexitySettings(BaseModel):
     tier: PerformanceTier
     thinking_effort: Optional[str] = None
+    intent_remap: Dict[str, str] = {}
     provider_override: Optional[str] = None   # rare edge case
 ```
 
@@ -61,6 +63,7 @@ class ComplexitySettings(BaseModel):
 Дефолтная таблица в `src/infrastructure/agent_config.py`, user override через `UserBotConfig.complexity_settings_overrides`. Provider в дефолтах **отсутствует** — приходит из agent-level настроек (`user_config.get_provider_for_agent("smart")` или STRATEGIES default). Override провайдера per-complexity — рудимент для edge-кейсов.
 
 Пример дефолта:
+
 ```
 small_talk       → ECO
 info_search      → BALANCED
@@ -96,6 +99,7 @@ Quick агент остаётся зарегистрированным в regist
 ### Q1. Reminders: route through router или pinned complexity?
 
 **Опции**:
+
 - **A**. Прогонять reminder alert text через роутер в `RemindersService.fire_due_reminders` перед `notify()`. Плюсы: один путь для всех сообщений. Минусы: +1 LLM call на каждый fire, +latency, +стоимость; роутер вызывается из сервиса, который раньше был чисто инфраструктурным.
 - **B**. Pinned complexity на `AgentNote` (новое поле `complexity: Optional[TaskComplexity]`). NotesAgent LLM/Cabinet UI задают при создании reminder'а. Если пусто — дефолт (например, `simple_analytics`). Плюсы: 0 лишних LLM calls; reminder-автор знает желаемую глубину. Минусы: новый слой ответственности у NotesAgent (tool schema + prompt context), Cabinet UI reminder form получает ещё одно поле.
 - **C**. Дефолт per entry source в коде. Reminders всегда получают `simple_analytics` (или `deep_reasoning`), без классификации. Плюсы: простейшее. Минусы: не умеет отличать «напомнить полить цветы» от «сделай утренний брифинг по инбоксу» — оба идут одним tier.
@@ -106,6 +110,7 @@ Quick агент остаётся зарегистрированным в regist
 ### Q2. Daily email review и прочие worker tasks: explicit hint или router?
 
 Аналогично Q1, но для worker-level триггеров:
+
 - Daily email review уже передаёт `thinking_effort="medium"`. Логично оставить в том же стиле: worker-task код явно задаёт `task_complexity="deep_reasoning"` в `notify(...)` kwargs.
 - Router здесь точно не нужен — worker-task разработчик знает характер payload'а лучше роутера.
 
@@ -151,6 +156,7 @@ Quick агент остаётся зарегистрированным в regist
 ### Q7. `message.context` как канал — достаточно ли?
 
 Сейчас `message.context` — это dict, который:
+
 - инициализируется в handler / adapter,
 - пропагандируется через DelegationEngine context passthrough,
 - читается в агентах.
@@ -167,6 +173,7 @@ Quick агент остаётся зарегистрированным в regist
 ### Q8. Router ответственность: остаётся intent classifier или расширяется до dispatch controller?
 
 Сейчас роутер:
+
 - Классифицирует complexity 1–10 (crude)
 - Извлекает semantic lens + search intent
 - Триггерит memory/web enrichment **до** роутинга
@@ -178,6 +185,7 @@ Quick агент остаётся зарегистрированным в regist
 ### Q9. Сколько complexity уровней в v1?
 
 Пользователь привёл 4 в пример. Возможные альтернативы:
+
 - **3** уровня (`light`, `standard`, `deep`) — меньше decision fatigue у LLM роутера, но крупнее гранулярность.
 - **4** уровня (приведённые в §3.1) — баланс.
 - **5** уровней (добавить `research` выше `deep_reasoning`) — нужно только если deep research triage будет отдельно классифицироваться.
@@ -195,6 +203,7 @@ Quick агент остаётся зарегистрированным в regist
 ### Q11. Логирование и debuggability
 
 Когда Smart исполнил с override — в логах и в `get_debug` / billing мы должны видеть:
+
 - Какой complexity пришёл
 - Как он резолвился (default vs user override)
 - Какой финальный `(provider, model, thinking)` применился
@@ -220,11 +229,12 @@ Quick агент остаётся зарегистрированным в regist
 ## 7. Appendix: критичные файлы для будущей имплементации
 
 Оставлено как подсказка, не как обязательство:
-- `src/domain/task_complexity.py`, `src/domain/complexity_settings.py` *(new)*
+
+- `src/domain/task_complexity.py`, `src/domain/complexity_settings.py` _(new)_
 - `src/domain/user.py` — `complexity_settings_overrides`
 - `src/infrastructure/agent_config.py` — `DEFAULT_COMPLEXITY_SETTINGS`, resolver
 - `src/services/agent_context_builder.py` — `resolve_for_task`
-- `src/services/task_execution_resolver.py` *(new)*
+- `src/services/task_execution_resolver.py` _(new)_
 - `src/agents/router_agent.py` — output schema, Firestore prompt token
 - `src/handlers/conversation_handler.py` — complexity в context, всегда Smart
 - `src/agents/core/smart_response_agent.py` — override в delegation loop
@@ -238,4 +248,18 @@ Quick агент остаётся зарегистрированным в regist
 
 ## 8. Decision log
 
-*Пусто. Заполнять по мере ответа на Q1–Q11.*
+- **Q4 — confidence (2026-04-21)**: поле `confidence` удалено из `RoutingMetadata` и
+  из TRIAGE schema. Safety net реализован статически: любой неизвестный/пустой
+  `task_complexity` из роутера маппится в `TaskComplexity.SIMPLE_ANALYTICS` в
+  `build_routing_metadata` и `RoutingMetadata.from_dict`. Калибровку порогов
+  confidence сочли неподъёмной без realtime метрик; выбрали детерминированный
+  fallback по enum value. Если позже понадобится — заведём `confidence` заново
+  отдельным полем без переписывания routing logic.
+- **Q6 — Quick deprecation (2026-04-21)**: опция B. Роутер всегда идёт в Smart
+  (`_apply_routing_rules` → `smart_agent_id`), Quick остаётся живым кодом.
+  Удаление — follow-up PR после прод-бейка.
+- **Реализация v1 (2026-04-21)**: Phase 1 + Phase 2 RFC §6 выполнены.
+  `TaskExecutionResolver`, `DEFAULT_COMPLEXITY_SETTINGS`, `AgentContextBuilder.resolve_for_task`,
+  `UserBotConfig.complexity_settings_overrides`, проводка task_complexity из роутера
+  в Smart через `message.context` — готово. Phase 3 (reminders / daily email review /
+  async doc delivery explicit hint) и Phase 4 (удаление Quick) — не покрыты.

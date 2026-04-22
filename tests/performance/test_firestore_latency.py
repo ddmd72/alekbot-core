@@ -18,6 +18,7 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.agents.memory_search_agent import FactsMemoryAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent
+from src.domain.request_context import RequestContext
 
 
 import os
@@ -65,7 +66,8 @@ async def test_memory_search_firestore_latency():
     )
 
     start = time.perf_counter()
-    response = await agent.execute(message)
+    with RequestContext(user_id=TEST_ACCOUNT_ID):
+        response = await agent.execute(message)
     total_ms = (time.perf_counter() - start) * 1000
 
     assert response.status.value == "success"

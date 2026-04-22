@@ -244,6 +244,7 @@ async def deliver_deep_research(
                 "user_id": user_id,
                 "account_id": account_id,
                 "session_id": session_id or "",
+                "task_complexity": "deep_reasoning",
                 **({"origin_channel_id": channel_id_override} if channel_id_override else {}),
                 **({"origin_platform": platform_override} if platform_override else {}),
             },

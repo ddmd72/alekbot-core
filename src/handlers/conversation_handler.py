@@ -786,11 +786,12 @@ class ConversationHandler(ConversationHandlerPort):
                 # Was: self.agent_factory.assembly_service.invalidate_cache() (Law of Demeter violation)
                 try:
                     self.agent_factory.invalidate_prompt_cache()
+                    self.agent_factory.invalidate_user_cache(context.user_id)
                     await response_channel.send_message(
                         "✅ **Cache reset complete**\n\n"
-                        "All prompt assembly caches have been cleared. "
-                        "Next requests will rebuild prompts from Firestore.\n\n"
-                        "_Note: This is a global operation affecting all users in this worker process._",
+                        "• Prompt assembly cache cleared (all users in this process)\n"
+                        "• User profile cache cleared (your UserBotConfig will reload from Firestore)\n\n"
+                        "_Next request will re-read your config and rebuild prompts._",
                         thread_id=context.thread_id
                     )
                     logger.info(f"✅ ADMIN: Cache reset successful (user {context.user_id[:8]})")
