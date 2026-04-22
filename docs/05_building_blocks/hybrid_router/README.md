@@ -1,28 +1,30 @@
 # Hybrid Router (Building Block)
 
-## 📖 HowTo: Using This Document
+## Purpose
 
-### Purpose
+Describes the intent classification and routing system that analyzes every user message,
+produces semantic routing metadata, enriches context, and routes to SmartResponseAgent.
 
-Describes the intent classification and routing system that directs user queries to the most appropriate agents.
+## When to Read
 
-### When to Read
+- Before modifying routing rules, triage prompts, or intent classification logic.
+- When troubleshooting incorrect complexity classification or model selection.
+- When changing `RoutingMetadata` fields or `build_routing_metadata()`.
 
-- **For AI Agents:** Before modifying routing rules, triage prompts, or intent classification logic.
-- **For Developers:** When troubleshooting incorrect agent selection or tuning the triage performance.
-
-### When to Update
+## When to Update
 
 This document MUST be updated when:
 
 - [ ] The triage logic (rule-based vs LLM-based) changes.
-- [ ] New routing categories or target agents are added.
-- [ ] The triage prompt (managed via PromptBuilder v3 in Firestore) is modified.
-- [ ] The complexity threshold for agent selection is adjusted.
-- [ ] Integration with `SearchEnrichmentService` changes.
+- [ ] `TaskComplexity` values or their semantic definitions change.
+- [ ] `RoutingMetadata` fields are added, removed, or renamed.
+- [ ] `build_routing_metadata()` coercion / safety-net logic changes.
+- [ ] Integration with `SearchEnrichmentService` or `AgentNotePort` changes.
+- [ ] Routing target (currently: always SmartResponseAgent) changes.
 
-### Cross-References
+## Cross-References
 
+- **Dynamic Execution:** [../smart_agent_execution/README.md](../smart_agent_execution/README.md)
 - **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
 - **Search Enrichment:** [../search_enrichment/README.md](../search_enrichment/README.md)
 - **Prompt Design System v3:** [../prompt_design_system_v3/README.md](../prompt_design_system_v3/README.md)
@@ -31,96 +33,142 @@ This document MUST be updated when:
 
 ## 1. Overview
 
-The **Hybrid Router** is the entry point for all user queries in the Alek-Core agent network. It analyzes incoming messages to determine their intent, complexity, and required tools, then routes them to either the `QuickResponseAgent` or the `SmartResponseAgent`.
+The **Hybrid Router** is the entry point for all user messages. It performs two jobs:
 
-**Core Principle:** Use the cheapest and fastest model possible for simple tasks, while reserving powerful models for complex reasoning.
+1. **Classify**: LLM triage assigns a `TaskComplexity` (semantic category) and extracts
+   context enrichment signals (`semantic_lens`, `search_intent`, `user_tone`).
+2. **Enrich**: Fetches memory context and active reminders, packages everything into
+   `message.context`, and forwards to `SmartResponseAgent`.
+
+**Routing target:** Always `SmartResponseAgent`. Quick routing was deprecated; Quick remains
+in code but is no longer reached via the Router.
+
+**Core principle:** Router classifies *what kind of task* this is; execution infrastructure
+maps that to *how to run it* (model, tier, thinking) — see
+[Smart Agent Execution](../smart_agent_execution/README.md).
 
 ---
 
 ## 2. Triage Mechanism
 
-The router uses a hybrid approach combining fast rule-based checks with semantic LLM analysis.
-
 ### 2.1 Rule-Based Classification (Fast Path)
 
-For common, unambiguous phrases, the router uses static keyword matching to avoid LLM latency.
+For common, unambiguous phrases, static keyword matching avoids LLM latency.
 
-- **Simple Phrases:** Greetings ("Hello"), acknowledgments ("Thanks"), and short confirmations.
-- **Personal Keywords:** Detects "my", "mine" to flag personal data queries.
-- **External Keywords:** Detects "weather", "news", "google" to flag web search needs.
+- Simple phrases: greetings ("Hello"), acknowledgments ("Thanks"), confirmations.
+- Personal keywords: "my", "mine" → flag personal data query.
+- External keywords: "weather", "news" → flag web search need.
 
 ### 2.2 LLM-Based Triage (Semantic Path)
 
-For complex or ambiguous queries, the router uses a lightweight LLM (Gemini Flash, ECO tier) to perform deep classification.
+For everything else, a lightweight LLM (Gemini Flash Lite, ECO tier) performs deep
+classification.
 
-- **Prompt:** assembled via `PromptBuilderPort` (Token System v3, stored in Firestore — token `COGNITIVE_PROCESS_ROUTER`).
-- **Output:** Structured JSON. The LLM classifies the query by its **data characteristics**, not by naming a target agent. Routing decisions belong to code.
-- **Vision Support:** If the message contains attachments (images), the router automatically increases the complexity score to ensure the `SmartResponseAgent` (with vision capabilities) is selected.
+- **Prompt:** assembled via `PromptBuilderPort` (token `COGNITIVE_PROCESS_ROUTER`).
+- **Output:** structured JSON via `response_schema` (provider-native enforcement).
+- **Vision override:** native binary images in the message → force `task_complexity=deep_reasoning`.
+
+#### LLM Triage Response Schema
+
+```json
+{
+  "needs_memory_search": bool,
+  "search_intent": "string — what to look for in memory",
+  "relevant_domains": ["finance", "health", ...],
+  "semantic_lens": ["keyword1", "keyword2"],
+  "search_phrase": "primary search phrase",
+  "metadata": {
+    "user_tone": "friendly | professional | urgent | ...",
+    "task_complexity": "small_talk | info_search | simple_analytics | deep_reasoning"
+  }
+}
+```
 
 ---
 
-## 3. Routing Logic
+## 3. Routing Metadata
 
-### 3.1 Routing Metadata
+### 3.1 RoutingMetadata Fields
 
-The triage process produces `RoutingMetadata`, which includes:
+Produced by `build_routing_metadata(classification)` in `src/domain/tone.py`:
 
-- `complexity_score`: 1-10 — topic difficulty (not message length).
-- `needs_memory_search`: bool — whether one Router prefetch pass will be insufficient; agent needs its own deep KB retrieval.
-- `confidence`: 0.0-1.0 — LLM confidence in the complexity/depth assessment.
-- `user_tone`: Detected tone (friendly, professional, etc.).
-- `needs_tools`: List of required capabilities.
-- `semantic_lens`: Keywords for search enrichment.
+| Field               | Type                | Description                                         |
+|---------------------|---------------------|-----------------------------------------------------|
+| `task_complexity`   | `TaskComplexity`    | Semantic category of the task (see §3.2)            |
+| `user_tone`         | `str`               | Detected user tone (`friendly`, `professional`, ...) |
+| `needs_tools`       | `List[str]`         | Capabilities needed (`search_web`, `search_memory`) |
+| `needs_memory_search` | `bool`            | Whether in-request KB retrieval is needed           |
+| `semantic_lens`     | `List[str]`         | Keywords for context enrichment / vector search     |
+| `reasoning`         | `str`               | LLM explanation of its classification decision      |
 
-### 3.2 Decision Rules
+**Removed fields (compared to prior design):**
+- `complexity_score` (1–10 numeric) — replaced by `task_complexity` enum
+- `confidence` (0.0–1.0) — removed; unknown complexity falls back to `simple_analytics`
 
-Two primary signals drive routing, evaluated in order:
+### 3.2 TaskComplexity Values
 
-1. **Confidence < 0.75** → `SmartResponseAgent` (safety net for ambiguous queries).
-2. **`needs_memory_search = true` OR `complexity_score >= 5`** → `SmartResponseAgent`.
-3. **Otherwise** → `QuickResponseAgent`.
+| Value               | Semantics                                             | Default Tier    |
+|---------------------|-------------------------------------------------------|-----------------|
+| `small_talk`        | Greetings, acknowledgments, yes/no, short acks        | ECO             |
+| `info_search`       | Factual lookups, quick retrieval, single-answer Q&A   | BALANCED        |
+| `simple_analytics`  | Basic analysis, calculations, comparisons             | BALANCED + low thinking |
+| `deep_reasoning`    | Multi-step reasoning, synthesis, planning             | PERFORMANCE + high thinking |
 
-**Complexity scale:**
-- `1–4`: chitchat, greeting, single factual question with one clear answer.
-- `5–7`: several facts needed, comparison, evaluation across data points.
-- `8–10`: multi-step reasoning, planning, synthesis across many domains.
+**Safety net**: unknown or empty `task_complexity` in LLM output → coerced to `simple_analytics`
+by `_coerce_task_complexity()` in `tone.py`.
 
-**`needs_memory_search` is independent of complexity.** A low-complexity query can still require deep KB retrieval (e.g., mutable data like lab results, or ambiguous multi-record lookups).
+### 3.3 Context Propagation
+
+`RoutingMetadata` is serialized into `message.context` when forwarding to SmartResponseAgent:
+
+```python
+context = {
+    **message.context,
+    "classification":  classification,             # Raw LLM triage dict
+    "routing":         routing_metadata.to_dict(), # Serialized RoutingMetadata
+    "task_complexity": routing_metadata.task_complexity.value,  # String for resolver
+    "enriched_context": ...,                       # SearchEnrichmentService result
+    "agent_notes":     ...,                        # Active self-reminders
+    "routed_by":       self.agent_id,
+}
+```
+
+`task_complexity` is passed as a **string value** (not enum) so it survives serialization
+through Cloud Tasks queues (used for async paths).
 
 ---
 
 ## 4. Search Enrichment Integration
 
-The router doesn't just route; it prepares the context for the target agent.
+The router doesn't just route — it prepares the full context for SmartResponseAgent.
 
-1. **Keyword Extraction:** LLM triage extracts "semantic lenses" and search phrases.
-2. **Enrichment:** Calls `SearchEnrichmentService` to perform parallel multi-vector searches.
-3. **Reminders Enrichment:** Calls `AgentNotePort.list_active_notes(user_id, as_of=now)` to fetch the user's active self-reminders. Result is serialized as `agent_notes: List[dict]` in the routed message context (`note_id`, `text`, `due`). Failures are caught and logged as warnings — enrichment never blocks routing.
-4. **Context Injection:** The enriched context (search results + active reminders) is attached to the `AgentMessage` sent to the target agent. Quick/Smart extract `agent_notes` from context and pass them to `PromptBuilder.build_for_agent()` → injected as `active_reminders {}` block after `PROMPT_CACHE_BOUNDARY`.
-
----
-
-## 5. Code References
-
-- `src/agents/core/router_agent.py`: Main implementation.
-- `src/domain/tone.py`: Tone detection and metadata building.
-- `src/ports/prompt_builder_port.py`: Port for triage prompt assembly.
-- `src/services/search_enrichment_service.py`: Context enrichment.
+1. **Keyword extraction**: LLM triage extracts `semantic_lens` and `search_phrase`.
+2. **Memory enrichment**: `SearchEnrichmentService` runs parallel multi-vector RRF search
+   using the extracted keys. Result is attached as `enriched_context`.
+3. **Reminders enrichment**: `AgentNotePort.list_active_notes(user_id)` fetches active
+   self-reminders → serialized as `agent_notes: List[dict]` in context.
+   Failures are caught and logged — enrichment never blocks routing.
+4. **Context injection**: Enriched context is available to SmartResponseAgent's
+   `PromptBuilder` (injected as `active_reminders {}` and `query_specific_context {}`
+   blocks after `PROMPT_CACHE_BOUNDARY`).
 
 ---
 
-## 6. Status & Roadmap
+## 5. Code Locations
+
+| Concern                         | File                                    |
+|---------------------------------|-----------------------------------------|
+| Main router implementation      | `src/agents/core/router_agent.py`       |
+| `RoutingMetadata` + coercion    | `src/domain/tone.py`                   |
+| `TaskComplexity` enum           | `src/domain/task_complexity.py`        |
+| Prompt assembly                 | `src/ports/prompt_builder_port.py`      |
+| Context enrichment              | `src/services/search_enrichment_service.py` |
+| Downstream resolution           | `src/services/task_execution_resolver.py` |
+
+---
+
+## 6. Status
 
 **Status:** ✅ Production Ready
 
-### Planned Enhancements
-
-- **Adaptive Thresholds:** Dynamically adjust the complexity threshold based on system load or user tier.
-- **Multi-Turn Triage:** Use conversation history more effectively to resolve ambiguous follow-up questions.
-- **Local Triage:** Explore small local models (e.g., BERT-based) for even faster rule-based classification.
-
----
-
-**Last Updated:** 2026-02-26
-**Status:** ✅ Complete  
-**Phase:** Documentation Audit Phase 3.3
+**Last Updated:** 2026-04-22

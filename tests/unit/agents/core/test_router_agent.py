@@ -219,13 +219,13 @@ class TestRouterAgentSimpleClassification:
         "Добрий день",
         "good morning",
     ])
-    async def test_simple_greetings_routed_to_quick(self, router_agent, text):
-        """Simple greetings should route to quick agent."""
+    async def test_simple_greetings_classified_as_simple(self, router_agent, text):
+        """Simple greetings should be classified as simple but route to smart agent."""
         message = create_query_message(text)
         
         response = await router_agent.execute(message)
         
-        assert response.metadata["target_agent"] == "quick_agent"
+        assert response.metadata["target_agent"] == "smart_agent"
         assert response.metadata["is_simple"] is True
 
     @pytest.mark.asyncio
@@ -242,7 +242,7 @@ class TestRouterAgentSimpleClassification:
         response = await router_agent.execute(message)
         
         assert response.metadata["is_simple"] is True
-        assert response.metadata["target_agent"] == "quick_agent"
+        assert response.metadata["target_agent"] == "smart_agent"
 
     @pytest.mark.asyncio
     async def test_empty_text_is_simple(self, router_agent):
@@ -393,8 +393,8 @@ class TestRouterAgentRouting:
     """Test routing behavior with coordinator."""
 
     @pytest.mark.asyncio
-    async def test_routes_to_quick_agent(self, router_with_coordinator, mock_coordinator):
-        """Should route simple requests to quick agent."""
+    async def test_routes_to_smart_agent_always(self, router_with_coordinator, mock_coordinator):
+        """Should route all requests to smart agent."""
         message = create_query_message("Привіт")
         
         await router_with_coordinator.execute(message)
@@ -404,7 +404,7 @@ class TestRouterAgentRouting:
         
         # Get the routed message
         routed_msg = mock_coordinator.route_message.call_args[0][0]
-        assert routed_msg.recipient == "quick_agent"
+        assert routed_msg.recipient == "smart_agent"
 
     @pytest.mark.asyncio
     async def test_routes_to_smart_agent(self, router_with_coordinator, mock_coordinator):
@@ -416,8 +416,8 @@ class TestRouterAgentRouting:
         # Verify coordinator was called — routing happened (destination depends on LLM availability)
         mock_coordinator.route_message.assert_called_once()
         routed_msg = mock_coordinator.route_message.call_args[0][0]
-        # Rule-based fallback: confidence=0.8 > 0.75, no LLM → routes to quick_agent
-        assert routed_msg.recipient in ("quick_agent", "smart_agent")
+        # Always routes to smart_agent
+        assert routed_msg.recipient == "smart_agent"
 
     @pytest.mark.asyncio
     async def test_preserves_context_in_routing(self, router_with_coordinator, mock_coordinator):
@@ -448,20 +448,20 @@ class TestRouterAgentLlmTriage:
     """Test LLM triage routing behavior."""
 
     @pytest.mark.asyncio
-    async def test_llm_routes_to_quick_on_low_complexity(self, router_with_llm, mock_llm):
+    async def test_llm_routes_to_smart_on_low_complexity(self, router_with_llm, mock_llm):
         mock_llm.generate_content.return_value = MagicMock(
-            text='{"needs_memory_search":false,"confidence":0.9,"reasoning":"simple greeting","search_intent":"none","relevant_domains":[],"semantic_lens":[],"search_phrase":"","metadata":{"user_tone":"casual","complexity_score":2}}'
+            text='{"needs_memory_search":false,"reasoning":"simple greeting","search_intent":"none","relevant_domains":[],"semantic_lens":[],"search_phrase":"","metadata":{"user_tone":"casual","task_complexity":"small_talk"}}'
         )
 
         message = create_query_message("Привіт")
         response = await router_with_llm.execute(message)
 
-        assert response.result["routed_to"] == "quick_agent"
+        assert response.result["routed_to"] == "smart_agent"
 
     @pytest.mark.asyncio
     async def test_llm_routes_to_smart_on_high_complexity(self, router_with_llm, mock_llm):
         mock_llm.generate_content.return_value = MagicMock(
-            text='{"needs_memory_search":true,"confidence":0.9,"reasoning":"multi-fact query","search_intent":"topic","relevant_domains":["possession"],"semantic_lens":["car","vehicle"],"search_phrase":"user vehicles list","metadata":{"user_tone":"casual","complexity_score":7}}'
+            text='{"needs_memory_search":true,"reasoning":"multi-fact query","search_intent":"topic","relevant_domains":["possession"],"semantic_lens":["car","vehicle"],"search_phrase":"user vehicles list","metadata":{"user_tone":"casual","task_complexity":"deep_reasoning"}}'
         )
 
         message = create_query_message("Які у мене машини?")
@@ -476,7 +476,7 @@ class TestRouterAgentLlmTriage:
         message = create_query_message("Привіт")
         response = await router_with_llm.execute(message)
 
-        assert response.result["routed_to"] == "quick_agent"
+        assert response.result["routed_to"] == "smart_agent"
 
 
 # ============================================================================
@@ -607,7 +607,7 @@ class TestRouterAgentIntegration:
         response = await router_agent.execute(message)
         
         assert response.status == AgentStatus.SUCCESS
-        assert response.result["routed_to"] == "quick_agent"
+        assert response.result["routed_to"] == "smart_agent"
         assert response.result["classification"]["is_simple"] is True
         assert response.result["classification"]["is_personal"] is False
         assert response.result["classification"]["needs_external"] is False
@@ -790,7 +790,7 @@ class TestVisionComplexityOverride:
         """current_parts with file_data must force complexity=7 → smart_agent path."""
         # LLM returns complexity=2 (would route to quick without vision override)
         mock_llm.generate_content.return_value = MagicMock(
-            text='{"needs_memory_search":false,"confidence":0.9,"reasoning":"image","search_intent":"none","relevant_domains":[],"semantic_lens":[],"search_phrase":"","metadata":{"user_tone":"casual","complexity_score":2}}'
+            text='{"needs_memory_search":false,"reasoning":"image","search_intent":"none","relevant_domains":[],"semantic_lens":[],"search_phrase":"","metadata":{"user_tone":"casual","task_complexity":"small_talk"}}'
         )
         ec = AgentExecutionContext(
             agent_type="router",
@@ -853,7 +853,7 @@ class TestVisionComplexityOverride:
         )
 
         response = await agent.execute(message)
-        assert response.result["routed_to"] == "quick_agent"
+        assert response.result["routed_to"] == "smart_agent"
 
 
 # ============================================================================
@@ -1141,59 +1141,7 @@ class TestClassifyWithLlmJsonDecodeError:
         assert response.status == AgentStatus.SUCCESS
 
 
-# ============================================================================
-# _apply_routing_rules: low-confidence → smart (line 485)
-# ============================================================================
 
-class TestApplyRoutingRulesLowConfidence:
-    """confidence < CONFIDENCE_THRESHOLD must return smart_agent_id (line 485)."""
-
-    def test_low_confidence_routes_to_smart(self, router_config):
-        """Confidence below threshold always routes to smart regardless of complexity."""
-        from src.domain.agent import RoutingMetadata
-
-        agent = RouterAgent(
-            config=router_config,
-            quick_agent_id="quick_agent",
-            smart_agent_id="smart_agent",
-        )
-
-        # Confidence below threshold (0.5)
-        routing_metadata = RoutingMetadata(
-            complexity_score=1,   # would be quick if confidence were OK
-            confidence=0.1,       # below threshold
-            user_tone="casual",
-            semantic_lens=[],
-            needs_memory_search=False,
-            needs_tools=[],
-            reasoning="low confidence test",
-        )
-
-        result = agent._apply_routing_rules(routing_metadata)
-        assert result == "smart_agent"
-
-    def test_high_confidence_low_complexity_routes_to_quick(self, router_config):
-        """High confidence + low complexity routes to quick_agent."""
-        from src.domain.agent import RoutingMetadata
-
-        agent = RouterAgent(
-            config=router_config,
-            quick_agent_id="quick_agent",
-            smart_agent_id="smart_agent",
-        )
-
-        routing_metadata = RoutingMetadata(
-            complexity_score=2,
-            confidence=0.9,
-            user_tone="casual",
-            semantic_lens=[],
-            needs_memory_search=False,
-            needs_tools=[],
-            reasoning="high confidence test",
-        )
-
-        result = agent._apply_routing_rules(routing_metadata)
-        assert result == "quick_agent"
 
 
 # ============================================================================
@@ -1375,13 +1323,13 @@ class TestVisionRefVsNativeBinary:
 
         response = await agent.execute(message)
         # PDF ref should not force smart routing (no vision override)
-        assert response.result["routed_to"] == "quick_agent"
+        assert response.result["routed_to"] == "smart_agent"
 
     @pytest.mark.asyncio
     async def test_ref_only_image_treated_as_vision(self, router_config, mock_llm, mock_prompt_builder):
         """file_data with ref key AND image/ mime → vision IS detected."""
         mock_llm.generate_content.return_value = MagicMock(
-            text='{"needs_memory_search":false,"confidence":0.9,"reasoning":"img","search_intent":"none","relevant_domains":[],"semantic_lens":[],"search_phrase":"","metadata":{"user_tone":"casual","complexity_score":2}}'
+            text='{"needs_memory_search":false,"reasoning":"img","search_intent":"none","relevant_domains":[],"semantic_lens":[],"search_phrase":"","metadata":{"user_tone":"casual","task_complexity":"small_talk"}}'
         )
         ec = AgentExecutionContext(
             agent_type="router",
@@ -1445,4 +1393,4 @@ class TestVisionRefVsNativeBinary:
 
         response = await agent.execute(message)
         # DOCX ref should not force smart routing (no vision override)
-        assert response.result["routed_to"] == "quick_agent"
+        assert response.result["routed_to"] == "smart_agent"

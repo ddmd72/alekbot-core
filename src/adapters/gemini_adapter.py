@@ -31,9 +31,13 @@ class GeminiAdapter(LLMPort):
     # Purpose: Decouple agent performance tier from concrete model names
     # ========================================================================
     MODEL_TIERS = {
-        PerformanceTier.ECO: "gemini-flash-lite-latest",
-        PerformanceTier.BALANCED: "gemini-flash-latest",
-        PerformanceTier.PERFORMANCE: "gemini-pro-latest"
+        PerformanceTier.ECO:         "gemini-flash-lite-latest",
+        PerformanceTier.BALANCED:    "gemini-flash-latest",
+        PerformanceTier.PERFORMANCE: "gemini-pro-latest",
+        PerformanceTier.ULTRA:       "gemini-pro-latest",   # no Gemini Ultra available yet
+        PerformanceTier.TIER1:       "gemini-flash-lite-latest",
+        PerformanceTier.TIER2:       "gemini-flash-lite-latest",
+        PerformanceTier.TIER3:       "gemini-flash-lite-latest",
     }
 
     # ========================================================================

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from pydantic import BaseModel, Field
 from .language import LanguageCode
+from .task_complexity import TaskComplexity
 
 class UserTier(str, Enum):
     FREE = "free"
@@ -28,6 +29,13 @@ class PerformanceTier(str, Enum):
     ECO = "eco"
     BALANCED = "balanced"
     PERFORMANCE = "performance"
+    ULTRA = "ultra"
+    # Reserved slots — default to ECO models in all adapters.
+    # Use via UserBotConfig.agent_tiers or complexity_settings_overrides
+    # to plug in experimental / provider-specific models as needed.
+    TIER1 = "tier1"
+    TIER2 = "tier2"
+    TIER3 = "tier3"
 
 
 # ============================================================================
@@ -67,7 +75,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "email_search": PerformanceTier.ECO,
     "postprocessing": PerformanceTier.BALANCED,
     "email_classifier": PerformanceTier.BALANCED,
-    "deep_research": PerformanceTier.BALANCED,       # BALANCED → claude-sonnet; PERFORMANCE → claude-opus
+    "deep_research": PerformanceTier.BALANCED,       # BALANCED → claude-sonnet; ULTRA → claude-opus-4-7
     "doc_planner": PerformanceTier.PERFORMANCE,      # JSON layout spec — max quality
     "doc_generator": PerformanceTier.BALANCED,   # JS code generation + retries
     "pdf_generator": PerformanceTier.BALANCED,      # HTML+CSS generation → Puppeteer
@@ -127,6 +135,11 @@ class UserBotConfig(BaseModel):
     agent_thinking: Optional[Dict[str, str]] = None   # agent_type -> thinking effort ("low"/"medium"/"high")
 
     model_overrides: Dict[str, str] = Field(default_factory=dict)  # agent_type -> model name
+
+    # ========================================================================
+    # NEW Task Complexity Settings (RFC: TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC)
+    # ========================================================================
+    complexity_settings_overrides: Dict[TaskComplexity, "ComplexitySettings"] = Field(default_factory=dict)
 
     temperature: float = 0.7
     
@@ -315,9 +328,15 @@ class UserProfile(BaseModel):
 
 
 # ============================================================================
-# Pydantic v2: Rebuild models with circular dependencies
-# Reason: BillingAccount.account_defaults references UserBotConfig (forward ref)
-# Must rebuild after UserBotConfig is fully defined
+# Pydantic v2: Resolve forward references
+#
+# UserBotConfig.complexity_settings_overrides uses "ComplexitySettings" as a
+# forward ref. Python resolves it only after complexity_settings.py is imported.
+# Importing that module here (at the tail of user.py, after all classes are
+# defined) is safe: complexity_settings.py imports only PerformanceTier at the
+# top (already defined) and UserBotConfig at its own tail (already defined here).
+# Python's circular-import guard returns the partial module on re-entry — that is
+# enough to let both files finish loading, after which model_rebuild() runs.
 # ============================================================================
-from .billing import BillingAccount
-BillingAccount.model_rebuild()
+from . import complexity_settings as _cs  # noqa: F401, E402  — side effect: calls model_rebuild()
+from .billing import BillingAccount  # noqa: F401, E402
