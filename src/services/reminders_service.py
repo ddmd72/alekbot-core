@@ -92,6 +92,7 @@ class RemindersService:
                     account_id=account_id,
                     system_alert=_build_reminder_alert(note),
                     agent_id_override=f"smart_response_agent_{note.user_id}",
+                    task_complexity="deep_reasoning",
                 )
             except Exception as exc:
                 logger.warning(

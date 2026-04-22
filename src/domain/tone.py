@@ -2,6 +2,7 @@
 
 from enum import Enum
 from .agent import RoutingMetadata
+from .task_complexity import TaskComplexity
 
 
 class UserTone(str, Enum):
@@ -36,26 +37,52 @@ class UserTone(str, Enum):
 def build_routing_metadata(classification: dict) -> RoutingMetadata:
     """Build RoutingMetadata from raw triage classification JSON."""
     metadata = classification.get("metadata", {}) if classification else {}
-    confidence = float(classification.get("confidence", 0.5)) if classification else 0.5
     if not metadata:
         is_simple = classification.get("is_simple") if classification else None
         is_personal = classification.get("is_personal") if classification else None
         needs_external = classification.get("needs_external") if classification else None
         metadata = {
-            "complexity_score": 2 if is_simple else 6,
+            "task_complexity": (
+                TaskComplexity.SMALL_TALK.value if is_simple
+                else TaskComplexity.SIMPLE_ANALYTICS.value
+            ),
             "needs_tools": ["web_search"] if needs_external else [],
             "user_tone": UserTone.FRIENDLY,
             "reasoning": "rule_based"
         }
         if is_personal:
             metadata["needs_tools"].append("memory_search")
-        confidence = 0.9 if is_simple else 0.8
+
+    task_complexity = metadata.get("task_complexity")
+    if not task_complexity and "complexity_score" in metadata:
+        # Transitional: tolerate legacy numeric classifications if the Firestore
+        # router prompt token still emits complexity_score. Drop this branch once
+        # the prompt is migrated to task_complexity.
+        score = int(metadata["complexity_score"])
+        if score <= 2:
+            task_complexity = TaskComplexity.SMALL_TALK.value
+        elif score <= 5:
+            task_complexity = TaskComplexity.INFO_SEARCH.value
+        elif score <= 8:
+            task_complexity = TaskComplexity.SIMPLE_ANALYTICS.value
+        else:
+            task_complexity = TaskComplexity.DEEP_REASONING.value
+
     return RoutingMetadata(
         user_tone=UserTone.validate(metadata.get("user_tone", UserTone.FRIENDLY)),
-        complexity_score=int(metadata.get("complexity_score", 5)),
-        confidence=confidence,
+        task_complexity=_safe_complexity(task_complexity),
         needs_tools=list(metadata.get("needs_tools", [])),
         reasoning=classification.get("reasoning", ""),
         semantic_lens=list(classification.get("semantic_lens", [])),
         needs_memory_search=bool(classification.get("needs_memory_search", False))
     )
+
+
+def _safe_complexity(value) -> TaskComplexity:
+    """Coerce router output to TaskComplexity; unknown → SIMPLE_ANALYTICS (Q4 safety net)."""
+    if isinstance(value, TaskComplexity):
+        return value
+    try:
+        return TaskComplexity(value) if value else TaskComplexity.SIMPLE_ANALYTICS
+    except ValueError:
+        return TaskComplexity.SIMPLE_ANALYTICS

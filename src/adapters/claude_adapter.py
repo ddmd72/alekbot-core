@@ -35,9 +35,13 @@ class ClaudeAdapter(LLMPort):
     # Purpose: Decouple agent performance tier from concrete model names
     # ========================================================================
     MODEL_TIERS = {
-        PerformanceTier.ECO: "claude-haiku-4-5-20251001",
-        PerformanceTier.BALANCED: "claude-sonnet-4-6",
-        PerformanceTier.PERFORMANCE: "claude-opus-4-6",
+        PerformanceTier.ECO:         "claude-haiku-4-5-20251001",
+        PerformanceTier.BALANCED:    "claude-haiku-4-5-20251001",
+        PerformanceTier.PERFORMANCE: "claude-sonnet-4-6",
+        PerformanceTier.ULTRA:       "claude-opus-4-7",
+        PerformanceTier.TIER1:       "claude-haiku-4-5-20251001",
+        PerformanceTier.TIER2:       "claude-haiku-4-5-20251001",
+        PerformanceTier.TIER3:       "claude-haiku-4-5-20251001",
     }
 
     # Models that support adaptive thinking (Sonnet 4.6+, Opus 4.6+).
@@ -310,7 +314,21 @@ class ClaudeAdapter(LLMPort):
         # appending them as an assistant turn would produce a 400 from the API
         # ("tool_use ids without tool_result blocks immediately after"). Real tool_calls
         # are returned to DelegationEngine, which executes them and continues the loop.
-        if _schema_tool_active and not _use_dynamic_search:
+        #
+        # NB: must NOT trigger when thinking is enabled. Adaptive thinking responses include
+        # thinking blocks in response.content. Appending that as an assistant prefill fails
+        # with 400 ("model does not support assistant message prefill") — prefilling is
+        # incompatible with thinking. When thinking is active, the model follows the
+        # OUTPUT_FORMAT prompt reliably; any plain-text JSON response is parsed downstream.
+        if _schema_tool_active and not _use_dynamic_search and thinking_param:
+            if not llm_response.tool_calls:
+                logger.error(
+                    "[ClaudeAdapter] thinking+schema: model returned text without calling respond tool "
+                    "(force-respond skipped — prefill incompatible with thinking). "
+                    "model=%s effort=%s text_len=%s",
+                    model_name, effort, len(llm_response.text or ""),
+                )
+        if _schema_tool_active and not _use_dynamic_search and not thinking_param:
             if not llm_response.tool_calls and response is not None:
                 logger.debug("[ClaudeAdapter] respond not called — forcing second turn")
                 force_messages = list(claude_messages) + [

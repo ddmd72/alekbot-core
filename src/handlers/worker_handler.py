@@ -497,6 +497,7 @@ class WorkerHandler:
             save_history=False,
             framing_suffix="",
             thinking_effort="medium",
+            task_complexity="deep_reasoning",
             email_for_triage=emails,
         )
 

@@ -56,6 +56,10 @@ class GeminiDeepResearchAdapter(DeepResearchPort):
         PerformanceTier.ECO:         "deep-research-pro-preview-12-2025",
         PerformanceTier.BALANCED:    "deep-research-pro-preview-12-2025",
         PerformanceTier.PERFORMANCE: "deep-research-pro-preview-12-2025",
+        PerformanceTier.ULTRA:       "deep-research-pro-preview-12-2025",
+        PerformanceTier.TIER1:       "deep-research-pro-preview-12-2025",
+        PerformanceTier.TIER2:       "deep-research-pro-preview-12-2025",
+        PerformanceTier.TIER3:       "deep-research-pro-preview-12-2025",
     }
 
     def __init__(

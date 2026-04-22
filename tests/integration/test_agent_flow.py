@@ -14,24 +14,24 @@ from src.domain.messaging import SmartResponse
 
 
 @pytest.mark.asyncio
-async def test_simple_query_routes_to_quick_agent():
+async def test_simple_query_routes_to_smart_agent():
     coordinator = AgentCoordinator()
 
-    quick_agent = MagicMock(spec=QuickResponseAgent)
-    quick_agent.agent_id = "quick_response_agent_u1"
-    quick_agent.agent_type = "quick_response"
-    quick_agent.config = MagicMock(capabilities=["fast_response"])
-    quick_agent.process = AsyncMock(return_value=MagicMock(
+    smart_agent = MagicMock(spec=SmartResponseAgent)
+    smart_agent.agent_id = "smart_response_agent_u1"
+    smart_agent.agent_type = "smart_response"
+    smart_agent.config = MagicMock(capabilities=["complex_reasoning"])
+    smart_agent.process = AsyncMock(return_value=MagicMock(
         status=AgentStatus.SUCCESS,
-        result="Привіт!",
+        result=SmartResponse(text="Привіт з Smart!"),
         confidence=1.0,
         metadata={}
     ))
-    coordinator.register_agent(quick_agent)
+    coordinator.register_agent(smart_agent)
 
     router = create_router_agent(
         coordinator=coordinator,
-        quick_agent_id=quick_agent.agent_id,
+        quick_agent_id="quick_response_agent_u1",
         smart_agent_id="smart_response_agent_u1",
         user_id="u1"
     )
@@ -48,7 +48,7 @@ async def test_simple_query_routes_to_quick_agent():
     response = await coordinator.route_message(message)
 
     assert response.status == AgentStatus.SUCCESS
-    assert response.result == "Привіт!"
+    assert response.result.text == "Привіт з Smart!"
 
 
 @pytest.mark.asyncio
@@ -81,12 +81,11 @@ async def test_complex_query_routes_to_smart_agent():
     # Patch classification to return complexity=8 to exercise Smart routing.
     complex_classification = {
         "metadata": {
-            "complexity_score": 8,
+            "task_complexity": "deep_reasoning",
             "needs_tools": [],
             "user_tone": "friendly",
             "reasoning": "test_override",
         },
-        "confidence": 0.9,
         "semantic_lens": [],
         "search_intent": "none",
     }

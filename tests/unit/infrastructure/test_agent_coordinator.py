@@ -411,3 +411,22 @@ class TestResolveFileRefs:
         await coord._resolve_file_refs(params, "")
 
         resolver.assert_not_called()
+
+    async def test_url_in_file_ref_is_skipped(self):
+        resolver = AsyncMock()
+        coord = AgentCoordinator(file_ref_resolver=resolver)
+        params = {"file_ref": "https://www.anthropic.com/glasswing"}
+
+        await coord._resolve_file_refs(params, "user1")
+
+        assert "file_content" not in params
+        resolver.assert_not_called()
+
+    async def test_http_url_in_file_ref_is_skipped(self):
+        resolver = AsyncMock()
+        coord = AgentCoordinator(file_ref_resolver=resolver)
+        params = {"file_ref": "http://example.com/page"}
+
+        await coord._resolve_file_refs(params, "user1")
+
+        resolver.assert_not_called()

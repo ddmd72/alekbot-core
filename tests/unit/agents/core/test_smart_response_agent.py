@@ -29,8 +29,9 @@ from src.domain.agent import AgentMessage, AgentConfig, AgentIntent, AgentStatus
 from src.domain.messaging import SmartResponse
 from src.ports.llm_port import Message, MessagePart, ToolCall, LLMResponse, UsageMetadata, LLMPort
 from src.services.agent_context_builder import AgentExecutionContext
-from src.domain.user import PerformanceTier
+from src.domain.user import PerformanceTier, UserBotConfig
 from src.ports.llm_port import ProviderCapabilities
+from src.services.task_execution_resolver import TaskExecutionResolver
 
 
 # =========================================================================
@@ -111,11 +112,16 @@ def smart_agent(
         tier=PerformanceTier.BALANCED,
         capabilities=ProviderCapabilities()
     )
+    resolver_mock = MagicMock(spec=TaskExecutionResolver)
+    resolver_mock.resolve.return_value = None
+    
     return SmartResponseAgent(
         config=smart_agent_config,
         execution_context=execution_context,
         session_store=mock_session_store,
         prompt_builder=mock_prompt_builder,
+        resolver=resolver_mock,
+        user_config=UserBotConfig(),
         coordinator=mock_coordinator
     )
 
@@ -338,10 +344,14 @@ class TestCreateSmartResponseAgent:
             tier=PerformanceTier.BALANCED,
             capabilities=ProviderCapabilities()
         )
+        resolver_mock = MagicMock(spec=TaskExecutionResolver)
+        resolver_mock.resolve.return_value = None
         agent = create_smart_response_agent(
             execution_context=execution_context,
             session_store=mock_session_store,
-            prompt_builder=mock_prompt_builder
+            prompt_builder=mock_prompt_builder,
+            resolver=resolver_mock,
+            user_config=UserBotConfig()
         )
 
         assert agent.agent_id == "smart_response_agent"

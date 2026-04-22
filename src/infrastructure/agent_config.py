@@ -69,10 +69,9 @@ class RouterAgentConfig:
     context_window: int = 5
     # Biographical context fetch limit
     biographical_limit: int = 100
-    # Routing thresholds: complexity <= threshold → Quick; > threshold → Smart
-    complexity_threshold: int = 5
-    # Routing safety net: confidence < threshold → always fall back to Smart
-    confidence_threshold: float = 0.75
+    # complexity_threshold / confidence_threshold removed: RFC TASK_COMPLEXITY_EXECUTION_SETTINGS.
+    # Router no longer routes on numeric complexity — all user messages go to Smart; the LLM
+    # classifies task_complexity (enum) and TaskExecutionResolver maps it to execution settings.
 
 
 # ---------------------------------------------------------------------------

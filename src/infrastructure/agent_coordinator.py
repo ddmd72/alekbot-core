@@ -505,6 +505,12 @@ class AgentCoordinator:
         file_ref = params.get("file_ref")
         if not file_ref or not user_id:
             return
+        if isinstance(file_ref, str) and file_ref.startswith(("http://", "https://")):
+            logger.warning(
+                "⚠️ [Coordinator] file_ref looks like a URL, skipping GCS resolve: %s",
+                file_ref,
+            )
+            return
         try:
             content = await self._file_ref_resolver(file_ref, user_id)
             params["file_content"] = content

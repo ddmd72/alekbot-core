@@ -133,6 +133,11 @@ WEB_SEARCH = AgentDescriptor(
             "payload: {\"url\": \"<URL to fetch>\", \"query\": \"<natural language description of what to find or extract on the page — required>\"}"
         ),
     },
+    context_schemas={
+        Intent.FETCH_URL: {
+            "url": "Full HTTP(S) URL to fetch and analyse (e.g. 'https://example.com/article')",
+        },
+    },
 )
 
 # internal=True: never shown to LLMs directly.

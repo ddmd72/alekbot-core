@@ -15,6 +15,7 @@ from src.infrastructure.agent_manifest import (
     DOC_PLANNER,
     PDF_GENERATOR,
     HTML_PAGE_GENERATOR,
+    WEB_SEARCH,
 )
 from src.infrastructure.agent_registry import ExecutionMode
 
@@ -70,3 +71,17 @@ class TestDocGeneratorsFileRefSchema:
     def test_html_page_generator_has_file_ref(self):
         schema = HTML_PAGE_GENERATOR.context_schemas.get(Intent.CREATE_HTML_PAGE, {})
         assert "file_ref" in schema
+
+
+class TestWebSearchFetchUrlSchema:
+    """fetch_url must declare `url` in context_schemas so the LLM puts the
+    URL there instead of misrouting it into `file_ref` (which triggered
+    4x GCS 404s in dev on 2026-04-21)."""
+
+    def test_fetch_url_declares_url_field(self):
+        schema = WEB_SEARCH.context_schemas.get(Intent.FETCH_URL, {})
+        assert "url" in schema
+
+    def test_fetch_url_does_not_declare_file_ref(self):
+        schema = WEB_SEARCH.context_schemas.get(Intent.FETCH_URL, {})
+        assert "file_ref" not in schema
