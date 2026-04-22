@@ -33,6 +33,10 @@ class OpenAIDeepResearchAdapter(DeepResearchPort):
         PerformanceTier.ECO:         "o4-mini-deep-research-2025-06-26",
         PerformanceTier.BALANCED:    "o4-mini-deep-research-2025-06-26",
         PerformanceTier.PERFORMANCE: "o3-deep-research-2025-06-26",
+        PerformanceTier.ULTRA:       "o3-deep-research-2025-06-26",
+        PerformanceTier.TIER1:       "o4-mini-deep-research-2025-06-26",
+        PerformanceTier.TIER2:       "o4-mini-deep-research-2025-06-26",
+        PerformanceTier.TIER3:       "o4-mini-deep-research-2025-06-26",
     }
 
     def __init__(

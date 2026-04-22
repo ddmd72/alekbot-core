@@ -90,7 +90,7 @@ def test_resolve_model_balanced():
 
 def test_resolve_model_performance():
     adapter, _ = _make_adapter()
-    assert adapter._resolve_model(PerformanceTier.PERFORMANCE) == "claude-opus-4-6"
+    assert adapter._resolve_model(PerformanceTier.PERFORMANCE) == "claude-sonnet-4-6"
 
 
 def test_model_override_wins_over_eco():
@@ -193,7 +193,7 @@ async def test_context_carries_resolved_model_for_balanced():
 async def test_context_carries_resolved_model_for_performance():
     adapter, runner = _make_adapter()
     await _call_create(adapter, tier=PerformanceTier.PERFORMANCE)
-    assert _get_context(runner)["model"] == "claude-opus-4-6"
+    assert _get_context(runner)["model"] == "claude-sonnet-4-6"
 
 
 async def test_context_carries_model_override():
