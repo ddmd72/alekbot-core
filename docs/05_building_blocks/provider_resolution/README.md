@@ -20,10 +20,12 @@ This document MUST be updated when:
 - [ ] Agent-specific provider strategies are modified.
 - [ ] The resolution order in `AgentContextBuilder` is updated.
 - [ ] New provider capabilities are introduced.
+- [ ] `resolve_for_task()` signature or behavior changes.
 
 ### Cross-References
 
 - **Provider Resolution Guide:** [../../08_concepts/provider_resolution_guide.md](../../08_concepts/provider_resolution_guide.md)
+- **Smart Agent Execution (dynamic routing):** [../smart_agent_execution/README.md](../smart_agent_execution/README.md)
 - **Prompt Cache Strategy:** [../prompt_cache_strategy/README.md](../prompt_cache_strategy/README.md)
 - **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
 - **Constraints:** [../../02_constraints/README.md](../../02_constraints/README.md)
@@ -124,7 +126,40 @@ config = UserBotConfig()  # Empty config
 # router agent → gemini (strategy default)
 ```
 
-### 3.3 Prompt Cache Strategy (Step 5)
+### 3.3 Task-Complexity Resolution (Dynamic Routing Path)
+
+When SmartResponseAgent processes a request with a known `TaskComplexity`, it calls
+`AgentContextBuilder.resolve_for_task()` instead of `build()`:
+
+```python
+def resolve_for_task(
+    self,
+    agent_type: str,
+    config: UserBotConfig,
+    settings: ComplexitySettings,       # already merged: user override > default
+) -> AgentExecutionContext:
+```
+
+The difference from `build()`:
+
+| Concern         | `build()`                                   | `resolve_for_task()`                                |
+|-----------------|---------------------------------------------|-----------------------------------------------------|
+| **Tier source** | `config.get_tier_for_agent(agent_type)`     | `settings.tier` (from merged ComplexitySettings)    |
+| **Provider**    | 3-level resolution (per-agent > pref > default) | Same 3-level, but `settings.provider_override` wins above all if set |
+| **Use case**    | Agent startup / default path                | Per-request dynamic override in SmartResponseAgent  |
+
+`settings.provider_override` (e.g. `"claude"`) short-circuits the normal 3-level provider
+resolution: if set, it is used directly without consulting `agent_providers` or
+`provider_preference`.
+
+The returned `AgentExecutionContext` has the same structure as the standard build path.
+SmartResponseAgent applies it as a temporary override for the duration of one request,
+then restores the default context.
+
+See [Smart Agent Execution](../smart_agent_execution/README.md) for the full override/restore
+pattern and `DEFAULT_COMPLEXITY_SETTINGS`.
+
+### 3.4 Prompt Cache Strategy (Step 5)
 
 After resolving provider, tier, and model, the builder applies the **Prompt Cache Strategy**:
 
@@ -135,7 +170,7 @@ After resolving provider, tier, and model, the builder applies the **Prompt Cach
 
 This step is transparent to agents — they receive a `CachingLLMProxy` (which implements `LLMPort`) instead of the raw adapter. See [Prompt Cache Strategy](../prompt_cache_strategy/README.md) for details.
 
-### 3.4 Execution Context
+### 3.5 Execution Context
 
 The result is an `AgentExecutionContext` DTO containing:
 
@@ -147,7 +182,7 @@ The result is an `AgentExecutionContext` DTO containing:
 - `fallback_provider` — raw `LLMPort` instance (no caching proxy) for the strategy's `"fallback"` entry, or `None`.
 - `fallback_model_name`, `fallback_provider_name` — resolved at build time from the fallback provider.
 
-### 3.5 Runtime Fallback
+### 3.6 Runtime Fallback
 
 When a primary provider returns 429 (rate limit) or 503 (unavailable), `BaseAgent._call_llm()`
 catches `LLMRateLimitError` / `LLMUnavailableError` and transparently retries with `fallback_provider`.

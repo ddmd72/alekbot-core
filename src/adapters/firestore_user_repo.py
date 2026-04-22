@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 import asyncio
 from google.cloud import firestore
@@ -9,6 +9,28 @@ from ..ports.account_repository import AccountRepository
 from ..config.environment import EnvironmentConfig
 from ..utils.logger import logger
 from ..utils.timer import log_execution_time
+
+
+def _sanitize_user_doc(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop complexity_settings_overrides entries with empty/invalid tier.
+
+    Firestore console allows saving empty strings; Pydantic rejects them as
+    invalid PerformanceTier values. Strip bad entries here so a single
+    misconfigured override cannot block the user from sending any message.
+    """
+    config = data.get("config")
+    if not isinstance(config, dict):
+        return data
+    overrides = config.get("complexity_settings_overrides")
+    if not isinstance(overrides, dict):
+        return data
+    clean = {k: v for k, v in overrides.items() if isinstance(v, dict) and v.get("tier")}
+    if len(clean) != len(overrides):
+        dropped = set(overrides) - set(clean)
+        logger.warning(f"Dropping invalid complexity_settings_overrides keys (empty tier): {dropped}")
+        data = {**data, "config": {**config, "complexity_settings_overrides": clean}}
+    return data
+
 
 class FirestoreUserRepository(UserRepository):
     """
@@ -31,7 +53,7 @@ class FirestoreUserRepository(UserRepository):
     async def get_user(self, user_id: str) -> Optional[UserProfile]:
         doc = await self.users_col.document(user_id).get()
         if doc.exists:
-            return UserProfile(**doc.to_dict())
+            return UserProfile(**_sanitize_user_doc(doc.to_dict()))
         return None
 
     @log_execution_time
@@ -48,7 +70,7 @@ class FirestoreUserRepository(UserRepository):
         docs = query.stream()
 
         async for doc in docs:
-            return UserProfile(**doc.to_dict())
+            return UserProfile(**_sanitize_user_doc(doc.to_dict()))
 
         return None
     
@@ -67,7 +89,7 @@ class FirestoreUserRepository(UserRepository):
 
         async for doc in docs:
             logger.debug(f"🔍 Found user by email: {email} → {doc.id}")
-            return UserProfile(**doc.to_dict())
+            return UserProfile(**_sanitize_user_doc(doc.to_dict()))
 
         logger.debug(f"🔍 No user found for email: {email}")
         return None
@@ -96,7 +118,7 @@ class FirestoreUserRepository(UserRepository):
 
         async for doc in docs:
             logger.debug(f"🔍 Found user by external_id: {external_user_id} → {doc.id}")
-            return UserProfile(**doc.to_dict())
+            return UserProfile(**_sanitize_user_doc(doc.to_dict()))
 
         logger.debug(f"🔍 No user found for external_id: {external_user_id}")
         return None

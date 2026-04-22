@@ -11,6 +11,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from .provider_registry import ProviderRegistry
     from ..domain.llm import PromptCacheConfig
+    from ..domain.complexity_settings import ComplexitySettings
 
 # Backward-compat re-export: importers of agent_context_builder still work unchanged.
 __all__ = ["AgentExecutionContext", "AgentContextBuilder"]
@@ -215,12 +216,35 @@ class AgentContextBuilder:
         3. Determine tier: user per-agent tier OR user default tier.
         4. Determine model: user model override OR provider-specific mapping for tier.
         """
-        strategy = AgentProviderStrategy.get_strategy(agent_type)
         provider_name = self.resolve_provider_name(agent_type, config)
+        tier = config.get_tier_for_agent(agent_type)
+        return self._build(agent_type, config, provider_name, tier)
+
+    def resolve_for_task(
+        self,
+        agent_type: str,
+        config: UserBotConfig,
+        settings: "ComplexitySettings"
+    ) -> AgentExecutionContext:
+        """
+        Build execution context using dynamically resolved complexity settings.
+        Overrides tier and (optionally) provider; all other logic identical to build().
+        """
+        provider_name = settings.provider_override or self.resolve_provider_name(agent_type, config)
+        return self._build(agent_type, config, provider_name, settings.tier)
+
+    def _build(
+        self,
+        agent_type: str,
+        config: UserBotConfig,
+        provider_name: str,
+        tier: PerformanceTier,
+    ) -> AgentExecutionContext:
+        """Shared context assembly for build() and resolve_for_task()."""
+        strategy = AgentProviderStrategy.get_strategy(agent_type)
         provider = self.registry.get(provider_name)
         capabilities = provider.get_capabilities()
 
-        tier = config.get_tier_for_agent(agent_type)
         model_override = config.get_model_override(agent_type)
         model_name = model_override or provider.get_model_for_tier(tier)
 

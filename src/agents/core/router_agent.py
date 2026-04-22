@@ -24,6 +24,7 @@ from ...domain.agent import (
     RoutingMetadata
 )
 from ...domain.tone import UserTone, build_routing_metadata
+from ...domain.task_complexity import TaskComplexity
 from ...ports.llm_port import LLMPort, Message, MessagePart, LLMRequest
 from ...ports.session_store import SessionStore
 from ...ports.repository import FactRepository
@@ -66,8 +67,6 @@ class RouterAgent(BaseAgent):
     TEMPERATURE = ROUTER.temperature
     CONTEXT_WINDOW = ROUTER.context_window
     BIOGRAPHICAL_LIMIT = ROUTER.biographical_limit
-    COMPLEXITY_THRESHOLD = ROUTER.complexity_threshold
-    CONFIDENCE_THRESHOLD = ROUTER.confidence_threshold
 
     # Simple phrases that don't require complex processing
     SIMPLE_PHRASES: Set[str] = {
@@ -132,7 +131,6 @@ class RouterAgent(BaseAgent):
         "type": "OBJECT",
         "properties": {
             "needs_memory_search": {"type": "BOOLEAN"},
-            "confidence": {"type": "NUMBER"},
             "reasoning": {"type": "STRING"},
             "search_intent": {"type": "STRING"},
             "relevant_domains": {
@@ -148,14 +146,13 @@ class RouterAgent(BaseAgent):
                 "type": "OBJECT",
                 "properties": {
                     "user_tone": {"type": "STRING"},
-                    "complexity_score": {"type": "INTEGER"}
+                    "task_complexity": {"type": "STRING"}
                 },
-                "required": ["user_tone", "complexity_score"]
+                "required": ["user_tone", "task_complexity"]
             }
         },
         "required": [
             "needs_memory_search",
-            "confidence",
             "search_intent",
             "relevant_domains",
             "semantic_lens",
@@ -289,13 +286,12 @@ class RouterAgent(BaseAgent):
             for p in current_parts if p.file_data
         )
         if has_vision:
-            logger.info("📸 [RouterAgent] Vision detected, forcing complexity=7")
-            routing_metadata.complexity_score = max(routing_metadata.complexity_score, 7)
+            logger.info("📸 [RouterAgent] Vision detected, forcing task_complexity=deep_reasoning")
+            routing_metadata.task_complexity = TaskComplexity.DEEP_REASONING
 
         logger.info(
-            "🎯 [RouterAgent] Triage result: complexity=%s, confidence=%.2f, tone=%s, lens=%s",
-            routing_metadata.complexity_score,
-            routing_metadata.confidence,
+            "🎯 [RouterAgent] Triage result: complexity=%s, tone=%s, lens=%s",
+            routing_metadata.task_complexity.value,
             routing_metadata.user_tone,
             routing_metadata.semantic_lens
         )
@@ -383,6 +379,7 @@ class RouterAgent(BaseAgent):
                 **message.context,
                 "classification": classification,
                 "routing": routing_metadata.to_dict(),
+                "task_complexity": routing_metadata.task_complexity.value,
                 "enriched_context": asdict(enriched_context) if enriched_context else None,
                 "agent_notes": agent_notes,
                 "routed_by": self.agent_id
@@ -484,18 +481,8 @@ class RouterAgent(BaseAgent):
         raise ValueError("No valid JSON found in triage response")
 
     def _apply_routing_rules(self, routing_metadata: RoutingMetadata) -> str:
-        """Route based on complexity_score.
-
-        Complexity scale: 1-5 → QuickAgent, 6-10 → SmartAgent.
-        Safety net: low confidence always falls back to Smart.
-        """
-        if routing_metadata.confidence < self.CONFIDENCE_THRESHOLD:
-            return self.smart_agent_id
-
-        if routing_metadata.complexity_score > self.COMPLEXITY_THRESHOLD:
-            return self.smart_agent_id
-
-        return self.quick_agent_id
+        """Route to target agent. Deprecating Quick, routing to Smart."""
+        return self.smart_agent_id
 
     def _classify_request(self, text: str) -> dict:
         """
