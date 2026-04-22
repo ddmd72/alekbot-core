@@ -46,6 +46,8 @@ from ...utils.llm_response_parser import parse_llm_response
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
+    from ...services.task_execution_resolver import TaskExecutionResolver
+    from ...domain.user import UserBotConfig
 
 
 class SmartResponseAgent(BaseAgent):
@@ -95,6 +97,8 @@ class SmartResponseAgent(BaseAgent):
         execution_context: AgentExecutionContext,
         session_store: SessionStore,
         prompt_builder: PromptBuilderPort,
+        resolver: "TaskExecutionResolver",
+        user_config: "UserBotConfig",
         repository: Optional[Any] = None,
         embedding_service: Optional[Any] = None,
         coordinator: "AgentCoordinator" = None,  # type: ignore
@@ -110,6 +114,8 @@ class SmartResponseAgent(BaseAgent):
         self._set_execution_context(execution_context)
         self.session_store = session_store
         self.prompt_builder = prompt_builder
+        self.resolver = resolver
+        self.user_config = user_config
         self.repository = repository
         self.embedding_service = embedding_service
         self.coordinator = coordinator
@@ -118,6 +124,12 @@ class SmartResponseAgent(BaseAgent):
         self.history_summary_service = history_summary_service
         self._user_timezone = user_timezone
         self._default_thinking_effort = thinking_effort
+
+        # Serialize concurrent same-user execute() calls. Complexity override
+        # mutates self.llm / self.model_name / self._agent_execution_context
+        # for the duration of one run; without a lock, two concurrent requests
+        # from the same user (e.g. bound channel + DM) would race on these.
+        self._execute_lock = asyncio.Lock()
 
         # Extract user_id from config metadata
         self.user_id = config.metadata.get("user_id")
@@ -147,6 +159,10 @@ class SmartResponseAgent(BaseAgent):
         """
         Execute complex response generation with agent delegation.
         """
+        async with self._execute_lock:
+            return await self._execute_locked(message)
+
+    async def _execute_locked(self, message: AgentMessage) -> AgentResponse:
         text = message.payload.get("text", "")
         session_id = message.context.get("session_id")
         user_id = message.context.get("user_id")
@@ -154,6 +170,21 @@ class SmartResponseAgent(BaseAgent):
         routing_metadata = RoutingMetadata.from_dict(message.context.get("routing", {}))
         self.config.metadata["user_tone"] = routing_metadata.user_tone
         thinking_effort: Optional[str] = message.context.get("thinking_effort") or self._default_thinking_effort
+
+        # Snapshot defaults so we can restore after the override is applied.
+        # Prevents leakage between runs even if an exception skips the tail.
+        default_llm = self.llm
+        default_model = self.model_name
+        default_ctx = self._agent_execution_context
+
+        override = self.resolver.resolve(message.context, self.user_config)
+        if override:
+            self.llm = override.execution_context.provider
+            self.model_name = override.execution_context.model_name
+            self._set_execution_context(override.execution_context)
+            if override.thinking_effort is not None:
+                thinking_effort = override.thinking_effort
+            logger.info(f"⚡ [SmartResponseAgent] Complexity override applied: model={self.model_name}")
 
         self._on_agent_start(text)
 
@@ -296,6 +327,11 @@ class SmartResponseAgent(BaseAgent):
                 agent_id=self.agent_id,
                 error=f"Smart response failed: {str(e)}"
             )
+        finally:
+            if override:
+                self.llm = default_llm
+                self.model_name = default_model
+                self._agent_execution_context = default_ctx
 
     def _build_smart_response(
         self, result: DelegationResult,
@@ -466,6 +502,8 @@ def create_smart_response_agent(
     execution_context: AgentExecutionContext,
     session_store: SessionStore,
     prompt_builder: PromptBuilderPort,
+    resolver: "TaskExecutionResolver",
+    user_config: "UserBotConfig",
     repository: Optional[Any] = None,
     embedding_service: Optional[Any] = None,
     coordinator: "AgentCoordinator" = None,  # type: ignore
@@ -497,6 +535,8 @@ def create_smart_response_agent(
         execution_context=execution_context,
         session_store=session_store,
         prompt_builder=prompt_builder,
+        resolver=resolver,
+        user_config=user_config,
         repository=repository,
         embedding_service=embedding_service,
         coordinator=coordinator,

@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from .task_complexity import TaskComplexity
+
 
 class AgentIntent(str, Enum):
     """Intent type for agent messages."""
@@ -22,8 +24,7 @@ class AgentIntent(str, Enum):
 class RoutingMetadata:
     """Typed routing metadata derived from triage classification."""
     user_tone: str
-    complexity_score: int
-    confidence: float
+    task_complexity: TaskComplexity
     needs_tools: List[str]
     reasoning: str
     semantic_lens: List[str] = field(default_factory=list)
@@ -32,8 +33,7 @@ class RoutingMetadata:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "user_tone": self.user_tone,
-            "complexity_score": self.complexity_score,
-            "confidence": self.confidence,
+            "task_complexity": self.task_complexity.value,
             "needs_tools": self.needs_tools,
             "reasoning": self.reasoning,
             "semantic_lens": self.semantic_lens,
@@ -44,13 +44,26 @@ class RoutingMetadata:
     def from_dict(cls, data: Dict[str, Any]) -> "RoutingMetadata":
         return cls(
             user_tone=data.get("user_tone", "friendly"),
-            complexity_score=int(data.get("complexity_score", 5)),
-            confidence=float(data.get("confidence", 0.5)),
+            task_complexity=_coerce_task_complexity(data.get("task_complexity")),
             needs_tools=list(data.get("needs_tools", [])),
             reasoning=data.get("reasoning", ""),
             semantic_lens=list(data.get("semantic_lens", [])),
             needs_memory_search=bool(data.get("needs_memory_search", False))
         )
+
+
+def _coerce_task_complexity(value: Any) -> TaskComplexity:
+    """Coerce an arbitrary input to TaskComplexity, defaulting to SIMPLE_ANALYTICS.
+
+    Router output is treated as best-effort; an unknown/missing value falls to
+    SIMPLE_ANALYTICS (the explicit safety-net default from RFC §Q4).
+    """
+    if isinstance(value, TaskComplexity):
+        return value
+    try:
+        return TaskComplexity(value) if value is not None else TaskComplexity.SIMPLE_ANALYTICS
+    except ValueError:
+        return TaskComplexity.SIMPLE_ANALYTICS
 
 
 class AgentStatus(str, Enum):

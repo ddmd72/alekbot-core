@@ -31,8 +31,9 @@ def test_claude_model_for_tier():
     adapter = ClaudeAdapter(api_key="test-key")
 
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "claude-haiku-4-5-20251001"
-    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-sonnet-4-6"
-    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-opus-4-6"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-haiku-4-5-20251001"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-4-6"
+    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-opus-4-7"
 
 
 def test_claude_unsupported_tier_raises():

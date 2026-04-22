@@ -57,6 +57,7 @@ from ..infrastructure.agent_config import (
 )
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
+from ..services.task_execution_resolver import TaskExecutionResolver
 from ..services.history_summary_service import HistorySummaryService
 from ..agents.core.router_agent import create_router_agent
 from ..agents.memory_search_agent import FactsMemoryAgent
@@ -194,6 +195,10 @@ class UserAgentFactory(AgentFactoryPort):
         if self.assembly_service and hasattr(self.assembly_service, "invalidate_cache"):
             self.assembly_service.invalidate_cache()
 
+    def invalidate_user_cache(self, user_id: str) -> None:
+        """Drop a user's cached profile + agents, forcing a fresh Firestore read next request."""
+        self._cache.pop(user_id, None)
+
     async def ensure_agents_for_user(self, user_id: str) -> Dict[str, object]:
         # Fast path: check cache without acquiring a lock
         cached = self._cache.get(user_id)
@@ -299,6 +304,8 @@ class UserAgentFactory(AgentFactoryPort):
             execution_context=smart_context,
             session_store=self.session_store,
             prompt_builder=prompt_builder,
+            resolver=TaskExecutionResolver(self.context_builder),
+            user_config=user_profile.config,
             repository=self.repository,
             embedding_service=self.embedding_service,
             coordinator=self.coordinator,
