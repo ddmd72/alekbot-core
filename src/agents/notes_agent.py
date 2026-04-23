@@ -92,10 +92,11 @@ _TOOL_DECLARATIONS = [
                 },
                 "complexity": {
                     "type": "string",
-                    "enum": ["info_search", "simple_analytics", "deep_reasoning"],
+                    "enum": ["small_talk", "simple_analytics", "deep_reasoning"],
                     "description": (
                         "Execution tier for Smart when this reminder fires. "
-                        "info_search — lightweight, no thinking (e.g. 'remind me to take medicine'). "
+                        "small_talk — ECO, no thinking; pure notification with no analysis "
+                        "(e.g. 'remind me to take medicine'). "
                         "simple_analytics — default; BALANCED + light thinking (most reminders). "
                         "deep_reasoning — PERFORMANCE + heavy thinking; only for instructions that "
                         "require multi-step analysis, research or synthesis "
@@ -149,7 +150,7 @@ _TOOL_DECLARATIONS = [
                 },
                 "complexity": {
                     "type": "string",
-                    "enum": ["info_search", "simple_analytics", "deep_reasoning"],
+                    "enum": ["small_talk", "simple_analytics", "deep_reasoning"],
                     "description": "New execution tier. Omit to keep unchanged.",
                 },
             },
