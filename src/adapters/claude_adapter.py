@@ -24,8 +24,10 @@ def _make_schema_strict(schema: dict) -> dict:
     """
     Recursively strips Anthropic-unsupported keys and injects required constraints.
 
-    - Removes "nullable" at every nesting level (Claude rejects it; GA structured outputs
-      use anyOf/null instead, but agents don't need that — nullable fields can be omitted).
+    - Removes "nullable" at every nesting level (Claude GA rejects it with 400).
+      Semantic side-effect: Gemini with nullable=True allows the model to return null for
+      that field (e.g. "rich_content": null); Claude without nullable must return an object
+      (e.g. "rich_content": {}). Both are handled correctly by the agent parsers.
     - Injects "additionalProperties": False on object types (required by GA strict mode).
     """
     if not isinstance(schema, dict):
