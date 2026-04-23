@@ -65,7 +65,7 @@ Defines the default provider and allowed overrides for each agent type.
 - **Quick:** Default `gemini`, allowed: `["grok", "gemini", "claude", "openai"]` (native tools). Claude supported since 2026-02-23: `AutomaticFunctionCallingConfig` is now conditional on `capabilities.native_tools` (True for Gemini/Grok/OpenAI, False for Claude).
 - **Smart:** Default `gemini`, allowed: `["claude", "openai", "gemini", "grok"]` (tool orchestration).
 - **Consolidation:** Default `claude`, allowed: `["claude", "gemini"]` (context caching).
-- **Postprocessing:** Default `gemini`, allowed: `["gemini"]` — **locked, no override**. Rationale: `response_schema` (structured JSON output) is a Gemini-only feature; Claude and Grok silently ignore it, causing JSON parse failures in `HistorySummaryService`. Tier (ECO/BALANCED/PERFORMANCE) remains user-configurable via `agent_tiers["postprocessing"]`.
+- **Postprocessing:** Default `gemini`, allowed: `["gemini"]` — **locked, no override**. Rationale: the agent uses `response_mime_type` (enforces raw JSON), which is not supported by Claude or Grok. Tier (ECO/BALANCED/PERFORMANCE) remains user-configurable via `agent_tiers["postprocessing"]`.
 - **MemorySearch:** No dedicated strategy entry — resolved via `build("router", config)`. Always gets the same provider/model as RouterAgent (Gemini Flash by default). Rationale: MemorySearch does key formulation only (small, fast task), not user-facing reasoning.
 
 ---
