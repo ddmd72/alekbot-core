@@ -25,6 +25,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..config.environment import EnvironmentConfig
 from ..domain.agent_note import AgentNote, NoteCreate, NoteUpdate, ReminderRecurrence
+from ..domain.task_complexity import TaskComplexity
 from ..ports.agent_note_port import AgentNotePort
 from ..utils.logger import logger
 
@@ -73,6 +74,8 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             doc["recurrence"] = {"type": data.recurrence.type, "interval": data.recurrence.interval}
         else:
             doc["recurrence"] = None
+        if data.complexity:
+            doc["complexity"] = data.complexity.value
 
         await self._col.document(note_id).set(doc)
         return AgentNote(
@@ -126,6 +129,8 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             updates["due"] = data.due
         if data.recurrence is not None:
             updates["recurrence"] = {"type": data.recurrence.type, "interval": data.recurrence.interval}
+        if data.complexity is not None:
+            updates["complexity"] = data.complexity.value
 
         if updates:
             await doc_ref.update(updates)
@@ -178,6 +183,13 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
         # Migration: existing docs without 'instruction' fall back to 'text'
         instruction = data.get("instruction") or data.get("text", "")
 
+        complexity: Optional[TaskComplexity] = None
+        if raw_complexity := data.get("complexity"):
+            try:
+                complexity = TaskComplexity(raw_complexity)
+            except ValueError:
+                logger.debug("AgentNote: unknown complexity value %r — using default", raw_complexity)
+
         return AgentNote(
             note_id=note_id,
             user_id=data["user_id"],
@@ -187,4 +199,5 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             due=_ensure_utc(data["due"]),
             recurrence=recurrence,
             last_fired=_ensure_utc(data.get("last_fired")),
+            complexity=complexity,
         )

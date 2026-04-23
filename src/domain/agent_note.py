@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from .task_complexity import TaskComplexity
+
 
 @dataclass
 class ReminderRecurrence:
@@ -30,6 +32,10 @@ class AgentNote:
     due: datetime                           # UTC — when to fire
     recurrence: Optional[ReminderRecurrence] = None
     last_fired: Optional[datetime] = None   # UTC — updated after each fire
+    # Execution tier for Smart when this reminder fires.
+    # None → default simple_analytics (BALANCED + thinking=low).
+    # Set by NotesAgent LLM at creation time based on instruction complexity.
+    complexity: Optional[TaskComplexity] = None
 
 
 @dataclass
@@ -40,6 +46,7 @@ class NoteCreate:
     instruction: str                        # Full execution context
     due: datetime                           # UTC
     recurrence: Optional[ReminderRecurrence] = None
+    complexity: Optional[TaskComplexity] = None
 
 
 @dataclass
@@ -51,3 +58,4 @@ class NoteUpdate:
     instruction: Optional[str] = None
     due: Optional[datetime] = None          # UTC
     recurrence: Optional[ReminderRecurrence] = None
+    complexity: Optional[TaskComplexity] = None
