@@ -332,6 +332,9 @@ CONSOLIDATION_AGENT = AgentDescriptor(
 # Set as class-level _descriptor in their agent classes.
 # ---------------------------------------------------------------------------
 
+# Quick doubles as emergency fallback for Smart failures (see AgentFallbackService).
+# Keep its provider/model config conservative and fixed — that's what makes it reliable
+# when Smart's dynamic assembly fails.
 QUICK_RESPONSE = AgentDescriptor(
     agent_id="quick_response_agent",
     agent_type="quick_response",

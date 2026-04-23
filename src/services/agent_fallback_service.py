@@ -1,9 +1,16 @@
 """
 AgentFallbackService — graceful degradation for failed agent responses.
 
-When the primary agent (typically SmartAgent) fails or times out, tries to
-route the request to QuickAgent. If QuickAgent also fails, returns a synthetic
-apology response — the user always sees a graceful message, never a raw error state.
+Degradation chain: Smart (FAILED/TIMEOUT) → Quick → synthetic apology text.
+
+Why Quick and not a Smart retry:
+- Smart's provider/model is dynamically assembled by the Router. If that assembly
+  produced a bad combination, retrying Smart likely fails again for the same reason.
+- Quick has a fixed, conservative provider/model config — its failure surface is
+  deliberately independent of whatever caused Smart to fail.
+- Quick also formulates the apology in the user's language/style via the prompt system
+  (_SYSTEM_NOTE is injected so the model knows to apologize gracefully, not expose
+  technical details). A raw retry or static string cannot do this.
 """
 from typing import List, Protocol
 
