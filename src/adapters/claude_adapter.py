@@ -20,6 +20,38 @@ from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
 from ..utils.logger import logger
 from ..utils.groovy_to_markdown_transformer import GroovyToMarkdownConverter
 
+def _make_schema_strict(schema: dict) -> dict:
+    """
+    Recursively strips Anthropic-unsupported keys and injects required constraints.
+
+    - Removes "nullable" at every nesting level (Claude rejects it; GA structured outputs
+      use anyOf/null instead, but agents don't need that — nullable fields can be omitted).
+    - Injects "additionalProperties": False on object types (required by GA strict mode).
+    """
+    if not isinstance(schema, dict):
+        return schema
+
+    strict_schema = {k: v for k, v in schema.items() if k != "nullable"}
+    if strict_schema.get("type") == "object" and "additionalProperties" not in strict_schema:
+        strict_schema["additionalProperties"] = False
+        
+    if "properties" in strict_schema:
+        strict_schema["properties"] = {
+            k: _make_schema_strict(v) for k, v in strict_schema["properties"].items()
+        }
+        
+    if "items" in strict_schema:
+        if isinstance(strict_schema["items"], dict):
+            strict_schema["items"] = _make_schema_strict(strict_schema["items"])
+        elif isinstance(strict_schema["items"], list):
+            strict_schema["items"] = [_make_schema_strict(i) for i in strict_schema["items"]]
+            
+    for key in ["anyOf", "allOf", "oneOf"]:
+        if key in strict_schema:
+            strict_schema[key] = [_make_schema_strict(i) for i in strict_schema[key]]
+            
+    return strict_schema
+
 class ClaudeAdapter(LLMPort):
     """
     Adapter for Anthropic Claude API.
@@ -249,7 +281,7 @@ class ClaudeAdapter(LLMPort):
             create_kwargs["output_config"] = {"effort": effort}
             
         if response_schema and isinstance(response_schema, dict):
-            schema = {k: v for k, v in response_schema.items() if k != "nullable"}
+            schema = _make_schema_strict(response_schema)
             output_config = create_kwargs.get("output_config", {})
             output_config["format"] = {"type": "json_schema", "schema": schema}
             create_kwargs["output_config"] = output_config

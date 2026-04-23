@@ -660,7 +660,7 @@ async def test_response_schema_injects_output_config_format():
     assert output_config is not None
     assert output_config.get("format") == {
         "type": "json_schema",
-        "schema": {"type": "object", "properties": {"answer": {"type": "string"}}}
+        "schema": {"type": "object", "additionalProperties": False, "properties": {"answer": {"type": "string"}}}
     }
     
     # Tool injection must NOT happen
@@ -672,8 +672,8 @@ async def test_response_schema_injects_output_config_format():
 
 
 @pytest.mark.asyncio
-async def test_response_schema_strips_nullable_key_from_schema():
-    """'nullable' key is stripped from the injected schema."""
+async def test_response_schema_adds_additional_properties_false():
+    """Adapter recursively injects additionalProperties: False into object schemas."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     cm = _make_claude_cm(_make_sdk_response("{}"))
@@ -690,13 +690,64 @@ async def test_response_schema_strips_nullable_key_from_schema():
             system_instruction="test",
             messages=_MESSAGES,
             tools=_TOOLS,
-            response_schema={"type": "object", "properties": {}, "nullable": True},
+            response_schema={
+                "type": "object",
+                "properties": {
+                    "nested": {"type": "object", "properties": {}},
+                    "array": {"type": "array", "items": {"type": "object", "properties": {}}}
+                }
+            },
+        )
+    )
+
+    output_config = captured.get("output_config", {})
+    schema = output_config.get("format", {}).get("schema", {})
+    assert schema.get("additionalProperties") is False
+    assert schema["properties"]["nested"].get("additionalProperties") is False
+    assert schema["properties"]["array"]["items"].get("additionalProperties") is False
+
+
+@pytest.mark.asyncio
+async def test_response_schema_strips_nullable_recursively():
+    """'nullable' is stripped at every nesting level, not just the top.
+
+    Regression: Smart/Quick _RESPONSE_SCHEMA has nullable=True on the nested
+    rich_content property — Claude GA rejects it with 400 if not stripped.
+    """
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    cm = _make_claude_cm(_make_sdk_response("{}"))
+
+    def capturing_stream(**kwargs):
+        captured.update(kwargs)
+        return cm
+
+    adapter.client.messages.stream = capturing_stream
+
+    await adapter.generate_content(
+        request=LLMRequest(
+            model_name="claude-sonnet-4-6",
+            system_instruction="test",
+            messages=_MESSAGES,
+            tools=_TOOLS,
+            response_schema={
+                "type": "object",
+                "nullable": True,
+                "properties": {
+                    "rich_content": {
+                        "type": "object",
+                        "nullable": True,
+                        "properties": {"type": {"type": "string"}},
+                    },
+                },
+            },
         )
     )
 
     output_config = captured.get("output_config", {})
     schema = output_config.get("format", {}).get("schema", {})
     assert "nullable" not in schema
+    assert "nullable" not in schema["properties"]["rich_content"]
 
 
 @pytest.mark.asyncio
