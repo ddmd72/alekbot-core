@@ -70,7 +70,7 @@ background process extracts new facts from the conversation → bot gets smarter
   Cognitive process: QUICK/RESEARCH triage — simple queries get one search, complex queries
   get multi-angle coverage with source evaluation and persistence.
   JSON output format with required URL fields (findings/source/url) enforced via
-  `response_schema` → `respond` tool on Claude, `text.format` on OpenAI.
+  `response_schema` → `output_config.format` (GA structured outputs) on Claude, `text.format` on OpenAI.
   Two intents: `search_web` (real-time web search) + `fetch_url` (fetch and extract content
   from a specific URL provided by the user).
 - Memory (LLM key formulation + vector search) — MemorySearchAgent: ECO-tier LLM extracts
@@ -714,8 +714,9 @@ Every agent that produces structured LLM output MUST follow these rules — no e
   `response_mime_type` without `response_schema`.
   OpenAI/Grok: triggers `json_object` mode (schema itself is not forwarded to API; inner
   structure enforced by OUTPUT_FORMAT prompt token).
-  Claude: converted to fake `"respond"` tool + `force_tool_use=True` — model must call the
-  tool with args matching the schema. Intercepted in adapter, returned as JSON text.
+  Claude: translated to `output_config={"format":{"type":"json_schema","schema":...}}` (GA
+  structured outputs API, no beta header). Works with tools and with thinking in the same
+  request. Model returns JSON directly in a text block — no tool interception needed.
 
   **OUTPUT_FORMAT token** — prompt-level instruction in Firestore blueprint. The authoritative
   source of truth for output structure. All JSON agents must have one. `response_schema` and
@@ -724,14 +725,17 @@ Every agent that produces structured LLM output MUST follow these rules — no e
 
   **What agents should pass:**
   - JSON agents WITHOUT tools: `response_mime_type` + `response_schema` (both).
-    Gemini uses both natively. Others react to either via json_object / fake tool.
+    Gemini uses both natively. OpenAI/Grok react via json_object. Claude: `response_mime_type`
+    is silently ignored; `response_schema` triggers `output_config.format`.
   - JSON agents WITH tools: `response_schema` only (no `response_mime_type`).
     Gemini cannot combine mime_type + tools. Schema works with tools on all providers.
   - Non-JSON agents: neither. OUTPUT_FORMAT token handles everything.
 
   **Guard:** agents requiring JSON output must be locked to providers that support it
   in `AgentProviderStrategy.STRATEGIES` (`allowed_providers`). If an agent uses
-  `response_mime_type` without `response_schema`, it **must not** run on Claude.
+  `response_mime_type` without `response_schema`, it **must not** run on Claude
+  (`response_mime_type` is still silently ignored by Claude — only `response_schema` is
+  honoured via `output_config.format`).
 
 - **`_RESPONSE_SCHEMA` on Quick/Smart.** Both orchestrators pass
   `response_schema=_RESPONSE_SCHEMA` to `LLMRequest` even when tools are active.

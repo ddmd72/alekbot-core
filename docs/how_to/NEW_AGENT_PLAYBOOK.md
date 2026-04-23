@@ -251,9 +251,9 @@ request = LLMRequest(
 **Gemini:** GeminiAdapter passes `response_mime_type` directly and routes the dict schema to
 `response_json_schema` (standard JSON Schema, SDK 1.64+). Both enforce JSON output.
 
-**Claude:** both fields are **silently ignored** when there are no delegation tools present.
-Claude relies entirely on the OUTPUT_FORMAT token in the system prompt. This is expected —
-make sure the blueprint includes an OUTPUT_FORMAT class.
+**Claude:** `response_mime_type` is **silently ignored**. `response_schema` is translated to
+`output_config={"format":{"type":"json_schema","schema":...}}` (GA structured outputs API) —
+JSON is returned directly in a text block. Make sure the blueprint includes an OUTPUT_FORMAT class.
 
 **Gemini nesting limit:** Gemini returns `400 INVALID_ARGUMENT` if the schema nests deeper
 than ~2 levels. Declare any field that is itself an object as `{"type": "object"}` with no
@@ -274,9 +274,10 @@ request = LLMRequest(
 **Gemini:** combining `response_mime_type` with custom tools causes silent empty responses
 or API errors — they are mutually exclusive in Gemini.
 
-**Claude:** when BOTH `response_schema: dict` AND `tools` are present, ClaudeAdapter injects
-a `respond` tool to force structured output (Smart/Quick pattern). For specialist agents
-with their own tools, this pattern is not used — output format is enforced by the prompt.
+**Claude:** `response_schema` is always translated to `output_config.format` (GA API),
+regardless of whether `tools` are also present. No `respond` tool is injected. For specialist
+agents with their own tools that don't need structured JSON output, omit `response_schema` — output
+format is enforced by the OUTPUT_FORMAT prompt token.
 
 #### Mode 3 — Free-text output
 
@@ -288,8 +289,7 @@ Output format is handled entirely by the prompt. Use for most simple agents.
 | Field | GeminiAdapter | ClaudeAdapter |
 |-------|--------------|---------------|
 | `response_mime_type` | Passed to `GenerateContentConfig` directly | **Ignored entirely** |
-| `response_schema: dict` | Routed to `response_json_schema` | Injected as `respond` tool **only when `tools` are also present** |
-| `response_schema: dict` + no tools | Enforces structure | **Ignored** |
+| `response_schema: dict` | Routed to `response_json_schema` | Translated to `output_config.format` (GA structured outputs) — works with or without `tools` |
 
 **PromptBuilder is mandatory** for all agents. If `build_for_agent()` fails, return
 `AgentResponse.failure()` — do not fall back to an empty string or a hardcoded prompt.
