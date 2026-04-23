@@ -249,9 +249,13 @@ class SlackResponseChannel(ResponseChannel):
         """
         if content.content_type == "table":
             blocks = self._build_generic_table_blocks(content.data)
+            # Slack rejects chat.postMessage with no_text when text is empty,
+            # even when blocks are present. fallback_text is LLM-generated and
+            # may be empty — use the table title as last resort.
+            text = content.fallback_text or content.data.get("title") or "Table"
             return await self.client.chat_postMessage(
                 channel=self.channel_id,
-                text=content.fallback_text,
+                text=text,
                 blocks=blocks,
                 thread_ts=thread_id,
                 mrkdwn=True
