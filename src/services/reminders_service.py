@@ -87,12 +87,13 @@ class RemindersService:
 
             try:
                 await self._agent_factory.ensure_agents_for_user(note.user_id)
+                task_complexity = note.complexity.value if note.complexity else "simple_analytics"
                 await self._notification.notify(
                     user_id=note.user_id,
                     account_id=account_id,
                     system_alert=_build_reminder_alert(note),
                     agent_id_override=f"smart_response_agent_{note.user_id}",
-                    task_complexity="deep_reasoning",
+                    task_complexity=task_complexity,
                 )
             except Exception as exc:
                 logger.warning(

@@ -38,6 +38,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.agent_note import NoteCreate, NoteUpdate, ReminderRecurrence
+from ..domain.task_complexity import TaskComplexity
 from ..infrastructure.agent_config import NOTES as NOTES_CFG
 from ..infrastructure.agent_manifest import Intent, NOTES as NOTES_DESCRIPTOR
 from ..ports.agent_note_port import AgentNotePort
@@ -89,6 +90,19 @@ _TOOL_DECLARATIONS = [
                     },
                     "required": ["type"],
                 },
+                "complexity": {
+                    "type": "string",
+                    "enum": ["info_search", "simple_analytics", "deep_reasoning"],
+                    "description": (
+                        "Execution tier for Smart when this reminder fires. "
+                        "info_search — lightweight, no thinking (e.g. 'remind me to take medicine'). "
+                        "simple_analytics — default; BALANCED + light thinking (most reminders). "
+                        "deep_reasoning — PERFORMANCE + heavy thinking; only for instructions that "
+                        "require multi-step analysis, research or synthesis "
+                        "(e.g. 'run morning inbox briefing and summarise action items'). "
+                        "Omit to use default (simple_analytics)."
+                    ),
+                },
             },
             "required": ["text", "instruction", "due"],
         },
@@ -132,6 +146,11 @@ _TOOL_DECLARATIONS = [
                         },
                     },
                     "required": ["type"],
+                },
+                "complexity": {
+                    "type": "string",
+                    "enum": ["info_search", "simple_analytics", "deep_reasoning"],
+                    "description": "New execution tier. Omit to keep unchanged.",
                 },
             },
             "required": ["note_id"],
@@ -192,6 +211,15 @@ def _parse_recurrence(args: Optional[Dict[str, Any]]) -> Optional[ReminderRecurr
         type=args["type"],
         interval=int(args.get("interval") or 1),
     )
+
+
+def _parse_complexity(value: Optional[str]) -> Optional[TaskComplexity]:
+    if not value:
+        return None
+    try:
+        return TaskComplexity(value)
+    except ValueError:
+        return None
 
 
 class NotesAgent(BaseAgent):
@@ -378,6 +406,7 @@ class NotesAgent(BaseAgent):
                 instruction=instruction,
                 due=due,
                 recurrence=_parse_recurrence(args.get("recurrence")),
+                complexity=_parse_complexity(args.get("complexity")),
             ))
             result: Dict[str, Any] = {"note_id": note.note_id, "status": "created"}
             active = await self._notes.list_active_notes(user_id, as_of=datetime.now(timezone.utc))
@@ -403,6 +432,7 @@ class NotesAgent(BaseAgent):
                 instruction=args.get("instruction"),
                 due=_parse_dt(args.get("due"), self._user_tz),
                 recurrence=_parse_recurrence(args.get("recurrence")),
+                complexity=_parse_complexity(args.get("complexity")),
             ))
             await self._notify(
                 user_id, account_id,
