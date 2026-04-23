@@ -74,13 +74,13 @@ class AgentProviderStrategy:
         },
         "email_classifier": {
             "default_provider": "gemini",
-            "allowed_providers": ["gemini", "claude"],
+            "allowed_providers": ["gemini"],
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },
         "email_search": {
             "default_provider": "gemini",
-            "allowed_providers": ["gemini", "claude"],
+            "allowed_providers": ["gemini"],
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },

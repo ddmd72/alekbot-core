@@ -186,26 +186,6 @@ class ClaudeAdapter(LLMPort):
                     {"type": "web_fetch_20250910",  "name": "web_fetch"},
                 ] + claude_tools
 
-        # Claude analog of Gemini's response_schema: inject a "respond" tool so Claude is
-        # forced into structured output even when real delegation tools are also present.
-        # Gemini enforces schema natively; Claude enforces it via tool_use input validation.
-        # The response is intercepted below: "respond" call → serialised to JSON text →
-        # returned as plain LLMResponse.text. Agents see no difference.
-        # force_tool_use=True (tool_choice: any) is required: with tool_choice=auto, Haiku
-        # ignores the respond tool and returns plain text, bypassing schema enforcement.
-        # Note: condition does NOT require claude_tools — schema enforcement applies even
-        # when the agent has no delegation tools (e.g. DocPlannerAgent).
-        _schema_tool_active = False
-        if response_schema and isinstance(response_schema, dict):
-            respond_tool_schema = {k: v for k, v in response_schema.items() if k != "nullable"}
-            claude_tools = claude_tools + [{
-                "name": "respond",
-                "description": "You MUST call this tool to submit your final answer. Do not output plain text.",
-                "input_schema": respond_tool_schema,
-            }]
-            _schema_tool_active = True
-            force_tool_use = True  # Must call one of: delegate_to_specialist | respond
-
         if stream_callback:
             # Note: Prompt caching in streaming is supported but handled slightly differently in usage stats
             try:
@@ -267,6 +247,13 @@ class ClaudeAdapter(LLMPort):
             create_kwargs["thinking"] = thinking_param
         if effort:
             create_kwargs["output_config"] = {"effort": effort}
+            
+        if response_schema and isinstance(response_schema, dict):
+            schema = {k: v for k, v in response_schema.items() if k != "nullable"}
+            output_config = create_kwargs.get("output_config", {})
+            output_config["format"] = {"type": "json_schema", "schema": schema}
+            create_kwargs["output_config"] = output_config
+            
         if force_tool_use and claude_tools:
             # thinking is incompatible with tool_choice="any" — fall back to "auto"
             create_kwargs["tool_choice"] = {"type": "auto" if thinking_param else "any"}
@@ -289,96 +276,6 @@ class ClaudeAdapter(LLMPort):
                     raise LLMUnavailableError(str(e), http_status=503) from e
                 raise
             llm_response = self._parse_response(response)
-
-        # Intercept "respond" tool call: extract structured args → return as JSON text.
-        # Remaining real tool_calls (if any) are discarded — Claude signalled it is done.
-        if _schema_tool_active and llm_response.tool_calls:
-            respond_call = next((tc for tc in llm_response.tool_calls if tc.name == "respond"), None)
-            if respond_call:
-                import json
-                return LLMResponse(
-                    text=json.dumps(respond_call.args or {}, ensure_ascii=False),
-                    tool_calls=[],
-                    raw_content=llm_response.raw_content,
-                    usage_metadata=llm_response.usage_metadata,
-                    cache_metadata=llm_response.cache_metadata,
-                )
-
-        # Force respond: when response_schema is active but the model returned end_turn
-        # with text only — no tool calls at all (happens with grounding — web_search
-        # satisfies tool_choice:any). Second call with tool_choice forced to respond; pass
-        # first response as assistant turn so the model reformats its own text into JSON.
-        #
-        # NB: must NOT trigger when the model returned real tool_calls (e.g.
-        # delegate_to_specialist). Those tool_use blocks have no paired tool_result yet —
-        # appending them as an assistant turn would produce a 400 from the API
-        # ("tool_use ids without tool_result blocks immediately after"). Real tool_calls
-        # are returned to DelegationEngine, which executes them and continues the loop.
-        #
-        # NB: must NOT trigger when thinking is enabled. Adaptive thinking responses include
-        # thinking blocks in response.content. Appending that as an assistant prefill fails
-        # with 400 ("model does not support assistant message prefill") — prefilling is
-        # incompatible with thinking. When thinking is active, the model follows the
-        # OUTPUT_FORMAT prompt reliably; any plain-text JSON response is parsed downstream.
-        if _schema_tool_active and not _use_dynamic_search and thinking_param:
-            if not llm_response.tool_calls:
-                logger.error(
-                    "[ClaudeAdapter] thinking+schema: model returned text without calling respond tool "
-                    "(force-respond skipped — prefill incompatible with thinking). "
-                    "model=%s effort=%s text_len=%s",
-                    model_name, effort, len(llm_response.text or ""),
-                )
-        if _schema_tool_active and not _use_dynamic_search and not thinking_param:
-            if not llm_response.tool_calls and response is not None:
-                logger.debug("[ClaudeAdapter] respond not called — forcing second turn")
-                force_messages = list(claude_messages) + [
-                    {"role": "assistant", "content": response.content}
-                ]
-                force_kwargs = {
-                    "model": model_name,
-                    "max_tokens": max_tokens,
-                    "system": system_parts,
-                    "messages": force_messages,
-                    "tools": claude_tools,
-                    "tool_choice": {"type": "tool", "name": "respond"},
-                    "temperature": temperature,
-                }
-                if beta_headers:
-                    force_kwargs["extra_headers"] = {"anthropic-beta": ",".join(beta_headers)}
-                try:
-                    async with self.client.messages.stream(**force_kwargs) as stream:
-                        force_response = await stream.get_final_message()
-                except anthropic.RateLimitError as e:
-                    raise LLMRateLimitError(str(e), http_status=429) from e
-                except anthropic.APIStatusError as e:
-                    if e.status_code == 503:
-                        raise LLMUnavailableError(str(e), http_status=503) from e
-                    raise
-
-                force_parsed = self._parse_response(force_response)
-                # Merge usage from both calls
-                total_usage = UsageMetadata(
-                    prompt_tokens=(llm_response.usage_metadata.prompt_tokens or 0) + (force_parsed.usage_metadata.prompt_tokens or 0),
-                    completion_tokens=(llm_response.usage_metadata.completion_tokens or 0) + (force_parsed.usage_metadata.completion_tokens or 0),
-                    total_tokens=(llm_response.usage_metadata.total_tokens or 0) + (force_parsed.usage_metadata.total_tokens or 0),
-                    cache_read_tokens=(llm_response.usage_metadata.cache_read_tokens or 0) + (force_parsed.usage_metadata.cache_read_tokens or 0),
-                    cache_creation_tokens=(llm_response.usage_metadata.cache_creation_tokens or 0) + (force_parsed.usage_metadata.cache_creation_tokens or 0),
-                )
-                respond_call = next(
-                    (tc for tc in force_parsed.tool_calls if tc.name == "respond"), None
-                )
-                if respond_call:
-                    import json
-                    return LLMResponse(
-                        text=json.dumps(respond_call.args or {}, ensure_ascii=False),
-                        tool_calls=[],
-                        raw_content=force_parsed.raw_content,
-                        usage_metadata=total_usage,
-                        cache_metadata=llm_response.cache_metadata,
-                    )
-                # Fallback: respond still not called — return force_parsed as-is
-                force_parsed.usage_metadata = total_usage
-                return force_parsed
 
         return llm_response
 

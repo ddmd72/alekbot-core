@@ -1,6 +1,6 @@
 # Claude Structured Outputs GA Migration RFC
 
-**Status:** Planned  
+**Status:** Implemented (2026-04-22)  
 **Priority:** Medium (not blocking, existing hack works with the 2026-04-22 hotfix)  
 **Scope:** `src/adapters/claude_adapter.py` only
 

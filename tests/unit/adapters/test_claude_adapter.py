@@ -630,20 +630,53 @@ async def test_no_cache_config_single_block_no_cache_control():
 
 
 # ============================================================================
-# Wire tests: respond tool injection and interception
-#
-# Claude enforces response_schema via a synthetic "respond" tool injected when
-# both real tools and a response_schema are present. The adapter intercepts the
-# "respond" tool call and serialises its args as JSON text, so agents see a
-# plain LLMResponse.text — identical to Gemini's native schema enforcement.
+# Wire tests: output_config.format for response_schema
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_respond_tool_injected_when_schema_and_tools_present():
-    """respond tool is appended to tools list when response_schema + real tools present."""
+async def test_response_schema_injects_output_config_format():
+    """When response_schema is present, adapter injects output_config.format without tool injection."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
-    cm = _make_claude_cm(_make_sdk_tool_response("search_memory", {"q": "x"}))
+    cm = _make_claude_cm(_make_sdk_response('{"answer": "42"}'))
+
+    def capturing_stream(**kwargs):
+        captured.update(kwargs)
+        return cm
+
+    adapter.client.messages.stream = capturing_stream
+
+    result = await adapter.generate_content(
+        request=LLMRequest(
+            model_name="claude-sonnet-4-6",
+            system_instruction="test",
+            messages=_MESSAGES,
+            tools=_TOOLS,
+            response_schema={"type": "object", "properties": {"answer": {"type": "string"}}},
+        )
+    )
+
+    output_config = captured.get("output_config")
+    assert output_config is not None
+    assert output_config.get("format") == {
+        "type": "json_schema",
+        "schema": {"type": "object", "properties": {"answer": {"type": "string"}}}
+    }
+    
+    # Tool injection must NOT happen
+    tools = captured.get("tools", [])
+    assert not any(t.get("name") == "respond" for t in tools)
+    
+    # result text is passed directly from API
+    assert result.text == '{"answer": "42"}'
+
+
+@pytest.mark.asyncio
+async def test_response_schema_strips_nullable_key_from_schema():
+    """'nullable' key is stripped from the injected schema."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    cm = _make_claude_cm(_make_sdk_response("{}"))
 
     def capturing_stream(**kwargs):
         captured.update(kwargs)
@@ -657,22 +690,21 @@ async def test_respond_tool_injected_when_schema_and_tools_present():
             system_instruction="test",
             messages=_MESSAGES,
             tools=_TOOLS,
-            response_schema={"type": "object", "properties": {"answer": {"type": "string"}}},
+            response_schema={"type": "object", "properties": {}, "nullable": True},
         )
     )
 
-    tools = captured.get("tools", [])
-    assert len(tools) == 2
-    assert tools[-1]["name"] == "respond"
-    assert tools[-1]["input_schema"] == {"type": "object", "properties": {"answer": {"type": "string"}}}
+    output_config = captured.get("output_config", {})
+    schema = output_config.get("format", {}).get("schema", {})
+    assert "nullable" not in schema
 
 
 @pytest.mark.asyncio
-async def test_respond_tool_injected_without_real_tools():
-    """respond tool IS injected when response_schema is set even without delegation tools."""
+async def test_response_schema_with_thinking_merges_output_config():
+    """When both thinking and response_schema are active, output_config merges effort and format."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
-    cm = _make_claude_cm(_make_sdk_tool_response("respond", {"answer": "42"}))
+    cm = _make_claude_cm(_make_sdk_response("{}"))
 
     def capturing_stream(**kwargs):
         captured.update(kwargs)
@@ -685,18 +717,20 @@ async def test_respond_tool_injected_without_real_tools():
             model_name="claude-sonnet-4-6",
             system_instruction="test",
             messages=_MESSAGES,
-            response_schema={"type": "object", "properties": {"answer": {"type": "string"}}},
+            tools=_TOOLS,
+            thinking="medium",
+            response_schema={"type": "object", "properties": {}},
         )
     )
 
-    tools = captured.get("tools", [])
-    assert len(tools) == 1
-    assert tools[0]["name"] == "respond"
+    output_config = captured.get("output_config", {})
+    assert output_config.get("effort") == "medium"
+    assert output_config.get("format", {}).get("type") == "json_schema"
 
 
 @pytest.mark.asyncio
-async def test_respond_tool_not_injected_without_schema():
-    """respond tool is NOT injected when response_schema is None."""
+async def test_no_response_schema_no_output_config_format():
+    """When response_schema is absent, output_config must not contain 'format'."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     cm = _make_claude_cm(_make_sdk_response())
@@ -716,16 +750,18 @@ async def test_respond_tool_not_injected_without_schema():
         )
     )
 
-    tools = captured.get("tools", [])
-    assert not any(t.get("name") == "respond" for t in tools)
+    output_config = captured.get("output_config", {})
+    assert "format" not in output_config, (
+        f"output_config.format must be absent when response_schema is None; output_config={output_config}"
+    )
 
 
 @pytest.mark.asyncio
-async def test_respond_tool_schema_strips_nullable_key():
-    """'nullable' key is stripped from respond tool's input_schema (Anthropic rejects it)."""
+async def test_response_schema_without_delegation_tools():
+    """output_config.format is injected even when no delegation tools are passed."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
-    cm = _make_claude_cm(_make_sdk_tool_response("search_memory", {"q": "x"}))
+    cm = _make_claude_cm(_make_sdk_response('{"result": "ok"}'))
 
     def capturing_stream(**kwargs):
         captured.update(kwargs)
@@ -733,82 +769,28 @@ async def test_respond_tool_schema_strips_nullable_key():
 
     adapter.client.messages.stream = capturing_stream
 
-    await adapter.generate_content(
-        request=LLMRequest(
-            model_name="claude-sonnet-4-6",
-            system_instruction="test",
-            messages=_MESSAGES,
-            tools=_TOOLS,
-            response_schema={"type": "object", "properties": {}, "nullable": True},
-        )
-    )
-
-    tools = captured.get("tools", [])
-    respond = next((t for t in tools if t.get("name") == "respond"), None)
-    assert respond is not None
-    assert "nullable" not in respond["input_schema"]
-
-
-@pytest.mark.asyncio
-async def test_respond_call_intercepted_returns_json_text():
-    """When LLM calls 'respond' tool, args are serialised to JSON text and tool_calls is empty."""
-    adapter = ClaudeAdapter(api_key="test-key")
-    cm = _make_claude_cm(
-        _make_sdk_tool_response("respond", {"full_response": "hello", "response_summary": "hi"})
-    )
-    adapter.client.messages.stream = lambda **kw: cm
-
     result = await adapter.generate_content(
         request=LLMRequest(
             model_name="claude-sonnet-4-6",
             system_instruction="test",
             messages=_MESSAGES,
-            tools=_TOOLS,
-            response_schema={"type": "object", "properties": {"full_response": {"type": "string"}}},
+            response_schema={"type": "object", "properties": {"result": {"type": "string"}}},
         )
     )
 
-    assert result.tool_calls == []
-    parsed = json.loads(result.text)
-    assert parsed["full_response"] == "hello"
-    assert parsed["response_summary"] == "hi"
+    output_config = captured.get("output_config")
+    assert output_config is not None
+    assert output_config.get("format", {}).get("type") == "json_schema"
+    assert result.text == '{"result": "ok"}'
 
 
 @pytest.mark.asyncio
-async def test_respond_call_not_present_returns_original_tool_calls():
-    """When LLM calls a real tool (not respond), tool_calls are preserved unchanged."""
+async def test_tool_calls_preserved_under_response_schema():
+    """When response_schema is active and model returns real delegation tool_calls,
+    they are returned unchanged — no interception, no second API call."""
     adapter = ClaudeAdapter(api_key="test-key")
-    cm = _make_claude_cm(_make_sdk_tool_response("search_memory", {"query": "test"}))
-    adapter.client.messages.stream = lambda **kw: cm
-
-    result = await adapter.generate_content(
-        request=LLMRequest(
-            model_name="claude-sonnet-4-6",
-            system_instruction="test",
-            messages=_MESSAGES,
-            tools=_TOOLS,
-            response_schema={"type": "object", "properties": {"answer": {"type": "string"}}},
-        )
-    )
-
-    assert len(result.tool_calls) == 1
-    assert result.tool_calls[0].name == "search_memory"
-
-
-@pytest.mark.asyncio
-async def test_real_tool_call_under_schema_does_not_force_second_turn():
-    """Regression: when response_schema is set and the model returns a real tool_call
-    (not 'respond'), the adapter must NOT enter the force-respond second-call branch.
-
-    Previously the adapter would append the assistant turn (containing the unmatched
-    tool_use block) to messages and re-call the API to force a respond — Anthropic
-    rejects this with 400 ('tool_use ids without tool_result blocks immediately
-    after'), which broke every Quick delegation request on Claude.
-    """
-    adapter = ClaudeAdapter(api_key="test-key")
-    cm = _make_claude_cm(_make_sdk_tool_response("search_memory", {"query": "test"}))
-
     call_count = 0
+    cm = _make_claude_cm(_make_sdk_tool_response("search_memory", {"query": "test"}, "call_abc"))
 
     def counting_stream(**kw):
         nonlocal call_count
@@ -828,62 +810,10 @@ async def test_real_tool_call_under_schema_does_not_force_second_turn():
     )
 
     assert call_count == 1, (
-        f"Adapter must call client.messages.stream exactly once when the model "
-        f"returns a real tool_call under response_schema; got {call_count} calls"
+        f"Must be exactly one stream call (no force-respond path); got {call_count}"
     )
     assert len(result.tool_calls) == 1
     assert result.tool_calls[0].name == "search_memory"
-
-
-@pytest.mark.asyncio
-async def test_text_only_under_schema_forces_second_turn_with_respond():
-    """When response_schema is set and the model returns text-only (no tool_calls),
-    the adapter must force a second call with tool_choice={'type':'tool','name':'respond'}
-    to enforce structured output. Usage from both calls is summed.
-    """
-    adapter = ClaudeAdapter(api_key="test-key")
-
-    first_cm = _make_claude_cm(_make_sdk_response("plain text answer"))
-    second_cm = _make_claude_cm(
-        _make_sdk_tool_response("respond", {"answer": "structured"})
-    )
-
-    captured_calls = []
-    cms = [first_cm, second_cm]
-
-    def stream_with_history(**kw):
-        captured_calls.append(kw)
-        return cms[len(captured_calls) - 1]
-
-    adapter.client.messages.stream = stream_with_history
-
-    result = await adapter.generate_content(
-        request=LLMRequest(
-            model_name="claude-sonnet-4-6",
-            system_instruction="test",
-            messages=_MESSAGES,
-            tools=_TOOLS,
-            response_schema={"type": "object", "properties": {"answer": {"type": "string"}}},
-        )
-    )
-
-    assert len(captured_calls) == 2, (
-        f"Adapter must call stream twice (initial + force-respond) when the model "
-        f"returns text-only under response_schema; got {len(captured_calls)} calls"
-    )
-    second_kwargs = captured_calls[1]
-    assert second_kwargs.get("tool_choice") == {"type": "tool", "name": "respond"}
-    # Second call's messages must end with the appended assistant turn (text content,
-    # NOT an orphaned tool_use).
-    second_messages = second_kwargs.get("messages") or []
-    assert second_messages, "second call must send a non-empty messages list"
-    assert second_messages[-1]["role"] == "assistant"
-
-    parsed = json.loads(result.text)
-    assert parsed == {"answer": "structured"}
-    # Usage summed across both calls (10+10 input, 5+5 output per _make_sdk_response).
-    assert result.usage_metadata.prompt_tokens == 20
-    assert result.usage_metadata.completion_tokens == 10
 
 
 # ============================================================================
