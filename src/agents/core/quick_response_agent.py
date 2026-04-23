@@ -2,8 +2,20 @@
 Quick Response Agent
 ====================
 
-Handles complexity 1–5 requests (≈70% of traffic) with specialist delegation.
-Remaps search_web → search_web_light at dispatch time.
+Primary role: handles complexity 1–5 requests (≈70% of traffic) with specialist delegation.
+
+Emergency fallback role: invoked by AgentFallbackService whenever SmartAgent returns
+FAILED or TIMEOUT. Quick has a fixed, conservative provider/model (no dynamic assembly
+by the router) so its failure surface is deliberately smaller than Smart's.
+
+Two scenarios where Quick acts as fallback:
+1. Smart fails (any reason) → AgentFallbackService.try_quick_fallback() routes here
+   with a _SYSTEM_NOTE injected so Quick formulates a graceful apology in the user's
+   language instead of surfacing a raw error.
+2. Smart times out → same path.
+
+Do not simplify Quick's provider/model config or remove it without considering these
+fallback scenarios — it is the last LLM-backed line before a synthetic static apology.
 """
 
 from __future__ import annotations
