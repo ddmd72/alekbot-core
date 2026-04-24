@@ -91,6 +91,38 @@ Port breakdown:
 
 **Standard comparison (2025):** Hexagonal is strongly justified here — high external system volatility (4 LLM providers, 2 platforms, 2 task providers, 3 deep research backends) is exactly the use case where ports earn their cost. Industry consensus confirms this. The single-impl port count is a legitimate academic criticism but is answered by the project's specific rationale.
 
+**Deep assessment (web research + code evolution analysis):**
+
+Evolution timeline (27 session date comments in code):
+- Pre-2026-02-07: 29 boundary violations, score 7.5/10
+- 2026-02-07: "Hexagonal refactoring epoch" — 5 new ports created, FactWriteService + SearchEnrichmentService extracted
+- 2026-02-16–20: DI cleanup, adapter decoupling, BiographicalContextService refactor
+- Post-epoch: 3 violations, score 9.0/10
+- This is measurable architectural learning over ~2 weeks, not initial design
+
+**AI-guardrail rationale — independently validated by 2025 research:**
+- arxiv "Architecture Without Architects" (2025): AI agents drift architecture within 3-4 months without mechanical enforcement
+- Bardia Khosravi (Medium 2025): "Backend Coding Rules for AI Coding Agents: DDD and Hexagonal Architecture" — prescribes exactly this approach
+- rulebricks/claude-code-guardrails, Codacy Guardrails (2025): dedicated tools emerging for this exact problem
+- The user arrived at this solution in early 2026 before it became mainstream practitioner advice
+- Weakness: research says documentation doesn't work as guardrail, only mechanical enforcement (CI linter) does. Manual test suite before merge is the weakest link in the strategy.
+
+**Port count re-evaluation (all 6 specific single-impl ports analyzed in code):**
+- ConsolidationQueue: real swap candidate (Firestore → Cloud Tasks/Pub/Sub) ✅
+- DedupStore: real swap candidate (Firestore → Redis/Memcached) ✅
+- JobRunnerPort: real swap candidate (Cloud Run → Lambda/Kubernetes) ✅
+- SearchEnrichmentPort: complex evolving algorithm (6-query RRF), testable isolation ✅
+- FactWritePort: embedding generation isolation from agent logic ✅
+- SessionStore: complex overflow callback semantics ✅
+Practitioner consensus says >18 ports is over-engineering for solo dev, but code analysis shows each examined port is genuinely justified. The maintenance tax (each field = 4-file change) is the real cost.
+
+**Blind spot identified — Domain Volatility:**
+Classical hexagonal assumes stable domain. In AI agent systems, the "domain" (agent behavior, routing logic, prompts) is volatile — changes with every LLM update, prompt refinement, or context window expansion. Anthropic Engineering Blog (2025) defines "Context Engineering" as a new first-class architectural concern not addressed by traditional ports/adapters. The project partially compensates through Firestore-backed prompt tokens (externalizing volatile prompt logic) and ConsolidationAgent versioning, but has no explicit architectural pattern for managing volatile domain behavior. This is a gap.
+
+**ServiceContainer:** ~55 singletons, layered, composition root pattern — correct. One circular dependency workaround (`BiographicalContextService.set_repository()`). Manageable now, approaching the limit where sub-container decomposition becomes warranted.
+
+**ADR documentation gap:** 8 ADRs all `PROPOSED (placeholder)`. Decisions exist in code session comments and conversation history, not in structured records. Significant gap for portfolio presentation — "why did you choose X?" needs a better answer than code archaeology.
+
 ---
 
 ## 2. Multi-Agent Topology
