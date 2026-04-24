@@ -752,3 +752,4 @@ pytest.ini
 |---------|------|-----------------|------------------------|
 | 1 | 2026-04-24 | Plan creation | — |
 | 2 | 2026-04-24 | §1 Hexagonal Architecture | 0 boundary violations; 59 ports (37 single-impl); no import-linter |
+| 2 | 2026-04-24 | §1 deep assessment | AI-guardrail rationale validated by arxiv 2025; all 6 single-impl ports justified in code; domain volatility gap identified + recommendations written; zombie file found; ADR docs empty |
