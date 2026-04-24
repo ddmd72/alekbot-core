@@ -33,7 +33,7 @@
 
 ## 1. Hexagonal Architecture
 
-**Status:** TODO
+**Status:** DONE
 
 **What to inspect:**
 - Actual import rule enforcement: do adapters import services? do services import adapters?
@@ -42,46 +42,54 @@
 - Composition layer role: does it actually own all cross-boundary wiring?
 - `REQ-ARCH-01`, `REQ-ARCH-22`, `REQ-ARCH-23` — find and count violations if any
 
-**Key files:**
+**Key files inspected:**
 ```
 src/domain/         — purity check
-src/ports/          — ~51 ABCs, justification audit
-src/adapters/       — import discipline
+src/ports/          — 59 ABCs (vs ~51 documented)
+src/adapters/       — import discipline, 69 adapters
 src/services/       — no concrete adapter imports rule
 src/composition/    — only layer allowed to cross all boundaries
+docs/08_concepts/hexagonal_architecture_patterns.md
+docs/09_decisions/adr-001-actor-model/
+docs/09_decisions/adr-002-firestore-adapter/
 ```
 
-**Web search targets:** hexagonal architecture Python production patterns, ports & adapters anti-patterns, dependency inversion in async Python
-
-**Questions for author:**
-1. 37 single-implementation ports — was a test adapter (in-memory) planned alongside any of them, or was "port by default" a conscious policy from the start?
-2. `FactManagementPort` has 2 implementations — migration in progress or parallel operation?
-3. 15 ports with no found adapter — future ports, or are there test adapters in `tests/`?
-4. No import-linter in CI — intentional (overhead not worth it for solo dev) or not yet implemented?
+**Author context:**
+1. Single-impl ports — conscious policy: system evolved incrementally with infrastructure uncertainty (GCP vs AWS, Firestore vs other DB). Uniform hexagonal rule prevents refactoring when second implementation arrives (validated: Google Tasks → Microsoft ToDo added with zero refactoring). Plus: hexagonal boundaries chosen as defence against AI hallucinations during pair programming — strict layer rules prevent AI assistant from accidentally cross-contaminating layers.
+2. `FactManagementPort` "two implementations" — tech debt (see below).
+3. 15 ports with no named adapter — covered by `AsyncMock(spec=PortClass)` test doubles in-line in tests, not separate adapter classes. Conscious testing pattern.
+4. No import-linter in CI — manual test suite before merge serves same purpose. Includes layer-boundary checks.
 
 **Findings:**
 
-**Boundary audit: 0 violations across all 5 rules.** 59 ports total (vs ~51 documented).
+**Boundary audit: 0 violations across all 5 rules.** 59 ports total.
 
 Port breakdown:
-- 7 ports with 2+ implementations — all justified: LLMPort (4 providers), SecurityPort (4 layers), DeepResearchPort (3 providers), TasksProviderPort (2 providers), PlatformPort + PlatformMediaPort (Slack/Telegram), FactManagementPort (2, context needed)
-- 37 single-impl ports — disputed zone by 2025 standards
-- 15 ports with no adapter found — needs clarification
+- Justified multi-impl ports (7): LLMPort (4 providers), SecurityPort (4 layers), DeepResearchPort (3 providers), TasksProviderPort (Google/Microsoft), PlatformPort + PlatformMediaPort (Slack/Telegram), FactManagementPort (see tech debt below)
+- Single-impl ports (37): justified via ADR-002 (infrastructure invariance / Firestore-as-replaceable-adapter) + AI-pair-programming defence rationale
+- No named adapter (15): covered by AsyncMock test doubles
+
+**Tech debt found:**
+- `src/adapters/firestore_fact_management_adapter.py` — zombie file. Renamed to `FactManagementAdapter` on 2026-02-20 (see docstring: "Renamed from FirestoreFactManagementAdapter — does not access Firestore directly"). Old file not deleted. Not imported anywhere in production or tests. `FactManagementPort` effectively has one active implementation.
+
+**ADR status:**
+- ADR-001 through ADR-008 all in `PROPOSED (placeholder)` status — structural scaffolding exists, no decision content filled in. Gap between code quality and decision documentation quality.
 
 **Pros:**
-- Zero boundary violations in ~150 files / 69 adapters — genuinely rare at this scale
+- Zero boundary violations in ~150 files / 69 adapters — rare at this scale and pace
 - Absolute domain purity: no I/O, no logging, no config
 - Security composite (4-layer) is textbook correct
-- Multi-provider LLM abstraction is fully justified — 4 providers is real volatility, not speculation
-- Architecture self-discipline maintained solo without CI enforcement
+- Multi-provider LLM abstraction fully justified — 4 providers is real external volatility
+- Architecture discipline maintained solo without automated CI enforcement
+- Novel rationale: hexagonal as AI-assistant guardrail — not in any 2025 literature, genuine contribution to the discourse
 
 **Cons / Tensions:**
-- 37 single-impl ports: each field addition = domain + port + adapter + service change. Real maintenance tax for solo dev on $100/month budget
-- 15 orphaned/future ports: potential dead weight
-- No import-linter in CI — boundary discipline relies entirely on code review. Fragile at scale
-- "Port explosion" onboarding cost: a simple new feature touches 4+ files by default
+- 37 single-impl ports: maintenance tax — each field addition = domain + port + adapter + service + test change. Real cost for solo dev
+- No automated import-linter in CI — boundary discipline is manual. Works now, fragile when team grows
+- ADR documentation is empty scaffolding — decisions exist in code and conversation, not in structured records
+- 1 zombie file (`firestore_fact_management_adapter.py`) — minor but indicates cleanup debt
 
-**Standard comparison (2025):** Hexagonal is strongly justified here due to high external system volatility (4 LLM providers, 2 platforms, 2 task providers, 3 deep research backends). Industry consensus is that hexagonal is optimal precisely for this use case. The single-impl port count is the one legitimate criticism vs. pragmatic alternatives.
+**Standard comparison (2025):** Hexagonal is strongly justified here — high external system volatility (4 LLM providers, 2 platforms, 2 task providers, 3 deep research backends) is exactly the use case where ports earn their cost. Industry consensus confirms this. The single-impl port count is a legitimate academic criticism but is answered by the project's specific rationale.
 
 ---
 
