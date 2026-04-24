@@ -174,11 +174,30 @@ Evolution timeline (27 session date comments in code):
 Practitioner consensus says >18 ports is over-engineering for solo dev, but code analysis shows each examined port is genuinely justified. The maintenance tax (each field = 4-file change) is the real cost.
 
 **Blind spot identified — Domain Volatility:**
-Classical hexagonal assumes stable domain. In AI agent systems, the "domain" (agent behavior, routing logic, prompts) is volatile — changes with every LLM update, prompt refinement, or context window expansion. Anthropic Engineering Blog (2025) defines "Context Engineering" as a new first-class architectural concern not addressed by traditional ports/adapters. The project partially compensates through Firestore-backed prompt tokens (externalizing volatile prompt logic) and ConsolidationAgent versioning, but has no explicit architectural pattern for managing volatile domain behavior. This is a gap.
+Classical hexagonal assumes stable domain. In AI agent systems, the "domain" (agent behavior, routing logic, prompts) is volatile — changes with every LLM update, prompt refinement, or context window expansion. Anthropic Engineering Blog (2025) defines "Context Engineering" as a new first-class architectural concern not addressed by traditional ports/adapters. The project partially compensates through Firestore-backed prompt tokens (externalizing volatile prompt logic) and ConsolidationAgent versioning, but has no explicit architectural pattern for managing volatile domain behavior. This is a gap — but it is manageable and closeable without major refactoring (see Recommendations below).
 
 **ServiceContainer:** ~55 singletons, layered, composition root pattern — correct. One circular dependency workaround (`BiographicalContextService.set_repository()`). Manageable now, approaching the limit where sub-container decomposition becomes warranted.
 
 **ADR documentation gap:** 8 ADRs all `PROPOSED (placeholder)`. Decisions exist in code session comments and conversation history, not in structured records. Significant gap for portfolio presentation — "why did you choose X?" needs a better answer than code archaeology.
+
+**Recommendations — closing the Domain Volatility gap:**
+
+The architecture already contains the right extension points. Closing the gap requires no major refactoring — only incremental additions within the existing hexagonal structure.
+
+What already exists and can be used immediately:
+- `UserBotConfig.agent_providers / agent_thinking / model_overrides` — per-user behavioral flags. Already a feature flag system for provider and model selection.
+- `PromptBuilder` 4-level priority (USER > ACCOUNT > AGENT > SYSTEM) — USER level is a prompt feature flag. Give user X a different token = different behavior, zero code change.
+- `DelegationEngine` `**context` spread — any key added to `message.context` (e.g. `experiment_variant`) propagates automatically through the full agent graph to every specialist. Experiment propagation infrastructure already in place.
+- `LogSink` port (`src/ports/log_sink.py`) + `GcpLogSink` adapter — structured JSON emission to Cloud Logging. Adding routing decision metrics = one `log_sink.log({...})` call per agent. No new ports, no new adapters.
+- `PromptDebugLogger` (`src/utils/debug_logger.py`) — already saves full LLM requests/responses to GCS. GCS backend activated by `DEBUG_PROMPTS_BUCKET` env var. This is observability infrastructure that can be repurposed for behavioral baselining.
+
+What needs to be added (incremental, no rework):
+1. **Prompt versioning** — extend `Token` domain model with `version`/`updated_at`, add `get_history(token_id)` to `TokenRepository` port, update Firestore adapter. 3 files. Nothing else changes.
+2. **Routing metrics** — add `log_sink.log({"event": "routing_decision", "complexity": N, "path": "quick|smart"})` in `RouterAgent`. 1 line. Immediately queryable in Cloud Logging → BigQuery.
+3. **Provider canary** — extend `ProviderRegistry.get()` to support weighted selection. 1 service file. Agents don't change.
+4. **Evaluation framework** — new `EvaluationPort` + adapter (e.g. wrapping Braintrust or custom). Agents emit `evaluation_signal` via existing `**context` passthrough or a new lifecycle hook in `BaseAgent._on_agent_success`. No existing code changes.
+
+Note on `LogSink` as validation of the port policy: adding behavioral observability requires zero architectural changes because `LogSink` is already a port. This is a concrete example of where the "port everywhere" policy pays off — swapping GCP Logging for Datadog or a custom evaluation sink is a single adapter swap.
 
 ---
 
