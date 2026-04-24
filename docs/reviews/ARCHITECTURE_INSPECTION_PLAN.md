@@ -6,6 +6,63 @@
 
 ---
 
+## How to Continue This Inspection (New Session Guide)
+
+### Context you must read first
+
+Before writing a single line of analysis, read in this order:
+1. **This file** — understand what's DONE and what's next
+2. **`CLAUDE.md`** (project root) — full system description, architecture rules, agent inventory
+3. **`docs/08_concepts/hexagonal_architecture_patterns.md`** — how hexagonal is applied here
+4. **`docs/09_decisions/`** — ADR-001 through ADR-008 (currently placeholder, but read anyway)
+5. The section you're about to work on — key files listed there
+
+For any section touching a specific subsystem, also read its building block doc in `docs/05_building_blocks/`.
+
+### Methodology (do not deviate)
+
+**Every section follows this exact sequence:**
+
+1. **Read the code** — key files listed in the section. Read actual implementations, not just interfaces. Look for session-date comments (format: `Session YYYY-MM-DD:`) — they are evolution breadcrumbs.
+2. **Read arc42 docs** — relevant RFC in `docs/10_rfcs/`, building block in `docs/05_building_blocks/`, decisions in `docs/09_decisions/`.
+3. **Web search** — use the "Web search targets" listed in the section. Search for practitioner perspectives (2024-2025), not textbook definitions. Prioritize: conference talks, post-mortems, arxiv papers, HN/Reddit discussions with engineers.
+4. **Ask the author** — formulate specific questions based on gaps between (a) what the code does and (b) what it was designed to do. Post questions in chat. Wait for answers before finalizing findings.
+5. **Write findings** — fill in the section's Findings block with: decision description, rationale (author context + code evidence), pros, cons, comparison to current standards.
+6. **Update document + commit + push** — update status to DONE, add session to Session Log, commit with descriptive message, push to `claude/architecture-inspection-plan-8g2jS`.
+
+### Principles established (do not compromise)
+
+- **Honest, not flattering.** If something is tech debt, call it tech debt. If a decision was wrong, say so with evidence. The author explicitly wants unbiased assessment.
+- **Evidence-based.** Every claim needs: code line reference OR web source OR author statement. No speculation.
+- **Web search before verdict.** Current standards (2024-2025) must be checked before judging any decision. The field moves fast.
+- **Author context is not defense.** When the author explains a decision, record it accurately. Then still evaluate it against the evidence. A well-intentioned decision can still be a bad one.
+- **Arc42 docs first.** Many answers are in `docs/`. Check there before asking the author.
+- **Parallel agents for independent work.** Web search and code analysis can run simultaneously. Use Agent tool with subagent_type=Explore for both.
+
+### What DONE means
+
+A section is DONE when:
+- All key files have been read
+- Relevant arc42 docs have been checked
+- Web search on stated targets has been performed
+- Author questions have been asked AND answered (or explicitly noted as unanswered)
+- Findings block is filled: decision + rationale + pros + cons + standard comparison
+- Document committed and pushed
+
+### Next section to work on
+
+Look at the Sections table — find the first `TODO`. That's where to start.
+Current next: **Section 2 — Multi-agent topology & LLM-based routing**.
+
+### Tone when reporting to the author
+
+- Write findings in chat after each section completes — author reads on mobile
+- Keep the chat summary tight: key finding per bullet, no repetition of what's in the doc
+- Ask questions explicitly and numbered — author answers one message at a time
+- If blocked waiting for author answer, mark section `BLOCKED` and move to next `TODO`
+
+---
+
 ## Sections
 
 | # | Area | Status | Session |
