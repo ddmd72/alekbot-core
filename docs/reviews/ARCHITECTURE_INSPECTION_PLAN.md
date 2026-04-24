@@ -10,7 +10,7 @@
 
 | # | Area | Status | Session |
 |---|------|--------|---------|
-| 1 | [Hexagonal Architecture — boundary enforcement](#1-hexagonal-architecture) | TODO | - |
+| 1 | [Hexagonal Architecture — boundary enforcement](#1-hexagonal-architecture) | DONE | 1 |
 | 2 | [Multi-agent topology & LLM-based routing](#2-multi-agent-topology) | TODO | - |
 | 3 | [DelegationEngine — multi-turn tool loop](#3-delegationengine) | TODO | - |
 | 4 | [LLM provider abstraction & PerformanceTier](#4-llm-provider-abstraction) | TODO | - |
@@ -53,9 +53,35 @@ src/composition/    — only layer allowed to cross all boundaries
 
 **Web search targets:** hexagonal architecture Python production patterns, ports & adapters anti-patterns, dependency inversion in async Python
 
-**Questions for author:** *(to be filled during inspection)*
+**Questions for author:**
+1. 37 single-implementation ports — was a test adapter (in-memory) planned alongside any of them, or was "port by default" a conscious policy from the start?
+2. `FactManagementPort` has 2 implementations — migration in progress or parallel operation?
+3. 15 ports with no found adapter — future ports, or are there test adapters in `tests/`?
+4. No import-linter in CI — intentional (overhead not worth it for solo dev) or not yet implemented?
 
-**Findings:** *(to be filled)*
+**Findings:**
+
+**Boundary audit: 0 violations across all 5 rules.** 59 ports total (vs ~51 documented).
+
+Port breakdown:
+- 7 ports with 2+ implementations — all justified: LLMPort (4 providers), SecurityPort (4 layers), DeepResearchPort (3 providers), TasksProviderPort (2 providers), PlatformPort + PlatformMediaPort (Slack/Telegram), FactManagementPort (2, context needed)
+- 37 single-impl ports — disputed zone by 2025 standards
+- 15 ports with no adapter found — needs clarification
+
+**Pros:**
+- Zero boundary violations in ~150 files / 69 adapters — genuinely rare at this scale
+- Absolute domain purity: no I/O, no logging, no config
+- Security composite (4-layer) is textbook correct
+- Multi-provider LLM abstraction is fully justified — 4 providers is real volatility, not speculation
+- Architecture self-discipline maintained solo without CI enforcement
+
+**Cons / Tensions:**
+- 37 single-impl ports: each field addition = domain + port + adapter + service change. Real maintenance tax for solo dev on $100/month budget
+- 15 orphaned/future ports: potential dead weight
+- No import-linter in CI — boundary discipline relies entirely on code review. Fragile at scale
+- "Port explosion" onboarding cost: a simple new feature touches 4+ files by default
+
+**Standard comparison (2025):** Hexagonal is strongly justified here due to high external system volatility (4 LLM providers, 2 platforms, 2 task providers, 3 deep research backends). Industry consensus is that hexagonal is optimal precisely for this use case. The single-impl port count is the one legitimate criticism vs. pragmatic alternatives.
 
 ---
 
@@ -609,3 +635,4 @@ pytest.ini
 | Session | Date | Sections worked | Key decisions uncovered |
 |---------|------|-----------------|------------------------|
 | 1 | 2026-04-24 | Plan creation | — |
+| 2 | 2026-04-24 | §1 Hexagonal Architecture | 0 boundary violations; 59 ports (37 single-impl); no import-linter |
