@@ -112,7 +112,7 @@ async def test_retry_mechanism_via_handler():
     # Execute handler logic
     mock_user_repo = AsyncMock()
     mock_user_repo.get_user = AsyncMock(return_value=MagicMock(account_id=user_id))
-    consolidation_queue.reset_processing_batches = AsyncMock()
+    consolidation_queue.reset_recoverable_batches = AsyncMock()
 
     await process_user_batches_on_overflow(
         user_id=user_id,

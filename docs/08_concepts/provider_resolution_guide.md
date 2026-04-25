@@ -372,7 +372,8 @@ config = UserBotConfig(
     
     agent_tiers={
         
-        "consolidation": PerformanceTier.BALANCED, # Moderate priority
+        
+                                                       
         
     }
     
@@ -413,7 +414,8 @@ config = UserBotConfig(
     
     agent_tiers={
         "smart": PerformanceTier.PERFORMANCE,
-        "consolidation": PerformanceTier.BALANCED,
+        
+                                                       
         "quick": PerformanceTier.ECO,
     },
 
@@ -430,9 +432,9 @@ config = UserBotConfig(
 
 
 
-- `smart` → claude + PERFORMANCE → `claude-opus-4-20250514`
-- `consolidation` → claude + BALANCED → `claude-sonnet-4-5-20250929`
-- `quick` → claude + ECO → `claude-3-haiku-20240307`
+- `smart` → claude + PERFORMANCE → `claude-sonnet-4-6`
+- `consolidation` → claude + PERFORMANCE → `claude-sonnet-4-6`
+
 - `web_search` → gemini (enforced) + override → `gemini-2.0-flash`
 - `router` → gemini (strategy default) + ECO → `gemini-2.0-flash`
 

@@ -445,8 +445,15 @@ class GrokAdapter(LLMPort):
                 try:
                     args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                 except json.JSONDecodeError:
-                    logger.warning(f"[GrokAdapter] Failed to parse tool args for {tc.function.name}: {tc.function.arguments}")
-                    args = {}
+                    raw = tc.function.arguments or ""
+                    logger.warning(
+                        f"[GrokAdapter] Truncated tool args for {tc.function.name} "
+                        f"(len={len(raw)}): {raw[:200]}..."
+                    )
+                    args = {
+                        "_parse_error": "truncated_json",
+                        "_raw_prefix": raw[:500],
+                    }
                 tool_calls.append(ToolCall(
                     name=tc.function.name,
                     args=args,

@@ -3,7 +3,7 @@ google-cloud-firestore
 google-cloud-storage
 google-cloud-logging
 google-genai>=1.72.0
-anthropic
+anthropic>=0.97.0  # 0.97.0+: output_config.effort + model capabilities API; older versions lack proper effort/structured-outputs typing
 openai>=1.0.0  # xAI Grok (OpenAI-compatible API)
 python-dotenv
 aiohttp

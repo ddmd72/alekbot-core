@@ -88,18 +88,46 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         await doc_ref.delete()
         logger.debug(f"🗑️ Deleted batch {batch_id}")
     
-    async def reset_processing_batches(self, user_id: str) -> int:
-        """Reset stale PROCESSING → RETRY_PENDING. Recovers zombies from crashed workers."""
+    async def reset_recoverable_batches(self, user_id: str) -> int:
+        """Reset PROCESSING (zombies) + FAILED (retry after fix) → RETRY_PENDING.
+
+        Resets `attempts` to 0 and clears `error` so the retry starts clean.
+        Logs separate counts so dashboard / alerting can distinguish zombie recovery
+        from intentional FAILED retry.
+        """
         query = (
             self.collection
-            .where(filter=FieldFilter("status", "==", BatchStatus.PROCESSING.value))
+            .where(filter=FieldFilter(
+                "status", "in",
+                [BatchStatus.PROCESSING.value, BatchStatus.FAILED.value],
+            ))
             .where(filter=FieldFilter("user_id", "==", user_id))
         )
         docs = await query.get()
+        zombies = 0
+        failures = 0
         for doc in docs:
-            await doc.reference.update({"status": BatchStatus.RETRY_PENDING.value})
-        if docs:
-            logger.info(f"♻️ Reset {len(docs)} stale PROCESSING batches → RETRY_PENDING for user {user_id[:8]}")
+            data = doc.to_dict() or {}
+            prev = data.get("status")
+            await doc.reference.update({
+                "status": BatchStatus.RETRY_PENDING.value,
+                "attempts": 0,
+                "error": None,
+            })
+            if prev == BatchStatus.PROCESSING.value:
+                zombies += 1
+            elif prev == BatchStatus.FAILED.value:
+                failures += 1
+        if zombies:
+            logger.info(
+                f"♻️ Reset {zombies} stale PROCESSING batches → RETRY_PENDING "
+                f"for user {user_id[:8]}"
+            )
+        if failures:
+            logger.info(
+                f"♻️ Reset {failures} FAILED batches → RETRY_PENDING (attempts=0) "
+                f"for user {user_id[:8]}"
+            )
         return len(docs)
 
     async def cleanup_old_batches(self, user_id: str, max_messages: int = 600) -> int:

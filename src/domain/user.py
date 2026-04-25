@@ -64,11 +64,13 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "router": PerformanceTier.ECO,
     "quick": PerformanceTier.ECO,
     "smart": PerformanceTier.PERFORMANCE,
-    # claude-sonnet-4-6 is sufficient for consolidation; opus-4-6 was 5x more
-    # expensive without proportional quality gain. Multi-turn cache markers in
-    # the Claude adapter (cache_last_message + sliding rolling window) further
-    # offset cost on the loop's later turns.
-    "consolidation": PerformanceTier.BALANCED,
+    # PERFORMANCE → claude-sonnet-4-6. Required for consolidation:
+    # BALANCED on Claude maps to Haiku 4.5, which lacks extended-thinking
+    # effort support → 400 invalid_request_error. Sonnet 4.6 is sufficient
+    # quality-wise; opus-4-7 was 5x more expensive without proportional gain.
+    # Multi-turn cache markers in the Claude adapter (cache_last_message +
+    # sliding rolling window) further offset cost on later turns.
+    "consolidation": PerformanceTier.PERFORMANCE,
     "web_search": PerformanceTier.BALANCED,
     "web_search_light": PerformanceTier.ECO,
     "facts_memory": PerformanceTier.ECO,

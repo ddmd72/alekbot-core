@@ -279,7 +279,14 @@ class ClaudeAdapter(LLMPort):
         )
         if thinking_param:
             create_kwargs["thinking"] = thinking_param
-        if effort:
+        # Only attach output_config.effort when the model supports it.
+        # Per Anthropic capabilities (verified 2026-04-25 against models.retrieve):
+        #   Sonnet 4.6 / Opus 4.7 → effort.supported = True
+        #   Haiku 4.5            → effort.supported = False  → API returns 400
+        # We gate by the same _THINKING_MODELS substring used for adaptive thinking,
+        # since the two go together: only Sonnet/Opus accept both. Haiku silently
+        # drops effort here instead of crashing the request.
+        if effort and any(m in model_name for m in self._THINKING_MODELS):
             create_kwargs["output_config"] = {"effort": effort}
             
         if response_schema and isinstance(response_schema, dict):

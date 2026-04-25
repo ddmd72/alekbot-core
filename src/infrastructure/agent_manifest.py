@@ -395,10 +395,12 @@ NOTES = AgentDescriptor(
     description="Full CRUD management of proactive self-reminders: create, update, delete, and list reminders that fire automatically at a scheduled time",
     capability_descriptions={
         Intent.MANAGE_SELF_REMINDERS: (
-            "Full CRUD for proactive self-reminders (create, update, delete, list). "
-            "Reminders fire automatically on schedule; each carries a self-contained instruction "
-            "executed in a new conversation with no session memory.\n"
-            "payload: {\"query\": \"<briefing: operation, timing, full context, id from active_reminders if updating/deleting>\"}"
+            "Full CRUD for proactive self-reminders that fire automatically on schedule "
+            "and execute as a new conversation with no session memory. "
+            "Use for any reminder management: create, update, delete, list. "
+            "Pass the user's request as natural language in 'query' — the specialist parses "
+            "intent, schedule, and identifiers itself. Do not format JSON, do not invent "
+            "field names, do not pre-resolve IDs."
         ),
     },
     internal=False,
