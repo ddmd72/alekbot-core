@@ -51,7 +51,7 @@ def _failed_response(error: str = "LLM error") -> AgentResponse:
 @pytest.fixture
 def queue():
     q = AsyncMock(spec=ConsolidationQueue)
-    q.reset_processing_batches.return_value = None
+    q.reset_recoverable_batches.return_value = None
     q.get_pending_batches.return_value = []
     q.update_batch_status.return_value = None
     q.delete_batch.return_value = None
@@ -137,7 +137,7 @@ class TestNoBatches:
     async def test_resets_processing_before_fetching(self, service, queue):
         queue.get_pending_batches.return_value = []
         call_order = []
-        queue.reset_processing_batches.side_effect = lambda uid: call_order.append("reset")
+        queue.reset_recoverable_batches.side_effect = lambda uid: call_order.append("reset")
         queue.get_pending_batches.side_effect = lambda **kw: call_order.append("fetch") or []
 
         await service.process_user_batches(user_id=_USER_ID)
@@ -188,7 +188,7 @@ class TestSingleBatchSuccess:
         queue.get_pending_batches.return_value = []
         call_order = []
         agent_factory.ensure_agents_for_user.side_effect = lambda uid: call_order.append("ensure")
-        queue.reset_processing_batches.side_effect = lambda uid: call_order.append("reset")
+        queue.reset_recoverable_batches.side_effect = lambda uid: call_order.append("reset")
 
         await service.process_user_batches(user_id=_USER_ID)
 
@@ -290,7 +290,7 @@ class TestBatchFailure:
 class TestExceptionHandling:
 
     async def test_unhandled_exception_returns_false(self, service, queue):
-        queue.reset_processing_batches.side_effect = RuntimeError("Firestore down")
+        queue.reset_recoverable_batches.side_effect = RuntimeError("Firestore down")
 
         result = await service.process_user_batches(user_id=_USER_ID)
 

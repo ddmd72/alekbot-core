@@ -372,7 +372,8 @@ config = UserBotConfig(
     default_tier=PerformanceTier.ECO,  # Global default
     agent_tiers={
         "smart": PerformanceTier.PERFORMANCE,     # Important agent
-        "consolidation": PerformanceTier.BALANCED, # Moderate priority
+        "consolidation": PerformanceTier.PERFORMANCE,  # Required: BALANCED on Claude
+                                                       # → Haiku 4.5, which rejects effort
         "quick": PerformanceTier.ECO,              # Cost optimization
     }
     # Other agents inherit default_tier (ECO)
@@ -413,7 +414,8 @@ config = UserBotConfig(
     # Per-agent tier overrides
     agent_tiers={
         "smart": PerformanceTier.PERFORMANCE,
-        "consolidation": PerformanceTier.BALANCED,
+        "consolidation": PerformanceTier.PERFORMANCE,  # Required on Claude:
+                                                       # BALANCED → Haiku, no effort support
         "quick": PerformanceTier.ECO,
     },
 
@@ -430,9 +432,9 @@ config = UserBotConfig(
 
 **Resolution Result:**
 
-- `smart` → claude + PERFORMANCE → `claude-opus-4-20250514`
-- `consolidation` → claude + BALANCED → `claude-sonnet-4-5-20250929`
-- `quick` → claude + ECO → `claude-3-haiku-20240307`
+- `smart` → claude + PERFORMANCE → `claude-sonnet-4-6`
+- `consolidation` → claude + PERFORMANCE → `claude-sonnet-4-6`
+- `quick` → claude + ECO → `claude-haiku-4-5-20251001`
 - `web_search` → gemini (enforced) + override → `gemini-2.0-flash`
 - `router` → gemini (strategy default) + ECO → `gemini-2.0-flash`
 

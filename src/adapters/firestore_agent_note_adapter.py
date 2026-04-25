@@ -89,6 +89,8 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
         )
 
     async def delete_note(self, note_id: str, user_id: str) -> bool:
+        if not note_id:
+            raise ValueError("delete_note: note_id must be a non-empty string")
         logger.debug("🗑️ [AgentNote] delete_note: note_id=%r user_id=%s", note_id, user_id[:8])
         doc_ref = self._col.document(note_id)
         doc = await doc_ref.get()
@@ -105,6 +107,8 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
         return True
 
     async def update_note(self, data: NoteUpdate) -> AgentNote:
+        if not data.note_id:
+            raise ValueError("update_note: note_id must be a non-empty string")
         doc_ref = self._col.document(data.note_id)
         doc = await doc_ref.get()
         if not doc.exists:

@@ -564,7 +564,22 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
 - **Port is justified** when: 2+ implementations, testable substitution, system boundary.
 - **Port is not needed** for internal services with a single implementation.
 - **PerformanceTier** (ECO/BALANCED/PERFORMANCE) — abstraction between agents and concrete models.
+  When picking a default tier for a new agent, verify the resolved model accepts every
+  parameter the agent sends. Concrete trap: `BALANCED` on Claude → `claude-haiku-4-5-20251001`,
+  which rejects `output_config.effort` (HTTP 400). ConsolidationAgent default is therefore
+  `PERFORMANCE` (`claude-sonnet-4-6`) in `_DEFAULT_AGENT_TIERS`. See
+  `docs/05_building_blocks/provider_resolution/README.md` §2.1, §2.4.
 - **ProviderRegistry** — runtime LLM provider selection (gemini/claude/grok).
+- **Adapter capability gates** — each adapter silently drops parameters the resolved model
+  doesn't accept instead of forwarding and crashing on 400. ClaudeAdapter gates `thinking`,
+  `output_config.effort`, and `web_search_20260209` on `_THINKING_MODELS` / `_DYNAMIC_SEARCH_MODELS`
+  substring checks; verify against `client.models.retrieve(<model>).capabilities` when adding
+  a new gate. SDK pin: `anthropic >= 0.97.0`.
+- **GeminiEmbeddingAdapter throttling** — process-local `asyncio.Semaphore` caps in-flight
+  `batchEmbedContents` calls (default `GEMINI_EMBED_CONCURRENCY=20`, sized for AI Studio Tier 2
+  = 5000 RPM); 429 `RESOURCE_EXHAUSTED` retried 3× with exponential backoff (2/4/8s). Both read
+  (search) and write (fact storage) paths share the same adapter instance and same semaphore.
+  See `docs/05_building_blocks/embedding_system/README.md` §2.3.
 - **PromptCacheStrategy** — transparent prompt caching via proxy pattern. Agents declare their
   type; strategy resolves cache config; `CachingLLMProxy` wraps the provider. Agents never
   import or reference `PromptCacheConfig`. See `docs/10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md`.

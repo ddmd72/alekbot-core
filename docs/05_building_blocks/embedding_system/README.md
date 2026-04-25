@@ -47,12 +47,43 @@ A domain-level interface that defines the contract for vector generation.
 
 ### 2.2 GeminiEmbeddingAdapter (Adapter)
 
-The production implementation using Google's Gemini API.
+The production implementation using Google's Gemini API (`generativelanguage.googleapis.com`,
+AI Studio API key).
 
 - **Model:** `models/gemini-embedding-001`.
 - **Dimensionality:** Fixed at **768** to match Firestore's KNN vector indexes.
-- **Concurrency:** Uses `asyncio.to_thread` for safe integration with the async runtime.
-- **Batch API:** `get_embeddings_batch()` sends multiple texts in a single `batchEmbedContents` call, reducing per-search embedding latency from ~15s (3 sequential calls) to ~1-2s.
+- **Concurrency:** `asyncio.to_thread` bridges the sync SDK into the async runtime.
+- **Batch API:** `get_embeddings_batch()` sends multiple texts in a single
+  `batchEmbedContents` call, reducing per-search embedding latency from ~15s
+  (3 sequential calls) to ~1–2s.
+
+### 2.3 Throttling and 429 retry
+
+The adapter caps **in-flight requests** with a process-local
+`asyncio.Semaphore` and retries **`RESOURCE_EXHAUSTED` (429)** with exponential
+backoff. Both the read path (`SearchEnrichmentService.enrich_context`) and the
+write path (`FactWriteService` storing 3 vectors per fact) go through this
+adapter, so consolidation runs that fan out parallel `search_existing_facts`
++ `create_fact` tool calls can momentarily burst above Google's per-second
+limiter even when the per-minute quota has plenty of headroom.
+
+Defaults — sized for AI Studio Tier 2 (`gemini-embedding-001` = 5000 RPM
+sustained, ~83 RPS):
+
+| Knob                         | Default | Override env var              |
+| ---------------------------- | ------- | ----------------------------- |
+| Concurrency cap (semaphore)  | **20**  | `GEMINI_EMBED_CONCURRENCY`    |
+| Retries on 429               | 3       | (not configurable)            |
+| Initial backoff              | 2s      | (doubles each attempt: 2/4/8) |
+
+Math behind the default: with avg latency ~0.7s, `N=20` → ~28 RPS = ~1700 RPM
+≈ 34 % of the Tier 2 ceiling. Leaves ~3300 RPM of headroom for cross-instance
+Cloud Run bursts and parallel write-path embedding calls. Bump
+`GEMINI_EMBED_CONCURRENCY` if you upgrade to Tier 3 or migrate to Vertex AI.
+
+The retry path matches `genai_errors.ClientError` with `code=429` or the
+literal string `RESOURCE_EXHAUSTED`. Other failure modes propagate
+immediately.
 
 ---
 
@@ -104,6 +135,13 @@ The `SmartDeduplicationService` uses embeddings to calculate cosine similarity b
 
 ---
 
-**Last Updated:** 2026-02-10  
+**Last Updated:** 2026-04-25  
 **Status:** ✅ Complete  
 **Phase:** Documentation Audit Phase 3.11
+
+### Changelog
+
+- **2026-04-25:** Added §2.3 Throttling and 429 retry. Production hit AI Studio
+  per-second burst limiter on parallel consolidation flows even though Tier 2
+  per-minute quota was barely used; adapter now caps concurrency at 20 and
+  retries 429 with exponential backoff.

@@ -72,7 +72,7 @@ class ConsolidationService:
                     user_id[:8], (account_id[:12] if account_id else "None"),
                 )
 
-                await self._queue.reset_processing_batches(user_id)
+                await self._queue.reset_recoverable_batches(user_id)
 
                 processed = 0
                 while True:
@@ -119,21 +119,28 @@ class ConsolidationService:
                         processed += 1
                     else:
                         attempts = await self._queue.increment_attempts(batch.batch_id)
+                        error_str = str(response.error)
                         if attempts >= 3:
                             await self._queue.update_batch_status(
-                                batch.batch_id, BatchStatus.FAILED, error=str(response.error)
+                                batch.batch_id, BatchStatus.FAILED, error=error_str
                             )
+                            # Single, structured ERROR line — alert/dashboard friendly.
+                            # Keep all signals on one line: batch_id, user_id, attempts,
+                            # message_count, full error string. Grep target:
+                            # "[Librarian] CONSOLIDATION_FAILED".
                             logger.error(
-                                "❌ [Librarian] Batch %s failed after %d attempts. Skipping.",
-                                batch.batch_id, attempts,
+                                "❌ [Librarian] CONSOLIDATION_FAILED batch_id=%s user_id=%s "
+                                "attempts=%d messages=%d error=%r",
+                                batch.batch_id, batch.user_id, attempts,
+                                len(batch.messages), error_str,
                             )
                         else:
                             await self._queue.update_batch_status(
-                                batch.batch_id, BatchStatus.RETRY_PENDING, error=str(response.error)
+                                batch.batch_id, BatchStatus.RETRY_PENDING, error=error_str
                             )
                             logger.warning(
-                                "⚠️ [Librarian] Batch %s failed (attempt %d). Set to retry later.",
-                                batch.batch_id, attempts,
+                                "⚠️ [Librarian] Batch %s failed (attempt %d/3) user=%s: %s",
+                                batch.batch_id, attempts, batch.user_id[:8], error_str,
                             )
                         break
 

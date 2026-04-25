@@ -543,10 +543,17 @@ class OpenAIAdapter(LLMPort):
                 try:
                     args = json.loads(arguments) if arguments else {}
                 except json.JSONDecodeError:
+                    # Truncated JSON — almost always max_tokens hit mid-arguments.
+                    # Surface this as structured error so callers can distinguish
+                    # "API truncated" from "model passed empty args".
                     logger.warning(
-                        f"[OpenAIAdapter] Failed to parse tool args for {name}: {arguments}"
+                        f"[OpenAIAdapter] Truncated tool args for {name} "
+                        f"(len={len(arguments)}): {arguments[:200]}..."
                     )
-                    args = {}
+                    args = {
+                        "_parse_error": "truncated_json",
+                        "_raw_prefix": arguments[:500],
+                    }
                 tool_calls.append(ToolCall(
                     name=name,
                     args=args,

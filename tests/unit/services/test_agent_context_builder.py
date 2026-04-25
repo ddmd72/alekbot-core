@@ -125,14 +125,19 @@ def test_build_router_respects_provider_preference(builder):
     assert ctx.model_name == "grok-model-for-eco"
 
 
-def test_build_consolidation_defaults_to_claude_balanced(builder):
-    """Test consolidation uses BALANCED tier (claude-sonnet-4-6, from
-    _DEFAULT_AGENT_TIERS in src/domain/user.py)."""
+def test_build_consolidation_defaults_to_claude_performance(builder):
+    """Test consolidation uses PERFORMANCE tier (claude-sonnet-4-6).
+
+    Was BALANCED before 2026-04-25, but BALANCED on Claude resolves to
+    claude-haiku-4-5-20251001, which rejects `output_config.effort` with
+    HTTP 400. PERFORMANCE → claude-sonnet-4-6, which supports effort.
+    See _DEFAULT_AGENT_TIERS in src/domain/user.py.
+    """
     config = UserBotConfig()
     ctx = builder.build("consolidation", config)
 
     assert ctx.provider.name == "claude"
-    assert ctx.tier == PerformanceTier.BALANCED
+    assert ctx.tier == PerformanceTier.PERFORMANCE
 
 
 def test_build_with_default_tier_override(builder):

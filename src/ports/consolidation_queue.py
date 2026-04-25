@@ -49,8 +49,16 @@ class ConsolidationQueue(ABC):
         pass
 
     @abstractmethod
-    async def reset_processing_batches(self, user_id: str) -> int:
-        """Reset stale PROCESSING batches → RETRY_PENDING for this user.
-        Used at the start of each consolidation run to recover zombies left
-        by crashed or CPU-throttled workers. Returns count of batches reset."""
+    async def reset_recoverable_batches(self, user_id: str) -> int:
+        """Reset PROCESSING and FAILED batches → RETRY_PENDING for this user.
+
+        Called at the start of each consolidation run. Two recovery paths:
+          - PROCESSING zombies: workers crashed / Cloud Run CPU-throttled mid-batch.
+          - FAILED batches: marked failed after 3 attempts on prior runs. Most failures
+            are transient (LLM 5xx, rate limits, deploy bugs); user prefers automatic
+            retry to avoid silent data loss. Periodic Firestore cron purges truly stuck
+            FAILED rows by age (manual external cleanup).
+
+        Resets `attempts` to 0 and clears `error` so the retry starts clean.
+        Returns count of batches reset."""
         pass

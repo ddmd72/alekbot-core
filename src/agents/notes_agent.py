@@ -396,6 +396,13 @@ class NotesAgent(BaseAgent):
     async def _execute_tool(
         self, name: str, args: Dict[str, Any], user_id: str, account_id: str
     ) -> Any:
+        if args.get("_parse_error") == "truncated_json":
+            return {"error": (
+                f"Tool arguments for {name} were truncated by the model API "
+                f"(likely max_tokens reached during JSON generation). "
+                f"Retry with a shorter 'instruction' or 'text' field."
+            )}
+
         if name == "create_self_reminder":
             due = _parse_dt(args.get("due"), self._user_tz)
             if due is None:
@@ -425,7 +432,9 @@ class NotesAgent(BaseAgent):
             return result
 
         if name == "update_self_reminder":
-            note_id = str(args.get("note_id") or "")
+            note_id = str(args.get("note_id") or "").strip()
+            if not note_id:
+                return {"error": "update_self_reminder requires non-empty 'note_id'. Read it from active_reminders block; never fabricate or omit."}
             note = await self._notes.update_note(NoteUpdate(
                 note_id=note_id,
                 user_id=user_id,
@@ -442,7 +451,9 @@ class NotesAgent(BaseAgent):
             return {"note_id": note.note_id, "status": "updated"}
 
         if name == "delete_self_reminder":
-            note_id = str(args.get("note_id") or "")
+            note_id = str(args.get("note_id") or "").strip()
+            if not note_id:
+                return {"error": "delete_self_reminder requires non-empty 'note_id'. Read it from active_reminders block; never fabricate or omit."}
             deleted = await self._notes.delete_note(note_id=note_id, user_id=user_id)
             if not deleted:
                 return {"error": f"Reminder {note_id!r} not found or does not belong to this user."}

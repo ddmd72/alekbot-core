@@ -50,12 +50,45 @@ Abstract levels of reasoning capability:
 - **BALANCED:** Good reasoning at moderate cost (e.g., Gemini Pro). Used for standard tasks.
 - **PERFORMANCE:** Top-tier reasoning (e.g., Claude Opus). Used for complex synthesis and tool orchestration.
 
+> **Tier × provider matrix has sharp edges.** Every adapter maps a tier to a
+> concrete model name and not every model accepts every parameter. Concrete
+> example: `BALANCED` on Claude resolves to `claude-haiku-4-5-20251001`, which
+> rejects `output_config.effort` with HTTP 400. The ConsolidationAgent default
+> tier was therefore lifted to `PERFORMANCE` (`claude-sonnet-4-6`) in
+> `_DEFAULT_AGENT_TIERS` (`src/domain/user.py`). When you change a default
+> tier, also verify that the resulting model accepts every parameter the agent
+> sends (effort, thinking type, response_schema, etc.) — see §2.4.
+
 ### 2.2 ProviderRegistry
 
 A central service locator that maintains active instances of LLM adapters (Gemini, Claude, etc.).
 
 - **Registration:** Adapters are registered at startup in `main.py`.
 - **Lookup:** Services fetch concrete `LLMPort` implementations by name.
+
+### 2.4 Per-model capability gates inside adapters
+
+Beyond strategy/tier resolution, each adapter applies **capability gates**
+before serializing the request — silently dropping parameters the resolved
+model does not accept rather than crashing on a 400. Authoritative source for
+support is the provider's own `models.retrieve()` capability response (verified
+2026-04-25 via `client.models.retrieve(<model>).capabilities` for Anthropic).
+
+**ClaudeAdapter** (`src/adapters/claude_adapter.py`):
+
+| Parameter             | Gated to                                | Behavior on unsupported model                |
+| --------------------- | --------------------------------------- | -------------------------------------------- |
+| `thinking={adaptive}` | `_THINKING_MODELS = sonnet, opus`       | Skipped silently (Haiku has only `enabled`). |
+| `output_config.effort`| Same `_THINKING_MODELS` substring check | Dropped silently. Required: API rejects with `400 invalid_request_error: This model does not support the effort parameter.` on Haiku 4.5. Effort and adaptive thinking go together — only Sonnet 4.6 / Opus 4.7 accept both. |
+| `web_search_20260209` | `_DYNAMIC_SEARCH_MODELS = sonnet, opus` | Falls back to legacy `web_search_20250305` on Haiku. |
+
+The gate uses substring matching (`"claude-sonnet" in model_name`) rather than
+hard-coded model lists so new minor revisions inherit the right behavior. If
+Anthropic ever adds effort to Haiku, drop `output_config.effort` from the
+gate; until then, **never send effort to a non-thinking model**.
+
+**SDK pin:** `anthropic >= 0.97.0` (see `requirements.txt`). Older versions
+lack typed support for the GA `output_config.format` structured outputs API.
 
 ### 2.3 AgentProviderStrategy
 
