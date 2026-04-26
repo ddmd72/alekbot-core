@@ -78,6 +78,11 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+# Local-only review/inspection notes (architecture audits, competency self-assessment).
+# Files exist on disk but are never tracked. See repo history for previously-committed
+# review docs that need to be removed retroactively.
+docs/reviews/
+
 # PyBuilder
 .pybuilder/
 target/
