@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from dateutil.relativedelta import relativedelta
 
 from ..domain.agent_note import AgentNote, ReminderRecurrence
+from ..domain.notification_kind import NotificationKind
 from ..ports.agent_note_port import AgentNotePort
 from ..utils.logger import logger
 
@@ -89,6 +90,7 @@ class RemindersService:
                 await self._agent_factory.ensure_agents_for_user(note.user_id)
                 task_complexity = note.complexity.value if note.complexity else "simple_analytics"
                 await self._notification.notify(
+                    kind=NotificationKind.REMINDER,
                     user_id=note.user_id,
                     account_id=account_id,
                     system_alert=_build_reminder_alert(note),

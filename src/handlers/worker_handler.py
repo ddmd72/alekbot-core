@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from ..ports.account_repository import AccountRepository
 
 from ..domain.agent import AgentIntent, AgentMessage, AgentStatus
+from ..domain.notification_kind import NotificationKind
 from ..handlers.agent_worker_handler import AgentWorkerHandler
 from ..services.deep_research_delivery import (
     NotificationPort, deliver_deep_research,
@@ -278,6 +279,7 @@ class WorkerHandler:
         if attempt >= self._MAX_POLL_ATTEMPTS:
             logger.warning(f"[DeepResearch] Polling timeout: interaction={interaction_id[:16]}")
             await self._notification.notify(
+                kind=NotificationKind.DEEP_RESEARCH,
                 user_id=user_id,
                 account_id=account_id,
                 system_alert="Deep research timed out after 60 minutes without producing a result.",
@@ -301,6 +303,7 @@ class WorkerHandler:
                     f"consecutive errors: interaction={interaction_id[:16]}"
                 )
                 await self._notification.notify(
+                    kind=NotificationKind.DEEP_RESEARCH,
                     user_id=user_id,
                     account_id=account_id,
                     system_alert="Deep research did not complete — the research session expired or encountered a persistent error.",
@@ -361,6 +364,7 @@ class WorkerHandler:
             f"[DeepResearch] Operation failed: interaction={interaction_id[:16]}, error={payload_text}"
         )
         await self._notification.notify(
+            kind=NotificationKind.DEEP_RESEARCH,
             user_id=user_id, account_id=account_id,
             system_alert="Deep research did not complete — the AI provider returned an error.",
             channel_id_override=origin_channel_id,
@@ -489,7 +493,8 @@ class WorkerHandler:
         system_alert = self._email_review.build_alert(date_str, len(emails))
 
         await self._agent_factory.ensure_agents_for_user(user_id)
-        await self._notification.notify(
+        result = await self._notification.notify(
+            kind=NotificationKind.DAILY_DIGEST,
             user_id=user_id,
             account_id=account_id,
             system_alert=system_alert,
@@ -500,6 +505,20 @@ class WorkerHandler:
             task_complexity="deep_reasoning",
             email_for_triage=emails,
         )
+
+        if not result.delivered:
+            # Returning 5xx allows Cloud Tasks queue-level retry to handle
+            # transient failures (channel unavailable, agent timeout, etc.).
+            logger.warning(
+                f"[Worker] daily_email_review: delivery FAILED for {user_id[:8]} "
+                f"(emails={len(emails)}, agent_status={result.agent_status}, "
+                f"error={result.error})"
+            )
+            return {
+                "error": result.error or "delivery_failed",
+                "agent_status": result.agent_status.value,
+                "emails": len(emails),
+            }, 500
 
         logger.info(
             f"[Worker] daily_email_review: delivered {len(emails)} emails to Smart for {user_id[:8]}"

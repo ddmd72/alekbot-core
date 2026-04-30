@@ -37,6 +37,7 @@ from typing import Optional
 
 from quart import Blueprint, request, jsonify
 
+from ..domain.notification_kind import NotificationKind
 from ..services.deep_research_delivery import NotificationPort, deliver_deep_research
 from ..ports.media_storage_port import MediaStoragePort
 from ..services.task_dispatch_service import TaskDispatchService
@@ -191,6 +192,7 @@ def create_deep_research_webhooks_blueprint(
             error = (response_obj.get("error") or {}).get("message", "unknown error")
             logger.error("[DeepResearchWebhook] Job failed: job=%s error=%s", job_id[:16], error)
             await notification_service.notify(
+                kind=NotificationKind.DEEP_RESEARCH,
                 user_id=user_id,
                 account_id=account_id,
                 system_alert="Deep research did not complete — the AI provider returned an error.",
@@ -200,6 +202,7 @@ def create_deep_research_webhooks_blueprint(
         if event_type == "response.cancelled":
             logger.info("[DeepResearchWebhook] Job cancelled: job=%s", job_id[:16])
             await notification_service.notify(
+                kind=NotificationKind.DEEP_RESEARCH,
                 user_id=user_id,
                 account_id=account_id,
                 system_alert="Deep research was cancelled before completing.",

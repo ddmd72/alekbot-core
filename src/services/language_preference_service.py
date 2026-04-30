@@ -9,6 +9,7 @@ document (so the correct LANG_* token is picked up during assembly).
 from typing import TYPE_CHECKING, Optional, Tuple
 
 from ..domain.language import LanguageCode
+from ..domain.notification_kind import NotificationKind
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -156,6 +157,7 @@ class LanguagePreferenceService(LanguageServicePort):
                     if self._ensure_agents:
                         await self._ensure_agents(user_id)
                     await self._notification_service.notify(
+                        kind=NotificationKind.INTERACTIVE,
                         user_id=user_id,
                         account_id=account_id,
                         system_alert=alert_text,

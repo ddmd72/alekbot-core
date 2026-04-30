@@ -30,6 +30,8 @@ from src.ports.llm_port import LLMResponse, ToolCall
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from src.ports.notification_state_port import NotificationStatePort
 from src.ports.session_store import SessionStore
+from src.domain.notification_kind import NotificationKind
+from src.infrastructure.notification_sla import NOTIFICATION_SLA
 from src.services.user_notification_service import UserNotificationService
 
 
@@ -150,6 +152,7 @@ class TestNotificationServiceNotifySession:
             state_repo=state_repo,
             channel_factory=channel_factory,
             coordinator=coordinator,
+            notification_sla=NOTIFICATION_SLA,
             session_store=session_store,
         )
         return service, state_repo, coordinator, session_store
@@ -162,6 +165,7 @@ class TestNotificationServiceNotifySession:
         )
 
         await service.notify(
+            kind=NotificationKind.INTERACTIVE,
             user_id=_USER,
             account_id=_ACCOUNT,
             system_alert="Test alert",
@@ -181,6 +185,7 @@ class TestNotificationServiceNotifySession:
         )
 
         await service.notify(
+            kind=NotificationKind.INTERACTIVE,
             user_id=_USER,
             account_id=_ACCOUNT,
             system_alert="Test alert",
@@ -199,6 +204,7 @@ class TestNotificationServiceNotifySession:
         )
 
         await service.notify(
+            kind=NotificationKind.INTERACTIVE,
             user_id=_USER,
             account_id=_ACCOUNT,
             system_alert="Test alert",
@@ -231,6 +237,7 @@ class TestNotificationServiceDocLink:
             state_repo=state_repo,
             channel_factory=channel_factory,
             coordinator=coordinator,
+            notification_sla=NOTIFICATION_SLA,
             session_store=session_store,
         )
         return service, state_repo, session_store
