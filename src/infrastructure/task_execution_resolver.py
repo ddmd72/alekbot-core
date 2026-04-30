@@ -1,30 +1,24 @@
 """
-TaskExecutionResolver — maps a per-call ``task_complexity`` value to an
-``ExecutionOverride``.
+TaskExecutionResolver and ExecutionOverride
+============================================
 
-Reads ``message.context["task_complexity"]`` (a string from the
-``TaskComplexity`` enum), merges per-user overrides on top of the system
-defaults, and resolves the resulting ``ComplexitySettings`` into an
-``AgentExecutionContext`` via ``AgentContextBuilder``. Returns ``None`` when
-no complexity is requested or when the value is invalid (the agent will
-then fall back to its default execution context).
+Config-resolution infrastructure: maps a per-call ``task_complexity``
+value to an ``ExecutionOverride`` describing the effective provider,
+model, thinking effort, and intent remap for one agent call.
 
-The returned ``ExecutionOverride`` is a frozen value object — agents
-consume it locally during one ``execute()`` call and never persist it on
-``self.*`` (see ``docs/04_solution_strategy/decisions/per_call_execution_context.md``).
+Lives in ``infrastructure/`` because it is the only layer importable by
+both ``agents/`` (which need to consume ``ExecutionOverride`` at runtime)
+and ``composition/`` (which constructs the resolver), while still being
+allowed to depend on ``ports/llm_port.AgentExecutionContext``.
+``domain/``, ``ports/``, and ``services/`` are each blocked by an
+existing layer rule (see § 4 of NOTIFICATION_DELIVERY_REFACTOR_RFC).
 
-The value object lives in this module (not a separate file) because:
-
-  - ``domain/`` cannot import from ``ports/`` (ExecutionOverride references
-    ``AgentExecutionContext`` which lives in ``ports/llm_port.py``).
-  - ``ports/`` cannot import from other ``ports/`` (REQ-ARCH-06).
-  - ``services/`` cannot import from other ``services/`` (REQ-ARCH-22).
-
-Co-locating the value object with its sole producer (the resolver)
-respects every layer rule and adds no cross-module coupling. Consumers
-(SmartResponseAgent, etc.) import ``ExecutionOverride`` from this module.
+The resolver depends on ``AgentContextBuilder`` (a service) only via
+constructor injection. The TYPE_CHECKING import of that class is
+excluded from the architectural test for infrastructure → services.
 
 See: docs/10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md § 4
+     docs/04_solution_strategy/decisions/per_call_execution_context.md
 """
 
 from __future__ import annotations
@@ -32,14 +26,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, Optional
 
-from ..domain.task_complexity import TaskComplexity
 from ..domain.complexity_settings import ComplexitySettings, DEFAULT_COMPLEXITY_SETTINGS
+from ..domain.task_complexity import TaskComplexity
 from ..domain.user import UserBotConfig
 from ..ports.llm_port import AgentExecutionContext
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
-    from .agent_context_builder import AgentContextBuilder
+    from ..services.agent_context_builder import AgentContextBuilder
 
 
 @dataclass(frozen=True)
@@ -64,6 +58,16 @@ class ExecutionOverride:
 
 
 class TaskExecutionResolver:
+    """Resolve ``task_complexity`` (string) into an ``ExecutionOverride``.
+
+    Reads ``message.context["task_complexity"]``, merges per-user overrides
+    on top of system defaults, and asks ``AgentContextBuilder`` to translate
+    the resulting ``ComplexitySettings`` into an ``AgentExecutionContext``.
+
+    Returns ``None`` when no complexity is requested or when the value is
+    invalid (the agent then falls back to its default execution context).
+    """
+
     def __init__(self, context_builder: "AgentContextBuilder"):
         self.context_builder = context_builder
 
@@ -71,7 +75,7 @@ class TaskExecutionResolver:
         self,
         context: dict,
         config: UserBotConfig,
-        agent_type: str = "smart"
+        agent_type: str = "smart",
     ) -> Optional[ExecutionOverride]:
         complexity_str = context.get("task_complexity")
         if not complexity_str:
@@ -85,7 +89,7 @@ class TaskExecutionResolver:
                 extra={
                     "event": "invalid_task_complexity",
                     "task_complexity": complexity_str,
-                }
+                },
             )
             return None
 
@@ -104,13 +108,13 @@ class TaskExecutionResolver:
             tier=merged_tier,
             thinking_effort=merged_thinking,
             intent_remap=merged_remap,
-            provider_override=merged_provider
+            provider_override=merged_provider,
         )
 
         execution_context = self.context_builder.resolve_for_task(
             agent_type=agent_type,
             config=config,
-            settings=settings
+            settings=settings,
         )
 
         return ExecutionOverride(

@@ -9,7 +9,7 @@ from src.ports.llm_port import LLMPort, LLMResponse, UsageMetadata, ProviderCapa
 from src.ports.session_store import SessionStore
 from src.services.agent_context_builder import AgentExecutionContext
 from src.domain.user import PerformanceTier, UserBotConfig
-from src.services.task_execution_resolver import TaskExecutionResolver
+from src.infrastructure.task_execution_resolver import TaskExecutionResolver
 
 
 def _read_env_value(key: str) -> str:

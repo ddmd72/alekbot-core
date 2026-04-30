@@ -24,12 +24,15 @@ import pytest
 from src.domain.complexity_settings import ComplexitySettings, DEFAULT_COMPLEXITY_SETTINGS
 from src.domain.task_complexity import TaskComplexity
 from src.domain.user import PerformanceTier, UserBotConfig
+from src.infrastructure.task_execution_resolver import (
+    ExecutionOverride,
+    TaskExecutionResolver,
+)
 from src.ports.llm_port import (
     AgentExecutionContext,
     LLMPort,
     ProviderCapabilities,
 )
-from src.services.task_execution_resolver import ExecutionOverride, TaskExecutionResolver
 
 
 # --------------------------------------------------------------------------- #
@@ -109,7 +112,7 @@ class TestMissingOrInvalidComplexity:
         # DEFAULT_COMPLEXITY_SETTINGS, resolve must return None instead of
         # crashing. Today every enum value has an entry; this test guards
         # against future enum additions that forget to update the table.
-        from src.services import task_execution_resolver as resolver_module
+        from src.infrastructure import task_execution_resolver as resolver_module
 
         # Patch with an empty dict — no complexity value will resolve.
         monkeypatch.setattr(
@@ -275,7 +278,7 @@ class TestReturnTypeContract:
             config=empty_user_config,
         )
         assert type(result).__name__ == "ExecutionOverride"
-        assert type(result).__module__ == "src.services.task_execution_resolver"
+        assert type(result).__module__ == "src.infrastructure.task_execution_resolver"
 
     def test_returned_override_is_frozen(self, resolver, empty_user_config):
         import dataclasses
