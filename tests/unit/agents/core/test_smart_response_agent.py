@@ -31,7 +31,7 @@ from src.ports.llm_port import Message, MessagePart, ToolCall, LLMResponse, Usag
 from src.services.agent_context_builder import AgentExecutionContext
 from src.domain.user import PerformanceTier, UserBotConfig
 from src.ports.llm_port import ProviderCapabilities
-from src.services.task_execution_resolver import TaskExecutionResolver
+from src.infrastructure.task_execution_resolver import TaskExecutionResolver
 
 
 # =========================================================================

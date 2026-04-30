@@ -97,12 +97,13 @@ behind whichever caller is currently inside `_execute_locked`.
 existing `AgentMessage.context` channel; nothing is stored on `self.*`
 that varies per call.
 
-#### A.1 — Rename `TaskExecutionOverride` → `ExecutionOverride` (co-located with the resolver)
+#### A.1 — Move `TaskExecutionResolver` to `infrastructure/`, rename `TaskExecutionOverride` → `ExecutionOverride`
 
 `ExecutionOverride` is structurally a value object (immutable
 dataclass) describing a per-call override of the agent's default
 execution parameters. Its natural home would be `domain/`, but every
-candidate placement is blocked by an existing layer rule:
+candidate placement except `infrastructure/` is blocked by an existing
+layer rule:
 
 - `domain/` cannot import from `ports/`, and `ExecutionOverride`
   references `AgentExecutionContext` from `ports/llm_port.py`
@@ -111,24 +112,35 @@ candidate placement is blocked by an existing layer rule:
   `tests/unit/arch_tech_debt.py`).
 - `ports/` cannot import from other `ports/` (REQ-ARCH-06 /
   `test_ports_do_not_import_other_ports`).
-- `services/` cannot import from other `services/` (REQ-ARCH-22 /
-  `test_services_do_not_import_other_services`). A separate file
-  `services/execution_override.py` would force the resolver and any
-  agent in another service file to violate this rule.
+- `services/` cannot import from `infrastructure/` (REQ-ARCH-01) AND
+  `agents/` cannot import from `services/` at runtime (REQ-ARCH-13 /
+  `test_agents_layer_isolation`). A `services/execution_override.py`
+  would block agent runtime imports; a `services/task_execution_resolver.py`
+  importing infrastructure would violate the services-layer rule.
 
-The clean placement that respects every layer rule is **co-locating
-the value object with its sole producer** in
-`src/services/task_execution_resolver.py`. Consumers
-(`SmartResponseAgent`, etc.) import `ExecutionOverride` from that
-module — agents are free to import from services without violating
-REQ-ARCH-22.
+Only `infrastructure/` satisfies every constraint:
+
+- `infrastructure/` may import `ports/` (so `AgentExecutionContext` is
+  reachable).
+- `agents/`, `composition/`, and `services/` (TYPE_CHECKING-only for
+  services-layer constraints) may all import from `infrastructure/`.
+- `TaskExecutionResolver`'s only service-layer dependency
+  (`AgentContextBuilder`) is injected via constructor; the class
+  reference is `TYPE_CHECKING`, which the architectural test excludes
+  from layer checks.
+
+`TaskExecutionResolver` and `ExecutionOverride` are therefore co-located
+in `src/infrastructure/task_execution_resolver.py`:
 
 ```python
-# src/services/task_execution_resolver.py
+# src/infrastructure/task_execution_resolver.py
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 from ..ports.llm_port import AgentExecutionContext
+
+if TYPE_CHECKING:
+    from ..services.agent_context_builder import AgentContextBuilder
 
 
 @dataclass(frozen=True)
@@ -144,13 +156,17 @@ class ExecutionOverride:
 
 
 class TaskExecutionResolver:
-    ...
+    def __init__(self, context_builder: "AgentContextBuilder"):
+        self.context_builder = context_builder
+
     def resolve(...) -> Optional[ExecutionOverride]: ...
 ```
 
-Service stays in `services/`; the local class is simply renamed
-(`TaskExecutionOverride` → `ExecutionOverride`) with a frozen-dataclass
-upgrade. No new cross-layer imports — services
+The old `services/task_execution_resolver.py` is deleted. Sole call
+sites — `SmartResponseAgent` (TYPE_CHECKING import for the resolver,
+runtime import for the value object) and `composition/user_agent_factory.py`
+(constructs the resolver) — update import paths. No new cross-layer
+imports — agents
 already import ports.
 
 #### A.2 — SmartAgent resolves override locally per-call, no mutation
@@ -201,7 +217,11 @@ async def _run(self, message: AgentMessage, eff: _Effective) -> AgentResponse:
 
 | File | Change | New imports | Imports removed |
 |---|---|---|---|
-| `services/task_execution_resolver.py` | Local `TaskExecutionOverride` renamed to `ExecutionOverride` (frozen dataclass) and kept in same module | (no new imports) | — |
+| `infrastructure/task_execution_resolver.py` | New file (moved from `services/`); contains both `ExecutionOverride` (frozen dataclass) and `TaskExecutionResolver` | `..ports.llm_port.AgentExecutionContext` (runtime); `..services.agent_context_builder.AgentContextBuilder` (TYPE_CHECKING) | — |
+| `services/task_execution_resolver.py` | DELETED | — | local `TaskExecutionOverride` dataclass deleted |
+| `agents/core/smart_response_agent.py` | Import `ExecutionOverride` from `infrastructure.task_execution_resolver`; TYPE_CHECKING import of `TaskExecutionResolver` switched to infrastructure path; remove `_execute_lock`; replace `_execute_locked` with `_resolve_effective` + `_run` | `...infrastructure.task_execution_resolver.ExecutionOverride` (runtime) | — |
+| `composition/user_agent_factory.py` | Import path of `TaskExecutionResolver` switched to infrastructure | — | — |
+| `agents/base_agent.py` | `_call_llm` accepts optional `llm_override` and `fallback_ctx_override` keyword args (backwards compatible) | — | — |
 | `agents/core/smart_response_agent.py` | Remove lock, per-call ctx | (no new) | `asyncio.Lock` no longer needed |
 
 ### Tests
@@ -588,9 +608,9 @@ path introduced or modified by this RFC has a unit test. Concretely:
 | Layer | What is mandatory |
 |---|---|
 | `domain/notification_kind.py` | All enum values; serialization round-trip; `NotifyResult` immutability and equality |
-| `services/task_execution_resolver.py` (`ExecutionOverride`) | Frozen dataclass invariants; equality; field defaults |
+| `infrastructure/task_execution_resolver.py` (`ExecutionOverride`) | Frozen dataclass invariants; equality; field defaults |
 | `infrastructure/notification_sla.py` | Every `NotificationKind` has an SLA entry; SLA values asserted explicitly (regression catches accidental changes); table is exhaustive (no missing enum value) |
-| `services/task_execution_resolver.py` | Resolver returns `ExecutionOverride` when `task_complexity` is set; returns `None` when absent or invalid; resolves user override correctly when present |
+| `infrastructure/task_execution_resolver.py` (`TaskExecutionResolver`) | Resolver returns `ExecutionOverride` when `task_complexity` is set; returns `None` when absent or invalid; resolves user override correctly when present |
 | `agents/core/smart_response_agent.py` | `_resolve_effective` priority chain (explicit override > resolver > defaults); concurrent `process()` calls with different overrides do not interfere; `self.llm` / `self.model_name` / `self._execute_lock` are gone (negative test); error path returns `AgentResponse.failure` not exception |
 | `services/user_notification_service.py` | `notify(kind=...)` propagates `sla.timeout_ms` to `AgentMessage.timeout_ms` for every `NotificationKind`; returns `NotifyResult(delivered=True)` on success; returns `NotifyResult(delivered=False, agent_status=FAILED)` when agent reports FAILED; returns `NotifyResult(delivered=False, error=...)` on exception in route_message; `kind` is keyword-only (positional call raises TypeError) |
 | `services/reminders_service.py` | Successful claim → enqueue Cloud Task with correct payload (note_id, user_id, due_at ISO format); failed claim (False return) → no enqueue; one-time reminder → `delete_if_due_at` instead of `reschedule_if_due_at`; `notify()` is no longer called from cron handler (negative test) |
@@ -662,8 +682,8 @@ considered incomplete and must not be merged.**
 
 | # | Commit | Files | Tests required |
 |---|---|---|---|
-| 1 | Rename `TaskExecutionOverride` → `ExecutionOverride` (frozen, co-located with resolver) | `services/task_execution_resolver.py` | unit: `test_execution_override.py` (frozen, equality, defaults), `test_task_execution_resolver.py` (return type, all branches) |
-| 2 | SmartAgent: drop `_execute_lock`, per-call ctx | `agents/core/smart_response_agent.py` | unit: `_resolve_effective` priority chain (3 cases) + negative tests on removed mutations + error path; integration: `test_smart_concurrent_per_user.py` (parallel calls do not interfere, wall-clock proof) |
+| 1 | Move `TaskExecutionResolver` to `infrastructure/`, rename `TaskExecutionOverride` → `ExecutionOverride` (frozen) | `infrastructure/task_execution_resolver.py` (new), `services/task_execution_resolver.py` (deleted), `composition/user_agent_factory.py` (import update), `agents/core/smart_response_agent.py` (TYPE_CHECKING import update) | unit: `tests/unit/infrastructure/test_execution_override.py` (frozen, equality, defaults), `tests/unit/infrastructure/test_task_execution_resolver.py` (return type, all branches) |
+| 2 | SmartResponseAgent: drop `_execute_lock`, per-call `_EffectiveExecution`, no mutation of `self.*`; extend `BaseAgent._call_llm` with optional override kwargs | `agents/core/smart_response_agent.py`, `agents/base_agent.py` | unit: `tests/unit/agents/core/test_smart_per_call_execution.py` (priority chain, no-mutation negative tests, frozen invariants); integration: `tests/integration/test_smart_concurrent_per_user.py` (parallel wall-clock proof, per-call override routing) |
 | 3 | `NotificationKind` enum + `NOTIFICATION_SLA` | `domain/notification_kind.py`, `infrastructure/notification_sla.py` | unit: enum values stable, `NOTIFICATION_SLA` exhaustive over enum, every kind's timeout asserted explicitly |
 | 4 | `NotifyResult` + signature change in `notify()` | `domain/notification_kind.py`, `services/user_notification_service.py` | unit: 3 outcome paths (SUCCESS, FAILED, exception), `kind=` keyword-only enforcement, `timeout_ms` propagation per kind |
 | 5 | All `notify()` callers pass `kind` and handle `NotifyResult` | `handlers/worker_handler.py`, `services/reminders_service.py`, `services/agent_worker_handler.py`, `services/deep_research_delivery.py`, etc. | unit per caller: correct `kind`, correct branching on `NotifyResult.delivered` |

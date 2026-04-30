@@ -1,6 +1,6 @@
 """
 Unit tests for the ExecutionOverride value object (defined in
-services.task_execution_resolver).
+infrastructure.task_execution_resolver, co-located with its sole producer).
 
 Covers:
 - Frozen dataclass invariants (no reassignment of attributes)
@@ -10,12 +10,12 @@ Covers:
 - intent_remap mutable-default-factory contract (independent dicts per instance)
 - Holds a reference to AgentExecutionContext
 
-ExecutionOverride is co-located with its sole producer
-(``TaskExecutionResolver``) because all three layer rules block a
-separate file: domain/ cannot import from ports/, ports/ cannot import
-from other ports/ (REQ-ARCH-06), and services/ cannot import from
-other services/ (REQ-ARCH-22). Consumers (SmartResponseAgent, etc.)
-import the value object from this module.
+ExecutionOverride lives in ``infrastructure/`` because every other layer
+is blocked: domain/ cannot import ports/, ports/ cannot import other
+ports/ (REQ-ARCH-06), services/ cannot import other services/
+(REQ-ARCH-22), and agents/ cannot import services/ at runtime
+(REQ-ARCH-13 via ``test_agents_layer_isolation``). Infrastructure is the
+only layer that satisfies every constraint.
 
 Per:
   docs/10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md § 4 / § 8.1
@@ -29,12 +29,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.domain.user import PerformanceTier
+from src.infrastructure.task_execution_resolver import ExecutionOverride
 from src.ports.llm_port import (
     AgentExecutionContext,
     LLMPort,
     ProviderCapabilities,
 )
-from src.services.task_execution_resolver import ExecutionOverride
 
 
 def _make_ctx(model_name: str = "test-model") -> AgentExecutionContext:

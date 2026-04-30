@@ -57,7 +57,7 @@ from ..infrastructure.agent_config import (
 )
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
-from ..services.task_execution_resolver import TaskExecutionResolver
+from ..infrastructure.task_execution_resolver import TaskExecutionResolver
 from ..services.history_summary_service import HistorySummaryService
 from ..agents.core.router_agent import create_router_agent
 from ..agents.memory_search_agent import FactsMemoryAgent

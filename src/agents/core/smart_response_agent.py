@@ -41,13 +41,27 @@ from ...ports.llm_port import (
 from ...ports.session_store import SessionStore
 from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_port import AgentExecutionContext
+from ...infrastructure.task_execution_resolver import ExecutionOverride
 from ...utils.logger import logger
 from ...utils.llm_response_parser import parse_llm_response
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
-    from ...services.task_execution_resolver import TaskExecutionResolver
+    from ...infrastructure.task_execution_resolver import TaskExecutionResolver
     from ...domain.user import UserBotConfig
+
+
+@dataclass(frozen=True)
+class _EffectiveExecution:
+    """Per-call resolved execution parameters. Private to this module.
+
+    Built once at the top of ``execute()`` and threaded through every
+    downstream call site. Replaces the mutate-self-then-restore pattern
+    that previously required ``_execute_lock`` to serialize concurrent
+    runs.
+    """
+    ctx: AgentExecutionContext
+    thinking_effort: Optional[str]
 
 
 class SmartResponseAgent(BaseAgent):
@@ -125,11 +139,13 @@ class SmartResponseAgent(BaseAgent):
         self._user_timezone = user_timezone
         self._default_thinking_effort = thinking_effort
 
-        # Serialize concurrent same-user execute() calls. Complexity override
-        # mutates self.llm / self.model_name / self._agent_execution_context
-        # for the duration of one run; without a lock, two concurrent requests
-        # from the same user (e.g. bound channel + DM) would race on these.
-        self._execute_lock = asyncio.Lock()
+        # NOTE: ``self.llm``, ``self.model_name``, ``self.execution_context``,
+        # and ``self._agent_execution_context`` (set by _set_execution_context
+        # above) are READ-ONLY after construction. Per-call overrides flow
+        # through ``_EffectiveExecution`` resolved by ``_resolve_effective``
+        # — never written back to ``self.*``. This is what allows concurrent
+        # ``execute()`` calls per user to run in parallel without a lock.
+        # See docs/04_solution_strategy/decisions/per_call_execution_context.md.
 
         # Extract user_id from config metadata
         self.user_id = config.metadata.get("user_id")
@@ -156,35 +172,73 @@ class SmartResponseAgent(BaseAgent):
         return bool(text) or has_attachments or bool(parts)
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
-        """
-        Execute complex response generation with agent delegation.
-        """
-        async with self._execute_lock:
-            return await self._execute_locked(message)
+        """Resolve effective execution parameters, then run the work.
 
-    async def _execute_locked(self, message: AgentMessage) -> AgentResponse:
+        No lock, no mutation of ``self.*``. Concurrent ``execute()`` calls
+        for the same user instance run in parallel; each carries its own
+        ``_EffectiveExecution`` through every downstream call site.
+        """
+        eff = self._resolve_effective(message)
+        return await self._run(message, eff)
+
+    def _resolve_effective(self, message: AgentMessage) -> _EffectiveExecution:
+        """Build per-call ``_EffectiveExecution`` from message + agent defaults.
+
+        Priority chain:
+          1. Explicit ``ExecutionOverride`` placed on
+             ``message.context["execution_override"]`` by the caller.
+          2. ``TaskExecutionResolver.resolve(...)`` based on
+             ``message.context["task_complexity"]``.
+          3. Agent defaults (``self.execution_context`` and
+             ``self._default_thinking_effort``).
+
+        ``thinking_effort`` resolution:
+          - When an override is present and its ``thinking_effort`` is set,
+            that value wins.
+          - Otherwise: ``message.context["thinking_effort"]`` →
+            ``self._default_thinking_effort``.
+        """
+        explicit = message.context.get("execution_override")
+        override: Optional[ExecutionOverride] = (
+            explicit if isinstance(explicit, ExecutionOverride) else None
+        )
+        if override is None:
+            override = self.resolver.resolve(message.context, self.user_config)
+
+        ctx_thinking = message.context.get("thinking_effort") or self._default_thinking_effort
+
+        if override is None:
+            return _EffectiveExecution(
+                ctx=self.execution_context,
+                thinking_effort=ctx_thinking,
+            )
+
+        thinking = override.thinking_effort if override.thinking_effort is not None else ctx_thinking
+        logger.info(
+            f"⚡ [SmartResponseAgent] Complexity override applied: "
+            f"model={override.execution_context.model_name}"
+        )
+        return _EffectiveExecution(
+            ctx=override.execution_context,
+            thinking_effort=thinking,
+        )
+
+    async def _run(
+        self, message: AgentMessage, eff: _EffectiveExecution
+    ) -> AgentResponse:
+        """Execute the delegation loop using a fully-resolved per-call context.
+
+        This method receives ``eff`` explicitly and never reads per-call
+        configuration from ``self.*``. ``self.execution_context`` /
+        ``self.llm`` / ``self.model_name`` are still used as defaults inside
+        ``_resolve_effective``, but every consumer below reads from ``eff``.
+        """
         text = message.payload.get("text", "")
         session_id = message.context.get("session_id")
         user_id = message.context.get("user_id")
         account_id = message.context.get("account_id")
         routing_metadata = RoutingMetadata.from_dict(message.context.get("routing", {}))
         self.config.metadata["user_tone"] = routing_metadata.user_tone
-        thinking_effort: Optional[str] = message.context.get("thinking_effort") or self._default_thinking_effort
-
-        # Snapshot defaults so we can restore after the override is applied.
-        # Prevents leakage between runs even if an exception skips the tail.
-        default_llm = self.llm
-        default_model = self.model_name
-        default_ctx = self._agent_execution_context
-
-        override = self.resolver.resolve(message.context, self.user_config)
-        if override:
-            self.llm = override.execution_context.provider
-            self.model_name = override.execution_context.model_name
-            self._set_execution_context(override.execution_context)
-            if override.thinking_effort is not None:
-                thinking_effort = override.thinking_effort
-            logger.info(f"⚡ [SmartResponseAgent] Complexity override applied: model={self.model_name}")
 
         self._on_agent_start(text)
 
@@ -205,7 +259,7 @@ class SmartResponseAgent(BaseAgent):
                 enriched_context=enriched_context,
                 cached_biographical=cached_biographical
             )
-            
+
             if enriched_context and enriched_context.get("facts"):
                 logger.info(
                     "🧠 [SmartResponseAgent] Merged context: %s biographical + %s semantic = %s total",
@@ -231,7 +285,7 @@ class SmartResponseAgent(BaseAgent):
                 user_id=prompt_user_id,
                 account_id=account_id,
                 routing_metadata=routing_metadata,
-                capabilities=self.execution_context.capabilities,
+                capabilities=eff.ctx.capabilities,
                 biographical_facts=biographical_facts,
                 kb_preamble=True,
                 agent_notes=agent_notes,
@@ -253,16 +307,28 @@ class SmartResponseAgent(BaseAgent):
 
             engine = DelegationEngine(self.coordinator)
             base_request = LLMRequest(
-                model_name=self.model_name,
+                model_name=eff.ctx.model_name,
                 system_instruction=system_prompt,
                 messages=clean_history,
                 tools=self._get_tool_declarations(),
                 temperature=self.DELEGATION_TEMPERATURE,
                 response_schema=self._RESPONSE_SCHEMA,
-                thinking=thinking_effort,
+                thinking=eff.thinking_effort,
             )
+
+            # Closure: every LLM call inside the engine routes through the
+            # per-call provider in eff.ctx, with eff.ctx as the fallback ctx.
+            # No mutation of self.llm / self._agent_execution_context.
+            async def call_llm_for_engine(req: "LLMRequest", turn: int = 0) -> "LLMResponse":
+                return await self._call_llm(
+                    req,
+                    turn,
+                    llm_override=eff.ctx.provider,
+                    fallback_ctx_override=eff.ctx,
+                )
+
             delegation_result = await engine.execute(
-                call_llm=self._call_llm,
+                call_llm=call_llm_for_engine,
                 base_request=base_request,
                 context=message.context,
                 max_turns=self.MAX_DELEGATION_TURNS,
@@ -296,7 +362,7 @@ class SmartResponseAgent(BaseAgent):
             self._on_agent_success(len(smart_response.text), total_tokens, output_text=smart_response.text)
 
             metadata = {
-                "model": self.model_name,
+                "model": eff.ctx.model_name,
                 "tokens": total_tokens,
                 "response_length": len(smart_response.text)
             }
@@ -327,11 +393,6 @@ class SmartResponseAgent(BaseAgent):
                 agent_id=self.agent_id,
                 error=f"Smart response failed: {str(e)}"
             )
-        finally:
-            if override:
-                self.llm = default_llm
-                self.model_name = default_model
-                self._agent_execution_context = default_ctx
 
     def _build_smart_response(
         self, result: DelegationResult,

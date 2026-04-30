@@ -873,23 +873,42 @@ class BaseAgent(ABC):
         """
         self._agent_execution_context = context
 
-    async def _call_llm(self, request: "LLMRequest", turn: int = 0) -> "LLMResponse":
+    async def _call_llm(
+        self,
+        request: "LLMRequest",
+        turn: int = 0,
+        *,
+        llm_override: Optional["LLMPort"] = None,
+        fallback_ctx_override: Optional["AgentExecutionContext"] = None,
+    ) -> "LLMResponse":
         """Invoke the agent LLM and auto-log the full response to the debug bucket.
 
         All agents MUST call this instead of self.llm / self._llm directly.
         Changing debug logging = edit this method only.
 
-        Resolves the LLM service via self.llm (Quick/Smart/Router) or
-        self._llm (specialist agents) — whichever is set.
+        Resolves the LLM service via (in priority order):
+          1. ``llm_override`` keyword argument (per-call override; used by
+             agents that resolve their execution context per-message and
+             must not mutate ``self.llm``).
+          2. ``self.llm`` (Quick/Smart/Router orchestrators).
+          3. ``self._llm`` (specialist agents).
 
         On LLMRateLimitError or LLMUnavailableError: transparently retries with
-        the fallback provider stored in _agent_execution_context (if configured).
+        the fallback provider, picked from (in priority order):
+          1. ``fallback_ctx_override`` keyword argument.
+          2. ``self._agent_execution_context``.
+
+        See docs/04_solution_strategy/decisions/per_call_execution_context.md
+        for the per-call override pattern that motivates the keyword args.
         """
-        llm = getattr(self, "llm", None) or getattr(self, "_llm", None)
+        llm = llm_override if llm_override is not None else (
+            getattr(self, "llm", None) or getattr(self, "_llm", None)
+        )
         if llm is None:
             raise RuntimeError(
                 f"{self.agent_id}: no LLM service configured "
-                f"(set self.llm or self._llm before calling _call_llm)"
+                f"(set self.llm or self._llm before calling _call_llm, "
+                f"or pass llm_override=)"
             )
         debug = get_debug_logger()
         if debug.enabled:
@@ -901,7 +920,7 @@ class BaseAgent(ABC):
         try:
             response = await llm.generate_content(request=request)
         except (LLMRateLimitError, LLMUnavailableError) as e:
-            ctx = self._agent_execution_context
+            ctx = fallback_ctx_override if fallback_ctx_override is not None else self._agent_execution_context
             if ctx and ctx.fallback_provider:
                 logger.warning(
                     "llm_fallback",
