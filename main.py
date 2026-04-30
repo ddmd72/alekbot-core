@@ -52,6 +52,7 @@ from src.adapters.slack.media_adapter import SlackMediaAdapter
 from src.adapters.slack.response_channel import SlackResponseChannel
 from src.adapters.telegram.response_channel import TelegramResponseChannel
 from src.services.user_notification_service import UserNotificationService
+from src.infrastructure.notification_sla import NOTIFICATION_SLA
 from src.handlers.worker_handler import WorkerHandler
 from src.adapters.gemini_deep_research_adapter import GeminiDeepResearchAdapter
 from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
@@ -378,6 +379,7 @@ async def main():
             state_repo=notification_state_repo,
             channel_factory=notification_channel_factory,
             coordinator=coordinator,
+            notification_sla=NOTIFICATION_SLA,
             session_store=session_store,
         )
         _language_service._notification_service = notification_service

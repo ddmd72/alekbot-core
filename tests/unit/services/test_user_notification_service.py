@@ -13,6 +13,8 @@ from datetime import datetime
 from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.messaging import RichContent, SmartResponse
 from src.domain.notification import NotificationChannel
+from src.domain.notification_kind import NotificationKind
+from src.infrastructure.notification_sla import NOTIFICATION_SLA
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from src.ports.notification_state_port import NotificationStatePort
 from src.services.user_notification_service import UserNotificationService
@@ -99,6 +101,7 @@ def service(state_repo, channel_factory, coordinator) -> UserNotificationService
         state_repo=state_repo,
         channel_factory=channel_factory,
         coordinator=coordinator,
+        notification_sla=NOTIFICATION_SLA,
     )
 
 
@@ -114,7 +117,7 @@ class TestNotifySmartResponse:
         smart = SmartResponse(text="Hello user")
         coordinator.route_message.return_value = _make_success_response(smart)
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "some alert")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "some alert", kind=NotificationKind.INTERACTIVE)
 
         response_channel.send_message.assert_awaited_once()
         call_args = response_channel.send_message.call_args
@@ -127,7 +130,7 @@ class TestNotifySmartResponse:
         smart = SmartResponse(text="See [Report][1].", link_list=_LINK_LIST)
         coordinator.route_message.return_value = _make_success_response(smart)
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "alert with links")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "alert with links", kind=NotificationKind.INTERACTIVE)
 
         response_channel.send_message.assert_awaited_once()
         call_args = response_channel.send_message.call_args
@@ -140,7 +143,7 @@ class TestNotifySmartResponse:
         smart = SmartResponse(text="Here is your table.", structured_data=_RICH_CONTENT)
         coordinator.route_message.return_value = _make_success_response(smart)
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "alert with table")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "alert with table", kind=NotificationKind.INTERACTIVE)
 
         response_channel.send_message.assert_awaited_once()
         assert response_channel.send_message.call_args[0][0] == "Here is your table."
@@ -155,7 +158,7 @@ class TestNotifySmartResponse:
         )
         coordinator.route_message.return_value = _make_success_response(smart)
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "deep research complete")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "deep research complete", kind=NotificationKind.INTERACTIVE)
 
         response_channel.send_message.assert_awaited_once()
         call_args = response_channel.send_message.call_args
@@ -168,7 +171,7 @@ class TestNotifySmartResponse:
         smart = SmartResponse(text="No links here.", link_list=[])
         coordinator.route_message.return_value = _make_success_response(smart)
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "plain alert")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "plain alert", kind=NotificationKind.INTERACTIVE)
 
         call_kwargs = response_channel.send_message.call_args[1]
         assert call_kwargs.get("link_list") is None
@@ -178,7 +181,7 @@ class TestNotifySmartResponse:
         smart = SmartResponse(text="", structured_data=_RICH_CONTENT)
         coordinator.route_message.return_value = _make_success_response(smart)
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "table only alert")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "table only alert", kind=NotificationKind.INTERACTIVE)
 
         response_channel.send_message.assert_not_awaited()
         response_channel.send_rich_content.assert_awaited_once_with(_RICH_CONTENT)
@@ -198,7 +201,7 @@ class TestNotifySmartResponse:
         smart = SmartResponse(text=long_text, link_list=_LINK_LIST)
         coordinator.route_message.return_value = _make_success_response(smart)
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "deep research alert")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "deep research alert", kind=NotificationKind.INTERACTIVE)
 
         # First send_message call posts the placeholder emoji
         short_limit_channel.send_message.assert_awaited_once_with("📩")
@@ -217,7 +220,7 @@ class TestNotifyLegacyStringResult:
         """Plain string result: delivered as-is, no link_list, no rich_content."""
         coordinator.route_message.return_value = _make_success_response("Plain text answer")
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "alert")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)
 
         response_channel.send_message.assert_awaited_once()
         assert response_channel.send_message.call_args[0][0] == "Plain text answer"
@@ -227,7 +230,7 @@ class TestNotifyLegacyStringResult:
         """None result: nothing sent to channel."""
         coordinator.route_message.return_value = _make_success_response(None)
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "alert")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)
 
         response_channel.send_message.assert_not_awaited()
         response_channel.send_rich_content.assert_not_awaited()
@@ -240,7 +243,7 @@ class TestNotifyEarlyExits:
         """No stored channel → coordinator never called."""
         state_repo.get.return_value = None
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "alert")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)
 
         coordinator.route_message.assert_not_awaited()
 
@@ -248,7 +251,7 @@ class TestNotifyEarlyExits:
         """Factory returns None (unknown platform) → coordinator never called."""
         channel_factory.create.return_value = None
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "alert")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)
 
         coordinator.route_message.assert_not_awaited()
 
@@ -258,7 +261,7 @@ class TestNotifyEarlyExits:
         fail_resp.status = AgentStatus.FAILED
         coordinator.route_message.return_value = fail_resp
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "alert")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)
 
         response_channel.send_message.assert_not_awaited()
         response_channel.send_rich_content.assert_not_awaited()
@@ -267,7 +270,7 @@ class TestNotifyEarlyExits:
         """state_repo.get raises → silently returns, no crash."""
         state_repo.get.side_effect = RuntimeError("db offline")
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "alert")  # must not raise
+        await service.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)  # must not raise
 
         coordinator.route_message.assert_not_awaited()
 
@@ -288,7 +291,7 @@ class TestNotifyRequestContext:
 
         coordinator.route_message.side_effect = capture_context
 
-        await service.notify(_USER_ID, _ACCOUNT_ID, "test alert")
+        await service.notify(_USER_ID, _ACCOUNT_ID, "test alert", kind=NotificationKind.INTERACTIVE)
 
         assert captured["user_id"] == _USER_ID
         assert captured["account_id"] == _ACCOUNT_ID
@@ -364,6 +367,7 @@ class TestNotifySlackAndHistory:
             state_repo=state_repo,
             channel_factory=channel_factory,
             coordinator=coordinator,
+            notification_sla=NOTIFICATION_SLA,
             session_store=session_store,
         ), session_store
 
@@ -388,8 +392,9 @@ class TestNotifySlackAndHistory:
             state_repo=state_repo,
             channel_factory=channel_factory,
             coordinator=coordinator,
+            notification_sla=NOTIFICATION_SLA,
         )
-        await svc.notify(_USER_ID, _ACCOUNT_ID, "alert")
+        await svc.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)
 
         sent_text = response_channel.send_message.call_args[0][0]
         assert sent_text.startswith("<@U1234567>")
@@ -404,7 +409,7 @@ class TestNotifySlackAndHistory:
         svc, session_store = self._make_svc_with_session_store(
             state_repo, channel_factory, coordinator
         )
-        await svc.notify(_USER_ID, _ACCOUNT_ID, "alert", save_history=True)
+        await svc.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE, save_history=True)
 
         session_store.append_messages_batch.assert_awaited_once()
 
@@ -418,7 +423,7 @@ class TestNotifySlackAndHistory:
         svc, session_store = self._make_svc_with_session_store(
             state_repo, channel_factory, coordinator
         )
-        await svc.notify(_USER_ID, _ACCOUNT_ID, "alert", save_history=False)
+        await svc.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE, save_history=False)
 
         session_store.append_messages_batch.assert_not_awaited()
 
@@ -433,7 +438,7 @@ class TestNotifySlackAndHistory:
             state_repo, channel_factory, coordinator
         )
         session_store.append_messages_batch = AsyncMock(side_effect=RuntimeError("history error"))
-        await svc.notify(_USER_ID, _ACCOUNT_ID, "alert")  # must not raise
+        await svc.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +453,7 @@ class TestNotifyDocumentLink:
             state_repo=state_repo,
             channel_factory=channel_factory,
             coordinator=AsyncMock(),
+            notification_sla=NOTIFICATION_SLA,
             session_store=session_store,
         ), session_store
 
@@ -506,6 +512,7 @@ class TestNotifyFileBytes:
             state_repo=state_repo,
             channel_factory=channel_factory,
             coordinator=AsyncMock(),
+            notification_sla=NOTIFICATION_SLA,
             platform_media=platform_media,
         ), platform_media
 
@@ -549,3 +556,113 @@ class TestNotifyFileBytes:
         svc, media = self._svc(state_repo, channel_factory)
         media.upload_file = AsyncMock(side_effect=RuntimeError("upload failed"))
         await svc.notify_file_bytes(_USER_ID, _ACCOUNT_ID, b"docx", "f.docx", "T")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Tests: save_primary() — primary channel persistence
+# ---------------------------------------------------------------------------
+
+
+class TestSavePrimary:
+    async def test_save_primary_writes_to_state_repo(self, service, state_repo):
+        await service.save_primary(_USER_ID, _PLATFORM, _CHANNEL_ID)
+        state_repo.save_primary.assert_awaited_once_with(_USER_ID, _PLATFORM, _CHANNEL_ID)
+
+    async def test_save_primary_swallows_exception(self, service, state_repo):
+        state_repo.save_primary = AsyncMock(side_effect=RuntimeError("db down"))
+        # must not raise
+        await service.save_primary(_USER_ID, _PLATFORM, _CHANNEL_ID)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _resolve_channel branches not covered by main notify() tests
+# ---------------------------------------------------------------------------
+
+
+class TestResolveChannelEdgeCases:
+    async def test_explicit_override_bypasses_state_repo(
+        self, service, state_repo, coordinator, response_channel
+    ):
+        """When channel_id_override + platform_override are both set,
+        notify() must NOT consult the state repository — the override
+        wins outright."""
+        coordinator.route_message.return_value = _make_success_response(
+            SmartResponse(text="ok")
+        )
+
+        result = await service.notify(
+            _USER_ID, _ACCOUNT_ID, "alert",
+            kind=NotificationKind.INTERACTIVE,
+            channel_id_override="C_OVERRIDE",
+            platform_override="slack",
+        )
+
+        # state repo MUST NOT have been touched.
+        state_repo.get.assert_not_awaited()
+        state_repo.get_primary.assert_not_awaited()
+        # notify still succeeded via the override.
+        assert result.delivered is True
+
+    async def test_get_primary_exception_swallowed_falls_back_to_get(
+        self, service, state_repo, coordinator
+    ):
+        """If get_primary raises (e.g. transient Firestore), notify()
+        must fall back to last-active via get(), not bubble the error."""
+        state_repo.get_primary = AsyncMock(side_effect=RuntimeError("primary fetch failed"))
+        coordinator.route_message.return_value = _make_success_response(
+            SmartResponse(text="ok")
+        )
+
+        result = await service.notify(
+            _USER_ID, _ACCOUNT_ID, "alert",
+            kind=NotificationKind.INTERACTIVE,
+        )
+
+        state_repo.get_primary.assert_awaited_once_with(_USER_ID)
+        state_repo.get.assert_awaited_once_with(_USER_ID)
+        assert result.delivered is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: notify() exception path returns NotifyResult(delivered=False)
+# ---------------------------------------------------------------------------
+
+
+class TestNotifyExceptionPath:
+    """When route_message or channel send raises, notify() must capture
+    the exception and report it via NotifyResult (NOT bubble the error)."""
+
+    async def test_route_message_exception_returns_failed_result(
+        self, service, coordinator
+    ):
+        coordinator.route_message = AsyncMock(
+            side_effect=RuntimeError("router boom")
+        )
+
+        result = await service.notify(
+            _USER_ID, _ACCOUNT_ID, "alert",
+            kind=NotificationKind.INTERACTIVE,
+        )
+
+        assert result.delivered is False
+        assert result.agent_status == AgentStatus.FAILED
+        assert "router boom" in (result.error or "")
+
+    async def test_send_message_exception_returns_failed_result(
+        self, service, coordinator, response_channel
+    ):
+        coordinator.route_message.return_value = _make_success_response(
+            SmartResponse(text="hi")
+        )
+        response_channel.send_message = AsyncMock(
+            side_effect=RuntimeError("slack down")
+        )
+
+        result = await service.notify(
+            _USER_ID, _ACCOUNT_ID, "alert",
+            kind=NotificationKind.INTERACTIVE,
+        )
+
+        assert result.delivered is False
+        assert result.agent_status == AgentStatus.FAILED
+        assert "slack down" in (result.error or "")

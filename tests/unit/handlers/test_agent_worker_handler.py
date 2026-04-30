@@ -36,6 +36,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.domain.agent import AgentResponse, AgentStatus, DeliveryItem
+from src.domain.notification_kind import NotificationKind
 from src.handlers.agent_worker_handler import AgentWorkerHandler
 from src.infrastructure.agent_manifest import Intent
 
@@ -410,6 +411,7 @@ class TestNotifyMethods:
         await handler._notify_failure(_CONTEXT)
 
         notification.notify.assert_called_once_with(
+            kind=NotificationKind.DEEP_RESEARCH,
             user_id=_USER_ID,
             account_id=_ACCOUNT_ID,
             system_alert=pytest.approx("Deep research did not complete — "

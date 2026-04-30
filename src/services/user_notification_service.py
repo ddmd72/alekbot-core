@@ -16,11 +16,13 @@ Callers:
 """
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Protocol
+from typing import Mapping, Optional, Protocol
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus
 from ..domain.llm import Message, MessagePart
 from ..domain.messaging import SmartResponse
+from ..domain.notification_kind import NotificationKind
+from ..domain.notify_result import NotifyResult
 from ..domain.request_context import RequestContext
 from ..ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from ..ports.notification_state_port import NotificationStatePort
@@ -35,6 +37,14 @@ class MessageRouter(Protocol):
     async def route_message(self, message: AgentMessage) -> AgentResponse: ...
 
 
+# Lightweight structural protocol for the SLA value object — avoids
+# importing infrastructure/notification_sla here (services/ may not
+# depend on infrastructure/ per REQ-ARCH-01). Composition wires the
+# concrete table at construction time.
+class _SLA(Protocol):
+    timeout_ms: int
+
+
 class UserNotificationService:
 
     def __init__(
@@ -42,12 +52,14 @@ class UserNotificationService:
         state_repo: NotificationStatePort,
         channel_factory: NotificationChannelFactoryPort,
         coordinator: MessageRouter,
+        notification_sla: Mapping[NotificationKind, _SLA],
         platform_media: Optional[PlatformMediaPort] = None,
         session_store: Optional[SessionStore] = None,
     ):
         self._state_repo = state_repo
         self._channel_factory = channel_factory
         self._coordinator = coordinator
+        self._notification_sla = notification_sla
         self._platform_media: Optional[PlatformMediaPort] = platform_media
         self._session_store: Optional[SessionStore] = session_store
 
@@ -154,6 +166,8 @@ class UserNotificationService:
         user_id: str,
         account_id: str,
         system_alert: str,
+        *,
+        kind: NotificationKind,
         agent_id_override: Optional[str] = None,
         session_id: Optional[str] = None,
         save_history: bool = True,
@@ -163,24 +177,39 @@ class UserNotificationService:
         email_for_triage: Optional[list] = None,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
-    ) -> None:
+    ) -> NotifyResult:
         """
         Send a background notification to the user's channel.
-        Uses fallback chain: override → primary → last active.
-        The system_alert is formatted by QuickAgent in the user's communication style.
 
-        session_id: if provided, reuses the original conversation session
-                    (e.g. deep research delivering back to the user's thread).
-                    Defaults to a new UUID for standalone background notifications.
-        channel_id_override: if provided, delivers to this channel instead of primary/last-active.
-                             Used for async results that should go back to the originating channel.
+        Returns a :class:`NotifyResult` reporting whether delivery
+        actually completed; callers decide what to do with non-delivery
+        (retry, mark idempotency state, escalate).
+
+        Args:
+            kind: classification of this notification (drives the SLA
+                budget — ``timeout_ms`` propagated to ``AgentMessage``).
+                Required keyword-only — every caller picks explicitly,
+                no implicit default.
+            session_id: if provided, reuses the original conversation
+                session (e.g. deep research delivering back to the
+                user's thread). Defaults to a session keyed on the
+                resolved channel id.
+            channel_id_override: if provided, delivers to this channel
+                instead of primary/last-active. Used for async results
+                that go back to the originating channel.
         """
+        sla = self._notification_sla[kind]
+
         channel_info = await self._resolve_channel(
             user_id, channel_id_override, platform_override,
         )
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping")
-            return
+            return NotifyResult(
+                delivered=False,
+                agent_status=AgentStatus.SUCCESS,
+                error="no_channel",
+            )
 
         response_channel = self._channel_factory.create(
             platform=channel_info.platform,
@@ -190,7 +219,11 @@ class UserNotificationService:
             logger.warning(
                 f"[Notification] Cannot create channel: platform={channel_info.platform}"
             )
-            return
+            return NotifyResult(
+                delivered=False,
+                agent_status=AgentStatus.SUCCESS,
+                error=f"channel_factory_returned_none:{channel_info.platform}",
+            )
 
         recipient = agent_id_override or f"quick_response_agent_{user_id}"
         effective_session_id = session_id if session_id is not None else f"{user_id}:{channel_info.channel_id}"
@@ -210,6 +243,7 @@ class UserNotificationService:
                 **({"task_complexity": task_complexity} if task_complexity else {}),
                 **({"email_for_triage": email_for_triage} if email_for_triage else {}),
             },
+            timeout_ms=sla.timeout_ms,
         )
 
         try:
@@ -219,7 +253,11 @@ class UserNotificationService:
                 logger.warning(
                     f"[Notification] Agent returned {response.status} for user {user_id[:8]}"
                 )
-                return
+                return NotifyResult(
+                    delivered=False,
+                    agent_status=response.status,
+                    error=getattr(response, "error", None),
+                )
 
             result = response.result
             text = ""
@@ -248,7 +286,7 @@ class UserNotificationService:
                     await response_channel.send_message(text, link_list=link_list or None)
                 logger.info(
                     f"📬 [Notification] Sent to {channel_info.platform} "
-                    f"channel={channel_info.channel_id} user={user_id[:8]}"
+                    f"channel={channel_info.channel_id} user={user_id[:8]} kind={kind.value}"
                 )
 
                 if self._session_store and save_history:
@@ -268,11 +306,20 @@ class UserNotificationService:
 
             if rich_content:
                 await response_channel.send_rich_content(rich_content)
+
+            return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS)
+
         except Exception as exc:
             logger.error(
                 f"[Notification] Failed to send notification for {user_id[:8]} "
-                f"(platform={channel_info.platform} channel={channel_info.channel_id}): {exc}",
+                f"(platform={channel_info.platform} channel={channel_info.channel_id} "
+                f"kind={kind.value}): {exc}",
                 exc_info=True,
+            )
+            return NotifyResult(
+                delivered=False,
+                agent_status=AgentStatus.FAILED,
+                error=str(exc),
             )
 
     async def notify_document_link(

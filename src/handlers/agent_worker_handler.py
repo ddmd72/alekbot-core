@@ -19,6 +19,7 @@ import base64
 from typing import TYPE_CHECKING, Dict, Any, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
+from ..domain.notification_kind import NotificationKind
 from ..services.deep_research_delivery import (
     NotificationPort, deliver_deep_research,
 )
@@ -257,6 +258,7 @@ class AgentWorkerHandler:
         if not self._notification:
             return
         await self._notification.notify(
+            kind=NotificationKind.DOCUMENT_DELIVERY,
             user_id=context.get("user_id", ""),
             account_id=context.get("account_id", ""),
             system_alert=(
@@ -272,6 +274,7 @@ class AgentWorkerHandler:
             return
 
         await self._notification.notify(
+            kind=NotificationKind.DEEP_RESEARCH,
             user_id=context.get("user_id", ""),
             account_id=context.get("account_id", ""),
             system_alert=(

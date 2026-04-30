@@ -15,6 +15,7 @@ from typing import Callable, Coroutine, List, Optional, Any, TYPE_CHECKING
 from ..domain.messaging import MessageContext, ResponseChannel, SmartResponse, RichContent
 from ..domain.ui_messages import StatusType
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus, DeliveryItem
+from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..infrastructure.agent_config import ENABLE_HISTORY_OPTIMIZATION
@@ -874,6 +875,7 @@ class ConversationHandler(ConversationHandlerPort):
                 )
                 if self._notification_service:
                     await self._notification_service.notify(
+                        kind=NotificationKind.INTERACTIVE,
                         user_id=context.user_id,
                         account_id=context.account_id,
                         system_alert=system_alert,

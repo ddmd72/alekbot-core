@@ -30,8 +30,11 @@ import pytest
 
 from datetime import datetime
 
+from src.domain.agent import AgentStatus
 from src.domain.billing import BillingAccount, AccountUsageStats
 from src.domain.email import IndexingJob
+from src.domain.notification_kind import NotificationKind
+from src.domain.notify_result import NotifyResult
 from src.domain.user import UserProfile
 from src.handlers.worker_handler import WorkerHandler
 from src.services.consolidation_service import ConsolidationService
@@ -823,7 +826,12 @@ class TestHandleDailyEmailReview:
         ns.email_review.fetch_review_payload.return_value = emails
         call_order = []
         ns.agent_factory.ensure_agents_for_user.side_effect = lambda uid: call_order.append("ensure")
-        ns.notification.notify.side_effect = lambda **kw: call_order.append("notify")
+        # Handler reads result.delivered to decide on 200 vs 500 — return a
+        # successful NotifyResult so the success path is exercised.
+        def _track_notify(**kw):
+            call_order.append("notify")
+            return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS)
+        ns.notification.notify.side_effect = _track_notify
 
         result, status = await worker._handle_daily_email_review(
             {"user_id": _USER_A, "account_id": _ACC_A}
@@ -833,6 +841,7 @@ class TestHandleDailyEmailReview:
         assert result["emails"] == 1
         assert call_order == ["ensure", "notify"]
         ns.notification.notify.assert_called_once_with(
+            kind=NotificationKind.DAILY_DIGEST,
             user_id=_USER_A,
             account_id=_ACC_A,
             system_alert=ns.email_review.build_alert.return_value,
