@@ -214,11 +214,18 @@ class AgentResponse:
 
 @dataclass
 class AgentConfig:
-    """Configuration for an agent."""
+    """Configuration for an agent.
+
+    NOTE: retry behavior is NOT in this config. It lives in
+    ``BaseAgent.RETRY_POLICY`` (class-level) or via the
+    ``retry_policy=`` constructor argument (instance-level), driven by
+    ``RetryPolicy`` (``src/domain/retry_policy.py``). The legacy
+    ``max_retries: int`` field was removed in the typed-retry refactor
+    because it conflated transient and structural failures.
+    """
     agent_id: str
     agent_type: str  # "memory_search", "web_search", "observation", etc.
     llm_model: Optional[str] = None  # Model to use (None = no LLM needed)
-    max_retries: int = 2
     timeout_ms: Optional[int] = None  # Explicit timeout per agent (None = no timeout)
     circuit_breaker_threshold: int = 3  # Failures before opening circuit
     circuit_breaker_recovery_ms: int = 300000  # 5 minutes

@@ -91,7 +91,6 @@ def smart_agent_config():
         agent_id="smart_response_agent",
         agent_type="smart_response",
         llm_model="gemini-3-pro-preview",
-        max_retries=1,
         timeout_ms=60000,
         capabilities=["complex_reasoning", "agent_delegation"]
     )

@@ -74,10 +74,9 @@ class QuickResponseAgent(BaseAgent):
     RETRY_BACKOFF_SECONDS = QUICK.retry_backoff_seconds
     DELEGATION_TEMPERATURE = QUICK.delegation_temperature
     TIMEOUT_MS = QUICK.timeout_ms
-    CONFIG_MAX_RETRIES = QUICK.config_max_retries
 
-    # Mirrors SmartResponseAgent._RESPONSE_SCHEMA — enforces JSON output on Gemini providers.
-    # ClaudeAdapter and GrokAdapter silently ignore these fields.
+    # Mirrors SmartResponseAgent._RESPONSE_SCHEMA. See its inline comment for the per-provider
+    # enforcement matrix; CLAUDE.md "Agent Output Format Standards" is the authoritative source.
     _RESPONSE_SCHEMA = {
         "type": "object",
         "required": ["full_response", "response_summary", "rich_content"],
@@ -440,7 +439,6 @@ def create_quick_response_agent(
         agent_id=agent_id,
         agent_type="quick_response",
         llm_model=model_name or execution_context.model_name,
-        max_retries=QuickResponseAgent.CONFIG_MAX_RETRIES,
         timeout_ms=QuickResponseAgent.TIMEOUT_MS,
         capabilities=["fast_response", "simple_queries"],
         metadata={

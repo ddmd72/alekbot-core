@@ -135,7 +135,6 @@ def smart_agent_with_concurrent_providers():
         agent_id="smart_response_agent_user-x",
         agent_type="smart_response",
         llm_model="model-DEFAULT",
-        max_retries=0,
         timeout_ms=300_000,
         capabilities=["complex_reasoning"],
         metadata={"user_id": "user-x"},

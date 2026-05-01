@@ -81,9 +81,10 @@ class SmartResponseAgent(BaseAgent):
     RETRY_BACKOFF_SECONDS = SMART.retry_backoff_seconds
     DELEGATION_TEMPERATURE = SMART.delegation_temperature
 
-    # Structured output schema — Gemini Pro experiment: enforce JSON format even with tools active.
-    # response_json_schema (dict) is used by GeminiAdapter (SDK 1.64+); ClaudeAdapter ignores it.
-    # If this causes 400 on turns with tools → remove and fall back to OUTPUT_FORMAT token only.
+    # Structured output envelope. Enforced by Gemini via response_json_schema and by Claude
+    # via output_config.format. OpenAI/Grok react via json_object mode without forwarding the
+    # inner schema — actual envelope shape is enforced by the OUTPUT_FORMAT token in the prompt.
+    # See CLAUDE.md "Agent Output Format Standards" for the per-provider matrix.
     _RESPONSE_SCHEMA = {
         "type": "object",
         "required": ["full_response", "response_summary", "rich_content"],
@@ -103,7 +104,6 @@ class SmartResponseAgent(BaseAgent):
         },
     }
     TIMEOUT_MS = SMART.timeout_ms
-    CONFIG_MAX_RETRIES = SMART.config_max_retries
 
     def __init__(
         self,
@@ -582,7 +582,6 @@ def create_smart_response_agent(
         agent_id=agent_id,
         agent_type="smart_response",
         llm_model=model_name or execution_context.model_name,
-        max_retries=SmartResponseAgent.CONFIG_MAX_RETRIES,
         timeout_ms=SmartResponseAgent.TIMEOUT_MS,
         capabilities=["complex_reasoning", "agent_delegation", "tool_use"],
         metadata={

@@ -6,6 +6,7 @@ Provides abstract base class and utilities for all agents.
 """
 
 import json
+import random
 import time
 import asyncio
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from abc import ABC, abstractmethod
 from typing import ClassVar, Dict, Optional, List
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentStatus
 from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
+from ..domain.retry_policy import DEFAULT_RETRY_POLICY, RetryPolicy
 from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
@@ -173,7 +175,20 @@ class BaseAgent(ABC):
 
     forwards_language_preference: ClassVar[bool] = False
 
-    def __init__(self, config: AgentConfig, circuit_breaker: Optional[CircuitBreaker] = None):
+    # Per-agent retry policy. Subclasses override this class attribute
+    # (see e.g. RouterAgent → NO_RETRY_POLICY, DocPlannerAgent →
+    # NO_RETRY_POLICY for ASYNC paths). Constructor argument
+    # ``retry_policy=`` overrides the class default at instance level.
+    # See domain/retry_policy.py and
+    # docs/04_solution_strategy/decisions/typed_retry_policy.md.
+    RETRY_POLICY: ClassVar[RetryPolicy] = DEFAULT_RETRY_POLICY
+
+    def __init__(
+        self,
+        config: AgentConfig,
+        circuit_breaker: Optional[CircuitBreaker] = None,
+        retry_policy: Optional[RetryPolicy] = None,
+    ):
         """
         Initialize base agent.
         
@@ -183,6 +198,9 @@ class BaseAgent(ABC):
         """
         self.config = config
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
+        # Instance retry policy. None → use class-level RETRY_POLICY.
+        # Read via ``self.retry_policy`` property to keep the lookup clear.
+        self._retry_policy_override: Optional[RetryPolicy] = retry_policy
         self._agent_execution_context = None  # set via _set_execution_context()
         self.coordinator = None  # injected post-construction by UserAgentFactory for all agents
         self._user_timezone: str = "UTC"  # overridden by subclasses that receive user_timezone
@@ -201,11 +219,16 @@ class BaseAgent(ABC):
     def agent_id(self) -> str:
         """Get agent identifier."""
         return self.config.agent_id
-    
+
     @property
     def agent_type(self) -> str:
         """Get agent type."""
         return self.config.agent_type
+
+    @property
+    def retry_policy(self) -> RetryPolicy:
+        """Effective retry policy: instance override or class default."""
+        return self._retry_policy_override or self.RETRY_POLICY
     
     @abstractmethod
     async def can_handle(self, message: AgentMessage) -> bool:
@@ -491,25 +514,35 @@ class BaseAgent(ABC):
                 error=f"Capability check failed: {str(e)}"
             )
         
-        # 3. Execute with retry
+        # 3. Execute with typed retry — see domain/retry_policy.py.
+        # Only LLMRateLimitError / LLMUnavailableError are retried (with
+        # exponential backoff + jitter). asyncio.TimeoutError is fixed-
+        # never-retry (structural budget mismatch — same call inside the
+        # same budget cannot succeed). asyncio.CancelledError is honored
+        # outright. Any other Exception is treated as deterministic and
+        # surfaced immediately.
         self._billing_account_id = message.context.get("account_id")
         self._billing_prompt_tokens = 0
         self._billing_completion_tokens = 0
         self._billing_cache_read_tokens = 0
         self._billing_cache_creation_tokens = 0
 
-        max_retries = self.config.max_retries
-        last_error = None
-        
-        for attempt in range(max_retries + 1):
+        policy = self.retry_policy
+        # Total tries = 1 initial attempt + N transient retries.
+        max_attempts = policy.transient_max_attempts + 1
+        attempt = 0
+        last_error: Optional[str] = None
+
+        while attempt < max_attempts:
+            attempt += 1
             try:
                 logger.info(
                     f"🔧 {self.agent_id} executing task {message.task_id[:8]}... "
-                    f"(attempt {attempt + 1}/{max_retries + 1})"
+                    f"(attempt {attempt}/{max_attempts})"
                 )
-                
+
                 response = await self._execute_with_timeout(message)
-                
+
                 # Success - record and return
                 self.circuit_breaker.record_success(self.agent_id)
                 await self._flush_billing()
@@ -520,33 +553,66 @@ class BaseAgent(ABC):
                 )
 
                 return response
-                
+
+            except (LLMRateLimitError, LLMUnavailableError) as e:
+                error_type = "rate_limit" if isinstance(e, LLMRateLimitError) else "unavailable"
+                last_error = f"{error_type}: {e}"
+                if attempt >= max_attempts:
+                    logger.warning(
+                        f"❌ {self.agent_id} transient error exhausted retries "
+                        f"({error_type}, attempt {attempt}/{max_attempts}): {e}"
+                    )
+                    break
+                # Exponential backoff with jitter — defends against
+                # synchronised retry storms when many agents hit the same
+                # provider rate-limit window simultaneously.
+                backoff = policy.transient_backoff_base_seconds * (2 ** (attempt - 1))
+                if policy.transient_jitter_seconds > 0:
+                    backoff += random.uniform(0, policy.transient_jitter_seconds)
+                logger.warning(
+                    f"⏳ {self.agent_id} transient error, retrying "
+                    f"(error_type={error_type}, "
+                    f"http_status={getattr(e, 'http_status', None)}, "
+                    f"attempt={attempt}/{max_attempts}, "
+                    f"backoff={backoff:.2f}s): {e}"
+                )
+                await asyncio.sleep(backoff)
+                continue
+
             except asyncio.TimeoutError:
+                # Structural budget mismatch — running again inside the
+                # same timeout cannot help. Surface immediately.
                 last_error = "Task execution timeout"
                 logger.warning(
-                    f"⏱️ {self.agent_id} timeout on attempt {attempt + 1}"
+                    f"⏱️ {self.agent_id} timeout on attempt {attempt}/{max_attempts} "
+                    f"(no retry — timeout indicates budget mismatch, not transient failure)"
                 )
-                
+                break
+
+            except asyncio.CancelledError:
+                # External cancellation — never swallow, never retry.
+                self.circuit_breaker.record_failure(self.agent_id)
+                await self._flush_billing()
+                raise
+
             except Exception as e:
+                # Deterministic by assumption — retry would only delay
+                # the failure and obscure the bug from logs.
                 last_error = str(e)
                 logger.warning(
-                    f"❌ {self.agent_id} failed on attempt {attempt + 1}: {e}"
+                    f"❌ {self.agent_id} failed on attempt {attempt}/{max_attempts} "
+                    f"(no retry — non-transient): {e}"
                 )
-            
-            # Exponential backoff before retry
-            if attempt < max_retries:
-                backoff_seconds = 2 ** attempt  # 1s, 2s, 4s...
-                logger.debug(f"⏳ Waiting {backoff_seconds}s before retry...")
-                await asyncio.sleep(backoff_seconds)
-        
-        # All retries exhausted - record failure and flush any partial billing
+                break
+
+        # All paths past the loop are non-success.
         self.circuit_breaker.record_failure(self.agent_id)
         await self._flush_billing()
 
         return AgentResponse.failure(
             task_id=message.task_id,
             agent_id=self.agent_id,
-            error=f"Max retries exceeded. Last error: {last_error}"
+            error=f"Agent failed. Last error: {last_error}"
         )
     
     async def _execute_with_timeout(self, message: AgentMessage) -> AgentResponse:

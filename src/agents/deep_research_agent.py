@@ -42,7 +42,6 @@ class DeepResearchAgent(BaseAgent):
     """
 
     TIMEOUT_MS  = DEEP_RESEARCH.timeout_ms
-    MAX_RETRIES = DEEP_RESEARCH.max_retries
 
     def __init__(
         self,

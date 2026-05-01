@@ -33,6 +33,7 @@ import urllib.parse
 from typing import Optional
 
 from .base_agent import BaseAgent
+from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.llm import Message, MessagePart, PROMPT_CACHE_BOUNDARY
 from ..infrastructure.agent_config import HTML_PAGE_GENERATOR
@@ -58,6 +59,9 @@ class HtmlPageGeneratorAgent(BaseAgent):
     If image_search is provided, source.unsplash.com placeholder URLs written by the LLM
     are resolved to real Unsplash photos after generation (post-processing step).
     """
+
+    # ASYNC document generation. See DocPlannerAgent for rationale.
+    RETRY_POLICY = NO_RETRY_POLICY
 
     TEMPERATURE = HTML_PAGE_GENERATOR.temperature
     MAX_TOKENS = HTML_PAGE_GENERATOR.max_tokens

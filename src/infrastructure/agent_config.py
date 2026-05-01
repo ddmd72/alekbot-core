@@ -89,10 +89,9 @@ class QuickAgentConfig:
     retry_backoff_seconds: float = 0.5
     # LLM temperature for the delegation loop
     delegation_temperature: float = 1.0
-    # AgentConfig fields (timeout / outer retry for the whole agent execution)
+    # AgentConfig field — see RetryPolicy in domain/retry_policy.py for retry behavior.
     # 300 s: covers PDF attachment parsing via markitdown (confirmed >60 s in production)
     timeout_ms: int = 300_000
-    config_max_retries: int = 1
     # Dispatch-time intent substitution (applied in QuickResponseAgent._delegate_quick).
     # search_web → search_web_light: Quick routes web queries via the cheaper ECO-tier agent.
     intent_remap: Dict[str, str] = field(
@@ -112,9 +111,10 @@ class SmartAgentConfig:
     retry_backoff_seconds: float = 1.0
     delegation_temperature: float = 1.0
     # 300 s: raised from 120 s to accommodate slower reasoning models (e.g. GPT-5)
+    # NOTE: per-call timeout_ms is overridden via AgentMessage.timeout_ms by
+    # UserNotificationService (NotificationKind/SLA) — see notification_sla.py.
+    # Retry behavior lives in BaseAgent.RETRY_POLICY (RetryPolicy domain object).
     timeout_ms: int = 300_000
-    # No retry: a retry doubles wall time → terrible UX
-    config_max_retries: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -217,8 +217,9 @@ class DeepResearchAgentConfig:
     timeout_ms covers the create_interaction() kick-off call only (returns quickly).
     The 5–60 minute research execution runs via Cloud Tasks polling, not within this timeout.
     """
-    timeout_ms: int  = 30_000   # kick-off only — not the research execution time
-    max_retries: int = 2
+    # kick-off only — not the research execution time
+    # Retry behavior: BaseAgent.RETRY_POLICY (default = retry transients).
+    timeout_ms: int  = 30_000
 
 
 # ---------------------------------------------------------------------------
@@ -231,12 +232,12 @@ class ClaudeDeepResearchRunnerConfig:
     Behavioral parameters for ClaudeDeepResearchRunnerAgent.
 
     timeout_ms covers the full research execution (up to 30 min per Cloud Task deadline).
-    max_retries=0 because a retry doubles wall time (10–25 min) and adds significant cost.
+    Retry: ClaudeDeepResearchRunnerAgent overrides RETRY_POLICY = NO_RETRY_POLICY
+    because a retry doubles wall time (10–25 min) and adds significant cost.
     """
     timeout_ms: int = 1_800_000  # 30 min — used only when invoked via coordinator (legacy path)
     #                              In job_main.py the agent is created with timeout_ms=None
     #                              so the Cloud Run Job task-timeout is the ceiling.
-    max_retries: int = 0
 
 
 # ---------------------------------------------------------------------------

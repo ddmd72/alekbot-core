@@ -110,7 +110,9 @@ class TestAgentProtocol:
         assert config.agent_id == "test_agent"
         assert config.agent_type == "test_type"
         assert config.llm_model is None
-        assert config.max_retries == 2
+        # max_retries removed from AgentConfig — retry behavior now lives
+        # in BaseAgent.RETRY_POLICY (RetryPolicy domain object).
+        assert not hasattr(config, "max_retries")
         assert config.timeout_ms is None
         assert config.circuit_breaker_threshold == 3
         assert config.circuit_breaker_recovery_ms == 300000
