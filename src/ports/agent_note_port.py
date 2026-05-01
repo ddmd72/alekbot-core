@@ -8,7 +8,7 @@ Port methods carry user_id explicitly — no auth artifacts at port boundary.
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from ..domain.agent_note import AgentNote, NoteCreate, NoteUpdate
 
@@ -28,6 +28,15 @@ class AgentNotePort(ABC):
         """Update an existing note. Returns updated note."""
 
     @abstractmethod
+    async def get_note(self, user_id: str, note_id: str) -> Optional[AgentNote]:
+        """Fetch a single note by id, scoped by user_id ownership.
+
+        Returns ``None`` if the note does not exist OR if it belongs to
+        a different user. Used by the reminder execute-worker to load
+        the note pointed to by a fire-payload.
+        """
+
+    @abstractmethod
     async def list_active_notes(self, user_id: str, as_of: datetime) -> List[AgentNote]:
         """
         Return all notes for the user where due > as_of (not yet fired).
@@ -43,8 +52,66 @@ class AgentNotePort(ABC):
 
     @abstractmethod
     async def reschedule(self, note_id: str, next_due: datetime, last_fired: datetime) -> None:
+        """DEPRECATED — superseded by ``reschedule_if_due_at``.
+
+        Unconditional reschedule. Do NOT use for new callers — it has the
+        race condition that defect #3 of NOTIFICATION_DELIVERY_REFACTOR_RFC
+        describes (cron tick A reads due, cron tick B reads same due,
+        both write next_due → duplicate fire enqueued). Removed entirely
+        in Step #7 along with its sole remaining caller (RemindersService
+        before its control flow rewrite).
         """
-        Update due to next_due and set last_fired.
-        Called after firing a recurrent reminder.
-        No user_id ownership check — cron owns the lock.
+
+    @abstractmethod
+    async def reschedule_if_due_at(
+        self,
+        note_id: str,
+        expected_due: datetime,
+        next_due: datetime,
+        last_fired: datetime,
+    ) -> bool:
+        """Atomically reschedule the note ONLY IF its current ``due``
+        equals ``expected_due``.
+
+        Returns ``True`` if rescheduled (this caller owns this fire);
+        ``False`` if ``due`` has already moved (another cron tick handled
+        it). Caller MUST treat False as "skip — someone else owns it".
+
+        Idempotency primitive — replaces the unconditional ``reschedule``
+        method. Implemented via Firestore transaction with read-modify-write
+        precondition on ``due``.
+
+        See: docs/10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md § 7 D.2.
+        """
+
+    @abstractmethod
+    async def delete_if_due_at(
+        self,
+        note_id: str,
+        user_id: str,
+        expected_due: datetime,
+    ) -> bool:
+        """One-time variant: atomically delete the note ONLY IF its
+        current ``due`` equals ``expected_due`` AND it belongs to
+        ``user_id``.
+
+        Returns ``True`` if deleted (this caller owns this fire);
+        ``False`` if ``due`` already moved or ownership mismatched.
+
+        Same idempotency contract as ``reschedule_if_due_at``, but for
+        non-recurrent reminders that are removed after firing.
+        """
+
+    @abstractmethod
+    async def mark_fire_delivered(self, note_id: str, due_at: datetime) -> None:
+        """Record that the fire scheduled for ``due_at`` has been
+        delivered to the user.
+
+        Idempotency token consumed by the reminder execute-worker to
+        short-circuit duplicate Cloud Tasks deliveries (compares
+        ``last_delivered_due == due_at`` before invoking ``notify``).
+
+        Idempotent: calling twice with the same ``due_at`` is safe.
+
+        See: docs/10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md § 7 D.3.
         """

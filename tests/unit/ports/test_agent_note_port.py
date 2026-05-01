@@ -2,8 +2,10 @@
 Port contract tests for AgentNotePort.
 
 Covers:
-- AgentNotePort (6 abstract async methods: create_note, delete_note, update_note,
-  list_active_notes, list_due_reminders, reschedule)
+- AgentNotePort (10 abstract async methods: create_note, delete_note,
+  update_note, get_note, list_active_notes, list_due_reminders,
+  reschedule [deprecated], reschedule_if_due_at, delete_if_due_at,
+  mark_fire_delivered)
 - AsyncMock(spec=AgentNotePort) satisfies the port contract in agent tests
 """
 
@@ -39,9 +41,22 @@ class TestAgentNotePortContract:
     def test_has_list_active_notes(self):
         assert getattr(AgentNotePort.list_active_notes, "__isabstractmethod__", False)
 
+    def test_has_get_note(self):
+        assert getattr(AgentNotePort.get_note, "__isabstractmethod__", False)
+
+    def test_has_reschedule_if_due_at(self):
+        assert getattr(AgentNotePort.reschedule_if_due_at, "__isabstractmethod__", False)
+
+    def test_has_delete_if_due_at(self):
+        assert getattr(AgentNotePort.delete_if_due_at, "__isabstractmethod__", False)
+
+    def test_has_mark_fire_delivered(self):
+        assert getattr(AgentNotePort.mark_fire_delivered, "__isabstractmethod__", False)
+
     def test_all_abstract_methods_are_async(self):
-        for name in ("create_note", "delete_note", "update_note", "list_active_notes",
-                     "list_due_reminders", "reschedule"):
+        for name in ("create_note", "delete_note", "update_note", "get_note",
+                     "list_active_notes", "list_due_reminders", "reschedule",
+                     "reschedule_if_due_at", "delete_if_due_at", "mark_fire_delivered"):
             method = getattr(AgentNotePort, name)
             assert inspect.iscoroutinefunction(method), f"{name} must be async"
 
@@ -50,7 +65,7 @@ class TestAgentNotePortContract:
             name for name, method in inspect.getmembers(AgentNotePort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 6, f"Expected 6 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 10, f"Expected 10 abstract methods, got {abstract_methods}"
 
     def test_create_note_signature(self):
         sig = inspect.signature(AgentNotePort.create_note)
@@ -77,6 +92,26 @@ class TestAgentNotePortContract:
         assert "self" in params
         assert "user_id" in params
         assert "as_of" in params
+
+    def test_get_note_signature(self):
+        sig = inspect.signature(AgentNotePort.get_note)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "user_id", "note_id"]
+
+    def test_reschedule_if_due_at_signature(self):
+        sig = inspect.signature(AgentNotePort.reschedule_if_due_at)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "note_id", "expected_due", "next_due", "last_fired"]
+
+    def test_delete_if_due_at_signature(self):
+        sig = inspect.signature(AgentNotePort.delete_if_due_at)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "note_id", "user_id", "expected_due"]
+
+    def test_mark_fire_delivered_signature(self):
+        sig = inspect.signature(AgentNotePort.mark_fire_delivered)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "note_id", "due_at"]
 
 
 class TestAgentNotePortMockImplementation:
@@ -136,3 +171,48 @@ class TestAgentNotePortMockImplementation:
             user_id="user-1", as_of=datetime.now(timezone.utc)
         )
         assert result == []
+
+    async def test_get_note_returns_optional(self, mock_port):
+        note = self._make_note()
+        mock_port.get_note.return_value = note
+        result = await mock_port.get_note(user_id="user-1", note_id="1741525822123")
+        assert result is note
+
+        mock_port.get_note.return_value = None
+        result = await mock_port.get_note(user_id="user-1", note_id="missing")
+        assert result is None
+
+    async def test_reschedule_if_due_at_returns_bool(self, mock_port):
+        mock_port.reschedule_if_due_at.return_value = True
+        result = await mock_port.reschedule_if_due_at(
+            note_id="1",
+            expected_due=datetime(2026, 5, 1, 6, 0, tzinfo=timezone.utc),
+            next_due=datetime(2026, 5, 2, 6, 0, tzinfo=timezone.utc),
+            last_fired=datetime(2026, 5, 1, 6, 0, 1, tzinfo=timezone.utc),
+        )
+        assert result is True
+
+        mock_port.reschedule_if_due_at.return_value = False
+        result = await mock_port.reschedule_if_due_at(
+            note_id="1",
+            expected_due=datetime(2026, 5, 1, 6, 0, tzinfo=timezone.utc),
+            next_due=datetime(2026, 5, 2, 6, 0, tzinfo=timezone.utc),
+            last_fired=datetime(2026, 5, 1, 6, 0, 1, tzinfo=timezone.utc),
+        )
+        assert result is False
+
+    async def test_delete_if_due_at_returns_bool(self, mock_port):
+        mock_port.delete_if_due_at.return_value = True
+        result = await mock_port.delete_if_due_at(
+            note_id="1",
+            user_id="user-1",
+            expected_due=datetime(2026, 5, 1, 6, 0, tzinfo=timezone.utc),
+        )
+        assert result is True
+
+    async def test_mark_fire_delivered_returns_none(self, mock_port):
+        mock_port.mark_fire_delivered.return_value = None
+        result = await mock_port.mark_fire_delivered(
+            note_id="1", due_at=datetime(2026, 5, 1, 6, 0, tzinfo=timezone.utc)
+        )
+        assert result is None
