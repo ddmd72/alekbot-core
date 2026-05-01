@@ -661,6 +661,42 @@ class TestWorkerHandlerSessionExtraction:
         call_kwargs = notification.notify.call_args[1]
         assert call_kwargs.get("channel_id_override") is None
 
+    async def test_deep_research_polling_forwards_media_storage(self):
+        """Gemini DR completion must forward self._media_storage to deliver_deep_research
+        so round1.md / round2.md / meta.json land in GCS (R12.3 — DR artifact symmetry)."""
+        worker, _notification = self._make_worker()
+
+        mock_media_storage = MagicMock()
+        worker._media_storage = mock_media_storage
+
+        mock_job_port = AsyncMock()
+        mock_job_port.get_status = AsyncMock(return_value=("completed", "Research result text"))
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_job_port
+        worker._job_registry = mock_registry
+        worker._task_dispatch = AsyncMock()
+        worker._agent_factory = AsyncMock()
+
+        payload = {
+            "task_type": "deep_research_polling",
+            "interaction_id": "int-003",
+            "user_id": _USER,
+            "account_id": _ACCOUNT,
+            "session_id": f"{_USER}:{_SLACK_CHANNEL}",
+            "attempt": 1,
+            "consecutive_errors": 0,
+            "provider": "gemini",
+            "query": "AI research",
+        }
+
+        with patch(
+            "src.handlers.worker_handler.deliver_deep_research", new_callable=AsyncMock
+        ) as mock_deliver:
+            await worker.handle(payload)
+
+            mock_deliver.assert_called_once()
+            assert mock_deliver.call_args.kwargs["media_storage"] is mock_media_storage
+
 
 # =========================================================================
 # 9. Cross-cutting: session format consistency

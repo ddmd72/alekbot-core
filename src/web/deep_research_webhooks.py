@@ -60,7 +60,9 @@ def create_deep_research_webhooks_blueprint(
         notification_service: UserNotificationService for delivering results.
         webhook_secret:       OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET (whsec_<base64> format).
                               None = skip verification (local dev).
-        media_storage:        Optional GCS adapter for uploading HTML reports.
+        media_storage:        Optional GCS adapter for uploading round1/round2/meta.json
+                              artifacts. None = skip artifact uploads (HTML report still
+                              delivered via task_queue).
     """
     blueprint = Blueprint("deep_research_webhooks", __name__)
 
@@ -176,6 +178,11 @@ def create_deep_research_webhooks_blueprint(
                 metadata={"source": "openai_webhook", "job_id": job_id},
             )
 
+            # Derive invocation channel from per-channel session_id (format: "user_id:channel_id")
+            # so the report delivers to the channel that started the research, not the user's
+            # primary/last-active channel. Mirrors Gemini polling path.
+            origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
+
             await deliver_deep_research(
                 result_text=output_text,
                 user_id=user_id,
@@ -183,6 +190,8 @@ def create_deep_research_webhooks_blueprint(
                 query=query,
                 task_queue=task_queue,
                 session_id=session_id,
+                media_storage=media_storage,
+                channel_id_override=origin_channel_id,
             )
 
             logger.info("[DeepResearchWebhook] Report delivered: user=%s", user_id[:8])

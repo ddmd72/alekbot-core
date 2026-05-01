@@ -362,6 +362,7 @@ class WorkerHandler:
                 query=query,
                 task_queue=self._task_dispatch,
                 session_id=session_id,
+                media_storage=self._media_storage,
                 channel_id_override=origin_channel_id,
             )
 
