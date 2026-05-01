@@ -23,6 +23,7 @@ from ..adapters.firestore_prompt_repository import FirestorePromptComponentRepos
 from ..adapters.groovy_prompt_assembler import GroovyPromptAssembler
 from ..adapters.xml_prompt_assembler import XmlPromptAssembler
 from ..adapters.fact_management_adapter import FactManagementAdapter
+from ..adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from ..domain.deduplication_service import SmartDeduplication
 from ..services.configuration_service import ConfigurationService
 from ..services.biographical_context_service import BiographicalContextService
@@ -84,6 +85,11 @@ class ServiceContainer:
         self.grok_service: Optional[LLMPort] = self._init_grok(config)
         self.openai_service: Optional[LLMPort] = self._init_openai(config)
         self.embedding_service = GeminiEmbeddingAdapter(api_key=config["GEMINI_API_KEY"])
+
+        # Provider-level circuit breaker — process-local singleton.
+        # Shared by all agents via AgentExecutionContext.resilience_port.
+        # Replace with Redis/Firestore adapter when multi-instance deployment lands.
+        self.resilience_port = InMemoryProviderResilience()
 
         # ------------------------------------------------------------------
         # Email search adapters (shared, stateless)
@@ -173,6 +179,7 @@ class ServiceContainer:
         self.cache_strategy = PromptCacheStrategy()
         self.context_builder = AgentContextBuilder(
             self.registry,
+            resilience_port=self.resilience_port,
             cache_strategy=self.cache_strategy,
             caching_proxy_factory=CachingLLMProxy,
         )

@@ -9,6 +9,7 @@ from src.services.agent_context_builder import AgentContextBuilder, AgentProvide
 from src.services.provider_registry import ProviderRegistry
 from src.domain.user import UserBotConfig, PerformanceTier
 from src.ports.llm_port import LLMPort, ProviderCapabilities
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from unittest.mock import Mock
 
 
@@ -67,7 +68,7 @@ def registry(mock_gemini_adapter, mock_claude_adapter, mock_grok_adapter):
 @pytest.fixture
 def builder(registry):
     """AgentContextBuilder with mocked registry."""
-    return AgentContextBuilder(registry)
+    return AgentContextBuilder(registry, resilience_port=InMemoryProviderResilience())
 
 
 # ============================================================================

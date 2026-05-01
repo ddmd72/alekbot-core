@@ -30,6 +30,7 @@ Migration from Chat Completions to Responses API (2026-04):
 - store=False for privacy (no server-side storage)
 """
 
+import asyncio
 import json
 import openai
 from typing import List, Any, Optional, Set
@@ -48,7 +49,13 @@ from ..ports.llm_port import (
     PROMPT_CACHE_BOUNDARY,
 )
 from ..domain.user import PerformanceTier
-from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
+from ..domain.exceptions import (
+    LLMNetworkError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from ..utils.logger import logger
 
 
@@ -223,16 +230,31 @@ class OpenAIAdapter(LLMPort):
         if cache_config and cache_config.enabled:
             create_kwargs["prompt_cache_retention"] = "24h"
 
+        request_timeout = request.timeout if request else None
         try:
-            response = await self.client.responses.create(**create_kwargs)
+            _coro = self.client.responses.create(**create_kwargs)
+            response = await (
+                asyncio.wait_for(_coro, timeout=request_timeout)
+                if request_timeout else _coro
+            )
+        except asyncio.TimeoutError as e:
+            raise LLMTimeoutError(f"request timeout after {request_timeout}s") from e
+        except openai.APITimeoutError as e:
+            # SDK-level timeout (default httpx 300s when request.timeout is None).
+            raise LLMTimeoutError(str(e)) from e
         except openai.RateLimitError as e:
             raise LLMRateLimitError(str(e), http_status=429) from e
+        except openai.APIConnectionError as e:
+            raise LLMNetworkError(str(e)) from e
         except openai.APIStatusError as e:
-            if e.status_code == 503:
+            status = getattr(e, "status_code", None)
+            if status == 503:
                 raise LLMUnavailableError(str(e), http_status=503) from e
+            if isinstance(status, int) and 500 <= status < 600:
+                raise LLMServerError(str(e), http_status=status) from e
             logger.error(
                 "❌ [OpenAIAdapter] API error: model=%s status=%s error=%s",
-                model_name, e.status_code, str(e),
+                model_name, status, str(e),
                 exc_info=True,
             )
             raise

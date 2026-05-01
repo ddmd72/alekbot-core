@@ -4,6 +4,7 @@ from src.composition.user_agent_factory import UserAgentFactory
 from src.domain.user import UserProfile, UserBotConfig, PerformanceTier
 from src.services.agent_context_builder import AgentExecutionContext
 from src.ports.llm_port import ProviderCapabilities, LLMPort
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 @pytest.fixture
@@ -44,6 +45,7 @@ def _make_context(agent_type: str, model_name: str, tier=PerformanceTier.BALANCE
         model_name=model_name,
         tier=tier,
         capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
 
 

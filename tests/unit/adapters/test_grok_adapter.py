@@ -5,11 +5,20 @@ Pattern: mock adapter.client at the SDK boundary (AsyncOpenAI), capture
 what kwargs are sent to client.chat.completions.create(), assert on them.
 This tests the translation layer (LLMRequest → SDK call), not business logic.
 """
+import asyncio
 import json
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+import openai
 
 from src.adapters.grok_adapter import GrokAdapter
+from src.domain.exceptions import (
+    LLMNetworkError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import (
     LLMRequest,
@@ -394,3 +403,64 @@ def test_gcs_ref_file_data_no_error():
 
     assert len(result) == 1
     assert result[0]["role"] == "user"
+
+
+# ============================================================================
+# F4.5 Phase 2 — exception translation
+# ============================================================================
+
+_GROK_REQUEST = LLMRequest(
+    model_name="grok-2-latest",
+    system_instruction="test",
+    messages=MESSAGES,
+)
+
+
+@pytest.mark.asyncio
+async def test_asyncio_timeout_translates_to_LLMTimeoutError():
+    """asyncio.TimeoutError from our wait_for wrap → LLMTimeoutError."""
+    adapter = GrokAdapter(api_key="test-key")
+    adapter.client.chat.completions.create = AsyncMock(side_effect=asyncio.TimeoutError())
+
+    request = _GROK_REQUEST.model_copy(update={"timeout": 10})
+    with pytest.raises(LLMTimeoutError):
+        await adapter.generate_content(request=request)
+
+
+@pytest.mark.asyncio
+async def test_sdk_timeout_translates_to_LLMTimeoutError():
+    """openai.APITimeoutError (SDK-level, default httpx 60s when
+    request.timeout is None) → LLMTimeoutError."""
+    adapter = GrokAdapter(api_key="test-key")
+    sdk_exc = openai.APITimeoutError(request=MagicMock())
+    adapter.client.chat.completions.create = AsyncMock(side_effect=sdk_exc)
+
+    with pytest.raises(LLMTimeoutError):
+        await adapter.generate_content(request=_GROK_REQUEST)
+
+
+@pytest.mark.asyncio
+async def test_connection_error_translates_to_LLMNetworkError():
+    """openai.APIConnectionError → LLMNetworkError."""
+    adapter = GrokAdapter(api_key="test-key")
+    sdk_exc = openai.APIConnectionError(request=MagicMock())
+    adapter.client.chat.completions.create = AsyncMock(side_effect=sdk_exc)
+
+    with pytest.raises(LLMNetworkError):
+        await adapter.generate_content(request=_GROK_REQUEST)
+
+
+@pytest.mark.asyncio
+async def test_5xx_non_503_translates_to_LLMServerError():
+    """openai.APIStatusError(status_code=504) → LLMServerError."""
+    adapter = GrokAdapter(api_key="test-key")
+    sdk_exc = openai.APIStatusError(
+        message="Gateway timeout",
+        response=MagicMock(status_code=504, request=MagicMock()),
+        body={"error": {"type": "server_error"}},
+    )
+    adapter.client.chat.completions.create = AsyncMock(side_effect=sdk_exc)
+
+    with pytest.raises(LLMServerError) as exc_info:
+        await adapter.generate_content(request=_GROK_REQUEST)
+    assert exc_info.value.http_status == 504

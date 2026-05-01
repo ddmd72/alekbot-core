@@ -4,13 +4,16 @@ Unit tests for LLM provider exception hierarchy + FAILOVER_TRIGGER_TYPES const.
 import pytest
 
 from src.domain.exceptions import (
+    _ERROR_TYPE_LOG_LABEL,
     FAILOVER_TRIGGER_TYPES,
+    BothProvidersUnavailableError,
     LLMError,
     LLMNetworkError,
     LLMRateLimitError,
     LLMServerError,
     LLMTimeoutError,
     LLMUnavailableError,
+    ProviderBreakerOpenError,
 )
 
 
@@ -113,3 +116,108 @@ class TestFailoverTriggerTypes:
 
         err = CustomLLMError("x")
         assert not isinstance(err, tuple(FAILOVER_TRIGGER_TYPES))
+
+
+class TestProviderBreakerOpenError:
+    def test_inherits_from_llm_error(self):
+        assert issubclass(ProviderBreakerOpenError, LLMError)
+
+    def test_carries_provider_name(self):
+        err = ProviderBreakerOpenError("gemini")
+        assert err.provider_name == "gemini"
+
+    def test_message_includes_provider_name(self):
+        err = ProviderBreakerOpenError("claude")
+        assert "claude" in str(err)
+        assert "breaker open" in str(err)
+
+    def test_no_http_status(self):
+        err = ProviderBreakerOpenError("gemini")
+        assert err.http_status is None
+
+    def test_in_failover_trigger_types(self):
+        # Short-circuit MUST route to fallback — same path as adapter-translated errors.
+        assert ProviderBreakerOpenError in FAILOVER_TRIGGER_TYPES
+
+    def test_isinstance_via_failover_tuple(self):
+        err = ProviderBreakerOpenError("gemini")
+        assert isinstance(err, tuple(FAILOVER_TRIGGER_TYPES))
+
+
+class TestBothProvidersUnavailableError:
+    def test_inherits_from_llm_error(self):
+        assert issubclass(BothProvidersUnavailableError, LLMError)
+
+    def test_carries_all_context(self):
+        cause = LLMRateLimitError("primary 429", http_status=429)
+        err = BothProvidersUnavailableError("gemini", "claude", primary_cause=cause)
+        assert err.primary_name == "gemini"
+        assert err.fallback_name == "claude"
+        assert err.primary_cause is cause
+
+    def test_accepts_none_fallback_name(self):
+        # When ctx.fallback_provider is None — uniform terminal type.
+        cause = LLMUnavailableError("primary 503", http_status=503)
+        err = BothProvidersUnavailableError("gemini", None, primary_cause=cause)
+        assert err.fallback_name is None
+
+    def test_message_includes_provider_names_and_cause_type(self):
+        cause = LLMTimeoutError("budget exhausted")
+        err = BothProvidersUnavailableError("gemini", "claude", primary_cause=cause)
+        msg = str(err)
+        assert "gemini" in msg
+        assert "claude" in msg
+        assert "LLMTimeoutError" in msg
+
+    def test_no_http_status(self):
+        cause = LLMRateLimitError("x", http_status=429)
+        err = BothProvidersUnavailableError("g", "c", primary_cause=cause)
+        assert err.http_status is None
+
+    def test_NOT_in_failover_trigger_types(self):
+        # Terminal error — exhausted, not a trigger for further routing.
+        # Catching this in FAILOVER tuple would create infinite loops.
+        assert BothProvidersUnavailableError not in FAILOVER_TRIGGER_TYPES
+
+    def test_isinstance_via_failover_tuple_returns_false(self):
+        cause = LLMRateLimitError("x", http_status=429)
+        err = BothProvidersUnavailableError("g", "c", primary_cause=cause)
+        assert not isinstance(err, tuple(FAILOVER_TRIGGER_TYPES))
+
+
+class TestErrorTypeLogLabel:
+    def test_covers_all_failover_trigger_types(self):
+        # Invariant: every FAILOVER_TRIGGER_TYPES member has a log label.
+        # Catches drift if someone adds a new trigger type without label.
+        missing = FAILOVER_TRIGGER_TYPES - set(_ERROR_TYPE_LOG_LABEL.keys())
+        assert not missing, f"FAILOVER_TRIGGER_TYPES missing labels: {missing}"
+
+    def test_no_extra_entries(self):
+        # Reverse invariant: no labels for types that aren't triggers.
+        # Keeps the dict tightly coupled to the trigger set.
+        extra = set(_ERROR_TYPE_LOG_LABEL.keys()) - FAILOVER_TRIGGER_TYPES
+        assert not extra, f"_ERROR_TYPE_LOG_LABEL has stale entries: {extra}"
+
+    def test_labels_are_unique(self):
+        labels = list(_ERROR_TYPE_LOG_LABEL.values())
+        assert len(labels) == len(set(labels)), f"Duplicate labels: {labels}"
+
+    @pytest.mark.parametrize(
+        "exc_type, expected_label",
+        [
+            (LLMRateLimitError, "rate_limit"),
+            (LLMUnavailableError, "unavailable"),
+            (LLMTimeoutError, "timeout"),
+            (LLMNetworkError, "network"),
+            (LLMServerError, "server_error"),
+            (ProviderBreakerOpenError, "breaker_open"),
+        ],
+    )
+    def test_specific_labels(self, exc_type, expected_label):
+        assert _ERROR_TYPE_LOG_LABEL[exc_type] == expected_label
+
+    def test_lookup_by_exception_type_works(self):
+        # The intended caller pattern in BaseAgent._call_llm:
+        # error_type=_ERROR_TYPE_LOG_LABEL[type(e)]
+        err = LLMTimeoutError("x")
+        assert _ERROR_TYPE_LOG_LABEL[type(err)] == "timeout"

@@ -1,6 +1,6 @@
 # Decision: Provider Resilience Port
 
-**Status:** Adopted (2026-05-01). Phase 2 caller wire-up pending.
+**Status:** Adopted (2026-05-01).
 
 ## Decision
 
@@ -18,3 +18,10 @@ Provider-level circuit-breaker is its own port (`src/ports/provider_resilience_p
 
 - Multi-instance deployment → swap `InMemoryProviderResilience` for a Redis- or Firestore-backed adapter (port unchanged).
 - Per-error-type weighting required → restore an `error` parameter.
+
+## See also
+
+- [`provider_resilience_phase2_wireup.md`](provider_resilience_phase2_wireup.md) — Phase 2 caller wire-up (BaseAgent + adapter translations + AgentExecutionContext field).
+- [`agent_execution_context_resilience_field.md`](agent_execution_context_resilience_field.md) — required-field choice + cross-port-import workaround.
+- [`agent_execution_context_eq_excludes_resilience.md`](agent_execution_context_eq_excludes_resilience.md) — custom `__eq__` excluding process-local infra.
+- [`both_providers_unavailable_terminal_type.md`](both_providers_unavailable_terminal_type.md) — terminal exception + breaking change to no-fallback path.

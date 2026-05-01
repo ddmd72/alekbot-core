@@ -1,9 +1,27 @@
-# Decision: Provider resilience layer is its own port — closure deferred
+# Decision: Provider resilience layer is its own port — SUPERSEDED
 
-**Status:** Pending (deferred 2026-05-01) — **target shape committed, implementation deferred**.
+**Status:** Superseded (2026-05-01).
+
+The deferral described in this record was reversed the same day this record was created. The clean closure shipped as Phase 1 + Phase 2 in a tighter shape than the target sketch below (3-method port instead of 6-method, stateless policy in `FAILOVER_TRIGGER_TYPES` domain const, asymmetric `record_success` policy).
+
+**Replaced by:**
+
+- [`provider_resilience_port.md`](provider_resilience_port.md) — Phase 1 port + adapter + domain const.
+- [`provider_resilience_phase2_wireup.md`](provider_resilience_phase2_wireup.md) — Phase 2 BaseAgent caller flow + adapter timeout translation.
+- [`agent_execution_context_resilience_field.md`](agent_execution_context_resilience_field.md) — required-field choice + cross-port-import workaround.
+- [`agent_execution_context_eq_excludes_resilience.md`](agent_execution_context_eq_excludes_resilience.md) — custom `__eq__` excluding process-local infra.
+- [`both_providers_unavailable_terminal_type.md`](both_providers_unavailable_terminal_type.md) — terminal exception + breaking change to no-fallback path.
+
+Original deferral content kept below for forensic value (target shape vs. actually-shipped shape diverged — useful comparison for future "what we sketched vs. what we built" reviews).
+
+---
+
+## Original (now-superseded) record
+
+**Status (original):** Pending (deferred 2026-05-01) — **target shape committed, implementation deferred**.
 **Trigger:** F4.5 — architecture inspection finding flagged the existing fallback chain in `BaseAgent._call_llm` as the largest acknowledged tech debt in the LLM provider subsystem.
 
-## Context
+### Context
 
 `BaseAgent._call_llm` (`src/agents/base_agent.py:920–939`) is the single point in the codebase that every agent uses to invoke an LLM. Today it implements a one-shot fallback policy inline:
 
@@ -16,11 +34,11 @@ The audit identified five acceptance gaps around this code path. The author conf
 
 This record exists because **the followup tracker (`docs/reviews/ARCHITECTURE_INSPECTION_FOLLOWUP.md`) is gitignored** — without a tracked record the deferral context evaporates the moment the followup file is removed or the maintainer onboards a future helper.
 
-## Decision
+### Decision
 
 The clean closure is **not a series of point fixes inside `_call_llm`**. It is a new port: `ProviderResiliencePort`, with state and policy living outside `BaseAgent`.
 
-### Target shape (specification, not implemented)
+#### Target shape (specification, not implemented)
 
 **Domain (`src/domain/exceptions.py`):**
 - Add `LLMTimeoutError`, `LLMNetworkError`, `LLMServerError` as `LLMError` subclasses. Pure data classes, no I/O dependency. Existing `LLMRateLimitError` / `LLMUnavailableError` remain.
@@ -78,30 +96,30 @@ Policy lives in the port, not in the agent. The existing 8 tests in `test_base_a
 
 **Estimated cost:** ~150–300 LOC net new + state design + composition wiring + ~30 new unit tests + per-adapter translation work.
 
-## Rationale
+### Rationale
 
 Per the project rule (`feedback_clean_or_explain.md`): every non-trivial change is binary — clean hexagonal implementation OR explicit deferral with rationale. **A solution that will likely require strong refactoring later does not count as clean.**
 
 Each of the five audit-listed gaps (backoff / jitter / circuit breaker / timeout fallback / parse-error fallback) reads as an independent fix, but all are instances of policy that belong in **one port**. Closing them piecemeal inside `_call_llm` (e.g. "just add jitter", "just add `LLMTimeoutError` to the except clause") locks in the inline-policy-in-agent pattern that the clean closure has to invert. Every such patch becomes throwaway work the day the port lands.
 
-## Why deferred (not done now)
+### Why deferred (not done now)
 
 - **Scope:** ~150–300 LOC + state design + composition wiring + ~30 new tests + per-adapter changes. Multi-day architectural unit, not an item-by-item sprint shape.
 - **Coupling with two other Bucket E items:** F2.11 (Smart stateless) and F4.6 (two-layer provider override under indefinite UAT) both touch BaseAgent / `AgentExecutionContext` state design. Doing F4.5 in isolation risks designing a `ProviderResiliencePort` that conflicts with F2.11's statelessness target or duplicates F4.6's override surface. The three should be designed together.
 - **LiteLLM evaluation is unresolved.** The audit names LiteLLM swap as one of two acceptance paths. That decision is its own portfolio-relevant call (vendor abstraction surface vs. hexagonal-port discipline) — not a sub-bullet of F4.5.
 
-## Triggers to revisit
+### Triggers to revisit
 
 1. **A real production incident driven by any of the five gaps.** Most plausible: Anthropic 60s stall on long DocGenerator responses — the comment at `claude_adapter.py:104` already names this hazard. Real signal beats speculative fix.
 2. **F2.11 design pass starts.** Bundle decision lands then.
 3. **LiteLLM evaluation completes** (chosen or rejected with rationale).
 4. **Multi-instance deployment.** Per-instance in-memory state stops being good enough — Redis/Firestore-backed circuit-breaker state needed; the architectural question becomes forced.
 
-## What stays true while deferred
+### What stays true while deferred
 
 The current 8-test fallback coverage continues to assert the documented contract: 429/503 → instant fallback, no fallback → re-raise. **No silent degradation.** The deferral is honest — it does not pretend partial coverage is complete; the five listed gaps remain documented as gaps, not silently dropped.
 
-## Consequences
+### Consequences
 
 **Positive:**
 - The shape of the eventual fix is committed in writing. Future work does not re-derive the design from scratch.
@@ -112,7 +130,7 @@ The current 8-test fallback coverage continues to assert the documented contract
 - Production keeps the existing five gaps until a trigger fires. The current behavior is "instant single failover on 429/503" — workable at current scale, but a long Anthropic stall (the named hazard) results in a hung request rather than a fallback.
 - Future helpers reading `_call_llm` will see inline policy and (correctly) think it is incomplete; this record is the answer to the "why isn't this a port already?" question.
 
-## References
+### References
 
 - `src/agents/base_agent.py:920–939` — current inline fallback.
 - `tests/unit/agents/core/test_base_agent_fallback.py` — 8 tests covering the existing contract.

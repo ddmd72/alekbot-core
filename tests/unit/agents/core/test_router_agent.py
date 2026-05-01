@@ -24,6 +24,7 @@ from src.domain.llm import Message, MessagePart
 from src.domain.session import SessionState
 from src.domain.agent_note import AgentNote
 from src.domain.user import PerformanceTier
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # ============================================================================
@@ -98,7 +99,8 @@ def router_with_llm(router_config, mock_llm, mock_prompt_builder):
         provider=mock_llm,
         model_name="gemini-flash",
         tier=PerformanceTier.ECO,
-        capabilities=ProviderCapabilities()
+        capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
     return RouterAgent(
         config=router_config,
@@ -795,7 +797,8 @@ class TestVisionComplexityOverride:
             provider=mock_llm,
             model_name="gemini-flash",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = RouterAgent(
             config=router_config,
@@ -872,7 +875,8 @@ class TestBiographicalFetchException:
             provider=mock_llm,
             model_name="gemini-flash",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
 
         mock_repository = AsyncMock(spec=FactRepository)
@@ -908,7 +912,8 @@ class TestBiographicalFetchException:
             provider=mock_llm,
             model_name="gemini-flash",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
 
         mock_enrichment = AsyncMock()
@@ -1007,7 +1012,8 @@ class TestLoadTriagePromptNoPromptBuilder:
             provider=mock_llm,
             model_name="gemini-flash",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = RouterAgent(
             config=router_config,
@@ -1027,7 +1033,8 @@ class TestLoadTriagePromptNoPromptBuilder:
             provider=mock_llm,
             model_name="gemini-flash",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = RouterAgent(
             config=router_config,
@@ -1055,7 +1062,8 @@ class TestClassifyWithLlmEmptyMessages:
             provider=mock_llm,
             model_name="gemini-flash",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = RouterAgent(
             config=router_config,
@@ -1099,7 +1107,8 @@ class TestClassifyWithLlmJsonDecodeError:
             provider=mock_llm,
             model_name="gemini-flash",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = RouterAgent(
             config=router_config,
@@ -1126,7 +1135,8 @@ class TestClassifyWithLlmJsonDecodeError:
             provider=mock_llm,
             model_name="gemini-flash",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = RouterAgent(
             config=router_config,
@@ -1334,7 +1344,8 @@ class TestVisionRefVsNativeBinary:
             provider=mock_llm,
             model_name="gemini-flash",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = RouterAgent(
             config=router_config,

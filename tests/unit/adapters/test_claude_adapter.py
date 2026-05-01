@@ -1,3 +1,4 @@
+import asyncio
 import json
 import pytest
 from unittest.mock import MagicMock, AsyncMock
@@ -5,7 +6,13 @@ import anthropic
 
 from src.adapters.claude_adapter import ClaudeAdapter
 from src.domain.user import PerformanceTier
-from src.domain.exceptions import LLMRateLimitError, LLMUnavailableError
+from src.domain.exceptions import (
+    LLMNetworkError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from src.ports.llm_port import (
     PromptCacheConfig, AutomaticFunctionCallingConfig, PROMPT_CACHE_BOUNDARY,
     LLMRequest, Message, MessagePart,
@@ -947,6 +954,89 @@ async def test_api_status_400_re_raises_as_is():
                 messages=_MESSAGES,
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# F4.5 Phase 2 — new exception translations
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_asyncio_timeout_translates_to_LLMTimeoutError():
+    """asyncio.TimeoutError from our wait_for wrap → LLMTimeoutError. This is
+    the wall-clock budget path: caller passed request.timeout, the inner
+    stream took too long."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    adapter.client.messages.stream = lambda **kw: _make_failing_cm(asyncio.TimeoutError())
+
+    with pytest.raises(LLMTimeoutError):
+        await adapter.generate_content(
+            request=LLMRequest(
+                model_name="claude-sonnet-4-6",
+                system_instruction="test",
+                messages=_MESSAGES,
+                timeout=10,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_sdk_timeout_translates_to_LLMTimeoutError():
+    """anthropic.APITimeoutError (SDK-level read timeout, default 120s when
+    request.timeout is None) → LLMTimeoutError. Without this branch, default-
+    timeout requests would silently bypass the circuit breaker."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    sdk_exc = anthropic.APITimeoutError(request=MagicMock())
+    adapter.client.messages.stream = lambda **kw: _make_failing_cm(sdk_exc)
+
+    with pytest.raises(LLMTimeoutError):
+        await adapter.generate_content(
+            request=LLMRequest(
+                model_name="claude-sonnet-4-6",
+                system_instruction="test",
+                messages=_MESSAGES,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_connection_error_translates_to_LLMNetworkError():
+    """anthropic.APIConnectionError → LLMNetworkError (TCP/DNS-level failure
+    before any HTTP response)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    sdk_exc = anthropic.APIConnectionError(request=MagicMock())
+    adapter.client.messages.stream = lambda **kw: _make_failing_cm(sdk_exc)
+
+    with pytest.raises(LLMNetworkError):
+        await adapter.generate_content(
+            request=LLMRequest(
+                model_name="claude-sonnet-4-6",
+                system_instruction="test",
+                messages=_MESSAGES,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_5xx_non_503_translates_to_LLMServerError():
+    """anthropic.APIStatusError(status_code=500) → LLMServerError (500/502/504
+    are distinct from 503 maintenance — counted separately by the breaker)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    sdk_exc = anthropic.APIStatusError(
+        message="Internal server error",
+        response=MagicMock(status_code=500),
+        body={"error": {"type": "server_error"}},
+    )
+    adapter.client.messages.stream = lambda **kw: _make_failing_cm(sdk_exc)
+
+    with pytest.raises(LLMServerError) as exc_info:
+        await adapter.generate_content(
+            request=LLMRequest(
+                model_name="claude-sonnet-4-6",
+                system_instruction="test",
+                messages=_MESSAGES,
+            )
+        )
+    assert exc_info.value.http_status == 500
 
 
 # ---------------------------------------------------------------------------

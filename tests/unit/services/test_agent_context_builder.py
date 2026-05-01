@@ -7,6 +7,7 @@ from src.services.prompt_cache_strategy import PromptCacheStrategy
 from src.services.caching_llm_proxy import CachingLLMProxy
 from src.domain.user import UserBotConfig, PerformanceTier
 from src.ports.llm_port import LLMPort, ProviderCapabilities
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 class FakeProvider(LLMPort):
@@ -44,7 +45,7 @@ def registry():
 
 @pytest.fixture
 def builder(registry):
-    return AgentContextBuilder(registry)
+    return AgentContextBuilder(registry, resilience_port=InMemoryProviderResilience())
 
 
 def test_build_default_strategy(builder):
@@ -172,6 +173,7 @@ def test_build_with_default_tier_override(builder):
 def builder_with_cache(registry):
     return AgentContextBuilder(
         registry,
+        resilience_port=InMemoryProviderResilience(),
         cache_strategy=PromptCacheStrategy(),
         caching_proxy_factory=CachingLLMProxy,
     )

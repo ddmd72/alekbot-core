@@ -1,7 +1,16 @@
+import asyncio
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
+import httpx
 
 from src.adapters.gemini_adapter import GeminiAdapter
+from src.domain.exceptions import (
+    LLMNetworkError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import (
     PromptCacheConfig,
@@ -11,6 +20,7 @@ from src.ports.llm_port import (
     PROMPT_CACHE_BOUNDARY,
 )
 from google.genai import types as gemini_types
+from google.genai import errors as genai_errors
 
 
 # ============================================================================
@@ -387,3 +397,65 @@ async def test_gcs_ref_file_data_no_error():
     result = await adapter._convert_messages(messages)
 
     assert len(result) == 1
+
+
+# ============================================================================
+# F4.5 Phase 2 — exception translation
+# ============================================================================
+
+_GEMINI_REQUEST = LLMRequest(
+    model_name="gemini-flash-latest",
+    messages=[Message(role="user", parts=[MessagePart(text="hi")])],
+)
+
+
+def _make_adapter_with_mock_call(side_effect):
+    """Build a GeminiAdapter whose generate_content call raises ``side_effect``."""
+    adapter = GeminiAdapter(api_key="test-key")
+    adapter.client = MagicMock()
+    adapter.client.aio.models.generate_content = AsyncMock(side_effect=side_effect)
+    return adapter
+
+
+@pytest.mark.asyncio
+async def test_asyncio_timeout_translates_to_LLMTimeoutError():
+    """asyncio.TimeoutError from our wait_for wrap → LLMTimeoutError."""
+    adapter = _make_adapter_with_mock_call(asyncio.TimeoutError())
+
+    request = _GEMINI_REQUEST.model_copy(update={"timeout": 10})
+    with pytest.raises(LLMTimeoutError):
+        await adapter.generate_content(request=request)
+
+
+@pytest.mark.asyncio
+async def test_sdk_timeout_translates_to_LLMTimeoutError():
+    """httpx.TimeoutException (SDK transport-level timeout when request.timeout
+    is None and httpx default fires) → LLMTimeoutError."""
+    sdk_exc = httpx.ReadTimeout("read timeout")
+    adapter = _make_adapter_with_mock_call(sdk_exc)
+
+    with pytest.raises(LLMTimeoutError):
+        await adapter.generate_content(request=_GEMINI_REQUEST)
+
+
+@pytest.mark.asyncio
+async def test_connection_error_translates_to_LLMNetworkError():
+    """httpx.NetworkError (TCP/DNS/SSL handshake) → LLMNetworkError."""
+    sdk_exc = httpx.ConnectError("DNS resolution failed")
+    adapter = _make_adapter_with_mock_call(sdk_exc)
+
+    with pytest.raises(LLMNetworkError):
+        await adapter.generate_content(request=_GEMINI_REQUEST)
+
+
+@pytest.mark.asyncio
+async def test_5xx_non_503_translates_to_LLMServerError():
+    """genai_errors.ServerError(code=500) → LLMServerError (distinct from 503)."""
+    sdk_exc = genai_errors.ServerError(
+        code=500, response_json={"error": {"message": "internal"}}
+    )
+    adapter = _make_adapter_with_mock_call(sdk_exc)
+
+    with pytest.raises(LLMServerError) as exc_info:
+        await adapter.generate_content(request=_GEMINI_REQUEST)
+    assert exc_info.value.http_status == 500

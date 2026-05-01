@@ -32,6 +32,7 @@ from src.services.agent_context_builder import AgentExecutionContext
 from src.domain.user import PerformanceTier, UserBotConfig
 from src.ports.llm_port import ProviderCapabilities
 from src.infrastructure.task_execution_resolver import TaskExecutionResolver
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # =========================================================================
@@ -109,7 +110,8 @@ def smart_agent(
         provider=mock_llm_port,
         model_name="gemini-3-pro-preview",
         tier=PerformanceTier.BALANCED,
-        capabilities=ProviderCapabilities()
+        capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
     resolver_mock = MagicMock(spec=TaskExecutionResolver)
     resolver_mock.resolve.return_value = None
@@ -341,7 +343,8 @@ class TestCreateSmartResponseAgent:
             provider=mock_llm_port,
             model_name="gemini-3-pro-preview",
             tier=PerformanceTier.BALANCED,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         resolver_mock = MagicMock(spec=TaskExecutionResolver)
         resolver_mock.resolve.return_value = None

@@ -12,6 +12,7 @@ from src.ports.fact_management_port import FactManagementPort
 from src.domain.llm import ToolCall
 from src.domain.user import PerformanceTier
 from src.domain.request_context import RequestContext
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 class TestConsolidationAgent:
@@ -68,7 +69,8 @@ class TestConsolidationAgent:
             provider=mock_llm,
             model_name="gemini-3-pro-preview",
             tier=PerformanceTier.PERFORMANCE,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         return ConsolidationAgent(
             config=config,
@@ -300,7 +302,8 @@ class TestConsolidationAgentV3:
             provider=mock_llm,
             model_name="gemini-3-pro-preview",
             tier=PerformanceTier.PERFORMANCE,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         return ConsolidationAgent(
             config=config,
@@ -454,7 +457,8 @@ class TestConsolidationAgentV3:
             provider=mock_llm,
             model_name="gemini-3-pro-preview",
             tier=PerformanceTier.PERFORMANCE,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = ConsolidationAgent(
             config=config,

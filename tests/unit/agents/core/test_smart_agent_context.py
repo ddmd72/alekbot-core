@@ -10,6 +10,7 @@ from src.ports.session_store import SessionStore
 from src.services.agent_context_builder import AgentExecutionContext
 from src.domain.user import PerformanceTier, UserBotConfig
 from src.infrastructure.task_execution_resolver import TaskExecutionResolver
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 def _read_env_value(key: str) -> str:
@@ -56,7 +57,8 @@ async def test_smart_agent_stores_and_passes_user_id(mock_deps):
         provider=llm,
         model_name="gemini",
         tier=PerformanceTier.PERFORMANCE,
-        capabilities=ProviderCapabilities()
+        capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
     agent = SmartResponseAgent(
         config=config,

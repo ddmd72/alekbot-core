@@ -33,6 +33,7 @@ from src.ports.llm_port import (
     LLMPort,
     ProviderCapabilities,
 )
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # --------------------------------------------------------------------------- #
@@ -48,6 +49,7 @@ def _make_ctx(model_name: str = "stub-model") -> AgentExecutionContext:
         tier=PerformanceTier.PERFORMANCE,
         capabilities=ProviderCapabilities(),
         provider_name="stub-provider",
+        resilience_port=InMemoryProviderResilience(),
     )
 
 

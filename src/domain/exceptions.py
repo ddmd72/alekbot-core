@@ -1,4 +1,4 @@
-from typing import FrozenSet, Optional, Type
+from typing import Dict, FrozenSet, Optional, Type
 
 
 class LLMError(Exception):
@@ -45,15 +45,71 @@ class LLMServerError(LLMError):
     """
 
 
+class ProviderBreakerOpenError(LLMError):
+    """Raised by ``BaseAgent._call_llm`` when the resilience port reports that
+    the primary provider's breaker is open. Distinct from ``LLMUnavailableError``
+    (real upstream 503) — this signals "we are not even trying because past
+    failures opened the breaker". Internal: callers should never see it
+    directly; ``_call_llm`` catches it and routes to fallback.
+    """
+
+    def __init__(self, provider_name: str) -> None:
+        super().__init__(f"provider {provider_name!r} breaker open", http_status=None)
+        self.provider_name = provider_name
+
+
+class BothProvidersUnavailableError(LLMError):
+    """Terminal error: primary failed (or short-circuited) AND fallback is
+    unavailable (open breaker, missing, or also failed).
+
+    NOT in ``FAILOVER_TRIGGER_TYPES`` — fallback is exhausted, no further
+    routing is possible. Downstream MUST treat as non-retry'able until at
+    least ``cooldown_seconds`` elapse — same-process immediate retry will
+    hit the same open breakers. Carries ``primary_cause`` for forensics.
+    """
+
+    def __init__(
+        self,
+        primary_name: str,
+        fallback_name: Optional[str],
+        primary_cause: LLMError,
+    ) -> None:
+        super().__init__(
+            f"both providers unavailable: primary={primary_name!r} "
+            f"fallback={fallback_name!r} primary_cause={type(primary_cause).__name__}",
+            http_status=None,
+        )
+        self.primary_name = primary_name
+        self.fallback_name = fallback_name
+        self.primary_cause = primary_cause
+
+
 # Stateless policy data: error types that warrant a switch to the fallback
 # provider on the first encounter. Lives in the domain, not on a port —
 # the decision is pure ``isinstance`` and has no system boundary.
 # Read by ``BaseAgent._call_llm``; counted by ``ProviderResiliencePort``.
+# ``BothProvidersUnavailableError`` is intentionally absent: it is the
+# terminal result of failover exhaustion, not a trigger for further routing.
 FAILOVER_TRIGGER_TYPES: FrozenSet[Type[LLMError]] = frozenset({
     LLMRateLimitError,
     LLMUnavailableError,
     LLMTimeoutError,
     LLMNetworkError,
     LLMServerError,
+    ProviderBreakerOpenError,
 })
+
+
+# Log label per failover-trigger type. Co-located with the trigger set so a
+# new trigger type without a label fails the invariant test in
+# tests/unit/agents/core/test_base_agent_fallback.py loudly. Keeps the
+# ``_call_llm`` log path branchless: ``error_type=_ERROR_TYPE_LOG_LABEL[type(e)]``.
+_ERROR_TYPE_LOG_LABEL: Dict[Type[LLMError], str] = {
+    LLMRateLimitError: "rate_limit",
+    LLMUnavailableError: "unavailable",
+    LLMTimeoutError: "timeout",
+    LLMNetworkError: "network",
+    LLMServerError: "server_error",
+    ProviderBreakerOpenError: "breaker_open",
+}
 

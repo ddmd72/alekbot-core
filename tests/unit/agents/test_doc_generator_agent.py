@@ -20,6 +20,7 @@ from src.ports.llm_port import (
     ProviderCapabilities,
 )
 from src.ports.prompt_builder_port import PromptBuilderPort
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +44,7 @@ def _make_execution_context(mock_llm) -> AgentExecutionContext:
         model_name="claude-test",
         tier=PerformanceTier.PERFORMANCE,
         capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
 
 

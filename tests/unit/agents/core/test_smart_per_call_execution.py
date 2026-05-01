@@ -38,6 +38,7 @@ from src.ports.llm_port import (
     LLMPort,
     ProviderCapabilities,
 )
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # --------------------------------------------------------------------------- #
@@ -57,6 +58,7 @@ def _make_ctx(
         tier=tier,
         capabilities=ProviderCapabilities(),
         provider_name="stub",
+        resilience_port=InMemoryProviderResilience(),
     )
 
 

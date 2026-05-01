@@ -35,6 +35,7 @@ from src.ports.llm_port import (
     LLMPort,
     ProviderCapabilities,
 )
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 def _make_ctx(model_name: str = "test-model") -> AgentExecutionContext:
@@ -51,6 +52,7 @@ def _make_ctx(model_name: str = "test-model") -> AgentExecutionContext:
         tier=PerformanceTier.PERFORMANCE,
         capabilities=ProviderCapabilities(),
         provider_name="test-provider",
+        resilience_port=InMemoryProviderResilience(),
     )
 
 
@@ -142,10 +144,12 @@ class TestExecutionOverrideEquality:
         ctx_a = AgentExecutionContext(
             agent_type="smart", provider=provider, model_name="m",
             tier=PerformanceTier.PERFORMANCE, capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         ctx_b = AgentExecutionContext(
             agent_type="smart", provider=provider, model_name="m",
             tier=PerformanceTier.PERFORMANCE, capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         a = ExecutionOverride(execution_context=ctx_a, thinking_effort="low",
                               intent_remap={"x": "y"})

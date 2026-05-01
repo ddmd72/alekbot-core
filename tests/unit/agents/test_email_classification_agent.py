@@ -17,6 +17,7 @@ from src.ports.llm_port import (
     AgentExecutionContext, LLMRequest, LLMResponse, LLMPort, ProviderCapabilities, ToolCall,
 )
 from src.ports.prompt_builder_port import PromptBuilderPort
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 def _make_execution_context(mock_llm, model_name: str = "gemini-test") -> AgentExecutionContext:
@@ -26,6 +27,7 @@ def _make_execution_context(mock_llm, model_name: str = "gemini-test") -> AgentE
         model_name=model_name,
         tier=PerformanceTier.BALANCED,
         capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
 
 

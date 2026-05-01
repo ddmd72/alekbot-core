@@ -39,6 +39,7 @@ from src.ports.llm_port import (
 )
 from src.ports.prompt_builder_port import PromptBuilderPort
 from src.ports.puppeteer_runner_port import PuppeteerRunnerError, PuppeteerRunnerPort
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # ============================================================================
@@ -58,6 +59,7 @@ def _make_execution_context(mock_llm) -> AgentExecutionContext:
         model_name="gemini-flash-test",
         tier=PerformanceTier.BALANCED,
         capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
 
 

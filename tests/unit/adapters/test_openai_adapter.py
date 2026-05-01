@@ -1,8 +1,17 @@
+import asyncio
 import json
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
+import openai
 
 from src.adapters.openai_adapter import OpenAIAdapter
+from src.domain.exceptions import (
+    LLMNetworkError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import (
     LLMRequest,
@@ -570,3 +579,65 @@ def test_parse_response_deduplicates_citations():
     result = adapter._parse_response(resp)
 
     assert result.text.count("https://same.com") == 1
+
+
+# ============================================================================
+# F4.5 Phase 2 — exception translation
+# ============================================================================
+
+_OPENAI_REQUEST = LLMRequest(
+    model_name="gpt-5-mini",
+    system_instruction="test",
+    messages=[Message(role="user", parts=[MessagePart(text="hi")])],
+)
+
+
+@pytest.mark.asyncio
+async def test_asyncio_timeout_translates_to_LLMTimeoutError():
+    """asyncio.TimeoutError from our wait_for wrap → LLMTimeoutError."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    adapter.client.responses.create = AsyncMock(side_effect=asyncio.TimeoutError())
+
+    request = _OPENAI_REQUEST.model_copy(update={"timeout": 10})
+    with pytest.raises(LLMTimeoutError):
+        await adapter.generate_content(request=request)
+
+
+@pytest.mark.asyncio
+async def test_sdk_timeout_translates_to_LLMTimeoutError():
+    """openai.APITimeoutError (SDK-level, default httpx 300s when
+    request.timeout is None) → LLMTimeoutError. Without this branch,
+    default-timeout requests would silently bypass the circuit breaker."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    sdk_exc = openai.APITimeoutError(request=MagicMock())
+    adapter.client.responses.create = AsyncMock(side_effect=sdk_exc)
+
+    with pytest.raises(LLMTimeoutError):
+        await adapter.generate_content(request=_OPENAI_REQUEST)
+
+
+@pytest.mark.asyncio
+async def test_connection_error_translates_to_LLMNetworkError():
+    """openai.APIConnectionError → LLMNetworkError."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    sdk_exc = openai.APIConnectionError(request=MagicMock())
+    adapter.client.responses.create = AsyncMock(side_effect=sdk_exc)
+
+    with pytest.raises(LLMNetworkError):
+        await adapter.generate_content(request=_OPENAI_REQUEST)
+
+
+@pytest.mark.asyncio
+async def test_5xx_non_503_translates_to_LLMServerError():
+    """openai.APIStatusError(status_code=502) → LLMServerError."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    sdk_exc = openai.APIStatusError(
+        message="Bad gateway",
+        response=MagicMock(status_code=502, request=MagicMock()),
+        body={"error": {"type": "server_error"}},
+    )
+    adapter.client.responses.create = AsyncMock(side_effect=sdk_exc)
+
+    with pytest.raises(LLMServerError) as exc_info:
+        await adapter.generate_content(request=_OPENAI_REQUEST)
+    assert exc_info.value.http_status == 502

@@ -123,7 +123,12 @@ class LLMRequest(BaseModel):
     use_grounding: bool = False       # Request native search grounding; adapter decides how to implement
     use_code_execution: bool = False  # Request sandboxed Python code execution; Gemini only, others ignore
     thinking: Optional[str] = None    # Thinking effort: "low" | "medium" | "high". None = disabled.
-    timeout: Optional[int] = None     # Request timeout in seconds; None = no limit
+    # Request timeout in seconds. Upper bound — adapters wrap their SDK call in
+    # asyncio.wait_for(timeout=request.timeout) when set. Effective timeout is
+    # min(request.timeout, sdk_client_timeout) — the SDK client also enforces
+    # a default ceiling (Claude 120s read, OpenAI 300s, Grok 60s, Gemini per-request).
+    # Both sources translate to LLMTimeoutError on expiry.
+    timeout: Optional[int] = None
 
 
 class LLMResponse(BaseModel):
