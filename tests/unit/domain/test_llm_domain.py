@@ -45,6 +45,41 @@ class TestLLMRequest:
         with pytest.raises(Exception):
             LLMRequest(messages=[self._make_message()])
 
+    def test_unknown_kwarg_rejected(self):
+        """R14.3 guard: LLMRequest must reject unknown kwargs at construction.
+
+        Without ConfigDict(extra='forbid'), Pydantic V2 silently dropped extras —
+        a 2026-03-16 commit renamed max_tokens to max_output_tokens in
+        DocGeneratorAgent and the regression went undetected for ~46 days.
+        """
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            LLMRequest(
+                model_name="m",
+                messages=[self._make_message()],
+                max_output_tokens=64_000,  # not a valid LLMRequest field
+            )
+
+    def test_max_tokens_accepted(self):
+        """The canonical max_tokens field must remain accepted."""
+        req = LLMRequest(
+            model_name="m",
+            messages=[self._make_message()],
+            max_tokens=64_000,
+        )
+        assert req.max_tokens == 64_000
+
+    def test_typo_unknown_kwarg_rejected(self):
+        """Generic typo (max_token, not max_tokens) must also be rejected — proves
+        the guard is broad, not a special-cased max_output_tokens block."""
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            LLMRequest(
+                model_name="m",
+                messages=[self._make_message()],
+                max_token=64_000,
+            )
+
 
 class TestLLMResponse:
     def test_all_defaults_none(self):

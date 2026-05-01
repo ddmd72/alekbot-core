@@ -11,7 +11,7 @@ AutomaticFunctionCallingConfig, LLMRequest, LLMResponse: moved 2026-03-08 (TD-V2
 
 import time
 from typing import List, Any, Optional, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # Prompt cache boundary marker — used by prompt assembly and LLM adapters.
@@ -95,7 +95,18 @@ class ProviderCapabilities(BaseModel):
 
 
 class LLMRequest(BaseModel):
-    """Unified request model for LLM calls."""
+    """Unified request model for LLM calls.
+
+    extra="forbid": unknown kwargs raise ValidationError at construction time.
+    Without this guard, Pydantic silently dropped extra fields — a long-form
+    AI-pair-programming hazard. A 2026-03-16 commit renamed `max_tokens` to
+    `max_output_tokens` in DocGenerator; the rename was accepted silently and
+    DocGenerator ran with provider defaults (4-8x smaller token budget) for
+    ~46 days before inspection caught it. See R14.3 in
+    docs/reviews/ARCHITECTURE_INSPECTION_FOLLOWUP.md.
+    """
+    model_config = ConfigDict(extra="forbid")
+
     model_name: str
     messages: List[Message]
     system_instruction: Optional[str] = None

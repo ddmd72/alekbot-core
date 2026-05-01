@@ -253,6 +253,20 @@ class TestLLMCall:
                           mock_llm.generate_content.call_args.args[0]
         assert req.temperature == DOC_GENERATOR.temperature
 
+    async def test_max_tokens_matches_config(self, agent, mock_llm):
+        """Regression test for R14.3: ensure DOC_GENERATOR.max_tokens (64K) is
+        forwarded to LLMRequest.max_tokens. Commit ec34bbae (2026-03-16) renamed
+        the kwarg to max_output_tokens, which Pydantic silently dropped, leaving
+        DocGenerator running at provider defaults (Claude 16K, Gemini 8K) for
+        ~46 days. ConfigDict(extra=forbid) on LLMRequest now blocks the same
+        regression at construction time."""
+        from src.infrastructure.agent_config import DOC_GENERATOR
+        await agent.execute(_make_message())
+        req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
+                          mock_llm.generate_content.call_args.args[0]
+        assert req.max_tokens == DOC_GENERATOR.max_tokens
+        assert req.max_tokens == 64_000  # canary on the configured value itself
+
     async def test_raw_query_in_user_message(self, agent, mock_llm):
         # Raw planner JSON is injected into the system prompt as document_spec block.
         # The user message is a fixed "Generate." trigger — not the raw query.
