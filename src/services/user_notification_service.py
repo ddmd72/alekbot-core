@@ -24,6 +24,7 @@ from ..domain.messaging import SmartResponse
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import NotifyResult
 from ..domain.request_context import RequestContext
+from ..domain.user import PerformanceTier
 from ..ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from ..ports.notification_state_port import NotificationStatePort
 from ..ports.platform_media_port import PlatformMediaPort
@@ -41,8 +42,13 @@ class MessageRouter(Protocol):
 # importing infrastructure/notification_sla here (services/ may not
 # depend on infrastructure/ per REQ-ARCH-01). Composition wires the
 # concrete table at construction time.
+#
+# tier_overrides is optional per-tier timeout supersession. notify()
+# resolves: ``sla.tier_overrides.get(tier, sla.timeout_ms)`` when the
+# caller provides ``tier=``; falls back to ``sla.timeout_ms`` otherwise.
 class _SLA(Protocol):
     timeout_ms: int
+    tier_overrides: Mapping[PerformanceTier, int]
 
 
 class UserNotificationService:
@@ -168,6 +174,7 @@ class UserNotificationService:
         system_alert: str,
         *,
         kind: NotificationKind,
+        tier: Optional[PerformanceTier] = None,
         agent_id_override: Optional[str] = None,
         session_id: Optional[str] = None,
         save_history: bool = True,
@@ -190,6 +197,12 @@ class UserNotificationService:
                 budget — ``timeout_ms`` propagated to ``AgentMessage``).
                 Required keyword-only — every caller picks explicitly,
                 no implicit default.
+            tier: optional ``PerformanceTier`` that the underlying agent
+                will execute on. When the SLA for ``kind`` declares
+                tier-specific overrides (e.g. REMINDER), passing tier
+                selects the matching budget; otherwise ignored.
+                Callers that know the tier (e.g. reminder worker reading
+                ``note.complexity``) should pass it; others may omit.
             session_id: if provided, reuses the original conversation
                 session (e.g. deep research delivering back to the
                 user's thread). Defaults to a session keyed on the
@@ -199,6 +212,12 @@ class UserNotificationService:
                 that go back to the originating channel.
         """
         sla = self._notification_sla[kind]
+        # Resolve effective timeout: tier override wins if both the
+        # caller passed a tier AND the SLA declares an override for it.
+        if tier is not None and tier in sla.tier_overrides:
+            effective_timeout_ms = sla.tier_overrides[tier]
+        else:
+            effective_timeout_ms = sla.timeout_ms
 
         channel_info = await self._resolve_channel(
             user_id, channel_id_override, platform_override,
@@ -243,7 +262,7 @@ class UserNotificationService:
                 **({"task_complexity": task_complexity} if task_complexity else {}),
                 **({"email_for_triage": email_for_triage} if email_for_triage else {}),
             },
-            timeout_ms=sla.timeout_ms,
+            timeout_ms=effective_timeout_ms,
         )
 
         try:

@@ -918,6 +918,61 @@ class TestHandleExecuteReminder:
         kw = ns.notification.notify.call_args.kwargs
         assert kw["task_complexity"] == "deep_reasoning"
 
+    @pytest.mark.parametrize("complexity_str,expected_tier_name", [
+        ("small_talk",        "ECO"),
+        ("info_search",       "BALANCED"),
+        ("simple_analytics",  "BALANCED"),
+        ("deep_reasoning",    "PERFORMANCE"),
+    ])
+    async def test_tier_forwarded_per_complexity(
+        self, complexity_str, expected_tier_name,
+    ):
+        """Worker resolves note.complexity → tier (via DEFAULT_COMPLEXITY_SETTINGS)
+        and passes it to notify(). This wires the per-tier SLA budget to
+        the right call without duplicating the complexity→tier mapping."""
+        from dataclasses import replace
+        from src.domain.agent import AgentStatus
+        from src.domain.notify_result import NotifyResult
+        from src.domain.task_complexity import TaskComplexity
+        from src.domain.user import PerformanceTier
+
+        worker, ns = _make_full_worker()
+        note = _make_reminder_note()
+        note = replace(note, complexity=TaskComplexity(complexity_str))
+        ns.notes_port.get_note.return_value = note
+        profile = MagicMock()
+        profile.account_id = "acc-x"
+        ns.user_repo.get_user.return_value = profile
+        ns.notification.notify.return_value = NotifyResult(
+            delivered=True, agent_status=AgentStatus.SUCCESS,
+        )
+
+        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        kw = ns.notification.notify.call_args.kwargs
+        assert kw["tier"] == PerformanceTier[expected_tier_name]
+
+    async def test_tier_is_none_when_complexity_absent(self):
+        """No complexity on note → tier=None → notify() falls back to
+        the kind's default budget (no per-tier override applied)."""
+        from src.domain.agent import AgentStatus
+        from src.domain.notify_result import NotifyResult
+
+        worker, ns = _make_full_worker()
+        note = _make_reminder_note()  # complexity defaults to None
+        ns.notes_port.get_note.return_value = note
+        profile = MagicMock()
+        profile.account_id = "acc-x"
+        ns.user_repo.get_user.return_value = profile
+        ns.notification.notify.return_value = NotifyResult(
+            delivered=True, agent_status=AgentStatus.SUCCESS,
+        )
+
+        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        kw = ns.notification.notify.call_args.kwargs
+        assert kw["tier"] is None
+
     async def test_handle_dispatches_execute_reminder_task_type(self):
         """The top-level dispatcher routes ``execute_reminder`` to the
         new handler — guards against forgetting to register the case."""
