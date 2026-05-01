@@ -154,10 +154,11 @@ class GeminiAdapter(LLMPort):
             types.SafetySetting(category="HARM_CATEGORY_CIVIC_INTEGRITY", threshold=safety_threshold),
         ]
 
-        # SDK 1.64+: response_json_schema (standard JSON Schema, lowercase types) is preferred
-        # over response_schema (Gemini proprietary uppercase types) which silently returns empty
-        # responses in newer SDK versions when passed as a plain dict.
-        # Route dict schemas → response_json_schema; typed/class schemas → response_schema.
+        # Gemini accepts schemas in two shapes: dict-form via response_json_schema (standard
+        # JSON Schema, lowercase types) and typed/class-form via response_schema (Gemini-native
+        # uppercase types). Route dict → response_json_schema; typed → response_schema.
+        # The split is forced by API behavior: passing a plain dict to response_schema returns
+        # empty responses; passing a typed schema to response_json_schema is rejected.
         use_json_schema = response_schema is not None and isinstance(response_schema, dict)
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
