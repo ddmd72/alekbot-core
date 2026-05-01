@@ -21,6 +21,7 @@ Existing documents without 'instruction' fall back to 'text'.
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..config.environment import EnvironmentConfig
@@ -159,10 +160,113 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
         return [self._dict_to_note(doc.id, doc.to_dict()) for doc in docs]
 
     async def reschedule(self, note_id: str, next_due: datetime, last_fired: datetime) -> None:
-        """Update due and last_fired for a recurrent reminder after firing."""
+        """DEPRECATED — see AgentNotePort. Superseded by ``reschedule_if_due_at``.
+        Removed in Step #7 of NOTIFICATION_DELIVERY_REFACTOR_RFC.
+        """
         await self._col.document(note_id).update({
             "due": next_due,
             "last_fired": last_fired,
+        })
+
+    async def get_note(self, user_id: str, note_id: str) -> Optional[AgentNote]:
+        if not note_id:
+            return None
+        doc = await self._col.document(note_id).get()
+        if not doc.exists:
+            return None
+        data = doc.to_dict()
+        if data.get("user_id") != user_id:
+            logger.debug(
+                "[AgentNote] get_note ownership mismatch: note=%s user=%s",
+                note_id, user_id[:8],
+            )
+            return None
+        return self._dict_to_note(note_id, data)
+
+    async def reschedule_if_due_at(
+        self,
+        note_id: str,
+        expected_due: datetime,
+        next_due: datetime,
+        last_fired: datetime,
+    ) -> bool:
+        """Atomic conditional reschedule via Firestore transaction.
+
+        Reads the doc inside the transaction, compares ``due`` to
+        ``expected_due`` (millisecond precision — Firestore stores
+        timestamps with microsecond precision but native datetime
+        equality works directly). Returns False if the doc is gone
+        OR if ``due`` already moved.
+        """
+        if not note_id:
+            return False
+        doc_ref = self._col.document(note_id)
+        transaction = self._db.transaction()
+
+        @firestore.async_transactional
+        async def _txn(txn) -> bool:
+            snapshot = await doc_ref.get(transaction=txn)
+            if not snapshot.exists:
+                return False
+            current_due = self._ensure_utc(snapshot.to_dict().get("due"))
+            expected = self._ensure_utc(expected_due)
+            if current_due != expected:
+                return False
+            txn.update(doc_ref, {"due": next_due, "last_fired": last_fired})
+            return True
+
+        return await _txn(transaction)
+
+    async def delete_if_due_at(
+        self,
+        note_id: str,
+        user_id: str,
+        expected_due: datetime,
+    ) -> bool:
+        """Atomic conditional delete via Firestore transaction.
+
+        Same precondition pattern as ``reschedule_if_due_at``, with the
+        added ownership check (matching the unconditional ``delete_note``
+        contract).
+        """
+        if not note_id:
+            return False
+        doc_ref = self._col.document(note_id)
+        transaction = self._db.transaction()
+
+        @firestore.async_transactional
+        async def _txn(txn) -> bool:
+            snapshot = await doc_ref.get(transaction=txn)
+            if not snapshot.exists:
+                return False
+            data = snapshot.to_dict()
+            if data.get("user_id") != user_id:
+                logger.debug(
+                    "[AgentNote] delete_if_due_at ownership mismatch: note=%s user=%s",
+                    note_id, user_id[:8],
+                )
+                return False
+            current_due = self._ensure_utc(data.get("due"))
+            expected = self._ensure_utc(expected_due)
+            if current_due != expected:
+                return False
+            txn.delete(doc_ref)
+            return True
+
+        return await _txn(transaction)
+
+    async def mark_fire_delivered(self, note_id: str, due_at: datetime) -> None:
+        """Stamp ``last_delivered_due`` with the fire-time we just delivered.
+
+        No precondition — multiple calls with the same ``due_at`` are
+        idempotent (final state identical), and a stamp newer than the
+        worker's view (e.g. next fire arriving while we mark this one)
+        is fine: we only ever advance the value forward in callers.
+        """
+        if not note_id:
+            return
+        await self._col.document(note_id).update({
+            "last_delivered_due": due_at,
         })
 
     # ------------------------------------------------------------------
@@ -170,15 +274,17 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _dict_to_note(note_id: str, data: dict) -> AgentNote:
-        def _ensure_utc(dt):
-            if dt is None:
-                return None
-            if hasattr(dt, "tzinfo") and dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
-            return dt
+    def _ensure_utc(dt):
+        """Normalise Firestore datetimes (naive UTC) to tz-aware UTC."""
+        if dt is None:
+            return None
+        if hasattr(dt, "tzinfo") and dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
 
-        created_at = _ensure_utc(data.get("created_at")) or datetime.now(timezone.utc)
+    @classmethod
+    def _dict_to_note(cls, note_id: str, data: dict) -> AgentNote:
+        created_at = cls._ensure_utc(data.get("created_at")) or datetime.now(timezone.utc)
 
         recurrence: Optional[ReminderRecurrence] = None
         if rec := data.get("recurrence"):
@@ -200,8 +306,9 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             text=data["text"],
             instruction=instruction,
             created_at=created_at,
-            due=_ensure_utc(data["due"]),
+            due=cls._ensure_utc(data["due"]),
             recurrence=recurrence,
-            last_fired=_ensure_utc(data.get("last_fired")),
+            last_fired=cls._ensure_utc(data.get("last_fired")),
             complexity=complexity,
+            last_delivered_due=cls._ensure_utc(data.get("last_delivered_due")),
         )

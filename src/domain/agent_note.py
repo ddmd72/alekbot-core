@@ -36,6 +36,13 @@ class AgentNote:
     # None → default simple_analytics (BALANCED + thinking=low).
     # Set by NotesAgent LLM at creation time based on instruction complexity.
     complexity: Optional[TaskComplexity] = None
+    # Idempotency token: due-time of the most recent fire that was
+    # actually delivered to the user. Set by the worker on success.
+    # Cloud Tasks may retry execute_reminder; the worker checks
+    # ``last_delivered_due == due_at`` and short-circuits to avoid
+    # delivering the same fire twice.
+    # See docs/10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md § 7 D.3.
+    last_delivered_due: Optional[datetime] = None
 
 
 @dataclass

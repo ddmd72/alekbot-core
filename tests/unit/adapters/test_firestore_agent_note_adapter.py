@@ -362,3 +362,475 @@ class TestUpdateNote:
 
         doc_ref.update.assert_not_called()
         assert isinstance(note, AgentNote)
+
+    async def test_update_instruction_only(self, adapter, col_mock):
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, _make_note_data()
+        ))
+        doc_ref.update = AsyncMock()
+        col_mock.document.return_value = doc_ref
+
+        upd = NoteUpdate(note_id=_NOTE_ID, user_id=_USER_ID, instruction="New instruction")
+        note = await adapter.update_note(upd)
+
+        doc_ref.update.assert_called_once_with({"instruction": "New instruction"})
+        assert note.instruction == "New instruction"
+
+    async def test_update_due_only(self, adapter, col_mock):
+        new_due = _FUTURE + timedelta(hours=2)
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, _make_note_data()
+        ))
+        doc_ref.update = AsyncMock()
+        col_mock.document.return_value = doc_ref
+
+        upd = NoteUpdate(note_id=_NOTE_ID, user_id=_USER_ID, due=new_due)
+        note = await adapter.update_note(upd)
+
+        doc_ref.update.assert_called_once_with({"due": new_due})
+        assert note.due == new_due
+
+    async def test_update_recurrence_serialised_to_dict(self, adapter, col_mock):
+        from src.domain.agent_note import ReminderRecurrence
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, _make_note_data()
+        ))
+        doc_ref.update = AsyncMock()
+        col_mock.document.return_value = doc_ref
+
+        recurrence = ReminderRecurrence(type="weekly", interval=2)
+        upd = NoteUpdate(note_id=_NOTE_ID, user_id=_USER_ID, recurrence=recurrence)
+        await adapter.update_note(upd)
+
+        doc_ref.update.assert_called_once_with(
+            {"recurrence": {"type": "weekly", "interval": 2}}
+        )
+
+    async def test_update_complexity_serialised_to_value(self, adapter, col_mock):
+        from src.domain.task_complexity import TaskComplexity
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, _make_note_data()
+        ))
+        doc_ref.update = AsyncMock()
+        col_mock.document.return_value = doc_ref
+
+        upd = NoteUpdate(note_id=_NOTE_ID, user_id=_USER_ID, complexity=TaskComplexity.DEEP_REASONING)
+        await adapter.update_note(upd)
+
+        doc_ref.update.assert_called_once_with({"complexity": "deep_reasoning"})
+
+
+# ---------------------------------------------------------------------------
+# get_note tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetNote:
+
+    async def test_returns_note_when_exists_and_owned(self, adapter, col_mock):
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, _make_note_data()
+        ))
+        col_mock.document.return_value = doc_ref
+
+        result = await adapter.get_note(user_id=_USER_ID, note_id=_NOTE_ID)
+
+        assert result is not None
+        assert result.note_id == _NOTE_ID
+        assert result.user_id == _USER_ID
+
+    async def test_returns_none_when_doc_missing(self, adapter, col_mock):
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, {}, exists=False,
+        ))
+        col_mock.document.return_value = doc_ref
+
+        result = await adapter.get_note(user_id=_USER_ID, note_id=_NOTE_ID)
+
+        assert result is None
+
+    async def test_returns_none_on_ownership_mismatch(self, adapter, col_mock):
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, _make_note_data(user_id=_OTHER_USER_ID)
+        ))
+        col_mock.document.return_value = doc_ref
+
+        result = await adapter.get_note(user_id=_USER_ID, note_id=_NOTE_ID)
+
+        assert result is None
+
+    async def test_returns_none_for_empty_note_id(self, adapter, col_mock):
+        result = await adapter.get_note(user_id=_USER_ID, note_id="")
+
+        assert result is None
+        # No collection access performed when note_id is falsy.
+        col_mock.document.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# reschedule_if_due_at tests (atomic conditional reschedule)
+# ---------------------------------------------------------------------------
+
+
+class TestRescheduleIfDueAt:
+    """Atomic conditional reschedule via Firestore transaction.
+
+    Tests the precondition mechanism: txn.update is called ONLY when the
+    snapshot inside the transaction shows ``due == expected_due``. This
+    is the cron-side primitive that prevents two concurrent ticks from
+    both reschedulin the same fire-time (defect #3 of the RFC).
+
+    Concurrency note: real cross-process safety is provided by Firestore
+    transaction OCC. These wire tests verify we USE the transaction
+    correctly (read snapshot inside txn, compare due, conditionally
+    write). End-to-end safety against the live emulator is exercised
+    manually via ``make dev-emulator`` when modifying transaction code.
+    """
+
+    @pytest.fixture(autouse=True)
+    def patch_async_transactional(self):
+        """Make firestore.async_transactional a pass-through so the
+        decorated function runs synchronously with our mock transaction."""
+        with patch(
+            "src.adapters.firestore_agent_note_adapter.firestore.async_transactional",
+            side_effect=lambda fn: fn,
+        ):
+            yield
+
+    def _setup(self, db_mock, col_mock, snapshot_data, *, exists=True):
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, snapshot_data, exists=exists,
+        ))
+        col_mock.document.return_value = doc_ref
+
+        transaction = MagicMock()
+        transaction.update = MagicMock()
+        db_mock.transaction.return_value = transaction
+        return doc_ref, transaction
+
+    async def test_returns_true_and_updates_when_due_matches(
+        self, adapter, db_mock, col_mock,
+    ):
+        expected_due = _FUTURE
+        next_due = _FUTURE + timedelta(days=1)
+        last_fired = _NOW
+
+        doc_ref, transaction = self._setup(
+            db_mock, col_mock,
+            _make_note_data(due=expected_due),
+        )
+
+        result = await adapter.reschedule_if_due_at(
+            note_id=_NOTE_ID,
+            expected_due=expected_due,
+            next_due=next_due,
+            last_fired=last_fired,
+        )
+
+        assert result is True
+        transaction.update.assert_called_once_with(
+            doc_ref, {"due": next_due, "last_fired": last_fired},
+        )
+
+    async def test_returns_false_when_due_already_moved(
+        self, adapter, db_mock, col_mock,
+    ):
+        """Concurrent tick scenario: snapshot reads a `due` newer than
+        what this caller expected → precondition fails → no write."""
+        expected_due = _FUTURE
+        snapshot_due = _FUTURE + timedelta(hours=1)  # already moved
+
+        _, transaction = self._setup(
+            db_mock, col_mock,
+            _make_note_data(due=snapshot_due),
+        )
+
+        result = await adapter.reschedule_if_due_at(
+            note_id=_NOTE_ID,
+            expected_due=expected_due,
+            next_due=_FUTURE + timedelta(days=1),
+            last_fired=_NOW,
+        )
+
+        assert result is False
+        transaction.update.assert_not_called()
+
+    async def test_returns_false_when_doc_missing(
+        self, adapter, db_mock, col_mock,
+    ):
+        _, transaction = self._setup(
+            db_mock, col_mock, {}, exists=False,
+        )
+
+        result = await adapter.reschedule_if_due_at(
+            note_id=_NOTE_ID,
+            expected_due=_FUTURE,
+            next_due=_FUTURE + timedelta(days=1),
+            last_fired=_NOW,
+        )
+
+        assert result is False
+        transaction.update.assert_not_called()
+
+    async def test_returns_false_for_empty_note_id(
+        self, adapter, db_mock, col_mock,
+    ):
+        result = await adapter.reschedule_if_due_at(
+            note_id="",
+            expected_due=_FUTURE,
+            next_due=_FUTURE + timedelta(days=1),
+            last_fired=_NOW,
+        )
+
+        assert result is False
+        col_mock.document.assert_not_called()
+        db_mock.transaction.assert_not_called()
+
+    async def test_naive_datetime_in_storage_compared_via_utc_normalisation(
+        self, adapter, db_mock, col_mock,
+    ):
+        """Firestore returns naive UTC datetimes; expected_due may be
+        tz-aware. ``_ensure_utc`` normalises both sides — verify the
+        match still succeeds."""
+        # Storage holds naive (no tzinfo) — Firestore quirk.
+        storage_due = _FUTURE.replace(tzinfo=None)
+        # Caller passes tz-aware UTC.
+        expected_due = _FUTURE  # tz-aware
+
+        doc_ref, transaction = self._setup(
+            db_mock, col_mock,
+            _make_note_data(due=storage_due),
+        )
+
+        result = await adapter.reschedule_if_due_at(
+            note_id=_NOTE_ID,
+            expected_due=expected_due,
+            next_due=_FUTURE + timedelta(days=1),
+            last_fired=_NOW,
+        )
+
+        assert result is True
+        transaction.update.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# delete_if_due_at tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteIfDueAt:
+
+    @pytest.fixture(autouse=True)
+    def patch_async_transactional(self):
+        with patch(
+            "src.adapters.firestore_agent_note_adapter.firestore.async_transactional",
+            side_effect=lambda fn: fn,
+        ):
+            yield
+
+    def _setup(self, db_mock, col_mock, snapshot_data, *, exists=True):
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, snapshot_data, exists=exists,
+        ))
+        col_mock.document.return_value = doc_ref
+
+        transaction = MagicMock()
+        transaction.delete = MagicMock()
+        db_mock.transaction.return_value = transaction
+        return doc_ref, transaction
+
+    async def test_returns_true_and_deletes_when_match_and_owned(
+        self, adapter, db_mock, col_mock,
+    ):
+        doc_ref, transaction = self._setup(
+            db_mock, col_mock, _make_note_data(due=_FUTURE),
+        )
+
+        result = await adapter.delete_if_due_at(
+            note_id=_NOTE_ID, user_id=_USER_ID, expected_due=_FUTURE,
+        )
+
+        assert result is True
+        transaction.delete.assert_called_once_with(doc_ref)
+
+    async def test_returns_false_on_ownership_mismatch(
+        self, adapter, db_mock, col_mock,
+    ):
+        _, transaction = self._setup(
+            db_mock, col_mock,
+            _make_note_data(user_id=_OTHER_USER_ID, due=_FUTURE),
+        )
+
+        result = await adapter.delete_if_due_at(
+            note_id=_NOTE_ID, user_id=_USER_ID, expected_due=_FUTURE,
+        )
+
+        assert result is False
+        transaction.delete.assert_not_called()
+
+    async def test_returns_false_when_due_moved(
+        self, adapter, db_mock, col_mock,
+    ):
+        _, transaction = self._setup(
+            db_mock, col_mock,
+            _make_note_data(due=_FUTURE + timedelta(hours=1)),
+        )
+
+        result = await adapter.delete_if_due_at(
+            note_id=_NOTE_ID, user_id=_USER_ID, expected_due=_FUTURE,
+        )
+
+        assert result is False
+        transaction.delete.assert_not_called()
+
+    async def test_returns_false_when_doc_missing(
+        self, adapter, db_mock, col_mock,
+    ):
+        _, transaction = self._setup(
+            db_mock, col_mock, {}, exists=False,
+        )
+
+        result = await adapter.delete_if_due_at(
+            note_id=_NOTE_ID, user_id=_USER_ID, expected_due=_FUTURE,
+        )
+
+        assert result is False
+        transaction.delete.assert_not_called()
+
+    async def test_returns_false_for_empty_note_id(self, adapter, db_mock, col_mock):
+        result = await adapter.delete_if_due_at(
+            note_id="", user_id=_USER_ID, expected_due=_FUTURE,
+        )
+
+        assert result is False
+        col_mock.document.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# mark_fire_delivered tests
+# ---------------------------------------------------------------------------
+
+
+class TestMarkFireDelivered:
+
+    async def test_writes_last_delivered_due(self, adapter, col_mock):
+        doc_ref = MagicMock()
+        doc_ref.update = AsyncMock()
+        col_mock.document.return_value = doc_ref
+
+        await adapter.mark_fire_delivered(note_id=_NOTE_ID, due_at=_FUTURE)
+
+        doc_ref.update.assert_called_once_with({"last_delivered_due": _FUTURE})
+
+    async def test_empty_note_id_is_noop(self, adapter, col_mock):
+        await adapter.mark_fire_delivered(note_id="", due_at=_FUTURE)
+        col_mock.document.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _dict_to_note: last_delivered_due round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestDictToNoteLastDeliveredDue:
+
+    async def test_last_delivered_due_passes_through(self, adapter, col_mock):
+        delivered_due = _NOW - timedelta(days=1)
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, {**_make_note_data(), "last_delivered_due": delivered_due},
+        ))
+        col_mock.document.return_value = doc_ref
+
+        result = await adapter.get_note(user_id=_USER_ID, note_id=_NOTE_ID)
+
+        assert result is not None
+        assert result.last_delivered_due == delivered_due
+
+    async def test_last_delivered_due_absent_yields_none(self, adapter, col_mock):
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, _make_note_data(),  # no last_delivered_due key
+        ))
+        col_mock.document.return_value = doc_ref
+
+        result = await adapter.get_note(user_id=_USER_ID, note_id=_NOTE_ID)
+
+        assert result is not None
+        assert result.last_delivered_due is None
+
+    async def test_naive_last_delivered_due_normalised_to_utc(self, adapter, col_mock):
+        naive = (_NOW - timedelta(days=1)).replace(tzinfo=None)
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, {**_make_note_data(), "last_delivered_due": naive},
+        ))
+        col_mock.document.return_value = doc_ref
+
+        result = await adapter.get_note(user_id=_USER_ID, note_id=_NOTE_ID)
+
+        assert result is not None
+        assert result.last_delivered_due is not None
+        assert result.last_delivered_due.tzinfo is timezone.utc
+
+
+# ---------------------------------------------------------------------------
+# Misc legacy paths (cover deprecated + dict-to-note edge cases)
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyAndEdgeCases:
+
+    async def test_deprecated_reschedule_writes_due_and_last_fired(
+        self, adapter, col_mock,
+    ):
+        """Deprecated method still in use until Step #7. Smoke test only."""
+        doc_ref = MagicMock()
+        doc_ref.update = AsyncMock()
+        col_mock.document.return_value = doc_ref
+
+        next_due = _FUTURE + timedelta(days=1)
+        await adapter.reschedule(_NOTE_ID, next_due, _NOW)
+
+        doc_ref.update.assert_called_once_with(
+            {"due": next_due, "last_fired": _NOW},
+        )
+
+    async def test_list_due_reminders_returns_all_due_docs(
+        self, adapter, col_mock,
+    ):
+        """Cross-user query: filter due <= as_of, return all matching."""
+        snap = _make_doc_snapshot(_NOTE_ID, _make_note_data(due=_PAST))
+        query = MagicMock()
+        query.get = AsyncMock(return_value=[snap])
+        col_mock.where.return_value = query
+
+        result = await adapter.list_due_reminders(as_of=_NOW)
+
+        assert len(result) == 1
+        assert result[0].note_id == _NOTE_ID
+
+    async def test_dict_to_note_invalid_complexity_falls_back_to_none(
+        self, adapter, col_mock,
+    ):
+        """Defensive: an unknown complexity string in storage must NOT raise.
+        Logged at debug, complexity = None.
+        """
+        data = {**_make_note_data(), "complexity": "not_a_real_tier"}
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(_NOTE_ID, data))
+        col_mock.document.return_value = doc_ref
+
+        result = await adapter.get_note(user_id=_USER_ID, note_id=_NOTE_ID)
+
+        assert result is not None
+        assert result.complexity is None
