@@ -298,35 +298,6 @@ TASKS = AgentDescriptor(
 )
 
 
-# internal=True: never shown to LLMs; invoked only via agent_execution Cloud Task.
-# Per-user instances are created by UserAgentFactory as claude_deep_research_runner_{user_id}.
-# NOT in ALL_DESCRIPTORS — UserAgentFactory registers instances directly.
-CLAUDE_DEEP_RESEARCH_RUNNER = AgentDescriptor(
-    agent_id="claude_deep_research_runner",
-    agent_type="claude_deep_research_runner",
-    eager=False,
-    capabilities={Intent.EXECUTE_DEEP_RESEARCH_CLAUDE: ExecutionMode.ASYNC},
-    description="Claude deep research executor — runs multi-turn loop and self-delivers result",
-    internal=True,
-)
-
-# internal=True: never shown to LLMs; routed directly by recipient ID, not via intent lookup.
-# Per-user instances are created by UserAgentFactory as consolidation_agent_{user_id}.
-# NOT in ALL_DESCRIPTORS — UserAgentFactory registers instances directly.
-CONSOLIDATION_AGENT = AgentDescriptor(
-    agent_id="consolidation_agent",
-    agent_type="consolidation",
-    capabilities={
-        Intent.CONSOLIDATE:         ExecutionMode.SYNC,
-        Intent.CONSOLIDATE_CLUSTER: ExecutionMode.SYNC,
-        Intent.CONSOLIDATE_EMAIL:   ExecutionMode.SYNC,
-        Intent.CONSOLIDATE_FULL:    ExecutionMode.SYNC,
-    },
-    description="Background memory consolidation",
-    internal=True,
-)
-
-
 # ---------------------------------------------------------------------------
 # Orchestrator agents — NOT registered in AgentRegistry.
 # Set as class-level _descriptor in their agent classes.

@@ -234,19 +234,16 @@ class QuickResponseAgent(BaseAgent):
             # latest user message — in-memory only, never persisted to history.
             conversation_history = self._inject_user_turn_anchor(conversation_history)
 
-            clean_history = self._clean_history_for_quick(conversation_history)
-            
             logger.debug(
-                f"⚡ [QuickResponseAgent] Context: {len(clean_history)} messages, "
+                f"⚡ [QuickResponseAgent] Context: {len(conversation_history)} messages, "
                 f"prompt size: {len(system_prompt)} chars"
             )
-            
 
             engine = DelegationEngine(self.coordinator)
             base_request = LLMRequest(
                 model_name=self.model_name,
                 system_instruction=system_prompt,
-                messages=clean_history,
+                messages=conversation_history,
                 tools=self._get_quick_tool_declarations(),
                 temperature=self.DELEGATION_TEMPERATURE,
                 response_schema=self._RESPONSE_SCHEMA,
@@ -367,26 +364,6 @@ class QuickResponseAgent(BaseAgent):
             logger.warning(f"⚠️ Failed to load session history: {e}")
             return []
     
-    def _clean_history_for_quick(self, history: List[Message]) -> List[Message]:
-        """
-        Remove tool interactions from history.
-
-        !! CURRENTLY A NO-OP IN PRACTICE !!
-        ConversationHandler saves only 2 messages per turn (user text + model text).
-        Tool call/response pairs from the delegation loop are NEVER written to the session store,
-        so this filter never finds anything to remove.
-
-        DO NOT DELETE — reserved for Brainstorm Mode (future feature):
-        In that mode, multi-turn reasoning traces will be stored in session for continuity
-        across requests, and this filter will need to decide what to expose to the model.
-        """
-        return [
-            msg for msg in history
-            if not any(
-                part.tool_call or part.tool_response
-                for part in msg.parts
-            )
-        ]
 
     def _get_quick_tool_declarations(self) -> List[Dict[str, Any]]:
         """Build tool declarations from AgentRegistry (all non-internal intents)."""

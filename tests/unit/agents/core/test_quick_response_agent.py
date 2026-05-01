@@ -433,44 +433,6 @@ class TestQuickResponseAgentHistory:
 
 
 # ============================================================================
-# Clean History Tests
-# ============================================================================
-
-class TestQuickResponseAgentCleanHistory:
-    """Test history cleaning for quick responses."""
-
-    def test_clean_history_removes_tool_calls(self, quick_agent):
-        """Should remove messages with tool calls."""
-        history = [
-            Message(role="user", parts=[MessagePart(text="Hello")]),
-            Message(role="model", parts=[
-                MessagePart(tool_call={"name": "search", "args": {}})
-            ]),
-            Message(role="tool", parts=[
-                MessagePart(tool_response={"result": "data"})
-            ]),
-            Message(role="model", parts=[MessagePart(text="Here's the result")])
-        ]
-        
-        clean = quick_agent._clean_history_for_quick(history)
-        
-        assert len(clean) == 2
-        assert clean[0].parts[0].text == "Hello"
-        assert clean[1].parts[0].text == "Here's the result"
-
-    def test_clean_history_preserves_text_only(self, quick_agent):
-        """Should preserve messages with only text."""
-        history = [
-            Message(role="user", parts=[MessagePart(text="Hello")]),
-            Message(role="model", parts=[MessagePart(text="Hi!")]),
-        ]
-        
-        clean = quick_agent._clean_history_for_quick(history)
-        
-        assert len(clean) == 2
-
-
-# ============================================================================
 # Factory Function Tests
 # ============================================================================
 
