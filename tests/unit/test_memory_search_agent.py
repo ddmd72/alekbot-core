@@ -213,7 +213,11 @@ class TestMemorySearchAgentLLM:
     @pytest.mark.asyncio
     async def test_formulate_keys_valid_json(self, agent_with_llm, mock_llm):
         """LLM returns valid JSON — keys extracted correctly."""
-        mock_llm.generate_content.return_value = Mock(text='{"keywords":["car","vehicle"],"primary_query":"user car brand","alternative_query":"vehicle model ownership","domains":["possession"]}')
+        mock_llm.generate_content.return_value = Mock(
+            text='{"keywords":["car","vehicle"],"primary_query":"user car brand","alternative_query":"vehicle model ownership","domains":["possession"]}',
+            tool_calls=[],
+            usage_metadata=None,
+        )
 
         keys = await agent_with_llm._formulate_search_keys("Какая марка моей машины?")
 
@@ -225,7 +229,11 @@ class TestMemorySearchAgentLLM:
     @pytest.mark.asyncio
     async def test_formulate_keys_malformed_response_falls_back(self, agent_with_llm, mock_llm):
         """Structured output is enforced by the adapter; if malformed JSON still arrives, fallback to empty dict."""
-        mock_llm.generate_content.return_value = Mock(text='```json\n{"keywords":["home"],"primary_query":"user home address","alternative_query":"residence location"}\n```')
+        mock_llm.generate_content.return_value = Mock(
+            text='```json\n{"keywords":["home"],"primary_query":"user home address","alternative_query":"residence location"}\n```',
+            tool_calls=[],
+            usage_metadata=None,
+        )
 
         keys = await agent_with_llm._formulate_search_keys("Где я живу?")
 
@@ -243,7 +251,11 @@ class TestMemorySearchAgentLLM:
     @pytest.mark.asyncio
     async def test_formulate_keys_invalid_json_returns_empty(self, agent_with_llm, mock_llm):
         """LLM returns non-JSON text — returns empty dict without crashing."""
-        mock_llm.generate_content.return_value = Mock(text="Sorry, I cannot help with that.")
+        mock_llm.generate_content.return_value = Mock(
+            text="Sorry, I cannot help with that.",
+            tool_calls=[],
+            usage_metadata=None,
+        )
 
         keys = await agent_with_llm._formulate_search_keys("What is my job?")
 
@@ -252,7 +264,11 @@ class TestMemorySearchAgentLLM:
     @pytest.mark.asyncio
     async def test_execute_llm_path_calls_enrichment(self, agent_with_llm, mock_llm, mock_search_enrichment):
         """execute() uses LLM to formulate keys then calls SearchEnrichmentService."""
-        mock_llm.generate_content.return_value = Mock(text='{"keywords":["car"],"primary_query":"user car","alternative_query":"vehicle ownership"}')
+        mock_llm.generate_content.return_value = Mock(
+            text='{"keywords":["car"],"primary_query":"user car","alternative_query":"vehicle ownership"}',
+            tool_calls=[],
+            usage_metadata=None,
+        )
 
         from unittest.mock import Mock as M
         enriched = M()
