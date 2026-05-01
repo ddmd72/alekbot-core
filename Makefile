@@ -71,6 +71,7 @@ help: ## Show this help message
 	@echo "  make kill-local      Kill all local bot processes"
 	@echo "  make test            Run all tests"
 	@echo "  make test-unit       Run unit tests"
+	@echo "  make test-coverage   Unit tests + per-file coverage gate (RFC § 8.4)"
 	@echo "  make test-integration Run integration tests"
 	@echo "  make lint            Run code linting"
 	@echo "  make format          Format code"
@@ -184,6 +185,17 @@ test: ## Run all tests
 test-unit: ## Run unit tests
 	@echo "🧪 Running unit tests..."
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -v --asyncio-mode=auto
+
+test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
+	@echo "🧪 Running unit tests with coverage..."
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ \
+	    --asyncio-mode=auto \
+	    --cov=src \
+	    --cov-report=term-missing:skip-covered \
+	    --cov-report=json \
+	    --cov-fail-under=70
+	@echo "🚦 Enforcing per-file coverage thresholds..."
+	@$(PYTHON) scripts/check_coverage_thresholds.py
 
 test-integration: ## Run integration tests
 	@echo "🧪 Running integration tests..."
