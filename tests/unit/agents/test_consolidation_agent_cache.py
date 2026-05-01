@@ -10,6 +10,7 @@ from src.domain.user import PerformanceTier
 from src.ports.repository import FactRepository
 from src.ports.embedding_service import EmbeddingService
 from src.services.prompt_builder import PromptBuilder
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 @pytest.fixture
@@ -57,7 +58,8 @@ async def test_consolidation_agent_invalidates_cache_on_success(mock_deps):
         provider=llm,
         model_name="gemini",
         tier=PerformanceTier.BALANCED,
-        capabilities=ProviderCapabilities()
+        capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
 
     agent = ConsolidationAgent(

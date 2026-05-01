@@ -31,6 +31,7 @@ from src.ports.llm_port import (
 )
 from src.ports.maps_tools_port import MapsToolError, MapsToolsPort
 from src.ports.prompt_builder_port import PromptBuilderPort
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +73,7 @@ def _make_execution_context(mock_llm) -> AgentExecutionContext:
         model_name="gemini-flash-latest",
         tier=PerformanceTier.BALANCED,
         capabilities=ProviderCapabilities(native_tools=True),
+        resilience_port=InMemoryProviderResilience(),
     )
 
 

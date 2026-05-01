@@ -8,6 +8,7 @@ from src.agents.web_search_agent import WebSearchAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
 from src.ports.llm_port import AgentExecutionContext, ProviderCapabilities, LLMPort, LLMResponse, LLMRequest
 from src.domain.user import PerformanceTier
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 class TestWebSearchAgent:
@@ -37,7 +38,8 @@ class TestWebSearchAgent:
             provider=mock_llm,
             model_name="gemini-3-flash-preview",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         return WebSearchAgent(
             config=config,

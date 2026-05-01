@@ -6,6 +6,7 @@ from src.domain.agent import AgentConfig, AgentMessage, AgentIntent
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import LLMRequest, LLMResponse, ProviderCapabilities, LLMPort
 from src.services.agent_context_builder import AgentExecutionContext
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 @pytest.mark.asyncio
@@ -24,7 +25,8 @@ async def test_quick_agent_builds_llm_request():
         provider=llm,
         model_name="gemini",
         tier=PerformanceTier.ECO,
-        capabilities=ProviderCapabilities()
+        capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
 
     agent = create_quick_response_agent(

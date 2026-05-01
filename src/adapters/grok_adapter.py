@@ -7,6 +7,7 @@ Implements the LLMPort port.
 """
 
 from typing import List, Any, Optional, Set
+import asyncio
 import json
 import socket
 import openai
@@ -24,7 +25,13 @@ from ..ports.llm_port import (
     LLMRequest
 )
 from ..domain.user import PerformanceTier
-from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
+from ..domain.exceptions import (
+    LLMNetworkError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from ..utils.logger import logger
 
 
@@ -186,17 +193,32 @@ class GrokAdapter(LLMPort):
             create_kwargs["tool_choice"] = "required" if force_tool_use else "auto"
 
         # Make API call
+        request_timeout = request.timeout if request else None
         try:
-            completion = await self.client.chat.completions.create(**create_kwargs)
+            _coro = self.client.chat.completions.create(**create_kwargs)
+            completion = await (
+                asyncio.wait_for(_coro, timeout=request_timeout)
+                if request_timeout else _coro
+            )
+        except asyncio.TimeoutError as e:
+            raise LLMTimeoutError(f"request timeout after {request_timeout}s") from e
+        except openai.APITimeoutError as e:
+            # SDK-level timeout (default httpx 60s when request.timeout is None).
+            raise LLMTimeoutError(str(e)) from e
         except openai.RateLimitError as e:
             raise LLMRateLimitError(str(e), http_status=429) from e
+        except openai.APIConnectionError as e:
+            raise LLMNetworkError(str(e)) from e
         except openai.APIStatusError as e:
-            if e.status_code == 503:
+            status = getattr(e, "status_code", None)
+            if status == 503:
                 raise LLMUnavailableError(str(e), http_status=503) from e
+            if isinstance(status, int) and 500 <= status < 600:
+                raise LLMServerError(str(e), http_status=status) from e
             # Detailed error logging for diagnostics before re-raise
             logger.error(
                 "❌ [GrokAdapter] API Error: type=%s status=%s message=%s model=%s",
-                type(e).__name__, e.status_code, str(e), model_name,
+                type(e).__name__, status, str(e), model_name,
                 exc_info=True,
             )
             raise

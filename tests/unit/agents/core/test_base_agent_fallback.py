@@ -17,13 +17,23 @@ from typing import Optional, List
 
 from src.agents.base_agent import BaseAgent
 from src.domain.agent import AgentMessage, AgentResponse, AgentConfig
-from src.domain.exceptions import LLMRateLimitError, LLMUnavailableError
+from src.domain.exceptions import (
+    BothProvidersUnavailableError,
+    LLMNetworkError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+    ProviderBreakerOpenError,
+)
 from src.ports.llm_port import (
     LLMPort, LLMRequest, LLMResponse, ProviderCapabilities, Message, MessagePart,
     UsageMetadata,
 )
+from src.ports.provider_resilience_port import ProviderResiliencePort
 from src.domain.user import PerformanceTier
 from src.services.agent_context_builder import AgentExecutionContext
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # ============================================================================
@@ -87,6 +97,7 @@ def _make_execution_context(
         fallback_provider=fallback_llm,
         fallback_model_name=fallback_model if fallback_llm else None,
         fallback_provider_name="claude" if fallback_llm else None,
+        resilience_port=InMemoryProviderResilience(),
     )
 
 
@@ -171,25 +182,31 @@ async def test_fallback_uses_fallback_model_name(agent, primary_llm, fallback_ll
 
 @pytest.mark.asyncio
 async def test_no_fallback_configured_re_raises(agent, primary_llm):
-    """When no fallback_provider set, original exception propagates."""
+    """When no fallback_provider set, primary failure surfaces as the terminal
+    BothProvidersUnavailableError carrying the original cause. Replaces the
+    old bare re-raise — uniform terminal type for failover-exhaustion."""
     exc = LLMRateLimitError("rate limit", http_status=429)
     primary_llm.generate_content = AsyncMock(side_effect=exc)
     ctx = _make_execution_context(primary_llm, fallback_llm=None)
     agent._set_execution_context(ctx)
 
-    with pytest.raises(LLMRateLimitError):
+    with pytest.raises(BothProvidersUnavailableError) as exc_info:
         await agent._call_llm(_make_request())
+    assert exc_info.value.primary_cause is exc
 
 
 @pytest.mark.asyncio
 async def test_no_context_set_re_raises(agent, primary_llm):
-    """When _set_execution_context was never called, original exception propagates."""
+    """When _set_execution_context was never called, primary failure surfaces as
+    BothProvidersUnavailableError (uniform terminal type — caller cannot tell
+    "no context" from "open fallback" without forensic detail)."""
     exc = LLMRateLimitError("rate limit", http_status=429)
     primary_llm.generate_content = AsyncMock(side_effect=exc)
     # _agent_execution_context stays None (no _set_execution_context call)
 
-    with pytest.raises(LLMRateLimitError):
+    with pytest.raises(BothProvidersUnavailableError) as exc_info:
         await agent._call_llm(_make_request())
+    assert exc_info.value.primary_cause is exc
 
 
 @pytest.mark.asyncio
@@ -242,3 +259,198 @@ async def test_fallback_log_error_type_unavailable(agent, primary_llm, fallback_
     extra = mock_logger.warning.call_args.kwargs.get("extra", {})
     assert extra.get("error_type") == "unavailable"
     assert extra.get("http_status") == 503
+
+
+# ============================================================================
+# F4.5 Phase 2 — provider resilience port flow
+# ============================================================================
+
+def _make_ctx_with_resilience(
+    primary_llm: LLMPort,
+    resilience: ProviderResiliencePort,
+    fallback_llm: Optional[LLMPort] = None,
+) -> AgentExecutionContext:
+    return AgentExecutionContext(
+        agent_type="quick",
+        provider=primary_llm,
+        model_name="gemini-flash",
+        tier=PerformanceTier.BALANCED,
+        capabilities=ProviderCapabilities(),
+        provider_name="gemini",
+        fallback_provider=fallback_llm,
+        fallback_model_name="claude-sonnet-4-6" if fallback_llm else None,
+        fallback_provider_name="claude" if fallback_llm else None,
+        resilience_port=resilience,
+    )
+
+
+@pytest.mark.asyncio
+async def test_breaker_open_short_circuits_to_fallback(agent, primary_llm, fallback_llm):
+    """Pre-call check: is_provider_open=True → primary skipped → fallback called."""
+    resilience = MagicMock(spec=ProviderResiliencePort)
+    resilience.is_provider_open.side_effect = lambda name: name == "gemini"
+    ctx = _make_ctx_with_resilience(primary_llm, resilience, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    response = await agent._call_llm(_make_request())
+
+    assert response.text == "fallback ok"
+    primary_llm.generate_content.assert_not_called()  # short-circuited
+    fallback_llm.generate_content.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_breaker_open_does_not_call_record_failure_on_primary(agent, primary_llm, fallback_llm):
+    """ProviderBreakerOpenError is the consequence of past failures, not a new one."""
+    resilience = MagicMock(spec=ProviderResiliencePort)
+    resilience.is_provider_open.side_effect = lambda name: name == "gemini"
+    ctx = _make_ctx_with_resilience(primary_llm, resilience, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    await agent._call_llm(_make_request())
+
+    # Only is_provider_open queries — no record_failure for the breaker-open case.
+    resilience.record_failure.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_record_success_called_on_primary_success(agent, primary_llm):
+    """Happy path: primary succeeds → record_success(primary_name)."""
+    resilience = MagicMock(spec=ProviderResiliencePort)
+    resilience.is_provider_open.return_value = False
+    ctx = _make_ctx_with_resilience(primary_llm, resilience, fallback_llm=None)
+    agent._set_execution_context(ctx)
+
+    await agent._call_llm(_make_request())
+
+    resilience.record_success.assert_called_once_with("gemini")
+    resilience.record_failure.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_record_failure_called_on_real_transient_error(agent, primary_llm, fallback_llm):
+    """Real failure (LLMRateLimitError) → record_failure(primary_name) before fallback."""
+    primary_llm.generate_content = AsyncMock(
+        side_effect=LLMRateLimitError("429", http_status=429)
+    )
+    resilience = MagicMock(spec=ProviderResiliencePort)
+    resilience.is_provider_open.return_value = False
+    ctx = _make_ctx_with_resilience(primary_llm, resilience, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    await agent._call_llm(_make_request())
+
+    resilience.record_failure.assert_called_once_with("gemini")
+
+
+@pytest.mark.asyncio
+async def test_no_record_success_on_fallback_success(agent, primary_llm, fallback_llm):
+    """Asymmetric policy: fallback success does NOT call record_success(fallback_name).
+    Phase 1 record_success is full-reset; calling on fallback would erase
+    accumulated fallback failures after one lucky call (see decision record)."""
+    primary_llm.generate_content = AsyncMock(
+        side_effect=LLMUnavailableError("503", http_status=503)
+    )
+    resilience = MagicMock(spec=ProviderResiliencePort)
+    resilience.is_provider_open.return_value = False
+    ctx = _make_ctx_with_resilience(primary_llm, resilience, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    await agent._call_llm(_make_request())
+
+    # record_success called for primary on the path? No — primary failed.
+    # record_success called for fallback? No — by design.
+    resilience.record_success.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_record_failure_on_fallback_failure_raises_both_unavailable(agent, primary_llm, fallback_llm):
+    """Both fail → record_failure for both, raises BothProvidersUnavailableError."""
+    primary_exc = LLMRateLimitError("primary 429", http_status=429)
+    fallback_exc = LLMUnavailableError("fallback 503", http_status=503)
+    primary_llm.generate_content = AsyncMock(side_effect=primary_exc)
+    fallback_llm.generate_content = AsyncMock(side_effect=fallback_exc)
+    resilience = MagicMock(spec=ProviderResiliencePort)
+    resilience.is_provider_open.return_value = False
+    ctx = _make_ctx_with_resilience(primary_llm, resilience, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    with pytest.raises(BothProvidersUnavailableError) as exc_info:
+        await agent._call_llm(_make_request())
+
+    assert exc_info.value.primary_cause is primary_exc
+    assert exc_info.value.primary_name == "gemini"
+    assert exc_info.value.fallback_name == "claude"
+    # Both providers recorded as failed.
+    failures = {call.args[0] for call in resilience.record_failure.call_args_list}
+    assert failures == {"gemini", "claude"}
+
+
+@pytest.mark.asyncio
+async def test_fallback_breaker_open_raises_both_unavailable_without_calling_fallback(
+    agent, primary_llm, fallback_llm
+):
+    """Primary fails real, fallback breaker open → fallback.generate_content NOT called."""
+    primary_exc = LLMUnavailableError("primary 503", http_status=503)
+    primary_llm.generate_content = AsyncMock(side_effect=primary_exc)
+    resilience = MagicMock(spec=ProviderResiliencePort)
+    # Primary closed at pre-call; fallback open at pre-fallback check.
+    resilience.is_provider_open.side_effect = lambda name: name == "claude"
+    ctx = _make_ctx_with_resilience(primary_llm, resilience, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    with patch("src.agents.base_agent.logger") as mock_logger:
+        with pytest.raises(BothProvidersUnavailableError) as exc_info:
+            await agent._call_llm(_make_request())
+
+    assert exc_info.value.primary_cause is primary_exc
+    fallback_llm.generate_content.assert_not_called()
+    # Structured log signals the both-open scenario distinctly.
+    events = [
+        call.kwargs.get("extra", {}).get("event")
+        for call in mock_logger.warning.call_args_list
+    ]
+    assert "llm_both_open" in events
+
+
+@pytest.mark.asyncio
+async def test_timeout_error_triggers_fallback(agent, primary_llm, fallback_llm):
+    """LLMTimeoutError triggers same fallback flow as LLMRateLimitError."""
+    primary_llm.generate_content = AsyncMock(
+        side_effect=LLMTimeoutError("budget exhausted")
+    )
+    ctx = _make_execution_context(primary_llm, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    response = await agent._call_llm(_make_request())
+
+    assert response.text == "fallback ok"
+    fallback_llm.generate_content.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_network_error_triggers_fallback(agent, primary_llm, fallback_llm):
+    """LLMNetworkError triggers same fallback flow."""
+    primary_llm.generate_content = AsyncMock(
+        side_effect=LLMNetworkError("DNS failure")
+    )
+    ctx = _make_execution_context(primary_llm, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    response = await agent._call_llm(_make_request())
+
+    assert response.text == "fallback ok"
+
+
+@pytest.mark.asyncio
+async def test_server_error_triggers_fallback(agent, primary_llm, fallback_llm):
+    """LLMServerError (non-503 5xx) triggers same fallback flow."""
+    primary_llm.generate_content = AsyncMock(
+        side_effect=LLMServerError("500 internal", http_status=500)
+    )
+    ctx = _make_execution_context(primary_llm, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    response = await agent._call_llm(_make_request())
+
+    assert response.text == "fallback ok"

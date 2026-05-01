@@ -23,6 +23,7 @@ from src.ports.llm_port import (
     ProviderCapabilities,
     ToolCall,
 )
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 _USER_ID = "user-test-01"
 _ACCOUNT_ID = "account-test-01"
@@ -42,6 +43,7 @@ def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexe
         model_name="gemini-pro",
         tier=PerformanceTier.PERFORMANCE,
         capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
     repo = MagicMock()
     repo.get_biographical_context_cached = AsyncMock(return_value=[])

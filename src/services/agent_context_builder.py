@@ -6,6 +6,7 @@ from ..domain.user import UserBotConfig, PerformanceTier
 from ..ports.llm_port import LLMPort, ProviderCapabilities, AgentExecutionContext
 from ..ports.deep_research_port import DeepResearchPort
 from ..ports.prompt_cache_strategy_port import PromptCacheStrategyPort
+from ..ports.provider_resilience_port import ProviderResiliencePort
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -175,10 +176,12 @@ class AgentContextBuilder:
     def __init__(
         self,
         registry: ProviderRegistry,
+        resilience_port: ProviderResiliencePort,
         cache_strategy: Optional[PromptCacheStrategyPort] = None,
         caching_proxy_factory: Optional[Callable[[LLMPort, PromptCacheConfig], LLMPort]] = None,
     ):
         self.registry = registry
+        self._resilience_port = resilience_port
         self._cache_strategy = cache_strategy
         self._caching_proxy_factory = caching_proxy_factory
 
@@ -286,6 +289,7 @@ class AgentContextBuilder:
             fallback_provider=fallback_llm,
             fallback_model_name=fallback_model_name,
             fallback_provider_name=resolved_fallback_name,
+            resilience_port=self._resilience_port,
         )
 
     def resolve_async_context(

@@ -49,6 +49,7 @@ from src.ports.llm_port import (
     ProviderCapabilities,
     UsageMetadata,
 )
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # Time each LLM call takes (in the mock). Two concurrent calls on the SAME
@@ -101,6 +102,7 @@ def _make_ctx(model_label: str) -> AgentExecutionContext:
         tier=PerformanceTier.BALANCED,
         capabilities=ProviderCapabilities(),
         provider_name=f"provider-{model_label}",
+        resilience_port=InMemoryProviderResilience(),
     )
 
 

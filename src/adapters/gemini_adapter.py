@@ -1,5 +1,6 @@
 import asyncio
 from typing import List, Any, Optional, Dict
+import httpx
 from google import genai
 from google.genai import types, errors as genai_errors
 from ..ports.llm_port import (
@@ -16,7 +17,13 @@ from ..ports.llm_port import (
     PROMPT_CACHE_BOUNDARY,
 )
 from ..domain.user import PerformanceTier
-from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
+from ..domain.exceptions import (
+    LLMNetworkError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from ..utils.logger import logger
 
 class GeminiAdapter(LLMPort):
@@ -225,14 +232,29 @@ class GeminiAdapter(LLMPort):
         )
         try:
             response = await (asyncio.wait_for(_gen_coro, timeout=request_timeout) if request_timeout else _gen_coro)
+        except asyncio.TimeoutError as e:
+            # Wall-clock budget from request.timeout exhausted — never reached server.
+            raise LLMTimeoutError(f"request timeout after {request_timeout}s") from e
         except genai_errors.ClientError as e:
             if getattr(e, "code", None) == 429:
                 raise LLMRateLimitError(str(e), http_status=429) from e
             raise
         except genai_errors.ServerError as e:
-            if getattr(e, "code", None) == 503:
+            code = getattr(e, "code", None)
+            if code == 503:
                 raise LLMUnavailableError(str(e), http_status=503) from e
+            if isinstance(code, int) and 500 <= code < 600:
+                # 500/502/504 — distinct from 503 maintenance; counted separately by breaker.
+                raise LLMServerError(str(e), http_status=code) from e
             raise
+        except httpx.TimeoutException as e:
+            # SDK-level transport timeout (when request.timeout is None and the
+            # httpx client default fires). Map to LLMTimeoutError so the breaker
+            # sees the same trigger type as our wait_for path.
+            raise LLMTimeoutError(str(e)) from e
+        except httpx.NetworkError as e:
+            # TCP/DNS/SSL handshake failure before any HTTP response.
+            raise LLMNetworkError(str(e)) from e
         candidate_count = len(getattr(response, "candidates", []) or [])
         raw_parts_count = None
         if response.candidates:

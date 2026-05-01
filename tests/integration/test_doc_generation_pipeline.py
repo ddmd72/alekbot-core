@@ -44,6 +44,7 @@ from src.ports.docx_runner_port import DocxRunnerError, DocxRunnerPort
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.ports.prompt_builder_port import PromptBuilderPort
 from src.ports.task_queue import TaskQueue
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +145,7 @@ def pipeline(
         model_name="gemini-test",
         tier=PerformanceTier.PERFORMANCE,
         capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
     generator_ctx = AgentExecutionContext(
         agent_type="doc_generator",
@@ -151,6 +153,7 @@ def pipeline(
         model_name="claude-test",
         tier=PerformanceTier.PERFORMANCE,
         capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
 
     planner = DocPlannerAgent(

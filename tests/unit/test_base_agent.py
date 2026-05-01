@@ -7,6 +7,7 @@ import asyncio
 from unittest.mock import Mock, AsyncMock, MagicMock, patch
 from src.agents.base_agent import BaseAgent, CircuitBreaker
 from src.domain.agent import AgentConfig, AgentMessage, AgentResponse, AgentIntent, AgentStatus
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 class MockAgent(BaseAgent):
@@ -867,6 +868,7 @@ class TestSetExecutionContext:
             model_name="gemini",
             tier=PerformanceTier.ECO,
             capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent._set_execution_context(ctx)
         assert agent._agent_execution_context is ctx
@@ -938,6 +940,7 @@ class TestCallLlmFullPaths:
             fallback_provider=mock_fallback,
             fallback_model_name="fallback-model",
             fallback_provider_name="fallback",
+            resilience_port=InMemoryProviderResilience(),
         )
         agent._set_execution_context(ctx)
 
@@ -948,16 +951,23 @@ class TestCallLlmFullPaths:
 
     @pytest.mark.asyncio
     async def test_rate_limit_error_reraises_without_fallback(self):
-        """LLMRateLimitError + no fallback → re-raises (lines 773-774)."""
-        from src.domain.exceptions import LLMRateLimitError
+        """LLMRateLimitError + no fallback → BothProvidersUnavailableError
+        carrying the original cause. F4.5 Phase 2 unified the no-fallback path
+        and the open-fallback path to a single terminal exception type."""
+        from src.domain.exceptions import (
+            BothProvidersUnavailableError,
+            LLMRateLimitError,
+        )
         from src.ports.llm_port import LLMRequest
 
         mock_llm = MagicMock()
-        mock_llm.generate_content = AsyncMock(side_effect=LLMRateLimitError("rate limit"))
+        original = LLMRateLimitError("rate limit")
+        mock_llm.generate_content = AsyncMock(side_effect=original)
         agent = self._make_agent_with_llm(mock_llm)
         # No execution context set → fallback_provider is None
 
         request = LLMRequest(model_name="test", messages=[])
-        with pytest.raises(LLMRateLimitError):
+        with pytest.raises(BothProvidersUnavailableError) as exc_info:
             await agent._call_llm(request)
+        assert exc_info.value.primary_cause is original
 

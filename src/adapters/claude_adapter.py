@@ -1,3 +1,4 @@
+import asyncio
 import time
 import anthropic
 from anthropic import types, AsyncAnthropic
@@ -16,7 +17,13 @@ from ..ports.llm_port import (
     PROMPT_CACHE_BOUNDARY,
 )
 from ..domain.user import PerformanceTier
-from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
+from ..domain.exceptions import (
+    LLMNetworkError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from ..utils.logger import logger
 
 
@@ -293,14 +300,33 @@ class ClaudeAdapter(LLMPort):
         if _use_dynamic_search:
             llm_response = await self._grounded_stream_loop(create_kwargs)
         else:
-            try:
+            request_timeout = request.timeout if request else None
+
+            async def _do_stream() -> Any:
                 async with self.client.messages.stream(**create_kwargs) as stream:
-                    response = await stream.get_final_message()
+                    return await stream.get_final_message()
+
+            try:
+                if request_timeout:
+                    response = await asyncio.wait_for(_do_stream(), timeout=request_timeout)
+                else:
+                    response = await _do_stream()
+            except asyncio.TimeoutError as e:
+                # Wall-clock budget from request.timeout exhausted.
+                raise LLMTimeoutError(f"request timeout after {request_timeout}s") from e
+            except anthropic.APITimeoutError as e:
+                # SDK-level timeout (default httpx read=120s when request.timeout is None).
+                raise LLMTimeoutError(str(e)) from e
             except anthropic.RateLimitError as e:
                 raise LLMRateLimitError(str(e), http_status=429) from e
+            except anthropic.APIConnectionError as e:
+                raise LLMNetworkError(str(e)) from e
             except anthropic.APIStatusError as e:
-                if e.status_code == 503:
+                status = getattr(e, "status_code", None)
+                if status == 503:
                     raise LLMUnavailableError(str(e), http_status=503) from e
+                if isinstance(status, int) and 500 <= status < 600:
+                    raise LLMServerError(str(e), http_status=status) from e
                 raise
             llm_response = self._parse_response(response)
 

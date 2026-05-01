@@ -13,7 +13,15 @@ from datetime import datetime, timezone
 from abc import ABC, abstractmethod
 from typing import ClassVar, Dict, Optional, List
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentStatus
-from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
+from ..domain.exceptions import (
+    _ERROR_TYPE_LOG_LABEL,
+    BothProvidersUnavailableError,
+    FAILOVER_TRIGGER_TYPES,
+    LLMError,
+    LLMRateLimitError,
+    LLMUnavailableError,
+    ProviderBreakerOpenError,
+)
 from ..domain.retry_policy import DEFAULT_RETRY_POLICY, RetryPolicy
 from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
@@ -959,13 +967,26 @@ class BaseAgent(ABC):
           2. ``self.llm`` (Quick/Smart/Router orchestrators).
           3. ``self._llm`` (specialist agents).
 
-        On LLMRateLimitError or LLMUnavailableError: transparently retries with
-        the fallback provider, picked from (in priority order):
-          1. ``fallback_ctx_override`` keyword argument.
-          2. ``self._agent_execution_context``.
-
-        See docs/04_solution_strategy/decisions/per_call_execution_context.md
-        for the per-call override pattern that motivates the keyword args.
+        Resilience flow (when ``ctx.resilience_port`` and ``ctx.provider_name`` set):
+          1. **Pre-call check.** If the resilience port reports the primary
+             breaker open, raise ``ProviderBreakerOpenError`` (consequence
+             of past failures, not a new failure — no ``record_failure``).
+          2. **Try primary.** On success, ``record_success(primary)``.
+          3. **On any FAILOVER_TRIGGER_TYPES.** ``record_failure(primary)``
+             unless the error is itself ``ProviderBreakerOpenError`` (already
+             accounted for). Then dispatch fallback.
+          4. **Pre-fallback check.** If no fallback configured, OR fallback
+             breaker is open, raise ``BothProvidersUnavailableError`` carrying
+             the primary cause. Log ``event="llm_both_open"``. Terminal: NOT
+             a FAILOVER trigger — caller must wait for cooldown.
+          5. **Try fallback.** On success, return — but do NOT call
+             ``record_success(fallback)``: full-reset semantics on
+             ``InMemoryProviderResilience`` (`adapter:72-74`) would erase
+             accumulated fallback failures after one lucky call. Asymmetry
+             is intentional; see `decisions/provider_resilience_port.md`.
+          6. **On fallback failure (FAILOVER_TRIGGER_TYPES).**
+             ``record_failure(fallback)``, then raise
+             ``BothProvidersUnavailableError`` with primary cause.
         """
         llm = llm_override if llm_override is not None else (
             getattr(self, "llm", None) or getattr(self, "_llm", None)
@@ -983,26 +1004,100 @@ class BaseAgent(ABC):
                 request=request,
                 turn=turn,
             )
+        ctx = (
+            fallback_ctx_override
+            if fallback_ctx_override is not None
+            else self._agent_execution_context
+        )
+        primary_name = ctx.provider_name if ctx else ""
+        resilience = ctx.resilience_port if ctx else None
+        failover_tuple = tuple(FAILOVER_TRIGGER_TYPES)
+
         try:
+            if resilience and primary_name and resilience.is_provider_open(primary_name):
+                # Short-circuit before primary call. Routes to fallback via the
+                # same except path as adapter-translated failures — uniform flow.
+                raise ProviderBreakerOpenError(primary_name)
             response = await llm.generate_content(request=request)
-        except (LLMRateLimitError, LLMUnavailableError) as e:
-            ctx = fallback_ctx_override if fallback_ctx_override is not None else self._agent_execution_context
-            if ctx and ctx.fallback_provider:
+            if resilience and primary_name:
+                resilience.record_success(primary_name)
+        except failover_tuple as e:
+            # Account real failures only. ProviderBreakerOpenError is the
+            # consequence of past record_failure calls; counting it again
+            # would create a self-amplifying loop on the open breaker.
+            if (
+                resilience
+                and primary_name
+                and not isinstance(e, ProviderBreakerOpenError)
+            ):
+                resilience.record_failure(primary_name)
+
+            fallback_provider = ctx.fallback_provider if ctx else None
+            fallback_name = ctx.fallback_provider_name if ctx else None
+
+            # Pre-fallback breaker check + missing-fallback check collapse to
+            # the same terminal outcome.
+            fallback_open = bool(
+                resilience
+                and fallback_name
+                and resilience.is_provider_open(fallback_name)
+            )
+            if fallback_provider is None or fallback_open:
                 logger.warning(
-                    "llm_fallback",
+                    "llm_both_open" if fallback_open else "llm_no_fallback",
                     extra={
-                        "event": "llm_fallback",
+                        "event": "llm_both_open" if fallback_open else "llm_no_fallback",
                         "agent_type": self.config.agent_type,
-                        "primary_provider": ctx.provider_name,
-                        "fallback_provider": ctx.fallback_provider_name,
-                        "error_type": "rate_limit" if isinstance(e, LLMRateLimitError) else "unavailable",
+                        "primary_provider": primary_name,
+                        "fallback_provider": fallback_name,
+                        "error_type": _ERROR_TYPE_LOG_LABEL[type(e)],
                         "http_status": e.http_status,
                     },
                 )
-                fallback_request = request.model_copy(update={"model_name": ctx.fallback_model_name})
-                response = await ctx.fallback_provider.generate_content(request=fallback_request)
-            else:
-                raise
+                raise BothProvidersUnavailableError(
+                    primary_name=primary_name,
+                    fallback_name=fallback_name,
+                    primary_cause=e,
+                ) from e
+
+            logger.warning(
+                "llm_fallback",
+                extra={
+                    "event": "llm_fallback",
+                    "agent_type": self.config.agent_type,
+                    "primary_provider": primary_name,
+                    "fallback_provider": fallback_name,
+                    "error_type": _ERROR_TYPE_LOG_LABEL[type(e)],
+                    "http_status": e.http_status,
+                },
+            )
+            fallback_request = request.model_copy(
+                update={"model_name": ctx.fallback_model_name}
+            )
+            try:
+                response = await fallback_provider.generate_content(
+                    request=fallback_request
+                )
+                # Asymmetry by design — see method docstring step 5.
+            except failover_tuple as fb_e:
+                if resilience and fallback_name:
+                    resilience.record_failure(fallback_name)
+                logger.warning(
+                    "llm_fallback_failed",
+                    extra={
+                        "event": "llm_fallback_failed",
+                        "agent_type": self.config.agent_type,
+                        "primary_provider": primary_name,
+                        "fallback_provider": fallback_name,
+                        "primary_error_type": _ERROR_TYPE_LOG_LABEL[type(e)],
+                        "fallback_error_type": _ERROR_TYPE_LOG_LABEL[type(fb_e)],
+                    },
+                )
+                raise BothProvidersUnavailableError(
+                    primary_name=primary_name,
+                    fallback_name=fallback_name,
+                    primary_cause=e,
+                ) from fb_e
         self._debug_llm_response(response, turn=turn)
         if response.usage_metadata:
             m = response.usage_metadata

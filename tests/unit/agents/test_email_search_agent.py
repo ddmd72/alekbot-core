@@ -19,6 +19,7 @@ from src.ports.llm_port import (
 )
 from src.ports.prompt_builder_port import PromptBuilderPort
 from src.services.email_search_service import EmailSearchService
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +48,7 @@ def _make_execution_context(mock_llm) -> AgentExecutionContext:
         model_name="gemini-test",
         tier=PerformanceTier.ECO,
         capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
 
 

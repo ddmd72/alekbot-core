@@ -25,6 +25,7 @@ from src.infrastructure.delegation_engine import (
     DelegationEngine,
     _format_email_search_compact,
 )
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
 # ============================================================================
@@ -124,7 +125,8 @@ def quick_agent(quick_agent_config, mock_llm_port, mock_session_store, mock_prom
         provider=mock_llm_port,
         model_name="gemini-3-flash-preview",
         tier=PerformanceTier.ECO,
-        capabilities=ProviderCapabilities()
+        capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
     return QuickResponseAgent(
         config=quick_agent_config,
@@ -454,7 +456,8 @@ class TestCreateQuickResponseAgent:
             provider=mock_llm_port,
             model_name="gemini-3-flash-preview",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = create_quick_response_agent(
             execution_context=execution_context,
@@ -475,7 +478,8 @@ class TestCreateQuickResponseAgent:
             provider=mock_llm_port,
             model_name="gemini-3-flash-preview",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = create_quick_response_agent(
             execution_context=execution_context,
@@ -495,7 +499,8 @@ class TestCreateQuickResponseAgent:
             provider=mock_llm_port,
             model_name="gemini-3-flash-preview",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = create_quick_response_agent(
             execution_context=execution_context,
@@ -632,7 +637,8 @@ class TestHistorySummaryFallback:
             provider=mock_llm_port,
             model_name="gemini-3-flash-preview",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = QuickResponseAgent(
             config=quick_agent_config,
@@ -700,7 +706,8 @@ class TestHistorySummaryFallback:
             provider=mock_llm_port,
             model_name="gemini-3-flash-preview",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = QuickResponseAgent(
             config=quick_agent_config,
@@ -912,7 +919,8 @@ class TestBiographicalContextLoading:
             provider=mock_llm_port,
             model_name="gemini-3-flash-preview",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = QuickResponseAgent(
             config=quick_agent_config,
@@ -983,7 +991,8 @@ class TestBiographicalContextLoading:
             provider=mock_llm_port,
             model_name="gemini-3-flash-preview",
             tier=PerformanceTier.ECO,
-            capabilities=ProviderCapabilities()
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
         )
         agent = QuickResponseAgent(
             config=quick_agent_config,
@@ -1128,7 +1137,8 @@ def _make_coordinator_quick_agent(quick_agent_config, mock_llm_port, mock_sessio
         provider=mock_llm_port,
         model_name="gemini-3-flash-preview",
         tier=PerformanceTier.ECO,
-        capabilities=ProviderCapabilities()
+        capabilities=ProviderCapabilities(),
+        resilience_port=InMemoryProviderResilience(),
     )
     coordinator = MagicMock()
     agent = QuickResponseAgent(
