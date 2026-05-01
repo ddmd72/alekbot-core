@@ -532,13 +532,12 @@ async def main():
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
         ) if consolidation_queue else None
+        _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
         _reminders_service = RemindersService(
             notes_port=container.notes_adapter,
             user_repo=user_repo,
-            notification_service=notification_service,
-            agent_factory=agent_factory,
-        ) if container.notes_adapter else None
-        _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
+            task_dispatch=_task_dispatch_service,
+        ) if (container.notes_adapter and _task_dispatch_service) else None
 
         # Billing webhook — optional, wired only when BILLING_SLACK_WEBHOOK_URL is set
         _billing_webhook = None

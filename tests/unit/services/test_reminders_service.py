@@ -1,8 +1,26 @@
 """
-Unit tests for RemindersService.
+Unit tests for RemindersService — Step #7 of NOTIFICATION_DELIVERY_REFACTOR_RFC.
 
-Covers: fire_due_reminders lifecycle, idempotency guard, recurrence scheduling,
-one-time deletion, notify-failure resilience, _build_reminder_alert, _compute_next_due.
+The cron-side service no longer calls notify() synchronously. Tests pin
+the new control flow:
+
+  1. list_due_reminders → for each note:
+  2. ATOMIC claim:
+       recurrent → reschedule_if_due_at(expected_due=note.due, ...)
+       one-time  → delete_if_due_at(expected_due=note.due, ...)
+  3. On True (claim won) → enqueue execute_reminder Cloud Task.
+     On False (concurrent tick won) → silently skip; counted in
+     ``claim_lost``.
+  4. Service NEVER calls notify or ensures agents (those move to the
+     execute_reminder worker in Step #8).
+
+Old behaviors REMOVED in this commit (regression-guarded by the new
+test suite + the absence of fixtures for them):
+  - _CRON_WINDOW_SECONDS idempotency guard (replaced by atomic claim).
+  - Synchronous notify() from cron handler.
+  - agent_factory.ensure_agents_for_user() inside cron.
+  - notes_port.reschedule() (unconditional) — replaced by
+    reschedule_if_due_at.
 """
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -14,9 +32,10 @@ from src.domain.agent_note import AgentNote, ReminderRecurrence
 from src.ports.agent_note_port import AgentNotePort
 from src.services.reminders_service import (
     RemindersService,
-    _build_reminder_alert,
     _compute_next_due,
+    build_reminder_alert,
 )
+from src.services.task_dispatch_service import TaskDispatchService
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +46,7 @@ _USER_ID = "user-abc"
 _ACCOUNT_ID = "acc-abc"
 _NOTE_ID = "note-001"
 _NOW = datetime(2026, 3, 15, 10, 0, 0, tzinfo=timezone.utc)
+_DUE = _NOW - timedelta(minutes=5)
 
 
 def _make_note(
@@ -42,7 +62,7 @@ def _make_note(
         user_id=user_id,
         text="check project status",
         instruction="Look at the project board and identify blockers.",
-        due=due or _NOW - timedelta(minutes=5),
+        due=due or _DUE,
         recurrence=recurrence,
         last_fired=last_fired,
         created_at=_NOW - timedelta(hours=1),
@@ -64,8 +84,9 @@ def _make_profile(account_id: str = _ACCOUNT_ID, timezone: str = "UTC"):
 def notes_port():
     p = AsyncMock(spec=AgentNotePort)
     p.list_due_reminders.return_value = []
-    p.reschedule.return_value = None
-    p.delete_note.return_value = None
+    # Default: every claim succeeds. Tests override per-scenario.
+    p.reschedule_if_due_at.return_value = True
+    p.delete_if_due_at.return_value = True
     return p
 
 
@@ -77,26 +98,18 @@ def user_repo():
 
 
 @pytest.fixture
-def notification():
-    n = MagicMock()
-    n.notify = AsyncMock()
-    return n
+def task_dispatch():
+    t = MagicMock(spec=TaskDispatchService)
+    t.enqueue_worker_task = AsyncMock(return_value="task-name-stub")
+    return t
 
 
 @pytest.fixture
-def agent_factory():
-    f = MagicMock()
-    f.ensure_agents_for_user = AsyncMock()
-    return f
-
-
-@pytest.fixture
-def service(notes_port, user_repo, notification, agent_factory):
+def service(notes_port, user_repo, task_dispatch):
     return RemindersService(
         notes_port=notes_port,
         user_repo=user_repo,
-        notification_service=notification,
-        agent_factory=agent_factory,
+        task_dispatch=task_dispatch,
     )
 
 
@@ -112,67 +125,47 @@ class TestNoDueReminders:
         result, status = await service.fire_due_reminders(now_utc=_NOW)
 
         assert status == 200
-        assert result == {"fired": 0, "skipped": 0}
+        assert result == {"enqueued": 0, "claim_lost": 0, "skipped": 0}
 
-    async def test_no_notify_calls(self, service, notes_port, notification):
+    async def test_no_enqueue_calls(self, service, notes_port, task_dispatch):
         notes_port.list_due_reminders.return_value = []
 
         await service.fire_due_reminders(now_utc=_NOW)
 
-        notification.notify.assert_not_called()
+        task_dispatch.enqueue_worker_task.assert_not_called()
+
+    async def test_no_claim_attempts(self, service, notes_port):
+        notes_port.list_due_reminders.return_value = []
+
+        await service.fire_due_reminders(now_utc=_NOW)
+
+        notes_port.reschedule_if_due_at.assert_not_called()
+        notes_port.delete_if_due_at.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# Idempotency guard
-# ---------------------------------------------------------------------------
-
-class TestIdempotencyGuard:
-
-    async def test_skips_recently_fired_note(self, service, notes_port):
-        # last_fired 2 minutes ago — within 4-min window
-        note = _make_note(last_fired=_NOW - timedelta(minutes=2))
-        notes_port.list_due_reminders.return_value = [note]
-
-        result, _ = await service.fire_due_reminders(now_utc=_NOW)
-
-        assert result["skipped"] == 1
-        assert result["fired"] == 0
-
-    async def test_fires_note_outside_window(self, service, notes_port):
-        # last_fired 5 minutes ago — outside window
-        note = _make_note(last_fired=_NOW - timedelta(minutes=5))
-        notes_port.list_due_reminders.return_value = [note]
-
-        result, _ = await service.fire_due_reminders(now_utc=_NOW)
-
-        assert result["fired"] == 1
-
-    async def test_fires_note_with_no_last_fired(self, service, notes_port):
-        note = _make_note(last_fired=None)
-        notes_port.list_due_reminders.return_value = [note]
-
-        result, _ = await service.fire_due_reminders(now_utc=_NOW)
-
-        assert result["fired"] == 1
-
-
-# ---------------------------------------------------------------------------
-# User resolution
+# User resolution (skipped tally — neither claim nor enqueue happens)
 # ---------------------------------------------------------------------------
 
 class TestUserResolution:
 
-    async def test_skips_when_user_not_found(self, service, notes_port, user_repo, notification):
+    async def test_skips_when_user_not_found(
+        self, service, notes_port, user_repo, task_dispatch,
+    ):
         note = _make_note()
         notes_port.list_due_reminders.return_value = [note]
         user_repo.get_user.return_value = None
 
         result, _ = await service.fire_due_reminders(now_utc=_NOW)
 
-        assert result["skipped"] == 1
-        notification.notify.assert_not_called()
+        assert result == {"enqueued": 0, "claim_lost": 0, "skipped": 1}
+        notes_port.reschedule_if_due_at.assert_not_called()
+        notes_port.delete_if_due_at.assert_not_called()
+        task_dispatch.enqueue_worker_task.assert_not_called()
 
-    async def test_skips_when_account_id_missing(self, service, notes_port, user_repo, notification):
+    async def test_skips_when_account_id_missing(
+        self, service, notes_port, user_repo, task_dispatch,
+    ):
         note = _make_note()
         notes_port.list_due_reminders.return_value = [note]
         profile = _make_profile()
@@ -182,179 +175,207 @@ class TestUserResolution:
         result, _ = await service.fire_due_reminders(now_utc=_NOW)
 
         assert result["skipped"] == 1
-        notification.notify.assert_not_called()
+        assert result["enqueued"] == 0
+        task_dispatch.enqueue_worker_task.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# One-time reminder
+# One-time reminder — claim via delete_if_due_at
 # ---------------------------------------------------------------------------
 
 class TestOneTimeReminder:
 
-    async def test_note_deleted_after_firing(self, service, notes_port):
+    async def test_successful_claim_enqueues_execute_reminder(
+        self, service, notes_port, task_dispatch,
+    ):
         note = _make_note(recurrence=None)
         notes_port.list_due_reminders.return_value = [note]
+        notes_port.delete_if_due_at.return_value = True
 
-        await service.fire_due_reminders(now_utc=_NOW)
+        result, _ = await service.fire_due_reminders(now_utc=_NOW)
 
-        notes_port.delete_note.assert_called_once_with(_NOTE_ID, _USER_ID)
-        notes_port.reschedule.assert_not_called()
+        assert result["enqueued"] == 1
+        notes_port.delete_if_due_at.assert_called_once_with(
+            note_id=_NOTE_ID,
+            user_id=_USER_ID,
+            expected_due=note.due,
+        )
+        notes_port.reschedule_if_due_at.assert_not_called()
+        task_dispatch.enqueue_worker_task.assert_called_once()
 
-    async def test_notify_called_with_correct_user(self, service, notes_port, notification):
+    async def test_failed_claim_skips_enqueue(
+        self, service, notes_port, task_dispatch,
+    ):
+        """Concurrent cron tick won the race — silently skip, count as
+        claim_lost. No enqueue, no log noise that resembles a failure."""
         note = _make_note(recurrence=None)
         notes_port.list_due_reminders.return_value = [note]
+        notes_port.delete_if_due_at.return_value = False
 
-        await service.fire_due_reminders(now_utc=_NOW)
+        result, _ = await service.fire_due_reminders(now_utc=_NOW)
 
-        _, kwargs = notification.notify.call_args
-        assert kwargs["user_id"] == _USER_ID
-        assert kwargs["account_id"] == _ACCOUNT_ID
-
-    async def test_ensure_agents_called_before_notify(self, service, notes_port, notification, agent_factory):
-        note = _make_note()
-        notes_port.list_due_reminders.return_value = [note]
-        call_order = []
-        agent_factory.ensure_agents_for_user.side_effect = lambda uid: call_order.append("ensure")
-        notification.notify.side_effect = lambda **kw: call_order.append("notify")
-
-        await service.fire_due_reminders(now_utc=_NOW)
-
-        assert call_order == ["ensure", "notify"]
-
-    async def test_agent_id_override_targets_smart_agent(self, service, notes_port, notification):
-        note = _make_note()
-        notes_port.list_due_reminders.return_value = [note]
-
-        await service.fire_due_reminders(now_utc=_NOW)
-
-        _, kwargs = notification.notify.call_args
-        assert kwargs["agent_id_override"] == f"smart_response_agent_{_USER_ID}"
+        assert result == {"enqueued": 0, "claim_lost": 1, "skipped": 0}
+        task_dispatch.enqueue_worker_task.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# Recurrent reminder
+# Recurrent reminder — claim via reschedule_if_due_at
 # ---------------------------------------------------------------------------
 
 class TestRecurrentReminder:
 
-    async def test_note_rescheduled_not_deleted(self, service, notes_port):
+    async def test_successful_claim_enqueues_with_correct_payload(
+        self, service, notes_port, task_dispatch,
+    ):
         note = _make_note(recurrence=ReminderRecurrence(type="daily", interval=1))
         notes_port.list_due_reminders.return_value = [note]
+        notes_port.reschedule_if_due_at.return_value = True
 
         await service.fire_due_reminders(now_utc=_NOW)
 
-        notes_port.reschedule.assert_called_once()
-        notes_port.delete_note.assert_not_called()
+        # Claim attempted with the snapshot's due as expected_due.
+        claim_kwargs = notes_port.reschedule_if_due_at.call_args.kwargs
+        assert claim_kwargs["note_id"] == _NOTE_ID
+        assert claim_kwargs["expected_due"] == note.due
+        assert claim_kwargs["next_due"] > note.due
+        assert claim_kwargs["last_fired"] == _NOW
+        notes_port.delete_if_due_at.assert_not_called()
 
-    async def test_reschedule_receives_note_id_and_future_date(self, service, notes_port):
-        note = _make_note(
-            due=_NOW - timedelta(minutes=5),
-            recurrence=ReminderRecurrence(type="daily", interval=1),
-        )
-        notes_port.list_due_reminders.return_value = [note]
+        # Enqueue carries (note_id, user_id, due_at) for the worker.
+        task_dispatch.enqueue_worker_task.assert_called_once()
+        enq_kwargs = task_dispatch.enqueue_worker_task.call_args.kwargs
+        assert enq_kwargs["task_type"] == "execute_reminder"
+        assert enq_kwargs["payload"] == {
+            "note_id": _NOTE_ID,
+            "user_id": _USER_ID,
+            "due_at": note.due.isoformat(),
+        }
 
-        await service.fire_due_reminders(now_utc=_NOW)
-
-        call_args = notes_port.reschedule.call_args
-        next_due = call_args[0][1]
-        assert call_args[0][0] == _NOTE_ID
-        assert next_due > note.due  # must be in the future relative to due
-
-
-# ---------------------------------------------------------------------------
-# Notify failure resilience
-# ---------------------------------------------------------------------------
-
-class TestNotifyFailure:
-
-    async def test_deletion_still_called_after_notify_error(self, service, notes_port, notification):
-        note = _make_note(recurrence=None)
-        notes_port.list_due_reminders.return_value = [note]
-        notification.notify.side_effect = RuntimeError("Slack unavailable")
-
-        result, status = await service.fire_due_reminders(now_utc=_NOW)
-
-        # Fired (lifecycle completed) even though notify failed
-        assert result["fired"] == 1
-        notes_port.delete_note.assert_called_once()
-
-    async def test_reschedule_still_called_after_notify_error(self, service, notes_port, notification):
+    async def test_failed_claim_skips_enqueue(
+        self, service, notes_port, task_dispatch,
+    ):
+        """Concurrent cron tick already rescheduled — atomic precondition
+        fails → silently skip. This is the canonical fix for defect #3."""
         note = _make_note(recurrence=ReminderRecurrence(type="daily", interval=1))
         notes_port.list_due_reminders.return_value = [note]
-        notification.notify.side_effect = RuntimeError("timeout")
+        notes_port.reschedule_if_due_at.return_value = False
 
         result, _ = await service.fire_due_reminders(now_utc=_NOW)
 
-        assert result["fired"] == 1
-        notes_port.reschedule.assert_called_once()
+        assert result == {"enqueued": 0, "claim_lost": 1, "skipped": 0}
+        task_dispatch.enqueue_worker_task.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# Multiple notes
+# Multiple notes — independent claim outcomes are tallied separately
 # ---------------------------------------------------------------------------
 
 class TestMultipleNotes:
 
-    async def test_counts_all_fired(self, service, notes_port):
+    async def test_all_claim_won(self, service, notes_port, task_dispatch):
+        notes = [_make_note(note_id=f"n{i}") for i in range(3)]
+        notes_port.list_due_reminders.return_value = notes
+
+        result, _ = await service.fire_due_reminders(now_utc=_NOW)
+
+        assert result["enqueued"] == 3
+        assert task_dispatch.enqueue_worker_task.await_count == 3
+
+    async def test_mixed_claim_outcomes(
+        self, service, notes_port, task_dispatch,
+    ):
+        notes = [
+            _make_note(note_id="n1"),  # claim won
+            _make_note(note_id="n2"),  # claim lost
+            _make_note(note_id="n3"),  # claim won
+        ]
+        notes_port.list_due_reminders.return_value = notes
+        # First and third one-time deletes succeed; middle one fails.
+        notes_port.delete_if_due_at.side_effect = [True, False, True]
+
+        result, _ = await service.fire_due_reminders(now_utc=_NOW)
+
+        assert result == {"enqueued": 2, "claim_lost": 1, "skipped": 0}
+        # Only the two winners enqueued tasks.
+        assert task_dispatch.enqueue_worker_task.await_count == 2
+
+    async def test_user_skipped_does_not_attempt_claim(
+        self, service, notes_port, user_repo, task_dispatch,
+    ):
         notes = [
             _make_note(note_id="n1"),
-            _make_note(note_id="n2"),
+            _make_note(note_id="n2", user_id="user-gone"),
             _make_note(note_id="n3"),
         ]
         notes_port.list_due_reminders.return_value = notes
 
-        result, _ = await service.fire_due_reminders(now_utc=_NOW)
-
-        assert result["fired"] == 3
-        assert result["skipped"] == 0
-
-    async def test_mix_of_fired_and_skipped(self, service, notes_port):
-        notes = [
-            _make_note(note_id="n1"),  # will fire
-            _make_note(note_id="n2", last_fired=_NOW - timedelta(seconds=60)),  # idempotency skip
-        ]
-        notes_port.list_due_reminders.return_value = notes
+        # user-gone returns None from user_repo; everyone else gets default.
+        async def get_user(uid):
+            return None if uid == "user-gone" else _make_profile()
+        user_repo.get_user = AsyncMock(side_effect=get_user)
 
         result, _ = await service.fire_due_reminders(now_utc=_NOW)
 
-        assert result["fired"] == 1
-        assert result["skipped"] == 1
+        assert result == {"enqueued": 2, "claim_lost": 0, "skipped": 1}
+        assert task_dispatch.enqueue_worker_task.await_count == 2
 
 
 # ---------------------------------------------------------------------------
-# _build_reminder_alert
+# now_utc default
+# ---------------------------------------------------------------------------
+
+class TestNowDefault:
+
+    async def test_uses_datetime_now_when_not_provided(
+        self, service, notes_port,
+    ):
+        """now_utc=None → service supplies datetime.now(UTC)."""
+        notes_port.list_due_reminders.return_value = []
+
+        # Should not raise.
+        result, status = await service.fire_due_reminders()
+
+        assert status == 200
+        notes_port.list_due_reminders.assert_called_once()
+        # The supplied as_of is some recent UTC datetime.
+        called_as_of = notes_port.list_due_reminders.call_args.kwargs["as_of"]
+        assert called_as_of.tzinfo is not None
+
+
+# ---------------------------------------------------------------------------
+# build_reminder_alert (public utility — consumed by Step #8 worker)
 # ---------------------------------------------------------------------------
 
 class TestBuildReminderAlert:
 
     def test_contains_note_text(self):
         note = _make_note()
-        alert = _build_reminder_alert(note)
+        alert = build_reminder_alert(note)
         assert "check project status" in alert
 
     def test_contains_instruction(self):
         note = _make_note()
-        alert = _build_reminder_alert(note)
+        alert = build_reminder_alert(note)
         assert "Look at the project board and identify blockers." in alert
 
     def test_contains_note_id(self):
         note = _make_note()
-        alert = _build_reminder_alert(note)
+        alert = build_reminder_alert(note)
         assert _NOTE_ID in alert
 
     def test_one_time_schedule_label(self):
         note = _make_note(recurrence=None)
-        alert = _build_reminder_alert(note)
+        alert = build_reminder_alert(note)
         assert "one-time" in alert
 
     def test_recurrent_schedule_label(self):
         note = _make_note(recurrence=ReminderRecurrence(type="daily", interval=2))
-        alert = _build_reminder_alert(note)
+        alert = build_reminder_alert(note)
         assert "2 daily" in alert
 
     def test_self_reminder_framing(self):
         note = _make_note()
-        alert = _build_reminder_alert(note)
+        alert = build_reminder_alert(note)
         assert "SELF-REMINDER" in alert
         assert "you wrote" in alert.lower() or "your own" in alert.lower()
 

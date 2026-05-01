@@ -2,10 +2,9 @@
 Port contract tests for AgentNotePort.
 
 Covers:
-- AgentNotePort (10 abstract async methods: create_note, delete_note,
+- AgentNotePort (9 abstract async methods: create_note, delete_note,
   update_note, get_note, list_active_notes, list_due_reminders,
-  reschedule [deprecated], reschedule_if_due_at, delete_if_due_at,
-  mark_fire_delivered)
+  reschedule_if_due_at, delete_if_due_at, mark_fire_delivered)
 - AsyncMock(spec=AgentNotePort) satisfies the port contract in agent tests
 """
 
@@ -55,7 +54,7 @@ class TestAgentNotePortContract:
 
     def test_all_abstract_methods_are_async(self):
         for name in ("create_note", "delete_note", "update_note", "get_note",
-                     "list_active_notes", "list_due_reminders", "reschedule",
+                     "list_active_notes", "list_due_reminders",
                      "reschedule_if_due_at", "delete_if_due_at", "mark_fire_delivered"):
             method = getattr(AgentNotePort, name)
             assert inspect.iscoroutinefunction(method), f"{name} must be async"
@@ -65,7 +64,13 @@ class TestAgentNotePortContract:
             name for name, method in inspect.getmembers(AgentNotePort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 10, f"Expected 10 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 9, f"Expected 9 abstract methods, got {abstract_methods}"
+
+    def test_deprecated_reschedule_is_gone(self):
+        """The unconditional reschedule() was removed in Step #7 because
+        it had a duplicate-fire race. reschedule_if_due_at supersedes it.
+        This test guards against accidental reintroduction."""
+        assert not hasattr(AgentNotePort, "reschedule")
 
     def test_create_note_signature(self):
         sig = inspect.signature(AgentNotePort.create_note)

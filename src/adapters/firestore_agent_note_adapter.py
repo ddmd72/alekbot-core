@@ -159,15 +159,6 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
         docs = await self._col.where(filter=FieldFilter("due", "<=", as_of)).get()
         return [self._dict_to_note(doc.id, doc.to_dict()) for doc in docs]
 
-    async def reschedule(self, note_id: str, next_due: datetime, last_fired: datetime) -> None:
-        """DEPRECATED — see AgentNotePort. Superseded by ``reschedule_if_due_at``.
-        Removed in Step #7 of NOTIFICATION_DELIVERY_REFACTOR_RFC.
-        """
-        await self._col.document(note_id).update({
-            "due": next_due,
-            "last_fired": last_fired,
-        })
-
     async def get_note(self, user_id: str, note_id: str) -> Optional[AgentNote]:
         if not note_id:
             return None
