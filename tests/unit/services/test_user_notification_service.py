@@ -666,3 +666,83 @@ class TestNotifyExceptionPath:
         assert result.delivered is False
         assert result.agent_status == AgentStatus.FAILED
         assert "slack down" in (result.error or "")
+
+
+# ---------------------------------------------------------------------------
+# Tests: tier override resolution (complexity-aware SLA)
+# ---------------------------------------------------------------------------
+
+
+class TestNotifyTierResolution:
+    """notify(tier=…) propagates the tier-specific timeout from the SLA
+    table to AgentMessage.timeout_ms. When SLA has no override for the
+    given (kind, tier) the kind's default timeout is used."""
+
+    async def test_no_tier_uses_kind_default(self, service, coordinator):
+        coordinator.route_message.return_value = _make_success_response(
+            SmartResponse(text="ok")
+        )
+
+        await service.notify(
+            _USER_ID, _ACCOUNT_ID, "alert",
+            kind=NotificationKind.REMINDER,
+        )
+
+        msg = coordinator.route_message.call_args[0][0]
+        # REMINDER default: 600_000ms.
+        assert msg.timeout_ms == 600_000
+
+    async def test_tier_with_override_supersedes_default(
+        self, service, coordinator
+    ):
+        from src.domain.user import PerformanceTier
+        coordinator.route_message.return_value = _make_success_response(
+            SmartResponse(text="ok")
+        )
+
+        await service.notify(
+            _USER_ID, _ACCOUNT_ID, "alert",
+            kind=NotificationKind.REMINDER,
+            tier=PerformanceTier.PERFORMANCE,
+        )
+
+        msg = coordinator.route_message.call_args[0][0]
+        # REMINDER + PERFORMANCE override: 1_500_000ms (25 min).
+        assert msg.timeout_ms == 1_500_000
+
+    async def test_eco_tier_picks_tightest_budget(self, service, coordinator):
+        from src.domain.user import PerformanceTier
+        coordinator.route_message.return_value = _make_success_response(
+            SmartResponse(text="ok")
+        )
+
+        await service.notify(
+            _USER_ID, _ACCOUNT_ID, "alert",
+            kind=NotificationKind.REMINDER,
+            tier=PerformanceTier.ECO,
+        )
+
+        msg = coordinator.route_message.call_args[0][0]
+        # REMINDER + ECO override: 180_000ms (3 min).
+        assert msg.timeout_ms == 180_000
+
+    async def test_tier_ignored_when_kind_has_no_overrides(
+        self, service, coordinator
+    ):
+        """INTERACTIVE has no tier_overrides — passing tier= must NOT
+        change the resolved timeout. Caller setting tier on a fixed-
+        purpose kind is silently tolerated."""
+        from src.domain.user import PerformanceTier
+        coordinator.route_message.return_value = _make_success_response(
+            SmartResponse(text="ok")
+        )
+
+        await service.notify(
+            _USER_ID, _ACCOUNT_ID, "alert",
+            kind=NotificationKind.INTERACTIVE,
+            tier=PerformanceTier.PERFORMANCE,
+        )
+
+        msg = coordinator.route_message.call_args[0][0]
+        # INTERACTIVE: 300_000ms regardless of tier passed.
+        assert msg.timeout_ms == 300_000

@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from ..ports.account_repository import AccountRepository
 
 from ..domain.agent import AgentIntent, AgentMessage, AgentStatus
+from ..domain.complexity_settings import DEFAULT_COMPLEXITY_SETTINGS
 from ..domain.notification_kind import NotificationKind
 from ..handlers.agent_worker_handler import AgentWorkerHandler
 from ..services.deep_research_delivery import (
@@ -519,11 +520,24 @@ class WorkerHandler:
         await self._agent_factory.ensure_agents_for_user(user_id)
 
         task_complexity = note.complexity.value if note.complexity else "simple_analytics"
+        # Resolve the PerformanceTier for the SLA budget. Single source of
+        # truth: the same DEFAULT_COMPLEXITY_SETTINGS table that
+        # TaskExecutionResolver uses to map complexity → execution context.
+        # ``tier=None`` means "use the kind's default budget" (handled by
+        # notify()); only the kinds with ``tier_overrides`` actually consume
+        # this argument.
+        sla_tier = None
+        if note.complexity is not None:
+            settings = DEFAULT_COMPLEXITY_SETTINGS.get(note.complexity)
+            if settings is not None:
+                sla_tier = settings.tier
+
         result = await self._notification.notify(
             user_id=user_id,
             account_id=user_profile.account_id,
             system_alert=build_reminder_alert(note),
             kind=NotificationKind.REMINDER,
+            tier=sla_tier,
             agent_id_override=f"smart_response_agent_{user_id}",
             task_complexity=task_complexity,
         )
