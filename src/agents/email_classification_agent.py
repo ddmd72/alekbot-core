@@ -85,9 +85,6 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
                   "Use classify_batch() directly.",
         )
 
-    def _get_alternative_agents(self) -> List[str]:
-        return []
-
     # ------------------------------------------------------------------
     # Primary API
     # ------------------------------------------------------------------

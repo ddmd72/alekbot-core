@@ -250,9 +250,6 @@ class PdfGeneratorAgent(BaseAgent):
             user_id=self.user_id,
         )
 
-    def _get_alternative_agents(self) -> list[str]:
-        return []
-
 
 # ---------------------------------------------------------------------------
 # Helpers
