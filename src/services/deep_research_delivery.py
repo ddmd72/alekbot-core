@@ -15,23 +15,31 @@ import html as html_lib
 from datetime import datetime, timezone
 from typing import Any, Optional, Protocol
 
+from ..domain.notification_kind import NotificationKind
+from ..domain.notify_result import NotifyResult
 from ..ports.media_storage_port import MediaStoragePort
 from ..utils.logger import logger
 
 
 class NotificationPort(Protocol):
-    """Protocol for user notification. Implemented by UserNotificationService."""
+    """Protocol for user notification. Implemented by UserNotificationService.
+
+    Mirrors the post-Step-4 ``UserNotificationService.notify`` signature:
+    ``kind`` is required keyword-only, returns ``NotifyResult``.
+    """
 
     async def notify(
         self,
         user_id: str,
         account_id: str,
         system_alert: str,
+        *,
+        kind: NotificationKind,
         agent_id_override: Optional[str] = None,
         session_id: Optional[str] = None,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
-    ) -> None: ...
+    ) -> NotifyResult: ...
 
     async def notify_raw(
         self,

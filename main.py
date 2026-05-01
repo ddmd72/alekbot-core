@@ -563,6 +563,7 @@ async def main():
             task_setup=task_setup_service,
             task_indexing=container.task_indexing,
             reminders_service=_reminders_service,
+            notes_port=container.notes_adapter,
             email_review=container.email_review_service,
             account_repo=account_repo,
             billing_webhook=_billing_webhook,
