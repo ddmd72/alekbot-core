@@ -39,34 +39,6 @@ class FactsMemoryAgent(BaseAgent):
     MAX_TOKENS = MEMORY_SEARCH.max_tokens
     RESULT_LIMIT = MEMORY_SEARCH.result_limit
 
-    MEMORY_SEARCH_RESPONSE_SCHEMA = {
-        "type": "OBJECT",
-        "properties": {
-            "keywords": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"},
-                "minItems": 3,
-                "maxItems": 5,
-            },
-            "primary_query": {"type": "STRING", "maxLength": 50},
-            "alternative_query": {"type": "STRING", "maxLength": 50},
-            "domains": {
-                "type": "ARRAY",
-                "items": {
-                    "type": "STRING",
-                    "enum": [
-                        "biographical", "possession", "health", "medical_records",
-                        "location", "work", "network", "preference", "skill",
-                        "project", "finance", "education", "legal",
-                        "entertainment", "communication",
-                    ],
-                },
-                "maxItems": 2,
-            },
-        },
-        "required": ["keywords", "primary_query", "alternative_query", "domains"],
-    }
-
     def __init__(
         self,
         config: AgentConfig,

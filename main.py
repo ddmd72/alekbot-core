@@ -21,7 +21,7 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.services.file_upload_service import FileUploadService
 from src.composition.service_container import ServiceContainer
 from src.infrastructure.agent_coordinator import AgentCoordinator
-from src.infrastructure.agent_registry import AgentRegistry, AgentManifest
+from src.infrastructure.agent_registry import AgentRegistry
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
 from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.handlers.agent_worker_handler import AgentWorkerHandler
