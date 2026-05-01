@@ -148,7 +148,7 @@ class DocGeneratorAgent(BaseAgent):
                 system_instruction=system_prompt,
                 messages=messages,
                 temperature=self.TEMPERATURE,
-                max_output_tokens=self.MAX_TOKENS,
+                max_tokens=self.MAX_TOKENS,
                 tools=_GENERATE_DOCX_TOOL,
                 thinking=self.THINKING_EFFORT or None,
             )
