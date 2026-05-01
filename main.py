@@ -572,6 +572,7 @@ async def main():
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
             notification_service=notification_service,
             webhook_secret=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET"),
+            media_storage=gcs_media_adapter,
             task_queue=agent_task_queue,
         )
 
