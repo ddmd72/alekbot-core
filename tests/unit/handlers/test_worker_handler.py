@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from src.domain.agent import AgentStatus
 from src.domain.billing import BillingAccount, AccountUsageStats
@@ -406,6 +406,9 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
     notification.notify = AsyncMock()
     user_repo = MagicMock()
     user_repo.get_user = AsyncMock(return_value=None)
+    notes_port = AsyncMock()
+    notes_port.get_note = AsyncMock(return_value=None)
+    notes_port.mark_fire_delivered = AsyncMock()
 
     ns = MagicMock()
     ns.email_indexing = email_indexing
@@ -420,6 +423,7 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
     ns.agent_factory = agent_factory
     ns.notification = notification
     ns.user_repo = user_repo
+    ns.notes_port = notes_port
 
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
@@ -434,6 +438,7 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
         task_setup=task_setup,
         task_indexing=task_indexing,
         reminders_service=reminders_service,
+        notes_port=notes_port,
         email_review=email_review,
         account_repo=account_repo,
         billing_webhook=billing_webhook,
@@ -715,8 +720,217 @@ class TestHandleFireDueReminders:
 
 
 # ---------------------------------------------------------------------------
-# _handle_start_daily_email_review
+# _handle_execute_reminder (Step #8 — per-fire worker)
 # ---------------------------------------------------------------------------
+
+_EXECUTE_NOTE_ID = "note-execute-001"
+_EXECUTE_USER_ID = "user-execute"
+_EXECUTE_DUE = datetime(2026, 5, 1, 6, 5, 0, tzinfo=timezone.utc)
+_EXECUTE_PAYLOAD = {
+    "note_id": _EXECUTE_NOTE_ID,
+    "user_id": _EXECUTE_USER_ID,
+    "due_at": _EXECUTE_DUE.isoformat(),
+}
+
+
+def _make_reminder_note(
+    *,
+    note_id: str = _EXECUTE_NOTE_ID,
+    user_id: str = _EXECUTE_USER_ID,
+    due: datetime = _EXECUTE_DUE,
+    last_delivered_due: datetime = None,
+):
+    """Build a domain AgentNote suitable for the worker path."""
+    from src.domain.agent_note import AgentNote
+    return AgentNote(
+        note_id=note_id,
+        user_id=user_id,
+        text="ping the team",
+        instruction="Ping the team about the deploy.",
+        due=due,
+        recurrence=None,
+        last_fired=None,
+        created_at=due - timedelta(hours=1),
+        last_delivered_due=last_delivered_due,
+    )
+
+
+class TestHandleExecuteReminder:
+    """Five paths + happy path documented in the docstring of
+    ``_handle_execute_reminder``."""
+
+    async def test_missing_notes_port_returns_501(self):
+        worker, _ = _make_full_worker()
+        worker._notes_port = None
+
+        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        assert status == 501
+        assert "notes_port" in result["error"]
+
+    async def test_missing_payload_fields_returns_400(self):
+        worker, _ = _make_full_worker()
+
+        result, status = await worker._handle_execute_reminder({"note_id": "x"})
+
+        assert status == 400
+        assert "missing" in result["error"]
+
+    async def test_bad_due_at_returns_400(self):
+        worker, _ = _make_full_worker()
+
+        result, status = await worker._handle_execute_reminder(
+            {**_EXECUTE_PAYLOAD, "due_at": "not-a-date"}
+        )
+
+        assert status == 400
+        assert result["error"] == "bad due_at"
+
+    async def test_note_gone_returns_200(self):
+        """Note deleted between cron and worker — ack the task, no retry."""
+        worker, ns = _make_full_worker()
+        ns.notes_port.get_note.return_value = None
+
+        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        assert status == 200
+        assert result["status"] == "note_gone"
+        ns.notification.notify.assert_not_called()
+        ns.notes_port.mark_fire_delivered.assert_not_called()
+
+    async def test_already_delivered_short_circuits(self):
+        """Cloud Tasks retry sees last_delivered_due == due_at → no notify,
+        no second mark, ack 200. This is the canonical Cloud-Tasks-retry
+        idempotency path (Step #6 D.3 + Step #8)."""
+        worker, ns = _make_full_worker()
+        ns.notes_port.get_note.return_value = _make_reminder_note(
+            last_delivered_due=_EXECUTE_DUE,
+        )
+
+        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        assert status == 200
+        assert result["status"] == "already_delivered"
+        ns.user_repo.get_user.assert_not_called()
+        ns.notification.notify.assert_not_called()
+        ns.notes_port.mark_fire_delivered.assert_not_called()
+
+    async def test_no_user_returns_200_without_notify(self):
+        worker, ns = _make_full_worker()
+        ns.notes_port.get_note.return_value = _make_reminder_note()
+        ns.user_repo.get_user.return_value = None
+
+        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        assert status == 200
+        assert result["status"] == "no_user"
+        ns.notification.notify.assert_not_called()
+        ns.notes_port.mark_fire_delivered.assert_not_called()
+
+    async def test_notify_failed_returns_500_no_mark(self):
+        """delivered=False → 500 → Cloud Tasks queue retries with backoff.
+        ``mark_fire_delivered`` MUST NOT be called or the retry would be
+        falsely short-circuited as already_delivered."""
+        from src.domain.agent import AgentStatus
+        from src.domain.notify_result import NotifyResult
+
+        worker, ns = _make_full_worker()
+        ns.notes_port.get_note.return_value = _make_reminder_note()
+        profile = MagicMock()
+        profile.account_id = "acc-x"
+        ns.user_repo.get_user.return_value = profile
+        ns.notification.notify.return_value = NotifyResult(
+            delivered=False,
+            agent_status=AgentStatus.FAILED,
+            error="agent_timeout",
+        )
+
+        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        assert status == 500
+        assert result["error"] == "agent_timeout"
+        assert result["agent_status"] == AgentStatus.FAILED.value
+        ns.notes_port.mark_fire_delivered.assert_not_called()
+
+    async def test_happy_path_delivers_marks_and_acks(self):
+        """delivered=True → mark_fire_delivered with (note_id, due_at)
+        → 200 ok. Verifies notify was called with kind=REMINDER, the
+        right system_alert (build_reminder_alert output), and the
+        smart_response_agent override."""
+        from src.domain.agent import AgentStatus
+        from src.domain.notification_kind import NotificationKind
+        from src.domain.notify_result import NotifyResult
+
+        worker, ns = _make_full_worker()
+        note = _make_reminder_note()
+        ns.notes_port.get_note.return_value = note
+        profile = MagicMock()
+        profile.account_id = "acc-x"
+        ns.user_repo.get_user.return_value = profile
+        ns.notification.notify.return_value = NotifyResult(
+            delivered=True, agent_status=AgentStatus.SUCCESS,
+        )
+
+        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        assert status == 200
+        assert result["status"] == "ok"
+        ns.agent_factory.ensure_agents_for_user.assert_awaited_once_with(_EXECUTE_USER_ID)
+        # notify called once with the right kind + override + alert.
+        ns.notification.notify.assert_awaited_once()
+        kw = ns.notification.notify.call_args.kwargs
+        assert kw["kind"] == NotificationKind.REMINDER
+        assert kw["user_id"] == _EXECUTE_USER_ID
+        assert kw["account_id"] == "acc-x"
+        assert kw["agent_id_override"] == f"smart_response_agent_{_EXECUTE_USER_ID}"
+        # alert includes the note's text + id (smoke that build_reminder_alert was used).
+        assert note.text in kw["system_alert"]
+        assert _EXECUTE_NOTE_ID in kw["system_alert"]
+        # task_complexity defaults to simple_analytics when note.complexity is None.
+        assert kw["task_complexity"] == "simple_analytics"
+        # mark_fire_delivered stamped with the SAME due_at that came in.
+        ns.notes_port.mark_fire_delivered.assert_awaited_once_with(
+            note_id=_EXECUTE_NOTE_ID, due_at=_EXECUTE_DUE,
+        )
+
+    async def test_happy_path_uses_note_complexity_when_set(self):
+        """If note.complexity is set, its .value is forwarded to notify
+        as task_complexity (Smart will then resolve the per-call SLA)."""
+        from src.domain.agent import AgentStatus
+        from src.domain.notify_result import NotifyResult
+        from src.domain.task_complexity import TaskComplexity
+
+        worker, ns = _make_full_worker()
+        note = _make_reminder_note()
+        # Per-note complexity override.
+        from dataclasses import replace
+        note = replace(note, complexity=TaskComplexity.DEEP_REASONING)
+        ns.notes_port.get_note.return_value = note
+        profile = MagicMock()
+        profile.account_id = "acc-x"
+        ns.user_repo.get_user.return_value = profile
+        ns.notification.notify.return_value = NotifyResult(
+            delivered=True, agent_status=AgentStatus.SUCCESS,
+        )
+
+        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        kw = ns.notification.notify.call_args.kwargs
+        assert kw["task_complexity"] == "deep_reasoning"
+
+    async def test_handle_dispatches_execute_reminder_task_type(self):
+        """The top-level dispatcher routes ``execute_reminder`` to the
+        new handler — guards against forgetting to register the case."""
+        worker, ns = _make_full_worker()
+        ns.notes_port.get_note.return_value = None  # → note_gone, 200
+
+        result, status = await worker.handle({
+            "task_type": "execute_reminder",
+            **_EXECUTE_PAYLOAD,
+        })
+
+        assert status == 200
+        assert result["status"] == "note_gone"
 
 class TestHandleStartDailyEmailReview:
 

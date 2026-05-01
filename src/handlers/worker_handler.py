@@ -11,7 +11,11 @@ Supported task_types:
   - email_indexing_watchdog  → mark stale running jobs as failed
   - consolidation            → process one batch, re-enqueue if more
   - deep_research_polling    → poll Gemini job, deliver via notification service
-  - fire_due_reminders       → fire all reminders with due <= now, reschedule or delete
+  - fire_due_reminders       → cron tick: claim each due note (atomic precondition on `due`)
+                                and enqueue per-fire `execute_reminder` Cloud Tasks
+  - execute_reminder         → run one claimed reminder fire: load note, idempotency
+                                check via `last_delivered_due`, deliver via notify(),
+                                stamp delivery on success
   - setup_microsoft_todo          → TaskSetupService.setup(user_id)
   - reindex_task_list             → TaskIndexingService.reindex_list(user_id, list_id)
   - renew_task_subscriptions      → TaskSetupService.renew_expiring_subscriptions(user_id)
@@ -32,6 +36,7 @@ if TYPE_CHECKING:
     from ..services.email_review_service import EmailReviewService
     from ..services.task_indexing_service import TaskIndexingService
     from ..services.task_setup_service import TaskSetupService
+    from ..ports.agent_note_port import AgentNotePort
     from ..ports.indexed_email_repository import IndexedEmailRepository
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
@@ -45,7 +50,7 @@ from ..services.deep_research_delivery import (
 from ..services.consolidation_service import ConsolidationService
 from ..services.provider_registry import ProviderRegistry
 from ..services.email_indexing_service import EmailIndexingService
-from ..services.reminders_service import RemindersService
+from ..services.reminders_service import RemindersService, build_reminder_alert
 from ..services.task_dispatch_service import TaskDispatchService
 from ..utils.logger import logger
 from ..utils.debug_logger import get_debug_logger
@@ -75,6 +80,7 @@ class WorkerHandler:
         task_setup: "Optional[TaskSetupService]" = None,
         task_indexing: "Optional[TaskIndexingService]" = None,
         reminders_service: Optional[RemindersService] = None,
+        notes_port: "Optional[AgentNotePort]" = None,
         email_review: "Optional[EmailReviewService]" = None,
         account_repo: "Optional[AccountRepository]" = None,
         billing_webhook: Any = None,  # SlackWebhookAdapter
@@ -93,6 +99,7 @@ class WorkerHandler:
         self._task_setup = task_setup
         self._task_indexing = task_indexing
         self._reminders_service = reminders_service
+        self._notes_port = notes_port
         self._email_review = email_review
         self._account_repo = account_repo
         self._billing_webhook = billing_webhook
@@ -129,6 +136,8 @@ class WorkerHandler:
             return await self._handle_renew_all_task_subscriptions()
         elif task_type == "fire_due_reminders":
             return await self._handle_fire_due_reminders()
+        elif task_type == "execute_reminder":
+            return await self._handle_execute_reminder(payload)
         elif task_type == "start_email_indexing":
             return await self._handle_start_email_indexing()
         elif task_type == "start_daily_email_review":
@@ -439,6 +448,102 @@ class WorkerHandler:
             logger.warning("[Worker] fire_due_reminders: reminders_service not configured")
             return {"error": "reminders_service not configured"}, 501
         return await self._reminders_service.fire_due_reminders()
+
+    async def _handle_execute_reminder(self, payload: dict) -> Tuple[dict, int]:
+        """Run a single claimed reminder fire (Step #8 of NOTIFICATION_DELIVERY_REFACTOR_RFC).
+
+        Payload (placed by ``RemindersService.fire_due_reminders``):
+            note_id : str          Firestore note id
+            user_id : str          owning user (verified via ownership-scoped get_note)
+            due_at  : str (ISO)    fire-time this task is delivering — used as
+                                   the idempotency token (compared against
+                                   ``last_delivered_due``).
+
+        Outcomes (HTTP status drives Cloud Tasks retry policy — 5xx = retry,
+        2xx = ack and stop):
+            note_gone           note deleted between cron-tick and this run → 200
+            no_user             user repo lost the user → 200
+            already_delivered   ``last_delivered_due == due_at`` → 200 (Cloud
+                                Tasks retry no-op, prevents duplicate Smart run
+                                + duplicate user message)
+            delivery_failed     notify() returned ``delivered=False`` → 500
+                                (Cloud Tasks queue retries with backoff)
+            ok                  delivered + ``mark_fire_delivered`` stamped → 200
+        """
+        if not self._notes_port:
+            logger.warning("[Worker] execute_reminder: notes_port not configured")
+            return {"error": "notes_port not configured"}, 501
+
+        note_id = payload.get("note_id")
+        user_id = payload.get("user_id")
+        due_at_raw = payload.get("due_at")
+        if not note_id or not user_id or not due_at_raw:
+            return {"error": "missing note_id, user_id, or due_at"}, 400
+
+        try:
+            due_at = datetime.fromisoformat(due_at_raw)
+        except ValueError:
+            logger.warning(
+                "[Worker] execute_reminder: bad due_at %r for note=%s",
+                due_at_raw, note_id,
+            )
+            return {"error": "bad due_at"}, 400
+
+        note = await self._notes_port.get_note(user_id=user_id, note_id=note_id)
+        if note is None:
+            # One-time fired-and-deleted, or recurrent that the user has
+            # since removed. Either way: nothing to deliver, ack the task.
+            logger.info(
+                "[Worker] execute_reminder: note_gone note=%s user=%s",
+                note_id, user_id[:8],
+            )
+            return {"status": "note_gone"}, 200
+
+        # Idempotency guard against Cloud Tasks retries.
+        if note.last_delivered_due is not None and note.last_delivered_due == due_at:
+            logger.info(
+                "[Worker] execute_reminder: already_delivered note=%s due=%s",
+                note_id, due_at.isoformat(),
+            )
+            return {"status": "already_delivered"}, 200
+
+        user_profile = await self._user_repo.get_user(user_id)
+        if not user_profile or not getattr(user_profile, "account_id", None):
+            logger.warning(
+                "[Worker] execute_reminder: no_user user=%s note=%s",
+                user_id[:8], note_id,
+            )
+            return {"status": "no_user"}, 200
+
+        await self._agent_factory.ensure_agents_for_user(user_id)
+
+        task_complexity = note.complexity.value if note.complexity else "simple_analytics"
+        result = await self._notification.notify(
+            user_id=user_id,
+            account_id=user_profile.account_id,
+            system_alert=build_reminder_alert(note),
+            kind=NotificationKind.REMINDER,
+            agent_id_override=f"smart_response_agent_{user_id}",
+            task_complexity=task_complexity,
+        )
+
+        if not result.delivered:
+            logger.warning(
+                "[Worker] execute_reminder: delivery_failed note=%s user=%s "
+                "(agent_status=%s, error=%s)",
+                note_id, user_id[:8], result.agent_status, result.error,
+            )
+            return {
+                "error": result.error or "delivery_failed",
+                "agent_status": result.agent_status.value,
+            }, 500
+
+        await self._notes_port.mark_fire_delivered(note_id=note_id, due_at=due_at)
+        logger.info(
+            "[Worker] execute_reminder: ok note=%s user=%s due=%s",
+            note_id, user_id[:8], due_at.isoformat(),
+        )
+        return {"status": "ok"}, 200
 
     # ------------------------------------------------------------------
     # Daily email review
