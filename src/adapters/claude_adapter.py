@@ -18,7 +18,7 @@ from ..ports.llm_port import (
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
 from ..utils.logger import logger
-from ..utils.groovy_to_markdown_transformer import GroovyToMarkdownConverter
+
 
 def _make_schema_strict(schema: dict) -> dict:
     """
@@ -59,9 +59,6 @@ class ClaudeAdapter(LLMPort):
     Adapter for Anthropic Claude API.
     Implements the LLMPort port with prompt caching support.
     """
-
-    # Feature flag for Groovy -> Markdown transformation
-    USE_MARKDOWN_PROMPT = False
 
     # ========================================================================
     # NEW Provider Refactor Session 7: Tier-to-model mapping
@@ -108,12 +105,6 @@ class ClaudeAdapter(LLMPort):
             api_key=api_key,
             timeout=anthropic.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
         )
-        if self.USE_MARKDOWN_PROMPT:
-            try:
-                self.prompt_converter = GroovyToMarkdownConverter()
-            except Exception as e:
-                logger.error(f"Failed to initialize GroovyToMarkdownConverter: {e}")
-                self.USE_MARKDOWN_PROMPT = False
 
     async def generate_content(
         self, 
@@ -147,11 +138,6 @@ class ClaudeAdapter(LLMPort):
             if request.max_tokens:
                 max_tokens = request.max_tokens
             stream_callback = None
-
-        # Transform Groovy to Markdown if enabled
-        if self.USE_MARKDOWN_PROMPT and system_instruction and "class Alek" in system_instruction:
-            logger.info("[ClaudeAdapter] Transforming Groovy prompt to Markdown")
-            system_instruction = self.prompt_converter.convert(system_instruction)
 
         if not model_name or messages is None:
             raise ValueError("model_name and messages are required for Claude generate_content")
