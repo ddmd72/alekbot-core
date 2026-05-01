@@ -690,7 +690,7 @@ considered incomplete and must not be merged.**
 | 6 | AgentNote `last_delivered_due` + port methods | `domain/agent_note.py`, `ports/agent_note_port.py`, `adapters/firestore_agent_note_adapter.py` | unit: domain field default, port abstract surface; integration: `test_firestore_reschedule_if_due_at.py` (50-iter concurrency), `test_firestore_delete_if_due_at.py`, `test_firestore_mark_fire_delivered.py` (idempotency) |
 | 7 | `RemindersService` new control flow: try-reschedule → enqueue | `services/reminders_service.py` | unit: claim success → enqueue, claim failure → no enqueue, no notify call from cron handler; integration: `test_reminders_concurrent_cron.py` (two parallel cron ticks → exactly one Cloud Task) |
 | 8 | `WorkerHandler._handle_execute_reminder` | `handlers/worker_handler.py` | unit: 5 paths (deliver+mark, retry-already-delivered, notify failed → 500, missing note, missing user); integration: `test_reminders_e2e.py` (full claim → enqueue → execute → mark cycle) |
-| 9 | Coverage gate: assert thresholds from § 8.4 in CI | `pyproject.toml` or `pytest.ini` | — (CI config) |
+| 9 | Coverage gate: per-file thresholds enforced (RFC § 8.4) | `.coveragerc` (cov config), `scripts/check_coverage_thresholds.py` (per-file enforcement), `Makefile` (`test-coverage` target) | gate verified by simulated regression — script exits non-zero on any threshold violation |
 | 10 | RFC + decision records (this file + decisions/) | docs only | — |
 
 ## 10. Verification (end-to-end, after all unit + integration tests pass)

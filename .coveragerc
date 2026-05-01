@@ -1,0 +1,30 @@
+# Coverage configuration for pytest-cov.
+#
+# Per-file coverage thresholds are enforced by
+# scripts/check_coverage_thresholds.py (run via `make test-coverage`),
+# not by coverage.py itself — coverage.py only supports a single global
+# fail_under. The thresholds mirror the mandate in
+# docs/10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md § 8.4.
+
+[run]
+source = src
+branch = False
+omit =
+    src/__init__.py
+    */__pycache__/*
+    src/utils/telemetry.py
+    src/utils/server.py
+
+[report]
+# Hide trivial omissions; missing lines surface via --cov-report=term-missing.
+exclude_lines =
+    pragma: no cover
+    raise NotImplementedError
+    if TYPE_CHECKING:
+    if __name__ == .__main__.:
+    \.\.\.
+
+[json]
+# scripts/check_coverage_thresholds.py reads this file.
+output = coverage.json
+pretty_print = False
