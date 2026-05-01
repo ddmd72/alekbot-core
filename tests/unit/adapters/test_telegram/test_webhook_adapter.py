@@ -75,6 +75,25 @@ class TestTelegramWebhookAdapter:
         assert is_valid is False
 
     @pytest.mark.asyncio
+    async def test_dispatcher_skips_processing_on_bad_signature(self, adapter):
+        """Regression guard (F15.7 follow-up): on bad signature, _handle_telegram_update
+        must NOT call _process_message and must NOT consult the dedup store —
+        an attacker who lacks the secret token cannot trigger any side-effect
+        even one as cheap as dedup-write."""
+        adapter._verify_webhook_signature = AsyncMock(return_value=False)
+        adapter._process_message = AsyncMock()
+
+        mock_request_obj = MagicMock()
+        mock_request_obj.get_json = AsyncMock(return_value={"update_id": 1})
+
+        with patch("src.adapters.telegram.webhook_adapter.jsonify", side_effect=lambda x: x):
+            with patch("src.adapters.telegram.webhook_adapter.request", new=mock_request_obj):
+                await adapter._handle_telegram_update()
+
+        adapter._process_message.assert_not_called()
+        adapter.dedup_store.try_mark_processed.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_dedup_with_namespace(self, adapter):
         """Test deduplication uses telegram:: namespace."""
         adapter.dedup_store.try_mark_processed = AsyncMock(return_value=True)
