@@ -179,7 +179,7 @@ python firestore_utils/download.py development_domain_prompt_profiles_v3 univers
 Specify output file name:
 
 ```bash
-python firestore_utils/download.py domain_prompt_tokens_v3_system COGNITIVE_PROCESS_ROUTER \
+python firestore_utils/download.py domain_prompt_tokens_v3_system ROUTER_COGNITIVE_PROCESS \
   --output firestore_utils/downloads/custom_name.groovy
 ```
 
@@ -194,7 +194,7 @@ python firestore_utils/upload.py domain_prompt_tokens_v3_system COGNITIVE_PROCES
 
 
 # Development
-python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_ROUTER
+python firestore_utils/upload.py development_domain_prompt_tokens_v3_system ROUTER_COGNITIVE_PROCESS
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_CONSOLIDATION
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_SMART
 python firestore_utils/upload.py development_domain_prompt_tokens_v3_system PROTOCOL_SMART_AGENT_SELECTION
