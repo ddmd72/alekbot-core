@@ -163,6 +163,3 @@ class DocPlannerAgent(BaseAgent):
             routing_metadata=None,
             include_biographical=False,
         )
-
-    def _get_alternative_agents(self) -> list[str]:
-        return []

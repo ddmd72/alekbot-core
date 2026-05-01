@@ -177,9 +177,6 @@ class HtmlPageGeneratorAgent(BaseAgent):
             ],
         )
 
-    def _get_alternative_agents(self) -> list[str]:
-        return []
-
 
 # ---------------------------------------------------------------------------
 # Unsplash placeholder resolution

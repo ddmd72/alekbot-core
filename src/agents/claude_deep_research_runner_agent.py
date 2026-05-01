@@ -110,9 +110,6 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
     async def execute(self, message: AgentMessage) -> AgentResponse:
         return await self._run(message)
 
-    def _get_alternative_agents(self) -> list:
-        return []
-
     # ------------------------------------------------------------------
     # Core logic
     # ------------------------------------------------------------------
