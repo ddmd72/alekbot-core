@@ -790,21 +790,6 @@ class TestDictToNoteLastDeliveredDue:
 
 class TestLegacyAndEdgeCases:
 
-    async def test_deprecated_reschedule_writes_due_and_last_fired(
-        self, adapter, col_mock,
-    ):
-        """Deprecated method still in use until Step #7. Smoke test only."""
-        doc_ref = MagicMock()
-        doc_ref.update = AsyncMock()
-        col_mock.document.return_value = doc_ref
-
-        next_due = _FUTURE + timedelta(days=1)
-        await adapter.reschedule(_NOTE_ID, next_due, _NOW)
-
-        doc_ref.update.assert_called_once_with(
-            {"due": next_due, "last_fired": _NOW},
-        )
-
     async def test_list_due_reminders_returns_all_due_docs(
         self, adapter, col_mock,
     ):

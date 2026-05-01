@@ -2,11 +2,28 @@
 Reminders Service
 =================
 
-Owns the lifecycle of proactive self-reminders: firing due reminders,
-rescheduling recurrent ones, and deleting one-time ones after firing.
+Owns the cron-side lifecycle of proactive self-reminders.
 
-Extracted from WorkerHandler so that the handler delegates through a
-service rather than calling AgentNotePort methods directly.
+Step #7 of NOTIFICATION_DELIVERY_REFACTOR_RFC: this service no longer
+calls ``notify()`` synchronously inside the cron HTTP request. It now:
+
+  1. Lists due notes.
+  2. For each note, ATOMICALLY claims this fire-time:
+       - recurrent → ``reschedule_if_due_at`` (next_due in user TZ,
+         DST-safe)
+       - one-time  → ``delete_if_due_at``
+     A False return means another concurrent cron tick already owns
+     this fire — skip silently.
+  3. Enqueues an ``execute_reminder`` Cloud Task with the fire-payload
+     ``{note_id, user_id, due_at}``. The actual user-facing delivery
+     runs there (Step #8) — out of band of the cron handler.
+
+This removes both defects #2 and #3 from the 2026-04-30 incident:
+  - Cron HTTP request returns within seconds (no longer blocks on
+    Smart's full SLA budget).
+  - The ``due``-precondition makes (note_id, due_at) the natural
+    idempotency key — no duplicate fire is possible regardless of
+    cron interval, Smart latency, or Cloud Tasks retry.
 """
 from __future__ import annotations
 
@@ -17,48 +34,43 @@ from zoneinfo import ZoneInfo
 from dateutil.relativedelta import relativedelta
 
 from ..domain.agent_note import AgentNote, ReminderRecurrence
-from ..domain.notification_kind import NotificationKind
 from ..ports.agent_note_port import AgentNotePort
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
-    from ..composition.user_agent_factory import UserAgentFactory
-    from ..services.user_notification_service import UserNotificationService
+    from .task_dispatch_service import TaskDispatchService
 
 
 class RemindersService:
-    """
-    Fires due reminders and manages their lifecycle (reschedule / delete).
+    """Cron-side reminder dispatcher.
 
-    Called by WorkerHandler when task_type == "fire_due_reminders".
-    Cloud Scheduler triggers every 15 minutes.
+    Called by ``WorkerHandler`` when ``task_type == "fire_due_reminders"``.
+    Returns within seconds: enqueues per-fire Cloud Tasks but does NOT
+    wait for them.
     """
-
-    _CRON_WINDOW_SECONDS = 4 * 60  # 4 min — idempotency guard for 5-min cron overlap
 
     def __init__(
         self,
         notes_port: AgentNotePort,
         user_repo: Any,
-        notification_service: UserNotificationService,
-        agent_factory: UserAgentFactory,
+        task_dispatch: "TaskDispatchService",
     ) -> None:
         self._notes_port = notes_port
         self._user_repo = user_repo
-        self._notification = notification_service
-        self._agent_factory = agent_factory
+        self._task_dispatch = task_dispatch
 
     async def fire_due_reminders(
         self, now_utc: Optional[datetime] = None
     ) -> Tuple[dict, int]:
-        """
-        Fire all reminders with due <= now.
+        """Claim every due fire and enqueue ``execute_reminder`` for it.
 
         For each due note:
-          1. Resolve user account_id (skip if user not found).
-          2. Idempotency: skip if already fired within the current cron window.
-          3. Fire: notify() sends instruction to SmartAgent → delivers to user's channel.
-          4. Reschedule (recurrent) or delete (one-time).
+          1. Resolve the user's timezone (skip if user gone).
+          2. Recurrent → ``reschedule_if_due_at``; one-time →
+             ``delete_if_due_at``. The atomic precondition on ``due``
+             is the cross-process at-most-once primitive.
+          3. On successful claim, enqueue ``execute_reminder``.
+          4. On failed claim (concurrent tick won), skip silently.
         """
         now = now_utc if now_utc is not None else datetime.now(timezone.utc)
         due_notes = await self._notes_port.list_due_reminders(as_of=now)
@@ -67,13 +79,8 @@ class RemindersService:
             len(due_notes), now.isoformat(),
         )
 
-        fired, skipped = 0, 0
+        enqueued, claim_lost, skipped = 0, 0, 0
         for note in due_notes:
-            # Idempotency: skip if fired recently
-            if note.last_fired and (now - note.last_fired).total_seconds() < self._CRON_WINDOW_SECONDS:
-                skipped += 1
-                continue
-
             user_profile = await self._user_repo.get_user(note.user_id)
             if not user_profile or not user_profile.account_id:
                 logger.warning(
@@ -83,52 +90,75 @@ class RemindersService:
                 skipped += 1
                 continue
 
-            account_id = user_profile.account_id
             user_tz = ZoneInfo(user_profile.config.timezone or "UTC")
 
-            try:
-                await self._agent_factory.ensure_agents_for_user(note.user_id)
-                task_complexity = note.complexity.value if note.complexity else "simple_analytics"
-                await self._notification.notify(
-                    kind=NotificationKind.REMINDER,
-                    user_id=note.user_id,
-                    account_id=account_id,
-                    system_alert=_build_reminder_alert(note),
-                    agent_id_override=f"smart_response_agent_{note.user_id}",
-                    task_complexity=task_complexity,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[Reminders] fire_due_reminders: notify failed for user=%s note=%s: %s",
-                    note.user_id[:8], note.note_id, exc,
-                )
-                # Still reschedule/delete — notification failure is not a reason to skip.
-
+            # Step 1 — atomic claim of this fire-time.
             if note.recurrence:
                 next_due = _compute_next_due(note.due, note.recurrence, user_tz)
-                await self._notes_port.reschedule(note.note_id, next_due, last_fired=now)
-                logger.info(
-                    "[Reminders] Rescheduled reminder %s → %s (user=%s)",
-                    note.note_id, next_due.isoformat(), note.user_id[:8],
+                claimed = await self._notes_port.reschedule_if_due_at(
+                    note_id=note.note_id,
+                    expected_due=note.due,
+                    next_due=next_due,
+                    last_fired=now,
                 )
+                if claimed:
+                    logger.info(
+                        "[Reminders] Claimed (recurrent) %s: due=%s → %s (user=%s)",
+                        note.note_id, note.due.isoformat(), next_due.isoformat(),
+                        note.user_id[:8],
+                    )
             else:
-                await self._notes_port.delete_note(note.note_id, note.user_id)
-                logger.info(
-                    "[Reminders] Deleted one-time reminder %s (user=%s)",
-                    note.note_id, note.user_id[:8],
+                claimed = await self._notes_port.delete_if_due_at(
+                    note_id=note.note_id,
+                    user_id=note.user_id,
+                    expected_due=note.due,
                 )
+                if claimed:
+                    logger.info(
+                        "[Reminders] Claimed (one-time) %s: deleted (user=%s)",
+                        note.note_id, note.user_id[:8],
+                    )
 
-            fired += 1
+            if not claimed:
+                # Another cron tick already won — silently skip.
+                claim_lost += 1
+                continue
 
-        logger.info("[Reminders] fire_due_reminders complete: fired=%d, skipped=%d", fired, skipped)
-        return {"fired": fired, "skipped": skipped}, 200
+            # Step 2 — enqueue the per-fire worker task. Payload carries
+            # everything the worker needs to operate without re-querying
+            # cron-side state. due_at is included for idempotency: the
+            # worker checks last_delivered_due == due_at on retry.
+            await self._task_dispatch.enqueue_worker_task(
+                task_type="execute_reminder",
+                payload={
+                    "note_id": note.note_id,
+                    "user_id": note.user_id,
+                    "due_at": note.due.isoformat(),
+                },
+            )
+            enqueued += 1
+
+        logger.info(
+            "[Reminders] fire_due_reminders complete: enqueued=%d, claim_lost=%d, skipped=%d",
+            enqueued, claim_lost, skipped,
+        )
+        return {
+            "enqueued": enqueued,
+            "claim_lost": claim_lost,
+            "skipped": skipped,
+        }, 200
 
 
 # ---------------------------------------------------------------------------
 # Utility: build system alert text for fired reminders
 # ---------------------------------------------------------------------------
+#
+# Used by the ``execute_reminder`` worker (Step #8) to construct the
+# system alert handed to SmartAgent via UserNotificationService.notify.
+# Co-located with the cron service for now — future Step may move both
+# producer and consumer of the alert into a shared infrastructure module.
 
-def _build_reminder_alert(note: AgentNote) -> str:
+def build_reminder_alert(note: AgentNote) -> str:
     if note.recurrence:
         interval = note.recurrence.interval or 1
         schedule = (

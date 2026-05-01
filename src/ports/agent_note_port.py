@@ -51,18 +51,6 @@ class AgentNotePort(ABC):
         """
 
     @abstractmethod
-    async def reschedule(self, note_id: str, next_due: datetime, last_fired: datetime) -> None:
-        """DEPRECATED — superseded by ``reschedule_if_due_at``.
-
-        Unconditional reschedule. Do NOT use for new callers — it has the
-        race condition that defect #3 of NOTIFICATION_DELIVERY_REFACTOR_RFC
-        describes (cron tick A reads due, cron tick B reads same due,
-        both write next_due → duplicate fire enqueued). Removed entirely
-        in Step #7 along with its sole remaining caller (RemindersService
-        before its control flow rewrite).
-        """
-
-    @abstractmethod
     async def reschedule_if_due_at(
         self,
         note_id: str,
