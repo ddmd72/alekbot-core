@@ -33,10 +33,17 @@ from src.infrastructure.delegation_engine import (
 
 @dataclass
 class MockUsageMetadata:
-    """Mock for LLM usage metadata."""
+    """Mock for LLM usage metadata.
+
+    Field names mirror production `src/domain/llm.py::UsageMetadata`. Sync this
+    mock when production fields rename — otherwise debug-mode runs (DEBUG_PROMPTS=true)
+    fail with AttributeError inside `BaseAgent._debug_llm_response`.
+    """
     total_tokens: int = 100
     prompt_tokens: int = 50
-    response_tokens: int = 50
+    completion_tokens: int = 50
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
 
 
 @dataclass

@@ -142,6 +142,8 @@ class TestConsolidationAgent:
 
         # Mock LLM response with valid JSON
         mock_response = Mock()
+        mock_response.tool_calls = []      # production LLMResponse default — bare Mock returns child Mock, not iterable
+        mock_response.usage_metadata = None
         mock_response.text = """
         ```json
         {
@@ -218,6 +220,8 @@ class TestConsolidationAgent:
     async def test_parse_consolidation_results_invalid_json(self, agent, mock_llm, mock_repo):
         """Test handling of invalid JSON from LLM — returns failure."""
         mock_response = Mock()
+        mock_response.tool_calls = []
+        mock_response.usage_metadata = None
         mock_response.text = "Not JSON"
         mock_llm.generate_content.return_value = mock_response
 
@@ -464,6 +468,8 @@ class TestConsolidationAgentV3:
         )
 
         mock_response = Mock()
+        mock_response.tool_calls = []
+        mock_response.usage_metadata = None
         mock_response.text = '{"new_facts": [], "new_anchors": []}'
         mock_llm.generate_content.return_value = mock_response
 
