@@ -72,7 +72,6 @@ def smart(default_ctx):
         agent_id="smart_response_agent",
         agent_type="smart_response",
         llm_model="default-model",
-        max_retries=0,
         timeout_ms=300_000,
         capabilities=["complex_reasoning"],
         metadata={"user_id": "user-123"},

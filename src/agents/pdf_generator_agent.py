@@ -36,6 +36,7 @@ import time
 from typing import Optional
 
 from .base_agent import BaseAgent
+from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.llm import Message, MessagePart
 from ..infrastructure.agent_config import PDF_GENERATOR
@@ -116,6 +117,9 @@ class PdfGeneratorAgent(BaseAgent):
       - HTML "document" (GCS link)
       - PDF  "document" (GCS link + Slack file upload)
     """
+
+    # ASYNC document generation. See DocPlannerAgent for rationale.
+    RETRY_POLICY = NO_RETRY_POLICY
 
     TEMPERATURE = PDF_GENERATOR.temperature
     MAX_TOKENS = PDF_GENERATOR.max_tokens

@@ -32,6 +32,7 @@ from datetime import date
 from typing import List, Optional
 
 from .base_agent import BaseAgent
+from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.llm import Message, MessagePart
 from ..infrastructure.agent_config import DOC_GENERATOR
@@ -79,6 +80,9 @@ class DocGeneratorAgent(BaseAgent):
     Returns AgentResponse with delivery_items=[DeliveryItem("file_upload", {...})] on success.
     Returns AgentResponse.failure(...) on all failure paths.
     """
+
+    # ASYNC document generation. See DocPlannerAgent for rationale.
+    RETRY_POLICY = NO_RETRY_POLICY
 
     MAX_TURNS = 5
     TEMPERATURE = DOC_GENERATOR.temperature

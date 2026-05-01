@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Optional
 
 from .base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
+from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.llm import Message, MessagePart
 from ..infrastructure.agent_config import DOC_PLANNER
 from ..infrastructure.agent_manifest import Intent
@@ -44,6 +45,12 @@ class DocPlannerAgent(BaseAgent):
     via coordinator (phase 2).
     Returns the file as a DeliveryItem for Cloud Task delivery.
     """
+
+    # ASYNC document creation runs in its own Cloud Task; a transient
+    # in-process retry would re-do the entire generation (LLM tokens +
+    # downstream DocGenerator hop). Cloud Tasks queue retry handles the
+    # retry layer for the whole task — see RFC § retry policy.
+    RETRY_POLICY = NO_RETRY_POLICY
 
     TEMPERATURE = DOC_PLANNER.temperature
     MAX_TOKENS = DOC_PLANNER.max_tokens

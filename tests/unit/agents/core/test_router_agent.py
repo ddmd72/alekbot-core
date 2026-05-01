@@ -37,7 +37,6 @@ def router_config():
         agent_id="router_agent",
         agent_type="router",
         llm_model=None,
-        max_retries=1,
         timeout_ms=None,
         capabilities=["classification", "routing"]
     )
@@ -667,7 +666,6 @@ class TestRouterAgentId:
             agent_id="my_custom_router",
             agent_type="router",
             llm_model=None,
-            max_retries=1,
             timeout_ms=None,
             capabilities=[]
         )

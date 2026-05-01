@@ -15,6 +15,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Optional, Set, List
 from ..base_agent import BaseAgent
+from ...domain.retry_policy import NO_RETRY_POLICY
 from ...domain.agent import (
     AgentMessage,
     AgentResponse,
@@ -40,6 +41,10 @@ from ...infrastructure.agent_config import ROUTER
 class RouterAgent(BaseAgent):
     """
     Router Agent - classifies and routes messages to specialized agents.
+
+    Retry: NO_RETRY_POLICY (router must stay fast — a transient retry
+    here would push triage latency into territory that defeats the
+    whole "fast triage" point of having Router at all).
     
     Responsibilities:
     - Classify messages as simple vs complex
@@ -63,7 +68,10 @@ class RouterAgent(BaseAgent):
     - External data queries: "What's the weather in Valencia?"
     - Multi-step reasoning: "Compare these two options..."
     """
-    
+
+    RETRY_POLICY = NO_RETRY_POLICY
+
+
     TEMPERATURE = ROUTER.temperature
     CONTEXT_WINDOW = ROUTER.context_window
     BIOGRAPHICAL_LIMIT = ROUTER.biographical_limit
@@ -700,7 +708,7 @@ def create_router_agent(
         agent_id=agent_id,
         agent_type="router",
         llm_model=None,  # Model managed by execution_context
-        max_retries=1,  # Router should be fast, no retries
+        # Retry behavior: NO_RETRY_POLICY (class-level) — router must stay fast.
         timeout_ms=None,  # Routing only, no timeout ownership
         capabilities=["classification", "routing"],
         metadata={

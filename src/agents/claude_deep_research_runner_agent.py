@@ -46,6 +46,7 @@ from ..infrastructure.agent_config import DEEP_RESEARCH_SECOND_PASS
 from ..infrastructure.agent_manifest import Intent
 from ..utils.logger import logger
 from .base_agent import BaseAgent
+from ..domain.retry_policy import NO_RETRY_POLICY
 
 
 class ClaudeDeepResearchRunnerAgent(BaseAgent):
@@ -58,7 +59,13 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
     Returns the research result text in AgentResponse.result.
     Delivery (HTML report upload, SmartAgent formatting, user notification) is handled
     externally by AgentWorkerHandler + notification service.
+
+    Retry: NO_RETRY_POLICY — a transient retry would re-do 10–25 minutes
+    of LLM work and pay for it twice. Cloud Tasks queue retry covers the
+    transient case at the right granularity.
     """
+
+    RETRY_POLICY = NO_RETRY_POLICY
 
     # Safety valve: maximum pause_turn continuations before giving up.
     # Each pause_turn = one server-side tool batch still executing. In practice 5-20 per session.

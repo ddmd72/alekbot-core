@@ -104,7 +104,6 @@ def quick_agent_config():
         agent_id="quick_response_agent",
         agent_type="quick_response",
         llm_model="gemini-3-flash-preview",
-        max_retries=1,
         timeout_ms=10000,
         capabilities=["fast_response"]
     )

@@ -114,7 +114,6 @@ class TestBaseAgent:
         return AgentConfig(
             agent_id="test_agent",
             agent_type="mock",
-            max_retries=2,
             timeout_ms=1000,
             circuit_breaker_threshold=3,
             circuit_breaker_recovery_ms=1000
@@ -154,19 +153,105 @@ class TestBaseAgent:
         assert agent.execute_calls == 0
 
     @pytest.mark.asyncio
-    async def test_retry_logic(self, config, message):
-        """Test retry logic on failure."""
+    async def test_no_retry_on_generic_exception(self, config, message):
+        """Generic Exception (e.g. ValueError) is treated as deterministic
+        and surfaced immediately. Retrying a programming error only delays
+        the failure and obscures the bug from logs."""
         agent = MockAgent(config)
-        agent.execute_error = ValueError("Temporary error")
-        
-        # Mock sleep to speed up test
+        agent.execute_error = ValueError("Programming bug")
+
         with patch("asyncio.sleep", new_callable=AsyncMock):
             response = await agent.process(message)
-        
-        # Should try initial + max_retries
-        assert agent.execute_calls == config.max_retries + 1
+
+        # Initial attempt only — no retry on generic exception.
+        assert agent.execute_calls == 1
         assert response.status == AgentStatus.FAILED
-        assert "Max retries exceeded" in response.error
+        assert "Agent failed" in response.error
+        assert "Programming bug" in response.error
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_timeout(self, config, message):
+        """asyncio.TimeoutError is structural: same call inside the same
+        budget cannot succeed. No retry."""
+        from src.agents.base_agent import asyncio as base_asyncio
+        agent = MockAgent(config)
+        agent.execute_error = base_asyncio.TimeoutError()
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            response = await agent.process(message)
+
+        assert agent.execute_calls == 1
+        assert response.status == AgentStatus.FAILED
+        assert "timeout" in response.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_retries_on_transient_rate_limit(self, config, message):
+        """LLMRateLimitError is the canonical transient case → retry up
+        to ``transient_max_attempts`` times, then surface the failure."""
+        from src.domain.exceptions import LLMRateLimitError
+        from src.domain.retry_policy import RetryPolicy
+        agent = MockAgent(config)
+        # Override policy: 2 retries, no jitter for determinism.
+        agent._retry_policy_override = RetryPolicy(
+            transient_max_attempts=2,
+            transient_backoff_base_seconds=0.0,
+            transient_jitter_seconds=0.0,
+        )
+        agent.execute_error = LLMRateLimitError("rate limited", http_status=429)
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            response = await agent.process(message)
+
+        # 1 initial + 2 retries = 3 attempts.
+        assert agent.execute_calls == 3
+        assert response.status == AgentStatus.FAILED
+        assert "rate_limit" in response.error
+
+    @pytest.mark.asyncio
+    async def test_retries_on_transient_unavailable(self, config, message):
+        """LLMUnavailableError (5xx) retries identically to rate limit."""
+        from src.domain.exceptions import LLMUnavailableError
+        from src.domain.retry_policy import RetryPolicy
+        agent = MockAgent(config)
+        agent._retry_policy_override = RetryPolicy(
+            transient_max_attempts=2,
+            transient_backoff_base_seconds=0.0,
+            transient_jitter_seconds=0.0,
+        )
+        agent.execute_error = LLMUnavailableError("service down", http_status=503)
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            response = await agent.process(message)
+
+        assert agent.execute_calls == 3
+        assert "unavailable" in response.error
+
+    @pytest.mark.asyncio
+    async def test_no_retry_when_policy_disables(self, config, message):
+        """RetryPolicy(transient_max_attempts=0) → only the initial attempt,
+        even on transient errors. NO_RETRY_POLICY uses this."""
+        from src.domain.exceptions import LLMRateLimitError
+        from src.domain.retry_policy import NO_RETRY_POLICY
+        agent = MockAgent(config)
+        agent._retry_policy_override = NO_RETRY_POLICY
+        agent.execute_error = LLMRateLimitError("rate limited", http_status=429)
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            response = await agent.process(message)
+
+        assert agent.execute_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_propagates_without_retry(self, config, message):
+        """asyncio.CancelledError is honored — never swallowed, never
+        retried. Records failure on the circuit breaker on the way out."""
+        agent = MockAgent(config)
+        agent.execute_error = asyncio.CancelledError()
+
+        with pytest.raises(asyncio.CancelledError):
+            await agent.process(message)
+
+        assert agent.execute_calls == 1
 
     @pytest.mark.asyncio
     async def test_circuit_breaker_integration(self, config, message):
@@ -185,26 +270,20 @@ class TestBaseAgent:
 
     @pytest.mark.asyncio
     async def test_timeout_enforcement(self, config, message):
-        """Test timeout enforcement."""
+        """Timeout fires correctly via asyncio.wait_for AND is treated as
+        non-retriable (typed retry policy: structural budget mismatch).
+        Exactly one attempt; failure surfaces with the timeout reason."""
         agent = MockAgent(config)
-        # Set delay longer than timeout
-        agent.execute_delay = 2.0  # 2s > 1s timeout
-        message.timeout_ms = 100   # 0.1s timeout
-
-        # Mock sleep to avoid actual waiting but allow timeout logic
-        # Note: We can't easily mock sleep inside wait_for, so we rely on
-        # asyncio.wait_for raising TimeoutError correctly with real sleep
-        # but we use a very short timeout in message
-
-        # For this test, we need real sleep behavior for wait_for to work
-        # so we don't mock sleep, but use small values
+        # Set delay longer than timeout — real sleep, real wait_for.
+        agent.execute_delay = 2.0  # 2s > 0.1s timeout
+        message.timeout_ms = 100
 
         response = await agent.process(message)
 
         assert response.status == AgentStatus.FAILED
-        assert "Max retries exceeded" in response.error
-        # Should have tried retries
-        assert agent.execute_calls > 1
+        assert "timeout" in response.error.lower()
+        # No retry on timeout — single attempt.
+        assert agent.execute_calls == 1
 
     @pytest.mark.asyncio
     async def test_can_handle_exception_returns_failure(self, config, message):

@@ -61,6 +61,7 @@ THRESHOLDS: Dict[str, float] = {
     "src/domain/notification_kind.py":      100.0,
     "src/domain/notify_result.py":          100.0,
     "src/domain/agent_note.py":             100.0,
+    "src/domain/retry_policy.py":           100.0,
     "src/infrastructure/notification_sla.py": 100.0,
     "src/ports/agent_note_port.py":         100.0,
 
