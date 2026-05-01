@@ -525,7 +525,7 @@ These change per request:
 
 ## 10. Status
 
-**Status:** ✅ Production Ready
+**Status:** ✅ Production Ready — but **subject to architectural revision** (see § 12 below).
 
 **Assembly model:** v4 class-collection (implemented 2026-02-27)
 
@@ -616,3 +616,36 @@ firestore_utils/uploads/LANG_FIXED_ES.json
 Upload to `development_domain_prompt_tokens_v3_system` with `--format json`.
 
 See full language system documentation: [../localization_system/README.md](../localization_system/README.md)
+
+---
+
+## 12. Pending Architectural Revision — Blueprint Approach Under Review
+
+**Status (2026-05-01):** the blueprint-as-static-template approach (§ 2.2 Blueprint, § 4 Assembly Algorithm) is **explicitly under doubt** and a strategy revision is pending. The system as documented above is in production and works; the revision is about whether the blueprint layer is the right abstraction for the long-term shape, not about a defect.
+
+**What is in doubt:**
+- Whether the **blueprint layer is needed at all.** A blueprint is a fixed `outer_class` + `class_order` over a per-agent set of token slots. A reviewer can reasonably ask: why not flatten — let the agent profile itself describe the section sequence directly, and drop the blueprint document type? The blueprint currently exists to share section structure across multiple agent profiles, but every agent in production has its own profile (`universal_agent_v1_SYSTEM_<agent>`), so the sharing benefit is theoretical.
+- Whether the **per-agent blueprints fragmentation** (six distinct blueprints, F5.1 from the inspection) is a stable end state or a transition stage to either a single canonical blueprint or no blueprints at all.
+- Whether the **legacy Groovy-mode upload path** (`groovy_prompt_assembler.py` + the upload utility's Groovy mode) survives the revision or is removed.
+
+**Why this is recorded explicitly:**
+- The core system maintainer has flagged blueprint approach for re-evaluation (paraphrased: *"the blueprint approach overall — I will think about further. It looks like we may move away from blueprints altogether."*).
+- Without an explicit decision record, follow-up agents (human or AI) reading this document and the v3 RFC will assume the v4 model is the stable end state and propose changes consistent with it — wasting work that may be discarded by the revision.
+- This is the AI-pair-programming third defensive layer (after ports + tests): a 5–15 line rationale-bearing record of architectural uncertainty, captured at decision time so future readers can see *that we knew it was uncertain*, not just *what was implemented*.
+
+**What this means for current work:**
+- **Do not invest in blueprint-layer expansion** (new blueprints, new override mechanics tied to blueprint IDs, deeper blueprint-aware caching) until the revision lands.
+- **Keep using the existing blueprints** as documented above for new agents — there is no replacement yet.
+- **Per-agent profile evolution is fine** — profiles are the stable layer; the question is what sits above them.
+
+**Items gated on the blueprint revision (in `docs/reviews/ARCHITECTURE_INSPECTION_FOLLOWUP.md`):**
+- F5.6 — `groovy_prompt_assembler.py` + Firestore upload Groovy mode tech debt. Original audit acceptance: *"Remove when blueprint migration decision is made."* Removal is gated on this revision.
+- F5.10 — Token versioning absent. The right shape depends on whether tokens stay first-class or get absorbed into a flatter profile structure.
+- F5.1 — Per-agent blueprints fragmentation. Resolves naturally as part of the revision.
+
+**Triggers to do the revision:**
+- A real prompt-engineering iteration cycle that the current shape makes painful (concrete pain, not speculative).
+- A second deployment surface (besides Cabinet UI) that would reuse the prompt pipeline — would force a clean port boundary on the assembly layer.
+- The pre-release-branch doc-shape pass (Bucket I) — the revision may surface as a portfolio narrative item ("how the prompt assembly system is architected, and how that architecture itself is under review") rather than as code.
+
+**Out of scope here:** which direction the revision should go (flatten vs keep + tighten vs adopt an external prompt-template engine). That choice is made when the revision is triggered, not now. Recording the *uncertainty* now is the value; pre-deciding the *answer* would be premature.
