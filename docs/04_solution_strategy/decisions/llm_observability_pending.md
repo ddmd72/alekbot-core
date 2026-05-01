@@ -1,8 +1,26 @@
-# Decision: LLM observability — replace custom `PromptDebugLogger`, evaluation pending
+# Decision: LLM observability — migrate to Pydantic Logfire
 
-**Status:** Pending — **architectural concern named, evaluation deferred**.
-**Date:** 2026-05-01
+**Status:** Adopted (platform selected) — **implementation pending**.
+**Date:** 2026-05-01 (initial deferral) → 2026-05-01 (platform chosen: Logfire).
 **Trigger:** Integration test `tests/integration/test_smart_concurrent_per_user.py::test_concurrent_execute_runs_in_parallel_with_per_call_overrides` fails under `DEBUG_PROMPTS=true` (the de-facto state of dev environment, which is the maintainer's effective production). The failure surfaced a class-of-problem with the current custom debug-logging that goes beyond the test.
+
+## Selection rationale (added 2026-05-01)
+
+After discussion of three candidate platforms (Langfuse self-hosted, Helicone proxy, Logfire managed) plus OpenLLMetry-as-vendor-neutral-SDK, **Pydantic Logfire** was chosen for alekbot. Reasons:
+
+- **Pydantic-native structural logging.** alekbot is heavily Pydantic — domain entities, agent messages, LLM requests are all `BaseModel`. Logfire (built by the Pydantic team) converts that structure into searchable trace fields. Other tools serialize as JSON strings and lose field-level search.
+- **Auto-instrumentation for Anthropic / OpenAI / google-genai SDKs.** Zero adapter changes — span per LLM call captured at the SDK boundary with model, tokens, cost, latency, finish_reason, full payload.
+- **Async-native OTel context propagation.** Trace ID flows through `asyncio.gather` and `create_task` automatically — multi-agent parallel delegation (Smart → search_memory + search_web in parallel → tool_use) reconstructs as a single tree without manual instrumentation. Cloud Tasks causality propagates via OTLP headers.
+- **Free-tier sufficient for solo-dev traffic.** Logfire's free allotment is 2-3 orders of magnitude above alekbot's expected load.
+- **Hexagonal-port-friendly.** Integration via decorator on `BaseAgent._call_llm` + per-delegation span on `AgentCoordinator.handle_delegation`. **The `LLMPort` boundary stays intact**; observability wraps the boundary, does not pierce it.
+- **Pydantic-managed = not a moving target.** The Pydantic team has 8+ years of Python ecosystem stewardship; Logfire is funded as their commercial offering. Lower vendor-stability risk than newer LLM-observability startups.
+
+**Why not the alternatives:**
+- **Langfuse self-hosted** — would bundle prompt-management with observability, but alekbot's prompt system is class-based composition with 4-level overrides, not generic CRUD. Langfuse prompt-management is a partial overlap, not replacement. Self-host adds Postgres + ClickHouse maintenance to a solo dev — not worth it for the observability-only need.
+- **Helicone proxy** — fights hexagonal `LLMPort` design (proxy becomes single point of failure for 4 providers, complicates per-provider rate-limit/connection-pool tuning). Bad for portfolio narrative — codebase looks unobserved because nothing visible in repo.
+- **OpenLLMetry SDK + neutral backend** — vendor-neutrality not load-bearing for solo project; backend choice (Grafana Tempo / Honeycomb) still adds infra. Logfire-as-backend with OpenLLMetry-as-SDK is overkill for current traffic.
+
+## Context
 
 ## Context
 
@@ -32,14 +50,25 @@ The right answer is not pre-decided here — the eval IS the next step.
 
 ## Decision
 
-**Defer.** Do not patch around the failing parallelism test. Do not migrate to a managed observability platform yet. Keep `PromptDebugLogger` as-is as a known-degraded workaround. The integration test stays in its current (failing under `DEBUG_PROMPTS=true`) state as a deliberate reminder that the problem is unresolved.
+**Adopt Pydantic Logfire.** Implementation deferred to pre-release-branch phase. Until Logfire lands, keep `PromptDebugLogger` as-is as a known-degraded workaround. The integration test stays in its current (failing under `DEBUG_PROMPTS=true`) state as a deliberate reminder until Logfire's non-blocking OTLP exporter replaces sync GCS uploads.
 
-### Why deferred
+### Implementation plan
 
-- **Vendor selection requires evaluation.** Langfuse vs Helicone vs OTel is a non-trivial call. Each affects the agent code differently (SDK wrap vs proxy vs annotation), and the wrong choice locks in a migration cost. This is its own decision-record-worthy step, not a sub-bullet.
-- **Coupling with `provider_resilience_port_pending.md`.** That decision proposes a `ProviderResiliencePort` that owns failure tracking per provider. The instrumentation hooks for "where did this latency come from?" / "which provider failed?" naturally belong to the resilience port too. Doing observability in isolation risks duplicating the future state surface.
-- **Coupling with portfolio doc-shape pass (Bucket I).** Observability is one of the most portfolio-visible architectural decisions a project can make. Picking the tool now, before the doc-shape decision, risks picking a tool that doesn't tell the right story for the portfolio framing (e.g. Helicone-as-proxy is cheap engineering but invisible to a reviewer skimming the repo; Langfuse self-hosted is more work but produces UI screenshots that read well in a release narrative).
-- **The current shape, while degraded, is not actively broken in production usage.** The maintainer reports the GCS dump is usable for daily debugging needs. The cost is the latency hit (real, named) and the inability to do anything more sophisticated (acknowledged trade-off).
+- **Port:** new `ObservabilityPort` in `src/ports/` to keep the adapter swap-friendly. Methods cover the actual operations alekbot performs: span creation around `_call_llm`, around `handle_delegation`, attribute attachment for token/cost accounting, exception recording.
+- **Adapter:** `LogfireObservabilityAdapter` in `src/adapters/logfire_observability.py`. Wraps `logfire.instrument()` decorators and span context managers per the port.
+- **Composition:** Logfire SDK initialized once in `main.py` with project token + service name; adapter constructed and threaded into `BaseAgent` via DI.
+- **Instrumentation hooks (all behind the port):**
+  - `BaseAgent._call_llm` — span per LLM call. Logfire auto-instrumentation also captures the underlying SDK call (anthropic/openai/google-genai) — both layers visible.
+  - `AgentCoordinator.handle_delegation` — span per delegation. Parent-child tree of multi-agent flows reconstructs automatically.
+  - Cloud Tasks payload propagation — OTLP trace headers serialized into task payload, deserialized by `WorkerHandler`. Causality across reminder fire / daily email / async DR / async doc generation preserved.
+- **Sunset `PromptDebugLogger`:** retain GCS bucket per current retention policy until daily-debugging workflow validated against Logfire UI. Once validated: delete `src/utils/debug_logger.py`, remove `DEBUG_PROMPTS` env var, drop the GCS bucket.
+- **Failing integration test resolution:** `test_concurrent_execute_runs_in_parallel_with_per_call_overrides` will pass without modification once Logfire's non-blocking OTLP exporter replaces sync GCS uploads inside `_debug_llm_response`. No test changes required.
+
+### Why implementation is deferred (not done now)
+
+- **Coupling with `provider_resilience_port_pending.md`.** That decision proposes a `ProviderResiliencePort` whose `record_failure` / `record_success` hooks naturally become Logfire span attributes. Building observability before resilience risks designing instrumentation that conflicts with the resilience port's state model.
+- **Pre-release-branch doc-shape pass (Bucket I).** Logfire UI screenshots are a portfolio-visible asset. Bundle Logfire integration with the doc-shape decision so the screenshots inform the narrative shape.
+- **Current usage is degraded but functional.** GCS dump remains usable for daily debugging; the latency hit is real but the maintainer accepts it consciously until Logfire lands.
 
 ## Why not partial closure
 
@@ -51,24 +80,41 @@ Per `feedback_clean_or_explain.md`: "every non-trivial change is binary — clea
 
 The integration test failing under `DEBUG_PROMPTS=true` is **the right shape of reminder** — it is a load-bearing visible signal, not a hidden TODO. Per the project's "loud failure over silent drop" discipline (see `feedback_clean_or_explain.md`), letting a known integration-test failure stay visible is preferable to muting it.
 
-## Triggers to revisit
+## Triggers to start implementation
 
-1. **A real product question that the current GCS dump cannot answer.** Most plausible: "why was this user's response slow?" / "did agent X regress on quality after a prompt change?" / "what is the cost-per-conversation distribution?" — any of these forces a real observability primitive.
-2. **Pre-release-branch portfolio doc-shape pass (Bucket I).** Observability is a prime portfolio surface; the doc-shape decision likely names what observability shape best supports the portfolio narrative.
-3. **`provider_resilience_port_pending.md` design pass.** When that subsystem is built, its instrumentation needs (record_failure / record_success / latency tracking) overlap heavily with observability — the right time to pick the platform.
-4. **Cost growth.** When token usage moves from "manageable solo-dev bill" to "needs per-feature attribution to make spend decisions", custom in-line accumulation stops being enough.
+1. **Pre-release-branch doc-shape pass (Bucket I) starts.** Logfire screenshots inform the doc/portfolio narrative shape — bundle.
+2. **`provider_resilience_port_pending.md` implementation starts.** Bundle observability + resilience as a single architectural pass to avoid double-redesigning the instrumentation surface.
+3. **A daily-debugging workflow gap.** Concretely: a "why was this user's response slow?" or "did agent X regress on quality after I tuned the prompt token?" question that the current GCS dump cannot answer in <5 minutes. That signal forces immediate Logfire integration regardless of bucket order.
+
+## Re-evaluate platform choice if
+
+- Logfire pricing model materially changes (free tier shrinks below alekbot's traffic + 10× headroom).
+- Logfire is acquired/sunset and roadmap stops moving (cf. small-vendor risk).
+- F5.6 blueprint revision concludes that prompt-management UI is now load-bearing — at that point Langfuse self-hosted re-enters consideration as a bundle.
 
 ## Consequences
 
-**Positive:**
-- The shape of the eventual fix (replace, not patch) is committed in writing. Future work does not waste cycles on `asyncio.to_thread` or fire-and-forget queue refactors that will be discarded.
-- Three correlated architectural items (this, F4.5 provider resilience, Bucket I doc-shape) get designed together — likely as a single observability + resilience pass.
+**Positive (post-decision, before implementation):**
+- Platform is chosen — no vendor-evaluation cycles when implementation starts.
+- The `ObservabilityPort` design keeps swap optionality if Logfire ever needs to be replaced.
+- Three correlated architectural items (this, F4.5 provider resilience, Bucket I doc-shape) get implemented together as a single bundled architectural pass.
 - The failing integration test is **purposefully** kept as a load-bearing reminder. Anyone running the suite in dev mode sees the symptom; the failure traceback now points to this decision record.
 
-**Negative / cost:**
+**Positive (post-implementation, expected):**
+- Multi-agent flow visibility (Smart → search_memory + search_web in parallel → terminal_tool reconstructs as a single trace tree).
+- Cost-per-user / per-agent / per-provider pivot from a single query (currently requires manual GCS inspection + accumulator math).
+- Pydantic-aware searchable trace fields — `LLMRequest` / `AgentMessage` / `MessageContext` field-level search in UI.
+- `_call_llm` no longer blocks the event loop on debug logging — failing integration test passes without modification.
+
+**Negative / cost (during deferral):**
 - Production agents continue to take the latency hit when `DEBUG_PROMPTS=true`. This is the de-facto dev-as-prod state — the maintainer accepts it consciously.
 - One integration test remains in a failing state under dev settings. CI must be configured to either run with `DEBUG_PROMPTS=false` or to expect this one failure (TBD when CI is set up).
-- The trace-model gap remains: complex multi-agent delegation flows (Smart → search_memory + search_web in parallel → terminal_tool) cannot be reconstructed from GCS files without manual triangulation.
+- The trace-model gap remains: complex multi-agent delegation flows cannot be reconstructed from GCS files without manual triangulation.
+
+**Negative / cost (post-implementation):**
+- Vendor dependency on Logfire (managed-only, no self-host).
+- Per-span cost beyond free tier — non-issue at current traffic but a watch-point if the bot scales beyond solo-use.
+- Pydantic-team stewardship risk — assessed low (8+ year ecosystem stewardship track record, Logfire is their flagship commercial product).
 
 ## References
 
