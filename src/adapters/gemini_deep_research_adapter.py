@@ -73,8 +73,9 @@ class GeminiDeepResearchAdapter(DeepResearchPort):
             api_key:        Gemini API key. The adapter manages its own genai.Client
                             lifecycle internally — see module-level CONNECTION LIFECYCLE note.
             task_queue:     Queue used to enqueue deep_research_polling Cloud Tasks after
-                            each create_interaction() call. None in Socket Mode / local dev —
-                            create_interaction() will raise before touching the Gemini API.
+                            each create_interaction() call. None when the queue is not wired
+                            (e.g. local dev without Cloud Tasks emulator) — create_interaction()
+                            will raise before touching the Gemini API.
             model_override: Pin a specific model identifier regardless of tier.
                             Takes precedence over MODEL_TIERS mapping.
                             Configure via GEMINI_DEEP_RESEARCH_MODEL env var in main.py.
