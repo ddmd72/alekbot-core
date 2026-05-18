@@ -7,6 +7,7 @@ Tests the new agent_providers field that allows different providers for differen
 import pytest
 from src.services.agent_context_builder import AgentContextBuilder, AgentProviderStrategy
 from src.services.provider_registry import ProviderRegistry
+from src.domain.complexity_settings import ComplexitySettings
 from src.domain.user import UserBotConfig, PerformanceTier
 from src.ports.llm_port import LLMPort, ProviderCapabilities
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
@@ -333,6 +334,48 @@ def test_per_agent_provider_with_model_override(builder):
     assert context.provider.get_capabilities().context_caching is True  # Claude capability
     # Model should be overridden
     assert context.model_name == "claude-sonnet-4-5"
+
+
+# ============================================================================
+# Two-layer override precedence: per-complexity (resolve_for_task) wins over
+# per-agent (resolve_provider_name). See decisions/two_layer_provider_override.md.
+# ============================================================================
+
+def test_per_complexity_provider_override_wins_over_per_agent(builder):
+    """When both layers are configured, ComplexitySettings.provider_override wins.
+
+    Coarse layer: agent_providers["smart"] = "gemini"  (per-agent).
+    Fine layer:   settings.provider_override = "claude"  (per-complexity).
+    Expected: resolve_for_task returns Claude context. The fine layer overrides
+    the coarse layer at task-execution time — the documented antipattern of
+    two parallel knobs is intentional; this test pins the precedence so future
+    refactors cannot silently invert it.
+    """
+    config = UserBotConfig(
+        agent_providers={"smart": "gemini"},
+        default_tier=PerformanceTier.PERFORMANCE,
+    )
+    settings = ComplexitySettings(
+        tier=PerformanceTier.PERFORMANCE,
+        provider_override="claude",
+    )
+
+    context = builder.resolve_for_task(agent_type="smart", config=config, settings=settings)
+
+    assert context.capabilities.context_caching is True  # Claude capability fingerprint
+
+
+def test_per_agent_used_when_complexity_override_absent(builder):
+    """Without a per-complexity provider_override, per-agent layer applies."""
+    config = UserBotConfig(
+        agent_providers={"smart": "claude"},
+        default_tier=PerformanceTier.PERFORMANCE,
+    )
+    settings = ComplexitySettings(tier=PerformanceTier.PERFORMANCE)  # no provider_override
+
+    context = builder.resolve_for_task(agent_type="smart", config=config, settings=settings)
+
+    assert context.capabilities.context_caching is True  # Claude (from per-agent)
 
 
 # ---------------------------------------------------------------------------
