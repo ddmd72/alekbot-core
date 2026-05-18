@@ -280,3 +280,104 @@ class OpenAIResponsesCapturingStub:
     @classmethod
     def with_tool_response(cls, name, args, call_id="call_1") -> "OpenAIResponsesCapturingStub":
         return cls(sdk_response=_openai_responses_tool_response(name, args, call_id))
+
+
+# ============================================================================
+# Non-LLM adapter stubs
+#
+# These stubs capture at the same level as the LLM ones — the outermost SDK
+# call inside the adapter — but the underlying transport varies. For HTTP
+# adapters (Gmail), we patch aiohttp.ClientSession; the captured "kwargs"
+# becomes a list of request records {method, url, headers, params, data}.
+# ContractRule validators for these adapters receive one such record.
+# ============================================================================
+
+
+class _FakeAiohttpResponse:
+    """Mock aiohttp response. Async context manager + json/raise_for_status."""
+
+    def __init__(self, data, status=200):
+        self._data = data
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    async def json(self):
+        return self._data
+
+    def raise_for_status(self):
+        if self.status >= 400:
+            raise RuntimeError(f"HTTP {self.status}")
+
+
+class _FakeAiohttpSession:
+    """Mock aiohttp ClientSession. Records GET/POST and returns prepared responses."""
+
+    def __init__(self, stub: "GmailCapturingStub"):
+        self._stub = stub
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    def get(self, url, headers=None, params=None):
+        self._stub._record("GET", url, headers, params, None)
+        return _FakeAiohttpResponse(self._stub._response_for(url))
+
+    def post(self, url, headers=None, data=None, params=None):
+        self._stub._record("POST", url, headers, params, data)
+        return _FakeAiohttpResponse(self._stub._response_for(url))
+
+
+class GmailCapturingStub:
+    """
+    Captures HTTP requests sent by GmailProviderAdapter via aiohttp.ClientSession.
+
+    Usage:
+        stub = GmailCapturingStub().set_response_for("/messages", {...})
+        stub.install(monkeypatch)
+        await adapter.list_emails(credentials=..., page_token="abc")
+        # stub.captured_requests is a list of request records.
+
+    Each request record has shape: {method, url, headers, params, data}.
+    The first matching url substring decides the response payload (default
+    empty messages list). ContractRule validators receive ONE record.
+    """
+
+    def __init__(self):
+        self.captured_requests: list[dict] = []
+        self._responses_by_url_substring: dict[str, dict] = {}
+        self._default_response: dict = {"messages": [], "nextPageToken": None}
+
+    def set_response_for(self, url_substring: str, data: dict) -> "GmailCapturingStub":
+        self._responses_by_url_substring[url_substring] = data
+        return self
+
+    def install(self, monkeypatch) -> "GmailCapturingStub":
+        stub = self
+        monkeypatch.setattr(
+            "src.adapters.gmail_provider_adapter.aiohttp.ClientSession",
+            lambda *args, **kwargs: _FakeAiohttpSession(stub),
+        )
+        return self
+
+    def _record(self, method, url, headers, params, data):
+        self.captured_requests.append({
+            "method": method,
+            "url": url,
+            "headers": dict(headers or {}),
+            "params": dict(params or {}),
+            "data": data,
+        })
+
+    def _response_for(self, url):
+        for substring, data in self._responses_by_url_substring.items():
+            if substring in url:
+                return data
+        return self._default_response
