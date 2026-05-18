@@ -187,3 +187,56 @@ FORCE_TOOL_USE_WITHOUT_TOOLS_OMITS_TOOL_CHOICE = ContractRule(
         ),
     },
 )
+
+
+# ============================================================================
+# Non-LLM adapter rules
+#
+# ContractRule.validators is a free-keyed string→callable map. For LLM rules
+# the key is the provider name; for non-LLM rules it is the adapter name
+# (e.g. "gmail"). The captured-input shape is per-adapter — the LLM rules
+# above receive SDK kwargs; HTTP-boundary adapters like Gmail receive a
+# request record {method, url, headers, params, data}. Each rule documents
+# its expected input shape in the description.
+# ============================================================================
+
+GMAIL_AUTHORIZATION_HEADER_PRESENT = ContractRule(
+    name="GMAIL_AUTHORIZATION_HEADER_PRESENT",
+    description=(
+        "Every Gmail API request issued by GmailProviderAdapter must carry an "
+        "Authorization: Bearer <token> header. Missing header → silent 401 inside "
+        "the adapter's try/except blocks → data loss with no clear signal. "
+        "Input: captured request record {method, url, headers, params, ...}."
+    ),
+    validators={
+        "gmail": lambda req: (
+            _true(
+                "Authorization" in req["headers"],
+                f"Gmail: missing Authorization header on {req.get('method')} {req.get('url')}",
+            ),
+            _true(
+                req["headers"].get("Authorization", "").startswith("Bearer "),
+                f"Gmail: Authorization must use Bearer scheme. Got: {req['headers'].get('Authorization')!r}",
+            ),
+        ),
+    },
+)
+
+GMAIL_LIST_EMAILS_PAGE_TOKEN_EXCLUDES_QUERY = ContractRule(
+    name="GMAIL_LIST_EMAILS_PAGE_TOKEN_EXCLUDES_QUERY",
+    description=(
+        "When GmailProviderAdapter.list_emails resumes via page_token, the q= "
+        "parameter must be omitted from the /messages list call. Gmail embeds the "
+        "original query in pageToken; passing q= alongside silently overrides the "
+        "embedded date filter and returns emails outside the requested range. "
+        "Input: captured request record for the list-page call (the one whose "
+        "params dict contains 'pageToken')."
+    ),
+    validators={
+        "gmail": lambda req: _not_in(
+            "q",
+            req["params"],
+            "Gmail: q= must be absent when pageToken is present in params",
+        ),
+    },
+)
