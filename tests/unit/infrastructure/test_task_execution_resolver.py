@@ -248,6 +248,24 @@ class TestUserOverrideMerging:
         assert result is not None
         assert result.intent_remap == {"search_web": "search_web_light"}
 
+    def test_user_override_replaces_provider_override(self, resolver):
+        # Default DEEP_REASONING settings have provider_override=None (see DEFAULT_COMPLEXITY_SETTINGS).
+        # User sets it to "claude" → merged settings passed to context_builder must carry "claude".
+        config = UserBotConfig(
+            complexity_settings_overrides={
+                TaskComplexity.DEEP_REASONING: ComplexitySettings(
+                    tier=PerformanceTier.PERFORMANCE,
+                    provider_override="claude",
+                ),
+            }
+        )
+        resolver.resolve(
+            context={"task_complexity": TaskComplexity.DEEP_REASONING.value},
+            config=config,
+        )
+        settings: ComplexitySettings = resolver.context_builder.resolve_for_task.call_args.kwargs["settings"]
+        assert settings.provider_override == "claude"
+
     def test_user_override_partial_fills_missing_from_defaults(self, resolver):
         # User sets tier=ECO but leaves thinking_effort blank → keep default "high"
         config = UserBotConfig(
