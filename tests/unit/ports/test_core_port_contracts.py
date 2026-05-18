@@ -524,13 +524,21 @@ class TestFactRepositoryContract:
         assert getattr(FactRepository.get_legacy_facts, "__isabstractmethod__", False)
         assert getattr(FactRepository.get_longest_facts, "__isabstractmethod__", False)
 
+    def test_has_search_facts_by_domain(self):
+        assert getattr(FactRepository.search_facts_by_domain, "__isabstractmethod__", False)
+
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 20 abstract methods."""
+        """Port should have exactly 21 abstract methods.
+
+        F7.2 (2026-05-18): added search_facts_by_domain to close the
+        port/adapter contract gap — search_facts_by_domain was called via
+        the port type in SearchEnrichmentService but missing from the ABC.
+        """
         abstract_methods = {
             name for name, method in inspect.getmembers(FactRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 20, f"Expected 20 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 21, f"Expected 21 abstract methods, got {abstract_methods}"
 
     def test_add_fact_signature(self):
         sig = inspect.signature(FactRepository.add_fact)
@@ -539,9 +547,13 @@ class TestFactRepositoryContract:
         assert sig.return_annotation == str
 
     def test_search_facts_signature(self):
+        # F7.2 (2026-05-18): vector_field promoted from adapter to port to
+        # close the contract gap. Default "vector" preserves backward compat
+        # for callers that pass only query_vector + limit.
         sig = inspect.signature(FactRepository.search_facts)
         params = list(sig.parameters.keys())
-        assert params == ["self", "query_vector", "limit", "user_id", "account_id"]
+        assert params == ["self", "query_vector", "vector_field", "limit", "user_id", "account_id"]
+        assert sig.parameters["vector_field"].default == "vector"
         assert sig.parameters["limit"].default == 5
         assert sig.parameters["user_id"].default is None
         assert sig.parameters["account_id"].default is None
