@@ -240,3 +240,55 @@ GMAIL_LIST_EMAILS_PAGE_TOKEN_EXCLUDES_QUERY = ContractRule(
         ),
     },
 )
+
+
+def _has_filter(filters, field_path: str, op_string: str) -> bool:
+    """True if any FieldFilter in `filters` matches (field_path, op_string)."""
+    return any(
+        getattr(f, "field_path", None) == field_path
+        and getattr(f, "op_string", None) == op_string
+        for f in filters
+    )
+
+
+FIRESTORE_EMAIL_FIND_NEAREST_FILTERS_USER_AND_STATE = ContractRule(
+    name="FIRESTORE_EMAIL_FIND_NEAREST_FILTERS_USER_AND_STATE",
+    description=(
+        "Every find_nearest query issued by FirestoreIndexedEmailRepository must "
+        "carry a user_id== AND a state== where-filter. Missing user_id risks "
+        "cross-tenant data leakage; missing state returns archived emails to "
+        "search results. SECURITY-RELEVANT. "
+        "Input: captured call {where_filters: list[FieldFilter], kwargs: dict}."
+    ),
+    validators={
+        "firestore_indexed_email": lambda call: (
+            _true(
+                _has_filter(call["where_filters"], "user_id", "=="),
+                "Firestore indexed_email find_nearest missing user_id== filter (cross-tenant leak risk)",
+            ),
+            _true(
+                _has_filter(call["where_filters"], "state", "=="),
+                "Firestore indexed_email find_nearest missing state== filter (archived emails leak into results)",
+            ),
+        ),
+    },
+)
+
+FIRESTORE_EMAIL_SAVE_BATCH_COMPOSITE_DOC_ID = ContractRule(
+    name="FIRESTORE_EMAIL_SAVE_BATCH_COMPOSITE_DOC_ID",
+    description=(
+        "FirestoreIndexedEmailRepository.save_batch must write each email at "
+        "doc_id = '{user_id}_{email_id}'. The composite ID provides per-user "
+        "isolation at the doc-id layer + idempotency on retry. If silently "
+        "changed to email_id alone, two users with the same provider message "
+        "ID collide; if changed to auto-id, retries duplicate facts. "
+        "Input: captured call {doc_id: str, user_id: str, email_id: str}."
+    ),
+    validators={
+        "firestore_indexed_email": lambda call: _eq(
+            call["doc_id"],
+            f"{call['user_id']}_{call['email_id']}",
+            f"Firestore indexed_email batch.set doc_id must be '{{user_id}}_{{email_id}}'",
+        ),
+    },
+)
