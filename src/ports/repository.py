@@ -92,6 +92,7 @@ class FactRepository(ABC):
     async def search_facts(
         self,
         query_vector: List[float],
+        vector_field: str = "vector",
         limit: int = 5,
         user_id: Optional[str] = None,
         account_id: Optional[str] = None
@@ -106,6 +107,9 @@ class FactRepository(ABC):
 
         Args:
             query_vector: Query embedding vector
+            vector_field: Vector field to search ("vector" | "metadata_vector" | "tags_vector").
+                Default "vector" preserves backward compatibility for callers that pass
+                only query_vector.
             limit: Maximum results
             user_id: Explicit user ID override (optional, from context if None)
             account_id: Explicit account ID override (optional, from context if None)
@@ -117,6 +121,38 @@ class FactRepository(ABC):
             ValueError: If context is not set and parameters are not passed
 
         Related: RFC REQUEST_CONTEXT_RFC.md
+        """
+        pass
+
+    @abstractmethod
+    async def search_facts_by_domain(
+        self,
+        domains: List[str],
+        limit: int = 10,
+        account_id: Optional[str] = None,
+        user_id: Optional[str] = None
+    ) -> List[FactEntity]:
+        """
+        Direct query by domain (uses domain-indexed lookup, not vector search).
+
+        Used for router enrichment — when the LLM router has already classified
+        the query into one or more knowledge domains, this surfaces facts in
+        those domains without an embedding round-trip.
+
+        Args:
+            domains: List of domain values (e.g., ["health", "possession"]).
+                Empty list → empty result. Adapter implementations may cap
+                the count based on backend constraints (Firestore: max 30
+                values in IN operator).
+            limit: Maximum number of facts to return.
+            account_id: Explicit account ID override (from RequestContext if None).
+            user_id: Explicit user ID override (from RequestContext if None).
+
+        Returns:
+            List of facts from specified domains.
+
+        Raises:
+            ValueError: If account_id cannot be resolved.
         """
         pass
 
