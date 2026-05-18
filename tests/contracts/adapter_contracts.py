@@ -292,3 +292,59 @@ FIRESTORE_EMAIL_SAVE_BATCH_COMPOSITE_DOC_ID = ContractRule(
         ),
     },
 )
+
+NODE_DOCX_SPEC_PASSED_VIA_STDIN = ContractRule(
+    name="NODE_DOCX_SPEC_PASSED_VIA_STDIN",
+    description=(
+        "NodeDocxRunner must pass the spec_json payload via subprocess stdin "
+        "(proc.communicate(input=...)) — NOT as a CLI argument. Spec payloads "
+        "can be tens-of-KB; passing as argv risks E2BIG on long documents and "
+        "leaks the spec into process listings. "
+        "Input: captured call {exec_args: tuple, stdin_inputs: list[bytes], "
+        "expected_spec_bytes: bytes}."
+    ),
+    validators={
+        "node_docx_runner": lambda call: (
+            _true(
+                call["expected_spec_bytes"] in call["stdin_inputs"],
+                f"node_docx_runner: spec_json must be written to subprocess stdin. "
+                f"Stdin inputs seen: {call['stdin_inputs']!r}",
+            ),
+            _true(
+                not any(
+                    call["expected_spec_bytes"].decode("utf-8") in (arg if isinstance(arg, str) else "")
+                    for arg in call["exec_args"]
+                ),
+                "node_docx_runner: spec_json must NOT appear in exec argv (E2BIG risk)",
+            ),
+        ),
+    },
+)
+
+NODE_DOCX_INVOKED_WITH_NODE_AND_SCRIPT_PATH = ContractRule(
+    name="NODE_DOCX_INVOKED_WITH_NODE_AND_SCRIPT_PATH",
+    description=(
+        "NodeDocxRunner must invoke `node <temp-script.js>` where the script "
+        "path resolves under the project's docx_generator/ directory. Running "
+        "the script from any other directory breaks `require('docx')` because "
+        "Node resolves node_modules from the script's parent directory. "
+        "Input: captured call {exec_args: tuple, expected_dir_substring: str}."
+    ),
+    validators={
+        "node_docx_runner": lambda call: (
+            _true(
+                len(call["exec_args"]) >= 2 and call["exec_args"][0] == "node",
+                f"node_docx_runner: first exec arg must be 'node'. Got: {call['exec_args']!r}",
+            ),
+            _true(
+                str(call["exec_args"][1]).endswith(".js"),
+                f"node_docx_runner: second exec arg must be a .js path. Got: {call['exec_args'][1]!r}",
+            ),
+            _true(
+                call["expected_dir_substring"] in str(call["exec_args"][1]),
+                f"node_docx_runner: script path must live under {call['expected_dir_substring']!r} "
+                f"for node_modules resolution. Got: {call['exec_args'][1]!r}",
+            ),
+        ),
+    },
+)
