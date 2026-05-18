@@ -541,3 +541,73 @@ def field_filter_matches(filter_obj, field_path: str, op_string: str) -> bool:
         getattr(filter_obj, "field_path", None) == field_path
         and getattr(filter_obj, "op_string", None) == op_string
     )
+
+
+# ============================================================================
+# Subprocess boundary — captures asyncio.create_subprocess_exec + communicate
+# ============================================================================
+
+
+class _FakeSubprocess:
+    """Mimics asyncio subprocess Process. Records communicate() input + exit code."""
+
+    def __init__(self, stub: "NodeSubprocessCapturingStub", returncode: int = 0,
+                 stdout: bytes = b"FAKE_DOCX_BYTES", stderr: bytes = b""):
+        self._stub = stub
+        self.returncode = returncode
+        self._stdout = stdout
+        self._stderr = stderr
+
+    async def communicate(self, input: bytes = b""):
+        self._stub.communicate_inputs.append(input)
+        return self._stdout, self._stderr
+
+    def kill(self):
+        self._stub.killed = True
+
+    async def wait(self):
+        return self.returncode
+
+
+class NodeSubprocessCapturingStub:
+    """
+    Captures asyncio.create_subprocess_exec calls + the stdin payload passed
+    via communicate(). Designed for subprocess-boundary adapters like
+    NodeDocxRunner.
+
+    Captured surfaces:
+        - exec_calls:         list[{args: tuple, kwargs: dict}]
+        - communicate_inputs: list[bytes] — what was sent to stdin per call
+
+    Usage:
+        stub = NodeSubprocessCapturingStub().install(monkeypatch)
+        result = await runner.run(js_code="...", spec_json='{}', timeout=10)
+        assert stub.exec_calls[0]["args"][0] == "node"
+    """
+
+    def __init__(self, returncode: int = 0, stdout: bytes = b"FAKE_DOCX_BYTES",
+                 stderr: bytes = b""):
+        self.exec_calls: list = []
+        self.communicate_inputs: list = []
+        self.killed: bool = False
+        self._returncode = returncode
+        self._stdout = stdout
+        self._stderr = stderr
+
+    def install(self, monkeypatch, target_module: str) -> "NodeSubprocessCapturingStub":
+        stub = self
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            stub.exec_calls.append({"args": args, "kwargs": kwargs})
+            return _FakeSubprocess(
+                stub,
+                returncode=stub._returncode,
+                stdout=stub._stdout,
+                stderr=stub._stderr,
+            )
+
+        monkeypatch.setattr(
+            f"{target_module}.asyncio.create_subprocess_exec",
+            fake_create_subprocess_exec,
+        )
+        return self
