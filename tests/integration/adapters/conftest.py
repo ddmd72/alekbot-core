@@ -381,3 +381,163 @@ class GmailCapturingStub:
             if substring in url:
                 return data
         return self._default_response
+
+
+# ============================================================================
+# Firestore boundary — captures chained query API + batch operations
+# ============================================================================
+
+
+class _FsRecordingQuery:
+    """Records where-filters chained on a Firestore collection or query.
+
+    Each .where() returns a NEW _FsRecordingQuery with the appended filter
+    (matching real Firestore Query immutability). .find_nearest() records the
+    call (including accumulated filters) and returns an awaitable .get().
+    """
+
+    def __init__(self, stub: "FirestoreCapturingStub", where_filters=None):
+        self._stub = stub
+        self.where_filters = list(where_filters or [])
+
+    def where(self, filter=None, **kwargs):
+        # FieldFilter is a real google.cloud.firestore object — keep as-is so
+        # validators can inspect .field_path / .op_string / .value.
+        return _FsRecordingQuery(self._stub, self.where_filters + [filter])
+
+    def find_nearest(self, **kwargs):
+        self._stub.find_nearest_calls.append({
+            "where_filters": list(self.where_filters),
+            "kwargs": kwargs,
+        })
+        return _FsAsyncGettable(self._stub, [])
+
+    def limit(self, n):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    async def get(self):
+        return []
+
+    async def stream(self):
+        for _ in []:  # async generator with zero yields
+            yield  # pragma: no cover
+
+
+class _FsAsyncGettable:
+    """Result of find_nearest()/query.get() — async-gets docs."""
+
+    def __init__(self, stub, docs):
+        self._stub = stub
+        self._docs = docs
+
+    async def get(self):
+        return list(self._docs)
+
+
+class _FsRecordingDocRef:
+    """Captures set/update/delete/get on a single document."""
+
+    def __init__(self, stub, doc_id):
+        self._stub = stub
+        self.id = doc_id
+
+    async def get(self):
+        doc = MagicMock()
+        doc.exists = False
+        doc.to_dict = MagicMock(return_value={})
+        doc.id = self.id
+        return doc
+
+    async def set(self, data):
+        self._stub.doc_set_calls.append({"doc_id": self.id, "data": data})
+
+    async def update(self, data):
+        self._stub.doc_update_calls.append({"doc_id": self.id, "data": data})
+
+    async def delete(self):
+        self._stub.doc_delete_calls.append({"doc_id": self.id})
+
+
+class _FsRecordingCollection(_FsRecordingQuery):
+    """A collection acts as a query root + .document() factory."""
+
+    def __init__(self, stub, name):
+        super().__init__(stub)
+        self.name = name
+
+    def document(self, doc_id):
+        ref = _FsRecordingDocRef(self._stub, doc_id)
+        self._stub.document_refs.append(ref)
+        return ref
+
+
+class _FsRecordingBatch:
+    """Captures batch.set() calls and the final .commit()."""
+
+    def __init__(self, stub):
+        self._stub = stub
+
+    def set(self, doc_ref, data):
+        self._stub.batch_set_calls.append({
+            "doc_id": doc_ref.id,
+            "data": data,
+        })
+
+    async def commit(self):
+        self._stub.batch_commits += 1
+
+
+class FirestoreCapturingStub:
+    """
+    Captures Firestore SDK operations on a mock client. Hands out the same
+    `_FsRecordingCollection` per name so chained query state and doc-id history
+    are preserved across calls within one test.
+
+    Usage:
+        stub = FirestoreCapturingStub()
+        repo = FirestoreIndexedEmailRepository(stub.build_db(), env_config)
+        await repo.save_batch([email])
+        assert stub.batch_set_calls[0]["doc_id"] == "user1_em1"
+
+    Captured surfaces:
+        - find_nearest_calls: list[{where_filters, kwargs}]
+        - batch_set_calls:    list[{doc_id, data}]
+        - doc_set_calls / doc_update_calls / doc_delete_calls
+        - document_refs:      every collection.document(id) call
+    """
+
+    def __init__(self):
+        self._collections: dict = {}
+        self.find_nearest_calls: list = []
+        self.batch_set_calls: list = []
+        self.batch_commits: int = 0
+        self.doc_set_calls: list = []
+        self.doc_update_calls: list = []
+        self.doc_delete_calls: list = []
+        self.document_refs: list = []
+
+    def build_db(self):
+        db = MagicMock()
+        db.collection = self._collection
+        db.batch = lambda: _FsRecordingBatch(self)
+        return db
+
+    def _collection(self, name):
+        if name not in self._collections:
+            self._collections[name] = _FsRecordingCollection(self, name)
+        return self._collections[name]
+
+
+def field_filter_matches(filter_obj, field_path: str, op_string: str) -> bool:
+    """Inspect a google.cloud.firestore FieldFilter for a (field, op) match.
+
+    FieldFilter exposes field_path / op_string / value as attributes; this
+    helper centralizes the introspection so contract validators stay short.
+    """
+    return (
+        getattr(filter_obj, "field_path", None) == field_path
+        and getattr(filter_obj, "op_string", None) == op_string
+    )
