@@ -149,12 +149,12 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 | Field | Value |
 |-------|-------|
 | **Job name** | `alek-bot-{dev,prod}-repair-email-embeddings` |
-| **Schedule** | `0 */6 * * *` (every 6 hours, at the top of the hour) |
+| **Schedule** | `0 * * * *` (hourly, top of the hour — aligned with `start_email_indexing` cadence so failures from any indexing tick are detected within ≤1h) |
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "repair_email_embeddings"}` |
 | **Purpose** | Re-embeds `IndexedEmail` docs where `embedding_pending=True` (set on transient embedding failures during initial indexing). Without this job those emails stay invisible to `find_nearest` search forever. |
 | **Handler** | `WorkerHandler._handle_repair_email_embeddings()` |
-| **Batch cap** | `EmailEmbeddingRepairService.batch_size = 100` per run (cross-user) |
+| **Batch cap** | `EmailEmbeddingRepairService.batch_size = 100` per run (cross-user). When the batch saturates, the handler re-enqueues another tick immediately via `enqueue_worker_task` — queue drains on demand without waiting for the next scheduler interval (same pattern as consolidation and email indexing). |
 | **Env** | dev + prod |
 | **RFC** | `docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md` §2.5 |
 
