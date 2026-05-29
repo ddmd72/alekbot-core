@@ -55,9 +55,12 @@ src/config/settings.py                  # OPENAI_API_KEY loading
 MODEL_TIERS = {
     PerformanceTier.ECO: "gpt-5.4-nano",      # Cheapest/fastest
     PerformanceTier.BALANCED: "gpt-5.4-mini",  # Mid-tier quality
-    PerformanceTier.PERFORMANCE: "gpt-5.4",    # Flagship
+    PerformanceTier.PERFORMANCE: "gpt-5.4",    # Frontier (5.4 kept; 5.5 is 2× the cost)
+    PerformanceTier.ULTRA: "gpt-5.5-pro",      # Highest quality (upgraded 2026-05-30; same price as 5.4-pro)
 }
 ```
+
+For the ULTRA tier rationale see [decisions/openai_ultra_tier_to_gpt_5_5_pro.md](../../04_solution_strategy/decisions/openai_ultra_tier_to_gpt_5_5_pro.md).
 
 Verify current model IDs at https://platform.openai.com/docs/models.
 

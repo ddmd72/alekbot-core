@@ -35,7 +35,7 @@ agent_tiers["smart"]           (UserBotConfig, per user)
 | `ECO`         | claude-haiku-4-5-20251001    | gpt-5.4-nano      | gemini-2.5-flash-lite-preview   | grok-4-1-fast                 |
 | `BALANCED`    | claude-haiku-4-5-20251001    | gpt-5.4-mini      | gemini-2.5-flash-preview-05-20  | grok-4-1-fast                 |
 | `PERFORMANCE` | claude-sonnet-4-6            | gpt-5.4           | gemini-2.5-pro-preview-06-05    | grok-4-1-fast                 |
-| `ULTRA`       | claude-opus-4-7              | gpt-5.4-pro       | gemini-pro-latest               | grok-4-1-fast-reasoning       |
+| `ULTRA`       | claude-opus-4-7              | gpt-5.5-pro       | gemini-pro-latest               | grok-4-1-fast-reasoning       |
 | `TIER1/2/3`   | claude-haiku-4-5-20251001    | gpt-5.4-nano      | gemini-2.5-flash-lite-preview   | grok-4-1-fast                 |
 
 > **TIER1/2/3** are reserved slots — default to ECO models. Override via
