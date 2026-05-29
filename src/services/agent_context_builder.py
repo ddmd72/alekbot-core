@@ -124,7 +124,7 @@ class AgentProviderStrategy:
         # provider declaration. UserAgentFactory reads default_provider from here.
         "deep_research": {
             "default_provider": "claude",
-            "allowed_providers": ["gemini", "openai", "claude"],
+            "allowed_providers": ["openai", "claude"],
             "required_capabilities": [],
             "fallback": None
         },

@@ -160,9 +160,12 @@ background process extracts new facts from the conversation → bot gets smarter
 - Consolidation — background "memory consolidation" (PERFORMANCE tier, runs via Cloud Tasks)
 - DeepResearch (async, provider-agnostic) — long-running research jobs. Agent calls
   `DeepResearchPort.create_interaction()` → returns ACK (job_id) immediately. Result delivered
-  by adapter: polling every 120s (Gemini), webhook (OpenAI). `ClaudeDeepResearchRunnerAgent`
-  wraps Claude's native extended thinking; runs as a **Cloud Run Job** (not Cloud Task) via
-  `JobRunnerPort` + `CloudRunJobsAdapter`. Entrypoint: `job_main.py`. task-timeout=18000s (5h).
+  by adapter: webhook (OpenAI) or Cloud Run Job completion (Claude — default).
+  `ClaudeDeepResearchRunnerAgent` wraps Claude's native extended thinking; runs as a
+  **Cloud Run Job** (not Cloud Task) via `JobRunnerPort` + `CloudRunJobsAdapter`.
+  Entrypoint: `job_main.py`. task-timeout=18000s (5h).
+  Gemini backend (polling Cloud Tasks) removed 2026-05-29 — see
+  `docs/04_solution_strategy/decisions/gemini_deep_research_adapter_removal.md`.
   Two-pass critic: per-user via `UserBotConfig.deep_research_second_pass` (default False,
   Cabinet UI toggle). Fallback: `DEEP_RESEARCH_SECOND_PASS` env var. max_tokens=64K for thinking
   models (claude-sonnet-4-6/opus-4-6), 32K for others. Beta: `output-128k-2025-02-19`.
@@ -254,7 +257,8 @@ background process extracts new facts from the conversation → bot gets smarter
   `agent_execution`, `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`,
   `consolidation`, `deep_research_polling`, `fire_due_reminders`, `setup_microsoft_todo`,
   `reindex_task_list`, `renew_task_subscriptions`, `renew_all_task_subscriptions`,
-  `start_daily_email_review`, `daily_email_review`, `billing_daily_summary`
+  `start_daily_email_review`, `daily_email_review`, `billing_daily_summary`,
+  `repair_email_embeddings`
   See `docs/07_deployment/SCHEDULERS.md` for full scheduler reference.
 - **Billing daily summary** — Cloud Scheduler 09:00 Europe/Madrid → `billing_daily_summary`.
   Reads `prev_daily_tokens/prev_daily_cost` (yesterday's snapshot, saved at daily counter reset)

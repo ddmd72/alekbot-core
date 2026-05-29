@@ -2,7 +2,7 @@ slack_bolt
 google-cloud-firestore
 google-cloud-storage
 google-cloud-logging
-google-genai>=1.72.0
+google-genai>=2.0.0,<3.0.0  # v2 cut at 2026-05-07; we only use the Models API (generate_content / embed_content / files), which is unaffected by the Interactions API breaking change. See decisions/gemini_deep_research_adapter_removal.md.
 anthropic>=0.97.0  # 0.97.0+: output_config.effort + model capabilities API; older versions lack proper effort/structured-outputs typing
 openai>=1.0.0  # xAI Grok (OpenAI-compatible API)
 python-dotenv
