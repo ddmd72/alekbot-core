@@ -144,4 +144,20 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 
 ---
 
-**Last Updated:** 2026-03-29
+### Email Embedding Repair
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `alek-bot-{dev,prod}-repair-email-embeddings` |
+| **Schedule** | `0 */6 * * *` (every 6 hours, at the top of the hour) |
+| **HTTP** | `POST /worker` |
+| **Payload** | `{"task_type": "repair_email_embeddings"}` |
+| **Purpose** | Re-embeds `IndexedEmail` docs where `embedding_pending=True` (set on transient embedding failures during initial indexing). Without this job those emails stay invisible to `find_nearest` search forever. |
+| **Handler** | `WorkerHandler._handle_repair_email_embeddings()` |
+| **Batch cap** | `EmailEmbeddingRepairService.batch_size = 100` per run (cross-user) |
+| **Env** | dev + prod |
+| **RFC** | `docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md` §2.5 |
+
+---
+
+**Last Updated:** 2026-05-29

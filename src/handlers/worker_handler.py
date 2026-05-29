@@ -23,6 +23,8 @@ Supported task_types:
   - start_email_indexing          → fan-out: start incremental indexing for all Gmail users with auto_index enabled
   - start_daily_email_review      → fan-out: enqueue daily_email_review for all Gmail users with gmail_daily_review enabled
   - daily_email_review            → fetch last 24h emails, deliver structured payload to SmartAgent for analysis
+  - repair_email_embeddings       → run one batch of EmailEmbeddingRepairService (re-embed indexed emails
+                                     where embedding_pending=True after transient API failures)
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ from ..services.deep_research_delivery import (
 )
 from ..services.consolidation_service import ConsolidationService
 from ..services.provider_registry import ProviderRegistry
+from ..services.email_embedding_repair_service import EmailEmbeddingRepairService
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.reminders_service import RemindersService, build_reminder_alert
 from ..services.task_dispatch_service import TaskDispatchService
@@ -85,6 +88,7 @@ class WorkerHandler:
         email_review: "Optional[EmailReviewService]" = None,
         account_repo: "Optional[AccountRepository]" = None,
         billing_webhook: Any = None,  # SlackWebhookAdapter
+        email_embedding_repair: Optional[EmailEmbeddingRepairService] = None,
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -104,6 +108,7 @@ class WorkerHandler:
         self._email_review = email_review
         self._account_repo = account_repo
         self._billing_webhook = billing_webhook
+        self._email_embedding_repair = email_embedding_repair
 
     async def handle(self, payload: dict) -> Optional[Tuple[dict, int]]:
         """
@@ -147,6 +152,8 @@ class WorkerHandler:
             return await self._handle_daily_email_review(payload)
         elif task_type == "billing_daily_summary":
             return await self._handle_billing_daily_summary()
+        elif task_type == "repair_email_embeddings":
+            return await self._handle_repair_email_embeddings()
         return None  # unknown task_type — caller handles fallback
 
     # ------------------------------------------------------------------
@@ -221,6 +228,25 @@ class WorkerHandler:
         stale_threshold = datetime.now(timezone.utc) - timedelta(hours=2)
         marked = await self._email_indexing.mark_stale_jobs_failed(stale_threshold)
         return {"status": "ok", "marked_failed": marked}, 200
+
+    # ------------------------------------------------------------------
+    # Email embedding repair
+    # ------------------------------------------------------------------
+
+    async def _handle_repair_email_embeddings(self) -> Tuple[dict, int]:
+        """Run one repair batch for indexed emails with `embedding_pending=True`.
+
+        Triggered by Cloud Scheduler every 6h. Cross-user, batch-capped at
+        EmailEmbeddingRepairService.batch_size (default 100). One pass per
+        Cloud Task — if more pending remain, the next scheduler tick picks
+        them up; no per-task re-enqueue.
+        """
+        if self._email_embedding_repair is None:
+            logger.warning("[Worker] repair_email_embeddings: service not configured")
+            return {"error": "repair service not configured"}, 501
+
+        repaired = await self._email_embedding_repair.run()
+        return {"status": "ok", "repaired": repaired}, 200
 
     # ------------------------------------------------------------------
     # Consolidation
