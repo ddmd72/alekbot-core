@@ -579,11 +579,19 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   `output_config.effort`, and `web_search_20260209` on `_THINKING_MODELS` / `_DYNAMIC_SEARCH_MODELS`
   substring checks; verify against `client.models.retrieve(<model>).capabilities` when adding
   a new gate. SDK pin: `anthropic >= 0.97.0`.
-- **GeminiEmbeddingAdapter throttling** — process-local `asyncio.Semaphore` caps in-flight
-  `batchEmbedContents` calls (default `GEMINI_EMBED_CONCURRENCY=20`, sized for AI Studio Tier 2
-  = 5000 RPM); 429 `RESOURCE_EXHAUSTED` retried 3× with exponential backoff (2/4/8s). Both read
-  (search) and write (fact storage) paths share the same adapter instance and same semaphore.
-  See `docs/05_building_blocks/embedding_system/README.md` §2.3.
+- **GeminiEmbeddingAdapter** — `gemini-embedding-2` model (migrated from `-001` 2026-05-29,
+  see `docs/04_solution_strategy/decisions/embedding_model_migration_v1_to_v2.md`).
+  Dimension 768 (Matryoshka truncation from native 3072). Legacy `task_type` parameter is
+  translated to an inline instruction prefix on the input text inside the adapter:
+  `RETRIEVAL_DOCUMENT` → `"title: | text: …"`, `RETRIEVAL_QUERY` → `"task: search result | query: …"`,
+  `SEMANTIC_SIMILARITY` → passthrough. Unknown values → `ValueError`. v2 has no true batch:
+  `embed_content(contents=List[str])` returns one embedding (multimodal-parts semantics), so
+  `get_embeddings_batch` fans out via `asyncio.gather` over N parallel single-content calls.
+  Throttling: process-local `asyncio.Semaphore` caps in-flight calls
+  (default `GEMINI_EMBED_CONCURRENCY=20`, sized for AI Studio Tier 2 = 5000 RPM); 429
+  `RESOURCE_EXHAUSTED` retried 3× with exponential backoff (2/4/8s). Both read (search) and
+  write (fact storage) paths share the same adapter instance and same semaphore.
+  See `docs/05_building_blocks/embedding_system/README.md` §2.2–2.3.
 - **PromptCacheStrategy** — transparent prompt caching via proxy pattern. Agents declare their
   type; strategy resolves cache config; `CachingLLMProxy` wraps the provider. Agents never
   import or reference `PromptCacheConfig`. See `docs/10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md`.
