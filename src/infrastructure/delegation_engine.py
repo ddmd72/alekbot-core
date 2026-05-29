@@ -268,7 +268,7 @@ class DelegationEngine:
         )
 
     # ------------------------------------------------------------------ #
-    # Tool execution — memory-first parallel                              #
+    # Tool execution — uniform parallel                                   #
     # ------------------------------------------------------------------ #
 
     async def _execute_tool_calls(
@@ -281,59 +281,39 @@ class DelegationEngine:
         max_retries: int,
         retry_backoff: float,
     ) -> List[ToolResult]:
-        """Execute tool calls with memory-first ordering.
+        """Dispatch all tool calls in one parallel batch via asyncio.gather.
 
-        search_memory calls execute first (sequential), then remaining
-        calls execute in parallel via asyncio.gather.
+        Per-turn ordering does not affect downstream LLM behavior — the LLM
+        commits tool-call parameters atomically per turn, and no specialist
+        agent consumes intra-turn cross-tool results.
         """
-        results: List[Optional[ToolResult]] = [None] * len(tool_calls)
-        memory_context: List[str] = []
+        if not tool_calls:
+            return []
 
-        def _is_memory(tc: ToolCall) -> bool:
-            return (
-                tc.name == "delegate_to_specialist"
-                and (tc.args or {}).get("intent") == "search_memory"
-            )
-
-        memory_calls = [(i, tc) for i, tc in enumerate(tool_calls) if _is_memory(tc)]
-        other_calls = [(i, tc) for i, tc in enumerate(tool_calls) if not _is_memory(tc)]
-
-        # Phase 1: memory searches first (sequential)
-        for idx, tc in memory_calls:
-            logger.info("🔄 [DelegationEngine] Priority execution: search_memory")
-            result = await self._dispatch_single(
+        logger.info(
+            "⚡ [DelegationEngine] Parallel execution: %s call(s)",
+            len(tool_calls),
+        )
+        tasks = [
+            self._dispatch_single(
                 tc, context, intent_remap, intent_fanout, calling_agent_id,
-                max_retries, retry_backoff, memory_context,
+                max_retries, retry_backoff,
             )
-            results[idx] = result
-            if result.result_str:
-                memory_context.append(result.result_str)
+            for tc in tool_calls
+        ]
+        parallel_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Phase 2: other calls in parallel
-        if other_calls:
-            logger.info(
-                "⚡ [DelegationEngine] Parallel execution: %s call(s)",
-                len(other_calls),
-            )
-            tasks = [
-                self._dispatch_single(
-                    tc, context, intent_remap, intent_fanout, calling_agent_id,
-                    max_retries, retry_backoff, memory_context,
-                )
-                for _, tc in other_calls
-            ]
-            parallel_results = await asyncio.gather(*tasks, return_exceptions=True)
-            for (idx, tc), result in zip(other_calls, parallel_results):
-                if isinstance(result, Exception):
-                    logger.error("❌ [DelegationEngine] Tool call failed: %s", result)
-                    results[idx] = ToolResult(
-                        name=tc.name,
-                        result_str=f"AGENT ERROR: {result}",
-                    )
-                else:
-                    results[idx] = result
-
-        return [r for r in results if r is not None]
+        results: List[ToolResult] = []
+        for tc, result in zip(tool_calls, parallel_results):
+            if isinstance(result, Exception):
+                logger.error("❌ [DelegationEngine] Tool call failed: %s", result)
+                results.append(ToolResult(
+                    name=tc.name,
+                    result_str=f"AGENT ERROR: {result}",
+                ))
+            else:
+                results.append(result)
+        return results
 
     # ------------------------------------------------------------------ #
     # Single tool dispatch                                                #
@@ -348,7 +328,6 @@ class DelegationEngine:
         calling_agent_id: str,
         max_retries: int,
         retry_backoff: float,
-        memory_context: Optional[List[str]] = None,
     ) -> ToolResult:
         """Dispatch a single delegate_to_specialist call to the coordinator."""
         args = tool_call.args or {}
@@ -378,7 +357,6 @@ class DelegationEngine:
 
         delegation_context: Dict[str, Any] = {
             **context,
-            "memory_context": memory_context or [],
             "params": context_params,
         }
 

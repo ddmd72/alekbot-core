@@ -4,7 +4,7 @@ Unit tests for SmartResponseAgent.
 Covers:
 - can_handle() classification logic
 - execute() flow with/without agent delegation
-- smart parallel execution (memory-first)
+- smart parallel execution (uniform)
 - history sanitization edge cases
 """
 
@@ -284,12 +284,25 @@ class TestSmartResponseAgentExecute:
 
 class TestSmartResponseAgentParallelExecution:
     @pytest.mark.asyncio
-    async def test_memory_first_then_parallel(self):
-        """DelegationEngine executes search_memory before other calls."""
-        call_order = []
+    async def test_all_tools_dispatched_in_one_parallel_batch(self):
+        """DelegationEngine dispatches all tool calls in one asyncio.gather batch.
+
+        Per-turn ordering does not affect downstream LLM behavior, so there is no
+        memory-first sequential phase. All intents — including search_memory — are
+        dispatched concurrently and results returned in the original tool-call order.
+        """
+        dispatched_intents = []
+        dispatched_count = 0
+        max_in_flight = 0
 
         async def mock_handle_delegation(intent, query, context, calling_agent_id=""):
-            call_order.append(intent)
+            nonlocal dispatched_count, max_in_flight
+            dispatched_count += 1
+            max_in_flight = max(max_in_flight, dispatched_count)
+            # Yield control so all three dispatches can start before any returns.
+            await asyncio.sleep(0)
+            dispatched_intents.append(intent)
+            dispatched_count -= 1
             return AgentResponse.success(task_id="t", agent_id="a", result="ok")
 
         mock_coordinator = AsyncMock()
@@ -312,8 +325,11 @@ class TestSmartResponseAgentParallelExecution:
             retry_backoff=0,
         )
 
-        assert call_order[0] == "search_memory"
         assert len(results) == 3
+        # All three dispatches were in flight simultaneously — confirms parallel,
+        # not memory-first sequential (which would max out at 1 in flight).
+        assert max_in_flight == 3
+        assert set(dispatched_intents) == {"search_memory", "search_web"}
 
 
 # =========================================================================
