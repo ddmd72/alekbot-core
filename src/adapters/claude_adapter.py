@@ -121,7 +121,6 @@ class ClaudeAdapter(LLMPort):
         messages: Optional[List[Message]] = None, 
         tools: Optional[List[Any]] = None,
         temperature: float = 0.8,
-        stream_callback: Optional[Any] = None,
         response_mime_type: Optional[str] = None,
         response_schema: Optional[Any] = None,
         cache_config: Optional[PromptCacheConfig] = None,
@@ -144,7 +143,6 @@ class ClaudeAdapter(LLMPort):
             use_grounding = request.use_grounding
             if request.max_tokens:
                 max_tokens = request.max_tokens
-            stream_callback = None
 
         if not model_name or messages is None:
             raise ValueError("model_name and messages are required for Claude generate_content")
@@ -212,31 +210,6 @@ class ClaudeAdapter(LLMPort):
                     {"type": "web_search_20250305", "name": "web_search"},
                     {"type": "web_fetch_20250910",  "name": "web_fetch"},
                 ] + claude_tools
-
-        if stream_callback:
-            # Note: Prompt caching in streaming is supported but handled slightly differently in usage stats
-            try:
-                async with self.client.messages.stream(
-                    model=model_name,
-                    max_tokens=max_tokens,
-                    system=system_parts,
-                    messages=claude_messages,
-                    tools=claude_tools if claude_tools else [],
-                    temperature=temperature,
-                ) as stream:
-                    full_text = ""
-                    async for text in stream.text_stream:
-                        full_text += text
-                        await stream_callback(full_text)
-
-                    final_message = await stream.get_final_message()
-                    return self._parse_response(final_message)
-            except anthropic.RateLimitError as e:
-                raise LLMRateLimitError(str(e), http_status=429) from e
-            except anthropic.APIStatusError as e:
-                if e.status_code == 503:
-                    raise LLMUnavailableError(str(e), http_status=503) from e
-                raise
 
         # Regular request
         # Claude API rejects tool_choice=null — must be omitted entirely when not forcing a tool

@@ -121,7 +121,6 @@ class OpenAIAdapter(LLMPort):
         messages: Optional[List[Message]] = None,
         tools: Optional[List[Any]] = None,
         temperature: float = 0.7,
-        stream_callback: Optional[Any] = None,
         response_mime_type: Optional[str] = None,
         response_schema: Optional[Any] = None,
         cache_config: Optional[PromptCacheConfig] = None,
@@ -146,7 +145,6 @@ class OpenAIAdapter(LLMPort):
             force_tool_use = request.force_tool_use
             use_grounding = request.use_grounding
             thinking = request.thinking
-            stream_callback = None
 
         if not model_name or messages is None:
             raise ValueError("model_name and messages are required for OpenAI generate_content")
