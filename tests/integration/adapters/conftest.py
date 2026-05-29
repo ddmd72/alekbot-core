@@ -183,6 +183,62 @@ class GeminiCapturingStub:
         return self
 
 
+def _gemini_embedding_result(batch_values=None):
+    """Mock response from client.models.embed_content. Each embedding has .values."""
+    if batch_values is None:
+        batch_values = [[0.1] * 8]
+    embeddings = []
+    for vals in batch_values:
+        e = MagicMock()
+        e.values = vals
+        embeddings.append(e)
+    result = MagicMock()
+    result.embeddings = embeddings
+    return result
+
+
+class GeminiEmbeddingCapturingStub:
+    """
+    Captures every call to GeminiEmbeddingAdapter's SDK boundary:
+    self.client.models.embed_content (synchronous; adapter wraps via asyncio.to_thread).
+
+    Install on a real GeminiEmbeddingAdapter instance before calling
+    get_embedding() or get_embeddings_batch(). Each call appends one record to
+    `captured_calls`:
+        [{"model": str, "contents": str, "config": dict}, ...]
+
+    `captured_kwargs` exposes the LAST call (compat for single-call assertions).
+
+    v2 contract note: gemini-embedding-2 treats `contents=List[str]` as one
+    multimodal document, so the adapter issues N parallel single-content calls
+    for an N-text batch. Tests for batch behaviour should assert against
+    `captured_calls` (one record per text).
+    """
+
+    def __init__(self, batch_values=None):
+        self.captured_calls: list = []
+        self._sdk_response = _gemini_embedding_result(batch_values or [[0.1] * 8])
+
+    @property
+    def captured_kwargs(self) -> dict:
+        return self.captured_calls[-1] if self.captured_calls else {}
+
+    def install(self, adapter) -> "GeminiEmbeddingCapturingStub":
+        stub = self
+
+        def capturing_embed(model=None, contents=None, config=None):
+            stub.captured_calls.append({
+                "model": model,
+                "contents": contents,
+                "config": config,
+            })
+            return stub._sdk_response
+
+        adapter.client = MagicMock()
+        adapter.client.models.embed_content = capturing_embed
+        return self
+
+
 class OpenAILikeCapturingStub:
     """
     Captures kwargs sent to client.chat.completions.create().

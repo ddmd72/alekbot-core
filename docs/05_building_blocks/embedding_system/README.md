@@ -15,7 +15,7 @@ Describes the system for generating vector embeddings used in semantic search, d
 
 This document MUST be updated when:
 
-- [ ] The primary embedding model (e.g., `models/gemini-embedding-001`) changes.
+- [ ] The primary embedding model (e.g., `gemini-embedding-2`) changes.
 - [ ] The output dimensionality (default 768) is modified.
 - [ ] New task types or configuration parameters are introduced.
 - [ ] The `EmbeddingService` port interface is updated.
@@ -50,12 +50,23 @@ A domain-level interface that defines the contract for vector generation.
 The production implementation using Google's Gemini API (`generativelanguage.googleapis.com`,
 AI Studio API key).
 
-- **Model:** `models/gemini-embedding-001`.
-- **Dimensionality:** Fixed at **768** to match Firestore's KNN vector indexes.
+- **Model:** `gemini-embedding-2` (GA April 2026; replaces `gemini-embedding-001`
+  which shuts down 2026-07-14 — see
+  [decisions/embedding_model_migration_v1_to_v2.md](../../04_solution_strategy/decisions/embedding_model_migration_v1_to_v2.md)).
+- **Dimensionality:** Fixed at **768** (via Matryoshka truncation from the
+  native 3072) to match Firestore's KNN vector indexes.
 - **Concurrency:** `asyncio.to_thread` bridges the sync SDK into the async runtime.
-- **Batch API:** `get_embeddings_batch()` sends multiple texts in a single
-  `batchEmbedContents` call, reducing per-search embedding latency from ~15s
-  (3 sequential calls) to ~1–2s.
+- **Task type → inline prefix:** v2 removed the `task_type` config parameter;
+  the adapter translates each legacy value into an instruction prefix on the
+  input text (`RETRIEVAL_DOCUMENT` → `"title: | text: …"`, `RETRIEVAL_QUERY` →
+  `"task: search result | query: …"`, `SEMANTIC_SIMILARITY` → passthrough).
+  Unknown values raise `ValueError`.
+- **Batch API:** v2's `embed_content(contents=List[str])` returns a single
+  embedding (multimodal-parts semantics), not N embeddings. To preserve the
+  `get_embeddings_batch(texts) → list[vec]` contract, the adapter fans out
+  via `asyncio.gather` over N parallel single-content calls under the existing
+  semaphore. At our typical batch sizes (3–4 texts) the wall-clock cost is
+  comparable to the v1 batch path.
 
 ### 2.3 Throttling and 429 retry
 
@@ -67,8 +78,7 @@ adapter, so consolidation runs that fan out parallel `search_existing_facts`
 + `create_fact` tool calls can momentarily burst above Google's per-second
 limiter even when the per-minute quota has plenty of headroom.
 
-Defaults — sized for AI Studio Tier 2 (`gemini-embedding-001` = 5000 RPM
-sustained, ~83 RPS):
+Defaults — sized for AI Studio Tier 2 (5000 RPM sustained, ~83 RPS):
 
 | Knob                         | Default | Override env var              |
 | ---------------------------- | ------- | ----------------------------- |

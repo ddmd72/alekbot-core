@@ -28,5 +28,5 @@ async def test_embedding_generation():
         assert vector == [0.1, 0.2, 0.3]
         mock_client.models.embed_content.assert_called_once()
         call_args = mock_client.models.embed_content.call_args
-        assert call_args.kwargs['model'] == "models/gemini-embedding-001"
-        assert call_args.kwargs['contents'] == "test text"
+        assert call_args.kwargs['model'] == "gemini-embedding-2"
+        assert call_args.kwargs['contents'] == "title: | text: test text"
