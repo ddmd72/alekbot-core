@@ -119,8 +119,9 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
     assert call_kwargs["query"] == "glove size"
     assert call_kwargs["context"]["user_id"] == user_id
     assert call_kwargs["context"]["session_id"] == "s1"
-    assert call_kwargs["context"]["memory_context"] == []
     assert call_kwargs["context"]["params"] == {}
+    # memory_context field removed in F3.8 (no consumer in src/ — deletion 2026-05-29)
+    assert "memory_context" not in call_kwargs["context"]
 
 @pytest.mark.asyncio
 async def test_quick_agent_stores_and_passes_user_id(mock_deps):
