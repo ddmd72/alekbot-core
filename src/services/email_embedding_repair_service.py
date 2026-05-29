@@ -2,11 +2,13 @@
 EmailEmbeddingRepairService — re-embeds IndexedEmail docs where embedding_pending=True.
 See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §2.5.
 
-Runs every 6h via Cloud Scheduler. Picks up emails that failed embedding during
+Runs hourly via Cloud Scheduler. Picks up emails that failed embedding during
 initial indexing (transient API errors, quota exhaustion, etc.) and repairs them.
+When a full batch is processed, the worker handler re-enqueues another tick
+immediately so the queue drains without waiting for the next scheduler tick.
 """
 
-from typing import List
+from typing import Tuple
 
 from ..domain.email import IndexedEmail
 from ..ports.embedding_service import EmbeddingService
@@ -33,17 +35,21 @@ class EmailEmbeddingRepairService:
             f"🔧 EmailEmbeddingRepairService initialized. batch_size={batch_size}"
         )
 
-    async def run(self) -> int:
+    async def run(self) -> Tuple[int, bool]:
         """
         Fetch pending emails, generate embeddings, write back vectors.
-        Returns count of emails repaired.
+
+        Returns (repaired_count, has_more). `has_more` is True when the
+        fetched batch saturates `batch_size` — the worker handler uses this
+        to re-enqueue another tick immediately so the queue drains without
+        waiting for the next scheduler interval.
         """
         pending = await self._email_repo.get_pending_embeddings(
             limit=self._batch_size
         )
         if not pending:
             logger.info("🔧 EmailEmbeddingRepairService: no pending embeddings")
-            return 0
+            return 0, False
 
         logger.info(f"🔧 Repairing embeddings for {len(pending)} emails")
         repaired = 0
@@ -58,8 +64,12 @@ class EmailEmbeddingRepairService:
                     f"💥 Repair failed for {email.email_id}: {exc}"
                 )
 
-        logger.info(f"🔧 Repair complete: {repaired}/{len(pending)} succeeded")
-        return repaired
+        has_more = len(pending) >= self._batch_size
+        logger.info(
+            f"🔧 Repair complete: {repaired}/{len(pending)} succeeded "
+            f"(has_more={has_more})"
+        )
+        return repaired, has_more
 
     async def _generate_vectors(self, email: IndexedEmail) -> dict:
         """Generate all 4 vectors for a single email. Returns partial dict on failure."""

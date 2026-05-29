@@ -168,7 +168,7 @@ steps:
         gcloud scheduler jobs describe alek-bot-dev-repair-email-embeddings \
           --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
         && gcloud scheduler jobs update http alek-bot-dev-repair-email-embeddings \
-          --schedule="0 */6 * * *" \
+          --schedule="0 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"repair_email_embeddings"}' \
@@ -177,7 +177,7 @@ steps:
           --attempt-deadline=300s \
           --project=$PROJECT_ID \
         || gcloud scheduler jobs create http alek-bot-dev-repair-email-embeddings \
-          --schedule="0 */6 * * *" \
+          --schedule="0 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"repair_email_embeddings"}' \

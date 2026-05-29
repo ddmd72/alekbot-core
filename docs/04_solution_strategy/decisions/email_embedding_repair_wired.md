@@ -32,23 +32,29 @@ no LLM calls, idempotent on `embedding_pending` flag), so wiring is mechanical:
 constructor injection in `main.py`, dispatcher case in `WorkerHandler`, scheduler
 entry in cloudbuild. No domain changes, no port changes.
 
-## Schedule choice
+## Schedule + drain pattern
 
-Every 6 hours (`0 */6 * * *`). Rationale: pending embeddings are non-urgent
-(emails are still classified, just not search-indexable); a 6h window bounds
-the worst-case "email invisible to search" duration to ≤6h. Tighter cadence
-wastes scheduler invocations on empty repair runs at solo-use scale. Batch cap
-of 100/run holds API budget bounded regardless of pending volume.
+Hourly tick (`0 * * * *`), aligned with `start_email_indexing` cadence —
+failures from any given indexing tick are detected within ≤1h. The handler
+implements the same drain-on-demand pattern as `_handle_consolidation` and
+`_handle_email_indexing`: `EmailEmbeddingRepairService.run()` returns
+`(repaired_count, has_more)`; when `has_more=True` (batch saturated at
+`batch_size=100`), the handler immediately re-enqueues another
+`repair_email_embeddings` Cloud Task via `enqueue_worker_task`. The queue
+drains in back-to-back Cloud Tasks without waiting for the next scheduler
+interval. Batch cap of 100/run holds per-task API budget bounded.
 
 ## What changed
 
 - `src/handlers/worker_handler.py` — new optional `email_embedding_repair`
-  constructor param + `_handle_repair_email_embeddings()` method + dispatcher
-  case for `repair_email_embeddings`.
+  constructor param + `_handle_repair_email_embeddings()` method (with
+  re-enqueue on saturated batch) + dispatcher case for `repair_email_embeddings`.
+- `src/services/email_embedding_repair_service.py` — `run()` returns
+  `Tuple[int, bool]` (`repaired_count`, `has_more`).
 - `main.py` — constructs `EmailEmbeddingRepairService(email_repo, embedding)`
   conditional on both ports being present; injects into `WorkerHandler`.
 - `cloudbuild-{dev,prod}.yaml` — Cloud Scheduler entries with 300s
-  attempt-deadline (room for ~100 emails × ~3s embedding each, with margin).
+  attempt-deadline (room for 100 emails × ~3s embedding each, with margin).
 - `docs/07_deployment/SCHEDULERS.md` — full reference entry.
 - `CLAUDE.md` — `WorkerHandler` task-type list.
 
@@ -64,12 +70,7 @@ of 100/run holds API budget bounded regardless of pending volume.
 - **Move repair into `EmailIndexingService.run_indexing_job` as in-page retry.**
   Couples retry policy with foreground indexing latency; failed emails block
   the whole batch. Out-of-band repair is the correct shape.
-
-## Trigger to revisit
-
-- Pending volume consistently exceeds 100/run — increase `batch_size` or
-  tighten schedule cadence.
-- Pending volume stays at zero for >30 days — disable scheduler (failure
-  modes turned out to be theoretical, not actual).
-- Migration to a different embedding provider with different transient-failure
-  characteristics.
+- **One pass per scheduler tick, no re-enqueue.** Drain time would scale
+  linearly with the scheduler interval — 600 pending at hourly cadence would
+  take 6h to drain instead of seconds. Inconsistent with consolidation /
+  email-indexing handler patterns.

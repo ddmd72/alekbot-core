@@ -236,17 +236,24 @@ class WorkerHandler:
     async def _handle_repair_email_embeddings(self) -> Tuple[dict, int]:
         """Run one repair batch for indexed emails with `embedding_pending=True`.
 
-        Triggered by Cloud Scheduler every 6h. Cross-user, batch-capped at
-        EmailEmbeddingRepairService.batch_size (default 100). One pass per
-        Cloud Task — if more pending remain, the next scheduler tick picks
-        them up; no per-task re-enqueue.
+        Triggered hourly by Cloud Scheduler. Cross-user, batch-capped at
+        EmailEmbeddingRepairService.batch_size (default 100). When the batch
+        saturates, immediately re-enqueues another `repair_email_embeddings`
+        task so the queue drains without waiting for the next scheduler tick
+        — same pattern as `_handle_consolidation` and `_handle_email_indexing`.
         """
         if self._email_embedding_repair is None:
             logger.warning("[Worker] repair_email_embeddings: service not configured")
             return {"error": "repair service not configured"}, 501
 
-        repaired = await self._email_embedding_repair.run()
-        return {"status": "ok", "repaired": repaired}, 200
+        repaired, has_more = await self._email_embedding_repair.run()
+        if has_more and self._task_dispatch:
+            await self._task_dispatch.enqueue_worker_task(
+                task_type="repair_email_embeddings",
+                payload={},
+            )
+            logger.info("📬 [Worker] Re-enqueued next email-embedding repair tick")
+        return {"status": "ok", "repaired": repaired, "has_more": has_more}, 200
 
     # ------------------------------------------------------------------
     # Consolidation

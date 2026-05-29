@@ -56,13 +56,14 @@ def _make_service(batch_size: int = 100) -> tuple[EmailEmbeddingRepairService, A
 
 class TestEmailEmbeddingRepairService:
 
-    async def test_empty_pending_returns_zero(self):
+    async def test_empty_pending_returns_zero_and_not_has_more(self):
         service, repo, embedding = _make_service()
         repo.get_pending_embeddings = AsyncMock(return_value=[])
 
-        repaired = await service.run()
+        repaired, has_more = await service.run()
 
         assert repaired == 0
+        assert has_more is False
         embedding.get_embeddings_batch.assert_not_awaited()
         repo.update_vectors.assert_not_called()
 
@@ -71,9 +72,10 @@ class TestEmailEmbeddingRepairService:
         repo.get_pending_embeddings = AsyncMock(return_value=[_make_email("e1")])
         repo.update_vectors = AsyncMock()
 
-        repaired = await service.run()
+        repaired, has_more = await service.run()
 
         assert repaired == 1
+        assert has_more is False  # 1 < batch_size=100
         embedding.get_embeddings_batch.assert_awaited_once()
         repo.update_vectors.assert_awaited_once()
         args = repo.update_vectors.await_args
@@ -121,7 +123,7 @@ class TestEmailEmbeddingRepairService:
             [[0.1] * 768, [0.2] * 768, [0.3] * 768],
         ]
 
-        repaired = await service.run()
+        repaired, _ = await service.run()
 
         assert repaired == 1  # only e_ok succeeded
         assert repo.update_vectors.await_count == 1
@@ -134,3 +136,15 @@ class TestEmailEmbeddingRepairService:
         await service.run()
 
         repo.get_pending_embeddings.assert_awaited_once_with(limit=25)
+
+    async def test_saturated_batch_sets_has_more_true(self):
+        service, repo, embedding = _make_service(batch_size=2)
+        repo.get_pending_embeddings = AsyncMock(
+            return_value=[_make_email("e1"), _make_email("e2")]
+        )
+        repo.update_vectors = AsyncMock()
+
+        repaired, has_more = await service.run()
+
+        assert repaired == 2
+        assert has_more is True  # len(pending) == batch_size → potentially more
