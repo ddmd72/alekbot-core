@@ -32,7 +32,7 @@ from src.ports.fact_write_port import FactWritePort
 from src.ports.file_service import FileService
 from src.ports.iam_port import IAMPort, ResourceType, Action, Role
 from src.ports.invite_code_repository import InviteCodeRepository
-from src.ports.llm_port import LLMPort, LLMResponse
+from src.ports.llm_port import LLMPort, LLMResponse, LLMRequest, Message, MessagePart
 from src.ports.log_sink import LogSink
 from src.ports.platform_auth_port import PlatformAuthPort, IAMDecision
 from src.ports.quota_service import QuotaService
@@ -813,10 +813,7 @@ class TestLLMPortContract:
     def test_generate_content_signature(self):
         sig = inspect.signature(LLMPort.generate_content)
         params = list(sig.parameters.keys())
-        assert "self" in params
-        assert "model_name" in params
-        assert "system_instruction" in params
-        assert "messages" in params
+        assert params == ["self", "request"]
         assert sig.return_annotation == LLMResponse
 
 
@@ -828,9 +825,12 @@ class TestLLMPortMockImplementation:
     async def test_generate_content(self, mock_service):
         response = MagicMock(spec=LLMResponse)
         mock_service.generate_content.return_value = response
-        result = await mock_service.generate_content(
-            model_name="flash", system_instruction="be helpful", messages=[]
+        req = LLMRequest(
+            model_name="flash",
+            system_instruction="be helpful",
+            messages=[Message(role="user", parts=[MessagePart(text="hi")])],
         )
+        result = await mock_service.generate_content(req)
         assert result is response
 
     def test_supports_caching(self, mock_service):

@@ -43,19 +43,12 @@ class _ConcreteService(LLMPort):
         return "test-model"
 
 
-def test_generate_content_abc_has_request_parameter():
-    """ABC signature declares request as first optional parameter."""
+def test_generate_content_abc_is_request_only():
+    """ABC signature declares request as the sole required parameter."""
     sig = inspect.signature(LLMPort.generate_content)
     params = list(sig.parameters.keys())
-    assert "request" in params, "ABC must declare 'request' parameter"
-    assert params.index("request") == 1, "'request' must be first after 'self'"
-    assert sig.parameters["request"].default is None
-
-
-def test_generate_content_abc_model_name_is_optional():
-    """ABC signature has model_name as Optional (not positional required)."""
-    sig = inspect.signature(LLMPort.generate_content)
-    assert sig.parameters["model_name"].default is None
+    assert params == ["self", "request"]
+    assert sig.parameters["request"].default is inspect.Parameter.empty
 
 
 async def test_generate_content_request_path_accepted():

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, List, Optional, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict
 from ..domain.user import PerformanceTier
 
@@ -51,25 +51,8 @@ class LLMPort(ABC):
     """
 
     @abstractmethod
-    async def generate_content(
-        self,
-        request: Optional[LLMRequest] = None,
-        model_name: Optional[str] = None,
-        system_instruction: Optional[str] = None,
-        messages: Optional[List[Message]] = None,
-        tools: Optional[List[Any]] = None,
-        temperature: float = 0.7,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        cache_config: Optional[PromptCacheConfig] = None,
-        automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None,
-    ) -> LLMResponse:
-        """Generates content using the specified model and parameters.
-
-        Primary path: pass a fully-constructed ``LLMRequest`` via ``request``.
-        Legacy path: pass individual keyword arguments (backward-compat shim).
-        Implementations must handle both paths.
-        """
+    async def generate_content(self, request: LLMRequest) -> LLMResponse:
+        """Generate content from a fully-constructed ``LLMRequest``."""
         pass
 
     @abstractmethod

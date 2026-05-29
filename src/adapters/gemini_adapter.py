@@ -64,43 +64,23 @@ class GeminiAdapter(LLMPort):
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key)
 
-    async def generate_content(
-        self, 
-        request: Optional[LLMRequest] = None,
-        model_name: Optional[str] = None, 
-        system_instruction: Optional[str] = None, 
-        messages: Optional[List[Message]] = None, 
-        tools: Optional[List[Any]] = None,
-        temperature: float = 0.7,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        cache_config: Optional[PromptCacheConfig] = None,
-        automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None
-    ) -> LLMResponse:
-        force_tool_use: bool = False
-        max_tokens: Optional[int] = None
-        disable_safety: bool = False
-        use_grounding: bool = False
-        use_code_execution: bool = False
-        thinking: Optional[str] = None
-        request_timeout: Optional[int] = None
-        if request:
-            model_name = request.model_name
-            system_instruction = request.system_instruction
-            messages = request.messages
-            tools = request.tools
-            temperature = request.temperature
-            response_mime_type = request.response_mime_type
-            response_schema = request.response_schema
-            cache_config = request.cache_config
-            automatic_function_calling = request.automatic_function_calling
-            force_tool_use = request.force_tool_use
-            max_tokens = request.max_tokens
-            disable_safety = request.disable_safety
-            use_grounding = request.use_grounding
-            use_code_execution = request.use_code_execution
-            thinking = request.thinking
-            request_timeout = request.timeout
+    async def generate_content(self, request: LLMRequest) -> LLMResponse:
+        model_name = request.model_name
+        system_instruction = request.system_instruction
+        messages = request.messages
+        tools = request.tools
+        temperature = request.temperature
+        response_mime_type = request.response_mime_type
+        response_schema = request.response_schema
+        cache_config = request.cache_config
+        automatic_function_calling = request.automatic_function_calling
+        force_tool_use = request.force_tool_use
+        max_tokens = request.max_tokens
+        disable_safety = request.disable_safety
+        use_grounding = request.use_grounding
+        use_code_execution = request.use_code_execution
+        thinking = request.thinking
+        request_timeout = request.timeout
 
         # Gemini does not support prompt caching — strip the boundary marker transparently.
         # The marker is an HTML comment injected by PromptAssemblyService for Claude caching;
@@ -108,8 +88,6 @@ class GeminiAdapter(LLMPort):
         if system_instruction and PROMPT_CACHE_BOUNDARY in system_instruction:
             system_instruction = system_instruction.replace(PROMPT_CACHE_BOUNDARY, "").strip()
 
-        if not model_name or messages is None:
-            raise ValueError("model_name and messages are required for Gemini generate_content")
         # ====================================================================
         # MODIFIED Provider Refactor Session 6: Fail-fast unsupported feature validation
         # Plan: docs/architecture/provider_refactor/PROVIDER_REFACTOR_EXECUTION_PLAN.md

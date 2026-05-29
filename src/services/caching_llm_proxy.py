@@ -7,16 +7,12 @@ the request with cache_config before forwarding to the real adapter.
 See: docs/10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md
 """
 
-from typing import List, Any, Optional
-
 from ..ports.llm_port import (
     LLMPort,
     LLMRequest,
     LLMResponse,
     PromptCacheConfig,
     ProviderCapabilities,
-    AutomaticFunctionCallingConfig,
-    Message,
     MessagePart,
 )
 from ..domain.user import PerformanceTier
@@ -35,40 +31,12 @@ class CachingLLMProxy(LLMPort):
         self._inner = inner
         self._cache_config = cache_config
 
-    async def generate_content(
-        self,
-        request: Optional[LLMRequest] = None,
-        model_name: Optional[str] = None,
-        system_instruction: Optional[str] = None,
-        messages: Optional[List[Message]] = None,
-        tools: Optional[List[Any]] = None,
-        temperature: float = 0.7,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        cache_config: Optional[PromptCacheConfig] = None,
-        automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None,
-    ) -> LLMResponse:
-        # LLMRequest path (all current agents use this)
-        if request is not None:
-            if not request.cache_config and self._cache_config:
-                request = request.model_copy(
-                    update={"cache_config": self._cache_config}
-                )
-            return await self._inner.generate_content(request=request)
-
-        # Legacy parameter path (defensive coverage)
-        effective_cache = cache_config if cache_config else self._cache_config
-        return await self._inner.generate_content(
-            model_name=model_name,
-            system_instruction=system_instruction,
-            messages=messages,
-            tools=tools,
-            temperature=temperature,
-            response_mime_type=response_mime_type,
-            response_schema=response_schema,
-            cache_config=effective_cache,
-            automatic_function_calling=automatic_function_calling,
-        )
+    async def generate_content(self, request: LLMRequest) -> LLMResponse:
+        if not request.cache_config and self._cache_config:
+            request = request.model_copy(
+                update={"cache_config": self._cache_config}
+            )
+        return await self._inner.generate_content(request=request)
 
     def supports_caching(self) -> bool:
         return self._inner.supports_caching()

@@ -113,41 +113,20 @@ class OpenAIAdapter(LLMPort):
         )
         logger.info("✅ [OpenAIAdapter] Initialized: base_url=api.openai.com, timeout=300s")
 
-    async def generate_content(
-        self,
-        request: Optional[LLMRequest] = None,
-        model_name: Optional[str] = None,
-        system_instruction: Optional[str] = None,
-        messages: Optional[List[Message]] = None,
-        tools: Optional[List[Any]] = None,
-        temperature: float = 0.7,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        cache_config: Optional[PromptCacheConfig] = None,
-        automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None,
-    ) -> LLMResponse:
+    async def generate_content(self, request: LLMRequest) -> LLMResponse:
         """Generate content using OpenAI Responses API."""
-
-        # Unpack LLMRequest (primary path)
-        force_tool_use = False
-        use_grounding = False
-        thinking: Optional[str] = None
-        if request:
-            model_name = request.model_name
-            system_instruction = request.system_instruction
-            messages = request.messages
-            tools = request.tools
-            temperature = request.temperature
-            response_mime_type = request.response_mime_type
-            response_schema = request.response_schema
-            cache_config = request.cache_config
-            automatic_function_calling = request.automatic_function_calling
-            force_tool_use = request.force_tool_use
-            use_grounding = request.use_grounding
-            thinking = request.thinking
-
-        if not model_name or messages is None:
-            raise ValueError("model_name and messages are required for OpenAI generate_content")
+        model_name = request.model_name
+        system_instruction = request.system_instruction
+        messages = request.messages
+        tools = request.tools
+        temperature = request.temperature
+        response_mime_type = request.response_mime_type
+        response_schema = request.response_schema
+        cache_config = request.cache_config
+        automatic_function_calling = request.automatic_function_calling
+        force_tool_use = request.force_tool_use
+        use_grounding = request.use_grounding
+        thinking = request.thinking
 
         # Strip PROMPT_CACHE_BOUNDARY marker — OpenAI doesn't use it.
         if system_instruction and PROMPT_CACHE_BOUNDARY in system_instruction:
@@ -197,7 +176,7 @@ class OpenAIAdapter(LLMPort):
         )
         if system_instruction:
             create_kwargs["instructions"] = system_instruction
-        if request and request.max_tokens:
+        if request.max_tokens:
             create_kwargs["max_output_tokens"] = request.max_tokens
         if not self._is_reasoning_model(model_name):
             create_kwargs["temperature"] = temperature
@@ -228,7 +207,7 @@ class OpenAIAdapter(LLMPort):
         if cache_config and cache_config.enabled:
             create_kwargs["prompt_cache_retention"] = "24h"
 
-        request_timeout = request.timeout if request else None
+        request_timeout = request.timeout
         try:
             _coro = self.client.responses.create(**create_kwargs)
             response = await (

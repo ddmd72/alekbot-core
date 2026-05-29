@@ -55,10 +55,12 @@ async def test_claude_native_tools_fail_fast():
 
     with pytest.raises(ValueError, match="does not support automatic function calling"):
         await adapter.generate_content(
-            model_name="claude-sonnet-4-5",
-            system_instruction="test",
-            messages=[],
-            automatic_function_calling=AutomaticFunctionCallingConfig(enabled=True, mode="AUTO")
+            request=LLMRequest(
+                model_name="claude-sonnet-4-5",
+                system_instruction="test",
+                messages=[],
+                automatic_function_calling=AutomaticFunctionCallingConfig(enabled=True, mode="AUTO"),
+            )
         )
 
 
