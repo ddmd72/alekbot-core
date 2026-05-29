@@ -40,7 +40,6 @@ from ..services.prompt_component_service import PromptComponentService
 from ..infrastructure.agent_config import (
     MEMORY_SEARCH as MEMORY_SEARCH_CFG,
     WEB_SEARCH as WEB_SEARCH_CFG,
-    WEB_SEARCH_LIGHT as WEB_SEARCH_LIGHT_CFG,
     EMAIL_SEARCH as EMAIL_SEARCH_CFG,
     CONSOLIDATION as CONSOLIDATION_CFG,
     MAPS_SEARCH as MAPS_SEARCH_CFG,
@@ -62,7 +61,6 @@ from ..services.history_summary_service import HistorySummaryService
 from ..agents.core.router_agent import create_router_agent
 from ..agents.memory_search_agent import FactsMemoryAgent
 from ..agents.web_search_agent import WebSearchAgent
-from ..agents.web_search_light_agent import WebSearchLightAgent
 from ..agents.email_search_agent import EmailSearchAgent
 from ..agents.consolidation_agent import ConsolidationAgent
 from ..agents.maps_search_agent import MapsSearchAgent
@@ -380,19 +378,6 @@ class UserAgentFactory(AgentFactoryPort):
             user_id=user_id,
         )
 
-        web_search_light_context = self.context_builder.build("web_search_light", user_profile.config)
-        web_search_light_agent = WebSearchLightAgent(
-            config=AgentConfig(
-                agent_id=f"web_search_light_agent_{user_id}",
-                agent_type="web_search_light",
-                timeout_ms=WEB_SEARCH_LIGHT_CFG.timeout_ms,
-                capabilities=["web_search", "current_events"],
-            ),
-            execution_context=web_search_light_context,
-            prompt_builder=prompt_builder,
-            user_id=user_id,
-        )
-
         email_search_context = self.context_builder.build("email_search", user_profile.config)
         email_search_agent = EmailSearchAgent(
             config=AgentConfig(
@@ -492,7 +477,6 @@ class UserAgentFactory(AgentFactoryPort):
             smart_agent,
             memory_agent,
             web_agent,
-            web_search_light_agent,
             email_search_agent,
             maps_agent,
             compute_agent,
@@ -537,7 +521,6 @@ class UserAgentFactory(AgentFactoryPort):
             "smart_agent": smart_agent,
             "memory_agent": memory_agent,
             "web_agent": web_agent,
-            "web_search_light_agent": web_search_light_agent,
             "email_search_agent": email_search_agent,
             "maps_agent": maps_agent,
             "compute_agent": compute_agent,
@@ -808,7 +791,7 @@ class UserAgentFactory(AgentFactoryPort):
                 if entry is None:
                     continue
                 for key in ("router_agent", "quick_agent", "smart_agent",
-                            "memory_agent", "web_agent", "web_search_light_agent",
+                            "memory_agent", "web_agent",
                             "email_search_agent", "maps_agent", "compute_agent",
                             "tasks_agent", "notes_agent",
                             "consolidation_agent", "help_agent"):

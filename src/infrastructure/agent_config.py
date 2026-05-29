@@ -93,10 +93,7 @@ class QuickAgentConfig:
     # 300 s: covers PDF attachment parsing via markitdown (confirmed >60 s in production)
     timeout_ms: int = 300_000
     # Dispatch-time intent substitution (applied in QuickResponseAgent._delegate_quick).
-    # search_web → search_web_light: Quick routes web queries via the cheaper ECO-tier agent.
-    intent_remap: Dict[str, str] = field(
-        default_factory=lambda: {"search_web": "search_web_light"}
-    )
+    intent_remap: Dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -137,16 +134,6 @@ class MemorySearchAgentConfig:
 class WebSearchAgentConfig:
     temperature: float = 1.0
     timeout_ms: int = 90_000
-
-
-# ---------------------------------------------------------------------------
-# WebSearchLightAgent (src/agents/web_search_light_agent.py)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class WebSearchLightAgentConfig:
-    temperature: float = 1.0
-    timeout_ms: int = 30_000
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +234,7 @@ class ClaudeDeepResearchRunnerConfig:
 @dataclass
 class ComputeAgentConfig:
     temperature: float = 1.0
-    timeout_ms: int = 30_000     # single code_execution call, same ceiling as WebSearchLight
+    timeout_ms: int = 30_000     # single code_execution call
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +261,6 @@ QUICK = QuickAgentConfig()
 SMART = SmartAgentConfig()
 MEMORY_SEARCH = MemorySearchAgentConfig()
 WEB_SEARCH = WebSearchAgentConfig()
-WEB_SEARCH_LIGHT = WebSearchLightAgentConfig()
 CONSOLIDATION = ConsolidationAgentConfig()
 EMAIL_SEARCH = EmailSearchAgentConfig()
 EMAIL_CLASSIFICATION = EmailClassificationAgentConfig()

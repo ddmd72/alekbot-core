@@ -51,18 +51,16 @@ class AgentDescriptor:
         capability_descriptions:  per-intent human-readable descriptions
         internal:                 if True, intents are NOT shown to LLMs;
                                   used for implementation-level agents
-                                  (e.g. web_search_light — Quick calls it
-                                  internally via intent_remap, but LLMs see
-                                  only "search_web")
+                                  dispatched only by other agents internally.
         description:              agent-level fallback description
 
     Part B — what this agent needs (for orchestrators that delegate):
         allowed_intents:  frozenset of intent names this agent may call,
                           or None to allow all non-internal intents.
         intent_remap:     dispatch-time substitution applied AFTER intent
-                          selection. e.g. {"search_web": "search_web_light"}
-                          means: LLM picks search_web, coordinator receives
-                          search_web_light. Purely internal routing.
+                          selection. Empty by default; reserved for routing
+                          variants that need to map LLM-visible intents to
+                          internal equivalents without exposing the swap.
         intent_fanout:    dispatch-time 1:N expansion. e.g.
                           {"search_web": FanoutSpec(intents=["maps_query"],
                           hint="...")} means: when LLM picks search_web,
@@ -83,7 +81,7 @@ class AgentDescriptor:
             agent_type="quick_response",
             capabilities={},
             allowed_intents=None,        # all non-internal
-            intent_remap={"search_web": "search_web_light"},
+            intent_remap={},             # currently empty; mechanism kept for future routing variants
         )
     """
     # Identity

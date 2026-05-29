@@ -38,7 +38,6 @@ class Intent:
     SAVE_TO_MEMORY       = "save_to_memory"
     SEARCH_WEB           = "search_web"
     FETCH_URL            = "fetch_url"
-    SEARCH_WEB_LIGHT     = "search_web_light"
     SEARCH_EMAILS        = "search_emails"
     GET_EMAIL_DETAILS    = "get_email_details"
     GET_EMAIL_ATTACHMENT = "get_email_attachment"
@@ -138,16 +137,6 @@ WEB_SEARCH = AgentDescriptor(
             "url": "Full HTTP(S) URL to fetch and analyse (e.g. 'https://example.com/article')",
         },
     },
-)
-
-# internal=True: never shown to LLMs directly.
-# QuickAgent dispatches here via QUICK_RESPONSE.intent_remap.
-WEB_SEARCH_LIGHT = AgentDescriptor(
-    agent_id="web_search_light_agent",
-    agent_type="web_search_light",
-    capabilities={Intent.SEARCH_WEB_LIGHT: ExecutionMode.SYNC},
-    description="Lightweight real-time web search (ECO tier)",
-    internal=True,
 )
 
 MAPS_SEARCH = AgentDescriptor(
@@ -311,7 +300,7 @@ QUICK_RESPONSE = AgentDescriptor(
     agent_type="quick_response",
     capabilities={},        # Quick does not offer intents to other agents
     allowed_intents=None,   # can call all non-internal intents
-    intent_remap={},  # was: SEARCH_WEB → SEARCH_WEB_LIGHT (disabled — adaptive cognitive process handles depth)
+    intent_remap={},
     intent_fanout={
         Intent.SEARCH_WEB: FanoutSpec(
             intents=[Intent.MAPS_QUERY],
@@ -542,7 +531,6 @@ DOMAIN_RESEARCHER = AgentDescriptor(
 ALL_DESCRIPTORS = [
     MEMORY_SEARCH,
     WEB_SEARCH,
-    WEB_SEARCH_LIGHT,
     EMAIL_SEARCH,
     MAPS_SEARCH,
     COMPUTE,

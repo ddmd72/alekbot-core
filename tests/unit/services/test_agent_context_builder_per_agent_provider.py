@@ -394,7 +394,6 @@ _FACTORY_AGENT_TYPES = [
     "notes",
     "facts_memory",
     "web_search",
-    "web_search_light",
     "email_search",
     "maps_search",
     "compute",

@@ -47,12 +47,6 @@ class AgentProviderStrategy:
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },
-        "web_search_light": {
-            "default_provider": "gemini",
-            "allowed_providers": ["gemini", "openai", "claude"],
-            "required_capabilities": ["native_tools"],
-            "fallback": None
-        },
         "consolidation": {
             "default_provider": "claude",
             "allowed_providers": ["claude", "gemini", "openai"],

@@ -8,7 +8,7 @@ from google.genai import types
 
 
 def create_google_search_tool() -> types.Tool:
-    """Create a Google Search grounding tool for WebSearchAgent / WebSearchLightAgent."""
+    """Create a Google Search grounding tool for WebSearchAgent."""
     return types.Tool(google_search=types.GoogleSearch())
 
 
