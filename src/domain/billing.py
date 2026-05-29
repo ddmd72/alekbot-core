@@ -101,10 +101,11 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "claude-haiku-4-5-20251001":         {"input": 1.00,  "output": 5.00,  "cache_read": 0.10, "cache_write": 1.25},
     "claude-sonnet-4-6":                 {"input": 3.00,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-6":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
-    # --- OpenAI (gpt-5.4 family, Mar 2026) ---
+    # --- OpenAI (gpt-5.4 family, Mar 2026; gpt-5.5-pro for ULTRA tier from 2026-05-30) ---
     "gpt-5.4-nano":                      {"input": 0.20,  "output": 1.25,  "cache_read": 0.10},
     "gpt-5.4-mini":                      {"input": 0.75,  "output": 4.50,  "cache_read": 0.10},
     "gpt-5.4":                           {"input": 2.50,  "output": 15.00, "cache_read": 0.10},
+    "gpt-5.5-pro":                       {"input": 30.00, "output": 180.00, "cache_read": 0.10},
     # legacy model IDs (gpt-5 family, Aug–Dec 2025)
     "gpt-5.2":                           {"input": 1.75,  "output": 14.00, "cache_read": 0.10},
     "gpt-5-nano":                        {"input": 0.05,  "output": 0.40,  "cache_read": 0.10},

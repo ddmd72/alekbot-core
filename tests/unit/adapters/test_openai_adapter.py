@@ -83,6 +83,15 @@ def test_openai_model_for_tier():
     assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-5.4"
 
 
+def test_openai_model_for_tier_ultra():
+    """ULTRA tier maps to gpt-5.5-pro (upgraded from gpt-5.4-pro on 2026-05-30).
+
+    Same price, newer model. See decisions/openai_ultra_tier_to_gpt_5_5_pro.md.
+    """
+    adapter = OpenAIAdapter(api_key="test-key")
+    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "gpt-5.5-pro"
+
+
 def test_openai_unsupported_tier_raises():
     adapter = OpenAIAdapter(api_key="test-key")
 

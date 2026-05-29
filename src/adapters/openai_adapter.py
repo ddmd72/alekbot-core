@@ -67,10 +67,13 @@ class OpenAIAdapter(LLMPort):
 
     # ========================================================================
     # Tier-to-model mapping
-    # ECO:         gpt-5.4-nano  (cheapest, fastest)
-    # BALANCED:    gpt-5.4-mini  (mid-tier quality + reasoning support)
-    # PERFORMANCE: gpt-5.4       (flagship)
-    # ULTRA:       gpt-5.4-pro   (highest quality)
+    # ECO:         gpt-5.4-nano  (cheapest, fastest; no 5.5-nano exists)
+    # BALANCED:    gpt-5.4-mini  (mid-tier quality + reasoning support; no 5.5-mini exists)
+    # PERFORMANCE: gpt-5.4       (lower-cost frontier; 5.5 is 2× the cost and 5.4 has no
+    #                             deprecation deadline; see
+    #                             decisions/openai_ultra_tier_to_gpt_5_5_pro.md)
+    # ULTRA:       gpt-5.5-pro   (highest quality; upgraded from 5.4-pro 2026-05-30 —
+    #                             same price ($30/$180), better benchmarks)
     # TIERx:       gpt-5.4-nano  (reserved slots, default to ECO)
     # Verify model IDs at https://platform.openai.com/docs/models
     # ========================================================================
@@ -78,7 +81,7 @@ class OpenAIAdapter(LLMPort):
         PerformanceTier.ECO:         "gpt-5.4-nano",
         PerformanceTier.BALANCED:    "gpt-5.4-mini",
         PerformanceTier.PERFORMANCE: "gpt-5.4",
-        PerformanceTier.ULTRA:       "gpt-5.4-pro",
+        PerformanceTier.ULTRA:       "gpt-5.5-pro",
         PerformanceTier.TIER1:       "gpt-5.4-nano",
         PerformanceTier.TIER2:       "gpt-5.4-nano",
         PerformanceTier.TIER3:       "gpt-5.4-nano",
