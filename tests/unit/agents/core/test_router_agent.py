@@ -479,6 +479,38 @@ class TestRouterAgentLlmTriage:
 
         assert response.result["routed_to"] == "smart_agent"
 
+    @pytest.mark.asyncio
+    async def test_fallback_path_injects_task_complexity_into_routed_context(
+        self, router_config, mock_llm, mock_prompt_builder, mock_coordinator
+    ):
+        """LLM exception → rule-based fallback → routed message must still carry
+        a `task_complexity` key in context. Defeats audit-claim F2.6/F2.10
+        ('cost model bypassed when triage fails')."""
+        mock_llm.generate_content.side_effect = Exception("LLM failed")
+        ec = AgentExecutionContext(
+            agent_type="router",
+            provider=mock_llm,
+            model_name="gemini-flash",
+            tier=PerformanceTier.ECO,
+            capabilities=ProviderCapabilities(),
+            resilience_port=InMemoryProviderResilience(),
+        )
+        agent = RouterAgent(
+            config=router_config,
+            execution_context=ec,
+            coordinator=mock_coordinator,
+            prompt_builder=mock_prompt_builder,
+        )
+
+        await agent.execute(create_query_message("Які у мене машини?"))
+
+        routed_msg = mock_coordinator.route_message.call_args[0][0]
+        assert "task_complexity" in routed_msg.context
+        assert routed_msg.context["task_complexity"] is not None
+        # Non-simple personal request → SIMPLE_ANALYTICS via build_routing_metadata
+        # fallback branch (rule-based dict has is_personal=True → is_simple becomes False).
+        assert routed_msg.context["task_complexity"] == "simple_analytics"
+
 
 # ============================================================================
 # Edge Cases Tests
