@@ -113,39 +113,19 @@ class ClaudeAdapter(LLMPort):
             timeout=anthropic.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
         )
 
-    async def generate_content(
-        self, 
-        request: Optional[LLMRequest] = None,
-        model_name: Optional[str] = None, 
-        system_instruction: Optional[str] = None, 
-        messages: Optional[List[Message]] = None, 
-        tools: Optional[List[Any]] = None,
-        temperature: float = 0.8,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        cache_config: Optional[PromptCacheConfig] = None,
-        automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None
-    ) -> LLMResponse:
-        force_tool_use = False
-        use_grounding = False
-        max_tokens = 16_000  # default; overridden by request.max_tokens when set
-        if request:
-            model_name = request.model_name
-            system_instruction = request.system_instruction
-            messages = request.messages
-            tools = request.tools
-            temperature = request.temperature
-            response_mime_type = request.response_mime_type
-            response_schema = request.response_schema
-            cache_config = request.cache_config
-            automatic_function_calling = request.automatic_function_calling
-            force_tool_use = request.force_tool_use
-            use_grounding = request.use_grounding
-            if request.max_tokens:
-                max_tokens = request.max_tokens
-
-        if not model_name or messages is None:
-            raise ValueError("model_name and messages are required for Claude generate_content")
+    async def generate_content(self, request: LLMRequest) -> LLMResponse:
+        model_name = request.model_name
+        system_instruction = request.system_instruction
+        messages = request.messages
+        tools = request.tools
+        temperature = request.temperature
+        response_mime_type = request.response_mime_type
+        response_schema = request.response_schema
+        cache_config = request.cache_config
+        automatic_function_calling = request.automatic_function_calling
+        force_tool_use = request.force_tool_use
+        use_grounding = request.use_grounding
+        max_tokens = request.max_tokens if request.max_tokens else 16_000
 
         # ====================================================================
         # MODIFIED Provider Refactor Session 22.1: Fix tool validation
@@ -213,7 +193,7 @@ class ClaudeAdapter(LLMPort):
 
         # Regular request
         # Claude API rejects tool_choice=null — must be omitted entirely when not forcing a tool
-        thinking_effort = request.thinking if request else None
+        thinking_effort = request.thinking
         # web-search-2025-03-05 is needed only for legacy web_search_20250305 (Haiku fallback).
         # New 20260209 tools are GA — no extra beta header required.
         beta_headers = ["prompt-caching-2024-07-31"]
@@ -273,7 +253,7 @@ class ClaudeAdapter(LLMPort):
         if _use_dynamic_search:
             llm_response = await self._grounded_stream_loop(create_kwargs)
         else:
-            request_timeout = request.timeout if request else None
+            request_timeout = request.timeout
 
             async def _do_stream() -> Any:
                 async with self.client.messages.stream(**create_kwargs) as stream:

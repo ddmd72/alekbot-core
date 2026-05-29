@@ -299,9 +299,11 @@ async def test_cache_boundary_stripped_from_system_instruction():
     system = f"{static}\n\n{PROMPT_CACHE_BOUNDARY}\n{dynamic}"
 
     await adapter.generate_content(
-        model_name="gpt-5-mini",
-        system_instruction=system,
-        messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+        request=LLMRequest(
+            model_name="gpt-5-mini",
+            system_instruction=system,
+            messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+        )
     )
 
     sent_instructions = captured_kwargs.get("instructions", "")
@@ -324,10 +326,12 @@ async def test_generate_content_excludes_temperature_for_gpt5():
     adapter.client.responses.create = mock_create
 
     await adapter.generate_content(
-        model_name="gpt-5-mini",
-        system_instruction="You are helpful.",
-        messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
-        temperature=0.8,
+        request=LLMRequest(
+            model_name="gpt-5-mini",
+            system_instruction="You are helpful.",
+            messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+            temperature=0.8,
+        )
     )
 
     assert "temperature" not in captured_kwargs
@@ -347,10 +351,12 @@ async def test_generate_content_includes_temperature_for_gpt4():
     adapter.client.responses.create = mock_create
 
     await adapter.generate_content(
-        model_name="gpt-4o",
-        system_instruction="You are helpful.",
-        messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
-        temperature=0.8,
+        request=LLMRequest(
+            model_name="gpt-4o",
+            system_instruction="You are helpful.",
+            messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+            temperature=0.8,
+        )
     )
 
     assert "temperature" in captured_kwargs
@@ -371,10 +377,12 @@ async def test_generate_content_json_mode():
     adapter.client.responses.create = mock_create
 
     await adapter.generate_content(
-        model_name="gpt-5-mini",
-        system_instruction="Return JSON.",
-        messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
-        response_mime_type="application/json",
+        request=LLMRequest(
+            model_name="gpt-5-mini",
+            system_instruction="Return JSON.",
+            messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+            response_mime_type="application/json",
+        )
     )
 
     assert captured_kwargs.get("text") == {"format": {"type": "json_object"}}
@@ -395,9 +403,11 @@ async def test_generate_content_returns_tool_calls():
     adapter.client.responses.create = mock_create
 
     response = await adapter.generate_content(
-        model_name="gpt-5-mini",
-        system_instruction="Use tools.",
-        messages=[Message(role="user", parts=[MessagePart(text="Find my vacation plans")])],
+        request=LLMRequest(
+            model_name="gpt-5-mini",
+            system_instruction="Use tools.",
+            messages=[Message(role="user", parts=[MessagePart(text="Find my vacation plans")])],
+        )
     )
 
     assert len(response.tool_calls) == 1
@@ -446,8 +456,10 @@ async def test_generate_content_store_true():
     adapter.client.responses.create = mock_create
 
     await adapter.generate_content(
-        model_name="gpt-5-mini",
-        messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+        request=LLMRequest(
+            model_name="gpt-5-mini",
+            messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+        )
     )
 
     assert captured_kwargs.get("store") is True
@@ -497,8 +509,10 @@ async def test_use_grounding_false_does_not_inject_web_search():
     adapter.client.responses.create = mock_create
 
     await adapter.generate_content(
-        model_name="gpt-5-mini",
-        messages=[Message(role="user", parts=[MessagePart(text="Hello")])],
+        request=LLMRequest(
+            model_name="gpt-5-mini",
+            messages=[Message(role="user", parts=[MessagePart(text="Hello")])],
+        )
     )
 
     tools_sent = captured_kwargs.get("tools", [])

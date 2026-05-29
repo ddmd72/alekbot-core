@@ -71,10 +71,12 @@ async def test_gemini_prompt_caching_fails_fast():
 
     with pytest.raises(ValueError, match="does not support prompt caching"):
         await adapter.generate_content(
-            model_name="gemini-3-flash-preview",
-            system_instruction="test",
-            messages=[],
-            cache_config=cache_config
+            request=LLMRequest(
+                model_name="gemini-3-flash-preview",
+                system_instruction="test",
+                messages=[],
+                cache_config=cache_config,
+            )
         )
 
 

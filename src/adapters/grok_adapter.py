@@ -108,37 +108,18 @@ class GrokAdapter(LLMPort):
             f"✅ [GrokAdapter] Initialized: base_url={self.base_url}, timeout=60s"
         )
 
-    async def generate_content(
-        self,
-        request: Optional[LLMRequest] = None,
-        model_name: Optional[str] = None,
-        system_instruction: Optional[str] = None,
-        messages: Optional[List[Message]] = None,
-        tools: Optional[List[Any]] = None,
-        temperature: float = 0.7,
-        response_mime_type: Optional[str] = None,
-        response_schema: Optional[Any] = None,
-        cache_config: Optional[PromptCacheConfig] = None,
-        automatic_function_calling: Optional[AutomaticFunctionCallingConfig] = None
-    ) -> LLMResponse:
+    async def generate_content(self, request: LLMRequest) -> LLMResponse:
         """Generate content using Grok API."""
-        
-        # Extract from request if provided
-        force_tool_use = False
-        if request:
-            model_name = request.model_name
-            system_instruction = request.system_instruction
-            messages = request.messages
-            tools = request.tools
-            temperature = request.temperature
-            response_mime_type = request.response_mime_type
-            response_schema = request.response_schema
-            cache_config = request.cache_config
-            automatic_function_calling = request.automatic_function_calling
-            force_tool_use = request.force_tool_use
-
-        if not model_name or messages is None:
-            raise ValueError("model_name and messages are required for Grok generate_content")
+        model_name = request.model_name
+        system_instruction = request.system_instruction
+        messages = request.messages
+        tools = request.tools
+        temperature = request.temperature
+        response_mime_type = request.response_mime_type
+        response_schema = request.response_schema
+        cache_config = request.cache_config
+        automatic_function_calling = request.automatic_function_calling
+        force_tool_use = request.force_tool_use
 
         # Validate unsupported features
         if cache_config and cache_config.enabled:
@@ -159,7 +140,7 @@ class GrokAdapter(LLMPort):
 
         # Inject native Grok search tools when grounding is requested.
         # Bypasses _convert_tools() — native tools are already in Grok dict format.
-        if request and request.use_grounding:
+        if request.use_grounding:
             grok_native = [{"type": "web_search"}, {"type": "web_fetch"}]
             openai_tools = grok_native + (openai_tools or [])
 
@@ -178,7 +159,7 @@ class GrokAdapter(LLMPort):
             messages=openai_messages,
             temperature=temperature,
         )
-        if request and request.max_tokens:
+        if request.max_tokens:
             create_kwargs["max_tokens"] = request.max_tokens
         if use_json_mode:
             create_kwargs["response_format"] = {"type": "json_object"}
@@ -187,7 +168,7 @@ class GrokAdapter(LLMPort):
             create_kwargs["tool_choice"] = "required" if force_tool_use else "auto"
 
         # Make API call
-        request_timeout = request.timeout if request else None
+        request_timeout = request.timeout
         try:
             _coro = self.client.chat.completions.create(**create_kwargs)
             completion = await (
