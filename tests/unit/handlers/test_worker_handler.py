@@ -1197,3 +1197,50 @@ class TestHandleBillingDailySummary:
         assert "Alice" in posted_text
         assert "1,000" in posted_text
         assert "Yesterday" in posted_text
+
+
+# ---------------------------------------------------------------------------
+# _handle_repair_email_embeddings + dispatcher routing
+# ---------------------------------------------------------------------------
+
+class TestHandleRepairEmailEmbeddings:
+    """R13.1 — EmailEmbeddingRepairService wire-up verification.
+
+    Pins the contract: dispatcher routes `repair_email_embeddings` task_type
+    to the new handler, and the handler returns 501 when the service is not
+    configured (preserving the optional-dependency pattern of other handlers)."""
+
+    async def test_missing_service_returns_501(self):
+        worker, _ = _make_full_worker()
+        worker._email_embedding_repair = None
+
+        result, status = await worker._handle_repair_email_embeddings()
+
+        assert status == 501
+        assert "not configured" in result["error"]
+
+    async def test_runs_service_and_returns_repaired_count(self):
+        worker, _ = _make_full_worker()
+        repair_service = AsyncMock()
+        repair_service.run = AsyncMock(return_value=42)
+        worker._email_embedding_repair = repair_service
+
+        result, status = await worker._handle_repair_email_embeddings()
+
+        assert status == 200
+        assert result == {"status": "ok", "repaired": 42}
+        repair_service.run.assert_awaited_once()
+
+    async def test_dispatcher_routes_repair_task_type(self):
+        worker, _ = _make_full_worker()
+        repair_service = AsyncMock()
+        repair_service.run = AsyncMock(return_value=7)
+        worker._email_embedding_repair = repair_service
+
+        result_tuple = await worker.handle({"task_type": "repair_email_embeddings"})
+
+        assert result_tuple is not None
+        result, status = result_tuple
+        assert status == 200
+        assert result["repaired"] == 7
+        repair_service.run.assert_awaited_once()
