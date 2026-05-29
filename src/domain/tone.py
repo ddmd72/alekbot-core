@@ -27,11 +27,19 @@ class UserTone(str, Enum):
         return tone in {cls.CASUAL, cls.FRIENDLY, cls.PLAYFUL, cls.NEUTRAL}
 
     @classmethod
-    def validate(cls, tone: str) -> str:
-        """Validate tone string and fall back to friendly on invalid input."""
-        if tone in cls._value2member_map_:
-            return str(tone)
-        return str(cls.FRIENDLY.value)
+    def validate(cls, tone) -> str:
+        """Validate tone (str or UserTone) and return its canonical lowercase value.
+
+        Falls back to "friendly" on invalid input. Accepts both raw strings
+        and UserTone members; always returns the underlying string value so
+        downstream comparisons (against enum.value or against equal strings)
+        are stable across Python 3.10/3.11+ str-Enum repr changes.
+        """
+        if isinstance(tone, cls):
+            return tone.value
+        if isinstance(tone, str) and tone in cls._value2member_map_:
+            return tone
+        return cls.FRIENDLY.value
 
 
 def build_routing_metadata(classification: dict) -> RoutingMetadata:
