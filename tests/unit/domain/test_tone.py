@@ -64,13 +64,8 @@ class TestBuildRoutingMetadataFallback:
         assert "web_search" in result.needs_tools
 
     def test_fallback_sets_user_tone(self):
-        # Fallback path always populates user_tone; exact representation is
-        # downstream of UserTone.validate (str-enum stringification quirks
-        # on Python 3.11+ are a separate concern, not load-bearing for
-        # cost-model invariant).
         result = build_routing_metadata({"is_simple": True})
-        assert result.user_tone is not None
-        assert "friendly" in str(result.user_tone).lower()
+        assert result.user_tone == "friendly"
 
     def test_empty_classification_still_returns_valid_metadata(self):
         result = build_routing_metadata({})
