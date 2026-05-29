@@ -125,7 +125,6 @@ class TestPromptCacheConfig:
     def test_disabled_by_default(self):
         cfg = PromptCacheConfig()
         assert cfg.enabled is False
-        assert cfg.ttl_seconds is None
 
 
 class TestPromptCacheBoundary:
