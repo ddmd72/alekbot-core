@@ -60,7 +60,7 @@ async def test_injects_cache_config_when_request_has_none(proxy, mock_inner, sam
 
 async def test_preserves_explicit_cache_config(proxy, mock_inner):
     """Proxy does NOT override explicit cache_config set by caller."""
-    explicit_config = PromptCacheConfig(enabled=False, ttl_seconds=60)
+    explicit_config = PromptCacheConfig(enabled=False)
     request = LLMRequest(
         model_name="claude-opus-4",
         messages=[Message(role="user", parts=[MessagePart(text="hello")])],

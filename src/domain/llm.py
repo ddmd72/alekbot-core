@@ -66,9 +66,6 @@ class PromptCacheConfig(BaseModel):
     # 5-minute ephemeral TTL — single-turn calls would pay the +25% cache
     # write surcharge with no read to amortize it.
     cache_last_message: bool = False
-    ttl_seconds: Optional[int] = None   # Reserved: provider-managed TTL (Claude ephemeral = 5 min)
-    cache_scope: str = "user"           # Reserved: future per-scope invalidation
-    cache_key: Optional[str] = None     # Reserved: future manual cache key control
 
 
 class CacheMetadata(BaseModel):

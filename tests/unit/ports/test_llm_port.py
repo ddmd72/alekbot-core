@@ -69,14 +69,6 @@ async def test_generate_content_request_path_accepted():
     assert result.text == "ok"
 
 
-def test_prompt_cache_config_reserved_fields_documented():
-    """Reserved fields exist and have expected defaults."""
-    cfg = PromptCacheConfig(enabled=True)
-    assert cfg.ttl_seconds is None
-    assert cfg.cache_scope == "user"
-    assert cfg.cache_key is None
-
-
 # ---------------------------------------------------------------------------
 # ProviderCapabilities and LLMRequest defaults
 # ---------------------------------------------------------------------------
