@@ -7,8 +7,8 @@ immediately — the actual 5–60 minute research runs in the background.
 
 Delivery-agnostic: the agent calls port.create_interaction() and returns ACK.
 The adapter owns delivery:
-  GeminiDeepResearchAdapter → enqueues Cloud Task (polling loop)
   OpenAIDeepResearchAdapter → creates response with webhook_url (push delivery)
+  ClaudeDeepResearchAdapter → enqueues agent_execution Cloud Task → Cloud Run Job
 
 Orchestration responsibilities:
   1. Receive {query, language} from Smart Agent after preparation protocol.

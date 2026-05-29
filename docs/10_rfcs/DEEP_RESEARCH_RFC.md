@@ -1,8 +1,8 @@
 # RFC: Deep Research Integration
 
-**Status:** Gemini backend implemented ✅ | Hexagonal fix applied ✅ | OpenAI migration: Implemented ✅ | Provider-agnostic refactor: Implemented ✅ | Claude runner implemented ✅ | Cloud Run Jobs migration: Implemented ✅
+**Status:** Gemini backend implemented ✅ → removed 2026-05-29 ❌ | Hexagonal fix applied ✅ | OpenAI migration: Implemented ✅ | Provider-agnostic refactor: Implemented ✅ | Claude runner implemented ✅ | Cloud Run Jobs migration: Implemented ✅
 **Date:** 2026-03-03
-**Implemented:** 2026-03-03 (Gemini); hexagonal fix 2026-03-03; OpenAI + provider-agnostic refactor 2026-03-07; Claude runner 2026-03-13; Cloud Run Jobs migration 2026-03-14
+**Implemented:** 2026-03-03 (Gemini); hexagonal fix 2026-03-03; OpenAI + provider-agnostic refactor 2026-03-07; Claude runner 2026-03-13; Cloud Run Jobs migration 2026-03-14; **Gemini backend removed 2026-05-29** (see [decisions/gemini_deep_research_adapter_removal.md](../04_solution_strategy/decisions/gemini_deep_research_adapter_removal.md))
 **Owner:** AI Engineering
 **Milestone:** Phase 2 — Async Specialist Agents
 **Depends on:** ACP_V2_SIMPLIFIED_RFC.md (ASYNC infrastructure)
@@ -16,7 +16,12 @@ Deep Research performs autonomous multi-step investigation (80–160 searches, 5
 execution) and delivers a cited long-form report as an HTML page via GCS link.
 
 This document covers the full lifecycle: initial Gemini implementation, the hexagonal
-architecture fix applied after initial release, and the planned OpenAI migration.
+architecture fix applied after initial release, the OpenAI migration, the Claude runner
+addition, and the 2026-05-29 removal of the Gemini backend.
+
+**Current state (post-2026-05-29):** Two backends — `ClaudeDeepResearchAdapter` (default,
+runs in a Cloud Run Job) and `OpenAIDeepResearchAdapter` (webhook delivery). The Gemini
+backend below is retained in this document as historical context — code has been removed.
 
 **Phase 1 — Gemini backend (implemented):**
 

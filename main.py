@@ -54,7 +54,6 @@ from src.adapters.telegram.response_channel import TelegramResponseChannel
 from src.services.user_notification_service import UserNotificationService
 from src.infrastructure.notification_sla import NOTIFICATION_SLA
 from src.handlers.worker_handler import WorkerHandler
-from src.adapters.gemini_deep_research_adapter import GeminiDeepResearchAdapter
 from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
 from src.adapters.cloud_run_jobs_adapter import CloudRunJobsAdapter
@@ -330,18 +329,11 @@ async def main():
         )
 
         # Async job adapters (Deep Research) — pure API clients, no queue logic.
-        # Both instantiated when API keys are present; per-user selection via
-        # UserBotConfig.agent_providers["deep_research"] ("gemini" | "openai").
-        # Tier → model mapping is adapter-internal (MODEL_TIERS dict).
+        # Per-user selection via UserBotConfig.agent_providers["deep_research"]
+        # ("claude" default, "openai" alternative). Tier → model mapping is adapter-internal.
         # Optional model_override pins a specific model from env var, bypassing tier mapping.
+        # Gemini provider removed 2026-05-29 — see decisions/gemini_deep_research_adapter_removal.md.
         job_registry = ProviderRegistry()
-        if config.get("GEMINI_API_KEY"):
-            job_registry.register("gemini", GeminiDeepResearchAdapter(
-                api_key=config["GEMINI_API_KEY"],
-                task_queue=agent_task_queue,
-                model_override=config.get("GEMINI_DEEP_RESEARCH_MODEL"),
-            ))
-            logger.info("🔬 Deep research adapter registered: provider=gemini")
         if config.get("OPENAI_API_KEY"):
             job_registry.register("openai", OpenAIDeepResearchAdapter(
                 api_key=config["OPENAI_API_KEY"],
@@ -523,6 +515,7 @@ async def main():
 
         # Services for WorkerHandler — wrap ports so the handler never imports ports directly
         from src.services.consolidation_service import ConsolidationService
+        from src.services.email_embedding_repair_service import EmailEmbeddingRepairService
         from src.services.reminders_service import RemindersService
         from src.services.task_dispatch_service import TaskDispatchService
         _consolidation_service = ConsolidationService(
@@ -538,6 +531,10 @@ async def main():
             user_repo=user_repo,
             task_dispatch=_task_dispatch_service,
         ) if (container.notes_adapter and _task_dispatch_service) else None
+        _email_embedding_repair_service = EmailEmbeddingRepairService(
+            email_repo=indexed_email_repo,
+            embedding=container.embedding_service,
+        ) if (indexed_email_repo and container.embedding_service) else None
 
         # Billing webhook — optional, wired only when BILLING_SLACK_WEBHOOK_URL is set
         _billing_webhook = None
@@ -567,6 +564,7 @@ async def main():
             email_review=container.email_review_service,
             account_repo=account_repo,
             billing_webhook=_billing_webhook,
+            email_embedding_repair=_email_embedding_repair_service,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

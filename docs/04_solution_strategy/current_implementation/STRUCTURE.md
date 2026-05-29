@@ -63,7 +63,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── firestore_user_repo.py # Firestore UserRepository implementation
 │   ├── firestore_whitelist_repo.py # Email/domain whitelist storage
 │   ├── gemini_adapter.py # Google Gemini Implementation
-│   ├── gemini_deep_research_adapter.py # 🆕 GeminiDeepResearchAdapter — wraps Gemini Deep Research SDK (google-genai)
 │   ├── gemini_embedding_adapter.py # Text embedding via text-embedding-004
 │   ├── gcs_file_storage_adapter.py # 🆕 GcsFileStorageAdapter — FileStoragePort impl; user file attachments with Finder-style dedup
 │   ├── gcs_media_adapter.py # 🆕 GCS bucket adapter for public media URLs (map images, Deep Research HTML reports)

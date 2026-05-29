@@ -2,7 +2,6 @@
 DeepResearchPort — port for background deep research job execution.
 
 Each adapter owns its delivery mechanism entirely:
-  GeminiDeepResearchAdapter  — submits job, enqueues Cloud Task for polling
   OpenAIDeepResearchAdapter  — submits job with webhook_url; OpenAI pushes result
   ClaudeDeepResearchAdapter  — enqueues agent_execution Cloud Task for ClaudeDeepResearchRunnerAgent
 
@@ -38,9 +37,10 @@ class DeepResearchPort(ABC):
         Submit a deep research job and arrange for result delivery.
 
         Delivery mechanism is adapter-specific:
-          GeminiDeepResearchAdapter → enqueues deep_research_polling Cloud Task.
           OpenAIDeepResearchAdapter → embeds user_id/account_id in OpenAI metadata;
                                       OpenAI echoes them back in the webhook payload.
+          ClaudeDeepResearchAdapter → enqueues agent_execution Cloud Task for the
+                                      ClaudeDeepResearchRunnerAgent (runs as Cloud Run Job).
 
         Args:
             query:          Full research brief (with language instruction appended).
@@ -61,8 +61,11 @@ class DeepResearchPort(ABC):
         """
         Poll the status of a running job.
 
-        Primary path: GeminiDeepResearchAdapter (polling loop in WorkerHandler).
-        Emergency fallback: OpenAIDeepResearchAdapter (primary delivery is webhook).
+        Used only by adapters that need explicit polling. Current adapters
+        (OpenAI, Claude) deliver results out-of-band (webhook / Cloud Run Job
+        completion), so this method is effectively unused in the active path.
+        Kept on the port for adapters that may need it (e.g. a future
+        polling-based provider).
 
         Returns:
             (status, payload) where:

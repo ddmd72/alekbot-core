@@ -193,8 +193,8 @@ from `file_data.path` (temp file from FileManagementAgent).
 ## Deep Research
 
 OpenAI provides a dedicated Deep Research API via the Responses endpoint.
-`OpenAIDeepResearchAdapter` implements `AsyncJobPort` — the same port as
-`GeminiDeepResearchAdapter`. Both are pure API clients.
+`OpenAIDeepResearchAdapter` implements `DeepResearchPort` — the same port as
+`ClaudeDeepResearchAdapter`. Both are pure API clients.
 
 ### Model
 
