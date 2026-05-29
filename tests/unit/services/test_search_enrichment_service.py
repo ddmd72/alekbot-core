@@ -233,29 +233,6 @@ class TestSafeResults:
 
 
 # ---------------------------------------------------------------------------
-# _limit_for_label()
-# ---------------------------------------------------------------------------
-
-class TestLimitForLabel:
-
-    def test_keyword_label(self):
-        svc = _make_service()
-        assert svc._limit_for_label("keyword") == svc._keyword_limit
-
-    def test_phrase_1_label(self):
-        svc = _make_service()
-        assert svc._limit_for_label("phrase_1") == svc._phrase_one_limit
-
-    def test_phrase_2_label(self):
-        svc = _make_service()
-        assert svc._limit_for_label("phrase_2") == svc._phrase_two_limit
-
-    def test_unknown_label_returns_total(self):
-        svc = _make_service()
-        assert svc._limit_for_label("unknown") == svc._total_limit
-
-
-# ---------------------------------------------------------------------------
 # _apply_rrf_ranking()
 # ---------------------------------------------------------------------------
 
@@ -343,34 +320,6 @@ class TestDeduplicateSemantic:
         kept_loose, count_loose = await svc._deduplicate_semantic([f1, f2], similarity_threshold=0.96)
         # With strict threshold=1.0, near-dupes are kept
         assert len(kept_strict) >= len(kept_loose)
-
-
-# ---------------------------------------------------------------------------
-# _search_by_phrase()
-# ---------------------------------------------------------------------------
-
-class TestSearchByPhrase:
-
-    async def test_empty_phrase_returns_empty(self):
-        svc = _make_service()
-        result = await svc._search_by_phrase("", "keyword")
-        assert result == []
-
-    async def test_phrase_returns_enriched_facts(self):
-        facts = [_make_fact("p1", "phrase result")]
-        svc = _make_service(results_map={"some phrase": facts})
-        result = await svc._search_by_phrase("some phrase", "keyword")
-        assert len(result) == 1
-        assert result[0].fact_id == "p1"
-        assert result[0].source == "keyword"
-
-    async def test_embedding_exception_returns_empty(self):
-        """Embedding service failure → returns [] instead of propagating."""
-        from unittest.mock import AsyncMock
-        svc = _make_service()
-        svc._embedding.get_embedding = AsyncMock(side_effect=RuntimeError("embedding down"))
-        result = await svc._search_by_phrase("query", "phrase_1")
-        assert result == []
 
 
 # ---------------------------------------------------------------------------

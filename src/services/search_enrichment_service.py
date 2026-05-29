@@ -248,63 +248,6 @@ class SearchEnrichmentService(SearchEnrichmentPort):
             biographical_dedup_count=biographical_dedup_count
         )
 
-    async def _search_by_phrase(
-        self,
-        phrase: str,
-        label: str
-    ) -> List[EnrichedFact]:
-        """
-        Search facts by phrase using RequestContext for account_id resolution.
-
-        SESSION_27: No owner_id parameter - uses implicit context.
-
-        Args:
-            phrase: Search phrase
-            label: Label for tracking (keyword/phrase_1/phrase_2)
-
-        Returns:
-            List of enriched facts
-        """
-        if not phrase:
-            return []
-
-        try:
-            query_vector = await self._embedding.get_embedding(
-                phrase,
-                task_type="RETRIEVAL_QUERY"
-            )
-            # SESSION_27: search_facts uses RequestContext automatically
-            facts = await self._repo.search_facts(
-                query_vector,
-                limit=self._limit_for_label(label)
-            )
-        except Exception as exc:
-            logger.warning(
-                "⚠️ [SearchEnrichmentService] Search failed for %s: %s",
-                label,
-                exc
-            )
-            return []
-
-        return [
-            EnrichedFact(
-                fact_id=fact.id,
-                content=fact.text,
-                source=label,
-                relevance_score=None
-            )
-            for fact in facts
-        ]
-
-    def _limit_for_label(self, label: str) -> int:
-        if label == "keyword":
-            return self._keyword_limit
-        if label == "phrase_1":
-            return self._phrase_one_limit
-        if label == "phrase_2":
-            return self._phrase_two_limit
-        return self._total_limit
-
     async def _deduplicate_semantic(
         self,
         facts: List[EnrichedFact],
