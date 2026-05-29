@@ -116,7 +116,6 @@ class GrokAdapter(LLMPort):
         messages: Optional[List[Message]] = None,
         tools: Optional[List[Any]] = None,
         temperature: float = 0.7,
-        stream_callback: Optional[Any] = None,
         response_mime_type: Optional[str] = None,
         response_schema: Optional[Any] = None,
         cache_config: Optional[PromptCacheConfig] = None,
@@ -137,7 +136,6 @@ class GrokAdapter(LLMPort):
             cache_config = request.cache_config
             automatic_function_calling = request.automatic_function_calling
             force_tool_use = request.force_tool_use
-            stream_callback = None
 
         if not model_name or messages is None:
             raise ValueError("model_name and messages are required for Grok generate_content")
@@ -172,10 +170,6 @@ class GrokAdapter(LLMPort):
             len(openai_messages),
             len(openai_tools) if openai_tools else 0
         )
-
-        # Streaming not implemented for MVP
-        if stream_callback:
-            logger.warning("[GrokAdapter] Streaming not implemented, falling back to regular request")
 
         # Build kwargs — only include tools/tool_choice when tools are present.
         # OpenAI API rejects tool_choice when tools is absent or empty.

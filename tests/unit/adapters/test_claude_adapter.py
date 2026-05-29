@@ -29,7 +29,6 @@ def test_claude_capabilities():
 
     assert caps.native_tools is False
     assert caps.context_caching is True
-    assert caps.streaming is True
     assert caps.vision is True
     assert caps.max_context_window == 200000
 

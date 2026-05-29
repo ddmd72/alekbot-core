@@ -72,7 +72,6 @@ class GeminiAdapter(LLMPort):
         messages: Optional[List[Message]] = None, 
         tools: Optional[List[Any]] = None,
         temperature: float = 0.7,
-        stream_callback: Optional[Any] = None,
         response_mime_type: Optional[str] = None,
         response_schema: Optional[Any] = None,
         cache_config: Optional[PromptCacheConfig] = None,
@@ -102,7 +101,6 @@ class GeminiAdapter(LLMPort):
             use_code_execution = request.use_code_execution
             thinking = request.thinking
             request_timeout = request.timeout
-            stream_callback = None
 
         # Gemini does not support prompt caching — strip the boundary marker transparently.
         # The marker is an HTML comment injected by PromptAssemblyService for Claude caching;
@@ -190,30 +188,6 @@ class GeminiAdapter(LLMPort):
                 if thinking else None
             ),
         )
-
-        if stream_callback:
-            logger.info(
-                "🔍 [GeminiAdapter] Request: model=%s contents_count=%s contents_summary=%s",
-                model_name,
-                len(contents),
-                [
-                    {
-                        "role": getattr(content, "role", None),
-                        "parts": len(getattr(content, "parts", []) or [])
-                    }
-                    for content in contents
-                ]
-            )
-            full_text = ""
-            _stream_coro = self.client.aio.models.generate_content_stream(
-                model=model_name, contents=contents, config=config
-            )
-            stream = await (asyncio.wait_for(_stream_coro, timeout=request_timeout) if request_timeout else _stream_coro)
-            async for chunk in stream:
-                chunk_text = self._extract_text(chunk)
-                full_text += chunk_text
-                await stream_callback(full_text)
-            return LLMResponse(text=full_text)
 
         logger.info(
             "🔍 [GeminiAdapter] Request: model=%s contents_count=%s contents_summary=%s",

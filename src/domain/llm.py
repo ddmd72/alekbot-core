@@ -81,7 +81,6 @@ class CacheMetadata(BaseModel):
 class ProviderCapabilities(BaseModel):
     """Capabilities supported by an LLM provider."""
     native_tools: bool = False
-    streaming: bool = True
     context_caching: bool = False
     vision: bool = False
     max_context_window: int = 32000
@@ -110,7 +109,6 @@ class LLMRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: Optional[int] = None
     tools: Optional[List[Any]] = None
-    stream: bool = False
     response_mime_type: Optional[str] = None
     response_schema: Optional[Any] = None
     cache_config: Optional[PromptCacheConfig] = None

@@ -76,7 +76,6 @@ async def test_generate_content_request_path_accepted():
 def test_provider_capabilities_defaults():
     caps = ProviderCapabilities()
     assert caps.native_tools is False
-    assert caps.streaming is True
     assert caps.context_caching is False
     assert caps.vision is False
     assert caps.max_context_window == 32000
@@ -92,4 +91,3 @@ def test_llm_request_defaults():
     assert request.temperature == 0.7
     assert request.max_tokens is None
     assert request.tools is None
-    assert request.stream is False

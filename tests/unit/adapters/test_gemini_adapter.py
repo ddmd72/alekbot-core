@@ -33,7 +33,6 @@ def test_gemini_capabilities():
 
     assert caps.native_tools is True
     assert caps.context_caching is False
-    assert caps.streaming is True
     assert caps.vision is True
     assert caps.max_context_window == 1000000
 

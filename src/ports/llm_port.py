@@ -59,7 +59,6 @@ class LLMPort(ABC):
         messages: Optional[List[Message]] = None,
         tools: Optional[List[Any]] = None,
         temperature: float = 0.7,
-        stream_callback: Optional[Any] = None,
         response_mime_type: Optional[str] = None,
         response_schema: Optional[Any] = None,
         cache_config: Optional[PromptCacheConfig] = None,
@@ -89,7 +88,7 @@ class LLMPort(ABC):
         Return provider capability flags for feature gating.
 
         Implementations should describe support for native tools, caching,
-        streaming, vision, and max context size.
+        vision, and max context size.
         """
         pass
 
