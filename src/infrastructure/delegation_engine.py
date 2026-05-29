@@ -153,8 +153,7 @@ class DelegationEngine:
             max_turns: Maximum delegation iterations.
             terminal_tool: Optional tool name that signals loop termination
                            (e.g. "deliver_response" for Smart).
-            intent_remap: Optional dispatch-time intent substitution
-                          (e.g. {"search_web": "search_web_light"} for Quick).
+            intent_remap: Optional dispatch-time intent substitution.
             intent_fanout: Optional dispatch-time 1:N expansion.
                            e.g. {"search_web": FanoutSpec(intents=["maps_query"],
                            hint="...")} dispatches both in parallel and merges

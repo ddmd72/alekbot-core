@@ -38,17 +38,6 @@ def test_get_tier_for_agent_returns_default_when_none():
     assert config.get_tier_for_agent("router") == PerformanceTier.ECO
 
 
-def test_web_search_light_default_tier_is_eco():
-    config = UserBotConfig()
-    assert config.get_tier_for_agent("web_search_light") == PerformanceTier.ECO
-
-
-def test_web_search_light_tier_override_works_with_stale_stored_config():
-    # Simulates old stored config without web_search_light key — class default should apply.
-    config = UserBotConfig(agent_tiers={"router": PerformanceTier.ECO, "quick": PerformanceTier.BALANCED})
-    assert config.get_tier_for_agent("web_search_light") == PerformanceTier.ECO
-
-
 def test_user_bot_config_provider_defaults_intact():
     config = UserBotConfig()
     assert config.provider_preference is None

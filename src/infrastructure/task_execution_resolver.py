@@ -49,8 +49,7 @@ class ExecutionOverride:
         thinking_effort: "low" / "medium" / "high"; ``None`` means "no
             override on top of agent default".
         intent_remap: dispatch-time substitutions applied by
-            ``DelegationEngine`` for this call only (e.g.
-            ``{"search_web": "search_web_light"}``). Empty dict = no remap.
+            ``DelegationEngine`` for this call only. Empty dict = no remap.
     """
     execution_context: AgentExecutionContext
     thinking_effort: Optional[str] = None

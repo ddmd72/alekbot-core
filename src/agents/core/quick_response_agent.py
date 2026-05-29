@@ -62,8 +62,8 @@ if TYPE_CHECKING:
 
 class QuickResponseAgent(BaseAgent):
     """
-    Handles complexity 1–5 requests. Functionally identical to SmartResponseAgent with
-    two differences: no refinement loop; search_web remapped to search_web_light.
+    Handles complexity 1–5 requests. Functionally identical to SmartResponseAgent
+    except for the absence of a refinement loop.
     """
 
     _descriptor = QUICK_RESPONSE
