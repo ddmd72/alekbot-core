@@ -17,25 +17,87 @@ _USER_ID_CTX: ContextVar[Optional[str]] = ContextVar("user_id", default=None)
 _tracer = None
 
 
+def _resolve_backend() -> str:
+    """Pick the tracing backend. Explicit TRACING_BACKEND wins; else legacy default.
+
+    Returns one of: ``cloud_trace`` | ``logfire`` | ``both`` | ``none``.
+    Legacy default (unset) preserves prior behavior: Cloud Trace in production,
+    nothing locally — so no environment starts exporting without opting in.
+    """
+    backend = os.getenv("TRACING_BACKEND", "").lower().strip()
+    if backend:
+        return backend
+    return "cloud_trace" if os.getenv("APP_ENV", "development").lower() == "production" else "none"
+
+
+def _make_cloud_trace_processor():
+    """Build a BatchSpanProcessor → Cloud Trace, or None on failure (e.g. no auth)."""
+    try:
+        return BatchSpanProcessor(CloudTraceSpanExporter())
+    except Exception as e:
+        print(f"⚠️ Failed to initialize Cloud Trace exporter: {e}")
+        return None
+
+
+def _init_logfire(service_name: str, also_cloud_trace: bool) -> bool:
+    """Configure Logfire as the global OTel provider. Returns False to fall back.
+
+    logfire.configure() replaces the global tracer provider, so the existing
+    get_tracer()/start_span() route through Logfire with no call-site changes.
+    For ``both``, Cloud Trace is attached as an additional span processor on the
+    same provider — every span fans out to both backends.
+    """
+    token = os.getenv("LOGFIRE_TOKEN", "")
+    if not token:
+        print("⚠️ TRACING_BACKEND requests Logfire but LOGFIRE_TOKEN is unset — skipping.")
+        return False
+    try:
+        import logfire
+    except ImportError:
+        print("⚠️ logfire not installed — skipping Logfire backend.")
+        return False
+
+    extra = []
+    if also_cloud_trace:
+        processor = _make_cloud_trace_processor()
+        if processor is not None:
+            extra.append(processor)
+
+    logfire.configure(
+        token=token,
+        service_name=service_name,
+        service_version=os.getenv("SERVICE_VERSION", "unknown"),
+        environment=os.getenv("APP_ENV", "development"),
+        console=False,
+        send_to_logfire=True,
+        additional_span_processors=extra or None,
+    )
+    return True
+
+
 def init_telemetry(service_name: str = "alek-core") -> None:
-    """Initialize OpenTelemetry with Cloud Trace exporter."""
+    """Initialize OpenTelemetry with the configured tracing backend(s)."""
     global _tracer
+
+    backend = _resolve_backend()
+
+    # Logfire owns the global provider (and optionally fans out to Cloud Trace).
+    if backend in ("logfire", "both"):
+        if _init_logfire(service_name, also_cloud_trace=(backend == "both")):
+            _tracer = trace.get_tracer(service_name)
+            return
+        # Logfire requested but unavailable — degrade to Cloud Trace on our own provider.
+        backend = "cloud_trace"
 
     resource = Resource.create({
         "service.name": service_name,
         "service.version": os.getenv("SERVICE_VERSION", "unknown")
     })
-
     provider = TracerProvider(resource=resource)
-    
-    # Only enable Cloud Trace in production to avoid local auth errors
-    if os.getenv("APP_ENV", "development").lower() == "production":
-        try:
-            exporter = CloudTraceSpanExporter()
-            processor = BatchSpanProcessor(exporter)
+    if backend in ("cloud_trace", "both"):
+        processor = _make_cloud_trace_processor()
+        if processor is not None:
             provider.add_span_processor(processor)
-        except Exception as e:
-            print(f"⚠️ Failed to initialize Cloud Trace exporter: {e}")
 
     trace.set_tracer_provider(provider)
     _tracer = trace.get_tracer(service_name)
