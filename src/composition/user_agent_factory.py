@@ -142,6 +142,7 @@ class UserAgentFactory(AgentFactoryPort):
         anthropic_client: Optional[object] = None,
         file_conversion_service: Optional[object] = None,
         file_storage: Optional[object] = None,
+        prompt_content_store: Optional[object] = None,
     ) -> None:
         self.config = config
         self.env_config = env_config
@@ -174,6 +175,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.anthropic_client = anthropic_client
         self.file_conversion_service = file_conversion_service
         self.file_storage = file_storage
+        self.prompt_content_store = prompt_content_store
 
         unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
         self._image_search = UnsplashAdapter(unsplash_key) if unsplash_key else None
@@ -510,6 +512,7 @@ class UserAgentFactory(AgentFactoryPort):
         for agent in agents_to_register:
             if agent is not None:
                 agent.coordinator = self.coordinator
+                agent._prompt_content_store = self.prompt_content_store
 
         cached = {
             "last_used": time.time(),
@@ -588,6 +591,7 @@ class UserAgentFactory(AgentFactoryPort):
                 return False
 
             agent.coordinator = self.coordinator
+            agent._prompt_content_store = self.prompt_content_store
             try:
                 self.coordinator.register_agent(agent)
             except ValueError:
