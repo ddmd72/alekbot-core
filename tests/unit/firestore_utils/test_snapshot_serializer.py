@@ -74,3 +74,29 @@ def test_pii_guard_flags_uuid_like_doc_id():
 def test_pii_guard_allows_named_system_tokens():
     assert ser.is_pii_doc("COGNITIVE_PROCESS_SMART",
                           {"token_id": "COGNITIVE_PROCESS_SMART", "content": "x"}) is False
+
+
+def test_relpath_layout():
+    assert ser.relpath_for("tokens_system", "X") == "tokens/system/X.groovy"
+    assert ser.relpath_for("tokens_user", "X") == "tokens/user/X.groovy"
+    assert ser.relpath_for("blueprints", "B") == "blueprints/B.yaml"
+    assert ser.relpath_for("profiles", "P") == "profiles/P.yaml"
+
+
+def test_plan_snapshot_serializes_and_skips_pii():
+    fetched = {
+        "tokens_system": {
+            "COGNITIVE_PROCESS_SMART": {"token_id": "COGNITIVE_PROCESS_SMART",
+                                        "category": "c", "class": "C", "content": "x", "metadata": {}},
+            "deadbeefdeadbeefdeadbeefdeadbeef": {"content": "leaked", "user_id": "u1"},  # PII
+        },
+        "tokens_user": {},
+        "blueprints": {"universal_agent_v1": {"blueprint_id": "universal_agent_v1",
+                                              "outer_class": "a", "class_order": []}},
+        "profiles": {},
+    }
+    files, skipped = ser.plan_snapshot(fetched)
+    assert "tokens/system/COGNITIVE_PROCESS_SMART.groovy" in files
+    assert "blueprints/universal_agent_v1.yaml" in files
+    assert "tokens_system/deadbeefdeadbeefdeadbeefdeadbeef" in skipped
+    assert not any("deadbeef" in p for p in files)  # PII doc not written
