@@ -1,0 +1,7 @@
+blueprint_id: pdf_planner_agent_v1
+class_order:
+- cognitive_process
+- output_format
+outer_class: PdfPlannerAgent extends Agent
+source_file: firestore_utils/uploads/pdf_planner_agent_v1.json
+uploaded_by: local_script

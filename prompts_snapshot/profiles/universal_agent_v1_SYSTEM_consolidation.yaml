@@ -1,0 +1,15 @@
+blueprint_id: universal_agent_v1
+metadata:
+  created_at: '2026-02-04'
+  description: Consolidation agent - fact extraction from conversations
+  note: Receives conversation_history in knowledge_base
+  use_case: Processes conversation history to extract biographical facts
+owner_type: SYSTEM
+owner_value: consolidation
+profile_id: universal_agent_v1_SYSTEM_consolidation
+slots:
+- non_overridable: true
+  type: token
+  value: COGNITIVE_PROCESS_CONSOLIDATION
+source_file: firestore_utils/uploads/consolidation_agent_profile.json
+uploaded_by: local_script

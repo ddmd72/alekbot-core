@@ -1,0 +1,11 @@
+agent_id: tasks
+blueprint_id: tasks_agent_v1
+source_file: firestore_utils/uploads/tasks.json
+tokens:
+  COGNITIVE_PROCESS_TASKS:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_TASKS:
+    non_overridable: true
+    order: 20
+uploaded_by: local_script

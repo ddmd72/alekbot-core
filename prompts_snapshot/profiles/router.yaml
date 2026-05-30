@@ -1,0 +1,8 @@
+agent_id: router
+blueprint_id: router_agent_v1
+source_file: firestore_utils/uploads/router.json
+tokens:
+  ROUTER_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

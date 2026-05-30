@@ -1,0 +1,40 @@
+agent_id: smart
+blueprint_id: universal_agent_v1
+source_file: firestore_utils/uploads/smart.json
+tokens:
+  ARCHETYPE_INTELLECTUAL_SNIPER:
+    order: 20
+  COGNITIVE_PROCESS_SMART:
+    order: 10
+  FEW_SHOT_EXAMPLES_RANEVSKAYA_ZHVANETSKY:
+    non_overridable: true
+    order: 90
+  HUMOR_PRESET_RANEVSKAYA:
+    order: 60
+  LANG_MIRROR:
+    non_overridable: false
+    order: 300
+  OUTPUT_FORMAT_JSON:
+    non_overridable: true
+    order: 100
+  POLICY_ALIGN_WITH_ANCHORS:
+    order: 350
+  POLICY_ANTI_GUARDIAN:
+    order: 330
+  POLICY_NO_OPEN_LOOPS:
+    order: 320
+  POLICY_PRIVACY:
+    order: 310
+  POLICY_WITTY_ACCENTUATION:
+    order: 340
+  PROTOCOL_AGENT_SELECTION:
+    non_overridable: true
+    order: 220
+  PROTOCOL_DEEP_RESEARCH_PREP:
+    non_overridable: true
+    order: '230'
+  VIBE_BATTLE_WEARY:
+    order: 30
+  VOICE_APHORISTIC:
+    order: 40
+uploaded_by: local_script

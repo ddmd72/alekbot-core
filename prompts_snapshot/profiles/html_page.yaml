@@ -1,0 +1,8 @@
+agent_id: html_page
+blueprint_id: html_page_agent_v1
+source_file: firestore_utils/uploads/html_page.json
+tokens:
+  COGNITIVE_PROCESS_HTML_PAGE:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

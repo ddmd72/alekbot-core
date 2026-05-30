@@ -1,0 +1,10 @@
+blueprint_id: memorysearch_agent_v1
+class_order:
+- identity
+- cognitive_process
+- examples
+- anti_patterns
+- output_format
+outer_class: MemorySearchAgent extends Agent
+source_file: firestore_utils/uploads/memorysearch_agent_v1.json
+uploaded_by: local_script

@@ -1,0 +1,20 @@
+agent_id: memorysearch
+blueprint_id: memorysearch_agent_v1
+source_file: firestore_utils/uploads/memorysearch.json
+tokens:
+  MEMORYSEARCH_ANTI_PATTERNS:
+    non_overridable: true
+    order: 40
+  MEMORYSEARCH_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 20
+  MEMORYSEARCH_EXAMPLES:
+    non_overridable: true
+    order: 30
+  MEMORYSEARCH_IDENTITY:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_MEMORY_SEARCH:
+    non_overridable: true
+    order: 50
+uploaded_by: local_script

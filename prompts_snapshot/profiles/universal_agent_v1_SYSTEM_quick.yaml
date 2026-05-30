@@ -1,0 +1,37 @@
+blueprint_id: universal_agent_v1
+owner_type: SYSTEM
+owner_value: quick
+profile_id: universal_agent_v1_SYSTEM_quick
+slots:
+- non_overridable: false
+  type: token
+  value: COGNITIVE_PROCESS_QUICK
+- non_overridable: false
+  type: token
+  value: HUMOR_PRESET_RANEVSKAYA
+- non_overridable: false
+  type: token
+  value: VOICE_APHORISTIC
+- non_overridable: false
+  type: token
+  value: RESPONSE_CONCISE
+- non_overridable: false
+  type: token
+  value: OUTPUT_FORMAT_JSON
+- non_overridable: true
+  type: token
+  value: PROTOCOL_QUICK_AGENT_SELECTION
+- non_overridable: true
+  type: slot
+  value: ARCHETYPE_INTELLECTUAL_SNIPER
+- non_overridable: true
+  type: slot
+  value: VIBE_BATTLE_WEARY
+- non_overridable: true
+  type: token
+  value: POLICY_OUTPUT_LANGUAGE
+- non_overridable: true
+  type: token
+  value: FEW_SHOT_EXAMPLES_RANEVSKAYA_ZHVANETSKY
+source_file: firestore_utils/uploads/universal_agent_v1_SYSTEM_quick.json
+uploaded_by: local_script

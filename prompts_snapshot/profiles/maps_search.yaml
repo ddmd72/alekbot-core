@@ -1,0 +1,14 @@
+agent_id: maps_search
+blueprint_id: maps_search_agent_v1
+source_file: firestore_utils/uploads/maps_search.json
+tokens:
+  MAPS_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 20
+  MAPS_OUTPUT_FORMAT:
+    non_overridable: true
+    order: 30
+  MAPS_PROPERTIES:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

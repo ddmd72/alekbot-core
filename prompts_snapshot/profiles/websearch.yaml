@@ -1,0 +1,14 @@
+agent_id: websearch
+blueprint_id: websearch_agent_v1
+source_file: firestore_utils/uploads/websearch.json
+tokens:
+  WEBSEARCH_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 20
+  WEBSEARCH_OUTPUT_FORMAT:
+    non_overridable: true
+    order: 30
+  WEBSEARCH_PROPERTIES:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

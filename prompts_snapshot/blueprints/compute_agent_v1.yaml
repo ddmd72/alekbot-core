@@ -1,0 +1,6 @@
+blueprint_id: compute_agent_v1
+class_order:
+- cognitive_process
+outer_class: ComputeAgent extends Agent
+source_file: firestore_utils/uploads/compute_agent_v1.json
+uploaded_by: local_script

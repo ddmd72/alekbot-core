@@ -1,0 +1,11 @@
+agent_id: doc_generator
+blueprint_id: doc_generator_agent_v1
+source_file: firestore_utils/uploads/doc_generator.json
+tokens:
+  DOC_GENERATOR_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_DOC_GENERATOR:
+    non_overridable: true
+    order: 20
+uploaded_by: local_script

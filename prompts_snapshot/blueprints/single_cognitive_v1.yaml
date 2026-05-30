@@ -1,0 +1,6 @@
+blueprint_id: single_cognitive_v1
+class_order:
+- cognitive_process
+outer_class: Agent
+source_file: firestore_utils/uploads/single_cognitive_v1.json
+uploaded_by: local_script

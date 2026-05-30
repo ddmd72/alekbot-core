@@ -1,0 +1,8 @@
+agent_id: notes
+blueprint_id: notes_agent_v1
+source_file: firestore_utils/uploads/notes.json
+tokens:
+  COGNITIVE_PROCESS_NOTES:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

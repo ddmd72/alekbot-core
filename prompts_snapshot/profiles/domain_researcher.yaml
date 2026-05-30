@@ -1,0 +1,8 @@
+agent_id: domain_researcher
+blueprint_id: single_cognitive_v1
+source_file: firestore_utils/uploads/domain_researcher.json
+tokens:
+  COGNITIVE_PROCESS_DOMAIN_RESEARCHER:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

@@ -1,0 +1,8 @@
+agent_id: compute
+blueprint_id: compute_agent_v1
+source_file: firestore_utils/uploads/compute.json
+tokens:
+  COMPUTE_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

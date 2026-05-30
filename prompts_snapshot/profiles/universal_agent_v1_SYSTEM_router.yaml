@@ -1,0 +1,8 @@
+blueprint_id: universal_agent_v1
+owner_type: SYSTEM
+owner_value: router
+profile_id: universal_agent_v1_SYSTEM_router
+slots:
+- non_overridable: true
+  type: token
+  value: COGNITIVE_PROCESS_ROUTER

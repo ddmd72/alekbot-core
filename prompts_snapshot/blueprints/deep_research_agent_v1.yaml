@@ -1,0 +1,6 @@
+blueprint_id: deep_research_agent_v1
+class_order:
+- cognitive_process
+outer_class: DeepResearchAgent extends Agent
+source_file: firestore_utils/uploads/deep_research_agent_v1.json
+uploaded_by: local_script

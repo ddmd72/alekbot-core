@@ -1,0 +1,13 @@
+blueprint_id: universal_agent_v1
+owner_type: SYSTEM
+owner_value: memorysearch
+profile_id: universal_agent_v1_SYSTEM_memorysearch
+slots:
+- non_overridable: true
+  type: token
+  value: COGNITIVE_PROCESS_MEMORY_SEARCH
+- non_overridable: true
+  type: token
+  value: OUTPUT_FORMAT_MEMORY_SEARCH
+source_file: firestore_utils/uploads/universal_agent_v1_SYSTEM_memorysearch.json
+uploaded_by: local_script

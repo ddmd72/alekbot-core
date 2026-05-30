@@ -1,0 +1,11 @@
+agent_id: doc_planner
+blueprint_id: doc_planner_agent_v1
+source_file: firestore_utils/uploads/doc_planner.json
+tokens:
+  DOC_PLANNER_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_DOC_PLANNER:
+    non_overridable: true
+    order: '20'
+uploaded_by: local_script

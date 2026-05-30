@@ -1,0 +1,17 @@
+agent_id: websearch_light
+blueprint_id: websearch_light_agent_v1
+source_file: firestore_utils/uploads/websearch_light.json
+tokens:
+  WEBSEARCH_LIGHT_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 20
+  WEBSEARCH_LIGHT_EXECUTION:
+    non_overridable: true
+    order: 40
+  WEBSEARCH_LIGHT_OUTPUT_FORMAT:
+    non_overridable: true
+    order: 30
+  WEBSEARCH_LIGHT_PROPERTIES:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script
