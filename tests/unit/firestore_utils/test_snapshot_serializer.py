@@ -42,3 +42,20 @@ def test_token_to_file_drops_volatile_keys():
     parsed = ser.token_from_file(ser.token_to_file(doc))
     assert "created_at" not in parsed and "updated_at" not in parsed
     assert parsed["content"] == "x"
+
+
+def test_blueprint_round_trip():
+    doc = {"blueprint_id": "universal_agent_v1", "outer_class": "agent",
+           "class_order": ["A", "B", "C"]}
+    assert ser.doc_from_yaml(ser.doc_to_yaml(doc)) == doc
+
+
+def test_profile_round_trip():
+    doc = {"blueprint_id": "universal_agent_v1",
+           "tokens": {"COGNITIVE_PROCESS_SMART": {"order": 10, "non_overridable": True}}}
+    assert ser.doc_from_yaml(ser.doc_to_yaml(doc)) == doc
+
+
+def test_doc_to_yaml_drops_volatile_keys():
+    doc = {"blueprint_id": "B", "outer_class": "a", "class_order": [], "updated_at": "x"}
+    assert "updated_at" not in ser.doc_from_yaml(ser.doc_to_yaml(doc))
