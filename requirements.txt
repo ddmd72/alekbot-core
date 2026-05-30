@@ -25,12 +25,16 @@ numpy>=1.24.0
 lark>=1.1.9
 
 # Observability
-opentelemetry-api
-opentelemetry-sdk
-opentelemetry-exporter-gcp-trace
-opentelemetry-instrumentation
+# Pinned as a set: logfire hard-pins opentelemetry-* to 1.41.x, so leaving
+# opentelemetry-exporter-gcp-trace unpinned makes pip backtrack through dozens of
+# versions in a clean build (30+ min hang). These exact versions are verified
+# co-installable and the GCP Cloud Trace exporter imports fine on sdk 1.41.1.
+opentelemetry-api==1.41.1
+opentelemetry-sdk==1.41.1
+opentelemetry-exporter-gcp-trace==1.11.0
+opentelemetry-instrumentation==0.62b1
+logfire==4.34.0  # OTel-native tracing backend; selected via TRACING_BACKEND (logfire|both)
 structlog
-logfire>=4.0,<5  # OTel-native tracing backend; selected via TRACING_BACKEND (logfire|both)
 
 # Testing
 pytest
