@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional, Any
 from ..domain.agent import AgentMessage, AgentResponse, AgentStatus, AgentIntent
 from ..utils.logger import logger
+from ..utils.telemetry import start_span
 from .agent_registry import AgentRegistry, AgentDescriptor, ExecutionMode
 from ..ports.task_queue import TaskQueue
 from ..ports.agent_factory_port import AgentFactoryPort
@@ -378,10 +379,19 @@ class AgentCoordinator:
         ts = datetime.now(timezone.utc).strftime("[%b %d, %H:%M UTC]")
         query = f"{ts} {query}"
 
-        if mode == ExecutionMode.SYNC:
-            return await self._execute_sync(manifest.agent_id, intent, query, context)
-        else:
-            return await self._execute_async(manifest.agent_id, intent, query, context, manifest.dispatch_deadline_s)
+        # Span wraps the actual specialist dispatch — the specialist's llm.call
+        # spans nest under this `delegation` node, giving orchestrator→specialist
+        # hierarchy in the trace.
+        with start_span("delegation", {
+            "delegation.intent": intent,
+            "delegation.agent_id": manifest.agent_id,
+            "delegation.mode": str(mode),
+            "delegation.calling_agent": calling_agent_id,
+        }):
+            if mode == ExecutionMode.SYNC:
+                return await self._execute_sync(manifest.agent_id, intent, query, context)
+            else:
+                return await self._execute_async(manifest.agent_id, intent, query, context, manifest.dispatch_deadline_s)
 
     async def _ensure_lazy_agent(
         self, agent_type: str, context: Dict[str, Any],

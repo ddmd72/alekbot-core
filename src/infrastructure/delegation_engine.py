@@ -23,6 +23,7 @@ from ..domain.messaging import SmartResponse
 from ..ports.llm_port import LLMRequest, LLMResponse, Message, MessagePart, ToolCall
 from ..domain.llm import build_tool_turn
 from ..utils.logger import logger
+from ..utils.telemetry import start_span
 
 from .agent_registry import FanoutSpec
 
@@ -129,6 +130,43 @@ class DelegationEngine:
         self._coordinator = coordinator
 
     async def execute(
+        self,
+        call_llm: Callable[[LLMRequest, int], Awaitable[LLMResponse]],
+        base_request: LLMRequest,
+        context: Dict[str, Any],
+        max_turns: int,
+        terminal_tool: Optional[str] = None,
+        intent_remap: Optional[Dict[str, str]] = None,
+        intent_fanout: Optional[Dict[str, FanoutSpec]] = None,
+        calling_agent_id: str = "delegation_engine",
+        max_retries: int = 1,
+        retry_backoff: float = 1.0,
+    ) -> DelegationResult:
+        """Run the delegation loop, wrapped in a ``delegation.loop`` tracing span.
+
+        Thin instrumentation wrapper — the validated loop body lives untouched in
+        ``_execute_loop`` so the span context is active across every turn. Each
+        turn's ``llm.call`` and each specialist ``delegation`` span nest under it.
+        """
+        with start_span("delegation.loop", {
+            "delegation.agent_id": calling_agent_id,
+            "delegation.max_turns": max_turns,
+            "delegation.terminal_tool": terminal_tool or "none",
+        }):
+            return await self._execute_loop(
+                call_llm=call_llm,
+                base_request=base_request,
+                context=context,
+                max_turns=max_turns,
+                terminal_tool=terminal_tool,
+                intent_remap=intent_remap,
+                intent_fanout=intent_fanout,
+                calling_agent_id=calling_agent_id,
+                max_retries=max_retries,
+                retry_backoff=retry_backoff,
+            )
+
+    async def _execute_loop(
         self,
         call_llm: Callable[[LLMRequest, int], Awaitable[LLMResponse]],
         base_request: LLMRequest,
