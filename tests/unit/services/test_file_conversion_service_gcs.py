@@ -176,6 +176,28 @@ class TestProcessAttachmentDedup:
         assert result.file_data["ref"] == "report (1).docx"
         assert result.file_data["original_name"] == "report.docx"
 
+    async def test_label_uses_deduped_ref_not_original_name(self, service, mock_storage):
+        """Label must carry the unique GCS ref, not the (possibly colliding) original
+        filename — the orchestrator addresses files by the label name when it calls
+        open_file / forwards to a specialist. If the label showed the original name
+        (e.g. Slack's generic 'image.png'), the exact-key download lands on a stale
+        object that squats the un-suffixed slot. See file_conversion_service.py:71.
+        """
+        mock_storage.upload = AsyncMock(return_value="image (4).png")
+
+        with patch("src.services.file_conversion_service.aiofiles") as mock_aiofiles:
+            mock_aio_ctx = AsyncMock()
+            mock_aio_ctx.read = AsyncMock(return_value=b"\x89PNG" + b"\x00" * 100)
+            mock_aiofiles.open.return_value.__aenter__ = AsyncMock(return_value=mock_aio_ctx)
+            mock_aiofiles.open.return_value.__aexit__ = AsyncMock()
+
+            result = await service.process_attachment(
+                "/tmp/image.png", "image.png", "image/png", "user1"
+            )
+
+        assert '[File: "image (4).png"' in result.text
+        assert "image.png\"" not in result.text  # original name must not be the label name
+
     async def test_no_original_name_when_not_deduped(self, service, mock_storage):
         mock_storage.upload = AsyncMock(return_value="report.docx")
 
