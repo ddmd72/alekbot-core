@@ -97,10 +97,11 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "gemini-3-flash-preview":            {"input": 0.50,  "output": 3.00,  "cache_read": 0.25},
     "deep-research-pro-preview-12-2025": {"input": 1.25,  "output": 10.00, "cache_read": 0.25},
     "models/gemini-3-pro-preview":       {"input": 2.00,  "output": 12.00, "cache_read": 0.25},
-    # --- Claude ---
+    # --- Claude (Opus 4.8 for ULTRA tier from 2026-05-30; same pricing as 4.7) ---
     "claude-haiku-4-5-20251001":         {"input": 1.00,  "output": 5.00,  "cache_read": 0.10, "cache_write": 1.25},
     "claude-sonnet-4-6":                 {"input": 3.00,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-6":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
+    "claude-opus-4-8":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
     # --- OpenAI (gpt-5.4 family, Mar 2026; gpt-5.5-pro for ULTRA tier from 2026-05-30) ---
     "gpt-5.4-nano":                      {"input": 0.20,  "output": 1.25,  "cache_read": 0.10},
     "gpt-5.4-mini":                      {"input": 0.75,  "output": 4.50,  "cache_read": 0.10},

@@ -76,7 +76,7 @@ class ClaudeAdapter(LLMPort):
         PerformanceTier.ECO:         "claude-haiku-4-5-20251001",
         PerformanceTier.BALANCED:    "claude-haiku-4-5-20251001",
         PerformanceTier.PERFORMANCE: "claude-sonnet-4-6",
-        PerformanceTier.ULTRA:       "claude-opus-4-7",
+        PerformanceTier.ULTRA:       "claude-opus-4-8",
         PerformanceTier.TIER1:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER2:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER3:       "claude-haiku-4-5-20251001",
@@ -84,6 +84,8 @@ class ClaudeAdapter(LLMPort):
 
     # Models that support adaptive thinking (Sonnet 4.6+, Opus 4.6+).
     # Haiku models do not support thinking — silently skipped when thinking_effort is set.
+    # Upgraded 2026-05-30: ULTRA → opus-4-8 (same price as 4-7, better benchmarks).
+    # See decisions/claude_ultra_tier_to_opus_4_8_plus_dr_gate_unification.md.
     _THINKING_MODELS = ("claude-sonnet", "claude-opus")
 
     # Models that support dynamic filtering web search (web_search_20260209 / web_fetch_20260209).

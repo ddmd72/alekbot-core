@@ -584,6 +584,39 @@ class TestResearchLoop:
         call_kwargs = client.messages.stream.call_args.kwargs
         assert call_kwargs["max_tokens"] == 64_000
 
+    async def test_opus_4_7_uses_thinking_path_after_gate_unification(self):
+        """ULTRA tier on opus-4-7 must hit the adaptive-thinking path.
+
+        Regression guard for the 2026-05-30 unification of _THINKING_MODELS
+        from exact-match set to substring tuple. Pre-unification, opus-4-7
+        silently fell to the Haiku-style fallback (32k max_tokens).
+        """
+        msg = _api_message("end_turn", [_text_block("Done")])
+        client = MagicMock()
+        client.messages.stream.return_value = _FakeStream([], msg)
+        agent = _make_agent(client)
+
+        await agent._research_loop("query", "", "claude-opus-4-7")
+
+        call_kwargs = client.messages.stream.call_args.kwargs
+        assert call_kwargs["max_tokens"] == 64_000
+        assert call_kwargs["thinking"] == {"type": "adaptive"}
+        assert call_kwargs["output_config"] == {"effort": "high"}
+
+    async def test_opus_4_8_uses_thinking_path(self):
+        """Current ULTRA model. Same expectation as opus-4-7."""
+        msg = _api_message("end_turn", [_text_block("Done")])
+        client = MagicMock()
+        client.messages.stream.return_value = _FakeStream([], msg)
+        agent = _make_agent(client)
+
+        await agent._research_loop("query", "", "claude-opus-4-8")
+
+        call_kwargs = client.messages.stream.call_args.kwargs
+        assert call_kwargs["max_tokens"] == 64_000
+        assert call_kwargs["thinking"] == {"type": "adaptive"}
+        assert call_kwargs["output_config"] == {"effort": "high"}
+
     async def test_non_thinking_model_uses_32k_max_tokens(self):
         msg = _api_message("end_turn", [_text_block("Done")])
         client = MagicMock()
