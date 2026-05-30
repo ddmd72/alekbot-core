@@ -228,8 +228,8 @@ batch through the consolidation LLM loop, marks emails as consolidated.
 
 ```python
 # ConsolidationAgentConfig defaults
-email_triage_passes: int = 2       # number of passes (batches)
-email_triage_batch_size: int = 200 # emails per batch
+email_triage_passes: int = 1       # number of passes (batches)
+email_triage_batch_size: int = 100 # emails per batch
 ```
 
 Both can be overridden in the payload: `{number_of_batches: int, batch_size: int}`.
@@ -248,14 +248,14 @@ All parameters in `src/infrastructure/agent_config.py` → `ConsolidationAgentCo
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `max_turns` | 15 | Max LLM turns per stage. Raised to 15 after Stage 2 on 25-fact cluster hit the 10-turn limit. |
-| `temperature` | 0.0 | Deterministic output. |
+| `temperature` | 1.0 | Model default. Zero-temp was abandoned — it degrades extraction quality on current models. |
 | `facts_limit` | 50 | Biographical facts loaded into context per stage. |
 | `principles_limit` | 15 | Principles loaded into context per stage. |
-| `max_tokens` | 32_000 | Output token limit. Large to accommodate full fact JSON. |
+| `max_tokens` | 64_000 | Output token limit. Large headroom for Gemini 3 Pro thinking tokens + full fact JSON. |
 | `thinking_effort` | `"medium"` | Claude extended thinking effort. `None` disables thinking. |
 | `inline_cluster_review` | `True` | Run Stage 2 inline after Stage 1. |
-| `email_triage_passes` | 2 | Stage 3 default passes. |
-| `email_triage_batch_size` | 200 | Stage 3 default batch size. |
+| `email_triage_passes` | 1 | Stage 3 default passes. |
+| `email_triage_batch_size` | 100 | Stage 3 default batch size. |
 | `timeout_ms` | 900_000 | Agent timeout (15 min). Covers Stage 1 (~4 min) + Stage 2 (~6 min) + Stage 3 (~4 min). |
 
 ---

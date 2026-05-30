@@ -183,8 +183,8 @@ class ConsolidationAgent(BaseAgent):
         Dispatches by payload["task"]:
           consolidate          → Stage 1 (+ optional inline Stage 2)
           consolidate_cluster  → Stage 2 cluster review only
-          consolidate_email    → email triage only  [not yet implemented]
-          consolidate_full     → Stage 1 + Stage 2 + email  [not yet implemented]
+          consolidate_email    → Stage 3 email triage only
+          consolidate_full     → Stage 1 + Stage 2 + Stage 3 email
           synthesize/librarian → legacy aliases for consolidate
         """
         user_id = message.context.get("user_id")
