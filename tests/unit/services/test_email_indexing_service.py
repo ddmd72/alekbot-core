@@ -2,7 +2,7 @@
 Unit tests for EmailIndexingService.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -121,7 +121,7 @@ def _make_meta(email_id: str) -> EmailMetadata:
         provider="gmail",
         subject="Booking confirmed",
         from_address="noreply@ryanair.com",
-        date=datetime.now(timezone.utc) - timedelta(hours=1),
+        date=datetime.now(timezone.utc),
         labels=["INBOX"],
         snippet="Your flight booking is confirmed",
     )
