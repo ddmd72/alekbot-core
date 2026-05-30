@@ -34,20 +34,6 @@ from src.config.environment import EnvironmentConfig  # noqa: E402
 _SNAPSHOT_DIR = os.path.join(_ROOT, "prompts_snapshot")
 _DATABASE = os.environ.get("FIRESTORE_DATABASE", "us-production")
 
-_README = """# prompts_snapshot — read-only mirror
-
-This tree is a **git-tracked mirror** of the shared prompt layer in Firestore.
-**Firestore is the source of truth. Do not edit these files** — edits here have no effect.
-
-Refresh: `python firestore_utils/snapshot_pull.py`
-Drift check (writes nothing, exits non-zero on drift): `python firestore_utils/snapshot_pull.py --check`
-
-Mirrored: tokens (system + user, both system-level), blueprints, profiles.
-Excluded: account/user overrides (PII).
-See docs/10_rfcs/PROMPT_TOKEN_SNAPSHOT_RFC.md.
-"""
-
-
 def _collections(cfg: "EnvironmentConfig") -> dict:
     base = cfg.domain_prompt_tokens_collection
     return {
@@ -67,6 +53,8 @@ def _existing_snapshot_files(base_dir: str) -> set:
     found = set()
     for root, _dirs, names in os.walk(base_dir):
         for n in names:
+            # README.md at the root is a hand-maintained doc, not a mirrored token —
+            # never treat it as an orphan (the pull must not delete or overwrite it).
             if n == "README.md" and root == base_dir:
                 continue
             found.add(os.path.relpath(os.path.join(root, n), base_dir))
@@ -75,8 +63,6 @@ def _existing_snapshot_files(base_dir: str) -> set:
 
 def write_snapshot(files: dict, base_dir: str = _SNAPSHOT_DIR) -> tuple:
     os.makedirs(base_dir, exist_ok=True)
-    with open(os.path.join(base_dir, "README.md"), "w", encoding="utf-8") as f:
-        f.write(_README)
     for rel, text in files.items():
         path = os.path.join(base_dir, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
