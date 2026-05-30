@@ -45,24 +45,24 @@ background process extracts new facts from the conversation → bot gets smarter
 ## Key Mechanisms
 
 **Multi-agent network** — not one LLM for everything, but specialists:
-- Router (Gemini) — LLM triage on every request: classifies complexity (1–5 → Quick, 6–10 → Smart),
-  extracts semantic lens and search intent, triggers memory/web enrichment before routing.
+- Router (Gemini) — LLM triage on every request: classifies complexity, tone, semantic lens and
+  search intent, triggers memory/web enrichment before routing.
+  Routing target is always Smart (`RouterAgent._apply_routing_rules` returns the Smart agent);
+  the complexity value drives Smart's per-request tier selection, not a Quick-vs-Smart routing split.
   Rule-based `_classify_request` is a fallback only (LLM unavailable or failed).
-  Confidence safety net: low confidence always falls back to Smart.
   Vision (file attachments): forces complexity ≥ 7.
-- Quick — functionally equivalent to Smart in tool access and intents.
-  Two differences only: (1) no re-evaluation after tool results (Smart re-evaluates for follow-up
-  delegation; Quick does not); (2) `intent_remap` at dispatch time (currently disabled).
-  Both Quick and Smart use `intent_fanout` to dispatch secondary specialists in parallel
-  (e.g. `search_web` auto-triggers `maps_query` via fan-out — see DelegationEngine below).
-  Handles complexity 1–6 (≈70% of requests), significantly cheaper.
+- Quick — no longer a primary-path agent; the Router never routes to it. Two surviving roles:
+  (1) emergency fallback when Smart fails/times out (`AgentFallbackService.try_quick_fallback`,
+  invoked by ConversationHandler); (2) system-notification formatter (`UserNotificationService.notify`
+  routes reminders / deep-research / daily-email alerts through Quick for LLM-formatted delivery).
+  When it does run it is functionally equivalent to Smart in tool access and intents, minus
+  re-evaluation after tool results. Uses `intent_fanout` like Smart. Deferred-deletion tech debt —
+  see `docs/04_solution_strategy/decisions/quick_agent_deferred_deletion.md`.
 - Smart — provider-agnostic, model resolved from execution context per user config.
-  Called only for complexity 7–10 requests. After tool results, re-evaluates for follow-up delegation.
+  Receives all user requests (primary path); complexity drives the resolved tier.
+  After tool results, re-evaluates for follow-up delegation.
   Thinking/reasoning: configurable via `UserBotConfig.agent_thinking["smart"]` ("low"/"medium"/"high").
   Priority: explicit `message.context["thinking_effort"]` (e.g. daily email worker) > config > None (disabled).
-- WebSearchLight — single-pass provider-native search (`use_grounding=True`). Separate agent
-  because Gemini cannot combine grounding + function calling in one request.
-  Remapped from `search_web` by Quick. Internal (`internal=True`).
 - WebSearch — provider-native web search with adaptive cognitive process. Called by Smart.
   `use_grounding=True` — each adapter injects its own tool: Gemini → Google Search,
   OpenAI → `{"type": "web_search"}` (Responses API, agentic search with reasoning),
@@ -363,7 +363,9 @@ result reused by all agents.
 
 ## Economics
 
-- 70% of requests → Quick path (cheap ECO-tier model), 30% → Smart path (expensive) = -62% LLM costs
+- Cost optimization is complexity-driven tier selection within Smart: simple requests resolve to a
+  cheaper tier model (ECO/BALANCED), expensive models reserved for complex requests. (Earlier this
+  was a Quick-vs-Smart path split; primary routing is now Smart-only — see Multi-agent network above.)
 - Budget ~$100/month, 1 vCPU Cloud Run — async is mandatory
 - Solo-dev — maintainability beats architectural elegance
 
