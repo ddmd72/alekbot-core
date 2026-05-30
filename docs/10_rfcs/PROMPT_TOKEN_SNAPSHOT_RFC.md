@@ -119,11 +119,26 @@ PII exclusion is enforced by **mechanism, not by trusting collection names**:
 - Cleaning or migrating the existing gitignored `firestore_utils/uploads/`+`downloads/` scratch dirs
   — left untouched.
 
-## 10. Follow-up (after the mirror lands)
+## 10. Upload path (`snapshot_upload.py`) — brought forward 2026-05-30
 
-**Upload-path evolution.** The current `firestore_utils/upload.py` is manual, AI-forbidden, and
-single-token (create/update one document). Once the read-only mirror exists, revisit how upload
-should work — whether it stays a deliberate single-token tool, gains a batch/diff-driven mode that
-pushes only the documents that changed in `prompts_snapshot/`, or evolves toward the D1-deferred
-git-authoritative direction. Deliberately deferred to the end of this subsystem's work; the mirror
-does not depend on it.
+Originally deferred, the upload counterpart was pulled forward because the first real pull
+surfaced **indirect PII baked into system-token few-shot examples** (a real car: plate + town +
+insurer, replicated across 7 consolidation/protocol tokens). The clean fix is to edit the snapshot
+file and push it back to Firestore — which needs the upload path. The mirror earned its keep on
+day one.
+
+**Mechanism.** `snapshot_upload.py <file>...` "unwinds" each snapshot file via the existing
+round-trip serializer (`token_from_file` / `doc_from_yaml`) into a Firestore doc dict, derives the
+target collection + doc id from the file path, and upserts the token. It is the reverse of the pull.
+
+**Decisions:**
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| U1 | **Merge, not overwrite** — `set(doc, merge=True)`. | The snapshot strips top-level volatile keys (`created_at`/`updated_at`); a full `set()` would delete them from Firestore. Merge updates only the fields present in the file (e.g. the scrubbed `content`) and preserves the rest. |
+| U2 | **Dry-run by default; field-level diff before any write.** `--dry-run` (default) prints the per-field diff (current Firestore doc vs file-parsed doc) and writes nothing. | Direct answer to the history where blind uploads corrupted live tokens (R9A.6). You see exactly what changes before it changes. |
+| U3 | **`--apply` is human-only, hard-gated (Variant A).** `--apply` requires an interactive confirmation (`input()` echoing the exact doc id); in a non-interactive context it aborts on `EOFError` and writes nothing. AI may run `--dry-run`; AI must never run `--apply`. | Preserves the safety invariant behind `upload.py`'s AI-forbidden status while giving a clean, diff-gated tool. The TTY confirmation is a real mechanism — AI's non-interactive shell cannot satisfy it. |
+
+**Scope (this iteration):** upload by file path(s); the script infers collection + doc id from the
+path layout. `--changed` (push everything that differs from Firestore) and full git-authoritative
+GitOps remain out of scope. `firestore_utils/upload.py` is left as-is (the legacy single-token tool).
