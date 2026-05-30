@@ -72,3 +72,39 @@ def doc_to_yaml(doc: dict) -> str:
 def doc_from_yaml(text: str) -> dict:
     """Inverse of doc_to_yaml."""
     return yaml.safe_load(text) or {}
+
+
+# Mirrored collection kinds, in stable order.
+_KINDS = ("tokens_system", "tokens_user", "blueprints", "profiles")
+
+
+def relpath_for(kind: str, doc_id: str) -> str:
+    """Relative path under prompts_snapshot/ for a given collection kind + doc id."""
+    return {
+        "tokens_system": f"tokens/system/{doc_id}.groovy",
+        "tokens_user": f"tokens/user/{doc_id}.groovy",
+        "blueprints": f"blueprints/{doc_id}.yaml",
+        "profiles": f"profiles/{doc_id}.yaml",
+    }[kind]
+
+
+def plan_snapshot(fetched: dict) -> tuple:
+    """Pure planner.
+
+    fetched: {kind: {doc_id: doc_dict}} for kind in _KINDS.
+    Returns (files, skipped):
+      files   = {relpath: file_text} for every non-PII document
+      skipped = ["kind/doc_id", ...] for PII documents the guard excluded
+    """
+    files: dict = {}
+    skipped: list = []
+    for kind in _KINDS:
+        for doc_id, doc in fetched.get(kind, {}).items():
+            if is_pii_doc(doc_id, doc):
+                skipped.append(f"{kind}/{doc_id}")
+                continue
+            if kind in ("tokens_system", "tokens_user"):
+                files[relpath_for(kind, doc_id)] = token_to_file(doc)
+            else:
+                files[relpath_for(kind, doc_id)] = doc_to_yaml(doc)
+    return files, skipped
