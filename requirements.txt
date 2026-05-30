@@ -30,6 +30,7 @@ opentelemetry-sdk
 opentelemetry-exporter-gcp-trace
 opentelemetry-instrumentation
 structlog
+logfire>=4.0,<5  # OTel-native tracing backend; selected via TRACING_BACKEND (logfire|both)
 
 # Testing
 pytest

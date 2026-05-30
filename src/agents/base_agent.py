@@ -28,7 +28,7 @@ from ..ports.session_store import SessionStore
 from ..utils.logger import logger
 from ..utils.debug_logger import get_debug_logger
 from ..domain.observability import PromptContentRecord
-from ..utils.telemetry import get_trace_ids, get_request_context
+from ..utils.telemetry import get_trace_ids, get_request_context, get_tracer
 
 
 # ---------------------------------------------------------------------------
@@ -1020,6 +1020,7 @@ class BaseAgent(ABC):
         failover_tuple = tuple(FAILOVER_TRIGGER_TYPES)
 
         _t0 = time.perf_counter()
+        _t0_ns = time.time_ns()
         try:
             if resilience and primary_name and resilience.is_provider_open(primary_name):
                 # Short-circuit before primary call. Routes to fallback via the
@@ -1115,10 +1116,48 @@ class BaseAgent(ABC):
                 self._billing_cache_creation_tokens += getattr(m, "cache_creation_tokens", 0)
             except (TypeError, AttributeError):
                 logger.debug("Non-conforming usage_metadata (e.g. test mock) — skipping billing accumulation")
-        self._maybe_store_content(
-            request, response, turn, (time.perf_counter() - _t0) * 1000.0, primary_name
-        )
+        latency_ms = (time.perf_counter() - _t0) * 1000.0
+        self._emit_llm_span(request, response, turn, latency_ms, primary_name, _t0_ns)
+        self._maybe_store_content(request, response, turn, latency_ms, primary_name)
         return response
+
+    def _emit_llm_span(
+        self,
+        request: "LLMRequest",
+        response: "LLMResponse",
+        turn: int,
+        latency_ms: float,
+        provider: str,
+        start_ns: int,
+    ) -> None:
+        """Emit a leaf ``llm.call`` span (metadata only — never content).
+
+        Nests under the active request span (e.g. ``conversation.agent_response``)
+        so the LLM call shows up as a timed node in the trace. Carries token
+        counts and latency, but never the prompt/response text — that lives only
+        in the content store (PromptContentStore), joined by trace_id. Best-effort.
+        """
+        try:
+            tracer = get_tracer()
+            span = tracer.start_span("llm.call", start_time=start_ns)
+            try:
+                span.set_attribute("llm.model", request.model_name or "")
+                span.set_attribute("llm.agent_type", self.agent_type)
+                span.set_attribute("llm.turn", turn)
+                span.set_attribute("llm.latency_ms", latency_ms)
+                if provider:
+                    span.set_attribute("llm.provider", provider)
+                m = response.usage_metadata
+                if m:
+                    span.set_attribute("llm.tokens.prompt", getattr(m, "prompt_tokens", 0))
+                    span.set_attribute("llm.tokens.completion", getattr(m, "completion_tokens", 0))
+                    span.set_attribute("llm.tokens.total", getattr(m, "total_tokens", 0))
+                    span.set_attribute("llm.tokens.cache_read", getattr(m, "cache_read_tokens", 0))
+                span.set_attribute("llm.tool_calls", len(response.tool_calls))
+            finally:
+                span.end()
+        except Exception as e:  # tracing must never break the LLM path
+            logger.debug("llm.call span emission skipped: %s", e)
 
     def _maybe_store_content(
         self,
