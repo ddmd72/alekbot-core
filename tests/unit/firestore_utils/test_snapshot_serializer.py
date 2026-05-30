@@ -100,3 +100,9 @@ def test_plan_snapshot_serializes_and_skips_pii():
     assert "blueprints/universal_agent_v1.yaml" in files
     assert "tokens_system/deadbeefdeadbeefdeadbeefdeadbeef" in skipped
     assert not any("deadbeef" in p for p in files)  # PII doc not written
+
+
+def test_token_to_file_coerces_none_content():
+    doc = {"token_id": "X", "category": "c", "class": "C", "content": None, "metadata": {}}
+    rt = ser.token_from_file(ser.token_to_file(doc))
+    assert rt["content"] == ""  # None treated as empty body

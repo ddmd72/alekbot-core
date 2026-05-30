@@ -42,7 +42,7 @@ def _strip_volatile(doc: dict) -> dict:
 def token_to_file(doc: dict) -> str:
     """token doc -> 'frontmatter + body' text. `content` becomes the body; rest is frontmatter."""
     front = _strip_volatile(doc)
-    body = front.pop("content", "")
+    body = front.pop("content", "") or ""
     front_yaml = yaml.safe_dump(
         front, sort_keys=True, allow_unicode=True, default_flow_style=False
     ).strip()
@@ -80,15 +80,18 @@ _KINDS = ("tokens_system", "tokens_user", "blueprints", "profiles")
 
 def relpath_for(kind: str, doc_id: str) -> str:
     """Relative path under prompts_snapshot/ for a given collection kind + doc id."""
-    return {
+    mapping = {
         "tokens_system": f"tokens/system/{doc_id}.groovy",
         "tokens_user": f"tokens/user/{doc_id}.groovy",
         "blueprints": f"blueprints/{doc_id}.yaml",
         "profiles": f"profiles/{doc_id}.yaml",
-    }[kind]
+    }
+    if kind not in mapping:
+        raise ValueError(f"unknown collection kind {kind!r}; expected one of {tuple(mapping)}")
+    return mapping[kind]
 
 
-def plan_snapshot(fetched: dict) -> tuple:
+def plan_snapshot(fetched: dict) -> tuple[dict[str, str], list[str]]:
     """Pure planner.
 
     fetched: {kind: {doc_id: doc_dict}} for kind in _KINDS.
@@ -96,8 +99,8 @@ def plan_snapshot(fetched: dict) -> tuple:
       files   = {relpath: file_text} for every non-PII document
       skipped = ["kind/doc_id", ...] for PII documents the guard excluded
     """
-    files: dict = {}
-    skipped: list = []
+    files: dict[str, str] = {}
+    skipped: list[str] = []
     for kind in _KINDS:
         for doc_id, doc in fetched.get(kind, {}).items():
             if is_pii_doc(doc_id, doc):
