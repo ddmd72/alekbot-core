@@ -43,3 +43,15 @@ def token_from_file(text: str) -> dict:
     doc = yaml.safe_load(front_yaml) or {}
     doc["content"] = body
     return doc
+
+
+def doc_to_yaml(doc: dict) -> str:
+    """blueprint/profile doc -> plain YAML text."""
+    return yaml.safe_dump(
+        _strip_volatile(doc), sort_keys=True, allow_unicode=True, default_flow_style=False
+    )
+
+
+def doc_from_yaml(text: str) -> dict:
+    """Inverse of doc_to_yaml."""
+    return yaml.safe_load(text) or {}
