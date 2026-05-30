@@ -15,6 +15,23 @@ import yaml
 # write and would add diff noise even when prompt content is identical.
 _VOLATILE_KEYS = {"created_at", "updated_at"}
 
+# Presence of any of these fields marks a document as account/user-scoped (PII).
+# Such documents are never written to the git mirror (SECRETS RULE).
+_PII_KEYS = {"user_id", "account_id"}
+
+
+def is_pii_doc(doc_id: str, doc: dict) -> bool:
+    """True if the document is account/user-scoped and must not be mirrored."""
+    if _PII_KEYS & set(doc.keys()):
+        return True
+    # Mirrored collections hold named definitions ("COGNITIVE_PROCESS_SMART").
+    # A uuid / 32-hex doc id signals a user-keyed document that slipped in.
+    compact = doc_id.replace("-", "").lower()
+    if len(compact) >= 32 and all(c in "0123456789abcdef" for c in compact):
+        return True
+    return False
+
+
 _DELIM = "---"
 
 
