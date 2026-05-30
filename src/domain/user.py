@@ -76,7 +76,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "email_search": PerformanceTier.ECO,
     "postprocessing": PerformanceTier.BALANCED,
     "email_classifier": PerformanceTier.BALANCED,
-    "deep_research": PerformanceTier.BALANCED,       # BALANCED → claude-sonnet; ULTRA → claude-opus-4-7
+    "deep_research": PerformanceTier.BALANCED,       # BALANCED → claude-sonnet; ULTRA → claude-opus-4-8
     "doc_planner": PerformanceTier.PERFORMANCE,      # JSON layout spec — max quality
     "doc_generator": PerformanceTier.BALANCED,   # JS code generation + retries
     "pdf_generator": PerformanceTier.BALANCED,      # HTML+CSS generation → Puppeteer

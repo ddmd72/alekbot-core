@@ -81,7 +81,11 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
     _SECOND_PASS_ENABLED = False  # default off; per-user override via UserBotConfig.deep_research_second_pass
 
     # Models that support adaptive thinking + output_config effort.
-    _THINKING_MODELS = {"claude-sonnet-4-6", "claude-opus-4-6"}
+    # Substring tuple — same shape as ClaudeAdapter._THINKING_MODELS (claude_adapter.py:87).
+    # Auto-includes future Sonnet/Opus versions (4.7, 4.8, …) without per-release updates.
+    # Unified 2026-05-30 to fix divergence where opus-4-7/4-8 ULTRA fell to Haiku-style
+    # fallback. See decisions/claude_ultra_tier_to_opus_4_8_plus_dr_gate_unification.md.
+    _THINKING_MODELS = ("claude-sonnet", "claude-opus")
 
     # Dynamic filtering enabled (no allowed_callers restriction).
     # code_execution_20250825 is auto-injected by the API — do NOT declare it explicitly.
@@ -324,7 +328,7 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
             if system_prompt else []
         )
 
-        if model in self._THINKING_MODELS:
+        if any(m in model for m in self._THINKING_MODELS):
             max_tokens = 64_000  # extended output beta supports up to 128K; 64K is safe ceiling
             extra_kwargs: dict = {
                 "thinking": {"type": "adaptive"},

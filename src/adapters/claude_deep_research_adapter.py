@@ -12,7 +12,7 @@ Tier → model mapping:
   ECO / TIER1-3 → claude-haiku-4-5-20251001  (fast + cheap debugging / light tasks)
   BALANCED      → claude-sonnet-4-6           (research quality + cost efficiency)
   PERFORMANCE   → claude-sonnet-4-6           (same as BALANCED for deep research)
-  ULTRA         → claude-opus-4-7             (maximum quality)
+  ULTRA         → claude-opus-4-8             (maximum quality; upgraded from 4-7 2026-05-30)
 """
 import json
 import uuid
@@ -39,7 +39,7 @@ class ClaudeDeepResearchAdapter(DeepResearchPort):
         PerformanceTier.ECO:         "claude-haiku-4-5-20251001",
         PerformanceTier.BALANCED:    "claude-sonnet-4-6",
         PerformanceTier.PERFORMANCE: "claude-sonnet-4-6",
-        PerformanceTier.ULTRA:       "claude-opus-4-7",
+        PerformanceTier.ULTRA:       "claude-opus-4-8",
         PerformanceTier.TIER1:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER2:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER3:       "claude-haiku-4-5-20251001",
