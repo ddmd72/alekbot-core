@@ -51,6 +51,7 @@ from ..adapters.firestore_task_search_index import FirestoreTaskSearchIndex
 from ..adapters.microsoft_todo_adapter import MicrosoftToDoAdapter
 from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
+from ..adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
 from ..services.file_conversion_service import FileConversionService
 from ..agents.email_classification_agent import EmailClassificationAgent
 from ..domain.agent import AgentConfig
@@ -256,6 +257,21 @@ class ServiceContainer:
             if self.file_storage else None
         )
 
+        # ------------------------------------------------------------------
+        # LLM prompt/response content store (BigQuery, 30-day TTL).
+        # Disabled when BIGQUERY_PROMPT_DATASET is unset — None propagates
+        # through the factory and BaseAgent skips the fire-and-forget write.
+        # ------------------------------------------------------------------
+        bq_dataset = config.get("BIGQUERY_PROMPT_DATASET", "")
+        self.prompt_content_store = (
+            BigQueryPromptContentAdapter(
+                dataset=bq_dataset,
+                table=config.get("BIGQUERY_PROMPT_TABLE", "prompt_content"),
+                project=config.get("GOOGLE_CLOUD_PROJECT", "") or "",
+            )
+            if bq_dataset else None
+        )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -285,6 +301,7 @@ class ServiceContainer:
             "notes_provider": self.notes_adapter,
             "file_conversion_service": self.file_conversion_service,
             "file_storage": self.file_storage,
+            "prompt_content_store": self.prompt_content_store,
         }
 
     def create_fact_management_adapter(

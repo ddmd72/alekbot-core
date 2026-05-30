@@ -75,6 +75,9 @@ def load_settings():
         "TELEGRAM_WEBHOOK_SECRET": os.getenv("TELEGRAM_WEBHOOK_SECRET"),
         # Media storage
         "GCS_MEDIA_BUCKET": os.getenv("GCS_MEDIA_BUCKET", ""),
+        # LLM prompt/response content store (BigQuery, 30-day TTL). Empty dataset → disabled.
+        "BIGQUERY_PROMPT_DATASET": os.getenv("BIGQUERY_PROMPT_DATASET", ""),
+        "BIGQUERY_PROMPT_TABLE": os.getenv("BIGQUERY_PROMPT_TABLE", "prompt_content"),
         # Microsoft To Do OAuth + webhook (TASKS_LOCAL_FIRST_RFC.md §11)
         "MICROSOFT_TODO_CLIENT_ID": os.getenv("MICROSOFT_TODO_CLIENT_ID", ""),
         "MICROSOFT_TODO_CLIENT_SECRET": os.getenv("MICROSOFT_TODO_CLIENT_SECRET", ""),
