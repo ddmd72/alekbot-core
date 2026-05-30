@@ -33,10 +33,20 @@ def test_parse_file_token(tmp_path, monkeypatch):
 
 def test_parse_file_blueprint_and_profile(tmp_path, monkeypatch):
     monkeypatch.setattr(up, "_SNAPSHOT_DIR", str(tmp_path))
-    bp = _write(str(tmp_path), "blueprints/B.yaml", up.serializer.doc_to_yaml({"blueprint_id": "B", "outer_class": "a", "class_order": []}))
-    pr = _write(str(tmp_path), "profiles/P.yaml", up.serializer.doc_to_yaml({"blueprint_id": "B", "tokens": {}}))
-    assert up.parse_file(bp)[0] == "blueprints"
-    assert up.parse_file(pr)[0] == "profiles"
+    bp = _write(str(tmp_path), "blueprints/B.yaml", up.serializer.doc_to_yaml({"blueprint_id": "B", "outer_class": "a", "class_order": ["X"]}))
+    pr = _write(str(tmp_path), "profiles/P.yaml", up.serializer.doc_to_yaml({"blueprint_id": "B", "tokens": {"T": {"order": 1}}}))
+    bp_kind, bp_id, bp_doc = up.parse_file(bp)
+    assert (bp_kind, bp_id, bp_doc["class_order"]) == ("blueprints", "B", ["X"])
+    pr_kind, pr_id, pr_doc = up.parse_file(pr)
+    assert (pr_kind, pr_id, pr_doc["tokens"]) == ("profiles", "P", {"T": {"order": 1}})
+
+
+def test_parse_file_token_user_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(up, "_SNAPSHOT_DIR", str(tmp_path))
+    text = up.serializer.token_to_file({"token_id": "VOICE", "category": "voice", "class": "C", "content": "x", "metadata": {}})
+    path = _write(str(tmp_path), "tokens/user/VOICE.groovy", text)
+    kind, doc_id, _doc = up.parse_file(path)
+    assert (kind, doc_id) == ("tokens_user", "VOICE")
 
 
 def test_parse_file_rejects_unknown_path(tmp_path, monkeypatch):
