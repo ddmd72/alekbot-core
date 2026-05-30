@@ -59,3 +59,18 @@ def test_profile_round_trip():
 def test_doc_to_yaml_drops_volatile_keys():
     doc = {"blueprint_id": "B", "outer_class": "a", "class_order": [], "updated_at": "x"}
     assert "updated_at" not in ser.doc_from_yaml(ser.doc_to_yaml(doc))
+
+
+def test_pii_guard_flags_user_keyed_fields():
+    assert ser.is_pii_doc("COGNITIVE_PROCESS_SMART", {"user_id": "u1", "content": "x"}) is True
+    assert ser.is_pii_doc("X", {"account_id": "a1"}) is True
+
+
+def test_pii_guard_flags_uuid_like_doc_id():
+    assert ser.is_pii_doc("3f2504e0-4f89-41d3-9a0c-0305e82c3301", {"content": "x"}) is True
+    assert ser.is_pii_doc("0123456789abcdef0123456789abcdef", {"content": "x"}) is True
+
+
+def test_pii_guard_allows_named_system_tokens():
+    assert ser.is_pii_doc("COGNITIVE_PROCESS_SMART",
+                          {"token_id": "COGNITIVE_PROCESS_SMART", "content": "x"}) is False
