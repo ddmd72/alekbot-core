@@ -68,7 +68,12 @@ class FileConversionService:
         ref = await self._storage.upload(data, filename, user_id, mime_type)
         size_bytes = len(data)
 
-        label = f'[File: "{filename}" ({_format_size(size_bytes)})]'
+        # Label carries the unique GCS ref (NOT the original filename): the orchestrator
+        # addresses files by this name when it calls open_file / forwards to a specialist.
+        # Slack names every pasted image 'image.png' → dedup gives a unique ref; showing
+        # the original name would make the exact-key download land on a stale object that
+        # squats the un-suffixed slot.
+        label = f'[File: "{ref}" ({_format_size(size_bytes)})]'
 
         file_data = {
             "ref": ref,
