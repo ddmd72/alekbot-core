@@ -212,8 +212,6 @@ tests/legacy/
 scripts/archive/
 
 # Root clutter artifacts (legacy)
-*.groovy
-!src/agents/prompts/*.groovy
 !src/agents/prompts/*.prompt
 comparison_report.txt
 .DS_Store
