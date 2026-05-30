@@ -1,0 +1,8 @@
+agent_id: deep_research
+blueprint_id: deep_research_agent_v1
+source_file: firestore_utils/uploads/deep_research.json
+tokens:
+  DEEP_RESEARCH_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

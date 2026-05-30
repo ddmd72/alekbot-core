@@ -1,0 +1,6 @@
+blueprint_id: html_page_agent_v1
+class_order:
+- cognitive_process
+outer_class: HtmlPageAgent extends Agent
+source_file: firestore_utils/uploads/html_page_agent_v1.json
+uploaded_by: local_script

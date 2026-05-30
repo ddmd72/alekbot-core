@@ -1,0 +1,10 @@
+blueprint_id: universal_agent_v1
+owner_type: SYSTEM
+owner_value: websearch_light
+profile_id: universal_agent_v1_SYSTEM_websearch_light
+slots:
+- non_overridable: true
+  type: token
+  value: COGNITIVE_PROCESS_WEBSEARCH_LIGHT
+source_file: firestore_utils/uploads/universal_agent_v1_SYSTEM_websearch_light.json
+uploaded_by: local_script

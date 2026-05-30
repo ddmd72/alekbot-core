@@ -1,0 +1,14 @@
+agent_id: email_search
+blueprint_id: emailsearch_agent_v1
+source_file: firestore_utils/uploads/email_search.json
+tokens:
+  EMAILSEARCH_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 20
+  EMAILSEARCH_OUTPUT_FORMAT:
+    non_overridable: true
+    order: 30
+  EMAILSEARCH_PROPERTIES:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

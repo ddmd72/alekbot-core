@@ -1,0 +1,38 @@
+agent_id: quick
+blueprint_id: universal_agent_v1
+source_file: firestore_utils/uploads/quick.json
+tokens:
+  ARCHETYPE_INTELLECTUAL_SNIPER:
+    non_overridable: true
+    order: 20
+  COGNITIVE_PROCESS_QUICK:
+    order: 10
+  FEW_SHOT_EXAMPLES_RANEVSKAYA_ZHVANETSKY:
+    non_overridable: true
+    order: 90
+  HUMOR_PRESET_RANEVSKAYA:
+    order: 60
+  LANG_MIRROR:
+    non_overridable: false
+    order: 300
+  OUTPUT_FORMAT_JSON:
+    order: 100
+  POLICY_ALIGN_WITH_ANCHORS:
+    order: 350
+  POLICY_ANTI_GUARDIAN:
+    order: 330
+  POLICY_NO_OPEN_LOOPS:
+    order: 320
+  POLICY_PRIVACY:
+    order: 310
+  POLICY_WITTY_ACCENTUATION:
+    order: 340
+  PROTOCOL_AGENT_SELECTION:
+    non_overridable: true
+    order: 210
+  VIBE_BATTLE_WEARY:
+    non_overridable: true
+    order: 30
+  VOICE_APHORISTIC:
+    order: 40
+uploaded_by: local_script

@@ -1,0 +1,23 @@
+agent_id: consolidation
+blueprint_id: consolidation_agent_v1
+source_file: firestore_utils/uploads/consolidation.json
+tokens:
+  CONSOLIDATION_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 20
+  CONSOLIDATION_EXAMPLES:
+    non_overridable: true
+    order: 40
+  CONSOLIDATION_OUTPUT_SPEC:
+    non_overridable: true
+    order: 60
+  CONSOLIDATION_POLICIES:
+    non_overridable: true
+    order: 50
+  CONSOLIDATION_TAXONOMY:
+    non_overridable: true
+    order: 10
+  CONSOLIDATION_TOOLS:
+    non_overridable: true
+    order: 30
+uploaded_by: local_script

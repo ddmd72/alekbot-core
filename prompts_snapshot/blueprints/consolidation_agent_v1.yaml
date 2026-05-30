@@ -1,0 +1,11 @@
+blueprint_id: consolidation_agent_v1
+class_order:
+- taxonomy
+- cognitive_process
+- tools
+- examples
+- policies
+- output_specification
+outer_class: ConsolidationAgent extends Agent
+source_file: firestore_utils/uploads/consolidation_agent_v1.json
+uploaded_by: local_script

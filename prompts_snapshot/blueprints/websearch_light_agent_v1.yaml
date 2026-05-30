@@ -1,0 +1,9 @@
+blueprint_id: websearch_light_agent_v1
+class_order:
+- properties
+- cognitive_process
+- output_format
+- execution
+outer_class: WebSearchLightAgent extends Agent
+source_file: firestore_utils/uploads/websearch_light_agent_v1.json
+uploaded_by: local_script

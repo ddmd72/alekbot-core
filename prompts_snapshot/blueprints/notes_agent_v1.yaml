@@ -1,0 +1,6 @@
+blueprint_id: notes_agent_v1
+class_order:
+- cognitive_process
+outer_class: NotesAgent extends Agent
+source_file: firestore_utils/uploads/notes_agent_v1.json
+uploaded_by: local_script

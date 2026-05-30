@@ -1,0 +1,11 @@
+agent_id: pdf_generator
+blueprint_id: pdf_generator_agent_v1
+source_file: firestore_utils/uploads/pdf_generator.json
+tokens:
+  OUTPUT_FORMAT_PDF_GENERATOR:
+    non_overridable: true
+    order: 20
+  PDF_GENERATOR_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

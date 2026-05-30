@@ -1,0 +1,7 @@
+blueprint_id: pdf_generator_agent_v1
+class_order:
+- cognitive_process
+- output_format
+outer_class: PdfGeneratorAgent extends Agent
+source_file: firestore_utils/uploads/pdf_generator_agent_v1.json
+uploaded_by: local_script

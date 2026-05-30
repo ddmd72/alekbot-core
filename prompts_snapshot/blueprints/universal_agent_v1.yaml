@@ -1,0 +1,12 @@
+blueprint_id: universal_agent_v1
+class_order:
+- properties
+- cognitive_process
+- policies
+- protocols
+- output_format
+- few_shot_examples
+- final_directives
+outer_class: Alek extends Agent
+source_file: firestore_utils/uploads/universal_agent_v1.json
+uploaded_by: local_script

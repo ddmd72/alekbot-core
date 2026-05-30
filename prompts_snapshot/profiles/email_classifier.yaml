@@ -1,0 +1,14 @@
+agent_id: email_classifier
+blueprint_id: email_classifier_v1
+source_file: firestore_utils/uploads/email_classifier.json
+tokens:
+  EMAIL_CLASSIFIER_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 20
+  EMAIL_CLASSIFIER_TAXONOMY:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_EMAIL_CLASSIFIER:
+    non_overridable: true
+    order: 30
+uploaded_by: local_script

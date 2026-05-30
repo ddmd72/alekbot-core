@@ -1,0 +1,8 @@
+blueprint_id: maps_search_agent_v1
+class_order:
+- properties
+- cognitive_process
+- output_format
+outer_class: MapsSearchAgent extends Agent
+source_file: firestore_utils/uploads/maps_search_agent_v1.json
+uploaded_by: local_script
