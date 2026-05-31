@@ -545,6 +545,60 @@ class TestHandleConsolidation:
 
 
 # ---------------------------------------------------------------------------
+# _handle_sweep_consolidation
+# ---------------------------------------------------------------------------
+
+class TestHandleSweepConsolidation:
+
+    async def test_missing_consolidation_service_returns_501(self):
+        worker, ns = _make_full_worker()
+        worker._consolidation = None
+
+        result, status = await worker._handle_sweep_consolidation()
+
+        assert status == 501
+
+    async def test_missing_task_dispatch_returns_501(self):
+        worker, ns = _make_full_worker()
+        worker._task_dispatch = None
+
+        result, status = await worker._handle_sweep_consolidation()
+
+        assert status == 501
+
+    async def test_enqueues_consolidation_per_stuck_user(self):
+        worker, ns = _make_full_worker()
+        ns.consolidation.find_stuck_users = AsyncMock(return_value=[_USER_A, "user-b"])
+
+        result, status = await worker._handle_sweep_consolidation()
+
+        assert status == 200
+        assert result == {"swept": 2}
+        assert ns.task_dispatch.enqueue_consolidation_task.await_count == 2
+        ns.task_dispatch.enqueue_consolidation_task.assert_any_await(user_id=_USER_A)
+        ns.task_dispatch.enqueue_consolidation_task.assert_any_await(user_id="user-b")
+
+    async def test_no_stuck_users_returns_swept_zero(self):
+        worker, ns = _make_full_worker()
+        ns.consolidation.find_stuck_users = AsyncMock(return_value=[])
+
+        result, status = await worker._handle_sweep_consolidation()
+
+        assert status == 200
+        assert result == {"swept": 0}
+        ns.task_dispatch.enqueue_consolidation_task.assert_not_called()
+
+    async def test_dispatch_via_handle_routes_to_sweep(self):
+        worker, ns = _make_full_worker()
+        ns.consolidation.find_stuck_users = AsyncMock(return_value=[])
+
+        result = await worker.handle({"task_type": "sweep_consolidation"})
+
+        assert result == ({"swept": 0}, 200)
+        ns.consolidation.find_stuck_users.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
 # _handle_setup_microsoft_todo
 # ---------------------------------------------------------------------------
 

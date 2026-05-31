@@ -160,4 +160,19 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 
 ---
 
-**Last Updated:** 2026-05-29
+### Sweep Stuck Consolidation
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `alek-bot-{dev,prod}-sweep-consolidation` |
+| **Schedule** | `0 * * * *` (hourly, top of the hour) |
+| **HTTP** | `POST /worker` |
+| **Payload** | `{"task_type": "sweep_consolidation"}` |
+| **Purpose** | Re-triggers consolidation for every user with a batch still in the queue. Consolidation is otherwise driven only by session overflow and the `$consolidate` command, so a batch that stalls (e.g. provider billing exhaustion exhausts its 3 attempts → `FAILED`, and the re-enqueue chain stops) would wait for the next overflow — potentially days. That batch's messages were already extracted from session history but not yet written to memory: a data hole between history and memory. This sweep closes it within ≤1h. |
+| **Handler** | `WorkerHandler._handle_sweep_consolidation()` → `ConsolidationService.find_stuck_users()` → per user `enqueue_consolidation_task` (reuses the normal consolidation path; `reset_recoverable_batches` revives `FAILED`/zombie batches). |
+| **Fan-out** | One distinct query (`FirestoreConsolidationQueue.get_stuck_batch_user_ids`, `user_id` projection) → one `consolidation` Cloud Task per stuck user. No-op when the queue is empty. |
+| **Env** | dev + prod |
+
+---
+
+**Last Updated:** 2026-05-31
