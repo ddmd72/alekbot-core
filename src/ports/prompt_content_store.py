@@ -1,37 +1,48 @@
 """
-PromptContentStore — persist full LLM request/response content for querying.
+PromptContentStore — capture LLM interactions to a queryable backend.
 
 Implementations:
-  BigQueryPromptContentAdapter — one row per LLM call in a DAY-partitioned
-    table with a 30-day partition expiration (TTL). Queryable via SQL.
+  BigQueryPromptContentAdapter — one row per interaction in a 30-day-TTL table,
+    queryable via SQL and joined to the tracing backend by trace_id.
 
-This is the "content" half of the observability split. It holds the sensitive
-payload (prompt/response text) inside the project's own GCP perimeter, while the
-tracing backend (OTel → Cloud Trace / Logfire) holds only non-sensitive spans.
-Rows carry ``trace_id`` so a span found in the tracer resolves to its prompt here.
+The adapter owns record building (request/response → row) and trace/user lookup,
+so the domain never sees storage shapes — agents hand over their native LLM
+objects and identity, nothing else.
 
-Contract: ``store`` is best-effort and MUST NOT raise — callers invoke it
-fire-and-forget on the hot path (``BaseAgent._call_llm``). Implementations
-swallow and log their own errors; a storage failure never breaks a user request.
+``record_turn`` is the hot-path capture: best-effort, non-blocking, non-raising.
+It schedules the write in the background and returns immediately, so it adds no
+latency to the LLM call and a storage failure never breaks a user request.
+Durable capture methods (for expensive deep-research outputs) are added separately.
 """
 
 from abc import ABC, abstractmethod
+from typing import Optional, TYPE_CHECKING
 
-from ..domain.observability import PromptContentRecord
+if TYPE_CHECKING:
+    from ..domain.llm import LLMRequest, LLMResponse
 
 
 class PromptContentStore(ABC):
-    """Store full LLM request/response content for later querying."""
+    """Capture LLM request/response content for later querying."""
 
     @abstractmethod
-    async def store(self, record: PromptContentRecord) -> None:
-        """Persist one LLM call record.
+    async def record_turn(
+        self,
+        *,
+        request: "LLMRequest",
+        response: "LLMResponse",
+        agent_id: str,
+        agent_type: str,
+        account_id: Optional[str],
+        turn: int,
+        latency_ms: float,
+        provider: str,
+    ) -> None:
+        """Capture one LLM request/response turn.
 
-        Best-effort and non-raising: implementations must catch their own
-        errors and log a warning rather than propagate, because this runs
-        fire-and-forget on the request hot path.
-
-        Args:
-            record: The captured request/response and its metadata.
+        Best-effort hot-path contract: MUST NOT raise, MUST NOT block. The
+        implementation builds the record (pulling trace_id/user_id from the
+        request-scoped telemetry context), schedules the write in the
+        background, and returns. A failed write is logged, never propagated.
         """
         ...

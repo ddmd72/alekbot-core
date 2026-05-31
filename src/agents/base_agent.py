@@ -27,8 +27,7 @@ from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
 from ..utils.debug_logger import get_debug_logger
-from ..domain.observability import PromptContentRecord
-from ..utils.telemetry import get_trace_ids, get_request_context, get_tracer
+from ..utils.telemetry import get_tracer
 
 
 # ---------------------------------------------------------------------------
@@ -214,9 +213,9 @@ class BaseAgent(ABC):
         self._agent_execution_context = None  # set via _set_execution_context()
         self.coordinator = None  # injected post-construction by UserAgentFactory for all agents
         # Queryable LLM content store (BigQuery). Injected post-construction by
-        # UserAgentFactory, like coordinator. None → fire-and-forget write skipped.
+        # UserAgentFactory, like coordinator. None → capture skipped. The adapter
+        # owns record building + the background-task set (best-effort, non-blocking).
         self._prompt_content_store = None
-        self._content_tasks: set = set()  # holds fire-and-forget store tasks (GC guard)
         self._user_timezone: str = "UTC"  # overridden by subclasses that receive user_timezone
         self._billing_account_id: Optional[str] = None
         self._billing_prompt_tokens: int = 0
@@ -704,11 +703,6 @@ class BaseAgent(ABC):
                 cache_read_tokens=self._billing_cache_read_tokens,
                 cache_creation_tokens=self._billing_cache_creation_tokens,
             )
-            get_debug_logger().log_response(
-                agent_name=self.agent_type or self.agent_id,
-                response=output_text,
-                metadata=meta,
-            )
 
     async def _flush_billing(self) -> None:
         """Fire-and-forget usage report to billing_agent. No-op if coordinator/account_id not set."""
@@ -1003,13 +997,6 @@ class BaseAgent(ABC):
                 f"(set self.llm or self._llm before calling _call_llm, "
                 f"or pass llm_override=)"
             )
-        debug = get_debug_logger()
-        if debug.enabled:
-            debug.log_llm_request(
-                agent_name=self.agent_type or self.agent_id,
-                request=request,
-                turn=turn,
-            )
         ctx = (
             fallback_ctx_override
             if fallback_ctx_override is not None
@@ -1106,7 +1093,6 @@ class BaseAgent(ABC):
                     fallback_name=fallback_name,
                     primary_cause=e,
                 ) from fb_e
-        self._debug_llm_response(response, turn=turn)
         if response.usage_metadata:
             m = response.usage_metadata
             try:
@@ -1118,7 +1104,20 @@ class BaseAgent(ABC):
                 logger.debug("Non-conforming usage_metadata (e.g. test mock) — skipping billing accumulation")
         latency_ms = (time.perf_counter() - _t0) * 1000.0
         self._emit_llm_span(request, response, turn, latency_ms, primary_name, _t0_ns)
-        self._maybe_store_content(request, response, turn, latency_ms, primary_name)
+        # Best-effort content capture. record_turn builds the record + schedules
+        # the write inside the adapter and returns immediately — zero latency,
+        # never raises. No-op when no store is configured.
+        if self._prompt_content_store is not None:
+            await self._prompt_content_store.record_turn(
+                request=request,
+                response=response,
+                agent_id=self.agent_id,
+                agent_type=self.agent_type,
+                account_id=self._billing_account_id,
+                turn=turn,
+                latency_ms=latency_ms,
+                provider=primary_name,
+            )
         return response
 
     def _emit_llm_span(
@@ -1158,88 +1157,6 @@ class BaseAgent(ABC):
                 span.end()
         except Exception as e:  # tracing must never break the LLM path
             logger.debug("llm.call span emission skipped: %s", e)
-
-    def _maybe_store_content(
-        self,
-        request: "LLMRequest",
-        response: "LLMResponse",
-        turn: int,
-        latency_ms: float,
-        provider: str,
-    ) -> None:
-        """Fire-and-forget the full request/response to the queryable content store.
-
-        No-op when no store is injected. Never blocks the caller and never
-        raises: the record is built defensively and the write is scheduled as a
-        background task. trace_id/user_id are pulled from the request-scoped
-        telemetry context so the BigQuery row joins back to its tracing span.
-        """
-        store = self._prompt_content_store
-        if store is None:
-            return
-        try:
-            record = self._build_content_record(request, response, turn, latency_ms, provider)
-            task = asyncio.create_task(store.store(record))
-            self._content_tasks.add(task)
-            task.add_done_callback(self._content_tasks.discard)
-        except Exception as e:  # building/scheduling must never break the LLM path
-            logger.debug("Prompt content store scheduling skipped: %s", e)
-
-    def _build_content_record(
-        self,
-        request: "LLMRequest",
-        response: "LLMResponse",
-        turn: int,
-        latency_ms: float,
-        provider: str,
-    ) -> PromptContentRecord:
-        """Assemble a PromptContentRecord from an LLM request/response pair."""
-        ids = get_trace_ids()
-        ctx = get_request_context()
-        m = response.usage_metadata
-
-        request_text = self._serialize_request_for_storage(request)
-        tool_calls = (
-            json.dumps(
-                [{"name": tc.name, "args": tc.args} for tc in response.tool_calls],
-                ensure_ascii=False,
-            )
-            if response.tool_calls
-            else None
-        )
-
-        return PromptContentRecord(
-            trace_id=ids.get("trace_id"),
-            span_id=ids.get("span_id"),
-            user_id=ctx.get("user_id"),
-            account_id=self._billing_account_id,
-            agent_id=self.agent_id,
-            agent_type=self.agent_type,
-            model=request.model_name or getattr(self, "model_name", "") or "",
-            provider=provider or None,
-            turn=turn,
-            request_text=request_text,
-            response_text=response.text,
-            tool_calls=tool_calls,
-            prompt_tokens=getattr(m, "prompt_tokens", 0) if m else 0,
-            completion_tokens=getattr(m, "completion_tokens", 0) if m else 0,
-            total_tokens=getattr(m, "total_tokens", 0) if m else 0,
-            cache_read_tokens=getattr(m, "cache_read_tokens", 0) if m else 0,
-            cache_creation_tokens=getattr(m, "cache_creation_tokens", 0) if m else 0,
-            latency_ms=latency_ms,
-        )
-
-    @staticmethod
-    def _serialize_request_for_storage(request: "LLMRequest") -> str:
-        """Render system instruction + message history as a single text blob."""
-        parts: List[str] = []
-        system = getattr(request, "system_instruction", None)
-        if system:
-            parts.append(f"=== SYSTEM ===\n{system}")
-        messages = getattr(request, "messages", None) or []
-        parts.append("=== MESSAGES ===")
-        parts.append(BaseAgent._format_history_for_debug(messages))
-        return "\n\n".join(parts)
 
     @staticmethod
     def _format_history_for_debug(history: List[Message]) -> str:
