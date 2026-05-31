@@ -22,3 +22,7 @@ class ConsolidationBatch(BaseModel):
     last_error: Optional[str] = None
     facts_extracted: int = 0
     processed_at: Optional[float] = None
+    # Stamped when the batch enters PROCESSING. Used by reset_recoverable_batches
+    # to distinguish a live run from a zombie: a batch can only be legitimately
+    # PROCESSING while its Cloud Task is alive (dispatch_deadline = 1800s).
+    processing_started_at: Optional[float] = None

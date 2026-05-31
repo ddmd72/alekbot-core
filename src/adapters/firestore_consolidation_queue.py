@@ -9,6 +9,14 @@ from src.config.environment import EnvironmentConfig
 
 logger = logging.getLogger(__name__)
 
+# A batch can only be legitimately PROCESSING while its consolidation Cloud Task is
+# alive. That task's dispatch_deadline is 1800s (see gcp_task_queue.enqueue_consolidation_task),
+# and ConsolidationAgent's own timeout is 15 min — both bounded by 1800s. A PROCESSING
+# batch older than this can only be a zombie (worker crashed / CPU-throttled mid-batch),
+# so it is safe to reset. Anything younger is a live run and must be left alone.
+_ZOMBIE_THRESHOLD_SECONDS = 1800
+
+
 class FirestoreConsolidationQueue(ConsolidationQueue):
     """
     Firestore implementation of the ConsolidationQueue port.
@@ -55,7 +63,11 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         }
         if error:
             update_data["last_error"] = error
-        
+        # Stamp entry into PROCESSING so reset_recoverable_batches can tell a live run
+        # from a zombie. Cleared again when the batch is reset back to RETRY_PENDING.
+        if status == BatchStatus.PROCESSING:
+            update_data["processing_started_at"] = time.time()
+
         await doc_ref.update(update_data)
     
     async def increment_attempts(self, batch_id: str) -> int:
@@ -89,11 +101,18 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         logger.debug(f"🗑️ Deleted batch {batch_id}")
     
     async def reset_recoverable_batches(self, user_id: str) -> int:
-        """Reset PROCESSING (zombies) + FAILED (retry after fix) → RETRY_PENDING.
+        """Reset stale PROCESSING (zombies) + FAILED (retry after fix) → RETRY_PENDING.
 
-        Resets `attempts` to 0 and clears `error` so the retry starts clean.
+        FAILED batches are always reset. PROCESSING batches are reset only when their
+        `processing_started_at` is older than _ZOMBIE_THRESHOLD_SECONDS — a recent
+        PROCESSING batch is a LIVE run (its Cloud Task is still executing) and must be
+        left untouched, otherwise the hourly sweep would reset a running consolidation
+        and double-process the batch.
+
+        Resets `attempts` to 0 and clears `last_error` + `processing_started_at`.
         Logs separate counts so dashboard / alerting can distinguish zombie recovery
         from intentional FAILED retry.
+        Returns the number of batches actually reset.
         """
         query = (
             self.collection
@@ -104,15 +123,25 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
             .where(filter=FieldFilter("user_id", "==", user_id))
         )
         docs = await query.get()
+        now = time.time()
         zombies = 0
         failures = 0
+        live = 0
         for doc in docs:
             data = doc.to_dict() or {}
             prev = data.get("status")
+            if prev == BatchStatus.PROCESSING.value:
+                started = data.get("processing_started_at")
+                # Missing timestamp (legacy batch) is treated as a zombie — safe, since
+                # any pre-existing PROCESSING batch predates this stamping logic.
+                if started is not None and (now - started) < _ZOMBIE_THRESHOLD_SECONDS:
+                    live += 1
+                    continue
             await doc.reference.update({
                 "status": BatchStatus.RETRY_PENDING.value,
                 "attempts": 0,
-                "error": None,
+                "last_error": None,
+                "processing_started_at": None,
             })
             if prev == BatchStatus.PROCESSING.value:
                 zombies += 1
@@ -128,7 +157,29 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
                 f"♻️ Reset {failures} FAILED batches → RETRY_PENDING (attempts=0) "
                 f"for user {user_id[:8]}"
             )
-        return len(docs)
+        if live:
+            logger.debug(
+                f"⏳ Skipped {live} live PROCESSING batches (< {_ZOMBIE_THRESHOLD_SECONDS}s) "
+                f"for user {user_id[:8]}"
+            )
+        return zombies + failures
+
+    async def get_stuck_batch_user_ids(self) -> List[str]:
+        """Distinct user_ids with at least one batch still in the queue.
+
+        Successful batches are deleted, so every stored batch is unconsolidated work.
+        Uses a field projection (`user_id` only) to keep the read cheap regardless of
+        batch message payload size.
+        """
+        query = self.collection.select(["user_id"])
+        docs = await query.get()
+        user_ids = set()
+        for doc in docs:
+            data = doc.to_dict() or {}
+            uid = data.get("user_id")
+            if uid:
+                user_ids.add(uid)
+        return list(user_ids)
 
     async def cleanup_old_batches(self, user_id: str, max_messages: int = 600) -> int:
         """Delete oldest completed/failed batches if total > max_messages."""

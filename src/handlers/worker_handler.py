@@ -10,6 +10,8 @@ Supported task_types:
   - email_indexing           → run one indexing page, re-enqueue if more
   - email_indexing_watchdog  → mark stale running jobs as failed
   - consolidation            → process one batch, re-enqueue if more
+  - sweep_consolidation      → fan-out cron: re-trigger consolidation for every user with
+                                stuck batches (recovers data stalled by e.g. billing errors)
   - deep_research_polling    → poll Gemini job, deliver via notification service
   - fire_due_reminders       → cron tick: claim each due note (atomic precondition on `due`)
                                 and enqueue per-fire `execute_reminder` Cloud Tasks
@@ -130,6 +132,8 @@ class WorkerHandler:
             return await self._handle_watchdog()
         elif task_type == "consolidation":
             return await self._handle_consolidation(payload)
+        elif task_type == "sweep_consolidation":
+            return await self._handle_sweep_consolidation()
         elif task_type == "deep_research_polling":
             return await self._handle_deep_research_polling(payload)
         elif task_type == "setup_microsoft_todo":
@@ -276,6 +280,28 @@ class WorkerHandler:
             await self._task_dispatch.enqueue_consolidation_task(user_id=user_id)
             logger.info(f"📬 [Worker] Re-enqueued next consolidation task for user {user_id[:8]}")
         return {"status": "ok"}, 200
+
+    async def _handle_sweep_consolidation(self) -> Tuple[dict, int]:
+        """
+        Fan-out cron: re-trigger consolidation for every user with stuck batches.
+
+        A batch is "stuck" if it stalled (e.g. provider billing exhaustion) after its
+        re-enqueue chain stopped — its data was extracted from session history but never
+        written to memory, and without this sweep it would wait for the next session
+        overflow (potentially days). Called by Cloud Scheduler hourly. Per stuck user we
+        enqueue the normal consolidation task, which resets recoverable batches and retries.
+        """
+        if self._consolidation is None or self._task_dispatch is None:
+            logger.warning("[Worker] sweep_consolidation: services not configured")
+            return {"error": "services not configured"}, 501
+
+        user_ids = await self._consolidation.find_stuck_users()
+        for user_id in user_ids:
+            await self._task_dispatch.enqueue_consolidation_task(user_id=user_id)
+            logger.info(f"[Worker] sweep_consolidation: enqueued for {user_id[:8]}")
+
+        logger.info(f"[Worker] sweep_consolidation complete: swept={len(user_ids)}")
+        return {"swept": len(user_ids)}, 200
 
     # ------------------------------------------------------------------
     # Deep Research polling (Gemini)

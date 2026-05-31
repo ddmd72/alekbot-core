@@ -50,15 +50,29 @@ class ConsolidationQueue(ABC):
 
     @abstractmethod
     async def reset_recoverable_batches(self, user_id: str) -> int:
-        """Reset PROCESSING and FAILED batches → RETRY_PENDING for this user.
+        """Reset stale PROCESSING (zombies) + FAILED batches → RETRY_PENDING for this user.
 
         Called at the start of each consolidation run. Two recovery paths:
           - PROCESSING zombies: workers crashed / Cloud Run CPU-throttled mid-batch.
+            Only batches whose `processing_started_at` is older than the consolidation
+            Cloud Task deadline are reset — a recent PROCESSING batch is a LIVE run and
+            must be left alone (otherwise the periodic sweep would race a running
+            consolidation and double-process the batch).
           - FAILED batches: marked failed after 3 attempts on prior runs. Most failures
-            are transient (LLM 5xx, rate limits, deploy bugs); user prefers automatic
-            retry to avoid silent data loss. Periodic Firestore cron purges truly stuck
-            FAILED rows by age (manual external cleanup).
+            are transient (LLM 5xx, rate limits, billing exhaustion); user prefers
+            automatic retry to avoid silent data loss. Periodic Firestore cron purges
+            truly stuck FAILED rows by age (manual external cleanup).
 
-        Resets `attempts` to 0 and clears `error` so the retry starts clean.
+        Resets `attempts` to 0 and clears `last_error` so the retry starts clean.
         Returns count of batches reset."""
+        pass
+
+    @abstractmethod
+    async def get_stuck_batch_user_ids(self) -> List[str]:
+        """Return distinct user_ids that have at least one batch still in the queue.
+
+        Batches are deleted on successful consolidation (delete_batch), so any stored
+        batch is unconsolidated work — its data has been extracted from session history
+        but not yet written to memory. The hourly sweep scheduler uses this to re-trigger
+        consolidation for affected users instead of waiting for the next overflow."""
         pass

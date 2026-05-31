@@ -309,3 +309,25 @@ class TestExceptionHandling:
         result = await service.process_user_batches(user_id=_USER_ID)
 
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# find_stuck_users — sweep scheduler entry point
+# ---------------------------------------------------------------------------
+
+class TestFindStuckUsers:
+
+    async def test_delegates_to_queue(self, service, queue):
+        queue.get_stuck_batch_user_ids.return_value = ["u1", "u2"]
+
+        result = await service.find_stuck_users()
+
+        assert result == ["u1", "u2"]
+        queue.get_stuck_batch_user_ids.assert_awaited_once_with()
+
+    async def test_empty_when_no_stuck_batches(self, service, queue):
+        queue.get_stuck_batch_user_ids.return_value = []
+
+        result = await service.find_stuck_users()
+
+        assert result == []

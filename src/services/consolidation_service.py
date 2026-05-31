@@ -44,6 +44,15 @@ class ConsolidationService:
         self._indexed_email_repo = indexed_email_repo
         self._user_repo = user_repo
 
+    async def find_stuck_users(self) -> list[str]:
+        """Distinct user_ids with unconsolidated batches still in the queue.
+
+        Used by the hourly sweep scheduler to re-trigger consolidation for users whose
+        batches stalled (e.g. provider billing exhaustion) instead of waiting for the
+        next session overflow. Delegates straight to the queue — no per-user work here.
+        """
+        return await self._queue.get_stuck_batch_user_ids()
+
     async def process_user_batches(
         self,
         user_id: str,
