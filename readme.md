@@ -13,30 +13,30 @@ Every conversation produces a stream of facts — preferences, events, decisions
 Alek-Core captures them automatically, deduplicates against existing knowledge, and uses them
 to enrich every future response. The system gets smarter with each conversation.
 
-**Core cycle:** user message → router classifies complexity and searches memory → specialist agent
-responds with biographical context → consolidation agent extracts new facts in the background →
-next conversation already knows them.
+**Core cycle:** user message → Router classifies complexity and enriches with memory/web →
+the Smart agent responds with biographical context at a complexity-appropriate model tier →
+the consolidation agent extracts new facts in the background → next conversation already knows them.
 
 ---
 
 ## Architecture
 
 **Hexagonal Architecture (Ports & Adapters).** Domain and business logic have zero infrastructure
-dependencies. All I/O goes through ~56 ABC interfaces (ports), with concrete implementations
+dependencies. All I/O goes through ~58 ABC interfaces (ports), with concrete implementations
 injected at startup via `ServiceContainer`.
 
 ```
 src/
   domain/         — Entities, enums, value objects. No external imports.
-  ports/          — ~56 ABC interfaces. Only domain/ + stdlib.
-  adapters/       — Firestore, Gemini, Claude, Grok, Slack, Telegram, Gmail, Microsoft To Do.
+  ports/          — ~58 ABC interfaces. Only domain/ + stdlib.
+  adapters/       — Firestore, Gemini, Claude, Grok, OpenAI, Slack, Telegram, Gmail, Microsoft To Do.
   services/       — Business logic (search enrichment, prompt assembly, fact writing, email indexing).
   agents/         — Multi-agent network. Receive all dependencies via constructor.
   handlers/       — ConversationHandler, ConsolidationHandler, WorkerHandler.
   infrastructure/ — AgentCoordinator, task queues, agent registry, agent manifest.
   composition/    — ServiceContainer: wires ports to adapters at startup.
   locales/        — Per-language UI string modules (uk, en, fr, es).
-  web/            — Quart OAuth app + Cabinet UI.
+  web/            — Quart OAuth app + Cabinet UI + remote MCP server.
 ```
 
 **Agents are provider-agnostic.** Each agent type has a default provider and a per-user
@@ -47,36 +47,44 @@ agent code. Model tier (ECO/BALANCED/PERFORMANCE) is resolved from user config a
 
 ## Agent network
 
+The Router runs LLM triage on **every** request — complexity score, tone, semantic lens, search
+intent — and triggers memory/web enrichment before routing. The routing target is **always Smart**;
+the complexity score drives Smart's per-request **model tier** (ECO → BALANCED → PERFORMANCE), not a
+separate cheap-vs-expensive agent. Smart re-evaluates after tool results and can chain further
+delegation. Specialists are commissioned through a single `delegate_to_specialist(intent, query)` tool.
+
 | Agent | Default provider | Mode | Role |
 |---|---|---|---|
-| Router | Gemini | sync | LLM triage on every request: complexity score, semantic lens, memory/web enrichment. 1–6 → Quick, 7–10 → Smart |
-| Quick | Gemini | sync | Handles complexity 1–6 (~70% of requests); full tool access, single-pass, no re-evaluation |
-| Smart | Gemini | sync | Handles complexity 7–10; multi-turn reasoning with re-evaluation after tool results |
-| Memory | Gemini | sync | LLM formulates search keys → multi-vector RRF retrieval; also handles explicit `save_to_memory` |
-| WebSearch | Gemini | sync | Provider-native web search (`use_grounding=True`); called by Smart. Intents: `search_web`, `fetch_url` |
-| WebSearchLight | Gemini | sync | Lightweight provider-native search; called by Quick via `search_web` → `search_web_light` remap. Internal |
-| EmailSearch | Gemini | sync | Email archive specialist: semantic search, full body fetch, attachment parsing |
-| EmailClassification | Gemini | sync | Classifies raw emails; extracts fact sentences for indexing — not user-facing |
+| Router | Gemini | sync | LLM triage on every request: complexity, tone, semantic lens, search intent; triggers memory/web enrichment. Always routes to Smart |
+| Smart | provider-agnostic (Gemini) | sync | Primary path for every request; multi-turn reasoning, re-evaluates after tool results; complexity → model tier |
+| Quick | Gemini | sync | Not on the primary path. Emergency fallback when Smart fails/times out, and formatter for system notifications |
+| Memory | Gemini (ECO) | sync | LLM formulates search keys → multi-vector RRF retrieval; also handles explicit `save_to_memory` |
+| WebSearch | provider-native | sync | Provider-native grounded web search; called by Smart. Intents: `search_web`, `fetch_url` |
+| EmailSearch | Gemini (BALANCED) | sync | Email archive specialist: semantic search, full-body fetch, attachment parsing |
+| EmailClassification | — | sync | Classifies raw emails during indexing; extracts fact sentences — not user-facing |
+| FileManagement | — (zero-LLM) | sync | `open_file` (GCS download + text/vision conversion) and `delete_file` — direct port operations |
+| Tasks | Gemini | sync | Microsoft To Do CRUD (list/search/create/update/delete); search-before-mutate via short IDs |
+| Notes | OpenAI (PERFORMANCE) | sync | Proactive self-reminders: deferred instructions that fire autonomously as new conversations |
+| MapsSearch | Gemini (BALANCED) | sync, internal | Place search, route computation, weather via Google Maps AI Grounding (MCP); auto-triggered alongside web search |
+| Compute | Gemini (ECO) | sync | Math, datetime, finance via Gemini code-execution sandbox |
+| Help | Gemini | sync | User-facing capabilities guide (`get_help`) |
 | DocPlanner | Claude | async | DOCX creation entry point: LLM → JSON layout spec → delegates to DocGenerator |
 | DocGenerator | Claude | async | Writes Node.js script → subprocess → DOCX bytes; internal (not exposed to LLM) |
 | PdfGenerator | Gemini | async | One LLM call → HTML+CSS → Puppeteer renders PDF; delivers GCS link + Slack upload |
 | HtmlPageGenerator | Gemini | async | One LLM call → full HTML+CSS+JS page with Unsplash image integration; delivers GCS link |
-| Tasks | Gemini | sync | Microsoft To Do or Google Tasks (per user): list, search, create, update, delete |
-| Notes | Gemini | sync | Proactive self-reminders: deferred instructions that fire autonomously on a schedule |
-| MapsSearch | Gemini | sync | Place search, route computation, weather via Google Maps AI Grounding (MCP) |
-| Compute | Gemini | sync | Math, datetime, finance calculations via Gemini code execution sandbox (Gemini-only) |
-| DeepResearch | OpenAI | async | Long-running research jobs; provider-agnostic (OpenAI webhook / Gemini polling / Claude Cloud Run Job) |
-| Consolidation | Claude | async | Background long-term memory formation ("Life Chronicler") via Cloud Tasks |
+| DeepResearch | Claude | async | Long-running research jobs; Claude Cloud Run Job (default) or OpenAI webhook |
+| Consolidation | Claude (PERFORMANCE) | async | Background long-term memory formation ("Life Chronicler") via Cloud Tasks |
 
-**70% Quick path (cheap model) + 30% Smart path (expensive) = ~−62% LLM cost** vs. routing everything to a top-tier model.
-
-Quick and Smart are functionally identical in tool access. Two differences only: Quick skips
-re-evaluation after tool results; Quick remaps `search_web` → `search_web_light` at dispatch time.
+**Cost control is complexity-driven tier selection within Smart:** the Router's complexity score
+resolves a cheaper model tier (ECO/BALANCED) for simple requests and reserves top-tier models for
+complex ones — instead of routing everything to a single expensive model. (Earlier this was a
+Quick-vs-Smart path split; the primary path is now Smart-only.)
 
 Providers are user-configurable per agent. Defaults listed above reflect the production baseline.
 
 Adding a new specialist requires a registry entry in `agent_manifest.py` — no changes to orchestrators.
-Also update [`src/utils/capabilities.py`](src/utils/capabilities.py) — user-facing capabilities reference returned by `get_help`.
+Also update [`src/utils/capabilities.py`](src/utils/capabilities.py) — the user-facing capabilities
+reference returned by `get_help`.
 
 ---
 
@@ -94,6 +102,8 @@ Analogous to how the brain consolidates short-term into long-term memory:
 - `Size_Triggers_Review` rule: facts > 40 words trigger decomposition deliberation before UPDATE —
   compound facts split into atomic parts if independently queryable
 - Biographical cache invalidated on write → next conversation sees new facts immediately
+- Stalled batches (e.g. a provider outage) are swept hourly by Cloud Scheduler and retried —
+  no data lost between session history and memory
 
 ### Multi-vector search with RRF
 
@@ -112,23 +122,52 @@ Prompts assembled from verified fragments stored in Firestore, not written inlin
 - `PROMPT_CACHE_BOUNDARY` splits each final prompt: static prefix cached by the LLM provider
   (5-min TTL), dynamic suffix (datetime + query-specific context) sent fresh every request
 
+### Layered transient-failure resilience
+
+Three retry layers at different granularities, single-sourced and non-overlapping:
+
+- **In-process** — a shared executor retries transient provider errors (429/503) with exponential
+  backoff + jitter; one `RetryPolicy` and one error taxonomy used by both the LLM and embedding paths
+- **Cloud Tasks** — the queue re-runs a whole worker task on 5xx (minutes-scale)
+- **Application** — re-enqueue / batch-attempt counters / the consolidation sweep (work-item progress)
+
+Layers that nest are prevented from multiplying: Cloud-Task-backed deliveries suppress in-process
+retry so the outer queue retry is the single retry.
+
 ### Gmail email indexing
 
 Passive inbox-as-memory pipeline:
 
 - User connects Gmail via OAuth; incremental indexing runs on schedule via Cloud Scheduler
 - `EmailClassificationAgent` triages each email; valuable ones stored as `IndexedEmail` in Firestore
-- 4-vector schema (mirrors fact schema) — emails are searchable the same way as memory facts
+- 4-vector schema (mirrors the fact schema) — emails are searchable the same way as memory facts
 - `EmailSearchAgent` surfaces relevant emails in conversation context
+
+### Daily email review
+
+An opt-in daily briefing assembled by the Smart agent:
+
+- Cloud Scheduler (hourly fan-out) enqueues a per-user job at the user's chosen local hour
+- Last 24h of email is triaged ([ACTION]/[FYI]/[DIGEST]/[NOISE]), action items deep-read, context researched
+- Output: an HTML report (GCS link, subjects as clickable Gmail links) + a short chat summary, in the user's language
 
 ### Proactive self-reminders
 
 The orchestrator sets reminders that fire autonomously and execute as new conversations:
 
-- 3 tools: `create_self_reminder`, `update_self_reminder`, `delete_self_reminder`
-- Cloud Scheduler fires every 15 min → due reminders trigger `QuickAgent` as a new conversation
+- Tools: `create_self_reminder`, `update_self_reminder`, `delete_self_reminder`
+- Cloud Scheduler fires every 15 min → each due reminder executes as a new **Smart-agent** conversation
 - One-time: deleted after firing. Recurrent (hourly/daily/weekly/monthly): rescheduled with DST-safe UTC conversion
 - Every CRUD immediately notifies the user's channel for transparency
+
+### Remote MCP server
+
+alekbot exposes its memory to claude.ai Custom Connectors as an MCP **server** (the inverse of its
+own Maps MCP *client* usage):
+
+- One tool, `get_user_context`, calls the search-enrichment service directly for ~1s retrieval
+- Full in-process OAuth 2.1 authorization server (DCR, PKCE, refresh-token rotation); consent bound
+  to the Cabinet login. Experimental, dev-only.
 
 ### Multilingual support
 
@@ -146,6 +185,7 @@ Two independent language axes:
 - **Infrastructure:** GCP Cloud Run, Firestore (named database `us-production`), Cloud Tasks, Cloud Scheduler
 - **Interfaces:** Slack (Socket Mode dev / HTTP Events API prod), Telegram
 - **Integrations:** Gmail (OAuth + indexing), Microsoft To Do (Graph API + webhooks), Unsplash, Google Maps (MCP)
+- **Observability:** Logfire tracing + a queryable BigQuery LLM content store (prompts/responses, 30-day TTL), joined by trace ID
 - **Tests:** pytest + pytest-asyncio
 
 ---
@@ -188,5 +228,7 @@ Architecture and design docs follow the [arc42](https://arc42.org) template:
 
 ## License
 
-All rights reserved. This repository is shared for evaluation purposes only.
-No copying, distribution, or reuse without explicit written permission from the author.
+Copyright © 2026 Dmytro Deleur. All rights reserved.
+
+This repository is shared for evaluation purposes only. No copying, distribution,
+modification, or reuse without explicit written permission from the copyright holder.
