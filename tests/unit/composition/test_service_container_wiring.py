@@ -118,3 +118,48 @@ class TestServiceContainerWiring:
         """GCS_MEDIA_BUCKET="" → file_storage + file_conversion_service both None."""
         assert container.file_storage is None
         assert container.file_conversion_service is None
+
+    def test_prompt_content_store_absent_by_default(self, container):
+        """No DEBUG_PROMPTS + no dataset → capture off → store is None."""
+        assert container.prompt_content_store is None
+
+
+class TestPromptCaptureFlag:
+    """DEBUG_PROMPTS is the global capture switch; it gates whether the store is
+    wired at all. The wired adapter is BigQuery."""
+
+    @staticmethod
+    def _build(monkeypatch, fake_config, **overrides):
+        monkeypatch.setenv("APP_ENV", "test")
+        cfg = {**fake_config, **overrides}
+        return ServiceContainer(
+            config=cfg,
+            db_client=MagicMock(),
+            env_config=EnvironmentConfig(),
+            account_repo=AsyncMock(spec=AccountRepository),
+        )
+
+    def test_off_with_dataset_means_no_store(self, monkeypatch, fake_config):
+        # Flag is the decider: dataset present but flag off → still None.
+        c = self._build(
+            monkeypatch, fake_config,
+            DEBUG_PROMPTS="false", BIGQUERY_PROMPT_DATASET="ds",
+        )
+        assert c.prompt_content_store is None
+
+    def test_on_without_dataset_means_no_store(self, monkeypatch, fake_config):
+        # Flag on but no dataset to write to → None (dataset is required config).
+        c = self._build(
+            monkeypatch, fake_config,
+            DEBUG_PROMPTS="true", BIGQUERY_PROMPT_DATASET="",
+        )
+        assert c.prompt_content_store is None
+
+    def test_on_with_dataset_wires_bigquery(self, monkeypatch, fake_config):
+        from src.adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
+        c = self._build(
+            monkeypatch, fake_config,
+            DEBUG_PROMPTS="true", BIGQUERY_PROMPT_DATASET="ds",
+            GOOGLE_CLOUD_PROJECT="proj",
+        )
+        assert isinstance(c.prompt_content_store, BigQueryPromptContentAdapter)
