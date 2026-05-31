@@ -21,11 +21,13 @@ from ..domain.exceptions import (
     LLMRateLimitError,
     LLMUnavailableError,
     ProviderBreakerOpenError,
+    TRANSIENT_RETRY_TYPES,
 )
 from ..domain.retry_policy import DEFAULT_RETRY_POLICY, RetryPolicy
 from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
+from ..utils.retry import retry_async
 from ..utils.debug_logger import get_debug_logger
 from ..utils.telemetry import get_tracer
 
@@ -540,85 +542,74 @@ class BaseAgent(ABC):
         self._billing_cache_read_tokens = 0
         self._billing_cache_creation_tokens = 0
 
+        # Typed retry via the shared executor (src/utils/retry.py). Retries only
+        # TRANSIENT_RETRY_TYPES (LLMRateLimitError / LLMUnavailableError) with the
+        # agent's RetryPolicy; everything else propagates out of retry_async and is
+        # turned into a terminal outcome below. The surrounding circuit-breaker,
+        # billing flush and timeout/cancelled handling are agent-level concerns and
+        # stay here — only the backoff loop + transient classification are shared.
         policy = self.retry_policy
-        # Total tries = 1 initial attempt + N transient retries.
-        max_attempts = policy.transient_max_attempts + 1
-        attempt = 0
         last_error: Optional[str] = None
 
-        while attempt < max_attempts:
-            attempt += 1
-            try:
-                logger.info(
-                    f"🔧 {self.agent_id} executing task {message.task_id[:8]}... "
-                    f"(attempt {attempt}/{max_attempts})"
-                )
+        async def _attempt() -> AgentResponse:
+            logger.info(f"🔧 {self.agent_id} executing task {message.task_id[:8]}...")
+            return await self._execute_with_timeout(message)
 
-                response = await self._execute_with_timeout(message)
+        def _on_retry(e: BaseException, attempt: int, backoff: float) -> None:
+            error_type = "rate_limit" if isinstance(e, LLMRateLimitError) else "unavailable"
+            logger.warning(
+                f"⏳ {self.agent_id} transient error, retrying "
+                f"(error_type={error_type}, "
+                f"http_status={getattr(e, 'http_status', None)}, "
+                f"attempt={attempt}, backoff={backoff:.2f}s): {e}"
+            )
 
-                # Success - record and return
-                self.circuit_breaker.record_success(self.agent_id)
-                await self._flush_billing()
+        try:
+            response = await retry_async(
+                _attempt,
+                policy=policy,
+                retryable=tuple(TRANSIENT_RETRY_TYPES),
+                on_retry=_on_retry,
+            )
+            self.circuit_breaker.record_success(self.agent_id)
+            await self._flush_billing()
+            logger.info(
+                f"✅ {self.agent_id} completed task {message.task_id[:8]} "
+                f"(status={response.status}, confidence={response.confidence:.2f})"
+            )
+            return response
 
-                logger.info(
-                    f"✅ {self.agent_id} completed task {message.task_id[:8]} "
-                    f"(status={response.status}, confidence={response.confidence:.2f})"
-                )
+        except asyncio.CancelledError:
+            # External cancellation — never swallow, never retry.
+            self.circuit_breaker.record_failure(self.agent_id)
+            await self._flush_billing()
+            raise
 
-                return response
+        except (LLMRateLimitError, LLMUnavailableError) as e:
+            # Transient retries exhausted.
+            error_type = "rate_limit" if isinstance(e, LLMRateLimitError) else "unavailable"
+            last_error = f"{error_type}: {e}"
+            logger.warning(
+                f"❌ {self.agent_id} transient error exhausted retries ({error_type}): {e}"
+            )
 
-            except (LLMRateLimitError, LLMUnavailableError) as e:
-                error_type = "rate_limit" if isinstance(e, LLMRateLimitError) else "unavailable"
-                last_error = f"{error_type}: {e}"
-                if attempt >= max_attempts:
-                    logger.warning(
-                        f"❌ {self.agent_id} transient error exhausted retries "
-                        f"({error_type}, attempt {attempt}/{max_attempts}): {e}"
-                    )
-                    break
-                # Exponential backoff with jitter — defends against
-                # synchronised retry storms when many agents hit the same
-                # provider rate-limit window simultaneously.
-                backoff = policy.transient_backoff_base_seconds * (2 ** (attempt - 1))
-                if policy.transient_jitter_seconds > 0:
-                    backoff += random.uniform(0, policy.transient_jitter_seconds)
-                logger.warning(
-                    f"⏳ {self.agent_id} transient error, retrying "
-                    f"(error_type={error_type}, "
-                    f"http_status={getattr(e, 'http_status', None)}, "
-                    f"attempt={attempt}/{max_attempts}, "
-                    f"backoff={backoff:.2f}s): {e}"
-                )
-                await asyncio.sleep(backoff)
-                continue
+        except asyncio.TimeoutError:
+            # Structural budget mismatch — running again inside the same timeout
+            # cannot help. Surfaced as failure, never retried.
+            last_error = "Task execution timeout"
+            logger.warning(
+                f"⏱️ {self.agent_id} timeout (no retry — budget mismatch, not transient failure)"
+            )
 
-            except asyncio.TimeoutError:
-                # Structural budget mismatch — running again inside the
-                # same timeout cannot help. Surface immediately.
-                last_error = "Task execution timeout"
-                logger.warning(
-                    f"⏱️ {self.agent_id} timeout on attempt {attempt}/{max_attempts} "
-                    f"(no retry — timeout indicates budget mismatch, not transient failure)"
-                )
-                break
+        except Exception as e:
+            # Deterministic by assumption — retry would only delay the failure
+            # and obscure the bug from logs.
+            last_error = str(e)
+            logger.warning(
+                f"❌ {self.agent_id} failed (no retry — non-transient): {e}"
+            )
 
-            except asyncio.CancelledError:
-                # External cancellation — never swallow, never retry.
-                self.circuit_breaker.record_failure(self.agent_id)
-                await self._flush_billing()
-                raise
-
-            except Exception as e:
-                # Deterministic by assumption — retry would only delay
-                # the failure and obscure the bug from logs.
-                last_error = str(e)
-                logger.warning(
-                    f"❌ {self.agent_id} failed on attempt {attempt}/{max_attempts} "
-                    f"(no retry — non-transient): {e}"
-                )
-                break
-
-        # All paths past the loop are non-success.
+        # All non-success paths converge here.
         self.circuit_breaker.record_failure(self.agent_id)
         await self._flush_billing()
 

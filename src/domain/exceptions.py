@@ -116,6 +116,20 @@ FAILOVER_TRIGGER_TYPES: FrozenSet[Type[LLMError]] = frozenset({
 })
 
 
+# Errors that warrant retrying the SAME provider call before giving up (with
+# backoff). Narrower than FAILOVER_TRIGGER_TYPES on purpose: a 429/503 is a
+# transient blip that usually clears within seconds, whereas 5xx/network/timeout
+# either need a different provider (failover, LLM path) or are not worth a same-
+# call retry. This is the SINGLE source of "what is retryable" — shared by the LLM
+# path (BaseAgent) and the embedding path (GeminiEmbeddingAdapter) via
+# utils.retry.retry_async, so the policy is defined once, not per call site.
+# Matches the retry set adopted in docs/.../decisions/typed_retry_policy.md.
+TRANSIENT_RETRY_TYPES: FrozenSet[Type[LLMError]] = frozenset({
+    LLMRateLimitError,
+    LLMUnavailableError,
+})
+
+
 # Log label per failover-trigger type. Co-located with the trigger set so a
 # new trigger type without a label fails the invariant test in
 # tests/unit/agents/core/test_base_agent_fallback.py loudly. Keeps the
