@@ -700,13 +700,15 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 
 
 
-| Collection             | Status           | Note                                                |
-| :--------------------- | :--------------- | :-------------------------------------------------- |
-| `observations{suffix}` | ⚠️ **DEAD CODE** | Defined in repo but `add_observation` never called. |
-| `observations_archive` | ⚠️ **DEAD CODE** | Never populated.                                    |
-| `users` (no suffix)    | 🛑 **MIGRATED**  | Use `users_oauth` in Dev/Test.                      |
-| `accounts` (no suffix) | 🛑 **MIGRATED**  | Use `accounts_oauth` in Dev/Test.                   |
-| `facts` (no suffix)    | 🛑 **MIGRATED**  | Use `facts_oauth` in Dev/Test.                      |
+
+
+
+
+
+| :--------------------- | :-------------------- | :-------------------------------------------------- |
+| `observations`         | 🗑️ **DELETED**        | Was dead code (`add_observation` never called).     |
+
+
 
 ---
 
