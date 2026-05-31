@@ -748,15 +748,16 @@ class TestOnAgentSuccess:
         agent = MockAgent(config)
         agent._on_agent_success(char_count=100, token_count=0)
 
-    def test_with_output_text_calls_debug_logger(self):
+    def test_with_output_text_does_not_call_debug_logger(self):
+        # GCS final-text dump dropped in the BigQuery-only migration; content
+        # capture now happens per-LLM-call via record_turn, not here.
         config = AgentConfig(agent_id="a", agent_type="mock")
         agent = MockAgent(config)
         with patch("src.agents.base_agent.get_debug_logger") as mock_gdl:
             mock_logger = MagicMock()
-            mock_logger.enabled = True
             mock_gdl.return_value = mock_logger
             agent._on_agent_success(char_count=20, token_count=10, output_text="hello")
-        mock_logger.log_response.assert_called_once()
+        mock_logger.log_response.assert_not_called()
 
 
 # =============================================================================
@@ -904,19 +905,18 @@ class TestCallLlmFullPaths:
         assert agent._billing_completion_tokens == 5
 
     @pytest.mark.asyncio
-    async def test_debug_enabled_logs_request(self):
-        """debug.enabled=True → log_llm_request called (lines 748-754)."""
+    async def test_call_llm_records_turn_to_content_store(self):
+        """_call_llm captures the turn via the injected content store (record_turn)."""
         from src.ports.llm_port import LLMRequest, LLMResponse
+        from src.ports.prompt_content_store import PromptContentStore
         mock_llm = MagicMock()
         mock_llm.generate_content = AsyncMock(return_value=LLMResponse(text="ok"))
         agent = self._make_agent_with_llm(mock_llm)
+        store = AsyncMock(spec=PromptContentStore)
+        agent._prompt_content_store = store
         request = LLMRequest(model_name="test", messages=[])
-        with patch("src.agents.base_agent.get_debug_logger") as mock_gdl:
-            mock_logger = MagicMock()
-            mock_logger.enabled = True
-            mock_gdl.return_value = mock_logger
-            await agent._call_llm(request)
-        mock_logger.log_llm_request.assert_called_once()
+        await agent._call_llm(request)
+        store.record_turn.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_rate_limit_error_uses_fallback_provider(self):

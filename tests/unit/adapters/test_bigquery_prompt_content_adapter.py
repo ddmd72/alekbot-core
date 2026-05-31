@@ -1,12 +1,13 @@
 """
 Wire tests for BigQueryPromptContentAdapter.
 
-Mock boundary: the google.cloud.bigquery SDK (injected into sys.modules so the
-adapter's lazy `from google.cloud import bigquery` binds to a fake). Never mock
-at the port level — these tests verify the actual translation to SDK calls:
-dataset/table creation, 30-day partition expiration, and the row insert.
+The adapter owns record building (request/response → row) and the background-task
+set. record_turn schedules a fire-and-forget insert and returns immediately; the
+write is best-effort (errors swallowed). Mock boundary: the google.cloud.bigquery
+SDK (injected into sys.modules) — never the port.
 """
 
+import asyncio
 import sys
 from unittest.mock import MagicMock
 
@@ -15,13 +16,14 @@ import pytest
 from src.adapters.bigquery_prompt_content_adapter import (
     BigQueryPromptContentAdapter,
     _PARTITION_EXPIRATION_MS,
+    _render_messages,
 )
-from src.domain.observability import PromptContentRecord
+from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart, ToolCall, UsageMetadata
 
 
 @pytest.fixture
 def fake_bigquery(monkeypatch):
-    """Inject a fake google.cloud.bigquery module and return (module, client)."""
+    """Inject a fake google.cloud.bigquery module; return (module, client)."""
     client = MagicMock()
     client.project = "proj"
     client.create_dataset = MagicMock()
@@ -44,82 +46,111 @@ def adapter():
     return BigQueryPromptContentAdapter(dataset="ds", table="tbl", project="proj")
 
 
-def _record() -> PromptContentRecord:
-    return PromptContentRecord(
-        trace_id="tr_1",
-        timestamp=1_700_000_000.0,
-        agent_id="smart_u1",
-        agent_type="smart",
-        model="claude-opus-4-8",
-        response_text="answer",
-        prompt_tokens=10,
-        completion_tokens=5,
-        total_tokens=15,
+def _request() -> LLMRequest:
+    return LLMRequest(
+        model_name="claude-opus-4-8",
+        system_instruction="you are a test",
+        messages=[Message(role="user", parts=[MessagePart(text="hello")])],
     )
 
 
-class TestStore:
-    async def test_creates_dataset_and_table_with_30day_ttl(self, adapter, fake_bigquery):
-        bq, client = fake_bigquery
+def _response() -> LLMResponse:
+    return LLMResponse(
+        text="answer",
+        usage_metadata=UsageMetadata(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+    )
 
-        await adapter.store(_record())
+
+async def _drain(adapter) -> None:
+    await asyncio.gather(*list(adapter._bg_tasks))
+
+
+async def _record(adapter, request=None, response=None):
+    await adapter.record_turn(
+        request=request or _request(),
+        response=response or _response(),
+        agent_id="smart_u1",
+        agent_type="smart",
+        account_id="acct-1",
+        turn=2,
+        latency_ms=42.0,
+        provider="claude",
+    )
+    await _drain(adapter)
+
+
+class TestRecordTurn:
+    async def test_creates_table_with_30day_ttl(self, adapter, fake_bigquery):
+        bq, client = fake_bigquery
+        await _record(adapter)
 
         client.create_dataset.assert_called_once_with("ds", exists_ok=True)
         client.create_table.assert_called_once()
-        # Partition expiration encodes the 30-day TTL.
         bq.TimePartitioning.assert_called_once()
         kwargs = bq.TimePartitioning.call_args.kwargs
         assert kwargs["field"] == "timestamp"
         assert kwargs["expiration_ms"] == _PARTITION_EXPIRATION_MS
         assert _PARTITION_EXPIRATION_MS == 30 * 24 * 60 * 60 * 1000
 
-    async def test_inserts_row_with_iso_timestamp(self, adapter, fake_bigquery):
+    async def test_inserts_row_built_from_request_and_response(self, adapter, fake_bigquery):
         bq, client = fake_bigquery
-
-        await adapter.store(_record())
+        await _record(adapter)
 
         client.insert_rows_json.assert_called_once()
-        args = client.insert_rows_json.call_args.args
-        table_id, rows = args[0], args[1]
+        table_id, rows = client.insert_rows_json.call_args.args[:2]
         assert table_id == "proj.ds.tbl"
-        assert len(rows) == 1
         row = rows[0]
-        assert row["trace_id"] == "tr_1"
+        assert row["agent_id"] == "smart_u1"
+        assert row["agent_type"] == "smart"
         assert row["model"] == "claude-opus-4-8"
+        assert row["account_id"] == "acct-1"
+        assert row["turn"] == 2
+        assert row["provider"] == "claude"
+        assert row["response_text"] == "answer"
         assert row["total_tokens"] == 15
-        # timestamp serialized to ISO-8601 UTC string for the TIMESTAMP column
+        assert row["latency_ms"] == 42.0
+        # request_text bundles system + history; timestamp is an ISO string
+        assert "you are a test" in row["request_text"]
+        assert "hello" in row["request_text"]
         assert isinstance(row["timestamp"], str)
-        assert row["timestamp"].startswith("2023-11-")
 
-    async def test_ensure_table_runs_only_once(self, adapter, fake_bigquery):
+    async def test_returns_immediately_without_blocking(self, adapter, fake_bigquery):
+        # record_turn schedules a background task and returns before the insert runs.
+        await adapter.record_turn(
+            request=_request(), response=_response(), agent_id="a", agent_type="t",
+            account_id=None, turn=0, latency_ms=1.0, provider="claude",
+        )
+        assert len(adapter._bg_tasks) == 1
         bq, client = fake_bigquery
-
-        await adapter.store(_record())
-        await adapter.store(_record())
-
-        assert client.create_table.call_count == 1
-        assert client.insert_rows_json.call_count == 2
+        client.insert_rows_json.assert_not_called()  # not yet — still scheduled
+        await _drain(adapter)
+        client.insert_rows_json.assert_called_once()
 
     async def test_insert_errors_are_swallowed(self, adapter, fake_bigquery):
         bq, client = fake_bigquery
         client.insert_rows_json.return_value = [{"index": 0, "errors": ["bad"]}]
-
-        # Must not raise — best-effort contract.
-        await adapter.store(_record())
+        await _record(adapter)  # must not raise
 
     async def test_client_exception_is_swallowed(self, adapter, fake_bigquery):
         bq, client = fake_bigquery
         client.insert_rows_json.side_effect = RuntimeError("BQ down")
+        await _record(adapter)  # must not raise
 
-        # Must not raise — runs fire-and-forget on the request hot path.
-        await adapter.store(_record())
+    async def test_tool_calls_serialized(self, adapter, fake_bigquery):
+        bq, client = fake_bigquery
+        resp = LLMResponse(text=None, tool_calls=[ToolCall(name="search_memory", args={"q": "x"})])
+        await _record(adapter, response=resp)
+
+        row = client.insert_rows_json.call_args.args[1][0]
+        assert "search_memory" in row["tool_calls"]
 
 
-class TestToRow:
-    def test_timestamp_becomes_iso_utc_string(self):
-        rec = PromptContentRecord(timestamp=1_700_000_000.0, agent_id="a")
-        row = BigQueryPromptContentAdapter._to_row(rec)
-
-        assert isinstance(row["timestamp"], str)
-        assert "T" in row["timestamp"]  # ISO-8601
-        assert row["timestamp"].endswith("+00:00")  # UTC
+class TestRenderMessages:
+    def test_renders_role_and_text(self):
+        msgs = [
+            Message(role="user", parts=[MessagePart(text="hi")]),
+            Message(role="model", parts=[MessagePart(text="hello")]),
+        ]
+        out = _render_messages(msgs)
+        assert "user: hi" in out
+        assert "model: hello" in out
