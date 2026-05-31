@@ -53,7 +53,7 @@ class GeminiEmbeddingAdapter(EmbeddingService):
         logger.info(f"[GeminiEmbedding] concurrency cap = {concurrency}, model = {_MODEL}")
 
     async def _embed_with_throttle(self, contents):
-        """Throttled call with retry on 429 RESOURCE_EXHAUSTED."""
+        """Throttled call with retry on transient failures (429 rate limit, 5xx server)."""
         async with self._semaphore:
             backoff = _INITIAL_BACKOFF_SEC
             for attempt in range(1, _MAX_RETRIES + 1):
@@ -71,6 +71,18 @@ class GeminiEmbeddingAdapter(EmbeddingService):
                     logger.warning(
                         f"[GeminiEmbedding] 429 on attempt {attempt}/{_MAX_RETRIES}, "
                         f"backing off {backoff:.1f}s"
+                    )
+                    await asyncio.sleep(backoff)
+                    backoff *= 2
+                except genai_errors.ServerError as exc:
+                    # 5xx (503 UNAVAILABLE / 500 / 504) — transient server-side failure,
+                    # same retry class as 429. The embedding endpoint 503s under load;
+                    # without this the error propagated and degraded fact search to [].
+                    if attempt == _MAX_RETRIES:
+                        raise
+                    logger.warning(
+                        f"[GeminiEmbedding] server error (code={getattr(exc, 'code', None)}) "
+                        f"on attempt {attempt}/{_MAX_RETRIES}, backing off {backoff:.1f}s"
                     )
                     await asyncio.sleep(backoff)
                     backoff *= 2

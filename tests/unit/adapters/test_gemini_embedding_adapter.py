@@ -17,10 +17,13 @@ v2 contract (see decisions/embedding_model_migration_v1_to_v2.md):
       unknown              → ValueError
 """
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from google.genai import errors as genai_errors
 
 from src.adapters.gemini_embedding_adapter import (
     GeminiEmbeddingAdapter,
+    _MAX_RETRIES,
     _apply_task_prefix,
 )
 
@@ -368,3 +371,50 @@ def test_apply_task_prefix_empty_text():
     """Empty input is allowed — the prefix is still applied."""
     assert _apply_task_prefix("", "RETRIEVAL_DOCUMENT") == "title: | text: "
     assert _apply_task_prefix("", "RETRIEVAL_QUERY") == "task: search result | query: "
+
+
+# ============================================================================
+# _embed_with_throttle — transient-failure retry (429 + 5xx)
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_retries_503_then_succeeds():
+    """503 ServerError is transient → retried with backoff, then returns the value."""
+    adapter = _make_adapter()
+    err = genai_errors.ServerError(code=503, response_json={"error": {"message": "unavailable"}})
+    adapter.client.models.embed_content.side_effect = [err, _make_embedding_result([0.4, 0.5])]
+
+    with patch("src.adapters.gemini_embedding_adapter.asyncio.sleep", new=AsyncMock()) as sleep:
+        result = await adapter.get_embedding("hi")
+
+    assert result == [0.4, 0.5]
+    assert adapter.client.models.embed_content.call_count == 2
+    sleep.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_503_exhausts_retries_then_raises():
+    """503 on every attempt → raises after _MAX_RETRIES (graceful degradation happens upstream)."""
+    adapter = _make_adapter()
+    err = genai_errors.ServerError(code=503, response_json={"error": {"message": "unavailable"}})
+    adapter.client.models.embed_content.side_effect = err
+
+    with patch("src.adapters.gemini_embedding_adapter.asyncio.sleep", new=AsyncMock()):
+        with pytest.raises(genai_errors.ServerError):
+            await adapter.get_embedding("hi")
+
+    assert adapter.client.models.embed_content.call_count == _MAX_RETRIES
+
+
+@pytest.mark.asyncio
+async def test_retries_429_then_succeeds():
+    """429 rate-limit path remains intact alongside the new 5xx branch."""
+    adapter = _make_adapter()
+    err = genai_errors.ClientError(code=429, response_json={"error": {"message": "RESOURCE_EXHAUSTED"}})
+    adapter.client.models.embed_content.side_effect = [err, _make_embedding_result([0.7])]
+
+    with patch("src.adapters.gemini_embedding_adapter.asyncio.sleep", new=AsyncMock()):
+        result = await adapter.get_embedding("hi")
+
+    assert result == [0.7]
+    assert adapter.client.models.embed_content.call_count == 2
