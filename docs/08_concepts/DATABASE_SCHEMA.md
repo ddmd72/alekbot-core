@@ -700,13 +700,15 @@ Updated on every message received via `ConversationHandler` → `UserNotificatio
 
 ## 7. Deprecated / Legacy Collections
 
-| Collection             | Status           | Note                                                |
-| :--------------------- | :--------------- | :-------------------------------------------------- |
-| `observations{suffix}` | ⚠️ **DEAD CODE** | Defined in repo but `add_observation` never called. |
-| `observations_archive` | ⚠️ **DEAD CODE** | Never populated.                                    |
-| `users` (no suffix)    | 🛑 **MIGRATED**  | Use `users_oauth` in Dev/Test.                      |
-| `accounts` (no suffix) | 🛑 **MIGRATED**  | Use `accounts_oauth` in Dev/Test.                   |
-| `facts` (no suffix)    | 🛑 **MIGRATED**  | Use `facts_oauth` in Dev/Test.                      |
+> All entries below were **deleted 2026-05-31** together with the dead unprefixed prod
+> collections (decision record: `docs/04_solution_strategy/decisions/dead_prod_collections_deletion.md`).
+> Kept here for historical traceability.
+
+| Collection             | Status                | Note                                                |
+| :--------------------- | :-------------------- | :-------------------------------------------------- |
+| `observations`         | 🗑️ **DELETED**        | Was dead code (`add_observation` never called).     |
+| `users` (no suffix)    | 🗑️ **DELETED**        | Migrated to `_domain_users_v2`; legacy copy removed. |
+| `facts` (no suffix)    | 🗑️ **DELETED**        | Migrated to `_domain_facts_v2`; legacy copy removed. |
 
 ---
 
