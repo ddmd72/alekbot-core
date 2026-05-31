@@ -60,6 +60,9 @@ async def _capture_research_result(
     result: dict, result_text: str, user_id: str, context: dict
 ) -> None:
     """Durably persist deep-research output(s) to BigQuery. Best-effort, non-raising."""
+    # DEBUG_PROMPTS is the global capture switch (write / don't write).
+    if os.environ.get("DEBUG_PROMPTS", "false").lower() != "true":
+        return
     dataset = os.environ.get("BIGQUERY_PROMPT_DATASET", "")
     if not dataset:
         return

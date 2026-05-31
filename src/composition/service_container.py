@@ -268,9 +268,13 @@ class ServiceContainer:
 
         # ------------------------------------------------------------------
         # LLM prompt/response content store (BigQuery, 30-day TTL).
-        # Disabled when BIGQUERY_PROMPT_DATASET is unset — None propagates
-        # through the factory and BaseAgent skips the fire-and-forget write.
+        # DEBUG_PROMPTS is the GLOBAL capture switch (write / don't write) — it
+        # gates whether the store is wired at all, so None propagates through the
+        # factory and BaseAgent skips the write. The wired adapter is BigQuery;
+        # the flag decides on/off, not which adapter. BIGQUERY_PROMPT_DATASET is
+        # required config for the adapter (no dataset → nothing to write to).
         # ------------------------------------------------------------------
+        capture_enabled = config.get("DEBUG_PROMPTS", "false").lower() == "true"
         bq_dataset = config.get("BIGQUERY_PROMPT_DATASET", "")
         self.prompt_content_store = (
             BigQueryPromptContentAdapter(
@@ -278,7 +282,7 @@ class ServiceContainer:
                 table=config.get("BIGQUERY_PROMPT_TABLE", "prompt_content"),
                 project=config.get("GOOGLE_CLOUD_PROJECT", "") or "",
             )
-            if bq_dataset else None
+            if capture_enabled and bq_dataset else None
         )
 
     # ------------------------------------------------------------------
