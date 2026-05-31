@@ -243,6 +243,29 @@ class TestBaseAgent:
         assert agent.execute_calls == 1
 
     @pytest.mark.asyncio
+    async def test_suppress_transient_retry_via_context(self, config, message):
+        """context['suppress_transient_retry'] forces a single attempt even when the
+        agent's own policy would retry — for Cloud-Task-backed executions where the
+        outer queue retry is the single retry layer (no layer1 × layer2)."""
+        from src.domain.exceptions import LLMRateLimitError
+        from src.domain.retry_policy import RetryPolicy
+        agent = MockAgent(config)
+        # Policy WOULD retry 3× — suppression must override it.
+        agent._retry_policy_override = RetryPolicy(
+            transient_max_attempts=3,
+            transient_backoff_base_seconds=0.0,
+            transient_jitter_seconds=0.0,
+        )
+        agent.execute_error = LLMRateLimitError("rate limited", http_status=429)
+        message.context["suppress_transient_retry"] = True
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            response = await agent.process(message)
+
+        assert agent.execute_calls == 1  # suppressed despite policy=3
+        assert response.status == AgentStatus.FAILED
+
+    @pytest.mark.asyncio
     async def test_cancelled_error_propagates_without_retry(self, config, message):
         """asyncio.CancelledError is honored — never swallowed, never
         retried. Records failure on the circuit breaker on the way out."""

@@ -746,3 +746,30 @@ class TestNotifyTierResolution:
         msg = coordinator.route_message.call_args[0][0]
         # INTERACTIVE: 300_000ms regardless of tier passed.
         assert msg.timeout_ms == 300_000
+
+
+class TestNotifySuppressTransientRetry:
+    """suppress_transient_retry flag → message context, for Cloud-Task-backed callers."""
+
+    async def test_flag_propagated_to_message_context(self, service, coordinator, response_channel):
+        coordinator.route_message.return_value = _make_success_response(SmartResponse(text="ok"))
+
+        await service.notify(
+            _USER_ID, _ACCOUNT_ID, "alert",
+            kind=NotificationKind.REMINDER,
+            suppress_transient_retry=True,
+        )
+
+        msg = coordinator.route_message.call_args[0][0]
+        assert msg.context.get("suppress_transient_retry") is True
+
+    async def test_absent_by_default(self, service, coordinator, response_channel):
+        coordinator.route_message.return_value = _make_success_response(SmartResponse(text="ok"))
+
+        await service.notify(
+            _USER_ID, _ACCOUNT_ID, "alert",
+            kind=NotificationKind.INTERACTIVE,
+        )
+
+        msg = coordinator.route_message.call_args[0][0]
+        assert "suppress_transient_retry" not in msg.context

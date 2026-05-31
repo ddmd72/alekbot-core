@@ -184,6 +184,7 @@ class UserNotificationService:
         email_for_triage: Optional[list] = None,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
+        suppress_transient_retry: bool = False,
     ) -> NotifyResult:
         """
         Send a background notification to the user's channel.
@@ -210,6 +211,11 @@ class UserNotificationService:
             channel_id_override: if provided, delivers to this channel
                 instead of primary/last-active. Used for async results
                 that go back to the originating channel.
+            suppress_transient_retry: set by callers whose /worker handler
+                returns 5xx on failure (reminder, daily email review), so
+                Cloud Tasks retries the whole task. Suppresses the agent's
+                in-process transient retry to avoid layer1 × layer2
+                amplification — the outer queue retry is the single retry.
         """
         sla = self._notification_sla[kind]
         # Resolve effective timeout: tier override wins if both the
@@ -261,6 +267,9 @@ class UserNotificationService:
                 **({"thinking_effort": thinking_effort} if thinking_effort else {}),
                 **({"task_complexity": task_complexity} if task_complexity else {}),
                 **({"email_for_triage": email_for_triage} if email_for_triage else {}),
+                # Cloud-Task-backed delivery: outer queue retry covers transients,
+                # so the agent must not also retry in-process (avoids layer1 × layer2).
+                **({"suppress_transient_retry": True} if suppress_transient_retry else {}),
             },
             timeout_ms=effective_timeout_ms,
         )

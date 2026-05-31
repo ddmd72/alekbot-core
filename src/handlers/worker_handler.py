@@ -592,6 +592,9 @@ class WorkerHandler:
             tier=sla_tier,
             agent_id_override=f"smart_response_agent_{user_id}",
             task_complexity=task_complexity,
+            # This handler returns 5xx on failure → Cloud Tasks retries the task.
+            # Suppress the agent's in-process retry so the two layers don't multiply.
+            suppress_transient_retry=True,
         )
 
         if not result.delivered:
@@ -676,6 +679,9 @@ class WorkerHandler:
             thinking_effort="medium",
             task_complexity="deep_reasoning",
             email_for_triage=emails,
+            # 5xx on failure → Cloud Tasks retries the task; suppress in-process
+            # agent retry so the two retry layers don't multiply.
+            suppress_transient_retry=True,
         )
 
         if not result.delivered:
