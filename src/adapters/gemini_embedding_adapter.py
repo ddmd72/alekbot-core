@@ -3,8 +3,16 @@ from google.genai import errors as genai_errors
 import asyncio
 import os
 from typing import List
+from ..domain.exceptions import (
+    LLMRateLimitError,
+    LLMServerError,
+    LLMUnavailableError,
+    TRANSIENT_RETRY_TYPES,
+)
+from ..domain.retry_policy import DEFAULT_RETRY_POLICY
 from ..ports.embedding_service import EmbeddingService
 from ..utils.logger import logger
+from ..utils.retry import retry_async
 
 # Concurrency cap on in-flight embedding requests.
 # Sized for AI Studio Tier 2 (5000 RPM = 83 RPS sustained).
@@ -12,8 +20,6 @@ from ..utils.logger import logger
 # leaving ~3300 RPM headroom for bursts, fact-storage paths, and Cloud Run multi-instance.
 # Override via GEMINI_EMBED_CONCURRENCY env var if tier or workload changes.
 _DEFAULT_CONCURRENCY = 20
-_MAX_RETRIES = 3
-_INITIAL_BACKOFF_SEC = 2.0
 
 _MODEL = "gemini-embedding-2"
 _OUTPUT_DIM = 768  # Matryoshka truncation from native 3072; preserves existing Firestore indexes.
@@ -53,39 +59,47 @@ class GeminiEmbeddingAdapter(EmbeddingService):
         logger.info(f"[GeminiEmbedding] concurrency cap = {concurrency}, model = {_MODEL}")
 
     async def _embed_with_throttle(self, contents):
-        """Throttled call with retry on transient failures (429 rate limit, 5xx server)."""
+        """Throttled embedding call.
+
+        Maps genai SDK errors to the shared typed taxonomy, then retries transient
+        ones (429/503) via the shared executor under the same RetryPolicy as the LLM
+        path. Per-item granularity (called once per text) is why retry lives here and
+        not in a port-boundary proxy: get_embeddings_batch fans out over this method,
+        so a single text's 503 must not re-run the whole batch.
+        """
+        async def _call():
+            try:
+                return await asyncio.to_thread(
+                    self.client.models.embed_content,
+                    model=_MODEL,
+                    contents=contents,
+                    config={"output_dimensionality": _OUTPUT_DIM},
+                )
+            except genai_errors.ClientError as exc:
+                if getattr(exc, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(exc):
+                    raise LLMRateLimitError(str(exc), http_status=429) from exc
+                raise
+            except genai_errors.ServerError as exc:
+                code = getattr(exc, "code", None)
+                if code == 503:
+                    raise LLMUnavailableError(str(exc), http_status=503) from exc
+                if isinstance(code, int) and 500 <= code < 600:
+                    # 500/502/504 — not in the transient retry set (matches the LLM
+                    # path); propagates so the caller degrades gracefully.
+                    raise LLMServerError(str(exc), http_status=code) from exc
+                raise
+
         async with self._semaphore:
-            backoff = _INITIAL_BACKOFF_SEC
-            for attempt in range(1, _MAX_RETRIES + 1):
-                try:
-                    return await asyncio.to_thread(
-                        self.client.models.embed_content,
-                        model=_MODEL,
-                        contents=contents,
-                        config={"output_dimensionality": _OUTPUT_DIM},
-                    )
-                except genai_errors.ClientError as exc:
-                    is_rate_limit = getattr(exc, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(exc)
-                    if not is_rate_limit or attempt == _MAX_RETRIES:
-                        raise
-                    logger.warning(
-                        f"[GeminiEmbedding] 429 on attempt {attempt}/{_MAX_RETRIES}, "
-                        f"backing off {backoff:.1f}s"
-                    )
-                    await asyncio.sleep(backoff)
-                    backoff *= 2
-                except genai_errors.ServerError as exc:
-                    # 5xx (503 UNAVAILABLE / 500 / 504) — transient server-side failure,
-                    # same retry class as 429. The embedding endpoint 503s under load;
-                    # without this the error propagated and degraded fact search to [].
-                    if attempt == _MAX_RETRIES:
-                        raise
-                    logger.warning(
-                        f"[GeminiEmbedding] server error (code={getattr(exc, 'code', None)}) "
-                        f"on attempt {attempt}/{_MAX_RETRIES}, backing off {backoff:.1f}s"
-                    )
-                    await asyncio.sleep(backoff)
-                    backoff *= 2
+            return await retry_async(
+                _call,
+                policy=DEFAULT_RETRY_POLICY,
+                retryable=tuple(TRANSIENT_RETRY_TYPES),
+                on_retry=lambda e, attempt, backoff: logger.warning(
+                    f"[GeminiEmbedding] transient {type(e).__name__} "
+                    f"(http_status={getattr(e, 'http_status', None)}) on attempt "
+                    f"{attempt}, backing off {backoff:.1f}s"
+                ),
+            )
 
     async def get_embedding(
         self,

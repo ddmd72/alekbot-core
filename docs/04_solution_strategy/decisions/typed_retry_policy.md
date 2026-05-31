@@ -111,3 +111,28 @@ notification refactor — the smallest budget is REMINDER ECO at 180 s.
   ``test_cancelled_error_propagates_without_retry``.
 - Coverage gate (``make test-coverage``) keeps ``retry_policy.py`` at
   100% (added to ``THRESHOLDS``).
+
+## Amendment (2026-05-31): shared executor + single classification
+
+The backoff loop was extracted out of ``BaseAgent.process`` into a shared
+executor ``src/utils/retry.py::retry_async`` so the LLM path and the
+embedding path (``GeminiEmbeddingAdapter``) no longer reimplement the same
+exponential-backoff-with-jitter loop. ``retry_async`` owns ONLY the loop; it
+does not own classification, failover, or circuit-breaking.
+
+The set of retryable errors is now a single domain constant
+``domain/exceptions.py::TRANSIENT_RETRY_TYPES = {LLMRateLimitError,
+LLMUnavailableError}`` — referenced by both call sites instead of an inline
+``except (LLMRateLimitError, LLMUnavailableError)`` in each. The retry set is
+unchanged from the original table above; only its definition moved to one place.
+
+``BaseAgent`` still owns the agent-level concerns that wrap the retry —
+circuit breaker (``record_success`` / ``record_failure``), billing flush, and
+the terminal handling of ``asyncio.TimeoutError`` (failure, no retry) and
+``asyncio.CancelledError`` (propagate). Cross-provider **failover** stays in
+``_call_llm`` (it needs the two-provider context a single-port retry cannot
+have). The embedding adapter maps genai SDK errors to the same typed taxonomy
+before retrying, and retries at per-item granularity (its batch path fans out
+internally, below any port-boundary wrapper). Rationale for "shared primitive,
+not a proxy": the batch fan-out and the per-agent ``RetryPolicy`` locality both
+make a port-boundary proxy the wrong vehicle for retry.

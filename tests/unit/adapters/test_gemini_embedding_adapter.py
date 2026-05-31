@@ -23,9 +23,16 @@ from google.genai import errors as genai_errors
 
 from src.adapters.gemini_embedding_adapter import (
     GeminiEmbeddingAdapter,
-    _MAX_RETRIES,
     _apply_task_prefix,
 )
+from src.domain.exceptions import (
+    LLMRateLimitError,
+    LLMServerError,
+    LLMUnavailableError,
+)
+from src.domain.retry_policy import DEFAULT_RETRY_POLICY
+
+_TOTAL_ATTEMPTS = DEFAULT_RETRY_POLICY.transient_max_attempts + 1  # initial + retries
 
 
 # ============================================================================
@@ -374,17 +381,19 @@ def test_apply_task_prefix_empty_text():
 
 
 # ============================================================================
-# _embed_with_throttle — transient-failure retry (429 + 5xx)
+# _embed_with_throttle — SDK error → typed taxonomy + shared retry executor
 # ============================================================================
+# Sleep happens inside the shared executor (src.utils.retry), so that's the patch
+# target. Mapping: genai 429 → LLMRateLimitError, 503 → LLMUnavailableError (both
+# transient → retried); other 5xx → LLMServerError (not retried, propagates).
 
 @pytest.mark.asyncio
-async def test_retries_503_then_succeeds():
-    """503 ServerError is transient → retried with backoff, then returns the value."""
+async def test_503_maps_to_unavailable_and_retries_then_succeeds():
     adapter = _make_adapter()
     err = genai_errors.ServerError(code=503, response_json={"error": {"message": "unavailable"}})
     adapter.client.models.embed_content.side_effect = [err, _make_embedding_result([0.4, 0.5])]
 
-    with patch("src.adapters.gemini_embedding_adapter.asyncio.sleep", new=AsyncMock()) as sleep:
+    with patch("src.utils.retry.asyncio.sleep", new=AsyncMock()) as sleep:
         result = await adapter.get_embedding("hi")
 
     assert result == [0.4, 0.5]
@@ -393,28 +402,40 @@ async def test_retries_503_then_succeeds():
 
 
 @pytest.mark.asyncio
-async def test_503_exhausts_retries_then_raises():
-    """503 on every attempt → raises after _MAX_RETRIES (graceful degradation happens upstream)."""
+async def test_503_exhausts_retries_then_raises_unavailable():
     adapter = _make_adapter()
     err = genai_errors.ServerError(code=503, response_json={"error": {"message": "unavailable"}})
     adapter.client.models.embed_content.side_effect = err
 
-    with patch("src.adapters.gemini_embedding_adapter.asyncio.sleep", new=AsyncMock()):
-        with pytest.raises(genai_errors.ServerError):
+    with patch("src.utils.retry.asyncio.sleep", new=AsyncMock()):
+        with pytest.raises(LLMUnavailableError):
             await adapter.get_embedding("hi")
 
-    assert adapter.client.models.embed_content.call_count == _MAX_RETRIES
+    assert adapter.client.models.embed_content.call_count == _TOTAL_ATTEMPTS
 
 
 @pytest.mark.asyncio
-async def test_retries_429_then_succeeds():
-    """429 rate-limit path remains intact alongside the new 5xx branch."""
+async def test_429_maps_to_rate_limit_and_retries_then_succeeds():
     adapter = _make_adapter()
     err = genai_errors.ClientError(code=429, response_json={"error": {"message": "RESOURCE_EXHAUSTED"}})
     adapter.client.models.embed_content.side_effect = [err, _make_embedding_result([0.7])]
 
-    with patch("src.adapters.gemini_embedding_adapter.asyncio.sleep", new=AsyncMock()):
+    with patch("src.utils.retry.asyncio.sleep", new=AsyncMock()):
         result = await adapter.get_embedding("hi")
 
     assert result == [0.7]
     assert adapter.client.models.embed_content.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_non_503_5xx_maps_to_server_error_and_not_retried():
+    """500/502/504 → LLMServerError, NOT in the transient set → single attempt, propagates."""
+    adapter = _make_adapter()
+    err = genai_errors.ServerError(code=500, response_json={"error": {"message": "internal"}})
+    adapter.client.models.embed_content.side_effect = err
+
+    with patch("src.utils.retry.asyncio.sleep", new=AsyncMock()):
+        with pytest.raises(LLMServerError):
+            await adapter.get_embedding("hi")
+
+    assert adapter.client.models.embed_content.call_count == 1
