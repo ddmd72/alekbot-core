@@ -44,203 +44,87 @@ background process extracts new facts from the conversation → bot gets smarter
 
 ## Key Mechanisms
 
-**Multi-agent network** — not one LLM for everything, but specialists:
-- Router (Gemini) — LLM triage on every request: classifies complexity, tone, semantic lens and
-  search intent, triggers memory/web enrichment before routing.
-  Routing target is always Smart (`RouterAgent._apply_routing_rules` returns the Smart agent);
-  the complexity value drives Smart's per-request tier selection, not a Quick-vs-Smart routing split.
-  Rule-based `_classify_request` is a fallback only (LLM unavailable or failed).
-  Vision (file attachments): forces complexity ≥ 7.
-- Quick — no longer a primary-path agent; the Router never routes to it. Two surviving roles:
-  (1) emergency fallback when Smart fails/times out (`AgentFallbackService.try_quick_fallback`,
-  invoked by ConversationHandler); (2) system-notification formatter (`UserNotificationService.notify`
-  routes reminders / deep-research / daily-email alerts through Quick for LLM-formatted delivery).
-  When it does run it is functionally equivalent to Smart in tool access and intents, minus
-  re-evaluation after tool results. Uses `intent_fanout` like Smart. Deferred-deletion tech debt —
-  see `docs/04_solution_strategy/decisions/quick_agent_deferred_deletion.md`.
-- Smart — provider-agnostic, model resolved from execution context per user config.
-  Receives all user requests (primary path); complexity drives the resolved tier.
-  After tool results, re-evaluates for follow-up delegation.
-  Thinking/reasoning: configurable via `UserBotConfig.agent_thinking["smart"]` ("low"/"medium"/"high").
-  Priority: explicit `message.context["thinking_effort"]` (e.g. daily email worker) > config > None (disabled).
-- WebSearch — provider-native web search with adaptive cognitive process. Called by Smart.
-  `use_grounding=True` — each adapter injects its own tool: Gemini → Google Search,
-  OpenAI → `{"type": "web_search"}` (Responses API, agentic search with reasoning),
-  Claude → web_search_20250305 + web_fetch_20250910.
-  Cognitive process: QUICK/RESEARCH triage — simple queries get one search, complex queries
-  get multi-angle coverage with source evaluation and persistence.
-  JSON output format with required URL fields (findings/source/url) enforced via
-  `response_schema` → `output_config.format` (GA structured outputs) on Claude, `text.format` on OpenAI.
-  Two intents: `search_web` (real-time web search) + `fetch_url` (fetch and extract content
-  from a specific URL provided by the user).
-- Memory (LLM key formulation + vector search) — MemorySearchAgent: ECO-tier LLM extracts
-  search keys, then multi-vector RRF search. Shared between Quick and Smart paths.
-  Two intents: `search_memory` (semantic search) + `save_to_memory` (explicit fact save).
-  `save_to_memory`: zero LLM calls — orchestrator fills `context.text` via `context_schemas`
-  with a self-contained fact passage; agent attaches it as `consolidation_text` on `MessagePart`
-  (user message layer, never compressed) → consolidation picks it up in the normal batch cycle.
-- EmailSearch — EmailSearchAgent: email archive specialist (BALANCED tier). Accessible to both
-  Quick and Smart (registered in AgentDescriptor with `internal=False`). Three intents:
-  `search_emails` (vector search in indexed archive), `get_email_details` (fetch full email body),
-  `get_email_attachment` (parse attachment via markitdown).
-- EmailClassification — EmailClassificationAgent: shared singleton in ServiceContainer.
-  Called by EmailIndexingService (not by agents). Classifies raw emails via tool-calling
-  mode; extracts fact sentences for Firestore storage. Exception to OUTPUT_FORMAT rule:
-  uses markdown code block extraction in `_parse_response()` — see inline comment.
-- DocPlanner (ASYNC, PERFORMANCE tier) — DOCX creation entry point (intent: `create_document`).
-  Single LLM call → JSON layout spec → fire-and-forget delegate to DocGenerator via coordinator.
-  Result: DeliveryItem("file_upload") delivered by AgentWorkerHandler → notify_file_bytes.
-- DocGenerator (internal, PERFORMANCE tier) — Node.js DOCX code generation (intent:
-  `generate_docx_code`, `internal=True`). LLM writes Node.js script → DocxRunnerPort executes
-  subprocess → DOCX bytes returned. See docs/05_building_blocks/document_generation/README.md.
-- PdfGenerator (ASYNC, PERFORMANCE tier) — Single-pass PDF creation (intent: `create_pdf`,
-  `internal=False`, exposed directly to LLMs). One LLM call → raw HTML+CSS text response →
-  NodePuppeteerRunner renders to PDF bytes → two DeliveryItem("document"): HTML (GCS link) +
-  PDF (GCS link + Slack file upload). Filename extracted from `<title>` tag.
-  System prompt loaded from PromptBuilder (required). Style auto-selected by LLM from 12-style catalogue.
-  See docs/05_building_blocks/document_generation/README.md.
-- HtmlPageGenerator (ASYNC, PERFORMANCE tier) — Single-pass HTML page creation (intent:
-  `create_html_page`, `internal=False`). One LLM call → complete HTML+CSS+JS document → one
-  DeliveryItem("document"): HTML GCS public link (no Slack file upload, no Node.js subprocess).
-  Filename from `<title>` tag. PromptBuilder mandatory (`agent_type="html_page"`); fail fast on
-  prompt builder error. Design enforced by `COGNITIVE_PROCESS_HTML_PAGE` token: mobile-first,
-  CSS custom properties, IntersectionObserver scroll animations.
-  **Unsplash integration:** LLM writes `source.unsplash.com/WxH/?keywords` placeholder URLs
-  natively. Post-processing (`_resolve_unsplash_placeholders`) replaces them with real Unsplash
-  API photos (parallel fetch via `UnsplashAdapter`), honoring dimensions and injecting attribution.
-  Requires `UNSPLASH_ACCESS_KEY` env var; graceful no-op when absent.
-  Port: `ImageSearchPort` (`src/ports/image_search_port.py`).
-  Adapter: `UnsplashAdapter` (`src/adapters/unsplash_adapter.py`).
-  See docs/05_building_blocks/document_generation/README.md § 11.
-- FileManagement (SYNC, zero-LLM) — `FileManagementAgent` (`file_management_agent.py`).
-  Two intents: `open_file` (download from GCS + convert to text or return binary for
-  LLM vision), `delete_file` (remove from GCS). Zero LLM calls — direct port operations via
-  `FileConversionService` and `FileStoragePort`. Context_schemas: `file_ref` (filename from
-  `[File: name (size)]` label in conversation). Binary files (images, PDFs) returned as temp file
-  + metadata for LLM vision. See docs/05_building_blocks/file_storage/README.md.
-- Proactive Self-Reminders (PERFORMANCE tier, OpenAI) — `NotesAgent` backed by `FirestoreAgentNoteAdapter`.
-  Intent `manage_self_reminders`. Paradigm: **deferred instructions for the orchestrator itself** —
-  not a user-facing notepad, but a mechanism where the system sets reminders that fire autonomously
-  and execute as new conversations (the orchestrator talks to itself on a schedule).
-  Two-field model: `text` (≤15-word label) + `instruction` (full execution context, self-contained).
-  `instruction` is the core of the reminder — but when firing, `_build_reminder_alert()` in
-  `WorkerHandler` enriches it with: note_id, schedule type (one-time vs recurring with interval),
-  self-authorship framing ("you wrote this to yourself"), proactive guidance (conversation history
-  as primary signal, available intents to act on).
-  4 tools: `create_self_reminder`, `update_self_reminder`, `delete_self_reminder`,
-  `delegate_to_specialist`. Multi-turn (max 3 turns) with chain delegation to compute specialists.
-  Recurrence enum includes `once` (default, one-time) — `_parse_recurrence` treats it as no recurrence.
-  Firing: Cloud Scheduler every 15 min → `POST /worker {fire_due_reminders}` → `WorkerHandler` →
-  `_build_reminder_alert(note)` → `UserNotificationService.notify(system_alert=..., agent_id_override=smart_response_agent_{user_id})` → SmartAgent executes as new conversation.
-  One-time reminders: deleted after firing. Recurrent (`hourly/daily/weekly/monthly`): `reschedule()`
-  computes `next_due` in user's local timezone (DST-safe), updates `due` + `last_fired`.
-  Idempotency: `last_fired` guard (4-min window). Soft cap 20 active reminders.
-  Transparency: every CRUD sends `notify_raw()` to user's channel immediately.
-  Context: orchestrator sees `active_reminders {}` summary; NotesAgent sees full details + bio facts.
-  Timezone: from `UserBotConfig.timezone` (IANA, set in Cabinet UI). Used for: prompt datetime,
-  `due` UTC conversion, `next_due` recurrence, transparency notification formatting.
-  See `docs/10_rfcs/PROACTIVE_SELF_REMINDERS_RFC.md`.
-- Tasks — `TasksAgent` backed by `TasksProviderPort`. Intent `manage_user_tasks`.
-  5 tools: `list_tasks`, `search_tasks`, `create_task`, `update_task`, `delete_task`. Max 6 turns.
-  Search-before-mutate: LLM calls `search_tasks` first, gets `task_ref` (8-char short_id =
-  `md5(task_id)[:8]`), then passes it to `update_task`/`delete_task`.
-  Recurrence: 5 patterns (`daily`, `weekdays`, `weekly`, `absoluteMonthly`, `absoluteYearly`);
-  smart defaults from `due_datetime`.
-  Two provider adapters (injected per user via UserAgentFactory):
-    `MicrosoftToDoAdapter` — Graph API CRUD + webhook subscriptions; implements
-      TasksProviderPort + TaskLifecyclePort. OAuth: Azure consumers tenant, `Tasks.ReadWrite`.
-      Webhook: `POST /webhook/microsoft-tasks/{user_id}` → self-healing index freshness.
-      Worker tasks: `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`.
-    `GoogleTasksAdapter` — Google Tasks REST API CRUD; implements TasksProviderPort.
-      OAuth: `/auth/connect-google-tasks`.
-  `TaskIndexingService` — embed→index pipeline + `resolve_short_id`.
-  `TaskSearchIndex` — 2-vector RRF in Firestore (`task_search_index` collection).
-  `TaskSetupService` — lifecycle: setup, ensure_subscriptions, disconnect.
-  See `docs/05_building_blocks/tasks_integration/README.md`.
-- Consolidation — background "memory consolidation" (PERFORMANCE tier, runs via Cloud Tasks)
-- DeepResearch (async, provider-agnostic) — long-running research jobs. Agent calls
-  `DeepResearchPort.create_interaction()` → returns ACK (job_id) immediately. Result delivered
-  by adapter: webhook (OpenAI) or Cloud Run Job completion (Claude — default).
-  `ClaudeDeepResearchRunnerAgent` wraps Claude's native extended thinking; runs as a
-  **Cloud Run Job** (not Cloud Task) via `JobRunnerPort` + `CloudRunJobsAdapter`.
-  Entrypoint: `job_main.py`. task-timeout=18000s (5h).
-  Gemini backend (polling Cloud Tasks) removed 2026-05-29 — see
-  `docs/04_solution_strategy/decisions/gemini_deep_research_adapter_removal.md`.
-  Two-pass critic: per-user via `UserBotConfig.deep_research_second_pass` (default False,
-  Cabinet UI toggle). Fallback: `DEEP_RESEARCH_SECOND_PASS` env var. max_tokens=64K for thinking
-  models (claude-sonnet-4-6/opus-4-6), 32K for others. Beta: `output-128k-2025-02-19`.
-  Logs: `resource.type=cloud_run_job`,
-  `make logs-research-job-dev-tail`. Debug prompts saved to GCS at `end_turn` and `max_tokens`.
-- MapsSearch (SYNC, BALANCED tier) — `MapsSearchAgent` (`maps_search_agent.py`). Intent `maps_query`.
-  Place search & discovery, route computation (distance/duration), current weather via Google Maps
-  AI Grounding Lite (MCP). Multi-turn tool loop: LLM selects MCP tools, agent executes, LLM formats
-  response with clickable Google Maps links. System prompt via PromptBuilder (`maps_search` profile).
-  Backend injected via `MapsToolsPort`. See `docs/10_rfcs/MCP_INFRASTRUCTURE_RFC.md`.
-  **Internal agent (`internal=True`)** — not shown in LLM tool declarations. Triggered automatically
-  via `intent_fanout` when orchestrator dispatches `search_web`. Results merged with web search
-  under labeled sections (`[Primary specialist: Web Search]` / `[Additional specialist: Maps]`)
-  with a reconciliation hint for the orchestrator. See DelegationEngine `intent_fanout` below.
-- Compute (SYNC, ECO tier) — `ComputeAgent` (`compute_agent.py`). Four intents:
-  `compute_math` (arithmetic, algebra, unit conversions), `compute_datetime` (date differences,
-  day-of-week, age, timezone conversions, countdowns), `compute_finance` (loan/mortgage payments,
-  compound interest, amortization), `compute` (general-purpose: statistics, BMI, scoring, any
-  numeric analysis). All execute Python code via Gemini `code_execution` sandbox. Provider-agnostic:
-  `LLMRequest.use_code_execution=True`. No external data access — compute-only.
+**Multi-agent network** — specialists, not one LLM for everything. Tiers: ECO/BALANCED/PERFORMANCE.
+- Router (Gemini) — LLM triage on every request: complexity, tone, semantic lens, search intent;
+  triggers memory/web enrichment. **Always routes to Smart** (`_apply_routing_rules`); complexity
+  drives Smart's per-request tier, not a Quick-vs-Smart split. `_classify_request` = rule-based
+  fallback only. Vision (attachments) forces complexity ≥ 7.
+- Smart — provider-agnostic (tier/model from execution context per user config). Primary path for
+  every request; re-evaluates for follow-up delegation after tool results. Thinking via
+  `UserBotConfig.agent_thinking["smart"]`; `message.context["thinking_effort"]` overrides.
+- Quick — no longer primary-path (Router never routes to it). Two roles: (1) emergency fallback when
+  Smart fails/times out (`AgentFallbackService.try_quick_fallback`); (2) default formatter for
+  `UserNotificationService.notify` — caller may override `agent_id_override` (reminders and
+  daily-email-review override to Smart). Functionally ≈ Smart minus post-tool re-evaluation.
+  Deferred-deletion tech debt — see `docs/04_solution_strategy/decisions/quick_agent_deferred_deletion.md`.
+- WebSearch — provider-native grounded search (`use_grounding=True`; each adapter injects its own:
+  Gemini Google Search, OpenAI `web_search`, Claude `web_search_20250305`+`web_fetch_20250910`),
+  called by Smart. QUICK/RESEARCH cognitive triage. JSON output (findings/source/url) enforced via
+  `response_schema`. Intents: `search_web`, `fetch_url`.
+- Memory — MemorySearchAgent (ECO): LLM extracts search keys → multi-vector RRF. Intents:
+  `search_memory`; `save_to_memory` (zero LLM — orchestrator fills `context.text` via `context_schemas`;
+  agent attaches `consolidation_text` on `MessagePart` → picked up in the normal consolidation batch).
+- EmailSearch — EmailSearchAgent (BALANCED, `internal=False`). Intents: `search_emails`,
+  `get_email_details`, `get_email_attachment` (markitdown).
+- EmailClassification — shared ServiceContainer singleton, called by EmailIndexingService (not agents);
+  tool-calling triage, extracts fact sentences. OUTPUT_FORMAT exception: markdown-block extraction in
+  `_parse_response()` (see inline comment).
+- DocPlanner (ASYNC, PERFORMANCE, intent `create_document`) — LLM → JSON layout spec →
+  fire-and-forget delegate to DocGenerator → DeliveryItem("file_upload").
+- DocGenerator (internal, PERFORMANCE, intent `generate_docx_code`) — LLM writes Node.js script →
+  DocxRunnerPort subprocess → DOCX bytes.
+- PdfGenerator (ASYNC, PERFORMANCE, intent `create_pdf`, `internal=False`) — one LLM call → HTML+CSS →
+  NodePuppeteerRunner → PDF; two DeliveryItem("document"): HTML (GCS) + PDF (GCS + Slack upload).
+  Filename from `<title>`; PromptBuilder required; LLM picks from a 12-style catalogue.
+- HtmlPageGenerator (ASYNC, PERFORMANCE, intent `create_html_page`, `internal=False`) — one LLM call →
+  complete HTML+CSS+JS → DeliveryItem("document") (GCS public link, no subprocess). PromptBuilder
+  mandatory; design enforced by `COGNITIVE_PROCESS_HTML_PAGE`. **Unsplash:** LLM writes
+  `source.unsplash.com/WxH/?keywords` placeholders → `_resolve_unsplash_placeholders` swaps real photos
+  via `UnsplashAdapter` (`ImageSearchPort`); needs `UNSPLASH_ACCESS_KEY`, graceful no-op when absent.
+- FileManagement (SYNC, zero-LLM) — intents `open_file` (GCS download + text/vision conversion via
+  `FileConversionService`/`FileStoragePort`) and `delete_file`. `context_schemas`: `file_ref` (from the
+  `[File: name (size)]` label). Binary → temp file + metadata for vision.
+- Notes / Proactive Self-Reminders (PERFORMANCE, OpenAI, intent `manage_self_reminders`) — deferred
+  instructions the system writes to itself that fire autonomously as new conversations. Two-field model:
+  `text` (≤15-word label) + `instruction` (self-contained execution context). Tools: create/update/delete
+  + `delegate_to_specialist` (multi-turn, max 3). Recurrence enum incl. `once` (default). Firing:
+  Cloud Scheduler every 15 min → `fire_due_reminders` → per-fire `_build_reminder_alert` →
+  `notify(agent_id_override=smart_response_agent_…)` → **Smart** runs it. One-time deleted after firing;
+  recurrent (`hourly/daily/weekly/monthly`) → `reschedule()` (DST-safe, user timezone). Idempotency:
+  `last_fired` 4-min guard. Soft cap 20. Every CRUD → `notify_raw()` to channel. See
+  `docs/10_rfcs/PROACTIVE_SELF_REMINDERS_RFC.md`.
+- Tasks (intent `manage_user_tasks`) — TasksAgent over `TasksProviderPort`. Tools: list/search/create/
+  update/delete (max 6 turns). Search-before-mutate → `task_ref` (8-char `md5(task_id)[:8]`). Recurrence:
+  5 patterns. Active provider: `MicrosoftToDoAdapter` (Graph API CRUD + webhook subscriptions; implements
+  TasksProviderPort+TaskLifecyclePort; worker tasks `setup_microsoft_todo`/`reindex_task_list`/
+  `renew_task_subscriptions`). `GoogleTasksAdapter` is frozen/deactivated. `TaskIndexingService`
+  (embed→index + `resolve_short_id`), `TaskSearchIndex` (2-vector RRF). See `docs/05_building_blocks/tasks_integration/`.
+- Consolidation (PERFORMANCE, Claude; Cloud Tasks) — background long-term memory formation (see below).
+- DeepResearch (async, provider-agnostic, intent `deep_research`) — `create_interaction()` returns
+  ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
+  `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+
+  `CloudRunJobsAdapter`; OpenAI backend = webhook. Gemini backend removed 2026-05-29. Two-pass critic via
+  `UserBotConfig.deep_research_second_pass`. Logs: `make logs-research-job-dev-tail`.
+- MapsSearch (SYNC, BALANCED, intent `maps_query`, **`internal=True`**) — place search, routes, weather
+  via Google Maps AI Grounding (MCP, `MapsToolsPort`). Not shown to LLMs; auto-triggered via
+  `intent_fanout` when the orchestrator dispatches `search_web`, results merged under labeled sections.
+- Compute (SYNC, ECO) — intents `compute_math`/`compute_datetime`/`compute_finance`/`compute`; runs
+  Python in Gemini `code_execution` sandbox (`use_code_execution=True`). No external data — compute-only.
 
-**Remote MCP Server** — expose memory search to claude.ai Custom Connectors:
-- Built on the `mcp` Python SDK (`mcp==1.27.*`, `FastMCP` from `mcp.server.fastmcp`).
-  alekbot acts as an MCP *server* — the inverse direction of `mcp_infrastructure/` (which
-  is alekbot as MCP *client* for Google Maps).
-- One tool exposed: `get_user_context(query, alternate_phrasing?, keywords?)`. Calls
-  `SearchEnrichmentService.enrich_context` directly (bypasses `MemorySearchAgent` + agent
-  stack) to minimize latency — claude.ai is already a smart orchestrator and formulates
-  good search queries itself. Target ~1.0–1.4s per call.
-- Full OAuth 2.1 authorization server in-process: AS metadata (RFC 8414), protected
-  resource metadata (RFC 9728 path-suffix form), DCR (RFC 7591), PKCE S256, RFC 8707
-  resource indicator, refresh token rotation. SDK handles all of it via
-  `OAuthAuthorizationServerProvider` protocol.
-- **Path layout (server root, not mounted):** `/mcp` (protocol), `/authorize`, `/token`,
-  `/register`, `/.well-known/oauth-authorization-server`,
-  `/.well-known/oauth-protected-resource/mcp`, plus `/mcp/consent` (Quart blueprint for the
-  approve/deny UI — the only piece the SDK does not own). `main.py` uses a plain ASGI
-  dispatcher (NOT Starlette `Mount`) that routes FastMCP-owned paths to the SDK sub-app
-  and everything else to Quart. Starlette `Mount` breaks this: doesn't match exact
-  `POST /mcp` without trailing slash, strips prefixes that conflict with the SDK's
-  absolute-path routes, and moves the RFC 9728 PRM path out of spec.
-- **Issuer at server root**, `resource_server_url = /mcp`. AS endpoints live at server root
-  so metadata URLs (`issuer_url + "/authorize"`) match the SDK's physical routes 1:1.
-- **Transport security**: FastMCP auto-enables DNS rebinding protection with a loopback
-  allow-list when `host` is `127.0.0.1` — blocks real public requests with "Invalid Host
-  header". Fix: explicit `TransportSecuritySettings` with public netloc from
-  `MCP_RESOURCE_URI` + localhost for dev.
-- **Consent binding** — user identity comes from the existing **Cabinet JWT cookie** at
-  the consent-page step, NOT from the OAuth flow itself. If no cookie → redirect to
-  `/auth/login` → Firebase OAuth → back to consent. The user who is logged into Cabinet
-  in their browser at the moment of clicking Approve is the identity bound to the
-  MCP token.
-- **Storage** — three Firestore collections, env-prefixed:
-  `mcp_oauth_clients` (DCR, plaintext `client_secret` — SDK constraint, see RFC § 6.4),
-  `mcp_auth_codes` (one-shot, 10 min TTL), `mcp_refresh_tokens` (rotated by sha256 hash,
-  30d TTL). Access tokens are stateless HS256 JWTs (reuses `oauth_session_secret`,
-  distinct `aud`). All lookups are doc-id — no composite indexes needed.
-- **Token carries user_id**: SDK's `AccessToken` is subclassed to `AlekAccessToken` with
-  `user_id` + `account_id` fields; tool handler reads them via
-  `ctx.request_context.request.user.access_token` and wraps the search call in
-  `RequestContext(user_id, account_id)` for proper account scoping.
-- **Hexagonal note**: the SDK shim `composition/mcp_sdk_oauth_provider.py` lives in
-  `composition/` (not `adapters/`) because REQ-ARCH-01 forbids adapters→services imports
-  and the shim delegates to `MCPAuthorizationService` on every method. Composition is
-  the only layer allowed to cross all boundaries.
-- **MVP scope** — dev only (no prod `MCP_RESOURCE_URI` env var yet). Experimental. Tool
-  description is load-bearing for claude.ai tool-use decisions; iterate on wording as
-  call patterns emerge.
-- Code: `src/domain/mcp.py`, `src/ports/mcp_client_repository.py`,
-  `src/adapters/firestore_mcp_client_repository.py`,
-  `src/services/mcp_authorization_service.py`,
-  `src/composition/mcp_sdk_oauth_provider.py`, `src/composition/mcp_setup.py`,
-  `src/web/mcp_consent_app.py`.
-- See `docs/05_building_blocks/remote_mcp_server/README.md` and
-  `docs/10_rfcs/REMOTE_MCP_SERVER_RFC.md`.
+**Remote MCP Server** — exposes memory search to claude.ai Custom Connectors (alekbot as MCP *server*,
+the inverse of its Maps MCP *client*). Built on the `mcp` Python SDK (`FastMCP`). One tool,
+`get_user_context(query, alternate_phrasing?, keywords?)`, calls `SearchEnrichmentService.enrich_context`
+directly (bypasses the agent stack; ~1–1.4s). Full in-process OAuth 2.1 AS (DCR, PKCE S256, RFC 8707
+resource indicator, refresh-token rotation) via the SDK's `OAuthAuthorizationServerProvider`. Endpoints at
+server root (`/mcp`, `/authorize`, `/token`, `/register`, `/.well-known/oauth-*`, `/mcp/consent`); `main.py`
+routes them via a plain ASGI dispatcher (NOT Starlette `Mount`, which breaks exact `POST /mcp` + the RFC 9728
+PRM path). Consent binds identity from the **Cabinet JWT cookie**, not the OAuth flow. Storage: three
+env-prefixed Firestore collections (`mcp_oauth_clients`/`mcp_auth_codes`/`mcp_refresh_tokens`, doc-id lookups
+only); access tokens = stateless HS256 JWTs carrying `user_id`+`account_id` (`AlekAccessToken`). The SDK shim
+`composition/mcp_sdk_oauth_provider.py` lives in `composition/` (not `adapters/`) — REQ-ARCH-01 forbids
+adapters→services; it delegates to `MCPAuthorizationService`. **MVP, dev-only, experimental.** Code under
+`src/{domain/mcp.py,ports/mcp_client_repository.py,adapters/firestore_mcp_client_repository.py,services/mcp_authorization_service.py,composition/mcp_*.py,web/mcp_consent_app.py}`.
+See `docs/05_building_blocks/remote_mcp_server/` + `docs/10_rfcs/REMOTE_MCP_SERVER_RFC.md`.
 
 **Gmail Email Indexing** — passive inbox-as-memory pipeline:
 - User connects Gmail via OAuth (`/auth/connect-gmail`); credentials stored in `oauth_credentials`
@@ -248,11 +132,11 @@ background process extracts new facts from the conversation → bot gets smarter
 - `EmailIndexingService` → `GmailProviderAdapter` → `EmailClassificationAgent` (LLM triage)
 - Valuable emails → `IndexedEmail` stored in `domain_email_facts_v1` (4-vector schema, mirrors FactEntity)
 - `EmailEmbeddingRepairService` — async repair job for emails stored without vectors
-- `UserNotificationService` — sends background notifications to user's last active channel.
-  `notify()`: routes `system_alert` through QuickAgent → formatted delivery + session history save.
-  History: `text` = `response_summary` from agent metadata (compact), `full_text` = full response.
-  `notify_raw()`: direct text delivery, no agent reformatting. Stores last active channel per user
-  in `user_notification_state`. Callers: reminders worker, deep research, async docs, daily email review.
+- `UserNotificationService` — background notifications to the user's last active channel.
+  `notify()`: routes `system_alert` through a formatter agent (Quick by default; `agent_id_override`
+  lets callers pick Smart — reminders and daily-review do) → formatted delivery + session history
+  (`text`=`response_summary`, `full_text`=full response). `notify_raw()`: direct text, no reformatting.
+  Last active channel in `user_notification_state`. Callers: reminders, deep research, async docs, daily review.
 - `WorkerHandler` — dispatches `/worker` Cloud Tasks by `task_type`:
   `agent_execution`, `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`,
   `consolidation`, `deep_research_polling`, `fire_due_reminders`, `setup_microsoft_todo`,
@@ -375,143 +259,35 @@ Hexagonal Architecture (Ports & Adapters).
 
 ```
 src/
-  domain/       — Models, enums, value objects. ZERO external dependencies.
-                  Includes: auth.py (TokenClaims, OAuthTokens, OAuthUserInfo, IAMDecision),
-                  llm.py (LLMRequest, LLMResponse, Message, MessagePart, ToolCall, ProviderCapabilities,
-                  UsageMetadata, PromptCacheConfig, CacheMetadata, PROMPT_CACHE_BOUNDARY,
-                  build_tool_turn — standard formatting for multi-turn tool calling history).
-                  MessagePart includes `consolidation_text` field — visible only to consolidation
-                  serializer; used by `save_to_memory` to attach facts to user messages.
-  ports/        — ~51 ABC interfaces. Import only domain/ and stdlib.
-                  New (2026-03-08): SecurityPort (security_port.py), PlatformPort (platform_port.py),
-                  DedupStore (dedup_store.py).
-                  New (2026-03-12): DocxRunnerPort (docx_runner_port.py) — system boundary for
-                  Node.js subprocess execution; DocxRunnerError public exception.
-                  Email ports: EmailProviderPort, EmailClassifierPort, EmailExclusionsPort,
-                  IndexedEmailRepository, EmailIndexingJobRepository, OAuthCredentialsPort,
-                  NotificationStatePort, NotificationChannelFactoryPort.
-                  Tasks ports: TasksProviderPort (task_provider_port.py), TaskSearchIndex
-                  (task_search_index.py), TaskConfigPort (task_config_port.py),
-                  TaskLifecyclePort (task_lifecycle_port.py).
-                  Maps ports: MapsToolsPort (maps_tools_port.py).
-                  File storage ports: FileStoragePort (file_storage_port.py) — user file
-                  attachments (upload/download/delete/exists/get_url).
-                  Language ports: LanguageServicePort (language_service_port.py),
-                  LocalizationPort (localization_port.py).
-                  Agent lifecycle ports: AgentFactoryPort (agent_factory_port.py) — on-demand
-                  lazy agent creation. Implemented by UserAgentFactory in composition/.
-                  MCP ports: MCPClientRepository (mcp_client_repository.py) — storage contract
-                  for MCP OAuth clients / auth codes / refresh tokens (remote MCP server).
-  adapters/     — Port implementations (Firestore, Gemini, Claude, Grok, OpenAI, Slack, Telegram,
-                  Gmail). Email adapters: GmailProviderAdapter, FirestoreIndexedEmailRepository,
-                  FirestoreEmailJobRepository, FirestoreEmailExclusionsAdapter,
-                  FirestoreOAuthCredentialsAdapter, FirestoreNotificationStateAdapter,
-                  NotificationChannelFactory.
-                  DOCX adapter: NodeDocxRunner (node_docx_runner.py) — DocxRunnerPort
-                  implementation; writes temp script to docx_generator/ dir, executes via
-                  subprocess, captures stdout as DOCX bytes.
-                  PDF/HTML adapter: NodePuppeteerRunner (node_puppeteer_runner.py) — PuppeteerRunnerPort.
-                  HtmlRendererPort: PlaywrightHtmlRenderer (playwright_html_renderer.py).
-                  Tasks adapters: MicrosoftToDoAdapter (microsoft_todo_adapter.py) — Graph API
-                  CRUD + subscription management; implements TasksProviderPort + TaskLifecyclePort.
-                  GoogleTasksAdapter (google_tasks_adapter.py) — Google Tasks REST API CRUD;
-                  implements TasksProviderPort. Provider injected per user by UserAgentFactory.
-                  FirestoreTaskSearchIndex (firestore_task_search_index.py) — 2-vector RRF.
-                  FirestoreTaskConfigRepository (firestore_task_config_repository.py).
-                  Language adapters: FileLocalizationAdapter (file_localization_adapter.py).
-                  File storage adapter: GcsFileStorageAdapter (gcs_file_storage_adapter.py) —
-                  FileStoragePort impl; Finder-style dedup, filename sanitization, lazy GCS client.
-                  MCP adapters: FirestoreMCPClientRepository (firestore_mcp_client_repository.py) —
-                  three env-prefixed collections (mcp_oauth_clients, mcp_auth_codes,
-                  mcp_refresh_tokens); doc-id lookups only, no composite indexes.
-  services/     — Business logic. Receive ports via DI.
-                  prompt_builder.py includes both PromptBuilder and UserPromptBuilder
-                  (merged from former user_prompt_builder.py).
-                  Email services: EmailIndexingService, EmailSearchService,
-                  EmailEmbeddingRepairService, GmailOAuthService, UserNotificationService.
-                  Tasks services: TaskIndexingService (embed→index + resolve_short_id),
-                  TaskSetupService (lifecycle: setup/disconnect/ensure_subscriptions).
-                  Language services: LanguagePreferenceService (write path + prompt token swap).
-                  File services: FileConversionService (file_conversion_service.py) — centralized
-                  file upload to GCS + on-demand content resolution.
-                  MCP services: MCPAuthorizationService (mcp_authorization_service.py) — OAuth 2.1
-                  business logic (DCR host allowlist, consent JWT, code lifecycle, refresh rotation,
-                  access JWT mint/verify). Pure DI — no config/ imports.
-  agents/       — Multi-agent system. core/ — agents, infrastructure/ — billing/logging.
-                  Email agents: EmailSearchAgent, EmailClassificationAgent.
-                  Document agents: DocPlannerAgent (doc_planner_agent.py, intent create_document,
-                  ASYNC), DocGeneratorAgent (doc_generator_agent.py, intent generate_docx_code,
-                  internal=True, called only by DocPlannerAgent via coordinator).
-                  PDF agents: PdfGeneratorAgent (pdf_generator_agent.py, intent create_pdf,
-                  ASYNC, internal=False). PuppeteerRunnerPort implemented by NodePuppeteerRunner
-                  (node_puppeteer_runner.py). Node.js runner in pdf_generator/runner.js.
-                  HTML page agents: HtmlPageGeneratorAgent (html_page_generator_agent.py, intent
-                  create_html_page, ASYNC, internal=False). HTML is final artifact; optional
-                  ImageSearchPort (UnsplashAdapter) for post-generation image resolution.
-                  Maps agents: MapsSearchAgent (maps_search_agent.py, intent maps_query, SYNC,
-                  internal=True — triggered via intent_fanout on search_web).
-                  Compute agents: ComputeAgent (compute_agent.py, intents compute_math,
-                  compute_datetime, compute_finance, compute; SYNC, code_execution sandbox).
-                  File agents: FileManagementAgent (file_management_agent.py, intents
-                  open_file + delete_file, SYNC, zero-LLM). See Key Mechanisms above.
-  handlers/     — Orchestrators (ConversationHandler, ConsolidationHandler, WorkerHandler).
-                  WorkerHandler dispatches /worker Cloud Tasks by task_type.
-  infrastructure/ — AgentCoordinator, queues, agent_config.py (central behavior params),
-                  agent_registry.py (AgentDescriptor dataclass with `eager: bool` field + AgentRegistry mechanics),
+  domain/       — Models, enums, value objects. ZERO external deps (stdlib + pydantic only).
+                  Key: llm.py (LLMRequest/LLMResponse/Message/MessagePart/ToolCall, PROMPT_CACHE_BOUNDARY,
+                  build_tool_turn), auth.py, retry_policy.py, exceptions.py. MessagePart.consolidation_text
+                  is visible only to the consolidation serializer (used by save_to_memory).
+  ports/        — ~58 ABC interfaces (domain/ + stdlib only). One port per system boundary.
+  adapters/     — Port implementations: LLM (Gemini/Claude/Grok/OpenAI), Firestore repos, Slack/Telegram,
+                  Gmail, MicrosoftToDo (GoogleTasks frozen), Node runners (DOCX/Puppeteer), Unsplash, MCP repo.
+                  No cross-subpackage adapter imports (REQ-ARCH-23).
+  services/     — Business logic; ports via DI. No concrete-adapter / cross-service imports (REQ-ARCH-22).
+                  Incl. prompt_builder.py (PromptBuilder + UserPromptBuilder), search enrichment, email
+                  (indexing/search/repair/notification), tasks (indexing/setup), MCPAuthorizationService.
+  agents/       — Multi-agent system (inherit BaseAgent). core/ — orchestrators; rest — specialists (see Key Mechanisms).
+  handlers/     — Exactly 3 entry points: ConversationHandler, ConsolidationHandler, WorkerHandler
+                  (dispatches /worker Cloud Tasks by task_type).
+  infrastructure/ — AgentCoordinator, queues, agent_config.py, agent_registry.py (AgentDescriptor + registry),
                   agent_manifest.py (Intent constants + all agent declarations — single source of truth),
-                  delegation_engine.py (DelegationEngine — reusable multi-turn tool-calling loop,
-                  shared by Smart, Quick, and bound channel agents).
-  composition/  — ServiceContainer + UserAgentFactory(AgentFactoryPort) + SlackAdapterFactory + TelegramAdapterFactory.
-                  UserAgentFactory lives in composition/ (NOT services/).
-                  Implements AgentFactoryPort for lazy agent creation on demand.
-                  MCP wiring: mcp_setup.py (build_mcp_components — builds FastMCP + tool handler),
-                  mcp_sdk_oauth_provider.py (SDK shim implementing OAuthAuthorizationServerProvider;
-                  lives here instead of adapters/ because REQ-ARCH-01 forbids adapters→services
-                  imports and the shim delegates to MCPAuthorizationService on every method).
-  locales/      — Per-language UI string modules (uk.py, en.py, fr.py, es.py).
-                  Loaded by FileLocalizationAdapter. Add new file per new language.
-  config/       — EnvironmentConfig, Settings, AuthConfig.
-  utils/        — Logger, telemetry, debug_logger (PromptDebugLogger), file_conversion
-                  (convert_file_to_text, is_native_binary, make_history_stub),
-                  groovy_to_markdown_transformer.
-  web/          — Quart web app (OAuth + Cabinet UI). Endpoints:
-                  Auth: /auth/login, /auth/callback, /auth/link-oauth, /auth/me,
-                  /auth/refresh, /auth/logout, /auth/connect-gmail, /auth/connect-gmail/callback,
-                  /auth/connect-google-tasks, /auth/connect-google-tasks/callback,
-                  /auth/connect-microsoft-todo, /auth/connect-microsoft-todo/callback.
-                  Gmail: /api/gmail/status, /api/gmail/index, /api/gmail/jobs/<id>,
-                  /api/gmail/jobs/<id>/cancel, /api/gmail/disconnect, /api/gmail/data (GET/DELETE),
-                  /api/gmail/auto-index (GET/PUT — daily auto-index schedule).
-                  Tasks: /api/tasks/status (GET), /api/tasks/disconnect (DELETE),
-                  /api/tasks/microsoft/status, /api/tasks/microsoft/reindex,
-                  /api/tasks/microsoft/lists, /api/tasks/microsoft/disconnect.
-                  Webhook: /webhook/microsoft-tasks/<user_id>.
-                  User: /api/user/link-platform (POST/DELETE), /api/user/link-telegram (POST),
-                  /api/user/platforms, /api/user/invite-codes (GET/POST),
-                  /api/user/join-team, /api/user/facts, /api/user/facts/browse,
-                  /api/user/facts/search, /api/user/facts/<id>/invalidate,
-                  /api/user/timezone (GET/PUT — IANA timezone setting),
-                  /api/user/location (GET/PUT — free text location, e.g. "Valencia, Spain"),
-                  /api/user/language (GET/POST — UI + bot response language).
-                  Reminders: /api/user/reminders (GET/POST),
-                  /api/user/reminders/<note_id> (PUT/DELETE).
-                  Deep Research: /api/user/deep-research (GET/PUT — second_pass toggle).
-                  Cabinet UI: /cabinet, /cabinet/docs, /cabinet/docs/<path>.
-                  Other: /health, deep_research_webhooks (OpenAI async results).
-                  MCP consent UI: /mcp/consent (GET/POST) — remote MCP server OAuth
-                  approve/deny page. Reads Cabinet JWT cookie to identify the user.
-                  Runs as a shared Quart app (all blueprints on port 8080); main.py
-                  wraps Quart + FastMCP in a plain ASGI dispatcher (NOT Starlette Mount)
-                  that routes FastMCP-owned paths (/mcp, /authorize, /token, /register,
-                  /.well-known/oauth-*) to the SDK sub-app and everything else to Quart.
-main.py         — Bootstrap: creates ServiceContainer + UserAgentFactory, graceful shutdown.
-                  Also wires the remote MCP server: builds a dedicated SearchEnrichmentService
-                  singleton (fixed limits, not per-user tier), calls build_mcp_components,
-                  registers /mcp/consent blueprint on main_app, and runs the parent ASGI
-                  dispatcher via hypercorn. FastMCP's session_manager.run() lives in the
-                  parent's lifespan.
-docx_generator/ — Node.js project with docx npm library. NodeDocxRunner writes temp scripts
-                  here so node_modules/docx resolves at execution time. Not a Python package.
+                  delegation_engine.py (reusable multi-turn tool loop).
+  composition/  — ServiceContainer + UserAgentFactory (AgentFactoryPort; lives HERE, not services/) +
+                  adapter factories + MCP wiring (mcp_setup.py, mcp_sdk_oauth_provider.py). The only layer
+                  allowed to cross all boundaries.
+  locales/      — Per-language UI strings (uk/en/fr/es.py), loaded by FileLocalizationAdapter.
+  config/       — EnvironmentConfig, Settings, AuthConfig.   utils/ — logger, telemetry, debug_logger, file_conversion.
+  web/          — Quart app (OAuth + Cabinet UI + MCP consent). Endpoint families: /auth/* (login + connect
+                  gmail/google-tasks/microsoft-todo), /api/gmail/*, /api/tasks/*, /api/user/* (facts, timezone,
+                  location, language, reminders, deep-research, platforms/invites), /webhook/microsoft-tasks/<id>,
+                  /cabinet*, /mcp/consent, deep_research_webhooks, /health.
+main.py         — Bootstrap: ServiceContainer + UserAgentFactory + remote MCP server (dedicated
+                  SearchEnrichmentService, build_mcp_components, ASGI dispatcher via hypercorn) + graceful shutdown.
+docx_generator/ — Node.js project (docx npm lib); NodeDocxRunner writes temp scripts here. Not a Python package.
 ```
 
 ## File Size Convention
@@ -581,19 +357,14 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   `output_config.effort`, and `web_search_20260209` on `_THINKING_MODELS` / `_DYNAMIC_SEARCH_MODELS`
   substring checks; verify against `client.models.retrieve(<model>).capabilities` when adding
   a new gate. SDK pin: `anthropic >= 0.97.0`.
-- **GeminiEmbeddingAdapter** — `gemini-embedding-2` model (migrated from `-001` 2026-05-29,
-  see `docs/04_solution_strategy/decisions/embedding_model_migration_v1_to_v2.md`).
-  Dimension 768 (Matryoshka truncation from native 3072). Legacy `task_type` parameter is
-  translated to an inline instruction prefix on the input text inside the adapter:
-  `RETRIEVAL_DOCUMENT` → `"title: | text: …"`, `RETRIEVAL_QUERY` → `"task: search result | query: …"`,
-  `SEMANTIC_SIMILARITY` → passthrough. Unknown values → `ValueError`. v2 has no true batch:
-  `embed_content(contents=List[str])` returns one embedding (multimodal-parts semantics), so
-  `get_embeddings_batch` fans out via `asyncio.gather` over N parallel single-content calls.
-  Throttling: process-local `asyncio.Semaphore` caps in-flight calls
-  (default `GEMINI_EMBED_CONCURRENCY=20`, sized for AI Studio Tier 2 = 5000 RPM); 429
-  `RESOURCE_EXHAUSTED` retried 3× with exponential backoff (2/4/8s). Both read (search) and
-  write (fact storage) paths share the same adapter instance and same semaphore.
-  See `docs/05_building_blocks/embedding_system/README.md` §2.2–2.3.
+- **GeminiEmbeddingAdapter** — `gemini-embedding-2`, dim 768 (Matryoshka from native 3072; migrated
+  from `-001` 2026-05-29). Legacy `task_type` → inline instruction prefix inside the adapter
+  (`RETRIEVAL_DOCUMENT`→`"title: | text: …"`, `RETRIEVAL_QUERY`→`"task: search result | query: …"`,
+  `SEMANTIC_SIMILARITY`→passthrough; unknown→`ValueError`). No true batch — `get_embeddings_batch`
+  fans out N parallel single-content calls via `asyncio.gather`. Throttle: process-local
+  `asyncio.Semaphore` (`GEMINI_EMBED_CONCURRENCY=20`). Transient 429/503 mapped to typed `LLMError`
+  and retried via the shared `retry_async` executor (see `decisions/typed_retry_policy.md`).
+  See `docs/05_building_blocks/embedding_system/README.md`.
 - **PromptCacheStrategy** — transparent prompt caching via proxy pattern. Agents declare their
   type; strategy resolves cache config; `CachingLLMProxy` wraps the provider. Agents never
   import or reference `PromptCacheConfig`. See `docs/10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md`.
@@ -603,24 +374,17 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   assignments with constructor-injected `self._cfg = get_agent_config(type, user_id)` backed by
   an `AgentConfigPort` + Firestore adapter — agents don't change. Provider selection is a separate
   concern — see `AgentProviderStrategy` in `src/services/agent_context_builder.py`.
-- **AgentDescriptor** — unified per-agent declaration. Dataclass defined in
-  `src/infrastructure/agent_registry.py`; all instances live in `src/infrastructure/agent_manifest.py`.
-  Every agent in the system — specialist and orchestrator — has one descriptor there.
-  Two halves: (A) `capabilities` — what this agent offers (intents it exposes, with `internal=True`
-  hiding an agent from LLM tool descriptions); (B) `requirements` — `allowed_intents` (which intents
-  it may call; `None` = all non-internal) + `intent_remap` (dispatch-time substitution, e.g. Quick
-  remaps `search_web` → `search_web_light`); (C) `context_schemas` — per-intent typed parameter
-  contracts (dict of field name → description). When present, orchestrator fills structured
-  `context` params at delegation time instead of passing a bare `query` string. Used by
-  `save_to_memory` (text), `get_email_details` (email_id), `get_email_attachment` (email_id,
-  filename). `AgentManifest` is a backward-compatible alias.
-  `eager: bool` (default True) — controls lifecycle. Eager agents are created during
-  `ensure_agents_for_user()`. Lazy agents (`eager=False`) are created on first delegation
-  via `AgentFactoryPort.create_agent_on_demand()`. Currently lazy: DocGenerator, DocPlanner,
-  PdfGenerator, HtmlPageGenerator, DeepResearch, ClaudeDeepResearchRunner, FileManagement.
-  Specialists: declared in `agent_manifest.py` → registered via `ALL_DESCRIPTORS` in `main.py`.
-  Orchestrators (Quick, Smart): declared in `agent_manifest.py`, set as class-level `_descriptor`
-  in the agent class — coordinator never routes TO them via registry.
+- **AgentDescriptor** (`agent_registry.py`; instances in `agent_manifest.py`) — one per agent
+  (specialist + orchestrator). Three parts: (A) `capabilities` — intents it exposes (`internal=True`
+  hides it from LLM tool declarations); (B) `requirements` — `allowed_intents` (`None` = all
+  non-internal) + `intent_remap` (dispatch-time intent substitution; currently unused — Quick's is `{}`);
+  (C) `context_schemas` — per-intent typed param contracts; when present the orchestrator fills
+  structured `context` instead of a bare `query` (used by `save_to_memory`, `get_email_details`,
+  `get_email_attachment`). `eager: bool` (default True): eager → created in `ensure_agents_for_user()`;
+  lazy (`eager=False`) → created on first delegation via `AgentFactoryPort.create_agent_on_demand()`
+  (DocGenerator/DocPlanner/Pdf/Html/DeepResearch/ClaudeDeepResearchRunner/FileManagement). Specialists
+  registered via `ALL_DESCRIPTORS` in `main.py`; orchestrators set a class-level `_descriptor`
+  (coordinator never routes TO them via registry).
   See **Adding a New Specialist Agent** below for the complete checklist.
 - **Intent** — typed string constants for all agent intent names. Defined in `agent_manifest.py`
   as `class Intent`. Import `Intent.SEARCH_MEMORY` etc. instead of raw string literals everywhere.
