@@ -30,6 +30,7 @@ from ..services.biographical_context_service import BiographicalContextService
 from ..services.fact_write_service import FactWriteService
 from ..services.provider_registry import ProviderRegistry
 from ..services.agent_context_builder import AgentContextBuilder
+from ..services.alerting_llm_proxy import AlertingLLMProxy
 from ..services.caching_llm_proxy import CachingLLMProxy
 from ..services.prompt_cache_strategy import PromptCacheStrategy
 from ..services.prompt_component_service import PromptComponentService
@@ -75,6 +76,7 @@ class ServiceContainer:
         env_config: EnvironmentConfig,
         account_repo: AccountRepository,
         overflow_callback: Optional[Callable] = None,
+        alert_webhook: Optional[Any] = None,
     ) -> None:
         # ------------------------------------------------------------------
         # LLM adapters
@@ -178,11 +180,18 @@ class ServiceContainer:
             self.registry.register("openai", self.openai_service)
 
         self.cache_strategy = PromptCacheStrategy()
+        # Alerting proxy factory — only when an alert sink (Slack webhook) is wired.
+        # Wraps every agent's provider so any LLMClientError (4xx) pushes an alert.
+        self.alert_webhook = alert_webhook
+        alerting_proxy_factory = None
+        if alert_webhook is not None:
+            alerting_proxy_factory = lambda inner: AlertingLLMProxy(inner, alert_fn=alert_webhook.post)
         self.context_builder = AgentContextBuilder(
             self.registry,
             resilience_port=self.resilience_port,
             cache_strategy=self.cache_strategy,
             caching_proxy_factory=CachingLLMProxy,
+            alerting_proxy_factory=alerting_proxy_factory,
         )
 
         # ------------------------------------------------------------------

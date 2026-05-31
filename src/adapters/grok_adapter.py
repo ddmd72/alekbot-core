@@ -26,6 +26,7 @@ from ..ports.llm_port import (
 )
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
+    LLMClientError,
     LLMNetworkError,
     LLMRateLimitError,
     LLMServerError,
@@ -190,6 +191,10 @@ class GrokAdapter(LLMPort):
                 raise LLMUnavailableError(str(e), http_status=503) from e
             if isinstance(status, int) and 500 <= status < 600:
                 raise LLMServerError(str(e), http_status=status) from e
+            # 4xx (non-429) → deterministic client error. Not a failover trigger;
+            # surfaces immediately + alerts.
+            if isinstance(status, int) and 400 <= status < 500:
+                raise LLMClientError(str(e), http_status=status) from e
             # Detailed error logging for diagnostics before re-raise
             logger.error(
                 "❌ [GrokAdapter] API Error: type=%s status=%s message=%s model=%s",

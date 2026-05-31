@@ -5,6 +5,7 @@ import httpx
 
 from src.adapters.gemini_adapter import GeminiAdapter
 from src.domain.exceptions import (
+    LLMClientError,
     LLMNetworkError,
     LLMRateLimitError,
     LLMServerError,
@@ -460,3 +461,17 @@ async def test_5xx_non_503_translates_to_LLMServerError():
     with pytest.raises(LLMServerError) as exc_info:
         await adapter.generate_content(request=_GEMINI_REQUEST)
     assert exc_info.value.http_status == 500
+
+
+@pytest.mark.asyncio
+async def test_4xx_non_429_translates_to_LLMClientError():
+    """genai_errors.ClientError(code=400) → LLMClientError (deterministic, not a
+    failover trigger)."""
+    sdk_exc = genai_errors.ClientError(
+        code=400, response_json={"error": {"message": "bad request"}}
+    )
+    adapter = _make_adapter_with_mock_call(sdk_exc)
+
+    with pytest.raises(LLMClientError) as exc_info:
+        await adapter.generate_content(request=_GEMINI_REQUEST)
+    assert exc_info.value.http_status == 400

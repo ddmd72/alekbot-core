@@ -6,6 +6,7 @@ import openai
 
 from src.adapters.openai_adapter import OpenAIAdapter
 from src.domain.exceptions import (
+    LLMClientError,
     LLMNetworkError,
     LLMRateLimitError,
     LLMServerError,
@@ -664,3 +665,20 @@ async def test_5xx_non_503_translates_to_LLMServerError():
     with pytest.raises(LLMServerError) as exc_info:
         await adapter.generate_content(request=_OPENAI_REQUEST)
     assert exc_info.value.http_status == 502
+
+
+@pytest.mark.asyncio
+async def test_4xx_non_429_translates_to_LLMClientError():
+    """openai.APIStatusError(status_code=400) → LLMClientError (deterministic,
+    not a failover trigger; e.g. insufficient_quota / bad request)."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    sdk_exc = openai.APIStatusError(
+        message="Bad request",
+        response=MagicMock(status_code=400, request=MagicMock()),
+        body={"error": {"type": "invalid_request_error"}},
+    )
+    adapter.client.responses.create = AsyncMock(side_effect=sdk_exc)
+
+    with pytest.raises(LLMClientError) as exc_info:
+        await adapter.generate_content(request=_OPENAI_REQUEST)
+    assert exc_info.value.http_status == 400
