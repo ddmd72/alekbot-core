@@ -40,9 +40,9 @@ from quart import Blueprint, request, jsonify
 from ..domain.notification_kind import NotificationKind
 from ..services.deep_research_delivery import NotificationPort, deliver_deep_research
 from ..ports.media_storage_port import MediaStoragePort
+from ..ports.prompt_content_store import PromptContentStore
 from ..services.task_dispatch_service import TaskDispatchService
 from ..utils.logger import logger
-from ..utils.debug_logger import get_debug_logger
 
 _TIMESTAMP_TOLERANCE_SECONDS = 300  # matches OpenAI SDK default
 
@@ -52,6 +52,7 @@ def create_deep_research_webhooks_blueprint(
     webhook_secret: Optional[str] = None,
     media_storage: Optional[MediaStoragePort] = None,
     task_queue: Optional[TaskDispatchService] = None,
+    prompt_content_store: Optional[PromptContentStore] = None,
 ) -> Blueprint:
     """
     Create Quart Blueprint for OpenAI Deep Research webhook delivery.
@@ -172,11 +173,19 @@ def create_deep_research_webhooks_blueprint(
                     if output_text:
                         break
 
-            get_debug_logger().log_response(
-                agent_name="deep_research",
-                response=output_text,
-                metadata={"source": "openai_webhook", "job_id": job_id},
-            )
+            # Durable capture BEFORE delivery — research is expensive; if delivery
+            # fails, the result is already persisted in BigQuery.
+            if prompt_content_store is not None:
+                await prompt_content_store.record_dr_result(
+                    output_text=output_text,
+                    query=query,
+                    user_id=user_id,
+                    account_id=account_id,
+                    model=response_obj.get("model", ""),
+                    provider="openai",
+                    source="openai_webhook",
+                    job_id=job_id,
+                )
 
             # Derive invocation channel from per-channel session_id (format: "user_id:channel_id")
             # so the report delivers to the channel that started the research, not the user's

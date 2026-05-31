@@ -572,6 +572,7 @@ async def main():
             webhook_secret=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET"),
             media_storage=gcs_media_adapter,
             task_queue=agent_task_queue,
+            prompt_content_store=container.prompt_content_store,
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(

@@ -31,6 +31,7 @@ import sys
 
 import anthropic
 
+from src.adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
 from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.agents.claude_deep_research_runner_agent import ClaudeDeepResearchRunnerAgent
@@ -53,6 +54,44 @@ def _build_task_queue() -> GcpTaskQueue:
         service_url=service_url,
         service_account_email=None,  # unauthenticated — service is allow-unauthenticated
     )
+
+
+async def _capture_research_result(
+    result: dict, result_text: str, user_id: str, context: dict
+) -> None:
+    """Durably persist deep-research output(s) to BigQuery. Best-effort, non-raising."""
+    dataset = os.environ.get("BIGQUERY_PROMPT_DATASET", "")
+    if not dataset:
+        return
+    try:
+        store = BigQueryPromptContentAdapter(
+            dataset=dataset,
+            table=os.environ.get("BIGQUERY_PROMPT_TABLE", "prompt_content"),
+            project=os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
+        )
+        query_text = result.get("query", context.get("original_query", ""))
+        model = result.get("model", "")
+        account_id = context.get("account_id", "")
+        job_id = context.get("job_id")
+        total_tokens = result.get("total_tokens", 0)
+        second_pass = result.get("second_pass", False)
+        round1 = result.get("round1_text", "")
+        if round1:
+            await store.record_dr_result(
+                output_text=round1, query=query_text,
+                user_id=user_id, account_id=account_id,
+                model=model, provider="claude", source="claude_job",
+                job_id=job_id, pass_index=1, total_tokens=total_tokens,
+            )
+        await store.record_dr_result(
+            output_text=result_text, query=query_text,
+            user_id=user_id, account_id=account_id,
+            model=model, provider="claude", source="claude_job",
+            job_id=job_id, pass_index=2 if second_pass else None,
+            total_tokens=total_tokens,
+        )
+    except Exception as exc:
+        logger.error("[ResearchJob] BigQuery content capture failed: %s", exc, exc_info=True)
 
 
 async def main() -> None:
@@ -106,6 +145,12 @@ async def main() -> None:
     if not result_text:
         logger.error("[ResearchJob] Agent returned empty result — aborting delivery")
         sys.exit(1)
+
+    # Durable content capture BEFORE delivery — deep research is expensive; if
+    # delivery later fails, the result is already persisted in BigQuery. Both
+    # passes are captured: the first pass never reaches the user (it feeds the
+    # critic) but matters for history. No-op when BIGQUERY_PROMPT_DATASET unset.
+    await _capture_research_result(result, result_text, user_id, context)
 
     try:
         await deliver_deep_research(

@@ -154,3 +154,71 @@ class TestRenderMessages:
         out = _render_messages(msgs)
         assert "user: hi" in out
         assert "model: hello" in out
+
+
+class TestRecordDrResult:
+    async def test_durable_write_builds_deep_research_row(self, adapter, fake_bigquery):
+        bq, client = fake_bigquery
+        await adapter.record_dr_result(
+            output_text="the report",
+            query="research X",
+            user_id="u1",
+            account_id="acct-1",
+            model="claude-opus-4-8",
+            provider="claude",
+            source="claude_job",
+            job_id="job-9",
+            pass_index=2,
+            total_tokens=5000,
+        )
+
+        client.insert_rows_json.assert_called_once()
+        row = client.insert_rows_json.call_args.args[1][0]
+        assert row["agent_type"] == "deep_research"
+        assert row["agent_id"] == "claude_job"
+        assert row["provider"] == "claude"
+        assert row["response_text"] == "the report"
+        assert row["request_text"] == "research X"
+        assert row["user_id"] == "u1"
+        assert row["total_tokens"] == 5000
+        assert row["turn"] == 2  # pass_index tagged via turn (no schema migration)
+
+    async def test_single_pass_tags_turn_zero(self, adapter, fake_bigquery):
+        bq, client = fake_bigquery
+        await adapter.record_dr_result(
+            output_text="r", query="q", user_id=None, account_id=None,
+            model="m", provider="openai", source="openai_webhook",
+        )
+        assert client.insert_rows_json.call_args.args[1][0]["turn"] == 0
+
+    async def test_durable_retries_then_logs_without_raising(self, adapter, fake_bigquery):
+        bq, client = fake_bigquery
+        client.insert_rows_json.return_value = [{"index": 0, "errors": ["transient"]}]
+        adapter._DURABLE_ATTEMPTS = 3
+        adapter._DURABLE_BACKOFF_S = 0  # no real sleeps in tests
+
+        # Must not raise even though every attempt "fails".
+        await adapter.record_dr_result(
+            output_text="r", query="q", user_id=None, account_id=None,
+            model="m", provider="claude", source="claude_job",
+        )
+        assert client.insert_rows_json.call_count == 3  # all attempts used
+
+    async def test_durable_stops_on_first_success(self, adapter, fake_bigquery):
+        bq, client = fake_bigquery
+        adapter._DURABLE_BACKOFF_S = 0
+        await adapter.record_dr_result(
+            output_text="r", query="q", user_id=None, account_id=None,
+            model="m", provider="claude", source="claude_job",
+        )
+        assert client.insert_rows_json.call_count == 1  # success → no retry
+
+    async def test_durable_swallows_client_exception(self, adapter, fake_bigquery):
+        bq, client = fake_bigquery
+        client.insert_rows_json.side_effect = RuntimeError("BQ down")
+        adapter._DURABLE_ATTEMPTS = 2
+        adapter._DURABLE_BACKOFF_S = 0
+        await adapter.record_dr_result(  # must not raise
+            output_text="r", query="q", user_id=None, account_id=None,
+            model="m", provider="claude", source="claude_job",
+        )
