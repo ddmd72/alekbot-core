@@ -46,3 +46,31 @@ class PromptContentStore(ABC):
         background, and returns. A failed write is logged, never propagated.
         """
         ...
+
+    @abstractmethod
+    async def record_dr_result(
+        self,
+        *,
+        output_text: str,
+        query: str,
+        user_id: Optional[str],
+        account_id: Optional[str],
+        model: str,
+        provider: str,
+        source: str,
+        job_id: Optional[str] = None,
+        pass_index: Optional[int] = None,
+        total_tokens: int = 0,
+    ) -> None:
+        """Durably capture an expensive deep-research result.
+
+        Unlike record_turn, this is **awaited and retried** — deep research is
+        costly and its output must survive even if downstream delivery fails, so
+        callers write it BEFORE delivering. Still non-raising: exhausted retries
+        log an error and return (delivery proceeds regardless).
+
+        ``pass_index`` tags the pass for multi-pass research (1 = first/round-1,
+        2 = critic/final); None for single-pass. ``source`` records the origin
+        (e.g. "claude_job", "openai_webhook").
+        """
+        ...

@@ -19,8 +19,8 @@ def test_port_cannot_be_instantiated():
         PromptContentStore()  # type: ignore[abstract]
 
 
-def test_record_turn_is_the_only_abstract_method():
-    assert PromptContentStore.__abstractmethods__ == frozenset({"record_turn"})
+def test_abstract_methods():
+    assert PromptContentStore.__abstractmethods__ == frozenset({"record_turn", "record_dr_result"})
 
 
 def test_record_turn_is_coroutine():
@@ -32,6 +32,9 @@ async def test_concrete_subclass_satisfies_contract():
 
     class _InMemoryStore(PromptContentStore):
         async def record_turn(self, **kwargs) -> None:
+            captured.append(kwargs)
+
+        async def record_dr_result(self, **kwargs) -> None:
             captured.append(kwargs)
 
     store = _InMemoryStore()

@@ -57,6 +57,11 @@ def _render_messages(messages: list) -> str:
 class BigQueryPromptContentAdapter(PromptContentStore):
     """Persist LLM interactions to a TTL'd BigQuery table."""
 
+    # Durable-write retry policy (record_dr_result). Class-level so tests can
+    # override without real sleeps.
+    _DURABLE_ATTEMPTS = 3
+    _DURABLE_BACKOFF_S = 2.0
+
     def __init__(self, dataset: str, table: str, project: str = "") -> None:
         """
         Args:
@@ -96,6 +101,67 @@ class BigQueryPromptContentAdapter(PromptContentStore):
             task.add_done_callback(self._bg_tasks.discard)
         except Exception as e:  # building/scheduling must never break the LLM path
             logger.warning("BigQueryPromptContentAdapter: record_turn skipped: %s", e)
+
+    async def record_dr_result(
+        self,
+        *,
+        output_text: str,
+        query: str,
+        user_id: Optional[str],
+        account_id: Optional[str],
+        model: str,
+        provider: str,
+        source: str,
+        job_id: Optional[str] = None,
+        pass_index: Optional[int] = None,
+        total_tokens: int = 0,
+    ) -> None:
+        """Durable: awaited + retried write for an expensive deep-research result."""
+        record = self._build_dr_record(
+            output_text=output_text,
+            query=query,
+            user_id=user_id,
+            account_id=account_id,
+            model=model,
+            provider=provider,
+            source=source,
+            pass_index=pass_index,
+            total_tokens=total_tokens,
+        )
+        await self._store_durable(record)
+
+    @staticmethod
+    def _build_dr_record(
+        *,
+        output_text: str,
+        query: str,
+        user_id: Optional[str],
+        account_id: Optional[str],
+        model: str,
+        provider: str,
+        source: str,
+        pass_index: Optional[int],
+        total_tokens: int,
+    ) -> PromptContentRecord:
+        # pass_index is tagged via the `turn` column (no schema migration): rows
+        # are already disambiguated by agent_type="deep_research"; within those,
+        # turn = pass (1 = first/round-1, 2 = critic/final, 0 = single-pass).
+        ids = get_trace_ids()
+        return PromptContentRecord(
+            trace_id=ids.get("trace_id"),
+            span_id=ids.get("span_id"),
+            user_id=user_id or None,
+            account_id=account_id or None,
+            agent_id=source,
+            agent_type="deep_research",
+            model=model or "",
+            provider=provider or None,
+            turn=pass_index or 0,
+            request_text=query or None,
+            response_text=output_text,
+            total_tokens=total_tokens,
+            latency_ms=None,
+        )
 
     # -- Record building (adapter-owned; domain never sees storage shapes) -----
 
@@ -167,6 +233,33 @@ class BigQueryPromptContentAdapter(PromptContentStore):
                 )
         except Exception as e:  # never propagate into the request path
             logger.warning("BigQueryPromptContentAdapter: store failed: %s", e)
+
+    async def _store_durable(self, record: PromptContentRecord) -> None:
+        """Awaited write with retry — for expensive content that must not be lost.
+
+        Still non-raising: on exhausted retries it logs an error and returns, so a
+        BigQuery outage never blocks delivering the (already-computed) result to
+        the user. Callers invoke this BEFORE delivery so the content is persisted
+        even if delivery later fails.
+        """
+        last: Any = None
+        for attempt in range(self._DURABLE_ATTEMPTS):
+            try:
+                await self._ensure_table()
+                row = self._to_row(record)
+                loop = asyncio.get_event_loop()
+                errors = await loop.run_in_executor(None, partial(self._insert_sync, row))
+                if not errors:
+                    return
+                last = errors
+            except Exception as e:
+                last = e
+            if attempt < self._DURABLE_ATTEMPTS - 1:
+                await asyncio.sleep(self._DURABLE_BACKOFF_S * (attempt + 1))
+        logger.error(
+            "BigQueryPromptContentAdapter: durable store failed after %d attempts: %s",
+            self._DURABLE_ATTEMPTS, last,
+        )
 
     # -- Lazy client / table --------------------------------------------------
 
