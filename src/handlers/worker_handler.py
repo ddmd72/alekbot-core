@@ -59,7 +59,6 @@ from ..services.email_indexing_service import EmailIndexingService
 from ..services.reminders_service import RemindersService, build_reminder_alert
 from ..services.task_dispatch_service import TaskDispatchService
 from ..utils.logger import logger
-from ..utils.debug_logger import get_debug_logger
 
 
 class WorkerHandler:
@@ -409,12 +408,6 @@ class WorkerHandler:
             return {"status": "polling", "attempt": attempt + 1}, 200
 
         if status == "completed":
-            get_debug_logger().log_response(
-                agent_name="deep_research",
-                response=payload_text,
-                metadata={"source": "gemini_polling", "interaction_id": interaction_id},
-            )
-
             await deliver_deep_research(
                 result_text=payload_text,
                 user_id=user_id,
