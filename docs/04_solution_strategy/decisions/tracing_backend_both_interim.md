@@ -1,29 +1,30 @@
-# Decision: Keep TRACING_BACKEND=both (Logfire + Cloud Trace) — interim
+# Decision: Remove Logfire — Cloud Trace is the sole tracing backend (in-house)
 
-**Status:** Interim — both backends active; full switch to a single backend deferred pending an explicit decision
+**Status:** Decided (remove Logfire). **Execution deferred ~a few days** for final hands-on evaluation of the Logfire UI; then revert to `TRACING_BACKEND=cloud_trace` and strip the Logfire branch. Until then `both` stays active (cost negligible).
 **Date:** 2026-05-31
-**Context:** Observability split (`project_observability_split`). Logfire added as an OTel-native tracing backend alongside the pre-existing Cloud Trace exporter.
+**Context:** Observability split (`project_observability_split`). Logfire was added as an OTel-native tracing backend alongside the pre-existing Cloud Trace exporter, partly to evaluate/learn it.
 
 ## Decision
 
-Run `TRACING_BACKEND=both` for now (dev). Every span fans out to **both** Logfire and Cloud Trace: `logfire.configure()` owns the global OTel provider, and `BatchSpanProcessor(CloudTraceSpanExporter())` is attached as an `additional_span_processor` on the same provider.
+Logfire is judged **redundant** for this project and will be removed. **Cloud Trace** (OpenTelemetry exporter, in-house GCP) becomes the sole tracing backend. The OTel instrumentation, the BigQuery content store, and the `DEBUG_PROMPTS` capture switch all stay — they are backend-agnostic.
 
-This is deliberately **not** a final state. Collapsing to one backend is left as an open decision, not done by default.
+## Why remove it
 
-## Why keep both for now
+- **Redundant over the existing in-house stack.** The three observability pillars are already covered inside the GCP perimeter: **Cloud Logging** (events, correlated by trace_id/span_id), **Cloud Trace** (the distributed-trace waterfall), **BigQuery** (queryable LLM content + token/cost/latency). Logfire is a nicer UI over capabilities already present.
+- **Its main differentiator is empty by design.** Logfire's value-add is the GenAI/LLM + Agents dashboards. Those key off OTel GenAI semantic conventions AND typically display prompt/response **content** — but content is deliberately kept out of spans (PII split → content lives only in BigQuery). So the LLM panels stay empty, and the metadata analytics they would show (tokens/cost/latency by model) are already a SQL query away in BigQuery.
+- **Learning goal satisfied** (~1h was enough; nothing more to learn once the LLM dashboards don't populate).
+- **Portfolio framing.** A half-integrated, abandoned external vendor is a negative signal, not a plus. The strong story is "vendor-neutral observability on OTel, in-house Cloud Trace by default, backend swappable in one line" — which the Logfire experiment validated. Removal *completes* that story rather than weakening it.
 
-- **Cost is not a forcing function.** At solo-dev volume (~5–15 spans/request, well under Cloud Trace's 2.5M-spans/month free tier and Logfire's free tier) both backends are effectively $0. Export is async/batched (no request-path latency), spans carry metadata only (no content). So dual-write costs ~nothing — it does not pressure a quick switch.
-- **The two have different value props** and the trade-off hasn't been resolved:
-  - **Logfire** — superior UI, the backend being learned/evaluated; but an external vendor.
-  - **Cloud Trace** — stays inside the GCP perimeter (in-house fallback), no third party; weaker UI.
-- Switching to `logfire` alone means accepting an external vendor as the *sole* tracing path; switching to `cloud_trace` alone means dropping the Logfire evaluation. Either is a real decision (vendor-dependence vs in-house), not yet made.
+## Removal checklist (when executed)
 
-## How to switch (when decided)
+1. `src/utils/telemetry.py` — drop `_init_logfire` + the `logfire`/`both` branches; keep `cloud_trace` | `none`.
+2. `requirements.txt` — remove `logfire`; revert opentelemetry-* to unpinned (the pins existed only for Logfire compatibility).
+3. `cloudbuild-dev.yaml` — `TRACING_BACKEND=both` → `cloud_trace`; remove the `LOGFIRE_TOKEN` secret ref.
+4. `tests/unit/utils/test_telemetry_backend.py` — rewrite for cloud_trace/none only.
+5. Secret Manager — delete the `LOGFIRE_TOKEN` secret (infra step, owner).
+6. Update `project_observability_split` memory.
 
-One value in `cloudbuild-dev.yaml`: `TRACING_BACKEND=logfire` (Logfire only) | `cloud_trace` (legacy, in-house only) | `none`. Redeploy. No code changes — OTel is the abstraction, the backend is the swap point.
+## Rejected alternatives
 
-## Rejected alternatives (for now)
-
-- **Logfire-only immediately.** Premature — commits to a sole external tracing dependency before the vendor has been evaluated in real use.
-- **Cloud-Trace-only (revert).** Throws away the Logfire evaluation that motivated this work.
-- **Decide on cost grounds.** Dual-write is free at this scale; cost can't be the deciding factor. The decision is about vendor-dependence vs in-house UX, to be made later.
+- **Keep Logfire (`both` or `logfire`-only).** No operational value over the in-house stack, and a standing external-vendor dependency + portfolio negative.
+- **Hand-roll GenAI semantic conventions to light up the dashboards.** Would still show no message content (PII), so only metadata panels — and that data is already in BigQuery. Not worth the work for a backend being removed.
