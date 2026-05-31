@@ -35,6 +35,22 @@ class LLMNetworkError(LLMError):
     """
 
 
+class LLMClientError(LLMError):
+    """4xx HTTP response that is NOT 429 (rate limit) — typically 400.
+
+    Covers all non-rate-limit client errors: provider credit/billing exhaustion
+    (Anthropic returns HTTP 400 "credit balance too low"), malformed requests,
+    unsupported parameters, content-policy rejections. All are DETERMINISTIC —
+    retrying the same request or failing over to another provider will not help —
+    so this type is intentionally absent from ``FAILOVER_TRIGGER_TYPES``: it
+    propagates immediately to the agent as a hard failure.
+
+    It is, however, an operator-actionable signal (top up the provider, fix the
+    broken request type), so ``AlertingLLMProxy`` watches for it and pushes a
+    Slack alert. ``http_status`` carries the actual code.
+    """
+
+
 class LLMServerError(LLMError):
     """5xx HTTP response that is NOT 503.
 

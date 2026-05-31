@@ -18,6 +18,7 @@ from ..ports.llm_port import (
 )
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
+    LLMClientError,
     LLMNetworkError,
     LLMRateLimitError,
     LLMServerError,
@@ -188,8 +189,13 @@ class GeminiAdapter(LLMPort):
             # Wall-clock budget from request.timeout exhausted — never reached server.
             raise LLMTimeoutError(f"request timeout after {request_timeout}s") from e
         except genai_errors.ClientError as e:
-            if getattr(e, "code", None) == 429:
+            code = getattr(e, "code", None)
+            if code == 429:
                 raise LLMRateLimitError(str(e), http_status=429) from e
+            # 4xx (non-429) → deterministic client error. Not a failover trigger;
+            # surfaces immediately + alerts.
+            if isinstance(code, int) and 400 <= code < 500:
+                raise LLMClientError(str(e), http_status=code) from e
             raise
         except genai_errors.ServerError as e:
             code = getattr(e, "code", None)

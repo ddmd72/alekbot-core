@@ -18,6 +18,7 @@ from ..ports.llm_port import (
 )
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
+    LLMClientError,
     LLMNetworkError,
     LLMRateLimitError,
     LLMServerError,
@@ -282,6 +283,10 @@ class ClaudeAdapter(LLMPort):
                     raise LLMUnavailableError(str(e), http_status=503) from e
                 if isinstance(status, int) and 500 <= status < 600:
                     raise LLMServerError(str(e), http_status=status) from e
+                # 4xx (non-429, e.g. 400 credit-balance / bad request) → deterministic
+                # client error. Not a failover trigger; surfaces immediately + alerts.
+                if isinstance(status, int) and 400 <= status < 500:
+                    raise LLMClientError(str(e), http_status=status) from e
                 raise
             llm_response = self._parse_response(response)
 
@@ -332,8 +337,11 @@ class ClaudeAdapter(LLMPort):
             except anthropic.RateLimitError as e:
                 raise LLMRateLimitError(str(e), http_status=429) from e
             except anthropic.APIStatusError as e:
-                if e.status_code == 503:
+                status = getattr(e, "status_code", None)
+                if status == 503:
                     raise LLMUnavailableError(str(e), http_status=503) from e
+                if isinstance(status, int) and 400 <= status < 500:
+                    raise LLMClientError(str(e), http_status=status) from e
                 raise
 
             container_id = new_container or container_id

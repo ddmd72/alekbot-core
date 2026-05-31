@@ -295,6 +295,15 @@ async def main():
             except Exception as e:
                 logger.error(f"❌ Error in overflow_callback: {e}", exc_info=True)
 
+        # Ops alert sink — shared by AlertingLLMProxy (LLM 4xx alerts) and the billing
+        # daily summary. Optional: wired only when BILLING_SLACK_WEBHOOK_URL is set.
+        _alert_webhook = None
+        _alert_webhook_url = os.getenv("BILLING_SLACK_WEBHOOK_URL")
+        if _alert_webhook_url:
+            from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
+            _alert_webhook = SlackWebhookAdapter(_alert_webhook_url)
+            logger.info("✅ Ops Slack webhook configured (billing + LLM client-error alerts)")
+
         # 1. Shared service container (LLM adapters, repositories, prompt infra, session store)
         logger.info("🏭 Initializing Service Container...")
         container = ServiceContainer(
@@ -303,6 +312,7 @@ async def main():
             env_config=env_config,
             account_repo=account_repo,
             overflow_callback=overflow_callback,
+            alert_webhook=_alert_webhook,
         )
         file_service = FileUploadService(container.llm_port)
         session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
@@ -536,14 +546,6 @@ async def main():
             embedding=container.embedding_service,
         ) if (indexed_email_repo and container.embedding_service) else None
 
-        # Billing webhook — optional, wired only when BILLING_SLACK_WEBHOOK_URL is set
-        _billing_webhook = None
-        _billing_webhook_url = os.getenv("BILLING_SLACK_WEBHOOK_URL")
-        if _billing_webhook_url:
-            from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
-            _billing_webhook = SlackWebhookAdapter(_billing_webhook_url)
-            logger.info("✅ Billing Slack webhook configured")
-
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
         worker_handler = WorkerHandler(
             agent_worker_handler=agent_worker_handler,
@@ -563,7 +565,7 @@ async def main():
             notes_port=container.notes_adapter,
             email_review=container.email_review_service,
             account_repo=account_repo,
-            billing_webhook=_billing_webhook,
+            billing_webhook=_alert_webhook,
             email_embedding_repair=_email_embedding_repair_service,
         )
 

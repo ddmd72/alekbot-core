@@ -7,6 +7,7 @@ import anthropic
 from src.adapters.claude_adapter import ClaudeAdapter
 from src.domain.user import PerformanceTier
 from src.domain.exceptions import (
+    LLMClientError,
     LLMNetworkError,
     LLMRateLimitError,
     LLMServerError,
@@ -937,8 +938,12 @@ async def test_api_status_503_raises_llm_unavailable_error():
 
 
 @pytest.mark.asyncio
-async def test_api_status_400_re_raises_as_is():
-    """anthropic.APIStatusError(status_code=400) is not wrapped — re-raised unchanged."""
+async def test_api_status_400_raises_llm_client_error():
+    """anthropic.APIStatusError(status_code=400) → LLMClientError(http_status=400).
+
+    400 covers provider credit/billing exhaustion ("credit balance too low") and
+    malformed requests. Deterministic → not a failover trigger; surfaced as a typed
+    client error so AlertingLLMProxy can push an operator alert."""
     adapter = ClaudeAdapter(api_key="test-key")
     sdk_exc = anthropic.APIStatusError(
         message="Bad request",
@@ -947,7 +952,7 @@ async def test_api_status_400_re_raises_as_is():
     )
     adapter.client.messages.stream = lambda **kw: _make_failing_cm(sdk_exc)
 
-    with pytest.raises(anthropic.APIStatusError):
+    with pytest.raises(LLMClientError) as exc_info:
         await adapter.generate_content(
             request=LLMRequest(
                 model_name="claude-sonnet-4-6",
@@ -955,6 +960,8 @@ async def test_api_status_400_re_raises_as_is():
                 messages=_MESSAGES,
             )
         )
+
+    assert exc_info.value.http_status == 400
 
 
 # ---------------------------------------------------------------------------

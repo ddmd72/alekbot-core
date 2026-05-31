@@ -50,6 +50,7 @@ from ..ports.llm_port import (
 )
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
+    LLMClientError,
     LLMNetworkError,
     LLMRateLimitError,
     LLMServerError,
@@ -232,6 +233,10 @@ class OpenAIAdapter(LLMPort):
                 raise LLMUnavailableError(str(e), http_status=503) from e
             if isinstance(status, int) and 500 <= status < 600:
                 raise LLMServerError(str(e), http_status=status) from e
+            # 4xx (non-429, e.g. 400 / insufficient_quota) → deterministic client error.
+            # Not a failover trigger; surfaces immediately + alerts.
+            if isinstance(status, int) and 400 <= status < 500:
+                raise LLMClientError(str(e), http_status=status) from e
             logger.error(
                 "❌ [OpenAIAdapter] API error: model=%s status=%s error=%s",
                 model_name, status, str(e),

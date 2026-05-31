@@ -173,11 +173,13 @@ class AgentContextBuilder:
         resilience_port: ProviderResiliencePort,
         cache_strategy: Optional[PromptCacheStrategyPort] = None,
         caching_proxy_factory: Optional[Callable[[LLMPort, PromptCacheConfig], LLMPort]] = None,
+        alerting_proxy_factory: Optional[Callable[[LLMPort], LLMPort]] = None,
     ):
         self.registry = registry
         self._resilience_port = resilience_port
         self._cache_strategy = cache_strategy
         self._caching_proxy_factory = caching_proxy_factory
+        self._alerting_proxy_factory = alerting_proxy_factory
 
     def resolve_provider_name(self, agent_type: str, config: UserBotConfig) -> str:
         """
@@ -251,6 +253,10 @@ class AgentContextBuilder:
             if cache_config:
                 provider = self._caching_proxy_factory(provider, cache_config)
 
+        # Wrap with alerting (outermost — sees errors from the real provider call).
+        if self._alerting_proxy_factory:
+            provider = self._alerting_proxy_factory(provider)
+
         # Resolve fallback provider from strategy (used by BaseAgent on 429/503).
         # Fallback gets raw provider without caching — cache is useless when switching providers.
         fallback_name = strategy.get("fallback")
@@ -260,7 +266,7 @@ class AgentContextBuilder:
         if fallback_name and fallback_name != provider_name:
             try:
                 fb_raw = self.registry.get(fallback_name)
-                fallback_llm = fb_raw
+                fallback_llm = self._alerting_proxy_factory(fb_raw) if self._alerting_proxy_factory else fb_raw
                 fallback_model_name = fb_raw.get_model_for_tier(tier)
                 resolved_fallback_name = fallback_name
             except Exception:
