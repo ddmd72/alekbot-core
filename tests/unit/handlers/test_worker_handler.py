@@ -947,6 +947,25 @@ class TestHandleExecuteReminder:
             note_id=_EXECUTE_NOTE_ID, due_at=_EXECUTE_DUE,
         )
 
+    async def test_passes_suppress_transient_retry(self):
+        """Handler returns 5xx on failure → Cloud Tasks retries the task, so notify
+        is told to suppress the agent's in-process retry (no layer1 × layer2)."""
+        from src.domain.agent import AgentStatus
+        from src.domain.notify_result import NotifyResult
+
+        worker, ns = _make_full_worker()
+        ns.notes_port.get_note.return_value = _make_reminder_note()
+        profile = MagicMock()
+        profile.account_id = "acc-x"
+        ns.user_repo.get_user.return_value = profile
+        ns.notification.notify.return_value = NotifyResult(
+            delivered=True, agent_status=AgentStatus.SUCCESS,
+        )
+
+        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        assert ns.notification.notify.call_args.kwargs["suppress_transient_retry"] is True
+
     async def test_happy_path_uses_note_complexity_when_set(self):
         """If note.complexity is set, its .value is forwarded to notify
         as task_complexity (Smart will then resolve the per-call SLA)."""
@@ -1174,6 +1193,7 @@ class TestHandleDailyEmailReview:
             thinking_effort="medium",
             task_complexity="deep_reasoning",
             email_for_triage=emails,
+            suppress_transient_retry=True,
         )
 
 

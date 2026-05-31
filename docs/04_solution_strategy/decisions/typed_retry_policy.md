@@ -136,3 +136,24 @@ before retrying, and retries at per-item granularity (its batch path fans out
 internally, below any port-boundary wrapper). Rationale for "shared primitive,
 not a proxy": the batch fan-out and the per-agent ``RetryPolicy`` locality both
 make a port-boundary proxy the wrong vehicle for retry.
+
+### Layer interaction: per-message suppression
+
+In-process retry (this layer) nests inside two coarser layers: Cloud Tasks queue
+retry (re-runs the whole ``/worker`` task on 5xx) and application re-enqueue /
+batch-attempts. They are a deliberate granularity hierarchy, not duplication — but
+where they overlap they multiply. The reminder (``execute_reminder``) and daily
+email review (``daily_email_review``) handlers return 5xx on delivery failure so
+Cloud Tasks retries the task; the agent underneath is ``SmartAgent`` (``DEFAULT``
+retry). Same agent, static policy, two execution contexts: interactive (no outer
+layer → in-process retry is the only retry, keep it) vs Cloud-Task-backed (outer
+queue retry already covers it → in-process retry would be layer1 × layer2, up to
+~12 executions during a sustained provider outage).
+
+Resolution: ``UserNotificationService.notify(suppress_transient_retry=True)`` sets
+``context["suppress_transient_retry"]``; ``BaseAgent.process`` resolves the policy to
+``NO_RETRY_POLICY`` when that flag is present. The two 5xx-returning handlers pass it,
+so the same agent stays single-attempt under a Cloud Task while still retrying on the
+interactive path. The flag is a plain bool (serialization-safe) and propagating it
+through delegation context is harmless and semantically correct (the whole sub-tree
+runs under the same outer-retried task).

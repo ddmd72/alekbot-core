@@ -23,7 +23,7 @@ from ..domain.exceptions import (
     ProviderBreakerOpenError,
     TRANSIENT_RETRY_TYPES,
 )
-from ..domain.retry_policy import DEFAULT_RETRY_POLICY, RetryPolicy
+from ..domain.retry_policy import DEFAULT_RETRY_POLICY, NO_RETRY_POLICY, RetryPolicy
 from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
@@ -548,7 +548,19 @@ class BaseAgent(ABC):
         # turned into a terminal outcome below. The surrounding circuit-breaker,
         # billing flush and timeout/cancelled handling are agent-level concerns and
         # stay here — only the backoff loop + transient classification are shared.
-        policy = self.retry_policy
+        #
+        # Per-message suppression: when this execution is already backed by an outer
+        # retry layer (Cloud Tasks re-running the whole /worker task — the reminder
+        # and daily-email-review handlers return 5xx on failure), in-process retry
+        # would multiply with it (layer1 × layer2). Those callers set
+        # context["suppress_transient_retry"] so the same agent that retries on the
+        # interactive path stays single-attempt under a Cloud Task. See
+        # docs/04_solution_strategy/decisions/typed_retry_policy.md.
+        policy = (
+            NO_RETRY_POLICY
+            if message.context.get("suppress_transient_retry")
+            else self.retry_policy
+        )
         last_error: Optional[str] = None
 
         async def _attempt() -> AgentResponse:
