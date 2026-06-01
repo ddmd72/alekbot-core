@@ -23,6 +23,8 @@ history management for user file attachments.
 - [ ] AgentCoordinator._resolve_file_refs flow changes
 - [ ] ConversationHandler history cleaning logic changes
 - [ ] GCS bucket lifecycle rules change
+- [ ] Capability-token / `/f/` route / signed-URL flow changes (FileLinkService, FileAccessTokenService, file_access_app)
+- [ ] Storage-class → prefix/gating/TTL mapping changes
 
 ### Cross-References
 
@@ -30,6 +32,7 @@ history management for user file attachments.
 - **Document Generation:** [../document_generation/README.md](../document_generation/README.md) — file_ref support in generators
 - **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md) — FileManagementAgent in catalogue
 - **RFC:** [../../10_rfcs/FILE_STORAGE_RFC.md](../../10_rfcs/FILE_STORAGE_RFC.md) — design decisions and rationale
+- **Decision:** [../../04_solution_strategy/decisions/private_file_storage_token_redirect.md](../../04_solution_strategy/decisions/private_file_storage_token_redirect.md) — private bucket + capability-token `/f/` route + server-side agent re-fetch (§2.4)
 
 ---
 
@@ -164,7 +167,57 @@ ConversationHandler (mode.is_bound):
   Agent calls open_file delegation when it needs the content
 ```
 
-### 2.4 History Save Flow
+### 2.4 Private Storage & Capability Access
+
+The GCS bucket is **private** (`allUsers` removed). Nothing is reachable by a bare
+`storage.googleapis.com/...` path — that returns 403. Two distinct access paths, decoupled on
+purpose (decision: [private_file_storage_token_redirect.md](../../04_solution_strategy/decisions/private_file_storage_token_redirect.md)):
+
+**User opens a delivered file** — the link in chat is a capability route on our own domain, not
+a storage URL:
+
+```
+DocumentDeliveryService.store(content, user_id, storage_class)
+        |-- GcsMediaAdapter.store() → PRIVATE object, returns the KEY (not a URL)
+        |-- FileLinkService.build_link(key, user_id)
+        |      → HS256 capability token {key, user_id, exp, gated}  (FileAccessTokenService)
+        |      → https://<host>/f/<token>
+        v
+DeliveredDocument(link, key)   link → channel,   key → conversation history
+
+User clicks https://<host>/f/<token>:
+  /f route (web/file_access_app.py)
+        |-- verify token (sig + exp)
+        |-- if gated (email_review): require matching Cabinet cookie, else → /auth/login
+        |-- mint a fresh 5-min GCS V4 signed URL (IAM signBlob)
+        |-- 302 redirect
+```
+
+Token TTL ≠ signed-URL TTL: the JWT carries the real link lifetime (30 days default; **5 days +
+gated for `email_review/`**), while the per-click signed URL is short (5 min). This sidesteps the
+7-day GCS signing cap — the long-lived link never embeds a long-lived storage signature.
+
+**Agent re-reads a delivered file** — NOT via the external `fetch_url` (provider grounding, which
+cannot reach a private object and has no session). The history note carries the internal **key**,
+and the agent re-reads server-side through the same `open_file` intent:
+
+```
+notify_document_link(..., key=...) writes to history:
+  "[Document delivered: <label>. ... read it with open_file, file_ref="<key>"]"
+        v
+Agent later: delegate open_file with file_ref=<key>
+        v
+FileConversionService._download_by_ref dispatches by ref SHAPE (no LLM choice):
+  - delivered key "{prefix}/{user_id}/…" → MediaStoragePort.fetch (server-side)
+                                            + ownership check on the user_id segment
+  - bare filename "report.docx"          → FileStoragePort.download (user upload)
+```
+
+One `open_file` intent for both sources — the resolver picks the backend from the ref, so the LLM
+never chooses. Ownership: a delivered key carries `user_id` as its second path segment; a request
+whose user_id doesn't match is rejected (`PermissionError`) before any read.
+
+### 2.5 History Save Flow
 
 ```
 message_parts cleanup (before saving to Firestore):
@@ -196,12 +249,15 @@ Everything else:
 | `download` | `(filename, user_id) -> bytes` | Download raw bytes |
 | `delete` | `(filename, user_id) -> None` | Remove file |
 | `exists` | `(filename, user_id) -> bool` | Check existence (for dedup) |
-| `get_url` | `(filename, user_id) -> str` | Assemble public URL |
+| `get_url` | `(filename, user_id) -> str` | Assemble a `storage.googleapis.com` path (legacy; **no live callers** — capability links are minted by FileLinkService, see §2.4) |
 
 All methods are async. Callers never see storage keys — adapter assembles `{user_id}/files/{filename}` internally.
 
-**Distinction from MediaStoragePort:** MediaStoragePort stores public non-PII content (HTML pages, widgets)
-with public URLs. FileStoragePort stores private user file attachments with TTL and dedup.
+**Distinction from MediaStoragePort:** both back the same **private** bucket. FileStoragePort
+addresses user uploads by bare filename under `{user_id}/files/`; MediaStoragePort stores
+system-delivered documents (`docs/`, `email_review/`, `deep_research/`) by full key and adds
+`fetch(key)` (server-side agent re-read) + `generate_signed_url(key, ttl)` (the `/f` route). Neither
+returns a public URL — access is via capability token → signed URL (§2.4).
 
 ### 3.2 GcsFileStorageAdapter
 
@@ -212,17 +268,22 @@ with public URLs. FileStoragePort stores private user file attachments with TTL 
 - **Lazy client init:** GCS client created on first use, cached
 - **Async/sync separation:** All GCS I/O via `run_in_executor`
 
-**GCS Bucket Structure:**
+**GCS Bucket Structure (private bucket):**
 
 ```
-alek-media-{env}/
-  {user_id}/
-    files/           <-- user attachments (this system)
-    deep_research/   <-- research reports (existing)
-    documents/       <-- generated PDFs/HTML (existing)
+alek-media-{env}/                         <-- PRIVATE (no allUsers); access via /f/<token>
+  {user_id}/files/                        <-- user uploads (bare-filename addressing)
+  docs/{user_id}/{uuid}-{name}            <-- generated PDF/HTML/DOCX
+  email_review/{user_id}/{uuid}-{name}    <-- daily email review (gated, short TTL)
+  deep_research/{user_id}/{ts}-{suffix}   <-- research round/report files
 ```
 
-Lifecycle rule: delete objects matching `*/files/*` older than 90 days.
+All delivered-document keys carry `user_id` as the second segment so the `open_file` resolver can
+verify ownership (§2.4).
+
+**Lifecycle (GCS, by prefix):** `email_review/` → delete after **5 days**; everything else
+(uploads, docs, deep_research) → delete after **30 days**. Config:
+`scripts/infra/alek-media-dev-lifecycle.json` (local-only infra artifact).
 
 ### 3.3 FileConversionService
 
@@ -262,8 +323,10 @@ is metadata only — it is *never* used to address files. See §1.1 for why this
 | `open_file` | SYNC | Download + convert (text) or download + temp file (binary) |
 | `delete_file` | SYNC | Remove file from GCS |
 
-**Zero-LLM agent** — no LLM calls, direct port operations. Context schema: `file_ref` (filename
-from `[File: name (size)]` label in conversation).
+**Zero-LLM agent** — no LLM calls, direct port operations. `file_ref` is either an upload filename
+(from a `[File: name (size)]` label) **or** a delivered-document key (from the `notify_document_link`
+history note). Both text and binary paths go through `FileConversionService`, which dispatches by
+ref shape (§2.4) — so `open_file` re-reads generated/delivered documents too, not only uploads.
 
 Binary files returned as `file_data` in `AgentResponse.metadata` — SmartAgent propagates to
 MessagePart for LLM vision.
@@ -300,14 +363,14 @@ Vision override (force complexity >= 7) uses refined logic:
 
 ---
 
-## 7. Known Limitations (Phase 1)
+## 7. Known Limitations
 
-1. **Generated documents not fetchable.** PdfGenerator/HtmlPageGenerator store files via
-   `MediaStoragePort` under `docs/{uuid}-{filename}`, not under `{user_id}/files/`.
-   `open_file` on a generated document returns 404.
-
-2. **No input validation for generators.** Document generators will create content from general
+1. **No input validation for generators.** Document generators will create content from general
    knowledge if the delegated query lacks source material.
+
+> Previously listed: "generated documents not fetchable (open_file → 404)". **Resolved** — `open_file`
+> now resolves delivered-document keys (`docs/…`, `email_review/…`, `deep_research/…`) via
+> `MediaStoragePort.fetch` with an ownership check, in addition to `{user_id}/files/` uploads (§2.4).
 
 ---
 
@@ -328,3 +391,9 @@ RFC: `docs/10_rfcs/FILE_STORAGE_RFC.md`
 (`file_conversion_service.py`). Fixes "bot describes a different/old photo" when Slack-pasted
 images all arrive named `image.png` and an exact-key download landed on a stale squatting object.
 See §1.1 (Design Intent + critical invariant).
+2026-06-01: Bucket made **private**; access via capability token → `/f/<token>` → 5-min signed
+URL (§2.4). Agent re-fetch of delivered documents moved to server-side `open_file`
+(MediaStoragePort.fetch + ownership check), replacing provider `fetch_url`. Keys now carry
+`user_id` (`{prefix}/{user_id}/…`). Lifecycle: email_review 5d, else 30d. Closes the old
+"generated documents not fetchable (404)" limitation. Decision:
+[private_file_storage_token_redirect.md](../../04_solution_strategy/decisions/private_file_storage_token_redirect.md).
