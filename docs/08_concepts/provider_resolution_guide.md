@@ -710,10 +710,6 @@ tests/unit/services/test_agent_context_builder.py    tests
 
 
 
-**RFCs (Historical):**
-
-- [Provider Split RFC](../10_rfcs/REQUEST_CONTEXT_RFC.md) — Original design proposal
-
 **Code:**
 
 

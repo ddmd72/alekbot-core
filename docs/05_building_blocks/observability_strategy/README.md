@@ -16,7 +16,7 @@ This document MUST be updated when:
 - [ ] Deduplication storage/TTL changes.
 
 ### Cross-References
-- **Observability Logs Guide:** [../../guides/OBSERVABILITY_LOGS_GUIDE.md](../../guides/OBSERVABILITY_LOGS_GUIDE.md)
+- **Logging guide:** [../../07_deployment/LOGGING.md](../../07_deployment/LOGGING.md)
 - **Slack Dual Mode:** [../slack_dual_mode/README.md](../slack_dual_mode/README.md)
 - **Agent Logging (lifecycle hooks + debug bucket):** [../agent_logging/README.md](../agent_logging/README.md)
 

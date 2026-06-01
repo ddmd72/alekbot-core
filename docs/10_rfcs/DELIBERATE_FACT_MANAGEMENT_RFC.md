@@ -3018,7 +3018,6 @@ USER: Yes, exactly.
 
 ### C. Related RFCs
 
-- [ACP v2 Agent Communication RFC](./ACP_V2_AGENT_COMMUNICATION_RFC.md) - Multi-agent coordination
 - [ACP v2 Simplified RFC](./ACP_V2_SIMPLIFIED_RFC.md) - Registry pattern for agents
 - [Gmail Email Indexing RFC](./GMAIL_EMAIL_INDEXING_RFC.md) - Async task example
 

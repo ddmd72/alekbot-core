@@ -43,8 +43,6 @@ collection whose documents must not expire never names a field `expires_at`: the
 
 | Collection | Holds | Doc id | Model / code |
 
-**See:** `docs/SESSION_2026_02_09_US_PRODUCTION_MIGRATION.md`
-
 ---
 
 ## 📖 HowTo: Using This Document
@@ -63,8 +61,8 @@ Canonical reference for Firestore collections, document structures, and indexes.
 
 ### Cross-References
 
-- **OAuth Architecture:** [../10_rfcs/MULTI_TENANT_OAUTH_RFC.md](../10_rfcs/MULTI_TENANT_OAUTH_RFC.md)
-- **Prompt System v3:** [../05_building_blocks/prompt_design_system_v3/README.md](../05_building_blocks/prompt_design_system_v3/README.md)
+- **OAuth Architecture:** [../05_building_blocks/oauth_multi_tenant/README.md](../05_building_blocks/oauth_multi_tenant/README.md)
+- **Prompt System:** [../05_building_blocks/prompt_design_system_v3/README.md](../05_building_blocks/prompt_design_system_v3/README.md)
 - **Environment Config:** `src/config/environment.py`
 
 ---
@@ -930,4 +928,3 @@ Used by `SearchEnrichmentService` and `FirestoreFactRepository.search_facts()`. 
 
 ---
 
-**Migration reference:** `docs/SESSION_2026_02_09_US_PRODUCTION_MIGRATION.md`

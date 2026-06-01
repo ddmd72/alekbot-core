@@ -66,7 +66,3 @@ This document MUST be updated when:
 - Observability Strategy: [observability_strategy/README.md](./observability_strategy/README.md)
 - Localization System: [localization_system/README.md](./localization_system/README.md)
 - User Management System: [user_management_system/README.md](./user_management_system/README.md)
-
-### Legacy
-
-- Prompt System v2 (DEPRECATED): [prompt_system_v2_legacy/README.md](./prompt_system_v2_legacy/README.md)

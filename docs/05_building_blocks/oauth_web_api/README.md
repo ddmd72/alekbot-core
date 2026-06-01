@@ -4,7 +4,7 @@
 
 **Purpose:** Web-based OAuth authentication API for Google sign-in, JWT session management, and user registration.
 
-**Related:** [MULTI_TENANT_OAUTH_RFC.md](../../10_rfcs/MULTI_TENANT_OAUTH_RFC.md)
+**Related:** [OAuth Multi-Tenant building block](../oauth_multi_tenant/README.md)
 
 ---
 
@@ -676,8 +676,7 @@ Update this document when:
 
 ## References
 
-- [MULTI_TENANT_OAUTH_RFC.md](../../10_rfcs/MULTI_TENANT_OAUTH_RFC.md) - Full OAuth architecture
-- [OAUTH_GCP_SETUP_GUIDE.md](../../guides/OAUTH_GCP_SETUP_GUIDE.md) - GCP setup instructions
+- [OAuth Multi-Tenant building block](../oauth_multi_tenant/README.md) - Full OAuth architecture
 - [src/web/oauth_app.py](../../../src/web/oauth_app.py) - Implementation
 - [src/services/authentication_service.py](../../../src/services/authentication_service.py) - Auth logic
 - [src/services/session_service.py](../../../src/services/session_service.py) - JWT management

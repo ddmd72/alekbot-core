@@ -22,7 +22,7 @@ This document MUST be updated when:
 
 ## Cross-References
 
-- **RFC:** [../../10_rfcs/HTML_CARD_PLAYWRIGHT_RFC.md](../../10_rfcs/HTML_CARD_PLAYWRIGHT_RFC.md)
+- **RFC:** [../../10_rfcs/WIDGET_PLAYWRIGHT_RFC.md](../../10_rfcs/WIDGET_PLAYWRIGHT_RFC.md)
 - **Rich Content RFC (original):** [../../10_rfcs/RICH_CONTENT_RFC.md](../../10_rfcs/RICH_CONTENT_RFC.md)
 - **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
 

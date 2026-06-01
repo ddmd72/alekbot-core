@@ -344,8 +344,7 @@ Response:
 ## Related Documentation
 
 
-- [MIGRATION_GUIDE.md](../05_building_blocks/oauth_multi_tenant/MIGRATION_GUIDE.md) — Migration Steps
-- [MULTI_TENANT_OAUTH_RFC.md](../10_rfcs/MULTI_TENANT_OAUTH_RFC.md) — Original RFC
+
 
   
 **Status:** ✅ Production Ready

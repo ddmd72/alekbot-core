@@ -16,8 +16,8 @@ This document MUST be updated when:
 - [ ] A critical incident occurs.
 
 ### Cross-References
-- **Current Sprint:** [../management/CURRENT_SPRINT.md](../management/CURRENT_SPRINT.md)
-- **Roadmap:** [../management/IMPLEMENTATION_ROADMAP.md](../management/IMPLEMENTATION_ROADMAP.md)
+- **Roadmap:** [IMPLEMENTATION_ROADMAP.md](./IMPLEMENTATION_ROADMAP.md)
+- **Refactoring backlog:** [REFACTORING_EPIC.md](./REFACTORING_EPIC.md)
 
 ---
 

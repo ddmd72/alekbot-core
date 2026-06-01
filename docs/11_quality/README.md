@@ -17,7 +17,7 @@ This document MUST be updated when:
 
 ### Cross-References
 - **Testing RFC:** [../10_rfcs/TESTING_STRATEGY_RFC.md](../10_rfcs/TESTING_STRATEGY_RFC.md)
-- **Requirements:** [../management/REQUIREMENTS.md](../management/REQUIREMENTS.md)
+- **Use cases:** [USE_CASES.md](./USE_CASES.md)
 
 ---
 

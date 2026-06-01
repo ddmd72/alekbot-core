@@ -31,12 +31,11 @@ This document MUST be updated when:
 - **[Hexagonal Architecture Patterns](./hexagonal_architecture_patterns.md)** — where a class goes, how layers stay
 
 - **[Multi-Vector RRF Search](./multi_vector_rrf_search.md)** — why memory search fuses ranks from several vectors,
-- **[Fractal Architecture](./fractal_architecture.md)** — Recursive hexagonal patterns for infinite scalability.
-- **[Belief System Manifesto](../_project/archive/concepts_legacy/BELIEF_SYSTEM_MANIFESTO.md)** — (Legacy) Philosophy of memory and truth.
+and how duplicates are judged.
 
 to write a token.
 
-- **[Prompt v3 Complete Guide](./prompt_v3_complete_guide.md)** — Comprehensive reference for token-based assembly.
+system prompt, and where the cache boundary sits.
 - **[Firestore Collections](./DATABASE_SCHEMA.md)** — every collection, its document id, and where its shape is
 defined.
 
