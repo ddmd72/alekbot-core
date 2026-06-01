@@ -1,40 +1,5 @@
 # Agent Registry (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the dynamic agent discovery system (ACP v2) that decouples SmartAgent from specialist
-implementations. The foundation of scalable multi-agent delegation.
-
-### When to Read
-
-- **For AI Agents:** Before modifying how SmartAgent calls specialists, changing intent routing, or
-  adding a new specialist agent.
-- **For Developers:** When registering a new agent, extending the worker handler, or changing
-  execution modes.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] A new specialist agent is registered in `main.py`.
-- [ ] `AgentDescriptor` fields or `AgentRegistry` interface changes.
-- [ ] `coordinator.handle_delegation()` routing logic is modified.
-- [ ] The Firestore token `PROTOCOL_SMART_AGENT_SELECTION` or `PROTOCOL_QUICK_AGENT_SELECTION` changes.
-- [ ] An intent's execution mode changes (SYNC ↔ ASYNC).
-- [ ] FactsMemoryAgent output format token (`OUTPUT_FORMAT_MEMORY_SEARCH`) or key formulation changes.
-- [ ] `QuickResponseAgent` `MAX_DELEGATION_TURNS` or `intent_remap` changes.
-
-### Cross-References
-
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-- **Search Enrichment:** [../search_enrichment/README.md](../search_enrichment/README.md)
-- **Prompt Design System v3:** [../prompt_design_system_v3/README.md](../prompt_design_system_v3/README.md)
-- **RFC:** [../../10_rfcs/ACP_V2_SIMPLIFIED_RFC.md](../../10_rfcs/ACP_V2_SIMPLIFIED_RFC.md)
-
----
-
 ## 1. Overview
 
 The **Agent Registry** is the dynamic discovery system at the core of ACP v2. It maps abstract

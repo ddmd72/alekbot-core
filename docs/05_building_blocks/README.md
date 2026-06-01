@@ -1,31 +1,5 @@
 # 05 Building Blocks
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Provides specifications for implemented subsystems and components.
-
-### When to Read
-
-- **For AI Agents:** When validating or updating implemented architecture details.
-- **For Developers:** When modifying or adding components.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] A new core component or subsystem is added.
-- [ ] A component is refactored or deprecated.
-- [ ] An adapter or port changes behavior.
-
-### Cross-References
-
-- **Target Architecture:** [../04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md](../04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md)
-- **Decisions Index:** [../09_decisions/README.md](../09_decisions/README.md)
-
----
-
 ## 📂 Contents
 
 ### Core Systems

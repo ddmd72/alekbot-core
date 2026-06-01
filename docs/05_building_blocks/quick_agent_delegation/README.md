@@ -1,39 +1,5 @@
 # Quick Agent Delegation (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the delegation mechanism inside `QuickResponseAgent`: how it optionally calls specialist
-agents to retrieve memory or run lightweight web searches, while preserving its low-latency
-contract.
-
-### When to Read
-
-- **For AI Agents:** Before changing QuickAgent prompt behavior, adding intents, or modifying
-  `WebSearchLightAgent`.
-- **For Developers:** When debugging Quick delegation flow, tuning `MAX_DELEGATION_TURNS`, or
-  adding a new intent to the Quick path.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] `AgentDescriptor.allowed_intents` or `intent_remap` for QuickAgent changes in `agent_manifest.py`.
-- [ ] `MAX_DELEGATION_TURNS` changes.
-- [ ] `DelegationEngine` loop mechanics, dispatch, or parallel execution changes.
-- [ ] The Firestore token `PROTOCOL_QUICK_AGENT_SELECTION` is updated.
-- [ ] `WebSearchLightAgent` model tier or output format changes.
-- [ ] `_clean_history_for_quick` behavior changes.
-
-### Cross-References
-
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-- **Agent Registry:** [../agent_registry/README.md](../agent_registry/README.md)
-- **Prompt Design System v3:** [../prompt_design_system_v3/README.md](../prompt_design_system_v3/README.md)
-
----
-
 ## 1. Overview
 
 `QuickResponseAgent` handles simple queries (complexity ≤5 as classified by RouterAgent). While

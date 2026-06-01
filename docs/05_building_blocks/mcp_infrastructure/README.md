@@ -6,36 +6,6 @@
 > [`../remote_mcp_server/`](../remote_mcp_server/README.md). Don't confuse the two;
 > they share the name "MCP" but are fundamentally different surfaces.
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the generic MCP (Model Context Protocol) client infrastructure and the Maps Grounding
-Lite pilot implementation. This is the reuse layer for connecting any MCP server to the
-hexagonal architecture.
-
-### When to Read
-
-- **For AI Agents:** Before adding a new MCP server integration.
-- **For Developers:** When modifying MCP transport behavior or adding new MCP-backed adapters.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] `MCPClient` transport logic changes (JSON-RPC version, auth method, error handling).
-- [ ] A new MCP server adapter is added (`src/adapters/mcp/`).
-- [ ] `MapsToolsPort` contract changes.
-- [ ] API quotas or endpoint URLs change.
-
-### Cross-References
-
-- **RFC:** [../../10_rfcs/MCP_INFRASTRUCTURE_RFC.md](../../10_rfcs/MCP_INFRASTRUCTURE_RFC.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-- **Adapter Wire Testing:** [../../how_to/ADAPTER_WIRE_TESTING.md](../../how_to/ADAPTER_WIRE_TESTING.md)
-
----
-
 ## 1. Overview
 
 MCP (Model Context Protocol) is a transport standard for connecting LLM agents to external tool

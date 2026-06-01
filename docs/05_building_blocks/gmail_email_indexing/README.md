@@ -1,36 +1,5 @@
 # Gmail Email Indexing (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the email indexing pipeline: OAuth authorization, background ingestion, classification, semantic search, and live access to the user's Gmail archive.
-
-### When to Read
-
-- **For AI Agents:** Before modifying `EmailSearchAgent`, `EmailClassificationAgent`, or `EmailIndexingService`.
-- **For Developers:** When troubleshooting indexing jobs, OAuth flows, or email search quality.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The indexing pipeline steps or chunking strategy changes.
-- [ ] New email providers are added (Outlook, etc.).
-- [ ] `EmailSearchAgent` intents or routing logic changes.
-- [ ] The Watchdog or job lifecycle transitions change.
-- [ ] `UserNotificationService` delivery channels or triggers change.
-
-### Cross-References
-
-- **RFC:** [../../10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md](../../10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-- **Search Enrichment:** [../search_enrichment/README.md](../search_enrichment/README.md)
-- **OAuth Web API:** [../oauth_web_api/README.md](../oauth_web_api/README.md)
-- **Database Schema:** [../../08_concepts/DATABASE_SCHEMA.md](../../08_concepts/DATABASE_SCHEMA.md) — Section 6
-
----
-
 ## 1. Overview
 
 The **Gmail Email Indexing** pipeline extends Alek-Core's memory with the user's email archive. Instead of raw Gmail keyword search, it ingests selected emails into Firestore with multi-vector embeddings — enabling semantic search identical to the fact-search pipeline.

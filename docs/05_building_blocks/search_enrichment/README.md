@@ -1,37 +1,5 @@
 # Search Enrichment (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the multi-vector semantic search system that retrieves and ranks relevant knowledge for agent context.
-
-### When to Read
-
-- **For AI Agents:** Before modifying search algorithms, RRF ranking, or deduplication logic.
-- **For Developers:** When troubleshooting low search relevance, high latency, or duplicate facts in context.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The multi-query strategy (number of phrases, fields, or channels) changes.
-- [ ] The domain-based channel (`relevant_domains`) logic changes.
-- [ ] The RRF (Reciprocal Rank Fusion) algorithm or constant `k` is modified.
-- [ ] The semantic deduplication logic is updated.
-- [ ] New vector fields (e.g., `tags_vector`, `metadata_vector`) are added to Firestore.
-- [ ] Search limits resolution logic changes.
-- [ ] Deduplication thresholds or modes are modified.
-
-### Cross-References
-
-- **Hybrid Router:** [../hybrid_router/README.md](../hybrid_router/README.md)
-- **Multi-Vector RRF Search Guide:** [../../08_concepts/multi_vector_rrf_search.md](../../08_concepts/multi_vector_rrf_search.md)
-- **Biographical Context Cache:** [../biographical_context_cache/README.md](../biographical_context_cache/README.md)
-- **Deliberate Fact Management RFC:** [../../10_rfcs/DELIBERATE_FACT_MANAGEMENT_RFC.md](../../10_rfcs/DELIBERATE_FACT_MANAGEMENT_RFC.md)
-
----
-
 ## 1. Overview
 
 The **Search Enrichment** system is responsible for retrieving the most relevant facts from the user's long-term memory. It uses a sophisticated multi-vector strategy and advanced ranking algorithms to ensure that agents have the precise context needed to answer complex queries.

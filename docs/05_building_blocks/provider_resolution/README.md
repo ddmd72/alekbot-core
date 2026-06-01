@@ -1,37 +1,5 @@
 # Provider Resolution (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the system for dynamic LLM provider selection, model mapping, and performance tier management.
-
-### When to Read
-
-- **For AI Agents:** Before adding new LLM providers, changing model mappings, or modifying resolution logic.
-- **For Developers:** When troubleshooting model selection issues, cost overruns, or provider-specific errors.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] A new LLM provider (e.g., OpenAI, Mistral) is added to the registry.
-- [ ] Performance tier definitions (ECO, BALANCED, PERFORMANCE) change.
-- [ ] Agent-specific provider strategies are modified.
-- [ ] The resolution order in `AgentContextBuilder` is updated.
-- [ ] New provider capabilities are introduced.
-- [ ] `resolve_for_task()` signature or behavior changes.
-
-### Cross-References
-
-- **Provider Resolution Guide:** [../../08_concepts/provider_resolution_guide.md](../../08_concepts/provider_resolution_guide.md)
-- **Smart Agent Execution (dynamic routing):** [../smart_agent_execution/README.md](../smart_agent_execution/README.md)
-- **Prompt Cache Strategy:** [../prompt_cache_strategy/README.md](../prompt_cache_strategy/README.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-- **Constraints:** [../../02_constraints/README.md](../../02_constraints/README.md)
-
----
-
 ## 1. Overview
 
 The **Provider Resolution** system decouples Alek-Core's reasoning logic from specific LLM vendors. It allows the system to dynamically choose the best model for a task based on performance requirements, user preferences, and cost constraints.

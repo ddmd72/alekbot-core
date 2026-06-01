@@ -45,28 +45,6 @@ collection whose documents must not expire never names a field `expires_at`: the
 
 ---
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Canonical reference for Firestore collections, document structures, and indexes.  
-**Generated from code audit:** Includes exact attribute names, types, and logic.
-
-### When to Update
-
-- [ ] New collection added via `src/config/environment.py`
-- [ ] Domain model changes (`src/domain/*.py`)
-- [ ] Adapter logic changes (`src/adapters/*.py`)
-- [ ] Index configuration update (`config/firestore.indexes.json`)
-
-### Cross-References
-
-- **OAuth Architecture:** [../05_building_blocks/oauth_multi_tenant/README.md](../05_building_blocks/oauth_multi_tenant/README.md)
-- **Prompt System:** [../05_building_blocks/prompt_design_system_v3/README.md](../05_building_blocks/prompt_design_system_v3/README.md)
-- **Environment Config:** `src/config/environment.py`
-
----
-
 | `{p}domain_accounts_v2` | tenant: tier, IAM policy, account defaults, usage counters, cost alert limit | `account_id` | `BillingAccount`, `src/domain/billing.py` |
 
 | `{p}domain_invite_codes_v1` | invite and self-link codes | the code | `InviteCode`, `src/domain/invite_code.py` |

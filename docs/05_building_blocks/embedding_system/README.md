@@ -1,33 +1,5 @@
 # Embedding System (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the system for generating vector embeddings used in semantic search, deduplication, and knowledge retrieval.
-
-### When to Read
-
-- **For AI Agents:** Before changing embedding models, task types, or vector dimensionality.
-- **For Developers:** When troubleshooting vector search failures, index mismatches, or embedding latency.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The primary embedding model (e.g., `gemini-embedding-2`) changes.
-- [ ] The output dimensionality (default 768) is modified.
-- [ ] New task types or configuration parameters are introduced.
-- [ ] The `EmbeddingService` port interface is updated.
-
-### Cross-References
-
-- **Search Enrichment:** [../search_enrichment/README.md](../search_enrichment/README.md)
-- **Fact Write Service:** [../fact_write_service/README.md](../fact_write_service/README.md)
-- **Constraints:** [../../02_constraints/README.md](../../02_constraints/README.md)
-
----
-
 ## 1. Overview
 
 The **Embedding System** transforms raw text into high-dimensional numerical vectors (embeddings) that capture semantic meaning. These vectors enable Alek-Core to perform "fuzzy" searches, identify duplicates, and retrieve relevant context without relying on exact keyword matches.

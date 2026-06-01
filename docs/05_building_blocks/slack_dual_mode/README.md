@@ -1,34 +1,5 @@
 # Slack Dual Mode (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the dual-mode integration with Slack, supporting both local development (Socket Mode) and production deployment (HTTP Events API).
-
-### When to Read
-
-- **For AI Agents:** Before modifying Slack-specific adapters, event handling, or signature verification.
-- **For Developers:** When troubleshooting Slack connectivity, event delivery, or switching between dev/prod modes.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The Slack adapter factory logic changes.
-- [ ] New Slack-specific features (e.g., modals, shortcuts) are added.
-- [ ] The background processing architecture (Cloud Tasks) is modified.
-- [ ] Signature verification or deduplication logic changes.
-- [ ] The Blueprint registration pattern for Slack is updated.
-
-### Cross-References
-
-- **Context:** [../../03_context/README.md](../../03_context/README.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-- **Deployment View:** [../../07_deployment/README.md](../../07_deployment/README.md)
-
----
-
 ## 1. Overview
 
 Alek-Core supports two distinct modes for Slack integration, allowing for seamless transitions between local development and high-scale production environments.

@@ -1,34 +1,5 @@
 # Security Validation (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the multi-layer security validation system that protects Alek-Core against prompt injection and malicious content.
-
-### When to Read
-
-- **For AI Agents:** Before implementing new validation logic, adding injection points, or modifying trust zones.
-- **For Developers:** When troubleshooting blocked content, tuning regex patterns, or integrating security checks into new services.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The `SecurityPort` interface or `ValidationResult` schema changes.
-- [ ] New validation adapters (e.g., LLM-based, External API) are added.
-- [ ] Trust zone definitions or risk level thresholds are modified.
-- [ ] New integration points (Layers) are introduced in the system.
-- [ ] The pattern library in `RegexSecurityAdapter` is updated.
-
-### Cross-References
-
-- **Prompt Design System v3:** [../prompt_design_system_v3/README.md](../prompt_design_system_v3/README.md)
-- **Security Validation Guide:** [../../08_concepts/security_validation_guide.md](../../08_concepts/security_validation_guide.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-
----
-
 ## 1. Overview
 
 The **Security Validation** system implements a **defense-in-depth** strategy to protect Alek-Core from both direct and indirect prompt injection attacks. It ensures that all untrusted data is sanitized or blocked before it can influence the behavior of the AI agents.

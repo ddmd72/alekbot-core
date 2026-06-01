@@ -1,32 +1,5 @@
 # Target Architecture: Alek-Core v6.0 (Staged)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Defines the target architecture (To-Be) and verified implementation status of Alek-Core.
-
-### When to Read
-
-- **For AI Agents:** Before proposing architecture changes or migrating components.
-- **For Architects:** As the source of truth for system direction and milestones.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] Milestone status changes.
-- [ ] New architectural patterns are adopted.
-- [ ] Core subsystems are added/removed.
-
-### Cross-References
-
-- **Building Blocks Index:** [../../05_building_blocks/README.md](../../05_building_blocks/README.md)
-- **RFC Index:** [../../10_rfcs/README.md](../../10_rfcs/README.md)
-- **Decisions Index:** [../../09_decisions/README.md](../../09_decisions/README.md)
-
----
-
 ## 1. Philosophy: Context Defines Truth
 
 We move from flat search (Flat RAG) to **Lensed Perception**. The system adapts retrieval to user role and context, and the architecture is **invariant to infrastructure providers**.
