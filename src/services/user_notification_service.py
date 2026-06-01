@@ -358,10 +358,15 @@ class UserNotificationService:
         label: str,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
+        key: Optional[str] = None,
     ) -> None:
         """
         Send a named document link to the user's channel.
         Uses fallback chain: override → primary → last active.
+
+        key — internal storage object key. When provided, it (not the user-facing
+        URL) is written to conversation history so the agent can re-read the
+        document later via open_file (server-side, not via an external URL fetch).
         """
         channel_info = await self._resolve_channel(
             user_id, channel_id_override, platform_override,
@@ -387,10 +392,19 @@ class UserNotificationService:
                 f"channel={channel_info.channel_id} user={user_id[:8]} label={label}"
             )
             if self._session_store:
-                history_note = (
-                    f"[Document delivered to user: {label} — {url}\n"
-                    f"If the user asks about it, you can read the full content using the fetch_url intent.]"
-                )
+                if key:
+                    # Internal key → agent re-reads server-side via open_file (no
+                    # external fetch, not bound to the user link's TTL).
+                    history_note = (
+                        f"[Document delivered to user: {label}.\n"
+                        f'If the user asks about it, read the full content using the '
+                        f'open_file intent with context={{"file_ref": "{key}"}}.]'
+                    )
+                else:
+                    history_note = (
+                        f"[Document delivered to user: {label} — {url}\n"
+                        f"If the user asks about it, you can read the full content using the fetch_url intent.]"
+                    )
                 doc_session_id = f"{user_id}:{channel_info.channel_id}"
                 await self._session_store.append_messages_batch(
                     session_id=doc_session_id,

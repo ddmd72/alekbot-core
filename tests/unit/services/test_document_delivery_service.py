@@ -55,9 +55,11 @@ def service(mock_storage, mock_link_service):
 
 class TestStore:
 
-    async def test_returns_capability_link(self, service):
-        link = await service.store(_FAKE_CONTENT, "q1_report.pdf", "application/pdf", user_id=_USER)
-        assert link == _FAKE_LINK
+    async def test_returns_link_and_key(self, service, mock_storage):
+        result = await service.store(_FAKE_CONTENT, "q1_report.pdf", "application/pdf", user_id=_USER)
+        assert result.link == _FAKE_LINK
+        # key is the stored object key (for history / agent re-read)
+        assert result.key == mock_storage.store.call_args.kwargs.get("key")
 
     async def test_calls_storage_store_once(self, service, mock_storage):
         await service.store(_FAKE_CONTENT, "q1_report.pdf", "application/pdf", user_id=_USER)
@@ -91,9 +93,10 @@ class TestKeyFormat:
     def _key(self, mock_storage) -> str:
         return mock_storage.store.call_args.kwargs.get("key", "")
 
-    async def test_default_key_starts_with_docs_prefix(self, service, mock_storage):
+    async def test_default_key_starts_with_docs_user_prefix(self, service, mock_storage):
         await service.store(_FAKE_CONTENT, "q1_report.pdf", "application/pdf", user_id=_USER)
-        assert self._key(mock_storage).startswith("docs/")
+        # {prefix}/{user_id}/{uuid}-{filename} — user_id segment enables ownership check
+        assert self._key(mock_storage).startswith(f"docs/{_USER}/")
 
     async def test_key_ends_with_filename(self, service, mock_storage):
         await service.store(_FAKE_CONTENT, "q1_report.pdf", "application/pdf", user_id=_USER)
@@ -101,7 +104,7 @@ class TestKeyFormat:
 
     async def test_key_contains_uuid4(self, service, mock_storage):
         await service.store(_FAKE_CONTENT, "report.pdf", "application/pdf", user_id=_USER)
-        part = self._key(mock_storage).removeprefix("docs/").removesuffix("-report.pdf")
+        part = self._key(mock_storage).removeprefix(f"docs/{_USER}/").removesuffix("-report.pdf")
         assert _UUID4_PATTERN.match(part), f"Expected UUID4 in key, got: {part!r}"
 
     async def test_email_review_class_uses_email_review_prefix(self, service, mock_storage):
@@ -109,13 +112,13 @@ class TestKeyFormat:
             b"<html></html>", "review.html", "text/html; charset=utf-8",
             user_id=_USER, storage_class="email_review",
         )
-        assert self._key(mock_storage).startswith("email_review/")
+        assert self._key(mock_storage).startswith(f"email_review/{_USER}/")
 
     async def test_unknown_class_falls_back_to_docs(self, service, mock_storage):
         await service.store(
             _FAKE_CONTENT, "x.pdf", "application/pdf", user_id=_USER, storage_class="bogus",
         )
-        assert self._key(mock_storage).startswith("docs/")
+        assert self._key(mock_storage).startswith(f"docs/{_USER}/")
 
 
 # ============================================================================

@@ -272,3 +272,59 @@ class TestResolveBytes:
 
         assert result == b"\x89PNG\r\n\x1a\n"
         mock_storage.download.assert_called_once_with("photo.png", "user1")
+
+
+# ---------------------------------------------------------------------------
+# Delivered-document dispatch + ownership (open_file re-read of system docs)
+# ---------------------------------------------------------------------------
+
+from src.ports.media_storage_port import MediaStoragePort  # noqa: E402
+
+
+@pytest.fixture
+def mock_media():
+    return AsyncMock(spec=MediaStoragePort)
+
+
+@pytest.fixture
+def service_with_media(mock_storage, mock_media):
+    return FileConversionService(storage=mock_storage, media_storage=mock_media)
+
+
+class TestDeliveredDocumentDispatch:
+
+    async def test_bare_filename_uses_file_storage(self, service_with_media, mock_storage, mock_media):
+        mock_storage.download = AsyncMock(return_value=b"upload bytes")
+        out = await service_with_media.resolve_bytes("report.docx", "user1")
+        assert out == b"upload bytes"
+        mock_storage.download.assert_called_once_with("report.docx", "user1")
+        mock_media.fetch.assert_not_called()
+
+    async def test_delivered_key_uses_media_storage(self, service_with_media, mock_storage, mock_media):
+        mock_media.fetch = AsyncMock(return_value=b"delivered bytes")
+        out = await service_with_media.resolve_bytes("docs/user1/uuid-report.pdf", "user1")
+        assert out == b"delivered bytes"
+        mock_media.fetch.assert_called_once_with("docs/user1/uuid-report.pdf")
+        mock_storage.download.assert_not_called()
+
+    async def test_deep_research_key_uses_media_storage(self, service_with_media, mock_media):
+        mock_media.fetch = AsyncMock(return_value=b"md")
+        out = await service_with_media.resolve_bytes("deep_research/user1/ts-report.md", "user1")
+        assert out == b"md"
+        mock_media.fetch.assert_called_once()
+
+    async def test_ownership_mismatch_raises_permission_error(self, service_with_media, mock_media):
+        mock_media.fetch = AsyncMock(return_value=b"secret")
+        with pytest.raises(PermissionError):
+            await service_with_media.resolve_bytes("docs/OTHER_USER/uuid-x.pdf", "user1")
+        mock_media.fetch.assert_not_called()
+
+    async def test_malformed_delivered_key_raises(self, service_with_media, mock_media):
+        # No user_id segment → cannot verify ownership → reject.
+        with pytest.raises(PermissionError):
+            await service_with_media.resolve_bytes("docs/onlyonepart.pdf", "user1")
+
+    async def test_delivered_key_without_media_storage_not_found(self, mock_storage):
+        svc = FileConversionService(storage=mock_storage, media_storage=None)
+        with pytest.raises(FileNotFoundError):
+            await svc.resolve_bytes("docs/user1/uuid-x.pdf", "user1")

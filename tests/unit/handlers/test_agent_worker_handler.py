@@ -68,7 +68,12 @@ def _make_handler(*, with_notification: bool = True, with_doc_delivery: bool = T
 
     doc_delivery = AsyncMock() if with_doc_delivery else None
     if doc_delivery:
-        doc_delivery.store = AsyncMock(return_value="https://example.com/doc.pdf")
+        from src.services.document_delivery_service import DeliveredDocument
+        doc_delivery.store = AsyncMock(
+            return_value=DeliveredDocument(
+                link="https://example.com/doc.pdf", key="docs/u/uuid-doc.pdf"
+            )
+        )
 
     task_queue = AsyncMock()
 
@@ -353,6 +358,7 @@ class TestDeliverDocumentResult:
             account_id=_ACCOUNT_ID,
             url="https://example.com/doc.pdf",
             label="Annual Report",
+            key="docs/u/uuid-doc.pdf",
             channel_id_override=None,
             platform_override=None,
         )

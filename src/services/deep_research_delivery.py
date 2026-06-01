@@ -118,9 +118,12 @@ async def _upload_round(
     suffix: str,
     media_storage: MediaStoragePort,
     link_service: Optional["FileLinkService"] = None,
-) -> Optional[str]:
-    """Upload a raw markdown research round to private GCS. Returns a capability
-    link (or None on failure).
+) -> tuple[Optional[str], Optional[str]]:
+    """Upload a raw markdown research round to private GCS.
+
+    Returns (link, key): a /f/<token> capability link for the channel and the
+    internal object key for history (agent re-read via open_file). (None, None)
+    on failure.
 
     Args:
         text:          Raw markdown text from the research loop.
@@ -139,10 +142,10 @@ async def _upload_round(
         )
         link = link_service.build_link(key=key, user_id=user_id) if link_service else key
         logger.info("[DeepResearch] Uploaded %s (%d chars) → %s", suffix, len(text), key)
-        return link
+        return link, key
     except Exception as exc:
         logger.error("[DeepResearch] Round upload failed (suffix=%s): %s", suffix, exc, exc_info=True)
-        return None
+        return None, None
 
 
 def _build_html_page_query(original_query: str, result_text: str) -> str:
@@ -187,36 +190,36 @@ async def deliver_deep_research(
 
     if media_storage:
         if has_two_rounds:
-            url1 = await _upload_round(round1_text, user_id, timestamp, "round1", media_storage, link_service)
+            url1, key1 = await _upload_round(round1_text, user_id, timestamp, "round1", media_storage, link_service)
             if url1 and notification:
                 try:
                     await notification.notify_document_link(
                         user_id=user_id, account_id=account_id,
-                        url=url1, label="Round 1 — raw research",
+                        url=url1, label="Round 1 — raw research", key=key1,
                         channel_id_override=channel_id_override,
                         platform_override=platform_override,
                     )
                 except Exception as exc:
                     logger.error("[DeepResearch] notify_document_link round1 failed: %s", exc, exc_info=True)
 
-            url2 = await _upload_round(result_text, user_id, timestamp, "round2", media_storage, link_service)
+            url2, key2 = await _upload_round(result_text, user_id, timestamp, "round2", media_storage, link_service)
             if url2 and notification:
                 try:
                     await notification.notify_document_link(
                         user_id=user_id, account_id=account_id,
-                        url=url2, label="Round 2 — verified report",
+                        url=url2, label="Round 2 — verified report", key=key2,
                         channel_id_override=channel_id_override,
                         platform_override=platform_override,
                     )
                 except Exception as exc:
                     logger.error("[DeepResearch] notify_document_link round2 failed: %s", exc, exc_info=True)
         else:
-            url = await _upload_round(result_text, user_id, timestamp, "report", media_storage, link_service)
+            url, key = await _upload_round(result_text, user_id, timestamp, "report", media_storage, link_service)
             if url and notification:
                 try:
                     await notification.notify_document_link(
                         user_id=user_id, account_id=account_id,
-                        url=url, label="Research report (raw)",
+                        url=url, label="Research report (raw)", key=key,
                         channel_id_override=channel_id_override,
                         platform_override=platform_override,
                     )

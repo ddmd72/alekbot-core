@@ -490,6 +490,32 @@ class TestNotifyDocumentLink:
         await svc.notify_document_link(_USER_ID, _ACCOUNT_ID, "https://doc.url", "My Doc")
         session_store.append_messages_batch.assert_awaited_once()
 
+    async def test_history_note_uses_key_and_open_file_when_key_given(
+        self, state_repo, channel_factory, response_channel
+    ):
+        # With an internal key, history must point the agent at open_file (server-side
+        # re-read), NOT at the user-facing URL / fetch_url.
+        response_channel.send_document_link = AsyncMock()
+        svc, session_store = self._svc(state_repo, channel_factory, with_session_store=True)
+        await svc.notify_document_link(
+            _USER_ID, _ACCOUNT_ID, "https://doc.url", "My Doc", key="docs/u/uuid-x.pdf"
+        )
+        msgs = session_store.append_messages_batch.call_args.kwargs["messages"]
+        note = msgs[-1].parts[0].text
+        assert "open_file" in note
+        assert "docs/u/uuid-x.pdf" in note
+        assert "https://doc.url" not in note  # URL must not leak into agent history
+        assert "fetch_url" not in note
+
+    async def test_history_note_falls_back_to_url_without_key(
+        self, state_repo, channel_factory, response_channel
+    ):
+        response_channel.send_document_link = AsyncMock()
+        svc, session_store = self._svc(state_repo, channel_factory, with_session_store=True)
+        await svc.notify_document_link(_USER_ID, _ACCOUNT_ID, "https://doc.url", "My Doc")
+        note = session_store.append_messages_batch.call_args.kwargs["messages"][-1].parts[0].text
+        assert "https://doc.url" in note
+
     async def test_send_document_link_exception_swallowed(
         self, state_repo, channel_factory, response_channel
     ):

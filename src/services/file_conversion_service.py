@@ -26,6 +26,17 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..ports.audio_transcription_port import AudioTranscriptionPort
+    from ..ports.media_storage_port import MediaStoragePort
+
+# Object-key prefixes of system-delivered documents (MediaStoragePort), as opposed
+# to user uploads (FileStoragePort, addressed by bare filename). All carry the owner
+# user_id as the second path segment: "{prefix}/{user_id}/...".
+_DELIVERED_PREFIXES = ("docs/", "email_review/", "deep_research/")
+
+
+def _is_delivered_key(ref: str) -> bool:
+    """True if ref is a system-delivered document key (vs a user-upload filename)."""
+    return any(ref.startswith(p) for p in _DELIVERED_PREFIXES)
 
 
 def _format_size(size_bytes: int) -> str:
@@ -44,9 +55,35 @@ class FileConversionService:
         self,
         storage: FileStoragePort,
         audio_service: Optional["AudioTranscriptionPort"] = None,
+        media_storage: Optional["MediaStoragePort"] = None,
     ) -> None:
         self._storage = storage
         self._audio_service = audio_service
+        # MediaStoragePort serves system-delivered documents (docs/, email_review/,
+        # deep_research/) so agents can re-read them via open_file without an external
+        # URL fetch. None → delivered-document re-read is unavailable.
+        self._media_storage = media_storage
+
+    async def _download_by_ref(self, ref: str, user_id: str) -> bytes:
+        """Fetch bytes for a ref, dispatching by ref shape (no LLM decision).
+
+        - Delivered-document key ("{prefix}/{user_id}/...") → MediaStoragePort.fetch,
+          gated by an ownership check on the user_id path segment.
+        - Bare filename → user upload via FileStoragePort.download.
+        """
+        if _is_delivered_key(ref):
+            if not self._media_storage:
+                raise FileNotFoundError(ref)
+            # Ownership: the second path segment must be the requesting user.
+            parts = ref.split("/")
+            if len(parts) < 3 or parts[1] != user_id:
+                logger.warning(
+                    "FileConversionService: ownership check failed for ref=%r user=%s",
+                    ref, user_id[:8] if user_id else "?",
+                )
+                raise PermissionError(f"ref {ref!r} does not belong to the requesting user")
+            return await self._media_storage.fetch(ref)
+        return await self._storage.download(ref, user_id)
 
     async def process_attachment(
         self,
@@ -113,7 +150,7 @@ class FileConversionService:
         mime_type, _ = mimetypes.guess_type(ref)
         mime_type = mime_type or "application/octet-stream"
 
-        data = await self._storage.download(ref, user_id)
+        data = await self._download_by_ref(ref, user_id)
 
         suffix = os.path.splitext(ref)[1] or ".bin"
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
@@ -134,5 +171,9 @@ class FileConversionService:
                 logger.debug("Failed to remove temp file %s", tmp_path)
 
     async def resolve_bytes(self, ref: str, user_id: str) -> bytes:
-        """Download raw bytes from GCS. For specialists that need the original."""
-        return await self._storage.download(ref, user_id)
+        """Download raw bytes. For specialists that need the original.
+
+        Dispatches by ref shape: delivered-document key → MediaStoragePort (with
+        ownership check); bare filename → user-upload FileStoragePort.
+        """
+        return await self._download_by_ref(ref, user_id)

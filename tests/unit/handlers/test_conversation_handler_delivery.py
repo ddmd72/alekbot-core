@@ -363,7 +363,8 @@ class TestDeliverItem:
 
     async def test_document_success_sends_link(self):
         dds = MagicMock()
-        dds.store = AsyncMock(return_value="https://gcs/x.pdf")
+        from src.services.document_delivery_service import DeliveredDocument
+        dds.store = AsyncMock(return_value=DeliveredDocument(link="https://gcs/x.pdf", key="docs/u/uuid-x.pdf"))
         handler = _make_handler(MagicMock(), doc_delivery_service=dds)
 
         channel = MagicMock()
@@ -390,7 +391,8 @@ class TestDeliverItem:
 
     async def test_document_with_file_upload_sends_file_too(self):
         dds = MagicMock()
-        dds.store = AsyncMock(return_value="https://gcs/x.pdf")
+        from src.services.document_delivery_service import DeliveredDocument
+        dds.store = AsyncMock(return_value=DeliveredDocument(link="https://gcs/x.pdf", key="docs/u/uuid-x.pdf"))
         handler = _make_handler(MagicMock(), doc_delivery_service=dds)
 
         channel = MagicMock()
