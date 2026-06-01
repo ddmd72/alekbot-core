@@ -52,6 +52,7 @@ from ..adapters.firestore_task_search_index import FirestoreTaskSearchIndex
 from ..adapters.microsoft_todo_adapter import MicrosoftToDoAdapter
 from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
+from ..adapters.gcs_media_adapter import GcsMediaAdapter
 from ..adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
 from ..services.file_conversion_service import FileConversionService
 from ..agents.email_classification_agent import EmailClassificationAgent
@@ -261,8 +262,20 @@ class ServiceContainer:
         # ------------------------------------------------------------------
         gcs_bucket = config.get("GCS_MEDIA_BUCKET", "")
         self.file_storage = GcsFileStorageAdapter(gcs_bucket) if gcs_bucket else None
+        # MediaStoragePort for re-reading system-delivered documents (docs/,
+        # email_review/, deep_research/) via open_file — see FileConversionService.
+        self.media_storage = (
+            GcsMediaAdapter(
+                bucket_name=gcs_bucket,
+                service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
+            )
+            if gcs_bucket else None
+        )
         self.file_conversion_service = (
-            FileConversionService(storage=self.file_storage)
+            FileConversionService(
+                storage=self.file_storage,
+                media_storage=self.media_storage,
+            )
             if self.file_storage else None
         )
 

@@ -115,8 +115,10 @@ class TestFetchText:
 
 class TestFetchBinary:
 
-    async def test_fetch_binary_returns_file_data(self, agent, mock_storage):
-        mock_storage.download = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n")
+    async def test_fetch_binary_returns_file_data(self, agent, mock_conversion):
+        # Binary path resolves via the conversion service (symmetric with the text
+        # path), so delivered-document keys resolve with the ownership check too.
+        mock_conversion.resolve_bytes = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n")
         msg = _make_message(Intent.OPEN_FILE, file_ref="photo.png")
 
         with patch("src.agents.file_management_agent.tempfile") as mock_tempfile, \
@@ -133,11 +135,11 @@ class TestFetchBinary:
         assert "photo.png" in response.result
         assert response.metadata["file_data"]["mime_type"] == "image/png"
         assert response.metadata["file_data"]["path"].endswith(".png")
-        mock_storage.download.assert_called_once_with("photo.png", "user1")
+        mock_conversion.resolve_bytes.assert_called_once_with("photo.png", "user1")
 
-    async def test_fetch_pdf_is_binary(self, agent, mock_storage):
+    async def test_fetch_pdf_is_binary(self, agent, mock_conversion):
         """PDFs are native binary — should use binary path."""
-        mock_storage.download = AsyncMock(return_value=b"%PDF-1.4")
+        mock_conversion.resolve_bytes = AsyncMock(return_value=b"%PDF-1.4")
         msg = _make_message(Intent.OPEN_FILE, file_ref="document.pdf")
 
         with patch("src.agents.file_management_agent.tempfile") as mock_tempfile, \

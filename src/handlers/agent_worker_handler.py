@@ -234,13 +234,14 @@ class AgentWorkerHandler:
                 content = base64.b64decode(item.data["content_b64"])
                 filename = item.data["filename"]
                 label = item.data.get("label", filename)
-                url = await self._doc_delivery_service.store(
+                delivered = await self._doc_delivery_service.store(
                     content, filename, item.data["content_type"],
                     user_id=user_id,
                     storage_class=item.data.get("storage_class", "document"),
                 )
                 await self._notification.notify_document_link(
-                    user_id=user_id, account_id=account_id, url=url, label=label,
+                    user_id=user_id, account_id=account_id,
+                    url=delivered.link, label=label, key=delivered.key,
                     channel_id_override=origin_channel, platform_override=origin_platform,
                 )
                 if item.data.get("file_upload"):

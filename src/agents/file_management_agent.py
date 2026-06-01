@@ -140,8 +140,13 @@ class FileManagementAgent(BaseAgent):
     async def _fetch_binary(
         self, message: AgentMessage, ref: str, user_id: str, mime_type: str,
     ) -> AgentResponse:
-        """Fetch native binary (image/PDF) and return as file_data for LLM vision."""
-        data = await self._storage.download(ref, user_id)
+        """Fetch native binary (image/PDF) and return as file_data for LLM vision.
+
+        Routed through the conversion service so delivered-document keys (docs/…,
+        deep_research/…) resolve via MediaStoragePort with the ownership check,
+        not only bare-filename user uploads.
+        """
+        data = await self._conversion_service.resolve_bytes(ref, user_id)
 
         suffix = os.path.splitext(ref)[1] or ".bin"
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)

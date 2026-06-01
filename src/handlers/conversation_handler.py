@@ -217,12 +217,14 @@ class ConversationHandler(ConversationHandlerPort):
                 content = base64.b64decode(item.data["content_b64"])
                 filename = item.data["filename"]
                 label = item.data.get("label", filename)
-                url = await self._doc_delivery_service.store(
+                delivered = await self._doc_delivery_service.store(
                     content, filename, item.data["content_type"],
                     user_id=user_id,
                     storage_class=item.data.get("storage_class", "document"),
                 )
-                await response_channel.send_document_link(url=url, label=label, thread_id=thread_id)
+                await response_channel.send_document_link(
+                    url=delivered.link, label=label, thread_id=thread_id
+                )
                 if item.data.get("file_upload"):
                     await response_channel.send_file(
                         content=content,
