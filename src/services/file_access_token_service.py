@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from ..domain.file_access import DEFAULT_FILE_LINK_TTL, EMAIL_REVIEW_FILE_LINK_TTL
 from ..utils.logger import logger
 
 
@@ -55,9 +56,10 @@ class FileAccessTokenService:
     _ALGORITHM = "HS256"
     _TYPE = "file_access"
 
-    # Default link lifetimes (seconds). Callers may override per artifact.
-    DEFAULT_TTL = 30 * 24 * 3600          # 30 days — docs/html/deep_research/uploads
-    EMAIL_REVIEW_TTL = 5 * 24 * 3600      # 5 days — daily email review (PII)
+    # Link lifetimes (seconds) — sourced from domain policy. Class aliases kept for
+    # convenience/back-compat; FileLinkService reads the domain constants directly.
+    DEFAULT_TTL = DEFAULT_FILE_LINK_TTL          # 30 days — docs/html/deep_research/uploads
+    EMAIL_REVIEW_TTL = EMAIL_REVIEW_FILE_LINK_TTL  # 5 days — daily email review (PII)
 
     def __init__(self, secret_key: str) -> None:
         """
