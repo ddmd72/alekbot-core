@@ -364,9 +364,17 @@ async def main():
             ))
             logger.info("🔬 Deep research adapter registered: provider=claude (Cloud Run Job)")
 
-        # GCS media adapter for HTML report uploads (optional — requires GCS_MEDIA_BUCKET)
+        # GCS media adapter for HTML report uploads (optional — requires GCS_MEDIA_BUCKET).
+        # service_account_email enables keyless V4 signed-URL minting via IAM signBlob
+        # on Cloud Run (for the /f/<token> capability route).
         gcs_bucket = config.get("GCS_MEDIA_BUCKET", "")
-        gcs_media_adapter = GcsMediaAdapter(bucket_name=gcs_bucket) if gcs_bucket else None
+        gcs_media_adapter = (
+            GcsMediaAdapter(
+                bucket_name=gcs_bucket,
+                service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
+            )
+            if gcs_bucket else None
+        )
 
         # Notification service — channel adapters (Slack, Telegram) registered later via set_* methods.
         notification_state_repo = FirestoreNotificationStateAdapter(
@@ -453,6 +461,19 @@ async def main():
             secret_key=auth_config.oauth_session_secret,
             access_token_ttl=auth_config.access_token_ttl,
             refresh_token_ttl=auth_config.refresh_token_ttl
+        )
+
+        # File access: capability tokens + link builder for private file storage.
+        # Reuses the same HS256 secret as the Cabinet session service.
+        from src.services.file_access_token_service import FileAccessTokenService
+        from src.services.file_link_service import FileLinkService
+        file_token_service = FileAccessTokenService(secret_key=auth_config.oauth_session_secret)
+        file_link_service = (
+            FileLinkService(
+                token_service=file_token_service,
+                base_url=config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080",
+            )
+            if gcs_media_adapter else None
         )
 
         # Gmail OAuth (web-only service for OAuth flow, not part of indexing pipeline)
@@ -684,6 +705,18 @@ async def main():
                 main_app.register_blueprint(cabinet_bp)
                 main_app.register_blueprint(deep_research_webhooks_bp)
                 main_app.register_blueprint(ms_tasks_webhook_bp)
+
+                # /f/<token> capability route for private file access
+                if gcs_media_adapter:
+                    from src.web.file_access_app import create_file_access_blueprint
+                    main_app.register_blueprint(
+                        create_file_access_blueprint(
+                            token_service=file_token_service,
+                            media_storage=gcs_media_adapter,
+                            session_service=session_service,
+                        )
+                    )
+                    logger.info("✅ File access blueprint registered at /f/<token>")
                 
                 # ====================================================================
                 # PHASE 3: Telegram Integration (Optional)
