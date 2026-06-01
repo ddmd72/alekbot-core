@@ -35,12 +35,19 @@ class TestMediaStoragePortContract:
     def test_store_is_async(self):
         assert inspect.iscoroutinefunction(MediaStoragePort.store)
 
+    def test_has_fetch(self):
+        assert getattr(MediaStoragePort.fetch, "__isabstractmethod__", False)
+
+    def test_fetch_is_async(self):
+        assert inspect.iscoroutinefunction(MediaStoragePort.fetch)
+
     def test_all_abstract_methods_count(self):
         abstract_methods = {
             name for name, method in inspect.getmembers(MediaStoragePort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 1, f"Expected 1 abstract method, got {abstract_methods}"
+        # store (write) + fetch (server-side read for agent re-fetch)
+        assert len(abstract_methods) == 2, f"Expected 2 abstract methods, got {abstract_methods}"
 
     def test_store_signature(self):
         sig = inspect.signature(MediaStoragePort.store)
@@ -50,6 +57,15 @@ class TestMediaStoragePortContract:
     def test_store_return_annotation(self):
         sig = inspect.signature(MediaStoragePort.store)
         assert sig.return_annotation == str
+
+    def test_fetch_signature(self):
+        sig = inspect.signature(MediaStoragePort.fetch)
+        params = list(sig.parameters.keys())
+        assert params == ["self", "key"]
+
+    def test_fetch_return_annotation(self):
+        sig = inspect.signature(MediaStoragePort.fetch)
+        assert sig.return_annotation == bytes
 
 
 class TestMediaStoragePortMockImplementation:
