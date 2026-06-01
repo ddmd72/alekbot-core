@@ -11,6 +11,12 @@ from typing import Optional, Any
 from enum import Enum
 
 
+# Placeholder used ONLY for local development when OAUTH_SESSION_SECRET is unset.
+# It signs Cabinet JWT access/refresh tokens, so in any deployed environment it
+# MUST be overridden by a real secret (Secret Manager) — see validate().
+_DEV_DEFAULT_SESSION_SECRET = "dev-secret-change-in-production-must-be-32-chars-long"
+
+
 class AuthProvider(Enum):
     """Supported OAuth authentication providers."""
     FIREBASE = "firebase"
@@ -74,10 +80,11 @@ class AuthConfig:
             "http://localhost:5001/auth/connect-google-tasks/callback",  # Dev default
             config
         )
-        # CRITICAL: Load from config (Secret Manager) or fallback
+        # CRITICAL: Load from config (Secret Manager) or fall back to the local
+        # dev placeholder. validate() rejects the placeholder in deployed envs.
         self.oauth_session_secret = self._get(
             "OAUTH_SESSION_SECRET",
-            "dev-secret-change-in-production-must-be-32-chars-long",  # 48 chars
+            _DEV_DEFAULT_SESSION_SECRET,
             config
         )
 
@@ -145,4 +152,16 @@ class AuthConfig:
         if not self.oauth_session_secret or len(self.oauth_session_secret) < 32:
             raise ValueError(
                 "OAUTH_SESSION_SECRET must be set and at least 32 characters"
+            )
+
+        # Fail closed: the dev placeholder is public (it lives in source control),
+        # so it must never sign real tokens. K_SERVICE is injected by Cloud Run and
+        # reliably distinguishes a deployed environment from a local laptop run.
+        if (
+            self.oauth_session_secret == _DEV_DEFAULT_SESSION_SECRET
+            and os.getenv("K_SERVICE")
+        ):
+            raise ValueError(
+                "OAUTH_SESSION_SECRET is the built-in dev placeholder in a deployed "
+                "environment — set a real secret (Secret Manager). Refusing to start."
             )

@@ -121,7 +121,7 @@ def create_oauth_blueprint(
 
         except Exception as e:
             logger.error(f"❌ OAuth login failed: {e}")
-            return jsonify({"error": "OAuth login failed", "message": str(e)}), 500
+            return jsonify({"error": "OAuth login failed"}), 500
 
     # ========================================================================
     # GET /auth/callback - OAuth callback handler
@@ -217,7 +217,7 @@ def create_oauth_blueprint(
 
         except Exception as e:
             logger.error(f"❌ OAuth callback failed: {e}")
-            return jsonify({"error": "OAuth callback failed", "message": str(e)}), 500
+            return jsonify({"error": "OAuth callback failed"}), 500
 
     # ========================================================================
     # POST /auth/refresh - Refresh access token
@@ -295,8 +295,9 @@ def create_oauth_blueprint(
             logger.warning(f"❌ Invalid refresh token: {e}")
             return jsonify({"error": "Invalid refresh token"}), 401
         except Exception as e:
+            # Log detail server-side; never leak exception internals to the client.
             logger.error(f"❌ Token refresh failed: {e}")
-            return jsonify({"error": "Token refresh failed", "message": str(e)}), 500
+            return jsonify({"error": "Token refresh failed"}), 500
 
     # ========================================================================
     # POST /auth/logout - Logout (clear cookies)
@@ -370,7 +371,7 @@ def create_oauth_blueprint(
             return jsonify({"error": "Invalid token"}), 401
         except Exception as e:
             logger.error(f"❌ Get current user failed: {e}")
-            return jsonify({"error": "Failed to get user info", "message": str(e)}), 500
+            return jsonify({"error": "Failed to get user info"}), 500
 
     # ========================================================================
     # POST /auth/link-oauth - Link OAuth to existing user
@@ -469,11 +470,9 @@ def create_oauth_blueprint(
             logger.error(f"❌ OAuth link validation error: {e}")
             return jsonify({"error": str(e)}), 400
         except Exception as e:
+            # Log detail server-side; never leak exception internals to the client.
             logger.error(f"❌ OAuth link failed: {e}", exc_info=True)
-            return jsonify({
-                "error": "Failed to link OAuth identity",
-                "message": str(e)
-            }), 500
+            return jsonify({"error": "Failed to link OAuth identity"}), 500
 
     # ========================================================================
     # GET /auth/connect-gmail - Initiate incremental Gmail OAuth

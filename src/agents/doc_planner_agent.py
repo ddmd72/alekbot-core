@@ -138,6 +138,11 @@ class DocPlannerAgent(BaseAgent):
             response_mime_type="application/json",
             response_schema=self._RESPONSE_SCHEMA,
             thinking=self.THINKING_EFFORT or None,
+            # Heavy layout-spec generation (reasoning models, thinking=high) can
+            # run ~6 min — longer than the OpenAI client's 300s default. Set an
+            # explicit timeout below the 600s Cloud Task deadline so the call is
+            # not clamped/retried into a deadline kill. See agent_config.DOC_PLANNER.
+            timeout=DOC_PLANNER.request_timeout_s,
         )
         response = await self._call_llm(request, turn=0)
         raw = (response.text or "").strip()

@@ -212,6 +212,14 @@ class OpenAIAdapter(LLMPort):
             create_kwargs["prompt_cache_retention"] = "24h"
 
         request_timeout = request.timeout
+        # Honor an explicit caller timeout at the SDK level via the per-request
+        # `timeout` kwarg — otherwise the client's 300s ceiling fires first and
+        # clamps the effective timeout, cutting off long reasoning generations
+        # (e.g. DocPlanner ~360s) at 300s. The outer asyncio.wait_for bounds the
+        # TOTAL wall-time (including any SDK retries) to the same value, so a
+        # retry cannot push the call past the Cloud Task deadline.
+        if request_timeout:
+            create_kwargs["timeout"] = float(request_timeout)
         try:
             _coro = self.client.responses.create(**create_kwargs)
             response = await (

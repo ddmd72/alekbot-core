@@ -292,6 +292,18 @@ class TestLLMCall:
                           mock_llm.generate_content.call_args.args[0]
         assert req.model_name == "gemini-test"
 
+    async def test_request_timeout_matches_config(self, agent, mock_llm):
+        # Heavy spec generation can exceed the OpenAI client's 300s default; the
+        # agent must set an explicit per-request timeout below the 600s task
+        # deadline so the call completes instead of being clamped/retried.
+        from src.infrastructure.agent_config import DOC_PLANNER
+        await agent.execute(_make_message())
+        req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
+                          mock_llm.generate_content.call_args.args[0]
+        assert req.timeout == DOC_PLANNER.request_timeout_s
+        assert req.timeout < DOC_PLANNER.timeout_ms / 1000, \
+            "request timeout must stay below the Cloud Task deadline"
+
 
 # ---------------------------------------------------------------------------
 # execute — payload merging (extra context fields → appended to query)

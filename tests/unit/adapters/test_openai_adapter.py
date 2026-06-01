@@ -682,3 +682,41 @@ async def test_4xx_non_429_translates_to_LLMClientError():
     with pytest.raises(LLMClientError) as exc_info:
         await adapter.generate_content(request=_OPENAI_REQUEST)
     assert exc_info.value.http_status == 400
+
+
+@pytest.mark.asyncio
+async def test_explicit_timeout_forwarded_to_sdk_create():
+    """An explicit request.timeout is passed as the per-request `timeout` kwarg to
+    responses.create, so it overrides the client's 300s default ceiling and is not
+    clamped (long reasoning generations, e.g. DocPlanner ~360s)."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    captured = {}
+
+    async def _capture(**kwargs):
+        captured.update(kwargs)
+        return _make_response(text="OK")
+
+    adapter.client.responses.create = AsyncMock(side_effect=_capture)
+
+    request = _OPENAI_REQUEST.model_copy(update={"timeout": 540})
+    await adapter.generate_content(request=request)
+
+    assert captured.get("timeout") == 540.0
+
+
+@pytest.mark.asyncio
+async def test_no_timeout_does_not_forward_timeout_kwarg():
+    """When request.timeout is None, no per-request timeout kwarg is sent — the
+    client's default ceiling applies (preserves prior behaviour for normal calls)."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    captured = {}
+
+    async def _capture(**kwargs):
+        captured.update(kwargs)
+        return _make_response(text="OK")
+
+    adapter.client.responses.create = AsyncMock(side_effect=_capture)
+
+    await adapter.generate_content(request=_OPENAI_REQUEST)  # timeout=None
+
+    assert "timeout" not in captured

@@ -32,6 +32,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import time
 from typing import Optional
 
@@ -84,6 +85,14 @@ def create_deep_research_webhooks_blueprint(
           compare against v1,<base64> values in webhook-signature header
         """
         if not webhook_secret:
+            # Fail closed in deployed environments (K_SERVICE is set by Cloud Run);
+            # only a local laptop run is allowed to skip signature verification.
+            if os.getenv("K_SERVICE"):
+                logger.error(
+                    "[DeepResearchWebhook] No webhook_secret in a deployed "
+                    "environment — rejecting unverifiable webhook"
+                )
+                return False
             return True
 
         sig_header    = headers.get("webhook-signature", "")

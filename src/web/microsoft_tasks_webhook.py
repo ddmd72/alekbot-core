@@ -23,6 +23,7 @@ Subscription liveness (three layers):
 """
 
 import json
+import os
 import re
 from typing import Optional, TYPE_CHECKING
 
@@ -94,8 +95,17 @@ def create_microsoft_tasks_webhook_blueprint(
             client_state = notification.get("clientState", "")
             resource = notification.get("resource", "")
 
-            # Verify clientState (CSRF protection for webhooks)
-            if webhook_secret and client_state != webhook_secret:
+            # Verify clientState (CSRF protection for webhooks). Fail closed in
+            # deployed environments (K_SERVICE) when no secret is configured.
+            if not webhook_secret:
+                if os.getenv("K_SERVICE"):
+                    logger.error(
+                        f"[MSTasksWebhook] No webhook_secret in a deployed environment "
+                        f"for sub={sub_id[:8]} — rejecting unverifiable notification"
+                    )
+                    continue
+                # local dev: no secret configured, allow unverified
+            elif client_state != webhook_secret:
                 logger.warning(
                     f"[MSTasksWebhook] clientState mismatch for sub={sub_id[:8]} — ignoring"
                 )
