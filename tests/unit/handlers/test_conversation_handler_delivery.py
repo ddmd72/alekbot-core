@@ -197,7 +197,7 @@ class TestDeliverItem:
         channel.send_message = AsyncMock()
 
         item = DeliveryItem(type="html_gcs_link", data={"html": "<b>hi</b>", "filename": "x.html"})
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
 
         channel.send_message.assert_not_awaited()
 
@@ -213,7 +213,7 @@ class TestDeliverItem:
             type="html_gcs_link",
             data={"html": "<h1>Report</h1>", "filename": "doc.html", "link_text": "Open Report"},
         )
-        await handler._deliver_item(item, channel, thread_id="T1")
+        await handler._deliver_item(item, channel, thread_id="T1", user_id="user-1")
 
         rcs._store_html.assert_awaited_once_with("<h1>Report</h1>", "doc.html")
         channel.send_message.assert_awaited_once_with(
@@ -230,7 +230,7 @@ class TestDeliverItem:
 
         item = DeliveryItem(type="html_gcs_link", data={"html": "<b>x</b>", "filename": "x.html"})
         # Should not raise; exception is swallowed and logged
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
         channel.send_message.assert_not_awaited()
 
     async def test_html_gcs_link_store_returns_none_no_message_sent(self):
@@ -242,7 +242,7 @@ class TestDeliverItem:
         channel.send_message = AsyncMock()
 
         item = DeliveryItem(type="html_gcs_link", data={"html": "<b>x</b>", "filename": "x.html"})
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
         channel.send_message.assert_not_awaited()
 
     # --- rich_content ---
@@ -261,7 +261,7 @@ class TestDeliverItem:
                 "fallback": "fallback text",
             },
         )
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
         channel.send_rich_content.assert_awaited_once()
 
     # --- message ---
@@ -272,7 +272,7 @@ class TestDeliverItem:
         channel.send_message = AsyncMock()
 
         item = DeliveryItem(type="message", data={"text": "Hello from agent!"})
-        await handler._deliver_item(item, channel, thread_id="T-thread")
+        await handler._deliver_item(item, channel, thread_id="T-thread", user_id="user-1")
 
         channel.send_message.assert_awaited_once_with("Hello from agent!", "T-thread")
 
@@ -288,7 +288,7 @@ class TestDeliverItem:
             type="file_upload",
             data={"file_bytes_b64": file_bytes, "filename": "doc.docx", "title": "My Doc"},
         )
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
         # No crash, just early return
 
     async def test_file_upload_no_channel_id_returns_early(self):
@@ -304,7 +304,7 @@ class TestDeliverItem:
             type="file_upload",
             data={"file_bytes_b64": file_bytes, "filename": "doc.docx", "title": "My Doc"},
         )
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
         rcs.upload_file_bytes.assert_not_awaited()
 
     async def test_file_upload_success_calls_upload_file_bytes(self):
@@ -321,7 +321,7 @@ class TestDeliverItem:
             type="file_upload",
             data={"file_bytes_b64": file_bytes_b64, "filename": "report.docx", "title": "Report"},
         )
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
 
         rcs.upload_file_bytes.assert_awaited_once_with(
             file_bytes=raw_bytes,
@@ -344,7 +344,7 @@ class TestDeliverItem:
             data={"file_bytes_b64": file_bytes_b64, "filename": "x.docx", "title": "X"},
         )
         # Should not raise
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
 
     # --- document ---
 
@@ -358,7 +358,7 @@ class TestDeliverItem:
             type="document",
             data={"content_b64": content_b64, "filename": "x.pdf", "content_type": "application/pdf"},
         )
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
         channel.send_document_link.assert_not_awaited()
 
     async def test_document_success_sends_link(self):
@@ -380,7 +380,7 @@ class TestDeliverItem:
                 "label": "My PDF",
             },
         )
-        await handler._deliver_item(item, channel, thread_id="T2")
+        await handler._deliver_item(item, channel, thread_id="T2", user_id="user-1")
 
         dds.store.assert_awaited_once()
         channel.send_document_link.assert_awaited_once_with(
@@ -407,7 +407,7 @@ class TestDeliverItem:
                 "file_upload": True,
             },
         )
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
 
         channel.send_document_link.assert_awaited_once()
         channel.send_file.assert_awaited_once()
@@ -425,7 +425,7 @@ class TestDeliverItem:
             type="document",
             data={"content_b64": content_b64, "filename": "x.pdf", "content_type": "application/pdf"},
         )
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
         channel.send_document_link.assert_not_awaited()
 
     # --- unknown type ---
@@ -434,7 +434,7 @@ class TestDeliverItem:
         handler = _make_handler(MagicMock())
         channel = MagicMock()
         item = DeliveryItem(type="telekinesis", data={})
-        await handler._deliver_item(item, channel, thread_id=None)
+        await handler._deliver_item(item, channel, thread_id=None, user_id="user-1")
         # Verify no channel methods called
         channel.send_message.assert_not_called()
 

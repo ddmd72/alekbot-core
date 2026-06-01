@@ -376,6 +376,21 @@ async def main():
             if gcs_bucket else None
         )
 
+        # File access: capability tokens + link builder for private file storage.
+        # Reuses the same HS256 secret as the Cabinet session service. Constructed
+        # here (before delivery services) so DocumentDeliveryService can mint links.
+        from src.services.file_access_token_service import FileAccessTokenService
+        from src.services.file_link_service import FileLinkService
+        _file_secret = config.get("OAUTH_SESSION_SECRET") or "dev-secret-change-in-production-must-be-32-chars-long"
+        file_token_service = FileAccessTokenService(secret_key=_file_secret)
+        file_link_service = (
+            FileLinkService(
+                token_service=file_token_service,
+                base_url=config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080",
+            )
+            if gcs_media_adapter else None
+        )
+
         # Notification service — channel adapters (Slack, Telegram) registered later via set_* methods.
         notification_state_repo = FirestoreNotificationStateAdapter(
             db_client=db_client, env_config=env_config
@@ -399,7 +414,9 @@ async def main():
         doc_delivery_service = None
         if gcs_media_adapter:
             from src.services.document_delivery_service import DocumentDeliveryService
-            doc_delivery_service = DocumentDeliveryService(storage=gcs_media_adapter)
+            doc_delivery_service = DocumentDeliveryService(
+                storage=gcs_media_adapter, link_service=file_link_service
+            )
             logger.info("✅ DocumentDeliveryService initialized")
         else:
             logger.info("ℹ️ DocumentDeliveryService disabled (GCS_MEDIA_BUCKET not set)")
@@ -409,6 +426,7 @@ async def main():
         agent_worker_handler._media_storage = gcs_media_adapter
         agent_worker_handler._task_queue = agent_task_queue
         agent_worker_handler._doc_delivery_service = doc_delivery_service
+        agent_worker_handler._link_service = file_link_service
 
         # Anthropic client — created once, shared by ClaudeDeepResearchRunnerAgent instances.
         # The agent receives the client via constructor; does not import or instantiate the SDK.
@@ -461,19 +479,6 @@ async def main():
             secret_key=auth_config.oauth_session_secret,
             access_token_ttl=auth_config.access_token_ttl,
             refresh_token_ttl=auth_config.refresh_token_ttl
-        )
-
-        # File access: capability tokens + link builder for private file storage.
-        # Reuses the same HS256 secret as the Cabinet session service.
-        from src.services.file_access_token_service import FileAccessTokenService
-        from src.services.file_link_service import FileLinkService
-        file_token_service = FileAccessTokenService(secret_key=auth_config.oauth_session_secret)
-        file_link_service = (
-            FileLinkService(
-                token_service=file_token_service,
-                base_url=config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080",
-            )
-            if gcs_media_adapter else None
         )
 
         # Gmail OAuth (web-only service for OAuth flow, not part of indexing pipeline)
@@ -588,6 +593,7 @@ async def main():
             account_repo=account_repo,
             billing_webhook=_alert_webhook,
             email_embedding_repair=_email_embedding_repair_service,
+            link_service=file_link_service,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
@@ -596,6 +602,7 @@ async def main():
             media_storage=gcs_media_adapter,
             task_queue=agent_task_queue,
             prompt_content_store=container.prompt_content_store,
+            link_service=file_link_service,
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(

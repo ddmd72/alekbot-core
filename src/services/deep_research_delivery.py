@@ -13,12 +13,15 @@ Shared by WorkerHandler, AgentWorkerHandler, and deep_research_webhooks.
 
 import html as html_lib
 from datetime import datetime, timezone
-from typing import Any, Optional, Protocol
+from typing import Any, Optional, Protocol, TYPE_CHECKING
 
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import NotifyResult
 from ..ports.media_storage_port import MediaStoragePort
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from .file_link_service import FileLinkService
 
 
 class NotificationPort(Protocol):
@@ -114,25 +117,29 @@ async def _upload_round(
     timestamp: str,
     suffix: str,
     media_storage: MediaStoragePort,
+    link_service: Optional["FileLinkService"] = None,
 ) -> Optional[str]:
-    """Upload a raw markdown research round to GCS. Returns public URL or None.
+    """Upload a raw markdown research round to private GCS. Returns a capability
+    link (or None on failure).
 
     Args:
         text:          Raw markdown text from the research loop.
-        user_id:       Used as a path segment for namespacing.
+        user_id:       Owner — path segment + capability-token subject.
         timestamp:     UTC timestamp string (e.g. "20260316T123456Z").
         suffix:        File suffix, e.g. "round1", "round2", "report".
-        media_storage: GCS storage port.
+        media_storage: Private GCS storage port.
+        link_service:  Builds the /f/<token> capability link from the stored key.
     """
     try:
         key = f"deep_research/{user_id}/{timestamp}-{suffix}.md"
-        url = await media_storage.store(
+        await media_storage.store(
             data=text.encode("utf-8"),
             key=key,
             content_type="text/markdown; charset=utf-8",
         )
-        logger.info("[DeepResearch] Uploaded %s (%d chars) → %s", suffix, len(text), url)
-        return url
+        link = link_service.build_link(key=key, user_id=user_id) if link_service else key
+        logger.info("[DeepResearch] Uploaded %s (%d chars) → %s", suffix, len(text), key)
+        return link
     except Exception as exc:
         logger.error("[DeepResearch] Round upload failed (suffix=%s): %s", suffix, exc, exc_info=True)
         return None
@@ -164,6 +171,7 @@ async def deliver_deep_research(
     second_pass: bool = False,
     channel_id_override: Optional[str] = None,
     platform_override: Optional[str] = None,
+    link_service: Optional["FileLinkService"] = None,
 ) -> None:
     """
     Deliver deep research result:
@@ -179,7 +187,7 @@ async def deliver_deep_research(
 
     if media_storage:
         if has_two_rounds:
-            url1 = await _upload_round(round1_text, user_id, timestamp, "round1", media_storage)
+            url1 = await _upload_round(round1_text, user_id, timestamp, "round1", media_storage, link_service)
             if url1 and notification:
                 try:
                     await notification.notify_document_link(
@@ -191,7 +199,7 @@ async def deliver_deep_research(
                 except Exception as exc:
                     logger.error("[DeepResearch] notify_document_link round1 failed: %s", exc, exc_info=True)
 
-            url2 = await _upload_round(result_text, user_id, timestamp, "round2", media_storage)
+            url2 = await _upload_round(result_text, user_id, timestamp, "round2", media_storage, link_service)
             if url2 and notification:
                 try:
                     await notification.notify_document_link(
@@ -203,7 +211,7 @@ async def deliver_deep_research(
                 except Exception as exc:
                     logger.error("[DeepResearch] notify_document_link round2 failed: %s", exc, exc_info=True)
         else:
-            url = await _upload_round(result_text, user_id, timestamp, "report", media_storage)
+            url = await _upload_round(result_text, user_id, timestamp, "report", media_storage, link_service)
             if url and notification:
                 try:
                     await notification.notify_document_link(

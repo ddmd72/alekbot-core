@@ -34,9 +34,12 @@ import hmac
 import json
 import os
 import time
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from quart import Blueprint, request, jsonify
+
+if TYPE_CHECKING:
+    from ..services.file_link_service import FileLinkService
 
 from ..domain.notification_kind import NotificationKind
 from ..services.deep_research_delivery import NotificationPort, deliver_deep_research
@@ -54,6 +57,7 @@ def create_deep_research_webhooks_blueprint(
     media_storage: Optional[MediaStoragePort] = None,
     task_queue: Optional[TaskDispatchService] = None,
     prompt_content_store: Optional[PromptContentStore] = None,
+    link_service: Optional["FileLinkService"] = None,
 ) -> Blueprint:
     """
     Create Quart Blueprint for OpenAI Deep Research webhook delivery.
@@ -209,6 +213,7 @@ def create_deep_research_webhooks_blueprint(
                 task_queue=task_queue,
                 session_id=session_id,
                 media_storage=media_storage,
+                link_service=link_service,
                 channel_id_override=origin_channel_id,
             )
 

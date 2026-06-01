@@ -344,7 +344,10 @@ class TestDeliverDocumentResult:
 
         await handler._deliver_document_result(response, _CONTEXT)
 
-        doc_delivery.store.assert_called_once_with(raw, "report.pdf", "application/pdf")
+        doc_delivery.store.assert_called_once_with(
+            raw, "report.pdf", "application/pdf",
+            user_id=_USER_ID, storage_class="document",
+        )
         notification.notify_document_link.assert_called_once_with(
             user_id=_USER_ID,
             account_id=_ACCOUNT_ID,
