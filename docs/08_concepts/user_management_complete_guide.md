@@ -13,7 +13,7 @@ Comprehensive implementation reference for the User Management System, covering 
 
 ### Cross-References
 
-- **Building Block:** [../../05_building_blocks/user_management_system/README.md](../../05_building_blocks/user_management_system/README.md)
+- **Building Block:** [../05_building_blocks/user_management_system/README.md](../05_building_blocks/user_management_system/README.md)
 
 ---
 

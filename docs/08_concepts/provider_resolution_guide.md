@@ -710,10 +710,6 @@ tests/integration/test_provider_resolution.py       # E2E resolution tests
 - Operations — See docs_local/guides/OPERATIONS.md (local only)
 - Installation — See docs_local/guides/INSTALLATION.md (local only)
 
-**RFCs (Historical):**
-
-- [Provider Split RFC](../10_rfcs/REQUEST_CONTEXT_RFC.md) — Original design proposal
-
 **Code:**
 
 - `src/domain/user.py` — PerformanceTier, UserBotConfig

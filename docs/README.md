@@ -1,105 +1,74 @@
 # Alek-Core Documentation
 
-Welcome to the documentation for **Alek-Core**, a Sovereign Exocortex built on Clean Architecture principles.
+Documentation for **Alek-Core**, a personal exocortex built on hexagonal (ports & adapters)
+architecture. Organised with the [arc42](https://arc42.org) template.
 
-## 🚀 Getting Started!
+## 🚀 Getting Started
 
-If you are new to the project, please follow this reading order:
-
-1.  **[Essential Reading](./ESSENTIAL_READING.md)** — The 25-minute onboarding guide for AI and humans.
-2.  **[01 Introduction](./01_introduction/README.md)** — Project goals, stakeholders, and core terminology.
-3.  **[04 Solution Strategy](./04_solution_strategy/README.md)** — High-level architecture and target state.
-4.  **[Installation Guide](./guides/INSTALLATION.md)** — How to set up your local development environment.
+1. **[Essential Reading](./ESSENTIAL_READING.md)** — short onboarding for AI and humans.
+2. **[Bootstrap](../BOOTSTRAP.md)** — from-scratch deployment runbook (local + GCP).
+3. **[01 Introduction](./01_introduction/README.md)** — goals, scope, glossary.
+4. **[04 Solution Strategy](./04_solution_strategy/README.md)** — architecture and target state.
 
 ---
 
-## 📖 Arc42 Architecture Documentation
-
-We follow the **Arc42** standard for architectural documentation, organized into the following sections:
+## 📖 Arc42 Sections
 
 ### [01 Introduction](./01_introduction/README.md)
-
 Project goals, business requirements, and glossary.
 
 ### [02 Constraints](./02_constraints/README.md)
-
 Technical, organizational, and architectural constraints.
 
 ### [03 Context & Scope](./03_context/README.md)
-
-System boundaries, external integrations (Slack, Telegram), and personas.
+System boundaries and external integrations (Slack, Telegram).
 
 ### [04 Solution Strategy](./04_solution_strategy/README.md)
-
-The big picture: [Target Architecture](./04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md) and milestones.
+The big picture: [Target Architecture](./04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md),
+[current implementation structure](./04_solution_strategy/current_implementation/STRUCTURE.md), and
+[decision records](./04_solution_strategy/decisions/).
 
 ### [05 Building Blocks](./05_building_blocks/README.md)
-
 Detailed specifications of implemented subsystems:
 
-- **[Multi-Agent System](./05_building_blocks/multi_agent_system/README.md)** — Actor Model & ACP.
-- **[Hybrid Router](./05_building_blocks/hybrid_router/README.md)** — Intent classification & triage.
-- **[Sliding Window Consolidation](./05_building_blocks/sliding_window_consolidation/README.md)** — Memory pipeline.
-- **[Prompt Design System v3](./05_building_blocks/prompt_design_system_v3/README.md)** — Token-based assembly.
-- **[Security Validation](./05_building_blocks/security_validation/README.md)** — 5-layer defense.
-- **[Telegram Integration](./05_building_blocks/telegram_integration/README.md)** — Webhook adapter.
-- **[Slack Dual Mode](./05_building_blocks/slack_dual_mode/README.md)** — Socket & HTTP adapters.
-- **[Search Enrichment](./05_building_blocks/search_enrichment/README.md)** — Multi-vector RRF search.
-- **[Biographical Context Cache](./05_building_blocks/biographical_context_cache/README.md)** — High-speed retrieval.
-- **[OAuth Multi-Tenant](./05_building_blocks/oauth_multi_tenant/README.md)** — Identity & IAM.
-- **[User Cabinet](./05_building_blocks/user_cabinet/README.md)** — Self-service portal: platform linking, facts browser, semantic search.
+- **[Multi-Agent System](./05_building_blocks/multi_agent_system/README.md)** — agent network & coordination.
+- **[Hybrid Router](./05_building_blocks/hybrid_router/README.md)** — LLM triage & complexity classification.
+- **[Sliding Window Consolidation](./05_building_blocks/sliding_window_consolidation/README.md)** — memory pipeline.
+- **[Prompt Design System](./05_building_blocks/prompt_design_system_v3/README.md)** — token-based assembly.
+- **[Security Validation](./05_building_blocks/security_validation/README.md)** — input defense layers.
+- **[Telegram Integration](./05_building_blocks/telegram_integration/README.md)** / **[Slack Dual Mode](./05_building_blocks/slack_dual_mode/README.md)** — channel adapters.
+- **[Search Enrichment](./05_building_blocks/search_enrichment/README.md)** — multi-vector RRF search.
+- **[OAuth Multi-Tenant](./05_building_blocks/oauth_multi_tenant/README.md)** — identity & IAM.
+- **[Remote MCP Server](./05_building_blocks/remote_mcp_server/README.md)** — claude.ai connector.
+- **[User Cabinet](./05_building_blocks/user_cabinet/README.md)** — self-service portal.
 
 ### [06 Runtime View](./06_runtime/README.md)
-
-Dynamic behavior: message flow, agent orchestration, and consolidation process.
-
-- **[API Reference](./06_runtime/API_REFERENCE.md)** — All HTTP endpoints in one place (auth, cabinet, facts).
+Dynamic behavior: message flow, agent orchestration, consolidation.
+- **[API Reference](./06_runtime/API_REFERENCE.md)** — HTTP endpoints.
 
 ### [07 Deployment](./07_deployment/README.md)
-
-Physical topology, GCP infrastructure, and CI/CD pipeline.
+GCP topology, schedulers, logging. Setup: **[Bootstrap](../BOOTSTRAP.md)**.
 
 ### [08 Concepts](./08_concepts/README.md)
-
-Cross-cutting concerns and deep dives:
-
-- **[Multi-Vector RRF Search](./08_concepts/multi_vector_rrf_search.md)** — Retrieval philosophy.
-- **[Prompt v3 Guide](./08_concepts/prompt_v3_complete_guide.md)** — Practical assembly reference.
+Cross-cutting deep dives:
+- **[Database Schema](./08_concepts/DATABASE_SCHEMA.md)** — Firestore collections & indexes.
+- **[Multi-Vector RRF Search](./08_concepts/multi_vector_rrf_search.md)** — retrieval philosophy.
+- **[Prompt Assembly Guide](./08_concepts/prompt_assembly_guide.md)** — token assembly (v4).
 - **[Provider Resolution](./08_concepts/provider_resolution_guide.md)** — LLM tier management.
-- **[User Management](./08_concepts/user_management_complete_guide.md)** — Onboarding & linking.
+- **[User Management](./08_concepts/user_management_complete_guide.md)** — onboarding & linking.
 
 ### [09 Decisions (ADRs)](./09_decisions/README.md)
-
-Architecture Decision Records for critical design choices.
+Architecture Decision Records.
 
 ### [10 RFCs](./10_rfcs/README.md)
-
-Active proposals for new features and refactorings.
+Feature and refactoring proposals.
 
 ### [11 Quality](./11_quality/README.md)
-
-Quality goals, testing strategy, and metrics.
+Quality goals, testing strategy, use cases.
 
 ### [12 Risks](./12_risks/README.md)
-
 Risk management and [Implementation Roadmap](./12_risks/IMPLEMENTATION_ROADMAP.md).
 
 ---
 
-## 🛠️ Operational Guides
-
-- **[Operations](./guides/OPERATIONS.md)** — Daily tasks, memory management, and commands.
-- **[Slack Setup](./guides/SLACK_SETUP.md)** — Configuring the Slack integration.
-- **[Observability](./guides/OBSERVABILITY_LOGS_GUIDE.md)** — Working with logs and traces.
-- **[Documentation](./guides/DOCUMENTATION.md)** — How to maintain this knowledge base.
-
----
-
-## 🤖 AI Protocols
-
-- **[AI Development Culture](./ai/AI_DEVELOPMENT_CULTURE.md)** — Rules for AI-assisted development.
-- **[Documentation Protocol](./ai/DOCUMENTATION_PROTOCOL.md)** — Mandatory rules for doc work.
-
----
-
-_Alek-Core: Toward a Sovereign Exocortex_
+_Alek-Core — personal exocortex._

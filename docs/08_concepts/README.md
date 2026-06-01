@@ -31,12 +31,11 @@ This document MUST be updated when:
 ### Core Philosophies
 
 - **[Multi-Vector RRF Search](./multi_vector_rrf_search.md)** — The ideology behind query-independent ranking and consensus retrieval.
-- **[Fractal Architecture](./fractal_architecture.md)** — Recursive hexagonal patterns for infinite scalability.
-- **[Belief System Manifesto](../_project/archive/concepts_legacy/BELIEF_SYSTEM_MANIFESTO.md)** — (Legacy) Philosophy of memory and truth.
+- **[Fractal Architecture](./fractal_architecture.md)** — Recursive hexagonal patterns.
 
 ### Practical Guides
 
-- **[Prompt v3 Complete Guide](./prompt_v3_complete_guide.md)** — Comprehensive reference for token-based assembly.
+- **[Prompt Assembly Guide](./prompt_assembly_guide.md)** — Token-based assembly (v4).
 - **[Provider Resolution Guide](./provider_resolution_guide.md)** — How to configure models, tiers, and fallbacks.
 - **[User Management Guide](./user_management_complete_guide.md)** — Onboarding, platform linking, and IAM.
 - **[Security Validation Guide](./security_validation_guide.md)** — Implementing defense-in-depth against injections.

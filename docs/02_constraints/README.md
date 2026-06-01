@@ -159,8 +159,8 @@ This document MUST be updated when:
 | **Output Tokens**   | 8192 tokens                  | Chunking required for long responses            |
 | **Rate Limit**      | 2000 RPM (requests)          | Per-user throttling to stay within limits       |
 | **Rate Limit**      | 4M TPM (tokens)              | Token counting required for quota enforcement   |
-| **Embedding Model** | text-embedding-004           | 768 dimensions, cosine distance                 |
-| **Embedding Batch** | 2048 documents               | Batch processing for efficiency                 |
+| **Embedding Model** | gemini-embedding-2           | 768 dimensions (Matryoshka truncation), cosine distance |
+| **Embedding Batch** | N parallel single-content calls | v2 has no true batch — fan-out via asyncio.gather |
 
 **Claude API (Anthropic):**
 
@@ -420,7 +420,7 @@ See [ADR-006](../09_decisions/adr-006-semantic-collection-naming/README.md) for 
 - ✅ Cross-references between docs maintained
 - ❌ No "TODO" docs (create skeleton with dates)
 
-See [DOCUMENTATION_PROTOCOL.md](../ai/DOCUMENTATION_PROTOCOL.md) for details.
+See [CLAUDE.md](../../CLAUDE.md) for the working contract and conventions.
 
 ---
 

@@ -131,7 +131,6 @@ The documentation structure has been migrated to **Arc42** standard:
 - Legacy `docs/concepts/` → `docs/_project/archive/concepts_legacy/`
 - New Arc42 structure: `docs/01_introduction/` through `docs/12_risks/`
 
-See: [\_project/migration/MIGRATION_PLAN.md](./_project/migration/MIGRATION_PLAN.md) for details.
 
 ---
 

@@ -1,7 +1,6 @@
 # Implementation Roadmap
 
-**Version:** 3.0 (January 2026)  
-**Historical History:** [ROADMAP_2026_01.md](../archive/roadmap_history/ROADMAP_2026_01.md)
+**Version:** 3.0 (January 2026)
 
 Strategic roadmap for Alek-Core architecture evolution, focusing on MVP and Enterprise readiness.
 
@@ -1275,7 +1274,6 @@ mandatory before team/multi-user rollout.
   - Hexagonal Architecture: migration in Adapter layer, Domain unchanged
 - **Status**: ✅ Complete - Bot fully operational with OAuth schema
 - **Blockers**: None
-- **Session Protocol**: [SESSION_PROTOCOL_2026-01-31-1.md](session_protocols/SESSION_PROTOCOL_2026-01-31-1.md)
 
 ### Session Context (31.01.2026 - Multi-Tenant OAuth RFC Design)
 
@@ -1513,7 +1511,6 @@ mandatory before team/multi-user rollout.
     - Commits: `ea36553`, `c19ebf6`, `d054d1c`, `bfa191f`
 - **Current Session**: ✅ All 10 Sessions Complete - Ready for Testing
 - **Branch**: `multi-tenant` (breaking changes allowed)
-- **Session Protocol**: [SESSION_PROTOCOL_2026-01-31.md](session_protocols/SESSION_PROTOCOL_2026-01-31.md)
 - **Progress**: 10/10 sessions (100%)
 - **Blockers**: None - Manual testing required (Firebase setup, migration, OAuth flow)
 

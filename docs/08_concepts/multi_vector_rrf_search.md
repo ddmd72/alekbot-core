@@ -584,7 +584,6 @@ Multi-tenant configuration uses same 3-level resolution:
 ### Internal Documentation
 
 - **Building Block:** [../05_building_blocks/search_enrichment/README.md](../05_building_blocks/search_enrichment/README.md) - Technical implementation
-- **Session Log:** [../SESSION_2026_02_07_MULTI_VECTOR_SEMANTIC_SEARCH.md](../SESSION_2026_02_07_MULTI_VECTOR_SEMANTIC_SEARCH.md) - Development journey
 
 ---
 

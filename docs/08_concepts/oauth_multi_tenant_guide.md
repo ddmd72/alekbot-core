@@ -344,8 +344,7 @@ pytest tests/integration/test_oauth_integration.py -v
 ## Related Documentation
 
 - [OAuth Multi-Tenant Building Block](../05_building_blocks/oauth_multi_tenant/README.md) — Architecture
-- [MIGRATION_GUIDE.md](../05_building_blocks/oauth_multi_tenant/MIGRATION_GUIDE.md) — Migration Steps
-- [MULTI_TENANT_OAUTH_RFC.md](../10_rfcs/MULTI_TENANT_OAUTH_RFC.md) — Original RFC
+- [OAuth testing guide](../05_building_blocks/oauth_multi_tenant/TESTING_GUIDE.md) — Test procedures
 
 **Last Updated:** 2026-02-05  
 **Status:** ✅ Production Ready

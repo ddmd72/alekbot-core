@@ -16,8 +16,7 @@ This document MUST be updated when:
 - [ ] New search agents are added using this pattern.
 
 ### Cross-References
-- **Original RFC:** [../../archive/rfcs/SEARCH_STRATEGY_RFC.md](../../archive/rfcs/SEARCH_STRATEGY_RFC.md)
-- **Implementation:** `../../../src/agents/web_search_agent.py`
+- **Implementation:** `src/agents/web_search_agent.py`
 - **Multi-Agent System:** [../../05_building_blocks/multi_agent_system/README.md](../../05_building_blocks/multi_agent_system/README.md)
 
 ---

@@ -43,8 +43,6 @@ export FIRESTORE_DATABASE=us-production
 3. ✅ **Separation:** Isolated from default DB for safety
 4. ✅ **Migration Complete:** All data migrated from default → us-production (2026-02-09)
 
-**See:** `docs/SESSION_2026_02_09_US_PRODUCTION_MIGRATION.md`
-
 ---
 
 ## 📖 HowTo: Using This Document
@@ -63,8 +61,8 @@ Canonical reference for Firestore collections, document structures, and indexes.
 
 ### Cross-References
 
-- **OAuth Architecture:** [../10_rfcs/MULTI_TENANT_OAUTH_RFC.md](../10_rfcs/MULTI_TENANT_OAUTH_RFC.md)
-- **Prompt System v3:** [../05_building_blocks/prompt_design_system_v3/README.md](../05_building_blocks/prompt_design_system_v3/README.md)
+- **OAuth Architecture:** [../05_building_blocks/oauth_multi_tenant/README.md](../05_building_blocks/oauth_multi_tenant/README.md)
+- **Prompt System:** [../05_building_blocks/prompt_design_system_v3/README.md](../05_building_blocks/prompt_design_system_v3/README.md)
 - **Environment Config:** `src/config/environment.py`
 
 ---
@@ -930,4 +928,3 @@ Added 2026-02-18 for User Cabinet facts browser (`GET /api/user/facts/browse`). 
 
 ---
 
-**Migration reference:** `docs/SESSION_2026_02_09_US_PRODUCTION_MIGRATION.md`

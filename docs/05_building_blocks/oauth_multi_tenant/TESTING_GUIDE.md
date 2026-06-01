@@ -379,7 +379,7 @@ After successful testing:
 4. ✅ Configuration inheritance → 99% of users use account defaults
 
 **Ready for dev deployment:**
-- See [DEV_DEPLOYMENT.md](DEV_DEPLOYMENT.md) for Cloud Run deployment instructions
+- See [../../../BOOTSTRAP.md](../../../BOOTSTRAP.md) for deployment instructions
 
 ---
 

@@ -1,11 +1,9 @@
 # RFC: Agent Communication Protocol v2 - Simplified (Registry Pattern)
 
-**Status:** Proposed  
+**Status:** Implemented (2026-02-21)  
 **Date:** 2026-02-12  
-**Owner:** AI Engineering (Cline)  
 **Milestone:** Phase 2 - Multi-Agent Evolution  
-**Supersedes:** ACP v1 (src/domain/agent.py)  
-**Alternative to:** [ACP_V2_AGENT_COMMUNICATION_RFC.md](./ACP_V2_AGENT_COMMUNICATION_RFC.md) (complex version)
+**Supersedes:** ACP v1 (src/domain/agent.py) and the complex ACP v2 variant (since removed)
 
 ---
 
@@ -1050,7 +1048,6 @@ IntentDef(
 
 **Related RFCs:**
 
-- [ACP_V2_AGENT_COMMUNICATION_RFC.md](./ACP_V2_AGENT_COMMUNICATION_RFC.md) - Complex version (alternative)
 - [GMAIL_EMAIL_INDEXING_RFC.md](./GMAIL_EMAIL_INDEXING_RFC.md) - Motivating use case
 
 **Building Blocks:**
@@ -1088,5 +1085,5 @@ IntentDef(
 
 **Last Updated:** 2026-02-21
 **Status:** ✅ Implemented (SYNC path production-ready; ASYNC infrastructure in place)
-**Implementation:** Commit `54e250f` (2026-02-21). See session protocol: [SESSION_PROTOCOL_2026-02-21.md](../12_risks/session_protocols/SESSION_PROTOCOL_2026-02-21.md)
+**Implementation:** Commit `54e250f` (2026-02-21).
 **Next Steps:** Gmail Agent (first ASYNC agent + user notification callback)

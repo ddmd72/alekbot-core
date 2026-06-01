@@ -17,8 +17,8 @@ This document MUST be updated when:
 
 ### Cross-References
 - **Original RFCs:** 
-  - [ADAPTIVE_ROUTING_CACHE_RFC.md](../../../10_rfcs/ADAPTIVE_ROUTING_CACHE_RFC.md)
-  - [NATIVE_TOOLS_INTEGRATION_RFC.md](../../../10_rfcs/NATIVE_TOOLS_INTEGRATION_RFC.md)
+  - [ADAPTIVE_ROUTING_CACHE_RFC.md](../../10_rfcs/ADAPTIVE_ROUTING_CACHE_RFC.md)
+  - [NATIVE_TOOLS_INTEGRATION_RFC.md](../../10_rfcs/NATIVE_TOOLS_INTEGRATION_RFC.md)
 - **Implementation:** 
   - `../../../src/services/search_enrichment_service.py`
   - `../../../src/agents/core/router_agent.py`
@@ -215,8 +215,8 @@ RFCs propose topic_similarity tracking to prevent context loss on Smart→Quick 
 
 ## References
 
-- **RFC (Partial):** `docs/architecture/rfcs/ADAPTIVE_ROUTING_CACHE_RFC.md` (active)
-- **RFC (Partial):** `docs/architecture/rfcs/NATIVE_TOOLS_INTEGRATION_RFC.md` (active)
+- **RFC (Partial):** `docs/10_rfcs/ADAPTIVE_ROUTING_CACHE_RFC.md` (active)
+- **RFC (Partial):** `docs/10_rfcs/NATIVE_TOOLS_INTEGRATION_RFC.md` (active)
 - **Implementation:** `src/services/search_enrichment_service.py`
 - **Domain Models:** `src/domain/search.py`
 - **Building Block:** [../../05_building_blocks/search_enrichment/README.md](../../05_building_blocks/search_enrichment/README.md)

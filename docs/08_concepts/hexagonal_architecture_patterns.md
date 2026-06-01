@@ -971,8 +971,6 @@ Bootstrap/wiring rules:
 - **CLAUDE.md** — Import rules (authoritative, checked by `make check`)
 - **Building Block:** `docs/05_building_blocks/fact_write_service/README.md`
 - **RFC:** `docs/10_rfcs/EXECUTION_CONTEXT_HEXAGONAL_RFC.md`
-- **Audit:** `docs/11_quality/audit_2026_02/REVIEW_HEXAGONAL_2026_02_19.md`
-- **Review v2:** `docs/reviews/HEXAGONAL_ARCHITECTURE_REVIEW_V2.md`
 
 ---
 

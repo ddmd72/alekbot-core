@@ -29,7 +29,7 @@ This document MUST be updated when:
 - **Security Validation:** [../security_validation/README.md](../security_validation/README.md)
 - **IAM Service:** [../../08_concepts/user_management_complete_guide.md](../../08_concepts/user_management_complete_guide.md)
 - **Rich Content Protocol:** [../rich_content_protocol/README.md](../rich_content_protocol/README.md)
-- **HTML Card RFC:** [../../10_rfcs/HTML_CARD_PLAYWRIGHT_RFC.md](../../10_rfcs/HTML_CARD_PLAYWRIGHT_RFC.md)
+- **HTML Card RFC:** [../../10_rfcs/WIDGET_PLAYWRIGHT_RFC.md](../../10_rfcs/WIDGET_PLAYWRIGHT_RFC.md)
 
 ---
 

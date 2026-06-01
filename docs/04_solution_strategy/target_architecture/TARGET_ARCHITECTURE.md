@@ -24,7 +24,6 @@ This document MUST be updated when:
 - **Building Blocks Index:** [../../05_building_blocks/README.md](../../05_building_blocks/README.md)
 - **RFC Index:** [../../10_rfcs/README.md](../../10_rfcs/README.md)
 - **Decisions Index:** [../../09_decisions/README.md](../../09_decisions/README.md)
-- **Gap Tracker:** [../../\_project/migration/FEATURE_GAP_ANALYSIS.md](../../_project/migration/FEATURE_GAP_ANALYSIS.md)
 
 ---
 
@@ -124,7 +123,7 @@ The system is composed of 11 core building blocks, each documented in detail:
 ### 6.4 Platform Integration & External Services
 
 - **[Gmail Email Indexing](../../05_building_blocks/gmail_email_indexing/README.md)** — Passive inbox-as-memory pipeline (OAuth, indexing, classification, search)
-- **[Deep Research](../../05_building_blocks/deep_research/README.md)** — Provider-agnostic background research (Gemini polling / OpenAI webhook)
+- **[Deep Research](../../10_rfcs/DEEP_RESEARCH_RFC.md)** — Provider-agnostic background research (Claude Cloud Run Job / OpenAI webhook)
 - **[Slack Dual Mode](../../05_building_blocks/slack_dual_mode/README.md)** — Socket Mode (dev) + HTTP Events API (prod)
 - **[Telegram Integration](../../05_building_blocks/telegram_integration/README.md)** — Webhook adapter
 - **[Rich Content Protocol](../../05_building_blocks/rich_content_protocol/README.md)** — Structured response rendering
