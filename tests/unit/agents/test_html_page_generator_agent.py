@@ -64,14 +64,18 @@ def _make_execution_context(mock_llm) -> AgentExecutionContext:
 def _make_message(
     query: str = _QUERY,
     intent: AgentIntent = AgentIntent.DELEGATE,
+    extra_context: dict | None = None,
 ) -> AgentMessage:
+    ctx = {"user_id": "user123", "account_id": "acc1"}
+    if extra_context:
+        ctx.update(extra_context)
     return AgentMessage(
         intent=intent,
         payload={"query": query},
         sender="smart_response_agent",
         recipient="html_page_generator_agent",
         task_id="task_html_1",
-        context={"user_id": "user123", "account_id": "acc1"},
+        context=ctx,
     )
 
 
@@ -169,6 +173,18 @@ class TestExecuteSuccess:
     async def test_html_item_file_upload_false(self, agent):
         response = await agent.execute(_make_message())
         assert response.delivery_items[0].data["file_upload"] is False
+
+    async def test_storage_class_defaults_to_document(self, agent):
+        response = await agent.execute(_make_message())
+        assert response.delivery_items[0].data["storage_class"] == "document"
+
+    async def test_storage_class_propagated_from_context(self, agent):
+        # Daily email review puts storage_class="email_review" in the run context;
+        # it must ride through to the DeliveryItem so the funnel picks the prefix.
+        response = await agent.execute(
+            _make_message(extra_context={"storage_class": "email_review"})
+        )
+        assert response.delivery_items[0].data["storage_class"] == "email_review"
 
     async def test_content_b64_decodes_to_original_html(self, agent):
         response = await agent.execute(_make_message())

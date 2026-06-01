@@ -683,6 +683,9 @@ class WorkerHandler:
             thinking_effort="medium",
             task_complexity="deep_reasoning",
             email_for_triage=emails,
+            # Any HTML page the agent generates in this run is the email review →
+            # file it under email_review/ (gated, 5-day TTL).
+            storage_class="email_review",
             # 5xx on failure → Cloud Tasks retries the task; suppress in-process
             # agent retry so the two retry layers don't multiply.
             suppress_transient_retry=True,

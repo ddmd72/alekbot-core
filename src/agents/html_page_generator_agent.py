@@ -176,6 +176,9 @@ class HtmlPageGeneratorAgent(BaseAgent):
                         "content_type": "text/html; charset=utf-8",
                         "label": f"{display_name}.html",
                         "file_upload": False,
+                        # Propagated from the run context (e.g. daily email review →
+                        # "email_review") so the delivery funnel picks prefix/TTL/gating.
+                        "storage_class": message.context.get("storage_class", "document"),
                     },
                 ),
             ],
