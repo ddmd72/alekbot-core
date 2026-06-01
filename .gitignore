@@ -229,6 +229,8 @@ config/secrets/
 # Personal data exports and local-only script data (PII)
 scripts/memory/
 scripts/email/credentials.json
+# Local-only infra artifacts (lifecycle configs, UAT checklists) — not part of the repo
+scripts/infra/
 all_facts.txt
 all_facts_simple.txt
 legacy_facts.txt

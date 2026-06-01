@@ -65,4 +65,6 @@ services with only the GCS SDK mocked, and is mutation-verified to fail on a con
 (1) `serviceAccountTokenCreator` on the runtime SA (signBlob for keyless V4 signing),
 (2) remove `allUsers` from `alek-media-dev`, (3) lifecycle rules (email_review/ → 5d, else → 30d).
 Order matters: grant signBlob and deploy BEFORE removing `allUsers`, or `/f` links break.
-`alek-docs-dev/prod` (the public arc42 docs site) stay public by design.
+(The old `alek-docs-*` GCS buckets and the `alek-docs-dev` Cloud Run docs site were a dead
+MkDocs deployment — UI long removed, no uploads, unreferenced by code — and were deleted as part
+of this cleanup, not kept.)
