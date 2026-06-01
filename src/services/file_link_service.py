@@ -13,8 +13,15 @@ keys) and every delivery caller produces consistent links.
 """
 from __future__ import annotations
 
-from .file_access_token_service import FileAccessTokenService
+from typing import TYPE_CHECKING
+
+from ..domain.file_access import DEFAULT_FILE_LINK_TTL, EMAIL_REVIEW_FILE_LINK_TTL
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    # Type-only import (REQ-ARCH-22). The instance is injected via the constructor;
+    # the TTL policy comes from the domain, not from the token service.
+    from .file_access_token_service import FileAccessTokenService
 
 # Object-key prefix for the most sensitive artifact (daily email review).
 _EMAIL_REVIEW_PREFIX = "email_review/"
@@ -23,7 +30,7 @@ _EMAIL_REVIEW_PREFIX = "email_review/"
 class FileLinkService:
     """Build capability links for private stored objects."""
 
-    def __init__(self, token_service: FileAccessTokenService, base_url: str) -> None:
+    def __init__(self, token_service: "FileAccessTokenService", base_url: str) -> None:
         """
         Args:
             token_service: Mints the HS256 capability token.
@@ -49,11 +56,7 @@ class FileLinkService:
             "<base_url>/f/<token>"
         """
         gated = key.startswith(_EMAIL_REVIEW_PREFIX)
-        ttl = (
-            FileAccessTokenService.EMAIL_REVIEW_TTL
-            if gated
-            else FileAccessTokenService.DEFAULT_TTL
-        )
+        ttl = EMAIL_REVIEW_FILE_LINK_TTL if gated else DEFAULT_FILE_LINK_TTL
         token = self._tokens.mint(key=key, user_id=user_id, ttl_seconds=ttl, gated=gated)
         logger.info(
             "FileLinkService: link for '%s' (user=%s, gated=%s, ttl=%ds)",

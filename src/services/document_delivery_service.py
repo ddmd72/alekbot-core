@@ -11,11 +11,16 @@ DeliveryItem(type="document") — the unified document delivery type.
 See docs/10_rfcs/DOCUMENT_DELIVERY_RFC.md.
 """
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from ..ports.media_storage_port import MediaStoragePort
-from .file_link_service import FileLinkService
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    # Type-only import (REQ-ARCH-22: services must not import services at runtime).
+    # The concrete instance is injected via the constructor.
+    from .file_link_service import FileLinkService
 
 # storage_class → object-key prefix. email_review is gated + short TTL
 # (FileLinkService derives gating/TTL from the prefix).
@@ -40,7 +45,7 @@ class DeliveredDocument:
 class DocumentDeliveryService:
     """Stores document artifacts privately and returns a capability link."""
 
-    def __init__(self, storage: MediaStoragePort, link_service: FileLinkService) -> None:
+    def __init__(self, storage: MediaStoragePort, link_service: "FileLinkService") -> None:
         self._storage = storage
         self._links = link_service
 
