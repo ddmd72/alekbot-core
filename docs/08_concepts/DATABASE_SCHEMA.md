@@ -1,8 +1,19 @@
-# Firestore Collections (Production Audit)
+# Firestore Collections
 
-**Last Updated:** 2026-04-02
-**Status:** ✅ Production Validated
-**Version:** 3.6 (File Storage + Billing Snapshot + Event Dedup TTL)
+**Last Updated:** 2026-06-01
+schemas live in the code (the domain model named in each row), and the building-block maps go deeper for memory and the
+drive. This page says where to look, so it does not copy field lists that would drift.
+
+---
+
+
+## 1. Database and naming
+
+- **One named database, `us-production`.** `EnvironmentConfig.firestore_database_id` reads `FIRESTORE_DATABASE` and
+defaults to it. The `(default)` database is not used. Every Firestore client passes `database=` (scripts use
+`scripts/_firestore.py`), and an AST test enforces it.
+- **Name = `{prefix}{name}`.** The prefix comes from `APP_ENV` (`EnvironmentConfig.firestore_collection_prefix`):
+`development_` for development, `test_` for test, and empty for production.
 
 ---
 

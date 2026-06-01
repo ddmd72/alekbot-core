@@ -34,6 +34,22 @@ make deploy            # Deploy to prod
 
 Linter and formatter not yet configured (Milestone 4).
 
+## Branching & Environment
+
+- **Single live environment.** The separate prod deployment was retired (2026-05-31); the
+  `development_`-prefixed collections in the `us-production` database are the sole live data.
+  The prod-suffix path and the env-prefix mechanism are kept by decision (a future real prod
+  would reuse them) — collections are NOT renamed to drop the prefix (Firestore has no native
+  rename; migration not worth it). See
+  `docs/04_solution_strategy/decisions/collection_prefix_retained.md` and
+  `docs/04_solution_strategy/decisions/dead_prod_collections_deletion.md`.
+- **Default branch is `main`** (renamed from `develop` 2026-06-01; the old prod-tracking `main`
+  was deleted). One trunk.
+- **Branch discipline:** large or risky changes go on a feature branch off `main`, merged when
+  green. Small isolated changes can land on `main` directly — but every change keeps the
+  affected docs (this file, arc42 in `docs/`, decision records) in sync. Documentation drift is
+  the thing branch discipline exists to prevent.
+
 ## What and Why
 
 Exocortex — AI extension of memory and thinking via Slack/Telegram.
@@ -694,5 +710,7 @@ request/response files with `gsutil cat` before theorizing about LLM behavior.
 - Do not touch `archive/` — this is deprecated legacy code.
 - All PII or sensitive data exports (Firestore queries, user facts, analysis results) MUST be
   saved only to `scripts/memory/` (gitignored). Never save them to tracked directories.
-- Both dev and prod Firestore use the `us-production` named database. The `(default)` database
-  is not used. Always use `database="us-production"` (or rely on `FIRESTORE_DATABASE` env var).
+- Firestore uses the `us-production` named database (the `(default)` database is not used).
+  Always use `database="us-production"` (or rely on `FIRESTORE_DATABASE` env var). Live data is
+  in the `development_`-prefixed collections; the unprefixed prod collections were deleted
+  2026-05-31 (see Branching & Environment above).

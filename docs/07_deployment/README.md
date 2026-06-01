@@ -1,6 +1,9 @@
 # Deployment Documentation
 
-Quick reference for deploying and managing Alek-Core in production.
+Quick reference for deploying and managing Alek-Core.
+
+> First-time setup? See [`../../BOOTSTRAP.md`](../../BOOTSTRAP.md) for the full from-scratch runbook
+> (prerequisites, local env, Firestore indexes, deploy). This file is the operational reference.
 
 ---
 
@@ -12,12 +15,10 @@ Quick reference for deploying and managing Alek-Core in production.
 - **[KEEP_ALIVE_SETUP.md](KEEP_ALIVE_SETUP.md)** - Cloud Scheduler setup to prevent scale-to-zero ($0.10/month)
 - **[LOGGING.md](LOGGING.md)** - Structured logging setup, Cloud Logging queries for developer and AI agents
 
-### Coming Soon
+### Setup
 
-- Cloud Run deployment guide
-- Secret Manager setup
-- Firestore indexes migration
-- Monitoring and alerts setup
+- **[../../BOOTSTRAP.md](../../BOOTSTRAP.md)** — from-scratch deployment runbook (prerequisites,
+  local env, `.env`, Firestore indexes, Cloud Run deploy, verify)
 
 ---
 
@@ -45,11 +46,11 @@ export CLOUD_RUN_URL="https://your-service.run.app"
 ### Check Service Status
 
 ```bash
-# Cloud Run service
-gcloud run services describe alek-bot-prod --region=europe-west1
+# Cloud Run service (region: us-central1; service: alek-bot / alek-bot-dev)
+gcloud run services describe alek-bot --region=us-central1
 
 # Cloud Scheduler jobs
-gcloud scheduler jobs list --location=europe-west1
+gcloud scheduler jobs list --location=us-central1
 
 # Recent logs
 gcloud logging read 'resource.type=cloud_run_revision' --limit=50
