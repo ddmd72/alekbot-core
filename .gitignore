@@ -199,9 +199,8 @@ backups/
 .ai_startup_prompt.md
 ai_templates/
 
-# Claude local settings
-.claude/settings.local.json
-.claude/settings.json
+# Claude Code local workspace (settings, runtime locks, scheduled-task state)
+.claude/
 
 # Reports & debug outputs
 reports/
