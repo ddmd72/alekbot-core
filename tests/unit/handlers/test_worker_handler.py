@@ -1194,6 +1194,7 @@ class TestHandleDailyEmailReview:
             task_complexity="deep_reasoning",
             email_for_triage=emails,
             suppress_transient_retry=True,
+            storage_class="email_review",
         )
 
 

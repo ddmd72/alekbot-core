@@ -185,6 +185,7 @@ class UserNotificationService:
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
         suppress_transient_retry: bool = False,
+        storage_class: Optional[str] = None,
     ) -> NotifyResult:
         """
         Send a background notification to the user's channel.
@@ -267,6 +268,9 @@ class UserNotificationService:
                 **({"thinking_effort": thinking_effort} if thinking_effort else {}),
                 **({"task_complexity": task_complexity} if task_complexity else {}),
                 **({"email_for_triage": email_for_triage} if email_for_triage else {}),
+                # Propagated to any document the agent generates in this run, so the
+                # delivery funnel files it under the right prefix (gating + TTL).
+                **({"storage_class": storage_class} if storage_class else {}),
                 # Cloud-Task-backed delivery: outer queue retry covers transients,
                 # so the agent must not also retry in-process (avoids layer1 × layer2).
                 **({"suppress_transient_retry": True} if suppress_transient_retry else {}),
