@@ -1,8 +1,19 @@
-# Firestore Database Schema (Production Audit)
+# Firestore Database Schema
 
-**Last Updated:** 2026-04-02
-**Status:** ✅ Production Validated
-**Version:** 3.6 (File Storage + Billing Snapshot + Event Dedup TTL)
+**Last Updated:** 2026-06-01
+**Status:** ✅ Validated against live schema
+**Version:** 3.7 (single-environment consolidation)
+
+---
+
+> **⚠️ Environment status (2026-06-01).** The separate production deployment was retired and its
+> unprefixed prod collections were deleted (see
+> [`../04_solution_strategy/decisions/dead_prod_collections_deletion.md`](../04_solution_strategy/decisions/dead_prod_collections_deletion.md)).
+> There is now **one live environment**: the `development_`-prefixed collections in the
+> `us-production` database. The `{prefix}` mechanism and the empty-prefix "Prod Example" column
+> below describe the *retained mechanism*, not a second live environment — collections are kept
+> prefixed by decision ([`collection_prefix_retained.md`](../04_solution_strategy/decisions/collection_prefix_retained.md)),
+> not renamed.
 
 ---
 
