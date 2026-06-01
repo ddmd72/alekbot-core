@@ -523,9 +523,12 @@ PDF bytes to stdout, exits 0. No intermediate files — stdin → stdout pipelin
 
 **File:** `src/services/document_delivery_service.py`
 
-Stores document bytes to GCS via `MediaStoragePort`. Key format: `docs/{uuid4()}-{filename}`.
-Returns a signed URL or public GCS URL depending on bucket configuration. Used by
-`PdfGeneratorAgent` to persist both HTML and PDF before the delivery notification is sent.
+Stores document bytes to the **private** bucket via `MediaStoragePort`, then mints a capability
+link via `FileLinkService`. Key format: `{prefix}/{user_id}/{uuid4()}-{filename}` where prefix
+comes from `storage_class` (`docs` default, `email_review` for daily review). Returns
+`DeliveredDocument(link, key)` — `link` is `/f/<token>` for the channel, `key` goes to history for
+agent re-read (file_storage [§2.4](../file_storage/README.md)). Used by `PdfGeneratorAgent` to
+persist both HTML and PDF before the delivery notification is sent.
 
 This service is separate from `RichContentService` — it handles document storage only, with no
 rendering or platform-specific upload logic.
@@ -579,10 +582,10 @@ DeliveryItem("document")
 AgentWorkerHandler._deliver_document_result()
      │
      ▼
-DocumentDeliveryService  →  GCS public URL  (key: docs/{uuid}-{filename}.html)
-     │
+DocumentDeliveryService  →  PRIVATE GCS object (key: docs/{user_id}/{uuid}-{filename}.html)
+     │                       returns DeliveredDocument(link=/f/<token>, key)
      ▼
-UserNotificationService  →  Slack link message
+UserNotificationService  →  Slack link message (capability link; key saved to history)
 ```
 
 ### 11.2 HtmlPageGeneratorAgent
@@ -621,8 +624,9 @@ self-contained CSS and vanilla JS.
 
 **Delivery item returned on success:**
 
-1. HTML source — `content_type="text/html; charset=utf-8"`, `file_upload=False` → stored to GCS,
-   public URL sent as a link in Slack. No binary render step, no Slack file upload.
+1. HTML source — `content_type="text/html; charset=utf-8"`, `file_upload=False` → stored to the
+   **private** GCS bucket; a capability link (`/f/<token>`) is sent in Slack. No binary render
+   step, no Slack file upload. See file_storage [§2.4](../file_storage/README.md).
 
 **Prompt:** PromptBuilder profile `html_page`, blueprint `html_page_agent_v1`.
 Token: `COGNITIVE_PROCESS_HTML_PAGE` (category: `cognitive_process`, `non_overridable=true`).
@@ -709,19 +713,23 @@ content generation. Covers both `DocumentDeliveryService` and `RichContentServic
 
 ---
 
-#### ADR-4: GCS bucket IAM — anonymous list access removed
+#### ADR-4: GCS bucket is private — capability-token access (supersedes earlier public-ACL model)
 
-**Decision:** `alek-media-dev` bucket IAM changed from `allUsers: roles/storage.objectViewer`
-to `allUsers: roles/storage.legacyObjectReader`.
+**Decision (2026-06-01):** `alek-media-dev` is **private** — `allUsers` removed entirely. Delivered
+documents are reached only through `https://<host>/f/<token>`: a verified HS256 capability token
+→ a fresh 5-min V4 signed URL (IAM signBlob) → 302. Bare `storage.googleapis.com/...` paths
+return 403.
 
-**Rationale:** `objectViewer` grants `storage.objects.list` — any party knowing the bucket name
-could enumerate all objects and filenames. `legacyObjectReader` grants only `storage.objects.get`
-— direct URLs remain publicly accessible (required for Slack link delivery) but enumeration is
-blocked. Verified: anonymous `gsutil ls` → `401`; direct URL → `200`.
+**Supersedes** the earlier step (`objectViewer` → `legacyObjectReader`, which kept objects
+publicly readable to block only enumeration). That was security-by-obscurity on public objects;
+a leaked URL still worked forever. The capability-token model removes public read entirely and
+bounds link lifetime (30d default; 5d + Cabinet-cookie-gated for `email_review/`).
 
-**Search engine indexing risk:** Low. Googlebot requires an external link to discover pages;
-Slack channels are not indexed. `noindex` injection (ADR-3) provides defense in depth.
-No signed URLs used — files have no expiry. Acceptable for dev bucket given UUID-based paths.
+**Why noindex (ADR-3) still matters:** defense in depth for any link shared outside chat; harmless
+now that objects aren't publicly fetchable anyway.
+
+Full rationale + the user-vs-agent access split: file_storage [§2.4](../file_storage/README.md)
+and decision [private_file_storage_token_redirect.md](../../04_solution_strategy/decisions/private_file_storage_token_redirect.md).
 
 ---
 
