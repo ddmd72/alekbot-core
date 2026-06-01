@@ -31,6 +31,7 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..ports.media_storage_port import MediaStoragePort
+    from ..services.file_link_service import FileLinkService
 
 
 class AgentWorkerHandler:
@@ -54,12 +55,14 @@ class AgentWorkerHandler:
         media_storage: Optional[MediaStoragePort] = None,
         task_queue: Optional[TaskDispatchService] = None,
         doc_delivery_service: Optional[DocumentDeliveryService] = None,
+        link_service: Optional["FileLinkService"] = None,
     ) -> None:
         self._coordinator = coordinator
         self._notification = notification_service
         self._media_storage = media_storage
         self._task_queue = task_queue
         self._doc_delivery_service = doc_delivery_service
+        self._link_service = link_service
 
     async def handle_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -170,6 +173,7 @@ class AgentWorkerHandler:
             task_queue=self._task_queue,
             session_id=context.get("session_id", ""),
             media_storage=self._media_storage,
+            link_service=self._link_service,
             notification=self._notification,
             model=result.get("model", ""),
             total_tokens=result.get("total_tokens", 0),
@@ -231,7 +235,9 @@ class AgentWorkerHandler:
                 filename = item.data["filename"]
                 label = item.data.get("label", filename)
                 url = await self._doc_delivery_service.store(
-                    content, filename, item.data["content_type"]
+                    content, filename, item.data["content_type"],
+                    user_id=user_id,
+                    storage_class=item.data.get("storage_class", "document"),
                 )
                 await self._notification.notify_document_link(
                     user_id=user_id, account_id=account_id, url=url, label=label,

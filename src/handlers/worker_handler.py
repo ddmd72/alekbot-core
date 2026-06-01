@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from ..ports.indexed_email_repository import IndexedEmailRepository
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
+    from ..services.file_link_service import FileLinkService
 
 from ..domain.agent import AgentIntent, AgentMessage, AgentStatus
 from ..domain.complexity_settings import DEFAULT_COMPLEXITY_SETTINGS
@@ -90,6 +91,7 @@ class WorkerHandler:
         account_repo: "Optional[AccountRepository]" = None,
         billing_webhook: Any = None,  # SlackWebhookAdapter
         email_embedding_repair: Optional[EmailEmbeddingRepairService] = None,
+        link_service: "Optional[FileLinkService]" = None,
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -102,6 +104,7 @@ class WorkerHandler:
         self._task_dispatch = task_dispatch
         self._job_registry: Optional[ProviderRegistry] = job_registry
         self._media_storage = media_storage
+        self._link_service = link_service
         self._task_setup = task_setup
         self._task_indexing = task_indexing
         self._reminders_service = reminders_service
@@ -416,6 +419,7 @@ class WorkerHandler:
                 task_queue=self._task_dispatch,
                 session_id=session_id,
                 media_storage=self._media_storage,
+                link_service=self._link_service,
                 channel_id_override=origin_channel_id,
             )
 

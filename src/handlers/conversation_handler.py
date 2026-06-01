@@ -159,6 +159,7 @@ class ConversationHandler(ConversationHandlerPort):
         item: DeliveryItem,
         response_channel: ResponseChannel,
         thread_id: Optional[str],
+        user_id: str,
     ) -> None:
         """Dispatch a DeliveryItem to its appropriate handler."""
         if item.type == "html_gcs_link":
@@ -217,7 +218,9 @@ class ConversationHandler(ConversationHandlerPort):
                 filename = item.data["filename"]
                 label = item.data.get("label", filename)
                 url = await self._doc_delivery_service.store(
-                    content, filename, item.data["content_type"]
+                    content, filename, item.data["content_type"],
+                    user_id=user_id,
+                    storage_class=item.data.get("storage_class", "document"),
                 )
                 await response_channel.send_document_link(url=url, label=label, thread_id=thread_id)
                 if item.data.get("file_upload"):
@@ -702,7 +705,9 @@ class ConversationHandler(ConversationHandlerPort):
 
             # Dispatch typed delivery items (e.g. grounding attribution widget from WebSearchAgent).
             for item in response.delivery_items:
-                await self._deliver_item(item, response_channel, thread_id_for_reply)
+                await self._deliver_item(
+                    item, response_channel, thread_id_for_reply, user_id=context.user_id
+                )
 
             # Save to History — skip for bound channels (platform API is the session store)
             if mode.write_session:
