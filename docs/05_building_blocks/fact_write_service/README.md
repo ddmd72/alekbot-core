@@ -1,33 +1,5 @@
 # Fact Write Service (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the application service responsible for persisting new knowledge with automatic multi-vector generation and semantic deduplication.
-
-### When to Read
-
-- **For AI Agents:** Before modifying the fact creation pipeline or embedding generation logic.
-- **For Developers:** When troubleshooting missing facts, duplicate knowledge, or slow consolidation performance.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The multi-vector generation strategy (number or type of vectors) changes.
-- [ ] The semantic deduplication threshold is adjusted.
-- [ ] New fact types or metadata mapping logic is introduced.
-- [ ] The service's dependencies (Ports) are modified.
-
-### Cross-References
-
-- **Sliding Window Consolidation:** [../sliding_window_consolidation/README.md](../sliding_window_consolidation/README.md)
-- **Embedding System:** [../embedding_system/README.md](../embedding_system/README.md)
-- **Search Enrichment:** [../search_enrichment/README.md](../search_enrichment/README.md)
-
----
-
 ## 1. Overview
 
 The **Fact Write Service** is an Application Layer service that bridges the gap between domain reasoning and infrastructure persistence. It takes raw fact data synthesized by agents and transforms it into fully-indexed `FactEntity` objects ready for semantic search.

@@ -5,29 +5,6 @@
 **Updated:** 30.01.2026 (v6.0 revisions)
 **Version:** 2.0
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-Describes the business logic of the multi-agent system: how agents work together to process requests, learn, and synthesize knowledge.
-
-### When to Read
-- **For AI Agents:** When understanding agent workflows or delegation patterns.
-- **For Developers:** When designing new agents or debugging agent interactions.
-
-### When to Update
-This document MUST be updated when:
-- [ ] New agents are added to the system.
-- [ ] Agent communication patterns change.
-- [ ] Business rules for agent selection evolve.
-
-### Cross-References
-- **Multi-Agent System:** [../05_building_blocks/multi_agent_system/README.md](../05_building_blocks/multi_agent_system/README.md)
-- **Hybrid Router:** [../05_building_blocks/hybrid_router/README.md](../05_building_blocks/hybrid_router/README.md)
-- **Sliding Window Consolidation:** [../05_building_blocks/sliding_window_consolidation/README.md](../05_building_blocks/sliding_window_consolidation/README.md)
-- **Runtime View:** [../06_runtime/README.md](../06_runtime/README.md)
-
----
-
 ## 🏗️ System Architecture (v6.0)
 
 ### High-Level Flow

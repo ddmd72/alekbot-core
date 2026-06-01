@@ -1,38 +1,5 @@
 # Telegram Integration (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the Telegram adapter implementation, security model, and integration with the multi-agent system.
-
-### When to Read
-
-- **For AI Agents:** Before modifying Telegram-specific logic, formatting, or webhook handling.
-- **For Developers:** When troubleshooting Telegram message delivery, file handling, or IAM authorization.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] Telegram webhook security model changes.
-- [ ] New Telegram-specific features are added (e.g., inline keyboards, voice messages).
-- [ ] Formatting logic (MarkdownV2) is modified.
-- [ ] File translation logic for Telegram changes.
-- [ ] `TelegramMediaAdapter` upload methods change.
-- [ ] `TelegramAdapterFactory` composition changes.
-
-### Cross-References
-
-- **Context:** [../../03_context/README.md](../../03_context/README.md)
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-- **Security Validation:** [../security_validation/README.md](../security_validation/README.md)
-- **IAM Service:** [../../08_concepts/user_management_complete_guide.md](../../08_concepts/user_management_complete_guide.md)
-- **Rich Content Protocol:** [../rich_content_protocol/README.md](../rich_content_protocol/README.md)
-- **HTML Card RFC:** [../../10_rfcs/WIDGET_PLAYWRIGHT_RFC.md](../../10_rfcs/WIDGET_PLAYWRIGHT_RFC.md)
-
----
-
 ## 1. Overview
 
 The Telegram Integration provides a production-ready adapter for the Telegram Bot API, following Hexagonal Architecture principles. It allows users to interact with Alek-Core via Telegram while maintaining strict isolation from the core business logic.

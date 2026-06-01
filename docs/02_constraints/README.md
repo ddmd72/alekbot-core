@@ -1,34 +1,5 @@
 # 02 Constraints
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Captures technical, organizational, and regulatory constraints that shape the architecture.
-
-### When to Read
-
-- **For AI Agents:** Before proposing solutions that affect infrastructure or compliance.
-- **For Developers:** When adding dependencies, services, or platform integrations.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] New infrastructure limitations appear (e.g., provider limits).
-- [ ] Runtime/platform versions change (Python, SDKs).
-- [ ] Security/compliance requirements change.
-- [ ] Budget constraints change.
-- [ ] Team structure changes.
-
-### Cross-References
-
-- **Introduction:** [../01_introduction/README.md](../01_introduction/README.md)
-- **Solution Strategy:** [../04_solution_strategy/README.md](../04_solution_strategy/README.md)
-- **Deployment:** [../07_deployment/README.md](../07_deployment/README.md)
-
----
-
 ## 1. Technical Constraints
 
 ### 1.1 Programming Language & Runtime

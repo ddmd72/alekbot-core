@@ -1,38 +1,5 @@
 # Multi-Agent System (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the Actor Model-based multi-agent architecture, agent coordination patterns, and resilience mechanisms.
-
-### When to Read
-
-- **For AI Agents:** Before changing agent coordination, routing logic, or ACP semantics.
-- **For Developers:** When adding new agents, modifying message flow, or tuning circuit breakers/retries.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] `AgentCoordinator` routing logic changes.
-- [ ] `AgentMessage` or `AgentResponse` schemas are modified.
-- [ ] New core or infrastructure agents are introduced.
-- [ ] Resilience rules (circuit breaker, retry) are adjusted.
-- [ ] Agent lifecycle management in `UserAgentFactory` changes.
-- [ ] `AgentResponse.history_context` or session history persistence logic changes in `ConversationHandler`.
-- [ ] A new `DeliveryItem` type is added or an existing data contract changes.
-
-### Cross-References
-
-- **Target Architecture:** [../../04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md](../../04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md)
-- **Hybrid Router:** [../hybrid_router/README.md](../hybrid_router/README.md)
-- **Agent Registry (ACP v2):** [../agent_registry/README.md](../agent_registry/README.md)
-- **Prompt Design System v3:** [../prompt_design_system_v3/README.md](../prompt_design_system_v3/README.md)
-- **Sliding Window Consolidation:** [../sliding_window_consolidation/README.md](../sliding_window_consolidation/README.md)
-
----
-
 ## 1. Overview
 
 Alek-Core uses a **Multi-Agent System (MAS)** based on the **Actor Model** to handle complex reasoning and specialized tasks. Instead of a monolithic orchestrator, the system consists of independent, specialized agents that communicate via a unified protocol.

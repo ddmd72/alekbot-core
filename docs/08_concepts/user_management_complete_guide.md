@@ -1,22 +1,5 @@
 # User Management System: Complete Guide
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Comprehensive implementation reference for the User Management System, covering Invite Codes, User Cabinet, and Admin Panel. Includes full code examples, API contracts, and testing strategies.
-
-### Audience
-
-- **Developers:** Implementing or maintaining user management features.
-- **AI Agents:** Understanding the codebase structure for modifications.
-
-### Cross-References
-
-- **Building Block:** [../05_building_blocks/user_management_system/README.md](../05_building_blocks/user_management_system/README.md)
-
----
-
 ## 1. Quick Start
 
 ### 1.1 Self-Link Flow (Connect Platform)

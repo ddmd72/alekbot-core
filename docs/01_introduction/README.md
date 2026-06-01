@@ -1,34 +1,5 @@
 # 01 Introduction
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Defines the system overview, goals, stakeholders, quality attributes, and core terminology for Alek-Core.
-
-### When to Read
-
-- **For AI Agents:** First step after Tier 1 initialization to understand project purpose and scope.
-- **For New Developers:** Onboarding - understand what Alek-Core is and why it exists.
-- **For Product Owners:** Business context and quality goals.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The project goals or product vision change.
-- [ ] New stakeholder groups are identified.
-- [ ] Quality goals are added or reprioritized.
-- [ ] Core terminology changes or new terms are introduced.
-
-### Cross-References
-
-- **Solution Strategy:** [../04_solution_strategy/README.md](../04_solution_strategy/README.md)
-- **Building Blocks:** [../05_building_blocks/README.md](../05_building_blocks/README.md)
-- **Roadmap:** [../12_risks/IMPLEMENTATION_ROADMAP.md](../12_risks/IMPLEMENTATION_ROADMAP.md)
-
----
-
 ## 1. Purpose and Goals
 
 ### 1.1 What is Alek-Core?

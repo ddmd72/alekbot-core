@@ -1,34 +1,5 @@
 # OAuth Multi-Tenant (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the multi-tenant architecture, OAuth authentication flows, and identity management system.
-
-### When to Read
-
-- **For AI Agents:** Before modifying authentication logic, IAM policies, or user/account repositories.
-- **For Developers:** When troubleshooting login issues, platform linking, or data isolation bugs.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The OAuth provider (Firebase/Google) or OIDC flow changes.
-- [ ] The IAM role model (OWNER, MEMBER, VIEWER) is modified.
-- [ ] The "Master Account First" registration logic changes.
-- [ ] New platform identity linking logic is introduced.
-- [ ] Storage schema for users or accounts is restructured.
-
-### Cross-References
-
-- **Context:** [../../03_context/README.md](../../03_context/README.md)
-- **User Management Guide:** [../../08_concepts/user_management_complete_guide.md](../../08_concepts/user_management_complete_guide.md)
-- **Security Validation:** [../security_validation/README.md](../security_validation/README.md)
-
----
-
 ## 1. Overview
 
 Alek-Core is a **Multi-Tenant Bot-as-a-Service** platform. It supports multiple isolated accounts (tenants), each containing one or more users. Authentication is handled via Google OAuth 2.0, and authorization is centralized in the `IAMService`.

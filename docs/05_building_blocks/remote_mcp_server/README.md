@@ -1,47 +1,5 @@
 # Remote MCP Server (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the **remote MCP server** that exposes alekbot's memory search as a Model Context
-Protocol tool over HTTPS, so claude.ai (and any other MCP-aware client) can add it as a
-Custom Connector and call `get_user_context` during conversations.
-
-This is the **inverse direction** of [`mcp_infrastructure/`](../mcp_infrastructure/README.md):
-that block describes alekbot acting as an MCP *client* (talking to Google Maps); this block
-describes alekbot acting as an MCP *server* (claude.ai talks to us).
-
-### When to Read
-
-- **For AI Agents:** Before touching anything under `src/*/mcp*` except `adapters/mcp/`.
-- **For Developers:** When changing OAuth flow, adding new MCP tools, or debugging
-  auth/routing issues on `/mcp*` endpoints.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] A new tool is exposed on the FastMCP instance (anything besides `get_user_context`).
-- [ ] OAuth scopes change beyond `user_context`.
-- [ ] Firestore collection schemas for MCP entities change.
-- [ ] ASGI routing at the top of `main.py` changes (`parent_asgi`, path allowlist).
-- [ ] The MCP SDK version is bumped (pinned at `mcp==1.27.*`).
-- [ ] The consent page UI or auth flow is modified.
-
-### Cross-References
-
-- **RFC:** [../../10_rfcs/REMOTE_MCP_SERVER_RFC.md](../../10_rfcs/REMOTE_MCP_SERVER_RFC.md)
-  — design rationale, all the "why" questions
-- **Search Enrichment:** [../search_enrichment/README.md](../search_enrichment/README.md)
-  — the actual RRF implementation the tool calls
-- **OAuth Multi-Tenant:** [../oauth_multi_tenant/README.md](../oauth_multi_tenant/README.md)
-  — how Cabinet JWT cookies are minted (consent page relies on them)
-- **MCP Infrastructure:** [../mcp_infrastructure/README.md](../mcp_infrastructure/README.md)
-  — the *inverse* direction (alekbot as MCP client)
-
----
-
 ## 1. Overview
 
 ### What it does

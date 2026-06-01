@@ -1,34 +1,5 @@
 # User Management System (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the system for managing user identities, billing accounts, platform linking, and invite-based onboarding.
-
-### When to Read
-
-- **For AI Agents:** Before modifying user registration, account creation, or platform linking logic.
-- **For Developers:** When troubleshooting onboarding issues, invite code validation, or IAM role assignments.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The user registration flow (OAuth callback) changes.
-- [ ] The invite code system (types, validation) is modified.
-- [ ] The platform linking logic (Slack/Telegram) is updated.
-- [ ] The relationship between `UserProfile` and `BillingAccount` changes.
-- [ ] New onboarding requirements or whitelist logic are introduced.
-
-### Cross-References
-
-- **OAuth Multi-Tenant:** [../oauth_multi_tenant/README.md](../oauth_multi_tenant/README.md)
-- **IAM Service:** [../../08_concepts/user_management_complete_guide.md](../../08_concepts/user_management_complete_guide.md)
-- **Context:** [../../03_context/README.md](../../03_context/README.md)
-
----
-
 ## 1. Overview
 
 The **User Management System** handles the entire lifecycle of an Alek-Core user, from initial registration via Google OAuth to linking multiple messaging platforms and managing team access. It ensures that every user is correctly mapped to a billing account and has the appropriate permissions.

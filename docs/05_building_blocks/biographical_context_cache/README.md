@@ -1,34 +1,5 @@
 # Biographical Context Cache (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the high-speed caching system for user-specific biographical facts and guiding principles.
-
-### When to Read
-
-- **For AI Agents:** Before modifying cache refresh logic, priority classification, or context formatting.
-- **For Developers:** When troubleshooting stale context, missing principles, or slow prompt assembly.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] The cache storage mechanism (Firestore collection) changes.
-- [ ] The 3-level configuration resolution for limits is modified.
-- [ ] The logic for separating facts and principles changes.
-- [ ] The cache refresh trigger (e.g., after consolidation) is updated.
-- [ ] The priority-rank ordering or domain-first strategy changes.
-
-### Cross-References
-
-- **Search Enrichment:** [../search_enrichment/README.md](../search_enrichment/README.md)
-- **Sliding Window Consolidation:** [../sliding_window_consolidation/README.md](../sliding_window_consolidation/README.md)
-- **Prompt Design System v3:** [../prompt_design_system_v3/README.md](../prompt_design_system_v3/README.md)
-
----
-
 ## 1. Overview
 
 The **Biographical Context Cache** provides agents with instant access to a user's most important personal information and behavioral anchors. It eliminates the need for expensive vector searches during every prompt assembly by maintaining a pre-ranked, deduplicated set of facts in a high-speed storage layer.

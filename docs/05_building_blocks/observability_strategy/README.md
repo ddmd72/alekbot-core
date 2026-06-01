@@ -1,27 +1,5 @@
 # Observability Strategy (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-Describe logging, tracing, and event deduplication needed for reliable diagnosis in production.
-
-### When to Read
-- **For AI Agents:** Before changing logging formats, trace propagation, or deduplication.
-- **For Developers:** When debugging production issues or tuning telemetry output.
-
-### When to Update
-This document MUST be updated when:
-- [ ] Logging format or context fields change.
-- [ ] Trace spans or telemetry initialization changes.
-- [ ] Deduplication storage/TTL changes.
-
-### Cross-References
-- **Logging guide:** [../../07_deployment/LOGGING.md](../../07_deployment/LOGGING.md)
-- **Slack Dual Mode:** [../slack_dual_mode/README.md](../slack_dual_mode/README.md)
-- **Agent Logging (lifecycle hooks + debug bucket):** [../agent_logging/README.md](../agent_logging/README.md)
-
----
-
 ## 1. Overview
 Observability is built on three layers:
 1. Human-readable logs (primary for operators).

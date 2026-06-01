@@ -1,53 +1,5 @@
 # Document Generation (Building Block)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the pipelines for generating professional documents and web pages from natural language
-requests:
-
-- **DOCX pipeline:** DocPlannerAgent (layout planning) → DocGeneratorAgent (Node.js `docx` npm code generation) → async delivery via Slack.
-- **PDF pipeline:** PdfGeneratorAgent (single LLM call: natural language → HTML+CSS + Puppeteer rendering) → GCS storage + async delivery via Slack.
-- **HTML page pipeline:** HtmlPageGeneratorAgent (single LLM call: natural language → HTML+CSS+JS) → GCS public URL delivered as Slack link.
-
-### When to Read
-
-- **For AI Agents:** Before modifying document generation logic, adding new document types, or
-  changing the async delivery path.
-- **For Developers:** When extending the runner adapter (e.g., Cloud Function), changing the spec
-  format, or troubleshooting Slack file delivery.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] DocPlannerAgent or DocGeneratorAgent execution logic changes.
-- [ ] `DocxRunnerPort` interface or `NodeDocxRunner` implementation changes.
-- [ ] The JSON layout spec schema changes.
-- [ ] A new `DocxRunnerPort` implementation is added (Cloud Function, etc.).
-- [ ] `AgentWorkerHandler._deliver_docx_result()` delivery path changes.
-- [ ] `UserNotificationService.notify_file_bytes()` channel resolution logic changes.
-- [ ] PdfGeneratorAgent execution logic changes (single-LLM-call pipeline).
-- [ ] `PuppeteerRunnerPort` interface or `NodePuppeteerRunner` implementation changes.
-- [ ] `DocumentDeliveryService` GCS storage logic or key format changes.
-- [ ] `pdf_generator/runner.js` stdin/stdout contract changes.
-- [ ] HtmlPageGeneratorAgent execution logic changes.
-- [ ] `COGNITIVE_PROCESS_HTML_PAGE` token rules change (output contract, mobile-first, CDN allowlist, OG tags).
-- [ ] `GcsMediaAdapter._inject_noindex()` logic or scope changes.
-- [ ] GCS bucket IAM policy changes (affects public URL accessibility).
-- [ ] `ImageSearchPort` interface changes or `UnsplashAdapter` implementation changes.
-- [ ] `_resolve_unsplash_placeholders()` logic changes (URL parsing, dimension handling, attribution).
-- [ ] `UNSPLASH_ACCESS_KEY` secret lifecycle changes (rotation, scope).
-
-### Cross-References
-
-- **Multi-Agent System:** [../multi_agent_system/README.md](../multi_agent_system/README.md)
-- **Agent Registry (ACP v2):** [../agent_registry/README.md](../agent_registry/README.md)
-- **New Agent Playbook:** [../../how_to/NEW_AGENT_PLAYBOOK.md](../../how_to/NEW_AGENT_PLAYBOOK.md)
-
----
-
 ## 1. Overview
 
 Document generation converts a natural language request ("Write a sales proposal for Acme Corp")

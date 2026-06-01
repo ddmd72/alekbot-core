@@ -1,32 +1,5 @@
 # 06 Runtime View
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-Describes runtime behavior: message flow, agent coordination, session lifecycle, and consolidation process.
-
-### When to Read
-- **For AI Agents:** Before changing runtime orchestration or agent flows.
-- **For Developers:** When debugging message processing or session lifecycle.
-
-### When to Update
-This document MUST be updated when:
-- [ ] The message flow changes.
-- [ ] Agent coordination logic changes.
-- [ ] Session lifecycle rules are updated.
-- [ ] New agents are added or removed from the coordination flow.
-
-### Cross-References
-- **Building Blocks:**
-  - [Multi-Agent System](../05_building_blocks/multi_agent_system/README.md)
-  - [Hybrid Router](../05_building_blocks/hybrid_router/README.md)
-  - [Sliding Window Consolidation](../05_building_blocks/sliding_window_consolidation/README.md)
-  - [Session Lifecycle (Sliding Window)](../05_building_blocks/sliding_window_consolidation/README.md#session-lifecycle)
-- **Target Architecture:** [../04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md](../04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md)
-- **Agent Communication Protocol:** [../05_building_blocks/multi_agent_system/README.md](../05_building_blocks/multi_agent_system/README.md)
-
----
-
 ## 📂 Contents
 
 1. [Message Processing Flow](#1-message-processing-flow-v60)

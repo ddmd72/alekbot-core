@@ -1,26 +1,5 @@
 # ADR-004: Agent Handoff Pattern for Web Search
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-Documents the architectural decision to implement web search via Agent Handoff pattern instead of direct tool integration.
-
-### When to Read
-- **For AI Agents:** When modifying web search behavior or adding new search sources.
-- **For Developers:** When understanding why WebSearchAgent is a separate agent, not a tool.
-
-### When to Update
-This document MUST be updated when:
-- [ ] The Agent Handoff pattern changes fundamentally.
-- [ ] WebSearchAgent is replaced with a different architecture.
-- [ ] New search agents are added using this pattern.
-
-### Cross-References
-- **Implementation:** `src/agents/web_search_agent.py`
-- **Multi-Agent System:** [../../05_building_blocks/multi_agent_system/README.md](../../05_building_blocks/multi_agent_system/README.md)
-
----
-
 ## Status
 
 **Accepted** | **Date:** 2026-01-16 (RFC) | **Implemented:** 2026-01-23

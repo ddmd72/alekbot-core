@@ -45,28 +45,6 @@ export FIRESTORE_DATABASE=us-production
 
 ---
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Canonical reference for Firestore collections, document structures, and indexes.  
-**Generated from code audit:** Includes exact attribute names, types, and logic.
-
-### When to Update
-
-- [ ] New collection added via `src/config/environment.py`
-- [ ] Domain model changes (`src/domain/*.py`)
-- [ ] Adapter logic changes (`src/adapters/*.py`)
-- [ ] Index configuration update (`config/firestore.indexes.json`)
-
-### Cross-References
-
-- **OAuth Architecture:** [../05_building_blocks/oauth_multi_tenant/README.md](../05_building_blocks/oauth_multi_tenant/README.md)
-- **Prompt System:** [../05_building_blocks/prompt_design_system_v3/README.md](../05_building_blocks/prompt_design_system_v3/README.md)
-- **Environment Config:** `src/config/environment.py`
-
----
-
 ## 1. Environment Strategy (ADR-006: Semantic Separation)
 
 ### 1.1 Collection Naming Rules

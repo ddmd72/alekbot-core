@@ -1,29 +1,6 @@
 # LLM Agent Best Practices
 **Subtitle:** Principles for building a provider-invariant and efficient AI agent
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-Critical practices for building production-ready LLM agents: security, cost control, reliability, and observability.
-
-### When to Read
-- **For AI Agents:** Before implementing new agents or tools.
-- **For Developers:** When adding agent features or debugging production issues.
-
-### When to Update
-This document MUST be updated when:
-- [ ] New best practices are identified from production incidents.
-- [ ] Security vulnerabilities are discovered and mitigated.
-- [ ] Cost optimization patterns change.
-
-### Cross-References
-- **Multi-Agent System:** [../05_building_blocks/multi_agent_system/README.md](../05_building_blocks/multi_agent_system/README.md)
-- **Provider Resolution:** [../05_building_blocks/provider_resolution/README.md](../05_building_blocks/provider_resolution/README.md)
-- **Observability Strategy:** [../05_building_blocks/observability_strategy/README.md](../05_building_blocks/observability_strategy/README.md)
-- **Fractal Architecture:** [./fractal_architecture.md](./fractal_architecture.md)
-
----
-
 ## 🎯 Goal
 
 This document contains 10 critically important practices for building a production-ready LLM agent that is:

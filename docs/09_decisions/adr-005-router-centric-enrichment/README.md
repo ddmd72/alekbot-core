@@ -1,31 +1,5 @@
 # ADR-005: Router-Centric Enrichment Pattern
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-Documents the architectural decision to centralize memory enrichment in RouterAgent via SearchEnrichmentService.
-
-### When to Read
-- **For AI Agents:** When modifying search enrichment, routing logic, or context injection.
-- **For Developers:** When understanding why enrichment is router-owned, not agent-owned.
-
-### When to Update
-This document MUST be updated when:
-- [ ] Enrichment pipeline changes (merge weights, dedup rules).
-- [ ] SearchEnrichmentService responsibilities change.
-- [ ] Router integration point changes.
-
-### Cross-References
-- **Original RFCs:** 
-  - [ADAPTIVE_ROUTING_CACHE_RFC.md](../../10_rfcs/ADAPTIVE_ROUTING_CACHE_RFC.md)
-  - [NATIVE_TOOLS_INTEGRATION_RFC.md](../../10_rfcs/NATIVE_TOOLS_INTEGRATION_RFC.md)
-- **Implementation:** 
-  - `../../../src/services/search_enrichment_service.py`
-  - `../../../src/agents/core/router_agent.py`
-- **Building Block:** [../../05_building_blocks/search_enrichment/README.md](../../05_building_blocks/search_enrichment/README.md)
-
----
-
 ## Status
 
 **Accepted & Implemented** | **Date:** 2026-01-27 | **Production:** 2026-01-30

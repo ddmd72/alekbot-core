@@ -2,28 +2,6 @@
 
 **Also known as:** Recursive Hexagonal, Agent-as-Adapter Pattern
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-Explains the Fractal Architecture pattern: how adapters can themselves be agents, creating recursive hexagonal structures.
-
-### When to Read
-- **For AI Agents:** When designing new tools or specialist agents.
-- **For Developers:** When deciding between simple, hybrid, or full hexagonal tool implementations.
-
-### When to Update
-This document MUST be updated when:
-- [ ] New tool complexity levels are identified.
-- [ ] Resilience patterns change (circuit breaker, retry logic).
-- [ ] Self-recursion capabilities are added or modified.
-
-### Cross-References
-- **Multi-Agent System:** [../05_building_blocks/multi_agent_system/README.md](../05_building_blocks/multi_agent_system/README.md)
-- **Target Architecture:** [../04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md](../04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md#8-fractal-architecture-pattern-recursive-hexagonal)
-- **Agent Best Practices:** [./agent_best_practices.md](./agent_best_practices.md)
-
----
-
 ## 📖 Philosophy
 
 Fractal Architecture is an extension of Hexagonal Architecture where Output Adapters are themselves agents, creating a recursive structure.

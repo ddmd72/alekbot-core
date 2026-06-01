@@ -3,33 +3,6 @@
 **Status:** Adopted Standard | **Last Updated:** 2026-02-25
 **Target Audience:** AI Developers & Future AI Sessions
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Explains the Groovy DSL pattern for prompt engineering: treating prompts as code for better LLM adherence.
-
-### When to Read
-
-- **For AI Agents:** When creating or modifying prompt tokens or blueprints.
-- **For Developers:** When designing agent prompts or debugging LLM behavior.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] Groovy DSL syntax conventions evolve.
-- [ ] New prompt patterns are discovered.
-- [ ] Better practices for LLM instruction clarity emerge.
-
-### Cross-References
-
-- **Prompt Design System v3:** [../05_building_blocks/prompt_design_system_v3/README.md](../05_building_blocks/prompt_design_system_v3/README.md)
-- **Prompt Assembly Guide:** [./prompt_assembly_guide.md](./prompt_assembly_guide.md)
-- **Implementation:** `src/services/prompt_v3/prompt_assembly_service.py`
-
----
-
 ## 1. The Core Philosophy
 
 Modern LLMs (Gemini 2.0, GPT-4, Claude) are heavily trained on code. They understand **syntax, inheritance, strict typing, and logical flow** better than they understand loose natural language instructions.

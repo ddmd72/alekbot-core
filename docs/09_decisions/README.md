@@ -1,26 +1,5 @@
 # 09 Decisions (ADRs)
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-Tracks architecture decisions (ADRs) and their rationale.
-
-### When to Read
-- **For AI Agents:** Before proposing changes that impact architecture.
-- **For Developers:** When reasoning about why a design exists.
-
-### When to Update
-This document MUST be updated when:
-- [ ] A new ADR is added.
-- [ ] An ADR is superseded or deprecated.
-- [ ] Decision references change.
-
-### Cross-References
-- **RFC Index:** [../10_rfcs/README.md](../10_rfcs/README.md)
-- **Building Blocks:** [../05_building_blocks/README.md](../05_building_blocks/README.md)
-
----
-
 ## 📂 Contents
 
 | ADR | Title | Status | Date | Related Building Blocks |

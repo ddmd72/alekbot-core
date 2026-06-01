@@ -1,34 +1,5 @@
 # 03 Context
 
-## 📖 HowTo: Using This Document
-
-### Purpose
-
-Describes the system context, external integrations, and architectural boundaries (ports/adapters) of Alek-Core.
-
-### When to Read
-
-- **For AI Agents:** Before implementing new integrations or modifying external API interactions.
-- **For Developers:** When adding or changing ports/adapters to understand the system's boundaries.
-- **For Architects:** To understand the high-level interaction between Alek-Core and the outside world.
-
-### When to Update
-
-This document MUST be updated when:
-
-- [ ] A new external integration is introduced (e.g., Discord, WhatsApp).
-- [ ] A new port or adapter is added to the system.
-- [ ] The role of an existing external system changes.
-- [ ] The authentication or authorization flow with external systems is modified.
-
-### Cross-References
-
-- **Introduction:** [../01_introduction/README.md](../01_introduction/README.md)
-- **Solution Strategy:** [../04_solution_strategy/README.md](../04_solution_strategy/README.md)
-- **Building Blocks:** [../05_building_blocks/README.md](../05_building_blocks/README.md)
-
----
-
 ## 1. System Context Diagram
 
 Alek-Core sits at the center of a user's digital knowledge ecosystem, connecting messaging platforms with advanced AI reasoning and persistent memory.
