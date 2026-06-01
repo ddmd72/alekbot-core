@@ -47,3 +47,23 @@ class MediaStoragePort(ABC):
         Returns:
             Raw object bytes.
         """
+
+    @abstractmethod
+    async def generate_signed_url(self, key: str, ttl_seconds: int) -> str:
+        """
+        Mint a short-lived GCS V4 signed URL for direct browser download.
+
+        Used by the /f/<token> route AFTER token verification: the route mints a
+        fresh signed URL on each click and 302-redirects to it, so the private
+        object is reachable only through a freshly-signed, short-lived URL.
+
+        On Cloud Run there is no SA key file — implementations sign via IAM
+        (signBlob, requires roles/iam.serviceAccountTokenCreator).
+
+        Args:
+            key:         Object key as returned by store().
+            ttl_seconds: Signed-URL lifetime (e.g. 300 = 5 min).
+
+        Returns:
+            Time-limited HTTPS URL to the object.
+        """

@@ -41,13 +41,23 @@ class TestMediaStoragePortContract:
     def test_fetch_is_async(self):
         assert inspect.iscoroutinefunction(MediaStoragePort.fetch)
 
+    def test_has_generate_signed_url(self):
+        assert getattr(MediaStoragePort.generate_signed_url, "__isabstractmethod__", False)
+
+    def test_generate_signed_url_is_async(self):
+        assert inspect.iscoroutinefunction(MediaStoragePort.generate_signed_url)
+
+    def test_generate_signed_url_signature(self):
+        sig = inspect.signature(MediaStoragePort.generate_signed_url)
+        assert list(sig.parameters.keys()) == ["self", "key", "ttl_seconds"]
+
     def test_all_abstract_methods_count(self):
         abstract_methods = {
             name for name, method in inspect.getmembers(MediaStoragePort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        # store (write) + fetch (server-side read for agent re-fetch)
-        assert len(abstract_methods) == 2, f"Expected 2 abstract methods, got {abstract_methods}"
+        # store (write) + fetch (server-side read) + generate_signed_url (/f route)
+        assert len(abstract_methods) == 3, f"Expected 3 abstract methods, got {abstract_methods}"
 
     def test_store_signature(self):
         sig = inspect.signature(MediaStoragePort.store)

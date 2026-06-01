@@ -86,6 +86,44 @@ class TestFetch:
         blob.download_as_bytes.assert_called_once()
 
 
+class TestSignedUrl:
+
+    @pytest.mark.asyncio
+    async def test_generate_signed_url_v4_get(self, adapter):
+        ctx, blob = _patch_client()
+        blob.generate_signed_url.return_value = "https://signed.example/key?sig=x"
+        with ctx:
+            url = await adapter.generate_signed_url("docs/x.pdf", 300)
+        assert url == "https://signed.example/key?sig=x"
+        kwargs = blob.generate_signed_url.call_args.kwargs
+        assert kwargs["version"] == "v4"
+        assert kwargs["method"] == "GET"
+        # ttl carried as a timedelta of the requested seconds
+        assert kwargs["expiration"].total_seconds() == 300
+
+    @pytest.mark.asyncio
+    async def test_signing_uses_iam_when_sa_email_set(self):
+        adapter = GcsMediaAdapter(bucket_name="b", service_account_email="sa@proj.iam")
+        ctx, blob = _patch_client()
+        blob.generate_signed_url.return_value = "https://signed"
+        with ctx, patch("google.auth.default", return_value=(MagicMock(token="tok"), "proj")):
+            await adapter.generate_signed_url("docs/x.pdf", 300)
+        kwargs = blob.generate_signed_url.call_args.kwargs
+        # IAM signBlob path: SA email + access token passed for keyless signing.
+        assert kwargs["service_account_email"] == "sa@proj.iam"
+        assert kwargs["access_token"] == "tok"
+
+    @pytest.mark.asyncio
+    async def test_signing_without_sa_email_omits_iam_kwargs(self, adapter):
+        ctx, blob = _patch_client()
+        blob.generate_signed_url.return_value = "https://signed"
+        with ctx:
+            await adapter.generate_signed_url("docs/x.pdf", 300)
+        kwargs = blob.generate_signed_url.call_args.kwargs
+        assert "service_account_email" not in kwargs
+        assert "access_token" not in kwargs
+
+
 class TestNoindexHelper:
 
     def test_injects_after_head(self):
