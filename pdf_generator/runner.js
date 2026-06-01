@@ -15,6 +15,41 @@
 
 const puppeteer = require('puppeteer');
 
+// --- SSRF guard -------------------------------------------------------------
+// The HTML is LLM-generated and therefore untrusted. A crafted document could
+// reference internal endpoints (e.g. the GCP metadata server at 169.254.169.254
+// → service-account token) via sub-resources. Block requests to loopback,
+// link-local, private and metadata hosts, and any non-HTTP(S) scheme.
+function isBlockedHost(hostname) {
+    if (!hostname) return true;
+    const h = hostname.toLowerCase().replace(/^\[|\]$/g, ''); // strip IPv6 brackets
+    if (
+        h === 'localhost' ||
+        h.endsWith('.localhost') ||
+        h.endsWith('.local') ||
+        h.endsWith('.internal') ||
+        h === 'metadata' ||
+        h === 'metadata.google.internal'
+    ) {
+        return true;
+    }
+    const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (m) {
+        const a = parseInt(m[1], 10);
+        const b = parseInt(m[2], 10);
+        if (a === 127 || a === 10 || a === 0) return true;
+        if (a === 169 && b === 254) return true; // link-local incl. metadata
+        if (a === 172 && b >= 16 && b <= 31) return true;
+        if (a === 192 && b === 168) return true;
+        if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    }
+    if (h === '::1' || h === '::' || h.startsWith('fe80:') ||
+        h.startsWith('fc') || h.startsWith('fd')) {
+        return true;
+    }
+    return false;
+}
+
 async function main() {
     let html = '';
     for await (const chunk of process.stdin) {
@@ -36,6 +71,39 @@ async function main() {
 
     try {
         const page = await browser.newPage();
+
+        // PDF rendering needs only HTML+CSS — disable JavaScript so an injected
+        // <script> in the untrusted HTML cannot reach the network or set request
+        // headers (e.g. the Metadata-Flavor header required to read the SA token).
+        await page.setJavaScriptEnabled(false);
+
+        // Block sub-resource requests to internal/private hosts and non-HTTP schemes.
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            try {
+                const url = req.url();
+                if (url.startsWith('data:') || url.startsWith('about:') || url.startsWith('blob:')) {
+                    return req.continue();
+                }
+                let parsed;
+                try {
+                    parsed = new URL(url);
+                } catch (e) {
+                    return req.abort();
+                }
+                if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                    return req.abort(); // file:, ftp:, gopher:, ...
+                }
+                if (isBlockedHost(parsed.hostname)) {
+                    process.stderr.write('Blocked SSRF request to: ' + parsed.hostname + '\n');
+                    return req.abort();
+                }
+                return req.continue();
+            } catch (e) {
+                return req.abort();
+            }
+        });
+
         await page.setContent(html, { waitUntil: 'networkidle0' });
 
         const pdf = await page.pdf({

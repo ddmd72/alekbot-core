@@ -270,3 +270,38 @@ async def test_subprocess_stderr_pipe_configured():
 
     kwargs = mock_exec.call_args.kwargs
     assert kwargs.get("stderr") == asyncio.subprocess.PIPE
+
+
+# ============================================================================
+# Sandbox: subprocess env must carry no application secrets
+# ============================================================================
+
+async def test_subprocess_env_excludes_secrets(monkeypatch):
+    """The browser renders untrusted LLM HTML — its env must not leak secrets."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret-should-not-leak")
+    monkeypatch.setenv("OAUTH_SESSION_SECRET", "super-secret-signing-key")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    proc = _make_proc()
+    with _patch_runner_exists():
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)) as mock_exec:
+            runner = NodePuppeteerRunner()
+            await runner.run(_FAKE_HTML, timeout=60)
+
+    env = mock_exec.call_args.kwargs["env"]
+    assert env.get("PATH") == "/usr/bin:/bin"
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "OAUTH_SESSION_SECRET" not in env
+
+
+async def test_subprocess_env_keeps_puppeteer_keys(monkeypatch):
+    """PUPPETEER_* config keys survive so a custom Chromium path still resolves."""
+    monkeypatch.setenv("PUPPETEER_EXECUTABLE_PATH", "/opt/chrome/chrome")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    proc = _make_proc()
+    with _patch_runner_exists():
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)) as mock_exec:
+            runner = NodePuppeteerRunner()
+            await runner.run(_FAKE_HTML, timeout=60)
+
+    env = mock_exec.call_args.kwargs["env"]
+    assert env.get("PUPPETEER_EXECUTABLE_PATH") == "/opt/chrome/chrome"

@@ -22,6 +22,25 @@ _PDF_GENERATOR_DIR = os.path.abspath(
 )
 _RUNNER_SCRIPT = os.path.join(_PDF_GENERATOR_DIR, "runner.js")
 
+# The runner renders LLM-generated HTML in a headless browser. Withhold every
+# application secret from the subprocess env so that even a Chromium/Node
+# compromise cannot read API keys or service-account creds from the environment.
+# PUPPETEER_* keys are kept so a custom Chromium path/cache still resolves.
+_SAFE_ENV_KEYS = (
+    "PATH", "HOME", "NODE_PATH", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP",
+    "PUPPETEER_EXECUTABLE_PATH", "PUPPETEER_CACHE_DIR", "PUPPETEER_DOWNLOAD_PATH",
+)
+
+
+def _safe_subprocess_env() -> dict:
+    """Minimal allow-listed environment for the browser subprocess (no secrets)."""
+    env = {}
+    for key in _SAFE_ENV_KEYS:
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+    return env
+
 
 class NodePuppeteerRunner(PuppeteerRunnerPort):
     """Renders HTML to PDF via the fixed pdf_generator/runner.js subprocess."""
@@ -41,6 +60,7 @@ class NodePuppeteerRunner(PuppeteerRunnerPort):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=_PDF_GENERATOR_DIR,
+            env=_safe_subprocess_env(),
         )
 
         try:

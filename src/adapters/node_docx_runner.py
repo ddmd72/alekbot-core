@@ -22,6 +22,52 @@ _DOCX_GENERATOR_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "docx_generator")
 )
 
+# Env vars the Node subprocess legitimately needs. Everything else (every
+# application secret — API keys, OAuth/session secrets, service-account creds)
+# is deliberately withheld: the script is LLM-generated and must be treated as
+# untrusted. A docx build needs only a PATH to locate `node`/node_modules.
+_SAFE_ENV_KEYS = ("PATH", "HOME", "NODE_PATH", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP")
+
+# Prepended to every LLM-generated script. Blocks the core modules that enable
+# network egress (→ GCP metadata server → service-account token → full DB/GCS
+# access) and process spawning (→ RCE), while leaving the docx toolchain
+# (fs/path/zlib/stream/buffer) untouched. Combined with _SAFE_ENV_KEYS this
+# collapses the blast radius of a malicious generated script to "produce a bad
+# docx", not "exfiltrate secrets".
+_SECURITY_PRELUDE = """\
+'use strict';
+(function () {
+  const Module = require('module');
+  const BLOCKED = new Set([
+    'child_process', 'cluster', 'worker_threads', 'inspector', 'repl', 'v8',
+    'http', 'http2', 'https', 'net', 'tls', 'dns', 'dgram'
+  ]);
+  const _load = Module._load;
+  Module._load = function (request) {
+    const name = String(request).replace(/^node:/, '');
+    if (BLOCKED.has(name)) {
+      throw new Error('Blocked module for security: ' + request);
+    }
+    return _load.apply(this, arguments);
+  };
+  // Node 18+ exposes a global fetch() that bypasses the require() hook above.
+  const blockedFetch = function () {
+    throw new Error('Network access (fetch) is blocked for security');
+  };
+  try { globalThis.fetch = blockedFetch; } catch (e) { /* read-only: ignore */ }
+})();
+"""
+
+
+def _safe_subprocess_env() -> dict:
+    """Minimal allow-listed environment for the untrusted Node subprocess."""
+    env = {}
+    for key in _SAFE_ENV_KEYS:
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+    return env
+
 
 class NodeDocxRunner(DocxRunnerPort):
     """Runs a Node.js script via asyncio subprocess and returns DOCX bytes."""
@@ -37,7 +83,9 @@ class NodeDocxRunner(DocxRunnerPort):
             delete=False,
         )
         try:
-            tmp.write(js_code)
+            # Untrusted (LLM-generated) script — prepend the security prelude that
+            # disables network/process-spawning core modules before any user code runs.
+            tmp.write(_SECURITY_PRELUDE + "\n" + js_code)
             tmp.flush()
             tmp.close()
 
@@ -48,6 +96,7 @@ class NodeDocxRunner(DocxRunnerPort):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=_safe_subprocess_env(),
             )
 
             try:

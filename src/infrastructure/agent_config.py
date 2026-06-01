@@ -311,6 +311,11 @@ class DocPlannerAgentConfig:
     max_tokens: int = 54_000      # JSON spec for a full document can be large
     timeout_ms: int = 600_000     # Background async task — allow 10 min for spec generation
     thinking_effort: Optional[str] = "high"
+    # Per-LLM-request timeout (seconds), passed as LLMRequest.timeout. Heavy
+    # layout-spec generation on reasoning models can run ~6 min, exceeding the
+    # OpenAI client's 300s default; set below timeout_ms (600s) so the request
+    # completes before the Cloud Task deadline rather than being clamped/retried.
+    request_timeout_s: int = 540
 
 
 DOC_PLANNER = DocPlannerAgentConfig()

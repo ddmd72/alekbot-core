@@ -226,6 +226,50 @@ class TestFactoryWiring:
         assert "task_queue" in kwargs_names
 
 
+class TestOpenAIWebhookFailClosed:
+    """Hardening: a missing webhook_secret must reject in deployed environments."""
+
+    async def test_no_secret_fails_closed_when_deployed(self):
+        import os
+        notification = AsyncMock()
+        app = _make_app(notification)  # webhook_secret=None
+        payload = _completed_payload(session_id=f"{_USER}:{_CHANNEL}")
+        with patch.dict(os.environ, {"K_SERVICE": "alek-bot-dev"}):
+            with patch(
+                "src.web.deep_research_webhooks.deliver_deep_research",
+                new_callable=AsyncMock,
+            ) as mock_deliver:
+                async with app.test_client() as client:
+                    resp = await client.post(
+                        "/webhooks/openai/deep-research",
+                        data=json.dumps(payload),
+                        headers={"Content-Type": "application/json"},
+                    )
+                assert resp.status_code == 401
+                mock_deliver.assert_not_called()
+
+    async def test_no_secret_allows_processing_locally(self):
+        import os
+        notification = AsyncMock()
+        app = _make_app(notification)  # webhook_secret=None
+        payload = _completed_payload(session_id=f"{_USER}:{_CHANNEL}")
+        env = dict(os.environ)
+        env.pop("K_SERVICE", None)
+        with patch.dict(os.environ, env, clear=True):
+            with patch(
+                "src.web.deep_research_webhooks.deliver_deep_research",
+                new_callable=AsyncMock,
+            ) as mock_deliver:
+                async with app.test_client() as client:
+                    resp = await client.post(
+                        "/webhooks/openai/deep-research",
+                        data=json.dumps(payload),
+                        headers={"Content-Type": "application/json"},
+                    )
+                assert resp.status_code == 200
+                mock_deliver.assert_called_once()
+
+
 class TestOpenAIWebhookFailureEvents:
     """response.failed and response.cancelled delegate to notification_service.notify."""
 
