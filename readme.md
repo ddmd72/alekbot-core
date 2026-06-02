@@ -178,6 +178,76 @@ Two independent language axes:
 
 ---
 
+## Hexagonal architecture as a guardrail for AI pair-programming
+
+Built solo with heavy AI pairing. The agent failure mode isn't bad code — it's
+drift: cross-layer imports, weakened tests, hallucinated intent strings, swallowed
+exceptions. The boundaries make drift fail loudly.
+
+- **Layering enforced by an AST test, not discipline.** 36 rule checks
+  (`tests/unit/test_req_arch_01_hexagonal_isolation.py`, 1262 lines) parse every
+  file's AST and fail on forbidden imports. Resolves relative imports (no dodging),
+  excludes `TYPE_CHECKING`. Covers layer isolation, no cross-service/sibling-agent
+  imports, no `print`/`getLogger`/env access/provider branching in core, no silent
+  `except: pass`, no `assert` in `src/`.
+- **Known violations are a tracked whitelist, not silent.** `tests/unit/arch_tech_debt.py` —
+  each exception has a root cause + fix plan; removing the entry proves the fix.
+- **Tests carry a banner aimed at the AI.** "Failing test = violation in `src/`;
+  fix the code, don't weaken the test; owner sign-off required." Stops the agent
+  from "fixing" red tests by editing them.
+  `tests/unit/test_req_arch_01_hexagonal_isolation.py:18`, `tests/contracts/adapter_contracts.py:4`.
+- **`extra="forbid"` on `LLMRequest`.** A `max_tokens`→`max_output_tokens` rename
+  was silently dropped; a generator ran on 4–8× smaller budgets for ~46 days.
+  Unknown kwargs now raise at construction. `src/domain/llm.py:96`.
+- **One source of truth for intents.** `class Intent` + `AgentDescriptor`
+  (`src/infrastructure/agent_manifest.py`). Unregistered intent → registry returns
+  `None`; can't be invented ad hoc.
+- **Adapter behavior pinned by contracts.** `tests/contracts/adapter_contracts.py` —
+  named per-provider `ContractRule`s assert on captured SDK calls (e.g. every
+  Firestore email query must filter `user_id`); same rules in unit + integration.
+- **Four-gate decision protocol in `CLAUDE.md`.** RFC/POC is ground truth; diff
+  intent vs. build; stop on any divergence — "found a simpler approach" flagged as
+  a red flag, not a win.
+
+---
+
+## Memory subsystem notes
+
+Long-term memory is a fact store with multi-vector retrieval and SCD2 history,
+not a flat RAG index. Decisions that aren't obvious:
+
+- **3 vectors per fact, not 1.** Text, tags, and metadata each get a separate
+  768-dim embedding. Keyword queries hit `tags_vector`, phrases hit `vector` —
+  keeping a keyword out of the same space as prose avoids contaminating retrieval.
+  `src/domain/entities.py:125`, `src/services/fact_write_service.py:220`.
+- **RRF (k=60) to fuse 6 parallel queries.** `score = Σ 1/(k + rank)` across
+  queries; a fact ranked #1 in tags but #50 in text still surfaces. Concatenating
+  or averaging scores loses that. `src/services/search_enrichment_service.py:40,357`.
+- **Number-aware dedup.** Vector similarity alone deletes contradictory facts: two
+  weights sit at ~0.97 similarity. Numbers are extracted and compared first — if
+  they differ, not a duplicate, regardless of similarity. Thresholds 0.96/0.98.
+  `src/domain/deduplication_service.py:13,98`.
+- **SCD2 versioning.** Facts carry `lineage_id`/`valid_from`/`valid_to`/
+  `is_current`. Updates don't overwrite — the old version is closed, the new one
+  shares the lineage. Full history queryable; can tell *when* a fact changed.
+  `src/domain/entities.py:161`.
+- **40-word atomic limit.** Consolidation must split facts >40 words so each is
+  independently retrievable (one fact per attribute, not a compound sentence
+  bundling several). `src/agents/consolidation_agent.py:913`.
+- **Consolidation skips semantic dedup.** Dedup at search time would hide merge
+  candidates from the consolidation LLM. It runs with `skip_semantic_dedup=True`
+  (ID-dedup only) so the agent sees near-duplicates and decides merge/discard
+  itself. `src/services/search_enrichment_service.py:196`.
+- **Consolidation reads a different serialization than the user.** Model parts use
+  `p.text` (summary), not `p.full_text` (verbose + web context); user parts use
+  `consolidation_text or text`. Keeps thinking traces and full files out of memory
+  formation. `src/agents/base_agent.py:402`.
+- **Biographical cache double-invalidation on write.** After consolidation, both
+  the repo cache and the PromptBuilder cache are refreshed — miss either and the
+  next session's prompt is built on stale facts. `src/agents/consolidation_agent.py:321`.
+
+---
+
 ## Stack
 
 - **Runtime:** Python 3.13, asyncio throughout — no synchronous I/O

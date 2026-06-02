@@ -234,9 +234,9 @@ class FactWriteService(FactWritePort):
             
         Example:
             fact_data = {
-                "content": "User's mother is Valentina",
+                "content": "User's mother is <name>",
                 "tags": ["family", "mother"],
-                "metadata": {"relationship": "mother", "name": "Valentina"}
+                "metadata": {"relationship": "mother", "name": "<name>"}
             }
             
             vectors = await self._generate_multi_vectors(fact_data)
