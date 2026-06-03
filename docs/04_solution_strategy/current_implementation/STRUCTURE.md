@@ -12,7 +12,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── requirements.txt
 ├── CHANGELOG.md       # Release history and notable changes
 ├── cloudbuild-dev.yaml
-├── cloudbuild-prod.yaml
 ├── scripts/            # Utility scripts and maintenance tools
 │   ├── README.md       # Scripts index and usage
 │   ├── memory/         # Memory migration + operations

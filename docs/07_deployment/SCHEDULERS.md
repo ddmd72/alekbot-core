@@ -1,6 +1,6 @@
 # Cloud Scheduler Reference
 
-All Cloud Scheduler jobs for Alek-Core. Managed via `cloudbuild-dev.yaml` and `cloudbuild-prod.yaml` using `describe && update || create` pattern (idempotent on every deploy).
+All Cloud Scheduler jobs for Alek-Core. Managed via `cloudbuild-dev.yaml` using the `describe && update || create` pattern (idempotent on every deploy).
 
 Region: `us-central1`. Attempt deadline: `60s` for all `/worker` jobs.
 
@@ -140,7 +140,7 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 | **Payload** | `{"task_type": "billing_daily_summary"}` |
 | **Purpose** | Sends a daily billing report to each account owner with activity today. Shows daily / monthly / total token consumption and cost per account. Skips accounts with zero daily usage. |
 | **Handler** | `WorkerHandler._handle_billing_daily_summary()` |
-| **Env** | dev only (add to cloudbuild-prod.yaml when ready for prod) |
+| **Env** | active on the single live service |
 
 ---
 

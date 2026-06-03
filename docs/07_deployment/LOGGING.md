@@ -90,11 +90,11 @@ labels.session_id="slack_U0123ABC_thread_456"
 ### Option 2: Make commands
 
 ```bash
-# Tail dev service logs (real-time)
-make logs-dev
-
-# Tail prod service logs (real-time)
+# Recent service logs (last K entries)
 make logs
+
+# Live tail (real-time)
+make logs-tail
 ```
 
 ### Option 3: gcloud CLI
@@ -164,15 +164,14 @@ gcloud logging read \
 
 | Make target | Cloud Run service name |
 |-------------|----------------------|
-| `make deploy-dev` | `alek-bot-dev` |
-| `make deploy` | `alek-bot-prod` |
+| `make deploy` | `alek-bot-dev` (the single live service) |
 
 ---
 
 ## Cloud Run Jobs (Deep Research)
 
 Deep research runs in Cloud Run Jobs (`job_main.py`), not in the service. Job logs use a
-**different resource type** — `cloud_run_job` — and are NOT captured by `make logs-dev-tail`.
+**different resource type** — `cloud_run_job` — and are NOT captured by `make logs-tail`.
 
 ### Make commands
 

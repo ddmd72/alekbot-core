@@ -63,21 +63,25 @@ Index builds are asynchronous — vector search returns errors until they finish
 
 ---
 
-## 5. Run locally
+## 5. Test & lint
 
 ```bash
-make dev                  # Slack Socket Mode against live Firestore
-make dev-emulator         # against the Firestore emulator (set FIRESTORE_EMULATOR_HOST)
-make check                # unit tests + domain-purity check — run before every commit
+make check                # ruff lint + unit/architecture tests — the CI gate, run before every commit
+make test                 # full suite
 ```
+
+There is no local run mode: several capabilities (Cloud Tasks, schedulers, GCS, Cloud Run
+Jobs) need the cloud environment.
 
 ---
 
 ## 6. Deploy to Cloud Run
 
+Single live environment; deploy is manual by choice (see
+[`docs/04_solution_strategy/decisions/ci_present_cd_deliberately_absent.md`](docs/04_solution_strategy/decisions/ci_present_cd_deliberately_absent.md)).
+
 ```bash
-make deploy-dev           # build + deploy alek-bot-dev   (cloudbuild-dev.yaml)
-make deploy               # build + deploy alek-bot (prod) (cloudbuild-prod.yaml)
+make deploy               # build + deploy alek-bot-dev (cloudbuild-dev.yaml)
 ```
 
 Cloud Scheduler jobs (consolidation watchdog, daily email review, reminder firing,
@@ -91,7 +95,7 @@ subscription renewal, billing summary) are documented in
 
 ```bash
 curl -s "$SERVICE_URL_DEV/health"          # → ok
-make logs-dev                              # recent Cloud Run logs
+make logs                                  # recent Cloud Run logs
 ```
 
 Send a message to the connected Slack/Telegram channel; confirm a reply and, after the

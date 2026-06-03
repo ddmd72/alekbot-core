@@ -181,7 +181,7 @@ async def validate_user_data(
     if not session_id:
         raise ValueError(
             f"No sessions found for user {user_id}. "
-            f"Run bot first: make dev"
+            f"Message the deployed bot first to create a session."
         )
     return session_id
 

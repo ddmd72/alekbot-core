@@ -615,10 +615,10 @@ For manual spot-check — fire a real message in Slack/Telegram that should trig
 ### Step 12 — Deploy and validate
 
 ```bash
-# Deploy to dev environment
-make deploy-dev
+# Deploy to Cloud Run (single live environment)
+make deploy
 
-# After smoke test in dev Slack:
+# After smoke test in Slack:
 make deploy
 ```
 
