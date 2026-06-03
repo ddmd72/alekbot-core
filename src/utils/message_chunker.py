@@ -51,8 +51,10 @@ class MessageChunker:
                 # Try word boundary
                 split_index = remaining.rfind(" ", 0, self.max_length)
 
-            if split_index == -1:
-                # Force split at max_length (no good boundary)
+            if split_index <= 0:
+                # Force split at max_length. Covers both no-boundary (-1) and a
+                # boundary at index 0 (e.g. ". " starting the remainder): the latter
+                # would yield an empty chunk and leave `remaining` unchanged → infinite loop.
                 split_index = self.max_length
 
             chunk = remaining[:split_index].rstrip()
