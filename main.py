@@ -3,7 +3,6 @@ import os
 import signal
 import logging
 import asyncio
-import traceback
 from slack_bolt.async_app import AsyncApp
 
 from src.config.settings import load_settings
@@ -28,7 +27,6 @@ from src.handlers.agent_worker_handler import AgentWorkerHandler
 from src.domain.agent import AgentConfig
 from src.agents.infrastructure.billing_agent import BillingAgent
 from src.agents.infrastructure.logger_agent import LoggerAgent
-from quart import Quart
 from src.web.oauth_app import create_oauth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
@@ -38,11 +36,9 @@ from src.composition.mcp_setup import build_mcp_components
 from src.services.task_setup_service import TaskSetupService
 from src.services.authentication_service import AuthenticationService
 from src.services.session_service import SessionService
-from src.services.invite_code_service import InviteCodeService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.config.auth import AuthConfig
 from src.adapters.firebase_auth_adapter import FirebaseAuthAdapter
-from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
 from src.services.google_oauth_service import GoogleOAuthService, GMAIL_SCOPES
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
 from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindingAdapter
