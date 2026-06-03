@@ -490,8 +490,8 @@ class TestRescheduleIfDueAt:
     Concurrency note: real cross-process safety is provided by Firestore
     transaction OCC. These wire tests verify we USE the transaction
     correctly (read snapshot inside txn, compare due, conditionally
-    write). End-to-end safety against the live emulator is exercised
-    manually via ``make dev-emulator`` when modifying transaction code.
+    write). End-to-end safety against live Firestore is exercised in the
+    deployed environment when modifying transaction code.
     """
 
     @pytest.fixture(autouse=True)
