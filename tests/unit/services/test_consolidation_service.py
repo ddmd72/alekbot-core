@@ -106,15 +106,12 @@ class TestIntentConstant:
         from src.infrastructure.agent_manifest import Intent
         assert _INTENT_CONSOLIDATE_FULL == Intent.CONSOLIDATE_FULL
 
-    def test_intent_routed_in_message(self, service, queue, coordinator):
+    async def test_intent_routed_in_message(self, service, queue, coordinator):
         """The AgentMessage payload carries the correct task intent string."""
         batch = _make_batch()
         queue.get_pending_batches.side_effect = [[batch], []]
 
-        import asyncio
-        asyncio.get_event_loop().run_until_complete(
-            service.process_user_batches(user_id=_USER_ID)
-        )
+        await service.process_user_batches(user_id=_USER_ID)
 
         call_args = coordinator.route_message.call_args
         message = call_args[0][0]
