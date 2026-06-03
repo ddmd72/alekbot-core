@@ -15,6 +15,7 @@ openpyxl>=3.1.0  # CSV → xlsx conversion in RichContentService
 python-docx>=1.1.0  # Markdown → docx conversion in RichContentService
 playwright>=1.40.0  # HTML → PNG rendering for widget rich content (ENABLE_HTML_RENDERER)
 google-cloud-secret-manager
+google-auth>=2.0.0  # in-app Google OIDC verification on the /worker endpoint
 firebase-admin>=6.0.0  # OAuth Multi-Tenant Session 3: Firebase Auth adapter
 PyJWT>=2.8.0  # OAuth Multi-Tenant Session 4: JWT session management
 hypercorn>=0.14.0
