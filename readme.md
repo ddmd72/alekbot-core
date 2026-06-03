@@ -3,7 +3,9 @@
 A knowledge management system that extends memory and reasoning through Slack and Telegram.
 Not a chatbot. A system that accumulates knowledge, thinks in the background, and always responds with context.
 
-**Solo project. Production on GCP (Cloud Run + Firestore).**
+**Solo project, in daily personal use. Production on GCP (Cloud Run + Firestore).**
+*A tool I run every day — and a reference for how I build: multi-agent orchestration,
+hexagonal architecture, and contract-based testing for non-deterministic LLM providers.*
 
 ---
 
@@ -45,6 +47,26 @@ agent code. Model tier (ECO/BALANCED/PERFORMANCE) is resolved from user config a
 
 ---
 
+## Testing & CI
+
+Architecture rules are enforced as tests, not just documented: layer-isolation checks
+(domain imports nothing but stdlib/pydantic; adapters never import services), a no-`print()`
+rule, and "ports are abstract" all run in the suite and fail the build on violation.
+
+- **Contract tests** (`tests/contracts/`) validate the *payload shapes* sent to each provider
+  SDK (Anthropic, Google, OpenAI) rather than the text the model generates. Checking the
+  boundary instead of the output is what keeps adapters swappable — and catches translation
+  regressions a port-level mock would hide.
+- **LLMPort mocking** isolates the model in unit and e2e tests, so multi-turn reasoning and
+  forced tool-call sequences run deterministically: no API tokens, no flakiness.
+- **CI:** `make check` (ruff lint + ~4,200 unit/architecture tests) runs on every push and PR
+  via GitHub Actions.
+- **Deployment is manual by choice** — solo dev, a single live environment, and LLM behavior
+  that tests can't fully verify make a deliberate `make deploy` saner than auto-deploy
+  ([decision](docs/04_solution_strategy/decisions/ci_present_cd_deliberately_absent.md)).
+
+---
+
 ## Agent network
 
 The Router runs LLM triage on **every** request — complexity score, tone, semantic lens, search
@@ -52,6 +74,11 @@ intent — and triggers memory/web enrichment before routing. The routing target
 the complexity score drives Smart's per-request **model tier** (ECO → BALANCED → PERFORMANCE), not a
 separate cheap-vs-expensive agent. Smart re-evaluates after tool results and can chain further
 delegation. Specialists are commissioned through a single `delegate_to_specialist(intent, query)` tool.
+
+Agents emit structured tool calls rather than running I/O themselves; the `DelegationEngine`
+executes them (memory-first, the rest in parallel via `asyncio.gather`) and feeds any tool
+failure back to the model as an observation, so it self-corrects on the next turn instead of
+crashing the request.
 
 | Agent | Default provider | Mode | Role |
 |---|---|---|---|
@@ -193,24 +220,23 @@ Two independent language axes:
 ## Getting started
 
 ```bash
-# Local run (Slack Socket Mode)
-make dev
+# Install
+make install-dev    # dependencies + test/lint tools
 
-# Local run with Firestore emulator
-make dev-emulator
-
-# Tests
-make check          # unit tests + domain purity check
+# Tests & lint (the CI gate)
+make check          # ruff lint + unit/architecture tests
 make test           # full suite
 make test-unit      # unit only
-make test-e2e-all   # E2E all agents
+make test-e2e-all   # E2E all agents (real API)
 
-# Deploy
-make deploy-dev     # development environment
-make deploy         # production
+# Deploy (single live environment; manual by choice)
+make deploy         # build + deploy to Cloud Run
+make logs-tail      # watch logs
 ```
 
-Requires `.env` with API keys and GCP credentials.
+Requires `.env` with API keys and GCP credentials. The system runs on GCP (Cloud Run +
+Firestore) — there is no local mode; several capabilities (Cloud Tasks, schedulers, GCS,
+Cloud Run Jobs) need the cloud environment.
 
 ---
 
