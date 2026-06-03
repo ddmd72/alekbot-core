@@ -32,7 +32,7 @@ jobs:
       - name: Notify Slack (pass/fail)
         if: always()
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_CI_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           STATUS: ${{ job.status }}
           # Untrusted inputs passed via env (never inlined into run: — avoids script injection).
           COMMIT_MSG: ${{ github.event.head_commit.message }}
@@ -41,7 +41,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
-            echo "SLACK_CI_WEBHOOK_URL secret not set — skipping Slack notification."
+            echo "SLACK_WEBHOOK_URL secret not set — skipping Slack notification."
             exit 0
           fi
           if [ "$STATUS" = "success" ]; then ICON="✅"; else ICON="❌"; fi
