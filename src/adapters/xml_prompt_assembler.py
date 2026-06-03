@@ -13,7 +13,7 @@ Session: 26 (Variable Formatting System)
 """
 
 from typing import List, Dict
-from ..domain.prompt import PromptComponent, PromptTemplate, ComponentScope
+from ..domain.prompt import PromptComponent, PromptTemplate
 
 
 class XmlPromptAssembler:

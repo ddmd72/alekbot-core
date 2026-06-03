@@ -6,7 +6,6 @@ from google.cloud.firestore import FieldFilter
 
 from ..domain.billing import BillingAccount
 from ..ports.account_repository import AccountRepository
-from ..utils.logger import logger
 
 
 class FirestoreAccountRepository(AccountRepository):

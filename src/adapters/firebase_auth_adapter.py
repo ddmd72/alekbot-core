@@ -7,7 +7,6 @@ Uses Firebase Admin SDK for token verification and Firebase Auth REST API for OA
 RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 Architecture: Provider-agnostic adapter implementing OIDC/OAuth 2.0 via Firebase
 """
-import json
 from typing import Optional
 from datetime import datetime
 from urllib.parse import urlencode

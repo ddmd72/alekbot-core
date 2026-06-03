@@ -14,6 +14,7 @@ from google.api_core.exceptions import NotFound
 from google.protobuf import timestamp_pb2, duration_pb2
 
 from ..ports.task_queue import TaskQueue
+from ..utils.logger import logger
 
 
 class _DomainEncoder(json.JSONEncoder):
@@ -23,7 +24,6 @@ class _DomainEncoder(json.JSONEncoder):
         if isinstance(obj, BaseModel):
             return obj.model_dump()
         return super().default(obj)
-from ..utils.logger import logger
 
 
 class GcpTaskQueue(TaskQueue):

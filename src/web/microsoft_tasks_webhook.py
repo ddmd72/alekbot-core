@@ -27,7 +27,7 @@ import os
 import re
 from typing import Optional, TYPE_CHECKING
 
-from quart import Blueprint, Response, request, make_response
+from quart import Blueprint, request, make_response
 
 from ..utils.logger import logger
 

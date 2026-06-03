@@ -3,7 +3,6 @@ Base Slack Adapter Interface
 Defines the contract for both Socket Mode and HTTP Mode adapters
 """
 from abc import abstractmethod
-from typing import Optional
 from slack_bolt.async_app import AsyncApp
 
 from ...ports.platform_port import PlatformPort

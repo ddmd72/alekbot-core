@@ -17,7 +17,7 @@ Architecture:
 from typing import List, Dict, Optional, Any
 
 from ..ports.repository import FactRepository
-from ..domain.entities import FactType, FactState, ContextPriority, FactDomain
+from ..domain.entities import FactDomain
 from ..domain.settings import SearchConfig
 from ..utils.logger import logger
 

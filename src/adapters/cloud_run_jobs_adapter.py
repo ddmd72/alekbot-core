@@ -14,8 +14,6 @@ REST endpoint:
   Body: {"overrides": {"containerOverrides": [{"env": [{"name": ..., "value": ...}]}]}}
 """
 import asyncio
-import json
-from typing import Optional
 
 import aiohttp
 import google.auth

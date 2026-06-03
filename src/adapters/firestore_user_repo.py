@@ -1,7 +1,5 @@
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
-import asyncio
-from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from ..domain.user import UserProfile
 from ..ports.user_repository import UserRepository

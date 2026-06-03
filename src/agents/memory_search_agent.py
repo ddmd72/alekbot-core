@@ -235,7 +235,7 @@ class FactsMemoryAgent(BaseAgent):
 
         try:
             if self._search_enrichment and (keywords or primary_query):
-                logger.info(f"🔍 [FactsMemoryAgent] Using SearchEnrichmentService (multi-vector RRF)")
+                logger.info("🔍 [FactsMemoryAgent] Using SearchEnrichmentService (multi-vector RRF)")
                 return await self._execute_enriched_search(
                     message=message,
                     keywords=keywords,
@@ -245,7 +245,7 @@ class FactsMemoryAgent(BaseAgent):
                     start_time=start_time,
                 )
             else:
-                logger.info(f"🔍 [FactsMemoryAgent] Using legacy single-vector search (fallback)")
+                logger.info("🔍 [FactsMemoryAgent] Using legacy single-vector search (fallback)")
                 return await self._execute_legacy_search(
                     message=message,
                     query=primary_query or raw_query,

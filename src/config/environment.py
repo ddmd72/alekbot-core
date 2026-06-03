@@ -441,8 +441,8 @@ def validate_telegram_config():
     # Example: 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz1234567
     if not re.match(r'^\d+:[A-Za-z0-9_-]{35}$', token):
         raise ValueError(
-            f"Invalid TELEGRAM_BOT_TOKEN format. "
-            f"Expected format: <bot_id>:<secret> (e.g., 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz1234567)"
+            "Invalid TELEGRAM_BOT_TOKEN format. "
+            "Expected format: <bot_id>:<secret> (e.g., 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz1234567)"
         )
     
     webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")

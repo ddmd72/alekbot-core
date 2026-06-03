@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional, Dict, Any, List, Iterable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 from ..base_agent import BaseAgent
 from ...infrastructure.agent_config import SMART, ENABLE_HISTORY_OPTIMIZATION
@@ -24,16 +22,11 @@ from ...domain.agent import (
     AgentResponse,
     AgentConfig,
     AgentIntent,
-    AgentStatus,
     RoutingMetadata,
-    DeliveryItem,
 )
-from ...domain.tone import UserTone
 from ...domain.messaging import SmartResponse, RichContent
 from ...ports.llm_port import (
-    LLMPort,
     LLMResponse,
-    ToolCall,
     Message,
     MessagePart,
     LLMRequest,
@@ -49,6 +42,7 @@ if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
     from ...infrastructure.task_execution_resolver import TaskExecutionResolver
     from ...domain.user import UserBotConfig
+    from ...infrastructure.agent_coordinator import AgentCoordinator
 
 
 @dataclass(frozen=True)

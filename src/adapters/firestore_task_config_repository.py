@@ -10,7 +10,7 @@ set_primary_list_id_if_absent: Firestore transaction for safe concurrent writes.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from google.cloud import firestore
 

@@ -9,13 +9,14 @@ DeepResearchAgent is delivery-agnostic: it calls create_interaction() and return
 The adapter decides whether polling, webhook, or agent task is used — no queue logic in the agent.
 """
 
-# Stable contract between ClaudeDeepResearchAdapter and ClaudeDeepResearchRunnerAgent.
-# Defined here so adapters can import it without violating the adapters → infrastructure rule.
-RUNNER_INTENT = "execute_deep_research_claude"
 from abc import ABC, abstractmethod
 from typing import Optional
 
 from ..domain.user import PerformanceTier
+
+# Stable contract between ClaudeDeepResearchAdapter and ClaudeDeepResearchRunnerAgent.
+# Defined here so adapters can import it without violating the adapters → infrastructure rule.
+RUNNER_INTENT = "execute_deep_research_claude"
 
 
 class DeepResearchPort(ABC):

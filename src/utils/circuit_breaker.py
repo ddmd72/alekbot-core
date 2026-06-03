@@ -63,7 +63,7 @@ class CircuitBreaker:
                    time.time() - self.last_failure_time >= self.config.recovery_timeout:
                     self.state = CircuitState.HALF_OPEN
                     self.success_count = 0
-                    logger.info(f"🔧 Circuit breaker entering HALF_OPEN state")
+                    logger.info("🔧 Circuit breaker entering HALF_OPEN state")
                 else:
                     raise CircuitBreakerError("Circuit breaker is OPEN")
 
@@ -72,7 +72,7 @@ class CircuitBreaker:
             await self._on_success()
             return result
 
-        except Exception as e:
+        except Exception:
             await self._on_failure()
             raise
 
@@ -84,7 +84,7 @@ class CircuitBreaker:
                 if self.success_count >= self.config.success_threshold:
                     self.state = CircuitState.CLOSED
                     self.failure_count = 0
-                    logger.info(f"✅ Circuit breaker CLOSED (service recovered)")
+                    logger.info("✅ Circuit breaker CLOSED (service recovered)")
             elif self.state == CircuitState.CLOSED:
                 self.failure_count = 0  # Reset on success
 
@@ -97,7 +97,7 @@ class CircuitBreaker:
             if self.state == CircuitState.HALF_OPEN:
                 # Failure in half-open → back to open
                 self.state = CircuitState.OPEN
-                logger.warning(f"🔴 Circuit breaker OPEN (half-open test failed)")
+                logger.warning("🔴 Circuit breaker OPEN (half-open test failed)")
 
             elif self.state == CircuitState.CLOSED:
                 if self.failure_count >= self.config.failure_threshold:

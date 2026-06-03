@@ -13,7 +13,6 @@ Session 2026-02-16: Phase 3 - Multi-turn tool use integration
 
 import re
 import json
-import uuid
 import time
 import asyncio
 from typing import List, Dict, Any, Optional, Tuple
@@ -23,12 +22,11 @@ from dataclasses import dataclass
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..ports.indexed_email_repository import IndexedEmailRepository
-from ..domain.entities import FactEntity, FactType
-from ..domain.request_context import get_effective_account_id, get_current_user_id
+from ..domain.request_context import get_effective_account_id
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_management_port import FactManagementPort
-from ..ports.llm_port import LLMPort, LLMResponse, ToolCall, Message, MessagePart, LLMRequest
+from ..ports.llm_port import LLMResponse, ToolCall, Message, MessagePart, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
@@ -356,8 +354,8 @@ class ConsolidationAgent(BaseAgent):
                     logger.info("ℹ️  [ConsolidationAgent] Session consolidation yielded 0 new facts (valid).")
                 elif observations:
                     logger.error(
-                        f"❌ [ConsolidationAgent] LLM returned empty result for observations. "
-                        f"Observations preserved for retry."
+                        "❌ [ConsolidationAgent] LLM returned empty result for observations. "
+                        "Observations preserved for retry."
                     )
                     return AgentResponse.failure(
                         task_id=message.task_id,
@@ -1394,7 +1392,7 @@ class ConsolidationAgent(BaseAgent):
             return json.loads(response_text.strip())
             
         except json.JSONDecodeError as e:
-            logger.warning(f"⚠️  No JSON found in LLM response")
+            logger.warning("⚠️  No JSON found in LLM response")
             logger.error(f"Failed to parse JSON: {e}")
             return {}
     

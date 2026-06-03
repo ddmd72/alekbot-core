@@ -5,7 +5,7 @@ Part of Prompt Design System v3 (RFC).
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List
 
 from src.domain.prompt_v3.token import Token, TokenId, TokenCategory, TokenClass
 

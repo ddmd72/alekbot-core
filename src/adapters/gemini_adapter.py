@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Any, Optional, Dict
+from typing import List, Any
 import httpx
 from google import genai
 from google.genai import types, errors as genai_errors
@@ -10,8 +10,6 @@ from ..ports.llm_port import (
     Message,
     MessagePart,
     UsageMetadata,
-    PromptCacheConfig,
-    AutomaticFunctionCallingConfig,
     ProviderCapabilities,
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
@@ -363,11 +361,14 @@ class GeminiAdapter(LLMPort):
 
     def _extract_text(self, response) -> str:
         try:
-            if not response.candidates: return ""
+            if not response.candidates:
+                return ""
             candidate = response.candidates[0]
-            if not candidate.content or not candidate.content.parts: return ""
+            if not candidate.content or not candidate.content.parts:
+                return ""
             return "".join([p.text for p in candidate.content.parts if p.text])
-        except: return ""
+        except Exception:
+            return ""
 
     def _parse_response(self, response) -> LLMResponse:
         if not response.candidates:

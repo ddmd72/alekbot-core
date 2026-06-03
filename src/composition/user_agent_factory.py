@@ -90,6 +90,7 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..infrastructure.agent_coordinator import AgentCoordinator
+    from ..domain.user import UserBotConfig
 
 
 @dataclass

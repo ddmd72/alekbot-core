@@ -2,7 +2,7 @@
 Session store port for persistent session history.
 """
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Optional
 
 from ..domain.llm import Message
 from ..domain.session import SessionState

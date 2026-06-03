@@ -79,7 +79,6 @@ class DeepResearchAgent(BaseAgent):
     async def execute(self, message: AgentMessage) -> AgentResponse:
         query      = message.payload.get("query", "")
         brief      = message.payload.get("brief", query)  # short summary for metadata; falls back to query
-        language   = message.payload.get("language", "English")
         user_id    = message.context.get("user_id", "")
         account_id = message.context.get("account_id", "")
 

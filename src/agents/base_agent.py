@@ -6,18 +6,16 @@ Provides abstract base class and utilities for all agents.
 """
 
 import json
-import random
 import time
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 from abc import ABC, abstractmethod
-from typing import ClassVar, Dict, Optional, List
-from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentStatus
+from typing import ClassVar, Dict, Optional, List, TYPE_CHECKING
+from ..domain.agent import AgentMessage, AgentResponse, AgentConfig
 from ..domain.exceptions import (
     _ERROR_TYPE_LOG_LABEL,
     BothProvidersUnavailableError,
     FAILOVER_TRIGGER_TYPES,
-    LLMError,
     LLMRateLimitError,
     LLMUnavailableError,
     ProviderBreakerOpenError,
@@ -30,6 +28,10 @@ from ..utils.logger import logger
 from ..utils.retry import retry_async
 from ..utils.debug_logger import get_debug_logger
 from ..utils.telemetry import get_tracer
+
+if TYPE_CHECKING:
+    from ..domain.llm import LLMRequest, LLMResponse
+    from ..ports.llm_port import LLMPort, AgentExecutionContext
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ from ..domain.email import EmailClassificationResult, EmailMetadata, OAuthCreden
 from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
 from ..ports.email_classifier_port import EmailClassifierPort
 from ..ports.email_provider_port import EmailProviderPort
-from ..ports.llm_port import AgentExecutionContext, LLMRequest, LLMResponse, LLMPort, Message, MessagePart, PROMPT_CACHE_BOUNDARY, ToolCall
+from ..ports.llm_port import AgentExecutionContext, LLMRequest, LLMResponse, Message, MessagePart, PROMPT_CACHE_BOUNDARY
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from ..infrastructure.agent_config import EMAIL_CLASSIFICATION

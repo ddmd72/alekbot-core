@@ -73,8 +73,8 @@ help: ## Show this help message
 	@echo "  make test-unit       Run unit tests"
 	@echo "  make test-coverage   Unit tests + per-file coverage gate (RFC § 8.4)"
 	@echo "  make test-integration Run integration tests"
-	@echo "  make lint            Run code linting"
-	@echo "  make format          Format code"
+	@echo "  make lint            Lint src/ with ruff"
+	@echo "  make format          Format src/ with ruff"
 	@echo ""
 	@echo "🏗️  BUILD & DEPLOY:"
 	@echo "  make deploy          Build + deploy to Cloud Run (production)"
@@ -140,7 +140,7 @@ install: ## Install production dependencies
 
 install-dev: install ## Install development dependencies
 	@echo "📦 Installing development dependencies..."
-	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock black flake8 mypy
+	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock ruff
 
 clean: ## Clean up temporary files and caches
 	@echo "🧹 Cleaning up temporary files..."
@@ -201,17 +201,15 @@ test-integration: ## Run integration tests
 	@echo "🧪 Running integration tests..."
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/ -v --asyncio-mode=auto
 
-lint: ## Run code linting
-	@echo "🔍 Running linter..."
-	@echo "⚠️  Linting not yet configured (Milestone 4)"
-	@echo "Planned: flake8 src/ --max-line-length=120"
+lint: ## Lint src/ with ruff (pyflakes + pycodestyle errors)
+	@echo "🔍 Running ruff linter on src/..."
+	$(PYTHON) -m ruff check src/
 
-format: ## Format code with black
-	@echo "✨ Formatting code..."
-	@echo "⚠️  Formatter not yet configured (Milestone 4)"
-	@echo "Planned: black src/ --line-length=120"
+format: ## Format src/ with ruff (black-compatible)
+	@echo "✨ Formatting src/ with ruff..."
+	$(PYTHON) -m ruff format src/
 
-check: test-unit ## Quick pre-commit check (unit tests + architecture tests)
+check: lint test-unit ## Quick pre-commit check (ruff lint + unit/architecture tests)
 	@echo "✅ All checks passed"
 
 # ============================================================================

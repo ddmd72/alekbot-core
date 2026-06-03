@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Dict, Optional, List, Any, Callable, TYPE_CHECKING
+from typing import Dict, Optional, Any, Callable, TYPE_CHECKING
 
 from ..domain.user import UserBotConfig, PerformanceTier
-from ..ports.llm_port import LLMPort, ProviderCapabilities, AgentExecutionContext
+from ..ports.llm_port import LLMPort, AgentExecutionContext
 from ..ports.deep_research_port import DeepResearchPort
 from ..ports.prompt_cache_strategy_port import PromptCacheStrategyPort
 from ..ports.provider_resilience_port import ProviderResiliencePort

@@ -15,7 +15,6 @@ Implementations:
 import asyncio
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, AsyncIterator
-from collections import defaultdict
 from ..domain.agent import AgentMessage
 from ..utils.logger import logger
 

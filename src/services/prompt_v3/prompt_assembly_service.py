@@ -12,7 +12,7 @@ PERFORMANCE OPTIMIZATION (2026-02-04):
 import time
 import asyncio
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, List, Dict, Optional, Tuple
 
 from src.ports.llm_port import PROMPT_CACHE_BOUNDARY

@@ -14,9 +14,8 @@ Callers:
   - deep_research_polling worker (async research delivery)
   - AgentWorkerHandler (async document delivery via notify_document_link / notify_file_bytes)
 """
-import uuid
 from datetime import datetime, timezone
-from typing import Mapping, Optional, Protocol
+from typing import Mapping, Optional, Protocol, TYPE_CHECKING
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus
 from ..domain.llm import Message, MessagePart
@@ -30,6 +29,9 @@ from ..ports.notification_state_port import NotificationStatePort
 from ..ports.platform_media_port import PlatformMediaPort
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from ..domain.notification import NotificationChannel
 
 
 class MessageRouter(Protocol):

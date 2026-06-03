@@ -30,7 +30,6 @@ from ..infrastructure.agent_config import DOC_PLANNER
 from ..infrastructure.agent_manifest import Intent
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
-from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..infrastructure.agent_coordinator import AgentCoordinator

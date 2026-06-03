@@ -31,7 +31,6 @@ Supported task_types:
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional, Tuple
 
@@ -46,7 +45,6 @@ if TYPE_CHECKING:
     from ..ports.account_repository import AccountRepository
     from ..services.file_link_service import FileLinkService
 
-from ..domain.agent import AgentIntent, AgentMessage, AgentStatus
 from ..domain.complexity_settings import DEFAULT_COMPLEXITY_SETTINGS
 from ..domain.notification_kind import NotificationKind
 from ..handlers.agent_worker_handler import AgentWorkerHandler

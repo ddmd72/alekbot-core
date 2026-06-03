@@ -2,7 +2,7 @@ import asyncio
 import time
 import anthropic
 from anthropic import types, AsyncAnthropic
-from typing import List, Any, Optional, Dict, Union
+from typing import List, Any, Optional, Dict
 from ..ports.llm_port import (
     LLMPort,
     LLMResponse,
@@ -10,8 +10,6 @@ from ..ports.llm_port import (
     Message,
     MessagePart,
     UsageMetadata,
-    PromptCacheConfig,
-    AutomaticFunctionCallingConfig,
     ProviderCapabilities,
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
@@ -122,7 +120,6 @@ class ClaudeAdapter(LLMPort):
         messages = request.messages
         tools = request.tools
         temperature = request.temperature
-        response_mime_type = request.response_mime_type
         response_schema = request.response_schema
         cache_config = request.cache_config
         automatic_function_calling = request.automatic_function_calling

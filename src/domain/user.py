@@ -1,10 +1,13 @@
 from enum import Enum
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from datetime import datetime, timezone
 from uuid import uuid4
 from pydantic import BaseModel, Field
 from .language import LanguageCode
 from .task_complexity import TaskComplexity
+
+if TYPE_CHECKING:
+    from .complexity_settings import ComplexitySettings
 
 class UserTier(str, Enum):
     FREE = "free"

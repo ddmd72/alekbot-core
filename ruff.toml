@@ -1,0 +1,10 @@
+# Ruff configuration — lint gate for src/ (see Makefile `make lint` / `make format`).
+# Rule set is ruff's default high-signal selection (pyflakes + pycodestyle errors):
+# real bugs and import hygiene, not stylistic noise. `ruff format` is black-compatible.
+target-version = "py313"
+line-length = 120
+
+extend-exclude = ["archive", "docx_generator"]
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

@@ -16,7 +16,6 @@ Supports specialist delegation via DelegationEngine (search_memory, search_web,
 open_file, etc.) — tools are available when coordinator is configured.
 """
 
-import time
 from typing import Optional
 
 from ..agents.base_agent import BaseAgent
@@ -27,7 +26,6 @@ from ..infrastructure.agent_manifest import DOMAIN_RESEARCHER as DOMAIN_RESEARCH
 from ..infrastructure.delegation_engine import DelegationEngine
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
-from ..utils.logger import logger
 
 
 class DomainResearcherAgent(BaseAgent):
@@ -77,7 +75,6 @@ class DomainResearcherAgent(BaseAgent):
         self, message: AgentMessage, query: str,
     ) -> AgentResponse:
         self._on_agent_start(query)
-        start_time = time.time()
 
         # Build system prompt via PromptBuilder (mandatory, no fallback)
         try:

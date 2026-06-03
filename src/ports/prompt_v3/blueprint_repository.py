@@ -5,7 +5,7 @@ Part of Prompt Design System v4 (RFC: docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md).
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List
 
 from src.domain.prompt_v3.blueprint import Blueprint
 

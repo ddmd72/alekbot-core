@@ -8,12 +8,11 @@ This is the entry point for all user queries in the agent network.
 NO LLM required - uses rule-based classification for speed.
 """
 
-import asyncio
 import json
 import re
 from dataclasses import asdict
 from datetime import datetime, timezone
-from typing import Optional, Set, List
+from typing import Optional, Set, List, TYPE_CHECKING
 from ..base_agent import BaseAgent
 from ...domain.retry_policy import NO_RETRY_POLICY
 from ...domain.agent import (
@@ -21,12 +20,11 @@ from ...domain.agent import (
     AgentResponse,
     AgentConfig,
     AgentIntent,
-    AgentStatus,
     RoutingMetadata
 )
 from ...domain.tone import UserTone, build_routing_metadata
 from ...domain.task_complexity import TaskComplexity
-from ...ports.llm_port import LLMPort, Message, MessagePart, LLMRequest
+from ...ports.llm_port import Message, MessagePart, LLMRequest
 from ...ports.session_store import SessionStore
 from ...ports.repository import FactRepository
 from ...ports.embedding_service import EmbeddingService
@@ -36,6 +34,9 @@ from ...ports.llm_port import AgentExecutionContext
 from ...ports.agent_note_port import AgentNotePort
 from ...utils.logger import logger
 from ...infrastructure.agent_config import ROUTER
+
+if TYPE_CHECKING:
+    from ...infrastructure.agent_coordinator import AgentCoordinator
 
 
 class RouterAgent(BaseAgent):
@@ -434,7 +435,6 @@ class RouterAgent(BaseAgent):
 
     async def _classify_with_llm(self, text: str, message: AgentMessage, history: List[Message] = None) -> dict:
         """Use LLM triage to classify tone/complexity/tool needs."""
-        user_id = message.context.get("user_id", "unknown")
         prompt = await self._load_triage_prompt(message)
 
         # IMPORTANT: Triage agent should NOT see file_data (images) to avoid 

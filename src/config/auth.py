@@ -7,7 +7,7 @@ Follows the same pattern as environment.py for consistency.
 RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 """
 import os
-from typing import Optional, Any
+from typing import Optional
 from enum import Enum
 
 

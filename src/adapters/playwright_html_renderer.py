@@ -16,7 +16,6 @@ Local:
 """
 import asyncio
 import os
-from typing import Optional
 
 from ..ports.html_renderer_port import HtmlRendererPort, HtmlRenderError
 from ..utils.logger import logger
