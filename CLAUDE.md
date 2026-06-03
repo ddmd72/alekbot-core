@@ -9,11 +9,11 @@ When you need user_id / account_id for manual triggers, gcloud commands, or scri
 
 ## Manual Triggers (dev)
 
-User IDs for the commands below: read from memory (`project_infra.md`).
+User IDs and the service URL for the commands below: read from `.env` / memory (`project_infra.md`).
 
 ```bash
-# Trigger daily email review for dev user
-curl -s -X POST https://dev.alekbot.app/worker \
+# Trigger daily email review for dev user ($SERVICE_URL_DEV from .env)
+curl -s -X POST "$SERVICE_URL_DEV/worker" \
   -H "Content-Type: application/json" \
   -d '{"task_type": "daily_email_review", "user_id": "<DEV_USER_ID>", "account_id": "<DEV_ACCOUNT_ID>"}'
 ```
