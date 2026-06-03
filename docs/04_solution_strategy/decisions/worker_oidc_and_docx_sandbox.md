@@ -45,6 +45,17 @@ Implement **#1 and #2**; defer **#3**.
 - **#2 scoped to `fs` only:** under the real-risk lens, also blocking `eval`/`Function`/
   `process.env` adds nothing once network egress is blocked — that would be portfolio-narrative
   gold-plating, explicitly out of scope.
+- **Identity-only check, audience NOT pinned** (revised post-deploy): `/worker` is driven by
+  Cloud Tasks *and* eight Cloud Scheduler jobs whose token audiences are inconsistent — Cloud
+  Tasks defaults the audience to `<service_url>/worker`, Cloud Scheduler jobs use the bare Cloud
+  Run URL, and `CLOUD_RUN_SERVICE_URL` is not reliably set. The first deploy pinned audience to
+  `<CLOUD_RUN_SERVICE_URL>/worker` and 401'd all legitimate Scheduler traffic (reminders,
+  consolidation sweep, billing, task-subscription renew, email indexing, daily review). Fix:
+  verify Google signature + `email == SA` + `email_verified`, no audience pin. The threat
+  (anonymous internet POSTs) carries no Google token at all and is fully stopped by signature +
+  SA-email; audience pinning would only block a same-SA token minted for a different audience —
+  negligible here. Companion infra change: the six Scheduler jobs that sent **no** OIDC token were
+  reconfigured with `--oidc-service-account-email` (no code can authenticate a tokenless caller).
 
 ## Rejected alternatives
 

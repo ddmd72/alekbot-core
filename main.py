@@ -847,19 +847,17 @@ async def main():
                 @main_app.route("/worker", methods=["POST"])
                 async def worker():
                     from quart import request, jsonify
-                    # OIDC gate. Cloud Tasks attaches an OIDC token only when
-                    # SERVICE_ACCOUNT_EMAIL is set; enforce verification under the
-                    # same condition. Local dev (no SA email) bypasses, keeping
-                    # manual curl triggers working (see CLAUDE.md "Manual Triggers").
+                    # OIDC gate. Cloud Tasks / Cloud Scheduler attach an OIDC
+                    # token signed by SERVICE_ACCOUNT_EMAIL; enforce verification
+                    # iff that value is set. Local dev (no SA email) bypasses,
+                    # keeping manual curl triggers working (CLAUDE.md "Manual
+                    # Triggers"). Identity-only check — audience is not pinned
+                    # (callers use inconsistent audiences); see verifier docstring.
                     sa_email = config.get("SERVICE_ACCOUNT_EMAIL")
                     if sa_email:
-                        service_url = (
-                            config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
-                        )
                         if not verify_worker_oidc(
                             request.headers.get("Authorization"),
                             sa_email,
-                            f"{service_url}/worker",
                         ):
                             logger.warning("Rejected unauthenticated /worker request")
                             return jsonify({"error": "unauthorized"}), 401
