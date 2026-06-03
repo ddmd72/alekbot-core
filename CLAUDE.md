@@ -32,7 +32,11 @@ make deploy-dev        # Deploy to dev
 make deploy            # Deploy to prod
 ```
 
-Linter and formatter not yet configured (Milestone 4).
+Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
+`ruff check src/` before the unit suite, and CI (`.github/workflows/ci.yml`) runs `make check` on
+every push/PR. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
+errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
+mass-reformatted.
 
 ## Branching & Environment
 

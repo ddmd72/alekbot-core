@@ -42,8 +42,6 @@ from ..ports.llm_port import (
     Message,
     MessagePart,
     UsageMetadata,
-    PromptCacheConfig,
-    AutomaticFunctionCallingConfig,
     ProviderCapabilities,
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
@@ -127,7 +125,6 @@ class OpenAIAdapter(LLMPort):
         response_mime_type = request.response_mime_type
         response_schema = request.response_schema
         cache_config = request.cache_config
-        automatic_function_calling = request.automatic_function_calling
         force_tool_use = request.force_tool_use
         use_grounding = request.use_grounding
         thinking = request.thinking

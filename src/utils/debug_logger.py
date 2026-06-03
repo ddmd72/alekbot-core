@@ -292,8 +292,6 @@ class PromptDebugLogger:
             now = datetime.now()
             timestamp = now.strftime("%Y-%m-%d_%H-%M-%S") + f"_{now.microsecond // 1000:03d}"
 
-            turn = (metadata or {}).get("turn", 0)
-
             # Parse JSON response to extract readable text
             text_body = response
             try:

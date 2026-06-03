@@ -10,7 +10,6 @@ injection and call process_user_batches() — they never import ConsolidationQue
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus

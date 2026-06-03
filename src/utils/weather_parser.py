@@ -289,8 +289,6 @@ def parse_weather(text: str, query: str) -> Optional[Dict[str, object]]:
     rows = [rows_by_day[day] for day in order]
 
     location = extract_location(query) or "Unknown location"
-    any_wind = any(row.get("wind") for row in rows)
-    any_humidity = any(row.get("humidity") for row in rows)
 
     headers = ["Day", "Night", "Daytime", "Condition", "Humidity", "Wind"]
 

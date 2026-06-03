@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, List
+from typing import Optional
 from ..domain.user import UserProfile
 
 class UserRepository(ABC):

@@ -8,7 +8,7 @@ RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 """
 from typing import Optional, Dict
 
-from ..ports.iam_port import IAMPort, Role, ResourceType, Action, ROLE_PERMISSIONS
+from ..ports.iam_port import IAMPort, Role, ResourceType, Action
 from ..ports.account_repository import AccountRepository
 from ..utils.logger import logger
 
@@ -72,7 +72,7 @@ class FirestoreIAMAdapter(IAMPort):
             Future: Add resource-level policies (e.g., per-fact permissions).
         """
         if not account_id:
-            logger.warning(f"❌ IAM check failed: no account_id provided")
+            logger.warning("❌ IAM check failed: no account_id provided")
             return False
 
         try:

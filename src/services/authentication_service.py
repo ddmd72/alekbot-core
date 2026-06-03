@@ -12,7 +12,7 @@ from typing import Optional, Tuple, TYPE_CHECKING
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from ..ports.auth_port import AuthPort, TokenClaims, OAuthTokens, OAuthUserInfo
+from ..ports.auth_port import TokenClaims, OAuthTokens, OAuthUserInfo
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
 from ..domain.user import UserProfile, UserBotConfig

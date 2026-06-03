@@ -5,7 +5,7 @@ Resolves at the top of handle_message() based on channel binding.
 All downstream logic checks mode instead of knowing about bindings.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 

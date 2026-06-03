@@ -4,7 +4,6 @@ Firestore implementation of WhitelistRepository.
 Stores whitelist configuration in Firestore with atomic operations.
 Swappable implementation - can be replaced with YAML, PostgreSQL, etc.
 """
-from typing import Set
 from google.cloud import firestore
 
 from ..domain.whitelist import WhitelistEntry

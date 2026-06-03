@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.messaging import SmartResponse
-from ..ports.llm_port import LLMRequest, LLMResponse, Message, MessagePart, ToolCall
+from ..ports.llm_port import LLMRequest, LLMResponse, Message, ToolCall
 from ..domain.llm import build_tool_turn
 from ..utils.logger import logger
 from ..utils.telemetry import start_span

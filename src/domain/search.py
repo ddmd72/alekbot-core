@@ -4,9 +4,8 @@ Search Domain Models.
 Contains entities related to semantic search, context enrichment, and retrieval.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Dict
-from .entities import FactEntity
 
 @dataclass
 class EnrichedFact:

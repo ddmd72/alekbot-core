@@ -41,8 +41,12 @@ class FileLocalizationAdapter(LocalizationPort):
 
     def get_file_prompt(self, lang: LanguageCode, mime_type: str) -> str:
         mod = self._module(lang)
-        if "image"    in mime_type: return mod.FILE_FALLBACK_IMAGE
-        if "video"    in mime_type: return mod.FILE_FALLBACK_VIDEO
-        if "pdf"      in mime_type: return mod.FILE_FALLBACK_PDF
-        if "document" in mime_type or "text/" in mime_type: return mod.FILE_FALLBACK_DOCUMENT
+        if "image" in mime_type:
+            return mod.FILE_FALLBACK_IMAGE
+        if "video" in mime_type:
+            return mod.FILE_FALLBACK_VIDEO
+        if "pdf" in mime_type:
+            return mod.FILE_FALLBACK_PDF
+        if "document" in mime_type or "text/" in mime_type:
+            return mod.FILE_FALLBACK_DOCUMENT
         return mod.FILE_FALLBACK_GENERIC

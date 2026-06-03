@@ -41,5 +41,8 @@ pytest
 pytest-asyncio
 pytest-mock
 
+# Linting — pinned so CI matches local; bumps are deliberate (new rules can break the gate)
+ruff==0.15.15
+
 # Telegram SDK
 python-telegram-bot==21.0

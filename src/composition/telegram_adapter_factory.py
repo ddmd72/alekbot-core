@@ -18,7 +18,6 @@ from .user_agent_factory import UserAgentFactory
 from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService
 from ..ports.html_renderer_port import HtmlRendererPort
-from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..ports.platform_auth_port import PlatformAuthPort
 from ..ports.file_service import FileService
 from ..ports.language_service_port import LanguageServicePort

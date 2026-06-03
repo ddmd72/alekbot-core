@@ -1,14 +1,9 @@
-import uuid
-import asyncio
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from ..domain.entities import (
-    FactEntity,
-    FactDomain,
     TemporalClass,
     FactState,
-    ContextPriority,
     normalize_fact_taxonomy,
 )
 from ..domain.search import SearchLimits

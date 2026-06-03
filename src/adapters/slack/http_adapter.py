@@ -211,7 +211,7 @@ class HTTPModeAdapter(SlackAdapter):
             session_id = payload.get("session_id")
 
             if not event_data or not session_id:
-                logger.warning(f"⚠️ Missing event_data or session_id in worker task")
+                logger.warning("⚠️ Missing event_data or session_id in worker task")
                 return jsonify({"ok": False, "error": "Missing required fields"}), 400
 
             # Per-session lock: serialize concurrent workers for the same session.
@@ -275,7 +275,7 @@ class HTTPModeAdapter(SlackAdapter):
                 )
 
             if (not text or not text.strip()) and not files:
-                logger.warning(f"⚠️ Empty text and no files in message event, skipping")
+                logger.warning("⚠️ Empty text and no files in message event, skipping")
                 return
 
             # IAM Authorization
@@ -437,11 +437,11 @@ class HTTPModeAdapter(SlackAdapter):
             is_valid = hmac.compare_digest(expected_signature, slack_signature)
 
             if not is_valid:
-                logger.error(f"⚠️ Signature mismatch!")
+                logger.error("⚠️ Signature mismatch!")
                 logger.error(f"   Expected: {expected_signature[:20]}...")
                 logger.error(f"   Received: {slack_signature[:20]}...")
             else:
-                logger.debug(f"✅ Signature verified successfully")
+                logger.debug("✅ Signature verified successfully")
 
             return is_valid
 

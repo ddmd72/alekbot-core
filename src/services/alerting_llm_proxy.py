@@ -19,7 +19,7 @@ flood Slack. In-process state — fine for the single-instance Cloud Run deploym
 """
 
 import asyncio
-from typing import Awaitable, Callable, Dict, Optional
+from typing import Awaitable, Callable, Dict
 import time
 
 from ..domain.exceptions import LLMClientError

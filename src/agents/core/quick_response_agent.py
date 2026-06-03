@@ -20,33 +20,23 @@ fallback scenarios — it is the last LLM-backed line before a synthetic static 
 
 from __future__ import annotations
 
-import json
 import re
 import asyncio
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 from ..base_agent import BaseAgent
 from ...infrastructure.agent_config import QUICK, ENABLE_HISTORY_OPTIMIZATION
 from ...infrastructure.agent_manifest import QUICK_RESPONSE
-from ...infrastructure.delegation_engine import DelegationEngine, DelegationResult
+from ...infrastructure.delegation_engine import DelegationEngine
 from ...domain.agent import (
     AgentMessage,
     AgentResponse,
     AgentConfig,
     AgentIntent,
-    AgentStatus,
     RoutingMetadata,
-    DeliveryItem,
 )
-from ...domain.tone import UserTone
 from ...ports.llm_port import (
-    LLMPort,
-    LLMResponse,
-    ToolCall,
     Message,
     MessagePart,
-    AutomaticFunctionCallingConfig,
     LLMRequest
 )
 from ...ports.session_store import SessionStore
@@ -58,6 +48,7 @@ from ...domain.messaging import SmartResponse
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
+    from ...infrastructure.agent_coordinator import AgentCoordinator
 
 
 class QuickResponseAgent(BaseAgent):

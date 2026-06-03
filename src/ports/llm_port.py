@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     # ProviderResiliencePort but the import lives behind TYPE_CHECKING to keep
     # ports/ free of cross-port imports (REQ-ARCH-06). At runtime the field is
     # validated as ``Any`` and isinstance-checked by callers.
-    from .provider_resilience_port import ProviderResiliencePort
+    pass
 
 # Domain types — canonical definitions in domain/llm.py.
 # Re-exported here for backward compatibility with existing imports.

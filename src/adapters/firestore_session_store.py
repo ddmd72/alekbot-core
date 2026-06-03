@@ -4,6 +4,7 @@ Persistent session storage for HTTP mode to survive container restarts
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Optional, List, Any, Dict, Callable, Awaitable
 import datetime
@@ -164,7 +165,6 @@ class FirestoreSessionStore(SessionStore):
         Implements sliding window: hot storage + cold storage overflow.
         """
         try:
-            import asyncio
             doc_ref = self.db.collection(self.collection_name).document(session_id)
             now = time.time()
             # If owner_id is not provided, we'll try to get it from doc or fallback to session_id

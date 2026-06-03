@@ -11,7 +11,6 @@ Adapters:
 RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 """
 from abc import ABC, abstractmethod
-from typing import Optional
 
 from src.domain.auth import TokenClaims, OAuthTokens, OAuthUserInfo
 

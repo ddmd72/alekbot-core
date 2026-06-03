@@ -54,7 +54,7 @@ class FirestoreFactRepository(FactRepository):
         db_client,
         env_config: EnvironmentConfig,
         embedding_service: Optional[EmbeddingService] = None,
-        biographical_context_service: Optional["BiographicalContextService"] = None,
+        biographical_context_service: Optional["BiographicalContextService"] = None,  # noqa: F821 — adapter must not import services; forward-ref only
         dedup_service: Optional[SmartDeduplication] = None,
     ):
         """
@@ -151,7 +151,7 @@ class FirestoreFactRepository(FactRepository):
             # Migrate old 'private' value to new enum 'user_private'
             from ..domain.entities import FactVisibility
             data["visibility"] = FactVisibility.USER_PRIVATE.value
-            logger.debug(f"Migrated visibility from 'private' to 'user_private'")
+            logger.debug("Migrated visibility from 'private' to 'user_private'")
 
         return data
 

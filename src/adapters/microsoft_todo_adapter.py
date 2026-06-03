@@ -16,7 +16,6 @@ Design decisions (per RFC §6.1):
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,7 +28,6 @@ from ..domain.task import (
     RecurrencePattern,
     RecurrenceRange,
     Task,
-    TaskAttachment,
     TaskCreate,
     TaskImportance,
     TaskList,

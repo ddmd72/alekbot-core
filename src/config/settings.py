@@ -1,7 +1,6 @@
 import os
 from dotenv import load_dotenv
 from google.cloud import secretmanager
-from typing import Optional
 from .environment import EnvironmentConfig
 from ..domain.language import LanguageCode
 

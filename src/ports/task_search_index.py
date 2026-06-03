@@ -5,7 +5,7 @@ Port is justified: testable substitution + external system boundary (Firestore).
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from ..domain.task import TaskSearchEntry
 

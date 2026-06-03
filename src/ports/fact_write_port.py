@@ -7,7 +7,7 @@ Justification for port promotion:
 - Enables test doubles without real Firestore + Gemini embedding calls.
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 
 class FactWritePort(ABC):

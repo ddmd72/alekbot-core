@@ -29,9 +29,7 @@ from mcp.server.auth.provider import (
     OAuthAuthorizationServerProvider,
     RefreshToken as SDKRefreshToken,
     RegistrationError,
-    RegistrationErrorCode,
     TokenError,
-    TokenErrorCode,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyUrl

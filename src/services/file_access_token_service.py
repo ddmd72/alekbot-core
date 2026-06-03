@@ -23,10 +23,8 @@ from __future__ import annotations
 import jwt
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from ..domain.file_access import DEFAULT_FILE_LINK_TTL, EMAIL_REVIEW_FILE_LINK_TTL
-from ..utils.logger import logger
 
 
 class FileAccessTokenError(Exception):

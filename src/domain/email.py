@@ -8,7 +8,7 @@ See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §5.
 Import rules: only stdlib + pydantic. No adapters/, services/, config/.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 

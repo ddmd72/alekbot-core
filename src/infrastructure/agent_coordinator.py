@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional, Any
-from ..domain.agent import AgentMessage, AgentResponse, AgentStatus, AgentIntent
+from ..domain.agent import AgentMessage, AgentResponse, AgentIntent
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 from .agent_registry import AgentRegistry, AgentDescriptor, ExecutionMode

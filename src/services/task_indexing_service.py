@@ -11,7 +11,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
-from ..domain.task import Task, TaskSearchEntry, TaskStatus
+from ..domain.task import Task, TaskSearchEntry
 from ..ports.embedding_service import EmbeddingService
 from ..ports.task_search_index import TaskSearchIndex
 from ..ports.tasks_provider_port import TasksProviderPort

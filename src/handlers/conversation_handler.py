@@ -9,7 +9,6 @@ import os
 import json
 import asyncio
 import time
-import dataclasses
 from typing import Callable, Coroutine, List, Optional, Any, TYPE_CHECKING
 
 from ..domain.messaging import MessageContext, ResponseChannel, SmartResponse, RichContent
@@ -860,7 +859,7 @@ class ConversationHandler(ConversationHandlerPort):
                 await response_channel.send_status(StatusType.THINKING, thread_id=context.thread_id)
                 
                 # Enqueue
-                batch_id = await self.consolidation_queue.enqueue_batch(batch)
+                await self.consolidation_queue.enqueue_batch(batch)
                 
                 # Save trimmed session
                 await session_store.save_session(session.session_id, session)
@@ -968,7 +967,7 @@ class ConversationHandler(ConversationHandlerPort):
             if available:
                 lines = [f"  `{a}`" for a in available]
                 await response_channel.send_message(
-                    f"Available agents:\n" + "\n".join(lines),
+                    "Available agents:\n" + "\n".join(lines),
                     thread_id=context.thread_id,
                 )
             else:

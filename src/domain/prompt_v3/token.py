@@ -52,7 +52,7 @@ class Token:
         class_: TokenClass,
         content: str,
         metadata: dict,
-        security_port: 'SecurityPort'
+        security_port: 'SecurityPort'  # noqa: F821 — domain must not import ports; forward-ref only
     ) -> "Token":
         """Factory method with SecurityPort validation.
 

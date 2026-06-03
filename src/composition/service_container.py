@@ -186,7 +186,8 @@ class ServiceContainer:
         self.alert_webhook = alert_webhook
         alerting_proxy_factory = None
         if alert_webhook is not None:
-            alerting_proxy_factory = lambda inner: AlertingLLMProxy(inner, alert_fn=alert_webhook.post)
+            def alerting_proxy_factory(inner):
+                return AlertingLLMProxy(inner, alert_fn=alert_webhook.post)
         self.context_builder = AgentContextBuilder(
             self.registry,
             resilience_port=self.resilience_port,

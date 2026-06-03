@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Dict, TYPE_CHECKING, Optional
+from typing import Dict, TYPE_CHECKING, Optional
 from .language import LanguageCode
 from datetime import datetime, timezone
 from uuid import uuid4

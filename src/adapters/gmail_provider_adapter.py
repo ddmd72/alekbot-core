@@ -84,7 +84,7 @@ class GmailProviderAdapter(EmailProviderPort):
                 # embedded in the token. Passing q= alongside pageToken may override
                 # the token's date filter and return emails outside the original range.
                 params["pageToken"] = page_token
-                logger.debug(f"📬 Gmail list_emails: resuming via pageToken (no q=)")
+                logger.debug("📬 Gmail list_emails: resuming via pageToken (no q=)")
             else:
                 # First page: build q= from caller query + date filters
                 q_parts = []

@@ -1,7 +1,7 @@
 import asyncio
 from typing import List, Dict, Optional, Union
 
-from ..domain.entities import FactEntity, FactType
+from ..domain.entities import FactEntity
 from ..domain.search import EnrichedContext, EnrichedFact, SearchLimits
 from ..domain.vector_math import cosine_similarity
 from ..ports.repository import FactRepository
@@ -200,7 +200,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
             final_facts = rrf_ranked[:effective_limits.total_limit]
             dedup_count = 0
             logger.info(
-                f"🔍 [SearchEnrichment] Semantic dedup SKIPPED (consolidation mode)"
+                "🔍 [SearchEnrichment] Semantic dedup SKIPPED (consolidation mode)"
             )
         else:
             # Normal search mode: remove semantic duplicates
