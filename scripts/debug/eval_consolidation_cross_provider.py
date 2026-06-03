@@ -18,7 +18,7 @@ Usage:
 
 Inputs:
     --session   Path prefix of the FIRST request file in the session, relative
-                to gs://gen-lang-client-0554950952-debug-prompts/consolidation/.
+                to gs://$DEBUG_PROMPTS_BUCKET/consolidation/.
                 Example: 2026-04-10/2026-04-10_10-32-29
 
 How it works:
@@ -63,7 +63,7 @@ from src.services.caching_llm_proxy import CachingLLMProxy
 from src.services.prompt_cache_strategy import PromptCacheStrategy
 
 
-GCS_BUCKET = "gen-lang-client-0554950952-debug-prompts"
+GCS_BUCKET = os.environ.get("DEBUG_PROMPTS_BUCKET", "")  # set in .env
 DEBUG_PREFIX = "consolidation"
 
 
