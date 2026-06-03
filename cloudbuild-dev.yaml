@@ -73,6 +73,11 @@ steps:
     args:
       - "-c"
       - |
+        # OIDC identity for /worker scheduler jobs. The /worker route verifies a
+        # Google-signed token whose email == this SA (audience is not pinned —
+        # see src/web/worker_oidc_verifier.py). Derive the default compute SA
+        # from the project number so no infra id is hardcoded (secrets rule).
+        SA="$$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
         gcloud scheduler jobs update http alek-bot-dev-keep-alive \
           --schedule="*/10 * * * *" \
           --uri="$_SERVICE_URL/health" \
@@ -93,6 +98,7 @@ steps:
         gcloud scheduler jobs create http alek-bot-dev-renew-task-subscriptions \
           --schedule="0 2 * * *" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"renew_all_task_subscriptions"}' \
           --headers="Content-Type=application/json" \
@@ -105,6 +111,7 @@ steps:
         && gcloud scheduler jobs update http alek-bot-dev-start-email-indexing \
           --schedule="0 * * * *" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"start_email_indexing"}' \
           --update-headers="Content-Type=application/json" \
@@ -114,6 +121,7 @@ steps:
         || gcloud scheduler jobs create http alek-bot-dev-start-email-indexing \
           --schedule="0 * * * *" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"start_email_indexing"}' \
           --headers="Content-Type=application/json" \
@@ -126,6 +134,7 @@ steps:
         && gcloud scheduler jobs update http alek-bot-dev-fire-due-reminders \
           --schedule="*/5 * * * *" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"fire_due_reminders"}' \
           --update-headers="Content-Type=application/json" \
@@ -135,6 +144,7 @@ steps:
         || gcloud scheduler jobs create http alek-bot-dev-fire-due-reminders \
           --schedule="*/5 * * * *" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"fire_due_reminders"}' \
           --headers="Content-Type=application/json" \
@@ -148,6 +158,7 @@ steps:
           --schedule="0 9 * * *" \
           --time-zone="Europe/Madrid" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"billing_daily_summary"}' \
           --update-headers="Content-Type=application/json" \
@@ -158,6 +169,7 @@ steps:
           --schedule="0 9 * * *" \
           --time-zone="Europe/Madrid" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"billing_daily_summary"}' \
           --headers="Content-Type=application/json" \
@@ -170,6 +182,7 @@ steps:
         && gcloud scheduler jobs update http alek-bot-dev-repair-email-embeddings \
           --schedule="0 * * * *" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"repair_email_embeddings"}' \
           --update-headers="Content-Type=application/json" \
@@ -179,6 +192,7 @@ steps:
         || gcloud scheduler jobs create http alek-bot-dev-repair-email-embeddings \
           --schedule="0 * * * *" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"repair_email_embeddings"}' \
           --headers="Content-Type=application/json" \
@@ -191,6 +205,7 @@ steps:
         && gcloud scheduler jobs update http alek-bot-dev-sweep-consolidation \
           --schedule="0 * * * *" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"sweep_consolidation"}' \
           --update-headers="Content-Type=application/json" \
@@ -200,6 +215,7 @@ steps:
         || gcloud scheduler jobs create http alek-bot-dev-sweep-consolidation \
           --schedule="0 * * * *" \
           --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
           --http-method=POST \
           --message-body='{"task_type":"sweep_consolidation"}' \
           --headers="Content-Type=application/json" \
