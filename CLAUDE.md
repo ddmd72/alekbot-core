@@ -9,14 +9,36 @@ When you need user_id / account_id for manual triggers, gcloud commands, or scri
 
 ## Manual Triggers (dev)
 
-User IDs and the service URL for the commands below: read from `.env` / memory (`project_infra.md`).
+`/worker` verifies a Google OIDC token (see
+`docs/04_solution_strategy/decisions/worker_oidc_and_docx_sandbox.md`), so a plain unauthenticated
+`curl` returns **401** against the live service. Project ID / user IDs / SA: read from `.env` /
+memory (`project_infra.md`) — don't hardcode. Three ways to trigger, easiest first:
 
+**1. Scheduled task types — run the Cloud Scheduler job** (it already carries OIDC; nothing to mint):
 ```bash
-# Trigger daily email review for dev user ($SERVICE_URL_DEV from .env)
+gcloud scheduler jobs list --location=us-central1 --project=<PROJECT_ID>   # see all jobs
+gcloud scheduler jobs run alek-bot-dev-fire-due-reminders --location=us-central1 --project=<PROJECT_ID>
+```
+
+**2. Arbitrary per-user payload against the live service — mint an OIDC token for the worker SA.**
+Needs a one-time grant of `roles/iam.serviceAccountTokenCreator` on the SA to your user.
+`--include-email` is **mandatory** — the verifier checks the token's `email` claim (audience is not
+pinned, so its value is irrelevant but the gcloud flag is required):
+```bash
+SA=$(gcloud secrets versions access latest --secret=SERVICE_ACCOUNT_EMAIL --project=<PROJECT_ID>)
+# one-time grant (you choose to run this — it widens your access to the SA):
+# gcloud iam service-accounts add-iam-policy-binding "$SA" \
+#   --member="user:$(gcloud config get-value account)" \
+#   --role=roles/iam.serviceAccountTokenCreator --project=<PROJECT_ID>
+TOKEN=$(gcloud auth print-identity-token --impersonate-service-account="$SA" \
+  --audiences="$SERVICE_URL_DEV/worker" --include-email)
 curl -s -X POST "$SERVICE_URL_DEV/worker" \
-  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"task_type": "daily_email_review", "user_id": "<DEV_USER_ID>", "account_id": "<DEV_ACCOUNT_ID>"}'
 ```
+
+**3. Local instance — the gate bypasses** when `SERVICE_ACCOUNT_EMAIL` is unset (local dev), so a
+plain unauthenticated `curl http://localhost:8080/worker ...` works with no token.
 
 ## Commands
 
