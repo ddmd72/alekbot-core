@@ -23,6 +23,7 @@ mcp==1.27.*  # MCP Python SDK for remote MCP server exposed to claude.ai Custom 
 google-cloud-tasks>=2.13.0
 numpy>=1.24.0
 lark>=1.1.9
+PyYAML>=6.0  # firestore snapshot serializer (firestore_utils) + migration/export scripts
 
 # Observability
 # Pinned as a set: logfire hard-pins opentelemetry-* to 1.41.x, so leaving
