@@ -1,5 +1,11 @@
 # Alek-Core Makefile
 # Best Practices: https://makefiletutorial.com/
+#
+# Single live environment. The Cloud Run service is named `alek-bot-dev` and the
+# build config is `cloudbuild-dev.yaml` for historical reasons (the separate prod
+# deployment was retired 2026-05-31); the names are kept because a Cloud Run rename
+# = a new service + new URL, not worth it. See
+# docs/04_solution_strategy/decisions/dead_prod_collections_deletion.md.
 
 # ============================================================================
 # CONFIGURATION VARIABLES
@@ -16,37 +22,34 @@ PROJECT_ID ?= $(GOOGLE_CLOUD_PROJECT)
 REGION ?= us-central1
 PYTHON ?= python3
 
-# Service Configuration
-SERVICE_NAME ?= alek-bot
-SERVICE_NAME_DEV ?= alek-bot-dev
+# The single live Cloud Run service + its async research job.
+SERVICE_NAME ?= alek-bot-dev
+RESEARCH_JOB ?= alek-research-job-dev
 
-# Cloud Run Service URLs — defined in .env (gitignored), loaded via include above
-# Required: SERVICE_URL_DEV, SERVICE_URL_PROD
-OAUTH_REDIRECT_URI_DEV ?= $(SERVICE_URL_DEV)/auth/callback
-OAUTH_REDIRECT_URI_PROD ?= $(SERVICE_URL_PROD)/auth/callback
+# Cloud Run service URL — defined in .env (gitignored), loaded via include above.
+# Required: SERVICE_URL_DEV
+OAUTH_REDIRECT_URI ?= $(SERVICE_URL_DEV)/auth/callback
 
-# Prompt inspection helpers (fallback order: DEV/PROD-specific → USER_ID)
-DEV_USER_ID ?= $(USER_ID)
-PROD_USER_ID ?= $(USER_ID)
-
-
+# Default entry count for log reads
+K ?= 300
 
 # ============================================================================
 # PHONY TARGETS (targets that don't create files)
 # ============================================================================
 
 .PHONY: help
-.PHONY: install install-dev clean
-.PHONY: dev dev-emulator run test lint format kill-local
-.PHONY: deploy deploy-dev deploy-indexes
-.PHONY: create-debug-bucket
-.PHONY: start stop restart start-dev stop-dev
-.PHONY: logs logs-dev logs-tail logs-perf logs-dev-tail logs-job-dev list-jobs-dev logs-execution-dev cancel-job-dev fetch-logs-dev fetch-logs-job-dev
-.PHONY: services status auth
+.PHONY: install install-dev clean auth
+.PHONY: test test-unit test-coverage test-integration lint format check
+.PHONY: deploy deploy-indexes
+.PHONY: start stop restart
+.PHONY: logs logs-tail logs-tail-clean logs-tail-full logs-perf fetch-logs
+.PHONY: logs-mode-clean logs-mode-full
+.PHONY: logs-job fetch-logs-job list-jobs logs-execution cancel-job
+.PHONY: services status
 .PHONY: check-models check-pricing
 .PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
-.PHONY: check
-.PHONY: delete-prod delete-dev delete-all
+.PHONY: create-debug-bucket
+.PHONY: delete
 
 # ============================================================================
 # DEFAULT TARGET
@@ -60,71 +63,55 @@ help: ## Show this help message
 	@echo "╚════════════════════════════════════════════════════════════════╝"
 	@echo ""
 	@echo "📦 INSTALLATION & SETUP:"
-	@echo "  make install         Install production dependencies"
-	@echo "  make install-dev     Install dev dependencies (includes testing tools)"
+	@echo "  make install         Install dependencies"
+	@echo "  make install-dev     Install dependencies + test/lint tools"
 	@echo "  make clean           Clean up temporary files and caches"
 	@echo "  make auth            Authenticate with Google Cloud"
 	@echo ""
-	@echo "🔧 DEVELOPMENT:"
-	@echo "  make dev             Run bot locally (Socket Mode)"
-	@echo "  make dev-emulator    Run with Firestore emulator (port 8081)"
-	@echo "  make kill-local      Kill all local bot processes"
+	@echo "🧪 TESTING & QUALITY:"
+	@echo "  make check           CI gate: ruff lint + unit/architecture tests"
 	@echo "  make test            Run all tests"
 	@echo "  make test-unit       Run unit tests"
-	@echo "  make test-coverage   Unit tests + per-file coverage gate (RFC § 8.4)"
+	@echo "  make test-coverage   Unit tests + per-file coverage gate"
 	@echo "  make test-integration Run integration tests"
 	@echo "  make lint            Lint src/ with ruff"
 	@echo "  make format          Format src/ with ruff"
 	@echo ""
-	@echo "🏗️  BUILD & DEPLOY:"
-	@echo "  make deploy          Build + deploy to Cloud Run (production)"
-	@echo "  make deploy-dev      Build + deploy to Cloud Run (development)"
+	@echo "🚀 DEPLOY (single live environment — deploy is manual by choice):"
+	@echo "  make deploy          Build + deploy to Cloud Run ($(SERVICE_NAME))"
+	@echo "  make deploy-indexes  Deploy Firestore indexes"
 	@echo ""
 	@echo "⚙️  CLOUD OPERATIONS:"
-	@echo "  make start           Start production service (min-instances=1)"
-	@echo "  make stop            Stop production service (min-instances=0)"
-	@echo "  make restart         Restart production service"
-	@echo "  make start-dev       Start development service"
-	@echo "  make stop-dev        Stop development service"
+	@echo "  make start           Start service (min-instances=1)"
+	@echo "  make stop            Stop service (min-instances=0)"
+	@echo "  make restart         Restart service"
+	@echo "  make services        Show service URL"
+	@echo "  make status          Show service status"
 	@echo ""
 	@echo "📊 MONITORING & LOGS:"
-	@echo "  make logs            View production logs (last 30 entries)"
-	@echo "  make logs-dev [K=300]  View development logs (last K entries)"
-	@echo "  make logs-tail       Live tail production logs"
-	@echo "  make logs-perf       Live tail production perf logs"
-	@echo "  make logs-dev-tail   Live tail development logs"
-	@echo "  make logs-job-dev    View recent Cloud Run Job logs (last 100 entries)"
-	@echo "  make list-jobs-dev   List all job executions with status"
-	@echo "  make logs-execution-dev EXECUTION=<name>  View logs for a specific execution"
-	@echo "  make cancel-job-dev EXECUTION=<name>      Cancel a running execution"
-	@echo "  make fetch-logs-dev [K=300]      Fetch dev service logs to alek_debug.log"
-	@echo "  make fetch-logs-job-dev [K=300]  Fetch dev job logs to alek_debug_job.log"
-	@echo "  make logs-tail-clean      Tail prod logs (clean mode)"
-	@echo "  make logs-tail-full       Tail prod logs (full mode)"
-	@echo "  make logs-dev-tail-clean  Tail dev logs (clean mode)"
-	@echo "  make logs-dev-tail-full   Tail dev logs (full mode)"
-	@echo "  make logs-mode-dev-clean  Set LOG_TRACE_CONTEXT=clean in dev service"
-	@echo "  make logs-mode-dev-full   Set LOG_TRACE_CONTEXT=full in dev service"
-	@echo "  make logs-mode-prod-clean Set LOG_TRACE_CONTEXT=clean in prod service"
-	@echo "  make logs-mode-prod-full  Set LOG_TRACE_CONTEXT=full in prod service"
-	@echo "  make services        Show all service URLs"
-	@echo "  make status          Show service status"
+	@echo "  make logs [K=300]    View last K service log entries"
+	@echo "  make logs-tail       Live tail logs"
+	@echo "  make logs-tail-clean Live tail logs (clean mode)"
+	@echo "  make logs-tail-full  Live tail logs (full mode)"
+	@echo "  make logs-perf       Live tail perf logs"
+	@echo "  make fetch-logs [K=300]  Fetch last K logs to alek_debug.log"
+	@echo "  make logs-mode-clean Set LOG_TRACE_CONTEXT=clean on the service"
+	@echo "  make logs-mode-full  Set LOG_TRACE_CONTEXT=full on the service"
+	@echo "  make logs-job        View recent Cloud Run Job logs"
+	@echo "  make fetch-logs-job [K=300]  Fetch last K job logs to alek_debug_job.log"
+	@echo "  make list-jobs       List job executions with status"
+	@echo "  make logs-execution EXECUTION=<name>  View logs for a specific execution"
+	@echo "  make cancel-job EXECUTION=<name>      Cancel a running execution"
 	@echo ""
 	@echo "🗄️  MAINTENANCE:"
 	@echo "  make check-models    Check available Gemini models"
+	@echo "  make check-pricing   Fetch live model prices and audit billing.py"
 	@echo ""
-	@echo "🧪 E2E TESTING (Production Flow):"
-	@echo "  make test-e2e-smart          E2E test Smart agent"
-	@echo "  make test-e2e-quick          E2E test Quick agent"
-	@echo "  make test-e2e-router         E2E test Router agent"
-	@echo "  make test-e2e-consolidation  E2E test Consolidation agent"
-	@echo "  make test-e2e-websearch      E2E test WebSearch agent"
-	@echo "  make test-e2e-all            E2E test all agents"
+	@echo "🧪 E2E TESTING (real API flow):"
+	@echo "  make test-e2e-smart / -quick / -router / -consolidation / -websearch / -all"
 	@echo ""
 	@echo "🗑️  CLEANUP:"
-	@echo "  make delete-prod        Delete production service (DANGEROUS)"
-	@echo "  make delete-dev         Delete development service"
-	@echo "  make delete-all         Delete ALL services (prod + dev)"
+	@echo "  make delete          Delete the Cloud Run service (DANGEROUS)"
 	@echo ""
 	@echo "💡 Tip: Use 'make <target>' to run any command"
 	@echo ""
@@ -133,13 +120,13 @@ help: ## Show this help message
 # INSTALLATION & SETUP
 # ============================================================================
 
-install: ## Install production dependencies
-	@echo "📦 Installing production dependencies..."
+install: ## Install dependencies
+	@echo "📦 Installing dependencies..."
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install -r requirements.txt
 
-install-dev: install ## Install development dependencies
-	@echo "📦 Installing development dependencies..."
+install-dev: install ## Install dependencies + test/lint tools
+	@echo "📦 Installing dev tools..."
 	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock ruff
 
 clean: ## Clean up temporary files and caches
@@ -156,27 +143,8 @@ auth: ## Authenticate with Google Cloud
 	gcloud auth application-default login
 
 # ============================================================================
-# DEVELOPMENT
+# TESTING & QUALITY
 # ============================================================================
-
-dev: ## Run bot locally (Socket Mode)
-	@echo "🏃 Starting bot in local development mode..."
-	@if [ -d "venv" ]; then \
-		echo "🐍 Using venv"; \
-		. venv/bin/activate && export APP_ENV=development SLACK_MODE=socket && python3 main.py; \
-	else \
-		export APP_ENV=development SLACK_MODE=socket && $(PYTHON) main.py; \
-	fi
-
-run: dev ## Alias for 'make dev'
-
-kill-local: ## Kill all local bot processes
-	@echo "🔪 Killing all local bot processes..."
-	@pkill -9 -f "main.py" 2>/dev/null && echo "✅ All bot processes killed" || echo "ℹ️  No bot processes found"
-
-dev-emulator: ## Run with Firestore emulator (emulator on port 8081, app on 8080)
-	@echo "🏠 Starting bot with Firestore emulator..."
-	@export FIRESTORE_EMULATOR_HOST=localhost:8081 APP_ENV=development SLACK_MODE=socket && $(PYTHON) main.py
 
 test: ## Run all tests
 	@echo "🧪 Running all tests..."
@@ -209,26 +177,18 @@ format: ## Format src/ with ruff (black-compatible)
 	@echo "✨ Formatting src/ with ruff..."
 	$(PYTHON) -m ruff format src/
 
-check: lint test-unit ## Quick pre-commit check (ruff lint + unit/architecture tests)
+check: lint test-unit ## CI gate: ruff lint + unit/architecture tests
 	@echo "✅ All checks passed"
 
 # ============================================================================
 # BUILD & DEPLOY
 # ============================================================================
 
-deploy: ## Build + deploy to Cloud Run (production)
-	@echo "🚀 Build + deploy to Cloud Run (PRODUCTION)..."
-	@echo "Using cloudbuild-prod.yaml configuration"
-	gcloud builds submit --config=cloudbuild-prod.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_PROD),_OAUTH_REDIRECT_URI=$(OAUTH_REDIRECT_URI_PROD) .
-	@echo "✅ Production deployment complete!"
-
-deploy-dev: ## Build + deploy to Cloud Run (development)
-	@echo "🚀 Build + deploy to Cloud Run (DEVELOPMENT)..."
-	@echo "Using cloudbuild-dev.yaml configuration"
+deploy: ## Build + deploy to Cloud Run (the single live environment)
+	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(OAUTH_REDIRECT_URI_DEV),_DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET) .
-	@echo "✅ Development deployment complete!"
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(OAUTH_REDIRECT_URI),_DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET) .
+	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json
 	@echo "🚀 Deploying Firestore indexes..."
@@ -239,94 +199,64 @@ deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json
 # CLOUD OPERATIONS
 # ============================================================================
 
-start: ## Start production service
-	@echo "🟢 Starting production service..."
+start: ## Start service (min-instances=1)
+	@echo "🟢 Starting $(SERVICE_NAME)..."
 	gcloud run services update $(SERVICE_NAME) --min-instances 1 --region $(REGION)
 	@echo "✅ Service started (min-instances=1)"
 
-stop: ## Stop production service
-	@echo "🛑 Stopping production service..."
+stop: ## Stop service (min-instances=0)
+	@echo "🛑 Stopping $(SERVICE_NAME)..."
 	gcloud run services update $(SERVICE_NAME) --min-instances 0 --region $(REGION)
 	@echo "✅ Service stopped (min-instances=0)"
 
-restart: stop start ## Restart production service
+restart: stop start ## Restart service
 
-start-dev: ## Start development service
-	@echo "🟢 Starting development service..."
-	gcloud run services update $(SERVICE_NAME_DEV) --min-instances 1 --region $(REGION)
-	@echo "✅ Development service started"
+services: ## Show service URL
+	@echo "🌐 Service URL:"
+	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format="value(status.url)" 2>/dev/null || echo "  $(SERVICE_NAME): Not deployed"
 
-stop-dev: ## Stop development service
-	@echo "🛑 Stopping development service..."
-	gcloud run services update $(SERVICE_NAME_DEV) --min-instances 0 --region $(REGION)
-	@echo "✅ Development service stopped"
+status: ## Show service status
+	@echo "📊 Service status ($(SERVICE_NAME)):"
+	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format="table(status.conditions[0].type,status.conditions[0].status,metadata.labels)" 2>/dev/null || echo "  Not deployed"
 
 # ============================================================================
 # MONITORING & LOGS
 # ============================================================================
 
-logs: ## View production logs (last 30 entries)
-	@echo "📋 Production logs (last 30 entries):"
-	@gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=$(SERVICE_NAME)" \
-	  --limit 30 \
-	  --format="value(textPayload)" \
-	  --project=$(PROJECT_ID)
-
-logs-dev: ## View development logs (last K entries, default K=150)
-	@echo "📋 Development logs (last $(K) entries):"
-	@gcloud run services logs read $(SERVICE_NAME_DEV) \
+logs: ## View last K service log entries (default K=300)
+	@echo "📋 Logs for $(SERVICE_NAME) (last $(K) entries):"
+	@gcloud run services logs read $(SERVICE_NAME) \
 	  --region=$(REGION) \
 	  --limit=$(K) \
 	  --format="value(textPayload)"
 
-logs-tail: ## Live tail production logs
-	@echo "📡 Tailing production logs (Ctrl+C to stop)..."
+logs-tail: ## Live tail logs
+	@echo "📡 Tailing $(SERVICE_NAME) logs (Ctrl+C to stop)..."
 	@gcloud beta logging tail "resource.type=cloud_run_revision AND resource.labels.service_name=$(SERVICE_NAME)" \
 	  --format="value(textPayload)" \
 	  --project=$(PROJECT_ID)
 
-logs-tail-clean: ## Live tail production logs (clean mode)
-	@echo "📡 Tailing production logs (clean mode, Ctrl+C to stop)..."
+logs-tail-clean: ## Live tail logs (clean mode)
+	@echo "📡 Tailing $(SERVICE_NAME) logs (clean mode, Ctrl+C to stop)..."
 	@LOG_TRACE_CONTEXT=clean gcloud beta logging tail "resource.type=cloud_run_revision AND resource.labels.service_name=$(SERVICE_NAME)" \
 	  --format="value(textPayload)" \
 	  --project=$(PROJECT_ID)
 
-logs-tail-full: ## Live tail production logs (full mode)
-	@echo "📡 Tailing production logs (full mode, Ctrl+C to stop)..."
+logs-tail-full: ## Live tail logs (full mode)
+	@echo "📡 Tailing $(SERVICE_NAME) logs (full mode, Ctrl+C to stop)..."
 	@LOG_TRACE_CONTEXT=full gcloud beta logging tail "resource.type=cloud_run_revision AND resource.labels.service_name=$(SERVICE_NAME)" \
 	  --format="value(textPayload)" \
 	  --project=$(PROJECT_ID)
 
-logs-perf: ## Live tail production perf logs
-	@echo "📡 Tailing production performance logs (Ctrl+C to stop)..."
+logs-perf: ## Live tail perf logs
+	@echo "📡 Tailing $(SERVICE_NAME) performance logs (Ctrl+C to stop)..."
 	@gcloud beta logging tail "resource.type=cloud_run_revision AND resource.labels.service_name=$(SERVICE_NAME) AND textPayload=~\"⏱️|✅ END|🧭 PATH|🔧 TOOL\"" \
 	  --format="value(textPayload)" \
 	  --project=$(PROJECT_ID)
 
-logs-dev-tail: ## Live tail development logs
-	@echo "📡 Tailing development logs (Ctrl+C to stop)..."
-	@gcloud beta logging tail "resource.type=cloud_run_revision AND resource.labels.service_name=$(SERVICE_NAME_DEV)" \
-	  --format="value(textPayload)" \
-	  --project=$(PROJECT_ID)
-
-logs-dev-tail-clean: ## Live tail development logs (clean mode)
-	@echo "📡 Tailing development logs (clean mode, Ctrl+C to stop)..."
-	@LOG_TRACE_CONTEXT=clean gcloud beta logging tail "resource.type=cloud_run_revision AND resource.labels.service_name=$(SERVICE_NAME_DEV)" \
-	  --format="value(textPayload)" \
-	  --project=$(PROJECT_ID)
-
-logs-job-dev: ## View recent Cloud Run Job logs (last 100 entries)
-	@echo "📋 Cloud Run Job logs (last 100 entries):"
-	@gcloud run jobs logs read alek-research-job-dev \
-	  --region=$(REGION) \
-	  --limit=100 \
-	  --project=$(PROJECT_ID)
-
-K ?= 300
-
-fetch-logs-dev: ## Fetch last K dev logs to alek_debug.log (default K=300)
-	@echo "📥 Fetching last $(K) dev log entries to alek_debug.log..."
-	@gcloud run services logs read $(SERVICE_NAME_DEV) \
+fetch-logs: ## Fetch last K logs to alek_debug.log (default K=300)
+	@echo "📥 Fetching last $(K) log entries to alek_debug.log..."
+	@gcloud run services logs read $(SERVICE_NAME) \
 	  --region=$(REGION) \
 	  --limit=$(K) \
 	  --format="value(textPayload)" \
@@ -334,23 +264,44 @@ fetch-logs-dev: ## Fetch last K dev logs to alek_debug.log (default K=300)
 	  > alek_debug.log
 	@echo "✅ Done: $$(wc -l < alek_debug.log) lines written"
 
-fetch-logs-job-dev: ## Fetch last K job logs to alek_debug_job.log (default K=300)
+logs-mode-clean: ## Set LOG_TRACE_CONTEXT=clean on the service
+	@echo "🔧 Setting log mode to clean (LOG_TRACE_CONTEXT=clean)..."
+	@gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
+	  --update-env-vars LOG_TRACE_CONTEXT=clean
+	@echo "✅ Log mode set to clean"
+
+logs-mode-full: ## Set LOG_TRACE_CONTEXT=full on the service
+	@echo "🔧 Setting log mode to full (LOG_TRACE_CONTEXT=full)..."
+	@gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
+	  --update-env-vars LOG_TRACE_CONTEXT=full
+	@echo "✅ Log mode set to full"
+
+# --- Async research job (Cloud Run Job: $(RESEARCH_JOB)) ---
+
+logs-job: ## View recent Cloud Run Job logs (last 100 entries)
+	@echo "📋 Cloud Run Job logs (last 100 entries):"
+	@gcloud run jobs logs read $(RESEARCH_JOB) \
+	  --region=$(REGION) \
+	  --limit=100 \
+	  --project=$(PROJECT_ID)
+
+fetch-logs-job: ## Fetch last K job logs to alek_debug_job.log (default K=300)
 	@echo "📥 Fetching last $(K) job log entries to alek_debug_job.log..."
-	@gcloud run jobs logs read alek-research-job-dev \
+	@gcloud run jobs logs read $(RESEARCH_JOB) \
 	  --region=$(REGION) \
 	  --limit=$(K) \
 	  --project=$(PROJECT_ID) \
 	  > alek_debug_job.log
 	@echo "✅ Done: $$(wc -l < alek_debug_job.log) lines written"
 
-list-jobs-dev: ## List all executions of alek-research-job-dev with status
+list-jobs: ## List all executions of the research job with status
 	@gcloud run jobs executions list \
-	  --job=alek-research-job-dev \
+	  --job=$(RESEARCH_JOB) \
 	  --region=$(REGION) \
 	  --project=$(PROJECT_ID)
 
-logs-execution-dev: ## View logs for a specific execution: make logs-execution-dev EXECUTION=<name>
-	@test -n "$(EXECUTION)" || (echo "❌ Usage: make logs-execution-dev EXECUTION=<execution-name>" && exit 1)
+logs-execution: ## View logs for a specific execution: make logs-execution EXECUTION=<name>
+	@test -n "$(EXECUTION)" || (echo "❌ Usage: make logs-execution EXECUTION=<execution-name>" && exit 1)
 	@echo "📋 Logs for execution $(EXECUTION):"
 	@gcloud logging read \
 	  'resource.type=cloud_run_job AND labels."run.googleapis.com/execution_name"=$(EXECUTION)' \
@@ -358,61 +309,12 @@ logs-execution-dev: ## View logs for a specific execution: make logs-execution-d
 	  --format="value(textPayload)" \
 	  --project=$(PROJECT_ID)
 
-cancel-job-dev: ## Cancel a running execution: make cancel-job-dev EXECUTION=<name>
-	@test -n "$(EXECUTION)" || (echo "❌ Usage: make cancel-job-dev EXECUTION=<execution-name>" && exit 1)
+cancel-job: ## Cancel a running execution: make cancel-job EXECUTION=<name>
+	@test -n "$(EXECUTION)" || (echo "❌ Usage: make cancel-job EXECUTION=<execution-name>" && exit 1)
 	@echo "🛑 Cancelling execution $(EXECUTION)..."
 	@gcloud run jobs executions cancel $(EXECUTION) \
 	  --region=$(REGION) \
 	  --project=$(PROJECT_ID)
-
-logs-dev-tail-full: ## Live tail development logs (full mode)
-	@echo "📡 Tailing development logs (full mode, Ctrl+C to stop)..."
-	@LOG_TRACE_CONTEXT=full gcloud beta logging tail "resource.type=cloud_run_revision AND resource.labels.service_name=$(SERVICE_NAME_DEV)" \
-	  --format="value(textPayload)" \
-	  --project=$(PROJECT_ID)
-
-logs-mode-dev-clean: ## Set LOG_TRACE_CONTEXT=clean in dev service
-	@echo "🔧 Setting dev log mode to clean (LOG_TRACE_CONTEXT=clean)..."
-	@gcloud run services update $(SERVICE_NAME_DEV) --region=$(REGION) \
-	  --update-env-vars LOG_TRACE_CONTEXT=clean
-	@echo "✅ Dev log mode set to clean"
-
-logs-mode-dev-full: ## Set LOG_TRACE_CONTEXT=full in dev service
-	@echo "🔧 Setting dev log mode to full (LOG_TRACE_CONTEXT=full)..."
-	@gcloud run services update $(SERVICE_NAME_DEV) --region=$(REGION) \
-	  --update-env-vars LOG_TRACE_CONTEXT=full
-	@echo "✅ Dev log mode set to full"
-
-logs-mode-prod-clean: ## Set LOG_TRACE_CONTEXT=clean in prod service
-	@echo "🔧 Setting prod log mode to clean (LOG_TRACE_CONTEXT=clean)..."
-	@gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
-	  --update-env-vars LOG_TRACE_CONTEXT=clean
-	@echo "✅ Prod log mode set to clean"
-
-logs-mode-prod-full: ## Set LOG_TRACE_CONTEXT=full in prod service
-	@echo "🔧 Setting prod log mode to full (LOG_TRACE_CONTEXT=full)..."
-	@gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
-	  --update-env-vars LOG_TRACE_CONTEXT=full
-	@echo "✅ Prod log mode set to full"
-
-services: ## Show all service URLs
-	@echo "🌐 Service URLs:"
-	@echo ""
-	@echo "Production:"
-	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format="value(status.url)" 2>/dev/null || echo "  $(SERVICE_NAME): Not deployed"
-	@echo ""
-	@echo "Development:"
-	@gcloud run services describe $(SERVICE_NAME_DEV) --region=$(REGION) --format="value(status.url)" 2>/dev/null || echo "  $(SERVICE_NAME_DEV): Not deployed"
-	@echo ""
-
-status: ## Show service status
-	@echo "📊 Service Status:"
-	@echo ""
-	@echo "Production ($(SERVICE_NAME)):"
-	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format="table(status.conditions[0].type,status.conditions[0].status,metadata.labels)" 2>/dev/null || echo "  Not deployed"
-	@echo ""
-	@echo "Development ($(SERVICE_NAME_DEV)):"
-	@gcloud run services describe $(SERVICE_NAME_DEV) --region=$(REGION) --format="table(status.conditions[0].type,status.conditions[0].status,metadata.labels)" 2>/dev/null || echo "  Not deployed"
 
 # ============================================================================
 # MAINTENANCE
@@ -427,50 +329,25 @@ check-pricing: ## Fetch live model prices (OpenRouter) and audit billing.py → 
 	@$(PYTHON) scripts/validation/check_pricing.py
 	@echo "📄 Open: scripts/memory/pricing_report.md"
 
-# E2E tests (production flow)
+# E2E tests (real API flow)
 
-test-e2e-smart: ## E2E: Smart agent (production flow)
+test-e2e-smart: ## E2E: Smart agent
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type smart
 
-test-e2e-quick: ## E2E: Quick agent (production flow)
+test-e2e-quick: ## E2E: Quick agent
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type quick
 
-test-e2e-router: ## E2E: Router agent (production flow)
+test-e2e-router: ## E2E: Router agent
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type router
 
 test-e2e-consolidation: ## E2E: Consolidation agent
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type consolidation
 
-test-e2e-websearch: ## E2E: WebSearch agent (production flow)
+test-e2e-websearch: ## E2E: WebSearch agent
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type web_search
 
-test-e2e-all: ## E2E: All agents (production flow)
+test-e2e-all: ## E2E: All agents
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type all
-
-# ============================================================================
-# CLEANUP (DANGEROUS)
-# ============================================================================
-
-delete-prod: ## Delete production service (DANGEROUS)
-	@echo "⚠️  WARNING: This will DELETE the production service!"
-	@echo "Service: $(SERVICE_NAME)"
-	@read -p "Type 'DELETE' to confirm: " confirm && [ "$$confirm" = "DELETE" ] || (echo "Aborted" && exit 1)
-	@echo "🗑️  Deleting production service..."
-	gcloud run services delete $(SERVICE_NAME) --region=$(REGION) --quiet
-	@echo "✅ Production service deleted"
-
-delete-dev: ## Delete development service
-	@echo "🗑️  Deleting development service..."
-	gcloud run services delete $(SERVICE_NAME_DEV) --region=$(REGION) --quiet
-	@echo "✅ Development service deleted"
-
-delete-all: ## Delete ALL services (DANGEROUS)
-	@echo "⚠️  WARNING: This will DELETE ALL services (production + development)!"
-	@read -p "Type 'DELETE ALL' to confirm: " confirm && [ "$$confirm" = "DELETE ALL" ] || (echo "Aborted" && exit 1)
-	@echo "🗑️  Deleting all services..."
-	@gcloud run services delete $(SERVICE_NAME) --region=$(REGION) --quiet 2>/dev/null || echo "Production service not found"
-	@gcloud run services delete $(SERVICE_NAME_DEV) --region=$(REGION) --quiet 2>/dev/null || echo "Development service not found"
-	@echo "✅ All services deleted"
 
 # ============================================================================
 # DEBUG INFRASTRUCTURE
@@ -491,3 +368,14 @@ create-debug-bucket: ## Create private GCS bucket for agent prompt/response debu
 		--role="roles/storage.objectCreator"
 	@echo "✅ Bucket ready. Add to .env: DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET)"
 	@echo "   Add to Cloud Build trigger substitutions: _DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET)"
+
+# ============================================================================
+# CLEANUP (DANGEROUS)
+# ============================================================================
+
+delete: ## Delete the Cloud Run service (DANGEROUS — this is the single live environment)
+	@echo "⚠️  WARNING: This will DELETE the live service: $(SERVICE_NAME)"
+	@read -p "Type 'DELETE' to confirm: " confirm && [ "$$confirm" = "DELETE" ] || (echo "Aborted" && exit 1)
+	@echo "🗑️  Deleting $(SERVICE_NAME)..."
+	gcloud run services delete $(SERVICE_NAME) --region=$(REGION) --quiet
+	@echo "✅ Service deleted"

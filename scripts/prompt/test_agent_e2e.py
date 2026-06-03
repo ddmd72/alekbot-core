@@ -165,7 +165,7 @@ async def validate_user_data(session_store, user_id: str) -> str:
     """Validate user has existing session data."""
     session_id = await session_store.get_latest_session_id(user_id)
     if not session_id:
-        raise ValueError(f"No sessions found for user {user_id}. Run bot first: make dev")
+        raise ValueError(f"No sessions found for user {user_id}. Message the deployed bot first to create a session.")
     return session_id
 
 

@@ -21,15 +21,14 @@ curl -s -X POST https://dev.alekbot.app/worker \
 ## Commands
 
 ```bash
-make check             # Quick check: unit tests + domain purity
+make check             # CI gate: ruff lint + unit/architecture tests
 make test              # All tests
 make test-unit         # Unit tests
 make test-integration  # Integration tests
 make test-e2e-all      # E2E all agents
-make dev               # Local run (Socket Mode)
-make dev-emulator      # With Firestore emulator
-make deploy-dev        # Deploy to dev
-make deploy            # Deploy to prod
+make deploy            # Build + deploy to Cloud Run (single live environment)
+make logs              # Recent Cloud Run logs
+make logs-tail         # Live tail logs
 ```
 
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs

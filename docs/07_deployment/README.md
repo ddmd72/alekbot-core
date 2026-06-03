@@ -24,14 +24,13 @@ Quick reference for deploying and managing Alek-Core.
 
 ## Quick Commands
 
-### Deploy to Production
+### Deploy
+
+Single live environment; deploy is manual by choice (see
+[`../04_solution_strategy/decisions/ci_present_cd_deliberately_absent.md`](../04_solution_strategy/decisions/ci_present_cd_deliberately_absent.md)).
 
 ```bash
-# Deploy from main branch
-gcloud builds submit --config cloudbuild-prod.yaml
-
-# Deploy from specific branch
-gcloud builds submit --config cloudbuild-prod.yaml --substitutions=BRANCH_NAME=develop
+make deploy   # build + deploy alek-bot-dev (cloudbuild-dev.yaml)
 ```
 
 ### Setup Keep-Alive (Recommended)
