@@ -441,8 +441,10 @@ class TestAgentWorkerHandlerOriginContext:
         notification.notify = AsyncMock()
         notification.notify_file_bytes = AsyncMock()
         notification.notify_document_link = AsyncMock()
+        from src.services.document_delivery_service import DeliveredDocument
         doc_delivery = AsyncMock()
-        doc_delivery.store = AsyncMock(return_value="https://example.com/doc.pdf")
+        doc_delivery.store = AsyncMock(return_value=DeliveredDocument(
+            link="https://example.com/doc.pdf", key="U_user123/doc.pdf"))
         task_queue = AsyncMock()
 
         from src.handlers.agent_worker_handler import AgentWorkerHandler

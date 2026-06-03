@@ -255,12 +255,9 @@ class TestGcsUpload:
         mock_blob = MagicMock()
         mock_client.bucket.return_value.blob.return_value = mock_blob
 
-        with patch("src.utils.debug_logger.PromptDebugLogger._gcs_upload",
-                   wraps=lambda self, c, b: None):
-            pass  # We'll test via side-channel
-
-        # Direct call with mocked storage module
-        with patch.dict("sys.modules", {"google.cloud.storage": MagicMock(Client=lambda: mock_client)}):
+        # Patch the real Client symbol (not sys.modules) so the result does not
+        # depend on whether another test already imported google.cloud.storage.
+        with patch("google.cloud.storage.Client", return_value=mock_client):
             pdl._gcs_client = None  # reset so it re-initializes
             pdl._gcs_upload("hello content", "agent/2026-03-29/file.txt")
 
