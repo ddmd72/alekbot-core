@@ -9,6 +9,7 @@ RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
 import os
 from typing import Optional
 from enum import Enum
+from urllib.parse import urlparse
 
 
 # Placeholder used ONLY for local development when OAUTH_SESSION_SECRET is unset.
@@ -165,3 +166,19 @@ class AuthConfig:
                 "OAUTH_SESSION_SECRET is the built-in dev placeholder in a deployed "
                 "environment — set a real secret (Secret Manager). Refusing to start."
             )
+
+        # Fail closed: a localhost callback is a local-dev value. If it reaches a
+        # deployed environment (K_SERVICE set by Cloud Run), Google sends the
+        # user's browser to localhost after login — the delivered link looks fine
+        # but dies on the OAuth callback. Catch the misconfig at startup, not in
+        # production. (The deploy pipeline derives this from the public service
+        # URL; this guard is the backstop against a local value leaking through.)
+        if os.getenv("K_SERVICE"):
+            callback_host = urlparse(self.oauth_redirect_uri).hostname or ""
+            if callback_host in ("localhost", "127.0.0.1", "::1"):
+                raise ValueError(
+                    "OAUTH_REDIRECT_URI points at localhost in a deployed "
+                    f"environment ({self.oauth_redirect_uri!r}) — the OAuth "
+                    "callback would redirect users to localhost. Set it to the "
+                    "public service URL. Refusing to start."
+                )
