@@ -56,3 +56,54 @@ class TestSessionSecretFailClosed:
             config = AuthConfig()
             with pytest.raises(ValueError, match="at least 32 characters"):
                 config.validate()
+
+
+class TestLocalhostCallbackFailClosed:
+    """A localhost OAuth callback must never reach a deployed environment — it
+    sends the user's browser to localhost after Google login. The session-secret
+    guard runs first, so deployed cases supply a real secret to reach this check.
+    """
+
+    _REAL_SECRET = "a-real-secret-from-secret-manager-32chars"
+
+    def test_rejects_localhost_callback_when_deployed(self):
+        env = {
+            **_COMPLETE,
+            "OAUTH_REDIRECT_URI": "http://localhost:5001/auth/callback",
+            "K_SERVICE": "alek-bot-dev",
+            "OAUTH_SESSION_SECRET": self._REAL_SECRET,
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = AuthConfig()
+            with pytest.raises(ValueError, match="localhost"):
+                config.validate()
+
+    def test_rejects_loopback_ip_when_deployed(self):
+        env = {
+            **_COMPLETE,
+            "OAUTH_REDIRECT_URI": "http://127.0.0.1:8080/auth/callback",
+            "K_SERVICE": "alek-bot-dev",
+            "OAUTH_SESSION_SECRET": self._REAL_SECRET,
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = AuthConfig()
+            with pytest.raises(ValueError, match="localhost"):
+                config.validate()
+
+    def test_allows_localhost_callback_locally(self):
+        # No K_SERVICE → local laptop run → localhost callback is the norm.
+        env = {**_COMPLETE, "OAUTH_REDIRECT_URI": "http://localhost:5001/auth/callback"}
+        with patch.dict(os.environ, env, clear=True):
+            config = AuthConfig()
+            config.validate()  # must not raise
+
+    def test_allows_public_callback_when_deployed(self):
+        env = {
+            **_COMPLETE,
+            "OAUTH_REDIRECT_URI": "https://dev.alekbot.app/auth/callback",
+            "K_SERVICE": "alek-bot-dev",
+            "OAUTH_SESSION_SECRET": self._REAL_SECRET,
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = AuthConfig()
+            config.validate()  # must not raise

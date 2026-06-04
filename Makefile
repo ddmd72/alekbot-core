@@ -27,8 +27,9 @@ SERVICE_NAME ?= alek-bot-dev
 RESEARCH_JOB ?= alek-research-job-dev
 
 # Cloud Run service URL — defined in .env (gitignored), loaded via include above.
-# Required: SERVICE_URL_DEV
-OAUTH_REDIRECT_URI ?= $(SERVICE_URL_DEV)/auth/callback
+# Required: SERVICE_URL_DEV. The deploy-time OAuth callback is derived from it in
+# the deploy target's substitutions — NOT from the local OAUTH_REDIRECT_URI in
+# .env (that one is a localhost value, used only for running the app locally).
 
 # Default entry count for log reads
 K ?= 300
@@ -187,7 +188,7 @@ check: lint test-unit ## CI gate: ruff lint + unit/architecture tests
 deploy: ## Build + deploy to Cloud Run (the single live environment)
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(OAUTH_REDIRECT_URI),_DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET) .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json
