@@ -117,6 +117,22 @@ class TestWebSearchAgent:
         assert sent_request.messages[0].parts[0].text == "weather in Valencia"
 
     @pytest.mark.asyncio
+    async def test_build_for_agent_excludes_biographical(self, agent, mock_prompt_builder):
+        """Web search omits biographical facts — PII irrelevant to a grounded-search agent."""
+        agent._llm.generate_content = AsyncMock(return_value=LLMResponse(text="ok"))
+        message = AgentMessage.create(
+            sender="test", recipient="web_agent",
+            intent=AgentIntent.QUERY,
+            payload={"query": "weather in Valencia"},
+        )
+
+        await agent.execute(message)
+
+        kwargs = mock_prompt_builder.build_for_agent.await_args.kwargs
+        assert kwargs["include_biographical"] is False
+        assert kwargs["agent_type"] == "websearch"
+
+    @pytest.mark.asyncio
     async def test_execute_search_web_no_results(self, agent):
         agent._llm.generate_content = AsyncMock(
             return_value=LLMResponse(text=None)
