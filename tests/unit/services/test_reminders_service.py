@@ -34,6 +34,7 @@ from src.services.reminders_service import (
     RemindersService,
     _compute_next_due,
     build_reminder_alert,
+    build_reminder_alert_summary,
 )
 from src.services.task_dispatch_service import TaskDispatchService
 
@@ -441,3 +442,17 @@ class TestComputeNextDue:
             self._BASE, ReminderRecurrence(type="biannual", interval=1), self._UTC
         )
         assert result == self._BASE + timedelta(days=1)
+
+
+class TestBuildReminderAlertSummary:
+
+    def test_is_compact_label_name_only(self):
+        # The compact label is what survives history tiering: the reminder name
+        # only — no instruction body, no note_id, no framing lyrics.
+        note = _make_note()
+        summary = build_reminder_alert_summary(note)
+
+        assert summary == 'Received reminder: "check project status"'
+        assert "blockers" not in summary            # instruction body excluded
+        assert _NOTE_ID not in summary              # no note_id
+        assert len(summary) < len(build_reminder_alert(note))

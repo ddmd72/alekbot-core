@@ -180,6 +180,7 @@ class UserNotificationService:
         agent_id_override: Optional[str] = None,
         session_id: Optional[str] = None,
         save_history: bool = True,
+        system_alert_summary: Optional[str] = None,
         framing_suffix: str = " Your response to this message will be read by the user. Inform them of the event details in your usual manner of communication.",
         thinking_effort: Optional[str] = None,
         task_complexity: Optional[str] = None,
@@ -331,7 +332,15 @@ class UserNotificationService:
                             session_id=effective_session_id,
                             owner_id=user_id,
                             messages=[
-                                Message(role="user", parts=[MessagePart(text=system_alert)]),
+                                # When the caller supplies a compact summary, tier the user
+                                # turn like a file part: text=short label, full_text=full alert.
+                                # Recent turns keep the full alert; aged-out turns shrink to the
+                                # label (see BaseAgent._apply_history_tiering). Without a summary,
+                                # full_text stays None → no tiering (unchanged behaviour).
+                                Message(role="user", parts=[MessagePart(
+                                    text=system_alert_summary or system_alert,
+                                    full_text=system_alert if system_alert_summary else None,
+                                )]),
                                 Message(role="model", parts=[MessagePart(text=history_summary, full_text=text)]),
                             ],
                         )

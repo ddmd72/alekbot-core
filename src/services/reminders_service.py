@@ -158,6 +158,17 @@ class RemindersService:
 # Co-located with the cron service for now — future Step may move both
 # producer and consumer of the alert into a shared infrastructure module.
 
+def build_reminder_alert_summary(note: AgentNote) -> str:
+    """Compact history label for a fired reminder — name only, no body, no id.
+
+    Stored as the user-turn ``text`` while the full alert lives in ``full_text``;
+    once the turn ages past the history-tiering window only this line remains.
+    No note_id: the live ``active_reminders {}`` prompt block already maps name→id,
+    and an aged-out firing marker needs no handle. See ``build_reminder_alert``.
+    """
+    return f'Received reminder: "{note.text}"'
+
+
 def build_reminder_alert(note: AgentNote) -> str:
     if note.recurrence:
         interval = note.recurrence.interval or 1

@@ -413,6 +413,43 @@ class TestNotifySlackAndHistory:
 
         session_store.append_messages_batch.assert_awaited_once()
 
+    async def test_user_turn_tiered_when_summary_given(
+        self, state_repo, channel_factory, coordinator, response_channel
+    ):
+        # With a summary, the user turn must be tierable: text=short label,
+        # full_text=full alert. Aged-out turns then drop the long alert body.
+        from src.domain.messaging import SmartResponse
+        coordinator.route_message.return_value = _make_success_response(SmartResponse(text="Done!"))
+        svc, session_store = self._make_svc_with_session_store(
+            state_repo, channel_factory, coordinator
+        )
+        await svc.notify(
+            _USER_ID, _ACCOUNT_ID, "FULL ALERT BODY", kind=NotificationKind.REMINDER,
+            save_history=True, system_alert_summary="short label",
+        )
+
+        user_part = session_store.append_messages_batch.call_args.kwargs["messages"][0].parts[0]
+        assert user_part.text == "short label"
+        assert user_part.full_text == "FULL ALERT BODY"
+
+    async def test_user_turn_not_tiered_without_summary(
+        self, state_repo, channel_factory, coordinator, response_channel
+    ):
+        # No summary → backward-compatible: full alert in text, no full_text (no tiering).
+        from src.domain.messaging import SmartResponse
+        coordinator.route_message.return_value = _make_success_response(SmartResponse(text="Done!"))
+        svc, session_store = self._make_svc_with_session_store(
+            state_repo, channel_factory, coordinator
+        )
+        await svc.notify(
+            _USER_ID, _ACCOUNT_ID, "FULL ALERT BODY", kind=NotificationKind.INTERACTIVE,
+            save_history=True,
+        )
+
+        user_part = session_store.append_messages_batch.call_args.kwargs["messages"][0].parts[0]
+        assert user_part.text == "FULL ALERT BODY"
+        assert user_part.full_text is None
+
     async def test_history_not_saved_when_save_history_false(
         self, state_repo, channel_factory, coordinator, response_channel
     ):
