@@ -38,6 +38,11 @@ opentelemetry-instrumentation==0.62b1
 logfire==4.34.0  # OTel-native tracing backend; selected via TRACING_BACKEND (logfire|both)
 structlog
 
+# Use the OS trust store (macOS keychain / Linux ca-certificates) instead of the
+# bundled certifi roots — via truststore.inject_into_ssl(). Lets locally-installed
+# CAs (e.g. a Charles/Proxyman TLS-interception root) be trusted with no cert juggling.
+truststore==0.10.4
+
 # Testing
 pytest
 pytest-asyncio
