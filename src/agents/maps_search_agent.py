@@ -53,6 +53,7 @@ class MapsSearchAgent(BaseAgent):
     """
 
     TEMPERATURE = MAPS_SEARCH.temperature
+    THINKING = MAPS_SEARCH.thinking
 
     def __init__(
         self,
@@ -138,6 +139,7 @@ class MapsSearchAgent(BaseAgent):
                     messages=messages,
                     tools=tool_declarations,
                     temperature=self.TEMPERATURE,
+                    thinking=self.THINKING,
                 )
                 response = await self._call_llm(request, turn=turn + 1)
 
@@ -153,29 +155,14 @@ class MapsSearchAgent(BaseAgent):
                     parts=[MessagePart(tool_call=tc) for tc in response.tool_calls],
                 ))
 
-                # Execute tool calls and collect results
-                tool_result_parts: list[MessagePart] = []
-                for tool_call in response.tool_calls:
-                    logger.info(
-                        f"🗺️ [MapsSearchAgent] tool_call: {tool_call.name} "
-                        f"args={json.dumps(tool_call.args, ensure_ascii=False)[:200]}"
-                    )
-                    try:
-                        result = await self._maps_port.call_tool(
-                            tool_call.name, tool_call.args
-                        )
-                    except MapsToolError as exc:
-                        logger.warning(
-                            f"🗺️ [MapsSearchAgent] tool '{tool_call.name}' failed: {exc}"
-                        )
-                        result = {"error": str(exc)}
-
-                    tool_result_parts.append(
-                        MessagePart(
-                            tool_response={"name": tool_call.name, "response": result}
-                        )
-                    )
-
+                # Execute tool calls. Multiple calls in a single turn (e.g. several
+                # weather lookups for different dates) are independent — run them
+                # concurrently. Only cross-turn order is serial (the next LLM turn
+                # depends on these results). gather preserves input order, so each
+                # tool_response lines up with its originating tool_call.
+                tool_result_parts = list(await asyncio.gather(
+                    *[self._execute_tool_call(tc) for tc in response.tool_calls]
+                ))
                 messages.append(Message(role="user", parts=tool_result_parts))
 
             else:
@@ -193,6 +180,7 @@ class MapsSearchAgent(BaseAgent):
                         )
                     ],
                     temperature=self.TEMPERATURE,
+                    thinking=self.THINKING,
                 )
                 response = await self._call_llm(request, turn=_MAX_TURNS + 1)
                 final_text = response.text or ""
@@ -227,6 +215,24 @@ class MapsSearchAgent(BaseAgent):
                 agent_id=self.agent_id,
                 error=f"Maps search failed: {exc}",
             )
+
+    async def _execute_tool_call(self, tool_call) -> MessagePart:
+        """Execute one MCP tool call → tool_response MessagePart.
+
+        Errors are captured per call ({"error": ...}) so a single failing tool in a
+        concurrent batch never fails the whole turn. Safe to run concurrently: the MCP
+        client uses an independent HTTP session per call.
+        """
+        logger.info(
+            f"🗺️ [MapsSearchAgent] tool_call: {tool_call.name} "
+            f"args={json.dumps(tool_call.args, ensure_ascii=False)[:200]}"
+        )
+        try:
+            result = await self._maps_port.call_tool(tool_call.name, tool_call.args)
+        except MapsToolError as exc:
+            logger.warning(f"🗺️ [MapsSearchAgent] tool '{tool_call.name}' failed: {exc}")
+            result = {"error": str(exc)}
+        return MessagePart(tool_response={"name": tool_call.name, "response": result})
 
     def _get_alternative_agents(self) -> list[str]:
         return ["web_search_agent", "facts_memory_agent"]

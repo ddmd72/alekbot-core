@@ -406,6 +406,17 @@ _FACTORY_AGENT_TYPES = [
 ]
 
 
+def test_maps_search_defaults_to_openai():
+    """maps_search defaults to OpenAI (ECO → gpt-5.4-nano) with gemini/claude allowed."""
+    strategy = AgentProviderStrategy.get_strategy("maps_search")
+    assert strategy["default_provider"] == "openai"
+    assert "openai" in strategy["allowed_providers"]
+    assert "gemini" in strategy["allowed_providers"]
+    # No per-agent / global override → strategy default wins.
+    builder = AgentContextBuilder.__new__(AgentContextBuilder)
+    assert builder.resolve_provider_name("maps_search", UserBotConfig()) == "openai"
+
+
 def test_all_factory_agent_types_have_strategy():
     """Every agent_type used in UserAgentFactory must have an explicit STRATEGIES entry.
 

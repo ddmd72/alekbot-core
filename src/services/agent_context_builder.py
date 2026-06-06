@@ -86,11 +86,14 @@ class AgentProviderStrategy:
             "required_capabilities": ["native_tools"],
             "fallback": None
         },
-        # MCP-backed: provider-agnostic. Gemini default; Claude supported.
-        # MCP tools passed as FunctionDeclaration dicts — adapters convert natively.
+        # MCP-backed: provider-agnostic. MCP tools passed as FunctionDeclaration
+        # dicts — adapters convert natively, so any native_tools provider works.
+        # Default OpenAI (ECO → gpt-5.4-nano) for latency: a small/fast reasoning
+        # model with thinking="low" is cheaper per turn than Gemini 3 Flash with
+        # default dynamic thinking. Tier pinned to ECO via _DEFAULT_AGENT_TIERS.
         "maps_search": {
-            "default_provider": "gemini",
-            "allowed_providers": ["gemini", "claude"],
+            "default_provider": "openai",
+            "allowed_providers": ["openai", "gemini", "claude"],
             "required_capabilities": ["native_tools"],
             "fallback": None
         },

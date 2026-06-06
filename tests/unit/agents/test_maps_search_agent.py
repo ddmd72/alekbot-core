@@ -15,6 +15,7 @@ Tests cover:
   - Empty query → failure
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -144,6 +145,34 @@ def agent(mock_llm, mock_maps_port, mock_prompt_builder) -> MapsSearchAgent:
 
 def test_max_turns_value():
     assert _MAX_TURNS == 10
+
+
+# ---------------------------------------------------------------------------
+# Thinking parameter — latency lever (forces minimum reasoning on every turn)
+# ---------------------------------------------------------------------------
+
+class TestThinkingParameter:
+    async def test_thinking_low_passed_on_direct_answer(self, agent, mock_llm):
+        """thinking='low' is carried on the single-pass (no tool call) request."""
+        mock_llm.generate_content.return_value = LLMResponse(text="OK", tool_calls=[])
+
+        await agent.execute(_make_message())
+
+        req = mock_llm.generate_content.await_args.kwargs["request"]
+        assert req.thinking == "low"
+
+    async def test_thinking_low_passed_on_every_turn(self, agent, mock_llm, mock_maps_port):
+        """thinking='low' is carried on the tool-call turn AND the follow-up format turn."""
+        mock_llm.generate_content.side_effect = [
+            LLMResponse(text="", tool_calls=[_make_tool_call("places_search", {"query": "кафе"})]),
+            LLMResponse(text="Кафе Центр поруч.", tool_calls=[]),
+        ]
+
+        await agent.execute(_make_message())
+
+        assert mock_llm.generate_content.call_count == 2
+        for call in mock_llm.generate_content.await_args_list:
+            assert call.kwargs["request"].thinking == "low"
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +337,55 @@ class TestToolLoop:
 
         assert response.status == AgentStatus.SUCCESS
         assert mock_maps_port.call_tool.await_count == 2
+
+    async def test_same_turn_tool_calls_run_concurrently(self, agent, mock_llm, mock_maps_port):
+        """Independent tool calls in one turn run concurrently, not serially.
+
+        A 2-party barrier deadlocks if the calls execute sequentially (the first call
+        would wait forever for the second that never starts) → wait_for times out →
+        the turn fails. Reaching SUCCESS proves both calls were in flight together.
+        """
+        barrier = asyncio.Barrier(2)
+
+        async def gated_call(name, args):
+            await asyncio.wait_for(barrier.wait(), timeout=2.0)
+            return {"tool": name}
+
+        mock_maps_port.call_tool.side_effect = gated_call
+        mock_llm.generate_content.side_effect = [
+            LLMResponse(text=None, tool_calls=[
+                _make_tool_call("places_search", {"query": "a"}),
+                _make_tool_call("weather_lookup", {"location": "b"}),
+            ]),
+            LLMResponse(text="done", tool_calls=[]),
+        ]
+
+        response = await agent.execute(_make_message())
+
+        assert response.status == AgentStatus.SUCCESS
+        assert mock_maps_port.call_tool.await_count == 2
+
+    async def test_same_turn_results_preserve_order(self, agent, mock_llm, mock_maps_port):
+        """gather preserves order: each tool_response lines up with its tool_call."""
+        async def named(name, args):
+            return {"tool": name}
+
+        mock_maps_port.call_tool.side_effect = named
+        mock_llm.generate_content.side_effect = [
+            LLMResponse(text=None, tool_calls=[
+                _make_tool_call("places_search", {"q": 1}),
+                _make_tool_call("route_computation", {"q": 2}),
+                _make_tool_call("weather_lookup", {"q": 3}),
+            ]),
+            LLMResponse(text="done", tool_calls=[]),
+        ]
+
+        await agent.execute(_make_message())
+
+        second_req = mock_llm.generate_content.await_args_list[1].kwargs["request"]
+        tool_msgs = [m for m in second_req.messages if any(p.tool_response for p in m.parts)]
+        names = [p.tool_response["name"] for p in tool_msgs[-1].parts]
+        assert names == ["places_search", "route_computation", "weather_lookup"]
 
     async def test_tool_declarations_fetched_once(self, agent, mock_llm, mock_maps_port):
         """get_tool_declarations called once per execute()."""

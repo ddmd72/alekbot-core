@@ -146,9 +146,11 @@ background process extracts new facts from the conversation → bot gets smarter
   `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+
   `CloudRunJobsAdapter`; OpenAI backend = webhook. Gemini backend removed 2026-05-29. Two-pass critic via
   `UserBotConfig.deep_research_second_pass`. Logs: `make logs-research-job-dev-tail`.
-- MapsSearch (SYNC, BALANCED, intent `maps_query`, **`internal=True`**) — place search, routes, weather
-  via Google Maps AI Grounding (MCP, `MapsToolsPort`). Not shown to LLMs; auto-triggered via
-  `intent_fanout` when the orchestrator dispatches `search_web`, results merged under labeled sections.
+- MapsSearch (SYNC, ECO, OpenAI `gpt-5.4-nano` default, intent `maps_query`, **`internal=True`**) — place
+  search, routes, weather via Google Maps AI Grounding (MCP, `MapsToolsPort`). Not shown to LLMs;
+  auto-triggered via `intent_fanout` when the orchestrator dispatches `search_web`, results merged
+  under labeled sections. Latency-tuned: `thinking="low"` on every turn (all allowed providers reason
+  at model default otherwise) + same-turn tool calls run concurrently via `asyncio.gather`.
 - Compute (SYNC, ECO) — intents `compute_math`/`compute_datetime`/`compute_finance`/`compute`; runs
   Python in Gemini `code_execution` sandbox (`use_code_execution=True`). No external data — compute-only.
 

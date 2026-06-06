@@ -247,7 +247,14 @@ class MapsSearchAgentConfig:
     # Provider resolved via AgentProviderStrategy — no model pin needed.
     # Pricing: free during experimental quota phase.
     # Timeout: allows for multi-turn tool loop (up to 4 turns).
+    # thinking="low" is the dominant latency lever: every allowed provider
+    # (Gemini 3, Claude, gpt-5) reasons at its model default when thinking is
+    # unset. Omitting it made the multi-turn synthesis call run 26-52s. "low"
+    # forces the minimum reasoning level (the floor on Gemini 3 / gpt-5 — full
+    # off is not available on those families). Provider-agnostic: maps to
+    # ThinkingLevel.LOW (Gemini) / reasoning.effort="low" (OpenAI).
     temperature: float = 1.0
+    thinking: str = "low"
     timeout_ms: int = 90_000
 
 
