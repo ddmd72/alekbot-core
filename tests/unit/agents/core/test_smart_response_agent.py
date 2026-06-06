@@ -1186,3 +1186,31 @@ class TestDelegateExtractsFileData:
             tool_call, {"user_id": "user1"}, {}, {}, "test", 0, 0,
         )
         assert result.file_data is None
+
+
+class TestResponseSchemaFullyDescribed:
+    """Every field is structurally described so Gemini constrained decoding populates it.
+    A flat {"type": "object"} / bare {"type": "array"} comes back empty on Flash — which
+    is how widgets (rich_content.data) and source links (link_list) were silently dropped."""
+
+    def test_link_list_is_required(self):
+        assert "link_list" in SmartResponseAgent._RESPONSE_SCHEMA["required"]
+
+    def test_link_list_items_require_anchor_title_url(self):
+        link_list = SmartResponseAgent._RESPONSE_SCHEMA["properties"]["link_list"]
+        assert link_list["type"] == "array"
+        item = link_list["items"]
+        assert item["type"] == "object"
+        assert set(item["required"]) == {"anchor", "title", "url"}
+        assert set(item["properties"]) == {"anchor", "title", "url"}
+
+    def test_rich_content_data_is_fully_structured(self):
+        # A flat {"type": "object"} data field comes back as {} on Gemini Flash (widget
+        # dropped). Every variant field (table/widget/file) must be declared so the model
+        # populates it. Verified on gemini-flash-latest via responseJsonSchema.
+        data = SmartResponseAgent._RESPONSE_SCHEMA["properties"]["rich_content"]["properties"]["data"]
+        assert data["type"] == "object"
+        props = data["properties"]
+        assert {"title", "headers", "rows", "footer", "html", "alt_text", "filename", "content"} <= set(props)
+        # rows preserves the {cells: [str]} row-object shape
+        assert props["rows"]["items"]["properties"]["cells"]["items"]["type"] == "string"

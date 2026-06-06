@@ -79,22 +79,67 @@ class SmartResponseAgent(BaseAgent):
     # via output_config.format. OpenAI/Grok react via json_object mode without forwarding the
     # inner schema — actual envelope shape is enforced by the OUTPUT_FORMAT token in the prompt.
     # See CLAUDE.md "Agent Output Format Standards" for the per-provider matrix.
+    # Fully describes the response envelope so Gemini's constrained decoding populates
+    # every field. Gemini will NOT generate content for an under-specified field: an
+    # `{"type": "object"}` with no `properties` comes back as `{}` and a bare
+    # `{"type": "array"}` as `[]` — which is how widgets (rich_content.data) and source
+    # links (link_list) were silently dropped, especially on Flash. Each object therefore
+    # declares its properties and each array its item shape. Dict schemas are routed to
+    # Gemini's `responseJsonSchema` (not the stricter `responseSchema`), so nesting that
+    # would 400 the OpenAPI subset is accepted here — verified on gemini-flash-latest for
+    # widget/table/file/text/search. Structure mirrors the OUTPUT_FORMAT_JSON token.
     _RESPONSE_SCHEMA = {
         "type": "object",
-        "required": ["full_response", "response_summary", "rich_content"],
+        "required": ["full_response", "response_summary", "rich_content", "link_list"],
         "properties": {
             "full_response":    {"type": "string"},
-            "response_summary": {"type": "string"},
+            "response_summary": {"type": "string", "maxLength": 300},
             "rich_content": {
                 "type": "object",
-                "nullable": True,  # prompt: "type": ["object", "null"]
+                "nullable": True,  # null for text-only responses
                 "properties": {
                     "type":     {"type": "string", "enum": ["widget", "file", "table"]},
                     "fallback": {"type": "string"},
-                    "data":     {"type": "object"},  # no deeper structure — Gemini nesting limit
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            # table
+                            "title":    {"type": "string"},
+                            "headers":  {"type": "array", "items": {"type": "string"}},
+                            "rows": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "cells": {"type": "array", "items": {"type": "string"}},
+                                    },
+                                },
+                            },
+                            "footer":   {"type": "string"},
+                            # widget
+                            "html":     {"type": "string"},
+                            "alt_text": {"type": "string"},
+                            # file
+                            "filename": {"type": "string"},
+                            "content":  {"type": "string"},
+                        },
+                    },
                 },
             },
-            "link_list": {"type": "array"},  # flat — Gemini nesting limit; structure enforced by OUTPUT_FORMAT token
+            # required forces presence; no-source turns correctly yield [] (verified —
+            # Gemini does not fabricate URLs to fill it).
+            "link_list": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["anchor", "title", "url"],
+                    "properties": {
+                        "anchor": {"type": "string"},
+                        "title":  {"type": "string"},
+                        "url":    {"type": "string"},
+                    },
+                },
+            },
         },
     }
     TIMEOUT_MS = SMART.timeout_ms
