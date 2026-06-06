@@ -63,7 +63,7 @@ steps:
       - "--memory=1024Mi"
       - "--cpu=2"
       - "--set-env-vars=APP_ENV=development,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,DEBUG_PROMPTS=true,DEBUG_PROMPTS_BUCKET=$_DEBUG_PROMPTS_BUCKET,GCS_MEDIA_BUCKET=alek-media-dev,BIGQUERY_PROMPT_DATASET=alek_observability_dev"
-      - "--set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
+      - "--set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest"
       - "--project=$PROJECT_ID"
 
   # Keep the dev container warm to avoid ~30s cold starts (min-instances=0).
