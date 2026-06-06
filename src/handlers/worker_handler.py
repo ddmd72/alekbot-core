@@ -55,7 +55,11 @@ from ..services.consolidation_service import ConsolidationService
 from ..services.provider_registry import ProviderRegistry
 from ..services.email_embedding_repair_service import EmailEmbeddingRepairService
 from ..services.email_indexing_service import EmailIndexingService
-from ..services.reminders_service import RemindersService, build_reminder_alert
+from ..services.reminders_service import (
+    RemindersService,
+    build_reminder_alert,
+    build_reminder_alert_summary,
+)
 from ..services.task_dispatch_service import TaskDispatchService
 from ..utils.logger import logger
 
@@ -590,6 +594,7 @@ class WorkerHandler:
             user_id=user_id,
             account_id=user_profile.account_id,
             system_alert=build_reminder_alert(note),
+            system_alert_summary=build_reminder_alert_summary(note),
             kind=NotificationKind.REMINDER,
             tier=sla_tier,
             agent_id_override=f"smart_response_agent_{user_id}",
