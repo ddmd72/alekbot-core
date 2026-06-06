@@ -88,9 +88,9 @@ class AgentProviderStrategy:
         },
         # MCP-backed: provider-agnostic. MCP tools passed as FunctionDeclaration
         # dicts — adapters convert natively, so any native_tools provider works.
-        # Default OpenAI (ECO → gpt-5.4-nano) for latency: a small/fast reasoning
-        # model with thinking="low" is cheaper per turn than Gemini 3 Flash with
-        # default dynamic thinking. Tier pinned to ECO via _DEFAULT_AGENT_TIERS.
+        # Default OpenAI (BALANCED → gpt-5.4-mini): nano was too weak for multi-turn
+        # tool synthesis; mini adds reasoning quality while thinking="low" keeps
+        # latency bounded. Tier pinned to BALANCED via _DEFAULT_AGENT_TIERS.
         "maps_search": {
             "default_provider": "openai",
             "allowed_providers": ["openai", "gemini", "claude"],

@@ -38,11 +38,11 @@ def test_get_tier_for_agent_returns_default_when_none():
     assert config.get_tier_for_agent("router") == PerformanceTier.ECO
 
 
-def test_maps_search_defaults_to_eco_tier():
-    # maps_search pinned to ECO → gpt-5.4-nano on OpenAI. Resolved via class default
+def test_maps_search_defaults_to_balanced_tier():
+    # maps_search pinned to BALANCED → gpt-5.4-mini on OpenAI. Resolved via class default
     # even for users whose stored agent_tiers predates the entry.
-    assert UserBotConfig(agent_tiers={}).get_tier_for_agent("maps_search") == PerformanceTier.ECO
-    assert UserBotConfig(agent_tiers=None).get_tier_for_agent("maps_search") == PerformanceTier.ECO
+    assert UserBotConfig(agent_tiers={}).get_tier_for_agent("maps_search") == PerformanceTier.BALANCED
+    assert UserBotConfig(agent_tiers=None).get_tier_for_agent("maps_search") == PerformanceTier.BALANCED
 
 
 def test_user_bot_config_provider_defaults_intact():

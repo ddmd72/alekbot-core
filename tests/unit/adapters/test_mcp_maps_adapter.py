@@ -253,3 +253,119 @@ class TestMCPMapsAdapter:
     def test_capability_description_is_non_empty_string(self):
         assert isinstance(MCPMapsAdapter.CAPABILITY_DESCRIPTION, str)
         assert len(MCPMapsAdapter.CAPABILITY_DESCRIPTION) > 20
+
+
+# ---------------------------------------------------------------------------
+# MCPMapsAdapter — argument normalization (protobuf-zero → omit impedance match)
+# ---------------------------------------------------------------------------
+
+class TestMCPMapsAdapterArgNormalization:
+    """The adapter strips LLM-emitted placeholder zeros that the Maps REST tools
+    reject: a {0,0,0} date and over-filled oneof location sub-fields (latLng {0,0})."""
+
+    # -- weather: date ------------------------------------------------------
+
+    def test_weather_zero_date_and_hour_dropped(self):
+        out = MCPMapsAdapter._normalize_arguments(
+            "lookup_weather",
+            {"location": {"address": "Kyiv, UA"}, "date": {"day": 0, "month": 0, "year": 0}, "hour": 0},
+        )
+        assert "date" not in out
+        assert "hour" not in out
+        assert out["location"] == {"address": "Kyiv, UA"}
+
+    def test_weather_partial_date_dropped(self):
+        # day=0 is a protobuf placeholder, not a usable weather date.
+        out = MCPMapsAdapter._normalize_arguments(
+            "lookup_weather",
+            {"location": {"address": "Kyiv, UA"}, "date": {"day": 0, "month": 6, "year": 2026}},
+        )
+        assert "date" not in out
+
+    def test_weather_valid_date_and_hour_kept(self):
+        out = MCPMapsAdapter._normalize_arguments(
+            "lookup_weather",
+            {"location": {"address": "Kyiv, UA"}, "date": {"day": 15, "month": 7, "year": 2026}, "hour": 14},
+        )
+        assert out["date"] == {"day": 15, "month": 7, "year": 2026}
+        assert out["hour"] == 14
+
+    # -- weather: location oneof -------------------------------------------
+
+    def test_location_prefers_latlng_and_drops_others(self):
+        out = MCPMapsAdapter._normalize_arguments(
+            "lookup_weather",
+            {"location": {
+                "address": "Kyiv, UA",
+                "latLng": {"latitude": 50.45, "longitude": 30.52},
+                "placeId": "abc",
+            }},
+        )
+        assert out["location"] == {"latLng": {"latitude": 50.45, "longitude": 30.52}}
+
+    def test_location_zero_latlng_falls_back_to_placeid(self):
+        out = MCPMapsAdapter._normalize_arguments(
+            "lookup_weather",
+            {"location": {"address": "", "latLng": {"latitude": 0, "longitude": 0}, "placeId": "ChIJxxx"}},
+        )
+        assert out["location"] == {"placeId": "ChIJxxx"}
+
+    def test_location_empty_falls_back_to_address(self):
+        out = MCPMapsAdapter._normalize_arguments(
+            "lookup_weather",
+            {"location": {"address": "Odesa, UA", "latLng": {"latitude": 0, "longitude": 0}, "placeId": ""}},
+        )
+        assert out["location"] == {"address": "Odesa, UA"}
+
+    def test_location_nothing_usable_returned_untouched(self):
+        loc = {"address": "  ", "latLng": {"latitude": 0, "longitude": 0}, "placeId": ""}
+        out = MCPMapsAdapter._normalize_arguments("lookup_weather", {"location": loc})
+        assert out["location"] == loc
+
+    # -- routes: waypoint oneof --------------------------------------------
+
+    def test_routes_waypoints_cleaned(self):
+        out = MCPMapsAdapter._normalize_arguments(
+            "compute_routes",
+            {
+                "origin": {"address": "Kyiv", "latLng": {"latitude": 0, "longitude": 0}},
+                "destination": {"address": "Lviv", "latLng": {"latitude": 49.84, "longitude": 24.03}},
+                "travelMode": "DRIVE",
+            },
+        )
+        assert out["origin"] == {"address": "Kyiv"}
+        assert out["destination"] == {"latLng": {"latitude": 49.84, "longitude": 24.03}}
+        assert out["travelMode"] == "DRIVE"
+
+    # -- passthrough / safety ----------------------------------------------
+
+    def test_search_places_passthrough_unchanged(self):
+        args = {"textQuery": "pharmacy in Kyiv", "regionCode": "UA"}
+        out = MCPMapsAdapter._normalize_arguments("search_places", args)
+        assert out == args
+
+    def test_unknown_tool_passthrough_unchanged(self):
+        args = {"foo": {"day": 0, "month": 0, "year": 0}}
+        out = MCPMapsAdapter._normalize_arguments("resolve_maps_urls", args)
+        assert out == args
+
+    def test_input_dict_not_mutated(self):
+        original = {"location": {"address": "Kyiv", "latLng": {"latitude": 0, "longitude": 0}},
+                    "date": {"day": 0, "month": 0, "year": 0}, "hour": 0}
+        snapshot = json.loads(json.dumps(original))
+        MCPMapsAdapter._normalize_arguments("lookup_weather", original)
+        assert original == snapshot
+
+    async def test_call_tool_forwards_normalized_args(self):
+        mock_client = AsyncMock(spec=MCPClient)
+        mock_client.call_tool.return_value = {"ok": True}
+
+        adapter = MCPMapsAdapter(mock_client)
+        await adapter.call_tool(
+            "lookup_weather",
+            {"location": {"address": "Kyiv, UA"}, "date": {"day": 0, "month": 0, "year": 0}, "hour": 0},
+        )
+
+        mock_client.call_tool.assert_awaited_once_with(
+            "lookup_weather", {"location": {"address": "Kyiv, UA"}}
+        )

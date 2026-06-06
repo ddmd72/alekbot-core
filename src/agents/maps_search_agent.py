@@ -92,11 +92,15 @@ class MapsSearchAgent(BaseAgent):
 
     async def _build_system_instruction(self) -> str:
         try:
+            # Biographical facts are irrelevant to spatial queries and leak PII into a
+            # tool-calling agent that never needs them. user_location is injected
+            # independently from UserBotConfig (assembly_service), and current time is
+            # prepended to the user message below — both survive include_biographical=False.
             return await self._prompt_builder.build_for_agent(
                 agent_type="maps_search",
                 account_id=self._account_id,
                 user_id=self.user_id,
-                include_biographical=True,
+                include_biographical=False,
             )
         except Exception as exc:
             logger.warning(f"🗺️ [MapsSearchAgent] prompt build failed ({exc}), using empty instruction")

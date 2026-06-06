@@ -407,7 +407,7 @@ _FACTORY_AGENT_TYPES = [
 
 
 def test_maps_search_defaults_to_openai():
-    """maps_search defaults to OpenAI (ECO → gpt-5.4-nano) with gemini/claude allowed."""
+    """maps_search defaults to OpenAI (BALANCED → gpt-5.4-mini) with gemini/claude allowed."""
     strategy = AgentProviderStrategy.get_strategy("maps_search")
     assert strategy["default_provider"] == "openai"
     assert "openai" in strategy["allowed_providers"]
