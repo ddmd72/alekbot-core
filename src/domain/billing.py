@@ -92,7 +92,7 @@ class BillingAccount(BaseModel):
 _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # --- Gemini ("latest" aliases resolve to current stable generation) ---
     "gemini-flash-lite-latest":          {"input": 0.10,  "output": 0.40,  "cache_read": 0.25},
-    "gemini-flash-latest":               {"input": 0.50,  "output": 3.00,  "cache_read": 0.25},
+    "gemini-flash-latest":               {"input": 1.50,  "output": 9.00,  "cache_read": 0.25},
     "gemini-pro-latest":                 {"input": 2.00,  "output": 12.00, "cache_read": 0.25},
     "gemini-3-flash-preview":            {"input": 0.50,  "output": 3.00,  "cache_read": 0.25},
     "deep-research-pro-preview-12-2025": {"input": 1.25,  "output": 10.00, "cache_read": 0.25},
