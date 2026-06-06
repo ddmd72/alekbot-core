@@ -20,40 +20,10 @@ token_id: OUTPUT_FORMAT_JSON
     output_schema {
         contract: "RAW JSON only — first char '{', last char '}'. No prose, no code blocks."
 
-        schema: {
-            "type": "object",
-            "required": ["full_response", "response_summary", "rich_content", "link_list"],
-            "properties": {
-                "full_response":    { "type": "string" },
-                "response_summary": { "type": "string", "maxLength": 300 },
-                "rich_content":     { "type": ["object", "null"], "properties": {
-                    "type":     { "enum": ["widget", "file", "table"] },
-                    "data":     { "type": "object", "properties": {
-                        "rows":    { "type": "array", "items": { "type": "object", "properties": { "cells": { "type": "array", "items": { "type": "string" } } } } },
-                        "headers": { "type": "array", "items": { "type": "string" } },
-                        "title":   { "type": "string" },
-                        "footer":  { "type": "string" },
-                        "html":    { "type": "string" },
-                        "alt_text":{ "type": "string" },
-                        "filename":{ "type": "string" },
-                        "content": { "type": "string" }
-                    }},
-                    "fallback": { "type": "string" }
-                }},
-                "link_list": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "required": ["anchor", "title", "url"],
-                        "properties": {
-                            "anchor": { "type": "string" },
-                            "title":  { "type": "string" },
-                            "url":    { "type": "string" }
-                        }
-                    }
-                }
-            }
-        }
+        // Field structure is enforced natively from code (_RESPONSE_SCHEMA): Gemini via
+        // responseJsonSchema, Claude via output_config, OpenAI via json_schema. The field
+        // contract the model follows lives in field_guidelines + rich_content_types + examples
+        // below — no duplicated JSON schema here (it drifted from the code copy).
     }
 
     field_guidelines {

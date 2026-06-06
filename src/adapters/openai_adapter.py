@@ -149,14 +149,30 @@ class OpenAIAdapter(LLMPort):
         if use_grounding:
             api_tools = [{"type": "web_search"}] + api_tools
 
-        # Build text format for JSON mode.
-        # Responses API uses text.format instead of response_format.
-        # OpenAI requires the word "json" in instructions or input when json_object is active.
+        # Build text format for JSON mode. Responses API uses text.format.
+        #   grounding      → no format: "Web Search cannot be used with JSON mode" (400).
+        #   dict schema    → json_schema (strict=False): the schema is sent to the model so it
+        #                    populates every described field (json_object sends no schema, so
+        #                    the model only follows the prompt and drops structure — e.g. empty
+        #                    rich_content widgets). strict=False because our variant schemas
+        #                    can't satisfy strict=True (it requires additionalProperties:false +
+        #                    every field required). Coexists with function tools — verified:
+        #                    the model emits a function_call on delegation turns and schema-
+        #                    conforming JSON only on the final text turn.
+        #   mime_type only → json_object (valid JSON, no schema). OpenAI requires the literal
+        #                    word "json" in the input when json_object is active.
         text_format = None
-        if response_mime_type == "application/json" or response_schema is not None:
+        if use_grounding:
+            pass
+        elif isinstance(response_schema, dict):
+            text_format = {"format": {
+                "type": "json_schema",
+                "name": "response",
+                "schema": self._to_openai_json_schema(response_schema),
+                "strict": False,
+            }}
+        elif response_mime_type == "application/json":
             text_format = {"format": {"type": "json_object"}}
-            # OpenAI requires the word "json" in input items (not instructions).
-            # Prepend a developer message to satisfy this API requirement.
             input_items.insert(0, {"role": "developer", "content": "Respond in JSON."})
 
         logger.info(
@@ -261,6 +277,28 @@ class OpenAIAdapter(LLMPort):
     def _is_reasoning_model(self, model_name: str) -> bool:
         """Return True for models that do not support sampling params (temperature etc.)."""
         return any(model_name.startswith(p) for p in self._REASONING_PREFIXES)
+
+    @staticmethod
+    def _to_openai_json_schema(schema: dict) -> dict:
+        """Normalize a response schema for OpenAI's `text.format.json_schema`.
+
+        Lowercases `type` values: some callers (RouterAgent) declare Gemini-native
+        uppercase types ("OBJECT"/"STRING"), which OpenAI rejects ("'STRING' is not
+        valid under any of the given schemas"). Every other keyword — `nullable`,
+        `maxLength`, `enum`, nested objects/arrays, and bare `{"type": "object"}` —
+        is accepted under strict=False and passes through unchanged.
+        """
+        def norm(node):
+            if isinstance(node, dict):
+                return {
+                    k: (v.lower() if k == "type" and isinstance(v, str) else norm(v))
+                    for k, v in node.items()
+                }
+            if isinstance(node, list):
+                return [norm(item) for item in node]
+            return node
+
+        return norm(schema)
 
     def supports_caching(self) -> bool:
         return False

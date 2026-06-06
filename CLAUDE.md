@@ -544,12 +544,17 @@ Every agent that produces structured LLM output MUST follow these rules — no e
   OpenAI/Grok: mapped to `response_format: {"type": "json_object"}`.
   Claude: **no equivalent in API — silently ignored**. Claude has no native json_object mode.
 
-  **`response_schema`** — flat envelope describing top-level JSON structure.
-  Gemini: natively enforced. **Known issue:** schema + Groovy DSL prompt → Flash Lite returns
-  empty responses (session 7, confirmed by 22+ tests). This is why MemorySearch uses
-  `response_mime_type` without `response_schema`.
-  OpenAI/Grok: triggers `json_object` mode (schema itself is not forwarded to API; inner
-  structure enforced by OUTPUT_FORMAT prompt token).
+  **`response_schema`** — JSON Schema for the output. Describe **every** field: a provider with
+  native constrained decoding returns `{}` for an under-specified `{"type":"object"}` and `[]`
+  for a bare array (Gemini drops widgets/links this way, worst on Flash) — see `_RESPONSE_SCHEMA`.
+  Gemini: natively enforced. Dict schemas route to `responseJsonSchema` (not the stricter
+  `responseSchema`), which accepts deep nesting. **Known issue:** schema + Groovy DSL prompt →
+  Flash Lite returns empty responses (session 7, confirmed by 22+ tests). This is why MemorySearch
+  uses `response_mime_type` without `response_schema`.
+  OpenAI: forwarded as `text.format={"type":"json_schema","strict":false}` — the schema IS sent
+  and natively enforced (`OpenAIAdapter._to_openai_json_schema` lowercases Gemini-style uppercase
+  types; suppressed when `use_grounding` is set — Web Search + JSON mode → 400). Grok: still
+  `json_object` mode (schema not forwarded; structure from the OUTPUT_FORMAT token + examples).
   Claude: translated to `output_config={"format":{"type":"json_schema","schema":...}}` (GA
   structured outputs API, no beta header). Works with tools and with thinking in the same
   request. Model returns JSON directly in a text block — no tool interception needed.
@@ -561,8 +566,9 @@ Every agent that produces structured LLM output MUST follow these rules — no e
 
   **What agents should pass:**
   - JSON agents WITHOUT tools: `response_mime_type` + `response_schema` (both).
-    Gemini uses both natively. OpenAI/Grok react via json_object. Claude: `response_mime_type`
-    is silently ignored; `response_schema` triggers `output_config.format`.
+    Gemini uses both natively. OpenAI enforces `response_schema` via json_schema (strict:false);
+    Grok reacts via json_object. Claude: `response_mime_type` is silently ignored;
+    `response_schema` triggers `output_config.format`.
   - JSON agents WITH tools: `response_schema` only (no `response_mime_type`).
     Gemini cannot combine mime_type + tools. Schema works with tools on all providers.
   - Non-JSON agents: neither. OUTPUT_FORMAT token handles everything.
@@ -574,11 +580,16 @@ Every agent that produces structured LLM output MUST follow these rules — no e
   honoured via `output_config.format`).
 
 - **`_RESPONSE_SCHEMA` on Quick/Smart.** Both orchestrators pass
-  `response_schema=_RESPONSE_SCHEMA` to `LLMRequest` even when tools are active.
-  Schema enforces only the top-level envelope (`full_response`, `response_summary`,
-  `rich_content.type` enum, `rich_content.fallback`). **`data` is declared as flat `{"type":
-  "object"}`** — Gemini has a hard nesting depth limit; going deeper causes `400 INVALID_ARGUMENT`.
-  Inner `data` structure is enforced by the OUTPUT_FORMAT token in the prompt.
+  `response_schema=_RESPONSE_SCHEMA` to `LLMRequest` even when tools are active. It now
+  **fully describes every field** — `rich_content.data` carries all variant keys (table:
+  title/headers/rows[{cells}]/footer; widget: html/alt_text; file: filename/content) and
+  `link_list` is required `array<object{anchor,title,url}>`. This is mandatory, not optional:
+  a flat `{"type":"object"}` data field comes back as `{}` on Gemini Flash (widget dropped) and
+  a bare `link_list` array as `[]` (dangling `[N]` citations with no URL). Dict schemas route to
+  Gemini's `responseJsonSchema`, which accepts the nesting — the earlier "keep data flat for the
+  nesting limit" note applied to the stricter `responseSchema` path and is obsolete. The
+  OUTPUT_FORMAT_JSON token no longer duplicates this schema (it drifted); structure is enforced
+  from code (Gemini responseJsonSchema, Claude output_config, OpenAI json_schema).
 
 - **`rich_content.data.rows` format: `[{"cells": [...]}, ...]`.** Each table row is an object with
   a `cells` key (array of strings). Never use `[[...], [...]]` (Gemini hangs on
