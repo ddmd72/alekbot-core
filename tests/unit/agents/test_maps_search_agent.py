@@ -203,7 +203,7 @@ class TestCanHandle:
 
 class TestPromptBuilder:
     async def test_build_for_agent_called_with_correct_args(self, agent, mock_prompt_builder, mock_llm):
-        """build_for_agent called with agent_type='maps_search', include_biographical=True."""
+        """build_for_agent called with agent_type='maps_search', include_biographical=False."""
         mock_llm.generate_content.return_value = LLMResponse(text="Відповідь.", tool_calls=[])
 
         await agent.execute(_make_message())
@@ -212,7 +212,7 @@ class TestPromptBuilder:
             agent_type="maps_search",
             account_id="acc1",
             user_id="user123",
-            include_biographical=True,
+            include_biographical=False,
         )
 
     async def test_fallback_to_empty_on_prompt_build_failure(self, mock_llm, mock_maps_port, mock_prompt_builder):
