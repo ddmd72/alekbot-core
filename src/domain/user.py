@@ -75,6 +75,9 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # sliding rolling window) further offset cost on later turns.
     "consolidation": PerformanceTier.PERFORMANCE,
     "web_search": PerformanceTier.BALANCED,
+    # ECO → gpt-5.4-nano on OpenAI (maps_search default provider). Small fast
+    # reasoning model; latency comes from turn count + thinking, not model size.
+    "maps_search": PerformanceTier.ECO,
     "facts_memory": PerformanceTier.ECO,
     "email_search": PerformanceTier.ECO,
     "postprocessing": PerformanceTier.BALANCED,
