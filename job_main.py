@@ -32,17 +32,63 @@ import sys
 import anthropic
 
 from src.adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
+from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.agents.claude_deep_research_runner_agent import ClaudeDeepResearchRunnerAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
+from src.domain.billing import calculate_cost
 from src.infrastructure.agent_manifest import Intent
 from src.services.deep_research_delivery import deliver_deep_research
 from src.utils.logger import logger
 
 
+def _build_account_repo() -> FirestoreAccountRepository:
+    """Build account repo for billing recording. Uses same database as main service."""
+    from google.cloud import firestore as _firestore
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+    db = _firestore.AsyncClient(project=project, database="us-production")
+    env = os.environ.get("APP_ENV", "development")
+    prefix = "development_" if env == "development" else ""
+    return FirestoreAccountRepository(db_client=db, collection_name=f"{prefix}domain_accounts_v2")
+
+
+async def _record_billing(account_id: str, model: str, result: dict) -> None:
+    """Record deep research token usage to Firestore. Best-effort, non-raising."""
+    if not account_id or not model:
+        return
+    total_tokens = result.get("total_tokens", 0)
+    cache_read_tokens = result.get("cache_read_tokens", 0)
+    cache_write_tokens = result.get("cache_write_tokens", 0)
+    if not (total_tokens or cache_read_tokens or cache_write_tokens):
+        return
+    cost = calculate_cost(
+        model=model,
+        prompt_tokens=total_tokens,
+        completion_tokens=0,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_write_tokens,
+    )
+    try:
+        repo = _build_account_repo()
+        await repo.increment_account_usage(account_id=account_id, tokens=total_tokens, cost=cost)
+        logger.info(
+            "[ResearchJob] Billing recorded: account=%s model=%s tokens=%d cache_read=%d cost=$%.4f",
+            account_id[:20], model, total_tokens, cache_read_tokens, cost,
+        )
+    except Exception as exc:
+        logger.error("[ResearchJob] Billing recording failed (non-fatal): %s", exc, exc_info=True)
+
+
 def _build_task_queue() -> GcpTaskQueue:
-    """Build the Cloud Tasks queue for DocPlanner delivery."""
+    """Build the Cloud Tasks queue for the HtmlPageGenerator delivery task.
+
+    SERVICE_ACCOUNT_EMAIL is mandatory: the /worker route enforces a Google OIDC
+    gate (src/web/worker_oidc_verifier.py), so the delivery task MUST carry an
+    oidc_token minted as that SA — otherwise /worker answers 401 and the research
+    result is never delivered. Symmetric with the main service's enqueue side
+    (main.py builds GcpTaskQueue with the same secret).
+    """
     project = os.environ["GOOGLE_CLOUD_PROJECT"]
     service_url = os.environ["CLOUD_RUN_SERVICE_URL"]
     env = os.environ.get("APP_ENV", "development")
@@ -52,7 +98,7 @@ def _build_task_queue() -> GcpTaskQueue:
         location="us-central1",
         queue_name=f"agent-tasks-{queue_suffix}",
         service_url=service_url,
-        service_account_email=None,  # unauthenticated — service is allow-unauthenticated
+        service_account_email=os.environ.get("SERVICE_ACCOUNT_EMAIL"),
     )
 
 
@@ -154,6 +200,15 @@ async def main() -> None:
     # passes are captured: the first pass never reaches the user (it feeds the
     # critic) but matters for history. No-op when BIGQUERY_PROMPT_DATASET unset.
     await _capture_research_result(result, result_text, user_id, context)
+
+    # Record billing BEFORE delivery — the token cost was incurred during research,
+    # not delivery. Delivery can fail (e.g. OIDC gate) and exit(1); billing must not
+    # be skipped when it does, otherwise expensive DR usage goes uncounted.
+    await _record_billing(
+        account_id=context.get("account_id", ""),
+        model=result.get("model", ""),
+        result=result,
+    )
 
     try:
         await deliver_deep_research(

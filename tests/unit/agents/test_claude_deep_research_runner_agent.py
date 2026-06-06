@@ -414,7 +414,7 @@ class TestResearchLoop:
         msg = _api_message("end_turn", [_text_block("Final report")])
         agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
 
-        text, tokens = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        text, tokens, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
         assert text == "Final report"
 
@@ -422,7 +422,7 @@ class TestResearchLoop:
         msg = _api_message("end_turn", [_text_block()], input_tokens=50, output_tokens=150)
         agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
 
-        _, tokens = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        _, tokens, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
         assert tokens == 200
 
@@ -432,7 +432,7 @@ class TestResearchLoop:
         client = _client_with_streams(_FakeStream([], pause), _FakeStream([], end))
         agent = _make_agent(client)
 
-        text, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        text, _, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
         assert text == "Final text"
 
@@ -442,7 +442,7 @@ class TestResearchLoop:
         client = _client_with_streams(_FakeStream([], pause), _FakeStream([], end))
         agent = _make_agent(client)
 
-        _, tokens = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        _, tokens, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
         assert tokens == 300  # 100 + 200
 
@@ -506,7 +506,7 @@ class TestResearchLoop:
         msg = _api_message("max_tokens", [_text_block("Partial output")])
         agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
 
-        text, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        text, _, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
         assert text == "Partial output"
 
@@ -521,7 +521,7 @@ class TestResearchLoop:
         msg = _api_message("end_turn", [_tool_block()])
         agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
 
-        text, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        text, _, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
         assert text == ""
 
