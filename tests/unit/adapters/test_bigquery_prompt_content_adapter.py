@@ -12,6 +12,7 @@ import sys
 from unittest.mock import MagicMock
 
 import pytest
+from google.api_core.exceptions import NotFound
 
 from src.adapters.bigquery_prompt_content_adapter import (
     BigQueryPromptContentAdapter,
@@ -80,11 +81,27 @@ async def _record(adapter, request=None, response=None):
 
 
 class TestRecordTurn:
-    async def test_creates_table_with_30day_ttl(self, adapter, fake_bigquery):
+    async def test_skips_creation_when_objects_exist(self, adapter, fake_bigquery):
+        # GET-first: when the dataset + table already exist, get_* succeed and we
+        # must NOT POST a create_* — that POST is what 409s and pollutes the tracing
+        # backend with a swallowed-but-recorded exception.
         bq, client = fake_bigquery
         await _record(adapter)
 
-        client.create_dataset.assert_called_once_with("ds", exists_ok=True)
+        client.get_dataset.assert_called_once_with("ds")
+        client.get_table.assert_called_once()
+        client.create_dataset.assert_not_called()
+        client.create_table.assert_not_called()
+
+    async def test_creates_table_with_30day_ttl(self, adapter, fake_bigquery):
+        bq, client = fake_bigquery
+        # Simulate first run: neither dataset nor table exists → GET raises NotFound
+        # → the create path (with the TTL) executes.
+        client.get_dataset.side_effect = NotFound("missing")
+        client.get_table.side_effect = NotFound("missing")
+        await _record(adapter)
+
+        client.create_dataset.assert_called_once_with("ds")
         client.create_table.assert_called_once()
         bq.TimePartitioning.assert_called_once()
         kwargs = bq.TimePartitioning.call_args.kwargs

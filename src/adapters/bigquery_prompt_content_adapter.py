@@ -291,39 +291,52 @@ class BigQueryPromptContentAdapter(PromptContentStore):
 
     def _ensure_table_sync(self) -> None:
         from google.cloud import bigquery
+        from google.api_core.exceptions import NotFound
 
         client = self._get_client()
-        client.create_dataset(self._dataset, exists_ok=True)
 
-        schema = [
-            bigquery.SchemaField("trace_id", "STRING"),
-            bigquery.SchemaField("span_id", "STRING"),
-            bigquery.SchemaField("timestamp", "TIMESTAMP"),
-            bigquery.SchemaField("user_id", "STRING"),
-            bigquery.SchemaField("account_id", "STRING"),
-            bigquery.SchemaField("agent_id", "STRING"),
-            bigquery.SchemaField("agent_type", "STRING"),
-            bigquery.SchemaField("model", "STRING"),
-            bigquery.SchemaField("provider", "STRING"),
-            bigquery.SchemaField("turn", "INTEGER"),
-            bigquery.SchemaField("request_text", "STRING"),
-            bigquery.SchemaField("response_text", "STRING"),
-            bigquery.SchemaField("tool_calls", "STRING"),
-            bigquery.SchemaField("prompt_tokens", "INTEGER"),
-            bigquery.SchemaField("completion_tokens", "INTEGER"),
-            bigquery.SchemaField("total_tokens", "INTEGER"),
-            bigquery.SchemaField("cache_read_tokens", "INTEGER"),
-            bigquery.SchemaField("cache_creation_tokens", "INTEGER"),
-            bigquery.SchemaField("latency_ms", "FLOAT"),
-            bigquery.SchemaField("error", "STRING"),
-        ]
-        table = bigquery.Table(self._table_id(), schema=schema)
-        table.time_partitioning = bigquery.TimePartitioning(
-            type_=bigquery.TimePartitioningType.DAY,
-            field="timestamp",
-            expiration_ms=_PARTITION_EXPIRATION_MS,
-        )
-        client.create_table(table, exists_ok=True)
+        # GET-first, not create_*(exists_ok=True): the latter still POSTs and gets a
+        # 409 that the BigQuery client swallows — but its OpenTelemetry instrumentation
+        # records that 409 on a span, surfacing a false error in the tracing backend
+        # (Logfire) on every process start. A get-then-create keeps the steady-state
+        # path clean (a 200 GET, no recorded exception) and POSTs only when missing.
+        try:
+            client.get_dataset(self._dataset)
+        except NotFound:
+            client.create_dataset(self._dataset)
+
+        try:
+            client.get_table(self._table_id())
+        except NotFound:
+            schema = [
+                bigquery.SchemaField("trace_id", "STRING"),
+                bigquery.SchemaField("span_id", "STRING"),
+                bigquery.SchemaField("timestamp", "TIMESTAMP"),
+                bigquery.SchemaField("user_id", "STRING"),
+                bigquery.SchemaField("account_id", "STRING"),
+                bigquery.SchemaField("agent_id", "STRING"),
+                bigquery.SchemaField("agent_type", "STRING"),
+                bigquery.SchemaField("model", "STRING"),
+                bigquery.SchemaField("provider", "STRING"),
+                bigquery.SchemaField("turn", "INTEGER"),
+                bigquery.SchemaField("request_text", "STRING"),
+                bigquery.SchemaField("response_text", "STRING"),
+                bigquery.SchemaField("tool_calls", "STRING"),
+                bigquery.SchemaField("prompt_tokens", "INTEGER"),
+                bigquery.SchemaField("completion_tokens", "INTEGER"),
+                bigquery.SchemaField("total_tokens", "INTEGER"),
+                bigquery.SchemaField("cache_read_tokens", "INTEGER"),
+                bigquery.SchemaField("cache_creation_tokens", "INTEGER"),
+                bigquery.SchemaField("latency_ms", "FLOAT"),
+                bigquery.SchemaField("error", "STRING"),
+            ]
+            table = bigquery.Table(self._table_id(), schema=schema)
+            table.time_partitioning = bigquery.TimePartitioning(
+                type_=bigquery.TimePartitioningType.DAY,
+                field="timestamp",
+                expiration_ms=_PARTITION_EXPIRATION_MS,
+            )
+            client.create_table(table)
 
     def _insert_sync(self, row: dict) -> list:
         client = self._get_client()
