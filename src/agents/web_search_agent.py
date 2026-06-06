@@ -99,11 +99,15 @@ class WebSearchAgent(BaseAgent):
             current_time_str = datetime.now(timezone.utc).strftime('%A, %d %B %Y, %H:%M %Z')
 
             account_id = message.context.get("account_id") if message.context else None
+            # Biographical facts (clothing sizes, blood type, …) are irrelevant to web
+            # search and leak PII into a grounded-search agent. user_location + current
+            # time survive (injected independently / prepended below).
             system_instruction = await self.prompt_builder.build_for_agent(
                 agent_type="websearch",
                 user_id=self.user_id,
                 account_id=account_id,
                 routing_metadata=None,
+                include_biographical=False,
             )
 
             system_instruction = f"current_date_time: {current_time_str}\n\n{system_instruction}"
