@@ -22,7 +22,7 @@ token_id: OUTPUT_FORMAT_JSON
 
         schema: {
             "type": "object",
-            "required": ["full_response", "response_summary", "rich_content"],
+            "required": ["full_response", "response_summary", "rich_content", "link_list"],
             "properties": {
                 "full_response":    { "type": "string" },
                 "response_summary": { "type": "string", "maxLength": 300 },
@@ -34,7 +34,9 @@ token_id: OUTPUT_FORMAT_JSON
                         "title":   { "type": "string" },
                         "footer":  { "type": "string" },
                         "html":    { "type": "string" },
-                        "alt_text":{ "type": "string" }
+                        "alt_text":{ "type": "string" },
+                        "filename":{ "type": "string" },
+                        "content": { "type": "string" }
                     }},
                     "fallback": { "type": "string" }
                 }},
@@ -59,11 +61,13 @@ token_id: OUTPUT_FORMAT_JSON
         response_summary: "Max 300 chars, plain text. Preserve tone and emojis."
         rich_content: "null by default. Use when visual layout adds clear value."
         link_list: """
-            Empty array [] by default.
-            Populate ONLY when delegate_to_specialist returned links (e.g. Google Maps URLs, article URLs).
-            Each item: anchor (numeric string matching a [N] citation in full_response), title (human label), url (exact URL from specialist).
+            Empty array [] when there are no sources. NEVER invent URLs — populate ONLY with
+            links a delegate_to_specialist actually returned (Google Maps URLs, article URLs).
+            Each item: anchor = a BARE numeric string ("1", "2") — NOT "[1]", NOT "[Name][1]";
+            title (human label); url (exact URL from the specialist).
             In full_response embed citations as [N] after the referenced name — e.g. "Bar Casa Vio [1] is located at...".
-            The platform renderer converts [N] to a clickable link. Never show raw URLs in full_response — use [N] anchors only.
+            Do NOT use markdown link syntax in full_response: no [text](url), no [text][1] — bare [N] only.
+            The platform renderer converts [N] to a clickable link. Never show raw URLs in full_response.
         """
     }
 
