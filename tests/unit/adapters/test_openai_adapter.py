@@ -399,6 +399,111 @@ async def test_generate_content_json_mode():
 
 
 @pytest.mark.asyncio
+async def test_dict_response_schema_uses_json_schema_strict_false():
+    """A dict response_schema activates text.format=json_schema (strict=False) carrying the schema
+    — json_object sends no schema, so the model drops structure (empty rich_content etc.)."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_create(**kwargs):
+        captured.update(kwargs)
+        return _make_response(text='{"answer": "x"}')
+
+    adapter.client.responses.create = mock_create
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+
+    await adapter.generate_content(request=LLMRequest(
+        model_name="gpt-5-mini",
+        messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+        response_schema=schema,
+    ))
+
+    fmt = captured.get("text", {}).get("format", {})
+    assert fmt.get("type") == "json_schema"
+    assert fmt.get("strict") is False
+    assert fmt.get("schema") == schema
+
+
+@pytest.mark.asyncio
+async def test_response_schema_uppercase_types_lowercased():
+    """Gemini-style uppercase types (RouterAgent) are lowercased before OpenAI's json_schema,
+    which rejects 'STRING'/'OBJECT'."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_create(**kwargs):
+        captured.update(kwargs)
+        return _make_response(text='{}')
+
+    adapter.client.responses.create = mock_create
+    schema = {"type": "OBJECT", "properties": {
+        "flag": {"type": "BOOLEAN"},
+        "items": {"type": "ARRAY", "items": {"type": "STRING"}},
+    }}
+
+    await adapter.generate_content(request=LLMRequest(
+        model_name="gpt-5-mini",
+        messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+        response_schema=schema,
+    ))
+
+    sent = captured["text"]["format"]["schema"]
+    assert sent["type"] == "object"
+    assert sent["properties"]["flag"]["type"] == "boolean"
+    assert sent["properties"]["items"]["type"] == "array"
+    assert sent["properties"]["items"]["items"]["type"] == "string"
+
+
+@pytest.mark.asyncio
+async def test_grounding_wins_over_schema_no_json_mode():
+    """use_grounding suppresses text.format (Web Search + JSON mode = 400) while still
+    injecting the web_search tool — even when a response_schema is also present."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_create(**kwargs):
+        captured.update(kwargs)
+        return _make_response(text="result")
+
+    adapter.client.responses.create = mock_create
+
+    await adapter.generate_content(request=LLMRequest(
+        model_name="gpt-5-mini",
+        messages=[Message(role="user", parts=[MessagePart(text="news?")])],
+        use_grounding=True,
+        response_schema={"type": "object", "properties": {"x": {"type": "string"}}},
+    ))
+
+    assert captured.get("text") is None
+    assert any(t.get("type") == "web_search" for t in captured.get("tools", []))
+
+
+@pytest.mark.asyncio
+async def test_json_schema_does_not_inject_developer_json_message():
+    """The 'Respond in JSON.' developer message is only required for json_object, not json_schema."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_create(**kwargs):
+        captured.update(kwargs)
+        return _make_response(text='{}')
+
+    adapter.client.responses.create = mock_create
+
+    await adapter.generate_content(request=LLMRequest(
+        model_name="gpt-5-mini",
+        messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+        response_schema={"type": "object", "properties": {"a": {"type": "string"}}},
+    ))
+
+    inputs = captured.get("input", [])
+    assert not any(
+        i.get("role") == "developer" and "JSON" in str(i.get("content", ""))
+        for i in inputs
+    )
+
+
+@pytest.mark.asyncio
 async def test_generate_content_returns_tool_calls():
     """Function calls in API response are mapped to domain ToolCall objects."""
     adapter = OpenAIAdapter(api_key="test-key")
