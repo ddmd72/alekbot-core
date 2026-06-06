@@ -18,11 +18,12 @@ import os
 import sys
 import argparse
 import re
-import textwrap
 from datetime import datetime, timezone
-from typing import Optional
+
+import truststore
 from dotenv import load_dotenv
 
+truststore.inject_into_ssl()  # trust the OS keychain (e.g. Charles CA) before any TLS client is built
 load_dotenv()
 
 # ---------------------------------------------------------------------------
@@ -159,7 +160,7 @@ def _get_expected_cache(key: str) -> dict[str, float] | None:
 _BILLING_TO_OR: dict[str, str] = {
     # Gemini aliases → resolved via generate call (model_version field)
     "gemini-flash-lite-latest":          "google/gemini-2.5-flash-lite",
-    "gemini-flash-latest":               "google/gemini-3-flash-preview",
+    "gemini-flash-latest":               "google/gemini-3.5-flash",  # live alias → gemini-3.5-flash
     "gemini-pro-latest":                 "google/gemini-3.1-pro-preview",
     "gemini-3-flash-preview":            "google/gemini-3-flash-preview",
     "models/gemini-3-pro-preview":       "google/gemini-3.1-pro-preview",
@@ -239,8 +240,8 @@ def _build_report(
         if not rows:
             continue
         lines.append(f"\n## {label}\n")
-        lines.append(f"| Model ID | Input $/M | Output $/M |")
-        lines.append(f"|----------|----------:|----------:|")
+        lines.append("| Model ID | Input $/M | Output $/M |")
+        lines.append("|----------|----------:|----------:|")
         for mid, p in rows:
             lines.append(f"| `{mid}` | {p['input']:.3f} | {p['output']:.3f} |")
 
