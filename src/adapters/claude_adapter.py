@@ -100,7 +100,7 @@ class ClaudeAdapter(LLMPort):
         native_tools=False,
         context_caching=True,
         vision=True,
-        max_context_window=200000,
+        max_context_window=1000000,  # model-dependent: sonnet-4-6 1M (verified via API + empirical 224K req, no beta header); haiku-4-5/opus 200K. Declarative only — not consumed for truncation.
         native_grounding=True,  # web_search_20250305 built-in tool
     )
 
