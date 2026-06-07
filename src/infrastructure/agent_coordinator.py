@@ -335,7 +335,14 @@ class AgentCoordinator:
         """
         Handle a delegate_to_specialist call from SmartResponseAgent.
 
-        Looks up intent in AgentRegistry, then routes:
+        Intent→agent resolution (RUNTIME — invisible to static call graphs):
+        the intent string is matched to an agent by
+        ``AgentRegistry.get_agent_for_intent(intent)``, which scans the
+        ``AgentDescriptor``s registered from ``ALL_DESCRIPTORS`` in
+        ``infrastructure/agent_manifest.py`` — each descriptor's ``capabilities``
+        dict declares the intents that agent owns. ``agent_manifest.py`` is the
+        single source of truth for which agent handles which intent; this method
+        hardcodes no mapping. Then routes by the descriptor's ExecutionMode:
         - SYNC  → _execute_sync (immediate, returns result)
         - ASYNC → _execute_async (enqueue Cloud Tasks, returns ack)
 
