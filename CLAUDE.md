@@ -59,6 +59,39 @@ every push/PR. Lint scope is `src/` only (default high-signal ruleset: pyflakes 
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 
+## Code Navigation (CodeGraph)
+
+A local code knowledge graph is available via the `codegraph` MCP server (index in `.codegraph/`,
+gitignored, ~28MB, machine-local — run `codegraph init` once per clone; the server may be absent in
+some environments — fall back to grep/Read when its tools aren't listed).
+
+**Default to `codegraph_explore` FIRST** for "how does X work / where is X / trace this flow /
+survey this area" — it returns the verbatim source of the relevant symbols in one call
+(Read-equivalent). Use grep/Read only to confirm a detail it didn't cover. This cuts the usual
+grep+Read fan-out to 1–2 calls.
+
+**Catches well (trust it):**
+- Whole-area / flow source in one shot (e.g. the DelegationEngine dispatch chain, an adapter's
+  request build) — verbatim, well-targeted.
+- Static structure: `extends` (port→adapter, agents→BaseAgent), `codegraph_callers`/`callees`,
+  `codegraph_impact` (symbol + its tests).
+
+**Dive deeper yourself (it stops at the doorstep):**
+- **Runtime dispatch** — intent→agent via `agent_manifest.py`/`agent_registry.py`, provider/tier
+  via `AgentProviderStrategy`, DI wiring in `composition/`. Explore points you to
+  `handle_delegation` etc. but does NOT resolve the registry/config mapping — grep those files.
+- **Class-level constants / config dicts** — `codegraph_search` returns name-substring test
+  matches, not the `FOO = {...}` definition. Grep instead.
+- The relationships "callers" list is polluted with `scripts/`+`tests/` noise — trust the Source
+  section, filter the rest. `codegraph affected` (source→test mapping) is unreliable — use
+  `make test-unit` / grep to find affected tests.
+
+**Keeping it fresh:** a native file watcher re-indexes ~1–2s after edits (debounced), tool
+responses warn when referencing pending files, and the MCP server reconciles against the working
+tree on reconnect — so normal editing stays fresh automatically. After a big branch switch / rebase
+/ bulk change made while the server was down, run `codegraph sync` (incremental) or `codegraph
+index` (full); `codegraph status` shows index health.
+
 ## Branching & Environment
 
 - **Single live environment.** The separate prod deployment was retired (2026-05-31); the
