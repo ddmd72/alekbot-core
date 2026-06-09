@@ -5,7 +5,7 @@ Shared across all adapters (Slack, Telegram, Web, etc.)
 Adapters can override specific messages if needed, but 99% will use these.
 """
 from typing import Dict, List
-from ..domain.ui_messages import StatusType
+from ..domain.ui_messages import StatusType, UIMessage
 
 
 ENTERTAINMENT_INTROS: List[str] = [
@@ -97,3 +97,11 @@ def get_message(status_type: StatusType, overrides: Dict[str, List[str]] = None)
         return overrides[status_type.value]
     
     return EN_MESSAGES.get(status_type.value, ["Processing..."])
+# Fixed single-string UI messages (see domain.ui_messages.UIMessage)
+UI_STRINGS: Dict[str, str] = {
+    UIMessage.RESPONSE_READY.value: "✅ Response ready.",
+    UIMessage.RESPONSE_TRUNCATED_SUFFIX.value: "\n\n... (response truncated)",
+    UIMessage.EMPTY_MODEL_RESPONSE.value: "*(empty response from the model)*",
+    UIMessage.UNKNOWN_COMMAND.value: "Unknown command: `{command}`",
+    UIMessage.NEW_TOPIC_ACK.value: "New topic. History cleared.",
+}

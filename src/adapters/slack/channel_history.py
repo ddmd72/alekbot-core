@@ -9,7 +9,16 @@ bound channel sessions where Slack IS the session store.
 from typing import List
 
 from ...domain.llm import Message, MessagePart
+from ...domain.ui_messages import UIMessage
+from ...locales import uk, en, fr, es
 from ...utils.logger import logger
+
+# The bot's "response ready" placeholder in every supported language — these
+# must be filtered out of history regardless of the user's UI language at the
+# time the message was sent.
+_RESPONSE_READY_VARIANTS = frozenset(
+    mod.UI_STRINGS[UIMessage.RESPONSE_READY.value] for mod in (uk, en, fr, es)
+)
 
 
 class SlackChannelHistorySource:
@@ -68,7 +77,7 @@ class SlackChannelHistorySource:
             if not text or text.startswith("$"):
                 continue
             # Skip status/placeholder messages from bot
-            if text in ("✅ Відповідь готова.",) or text.startswith("🤔"):
+            if text in _RESPONSE_READY_VARIANTS or text.startswith("🤔"):
                 continue
             # Bot's own messages → model role
             role = "model" if m.get("bot_id") or m.get("user") == self._bot_user_id else "user"

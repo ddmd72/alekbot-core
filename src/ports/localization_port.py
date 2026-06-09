@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from typing import List
 
 from ..domain.language import LanguageCode
-from ..domain.ui_messages import StatusType
+from ..domain.ui_messages import StatusType, UIMessage
 
 
 class LocalizationPort(ABC):
@@ -32,3 +32,16 @@ class LocalizationPort(ABC):
     @abstractmethod
     def get_file_prompt(self, lang: LanguageCode, mime_type: str) -> str:
         """Prompt to use when user sends a file without text."""
+
+    @abstractmethod
+    def get_ui_string(self, lang: LanguageCode, message: UIMessage) -> str:
+        """Single fixed UI string (may be a str.format template)."""
+
+    @abstractmethod
+    def get_ui_string_variants(self, message: UIMessage) -> List[str]:
+        """The message's rendering in every supported language.
+
+        For consumers that must RECOGNIZE a UI string regardless of the
+        language it was originally sent in (e.g. filtering the bot's own
+        status messages out of platform channel history).
+        """

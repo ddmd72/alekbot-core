@@ -12,7 +12,8 @@ import time
 from typing import Callable, Coroutine, List, Optional, Any, TYPE_CHECKING
 
 from ..domain.messaging import MessageContext, ResponseChannel, SmartResponse, RichContent
-from ..domain.ui_messages import StatusType
+from ..domain.ui_messages import StatusType, UIMessage
+from ..domain.language import LanguageCode
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus, DeliveryItem
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
@@ -251,6 +252,16 @@ class ConversationHandler(ConversationHandlerPort):
             logger.warning(f"⚠️ Failed to load user config for {user_id}: {e}")
 
         return self.global_config
+
+    def _ui_string(self, context: MessageContext, message: UIMessage, **fmt: Any) -> str:
+        """Localized fixed UI string for the message's effective UI language."""
+        if self._localization:
+            lang = LanguageCode.from_str(context.language, default=LanguageCode.UK)
+            template = self._localization.get_ui_string(lang, message)
+        else:
+            from ..locales.uk import UI_STRINGS
+            template = UI_STRINGS[message.value]
+        return template.format(**fmt) if fmt else template
 
     async def validate_model_output(self, response_text: str, user_id: str) -> str:
         """
@@ -581,7 +592,7 @@ class ConversationHandler(ConversationHandlerPort):
                 # Send rich content without text update
                 await response_channel.update_message(
                     status_message_id,
-                    "✅ Відповідь готова."
+                    self._ui_string(context, UIMessage.RESPONSE_READY),
                 )
                 await self._deliver_rich_content(
                     structured_data, response_channel, thread_id_for_reply
@@ -594,7 +605,7 @@ class ConversationHandler(ConversationHandlerPort):
             else:
                 # Standard text response (with optional rich content)
                 if not response_text.strip():
-                    response_text = "*(порожня відповідь від моделі)*"
+                    response_text = self._ui_string(context, UIMessage.EMPTY_MODEL_RESPONSE)
 
                 # Validate User Output
                 response_text = await self.validate_model_output(response_text, context.user_id)
@@ -901,12 +912,13 @@ class ConversationHandler(ConversationHandlerPort):
                 # Topic marker — acknowledged by bot. SlackChannelHistorySource
                 # uses these as history boundaries (fetch stops at marker).
                 await response_channel.send_message(
-                    "New topic. History cleared.", thread_id=context.thread_id,
+                    self._ui_string(context, UIMessage.NEW_TOPIC_ACK),
+                    thread_id=context.thread_id,
                 )
 
             else:
                 await response_channel.send_message(
-                    f"Невідома команда: `{command}`",
+                    self._ui_string(context, UIMessage.UNKNOWN_COMMAND, command=command),
                     thread_id=context.thread_id
                 )
 
