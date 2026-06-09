@@ -1192,7 +1192,10 @@ class ConsolidationAgent(BaseAgent):
         }
         """
         try:
-            # Try to extract JSON from markdown code block
+            # Documented exception to the "no regex fallbacks" rule (CLAUDE.md, Agent Output
+            # Format Standards): all DB operations are already executed via tool calls by this
+            # point — the report is cosmetic, and a parse-retry would re-bill a full
+            # consolidation turn for zero data value.
             json_match = re.search(
                 r"```json\s*(\{.*?\})\s*```",
                 response_text,

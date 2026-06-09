@@ -1,5 +1,5 @@
 """
-Unit tests for BaseAgent's LLM content capture врезка.
+Unit tests for BaseAgent's LLM content capture hook.
 
 After every _call_llm, the agent hands the turn to the injected
 PromptContentStore via record_turn — best-effort, non-blocking. The adapter

@@ -1684,14 +1684,14 @@ Bot: (~4–6s total)
   📋 January 15 — Blood panel: Uric acid elevated (Hyperuricemia confirmed).
   ..."
 
-User: "покажи детали мартовского анализа"
+User: "show me the details of the March lab results"
 
 SmartAgent → delegate_to_specialist(intent="get_email_details", email_id="msg_mar28")
   → EmailSearchAgent._handle_get_details()
   → GmailProviderAdapter.batch_get_full_content([email_id], deep=False)
   → returns subject, from, date, body_text[:5000], attachment filenames
 
-Bot: "Март 28 — Синево. ..." (full body text formatted by SmartAgent)
+Bot: "March 28 — Synevo. ..." (full body text formatted by SmartAgent)
 ```
 
 **Production example** (2026-03-01, ~5.9s, query: "family and France last two months"):
@@ -1736,11 +1736,11 @@ SCD2 versioning, conflict resolution, decomposition. No second classification la
 {env}_domain_email_facts_v1 (WHERE consolidated_at IS NULL)
   ↓ batch of N facts (periodic job or on-demand)
 ConsolidationAgent prompt (system_alert):
-  "[system_alert] Система по поручению пользователя просканировала ящик электронной почты
-   и сделала выборку кандидатов для занесения в базу фактов. Выборка содержит шум.
-   Оцени входящие данные и обработай по своему алгоритму.
+  "[system_alert] On the user's behalf, the system scanned the email inbox
+   and produced a selection of candidates to be added to the fact base. The selection contains noise.
+   Evaluate the incoming data and process it according to your own algorithm.
 
-   Кандидаты:
+   Candidates:
    1. {"email_id": "msg_xyz123", "fact": "User booked flight KBP→BCN March 15 2025 ref RYR1234",
        "category": "travel", "tags": ["flight", "ryanair", "booking"],
        "date": "2025-03-10", "attachments": ["booking_confirmation.pdf"],
@@ -1795,7 +1795,7 @@ have interesting attachments. The natural flow is discovery → curiosity → re
 **Example conversation:**
 
 ```
-User:   "напомни мне все покупки из амазона за осень"
+User:   "remind me of all my Amazon purchases from this fall"
 Bot:    "Found 4 Amazon orders Oct–Dec 2025:
          • Oct 12 — Kindle Paperwhite (Order #123-456) — 89 EUR
            📎 invoice_amazon_oct12.pdf
@@ -1803,17 +1803,17 @@ Bot:    "Found 4 Amazon orders Oct–Dec 2025:
            📎 invoice_amazon_nov3.pdf
          ..."
 
-User:   "подожди ты купил корову — у тебя написано что-то про ноябрь"
-Bot:    "Нет записей о покупке коровы. По ноябрю — только AirPods Pro.
-         Хочешь я загляну в инвойс подробнее?"
+User:   "wait, did you buy a cow — you have something written about November"
+Bot:    "No records of buying a cow. For November — only AirPods Pro.
+         Want me to take a closer look at the invoice?"
 
-User:   "да посмотри детали в аттачменте"
+User:   "yes, check the details in the attachment"
 Bot:    (calls EmailSearchAgent.search_deep(email_id="msg_nov3") → Mode B)
         (GmailProviderAdapter.batch_get_full_content → attachment binary)
         (markitdown.parse(binary) → invoice text)
         (LLM extracts structured facts from text)
-        "Инвойс Amazon от 3 ноября: AirPods Pro (Gen 2) — 249 EUR.
-         Доставлено 7 ноября на адрес Example City, Spain.
+        "Amazon invoice from November 3: AirPods Pro (Gen 2) — 249 EUR.
+         Delivered November 7 to Example City, Spain.
          Order: 789-012-3456789."
 ```
 
@@ -1834,7 +1834,7 @@ When SmartAgent surfaces email facts, it includes `email_refs` in `rich_content`
 }
 ```
 
-Next turn: "посмотри детали в аттачменте" → SmartAgent finds `email_refs` in conversation
+Next turn: "check the details in the attachment" → SmartAgent finds `email_refs` in conversation
 history → resolves most recent / most relevant `email_id` → calls `search_email(mode="deep")`.
 No new state slots needed — `rich_content` is already part of conversation history.
 
@@ -1966,9 +1966,9 @@ Bot: "Your PZU insurance renewal is in 2 weeks based on your email."
 Critical path to first production run. Cabinet and search deferred until core pipeline works.
 Mark items `✅` as completed.
 
-### Блок 1 — Фундамент (domain + ports + тесты контрактов) ✅
+### Block 1 — Foundation (domain + ports + contract tests) ✅
 
-- ✅ `src/domain/email.py` — все domain models (OAuthCredentials, EmailMetadata, EmailFullContent, EmailClassificationResult, IndexedEmail, IndexingState, IndexingJob, EmailExclusion)
+- ✅ `src/domain/email.py` — all domain models (OAuthCredentials, EmailMetadata, EmailFullContent, EmailClassificationResult, IndexedEmail, IndexingState, IndexingJob, EmailExclusion)
 - ✅ `src/ports/email_provider_port.py` — ABC (list_emails, batch_get_full_content, refresh_token)
 - ✅ `src/ports/oauth_credentials_port.py` — ABC (get/save/revoke credentials, is_connected, list_connected_providers)
 - ✅ `src/ports/indexed_email_repository.py` — ABC (save_batch, find_nearest, indexing state, consolidation batch, repair batch, vector update)
@@ -1976,36 +1976,36 @@ Mark items `✅` as completed.
 - ✅ `src/ports/email_indexing_job_repository.py` — ABC (create/update/get/get_latest/list jobs)
 - ✅ `tests/unit/ports/test_email_ports.py` — 35 port contract tests, all passing
 
-### Блок 2 — Адаптеры + индексы Firestore ✅
+### Block 2 — Adapters + Firestore indexes ✅
 
-- ✅ `src/adapters/gmail_provider_adapter.py` — aiohttp Gmail REST; metadata + full content (`deep` flag); token refresh; `query` + `date_from` объединяются в `q=` параметр
+- ✅ `src/adapters/gmail_provider_adapter.py` — aiohttp Gmail REST; metadata + full content (`deep` flag); token refresh; `query` + `date_from` are merged into the `q=` parameter
 - ✅ `src/adapters/firestore_oauth_credentials_adapter.py` — upsert/get/delete; doc ID: `{user_id}_{provider}`
 - ✅ `src/adapters/firestore_indexed_email_repo.py` — save_batch (500/batch); 4-vector RRF search; consolidation query; repair query; cursor tracking
 - ✅ `src/adapters/firestore_email_exclusions_adapter.py` — exclusion patterns per user
 - ✅ `src/adapters/firestore_email_job_repo.py` — job journal; partial updates; resume cursor
-- ✅ `config/firestore.indexes.json` — 4 vector indexes (`vector`, `tags_vector`, `metadata_vector`, `attachments_vector`) + composite indexes для `get_unconsolidated_batch` и job queries; оба коллекции dev + prod
+- ✅ `config/firestore.indexes.json` — 4 vector indexes (`vector`, `tags_vector`, `metadata_vector`, `attachments_vector`) + composite indexes for `get_unconsolidated_batch` and job queries; both collections dev + prod
 
-### Блок 3 — Сервисы pipeline ✅
+### Block 3 — Pipeline services ✅
 
-- ✅ `src/agents/email_classification_agent.py` — **реализован как агент, не сервис** (требует LLM + tool calling); agentic Gemini Flash; `get_email_details` tool; `AgentExecutionContext`; TEST A/TEST B (confirmed_event + biographical_signal); per-chunk 300 emails (default, configurable)
-- ✅ `src/services/email_indexing_service.py` — per-chunk loop; `GMAIL_DEFAULT_QUERY` дефолтный фильтр; `page_size=300` (default, max 500); resume от indexed_through; batch_get_full_content parallel (semaphore=10); advances cursor only on success
+- ✅ `src/agents/email_classification_agent.py` — **implemented as an agent, not a service** (requires LLM + tool calling); agentic Gemini Flash; `get_email_details` tool; `AgentExecutionContext`; TEST A/TEST B (confirmed_event + biographical_signal); per-chunk 300 emails (default, configurable)
+- ✅ `src/services/email_indexing_service.py` — per-chunk loop; `GMAIL_DEFAULT_QUERY` default filter; `page_size=300` (default, max 500); resume from indexed_through; batch_get_full_content parallel (semaphore=10); advances cursor only on success
 - ✅ `src/services/email_embedding_repair_service.py` — query embedding_pending=True → re-embed → update_vectors
 - ✅ `tests/unit/services/test_email_indexing_service.py`
-- ✅ `tests/unit/agents/test_email_classification_agent.py` — 13 тестов: classify_batch (happy path, missing emails, invalid JSON + retry, LLM error, empty input, request fields, tags normalization), tool calling path, MAX_TURNS, can_handle, execute, prompt_builder guard
+- ✅ `tests/unit/agents/test_email_classification_agent.py` — 13 tests: classify_batch (happy path, missing emails, invalid JSON + retry, LLM error, empty input, request fields, tags normalization), tool calling path, MAX_TURNS, can_handle, execute, prompt_builder guard
 
-### Блок 4 — Скрипт + первый production прогон ✅
+### Block 4 — Script + first production run ✅
 
-- ✅ `scripts/email/run_indexing.py` — ручной wireset; `--after`, `--max-pages`, `--no-filter`, `--resume-token` флаги; GMAIL_DEFAULT_QUERY явно пробрасывается
-- ✅ Первый прогон: классификация работает; коллекции созданы в `us-production`; `development_domain_email_facts_v1`, `development_email_indexing_jobs_v1`, `development_email_indexing_state` — все документы корректны
+- ✅ `scripts/email/run_indexing.py` — manual wireset; `--after`, `--max-pages`, `--no-filter`, `--resume-token` flags; GMAIL_DEFAULT_QUERY passed through explicitly
+- ✅ First run: classification works; collections created in `us-production`; `development_domain_email_facts_v1`, `development_email_indexing_jobs_v1`, `development_email_indexing_state` — all documents are correct
 
-### Блок 5 — Web + Cabinet ← ТЕКУЩИЙ
+### Block 5 — Web + Cabinet ← CURRENT
 
 - [ ] `src/adapters/firebase_auth_adapter.py` — `additional_scopes` param (backward-compatible)
 - [ ] `src/web/oauth_app.py` — `/auth/connect-gmail` (incremental OAuth, gmail.readonly layered on existing session) + callback + `DELETE /auth/disconnect-gmail`
 - [ ] `src/web/user_cabinet_app.py` — `/api/gmail/status` + `/api/gmail/index` + `/api/gmail/disconnect`
 - [ ] `requirements.txt` — `google-auth>=2.0.0`, `google-auth-oauthlib>=1.0.0`
 
-### Блок 6 — ServiceContainer + EmailAgent + graceful degradation
+### Block 6 — ServiceContainer + EmailAgent + graceful degradation
 
 - [ ] `src/composition/service_container.py` — wire all email components (see §2.1.4)
 - [ ] `src/agents/email_agent.py` — `_handle_indexing()` (Flow 1 + 2); multi-provider fan-out; Slack completion notification
@@ -2013,19 +2013,19 @@ Mark items `✅` as completed.
 - [ ] Graceful degradation: LLM-interpreted success/error notifications in chat (same pattern as ConversationHandler router errors)
 - [ ] `tests/unit/agents/test_email_agent.py`
 
-### Блок 7 — EmailSearchAgent
+### Block 7 — EmailSearchAgent
 
 - [ ] `src/agents/email_search_agent.py` — Mode A (vector RRF, ~0.5s) + Mode B (markitdown + deep=True, ~3–5s)
 - [ ] Wire to SmartAgent via `search_email` tool + `main.py` registration (intent: search_email SYNC)
 - [ ] `tests/unit/agents/test_email_search_agent.py`
-- [ ] Validate: тестовый запрос из Slack "покажи мои рейсы" → results from indexed email facts
+- [ ] Validate: test query from Slack "show me my flights" → results from indexed email facts
 
-### Блок 8 — ConsolidationAgent hook
+### Block 8 — ConsolidationAgent hook
 
-- [ ] Расширить ConsolidationAgent: после обычного батча → `get_unconsolidated_batch(user_id, limit=200)` → email тридж → `mark_consolidated`
-- [ ] Обогащённый кандидат: `email_id + attachments + metadata.subject/from` в system_alert prompt
-- [ ] Добавить тег `email` в инструкцию промпта консолидатора
-- [ ] Тест на результате полной индексации из Блока 6
+- [ ] Extend ConsolidationAgent: after the regular batch → `get_unconsolidated_batch(user_id, limit=200)` → email triage → `mark_consolidated`
+- [ ] Enriched candidate: `email_id + attachments + metadata.subject/from` in the system_alert prompt
+- [ ] Add the `email` tag to the consolidator prompt instruction
+- [ ] Test against the result of the full indexing from Block 6
 
 ---
 
@@ -2204,7 +2204,7 @@ Prod (`cloudbuild-prod.yaml`) — no debug logging (intentional).
 
 **5. Consolidation completion — smart notification via UserNotificationService**
 
-Replaced raw `response_channel.send_message("✅ Консолідація завершена...")` in `conversation_handler.py`
+Replaced raw `response_channel.send_message("✅ Consolidation completed...")` in `conversation_handler.py`
 with `self._notification_service.notify(user_id, account_id, system_alert)`. The completion
 message now routes through QuickAgent and is formatted in the user's communication style,
 consistent with the email indexer notification pattern.
@@ -2257,7 +2257,7 @@ Cloud Run at 300s before this fix. Next occurrence will have a clear `TimeoutErr
   Matches the 10–20% design assumption. §9.1 cost analysis updated.
 
 **Batch sizing:**
-- Default page_size updated to 300 (was 100) across §2.1.2, §2.2 rationale, CHUNK diagram, §18 Блок 3.
+- Default page_size updated to 300 (was 100) across §2.1.2, §2.2 rationale, CHUNK diagram, §18 Block 3.
   `EmailIndexingService.page_size=300`, Gmail API hard limit 500. Configurable via `--count` flag.
   ~45 docs/chunk at ~15% rate (was ~15 docs).
 
@@ -2266,35 +2266,35 @@ Cloud Run at 300s before this fix. Next occurrence will have a clear `TimeoutErr
   `context_builder.build("email_classifier", email_config)` returns the context;
   `AgentProviderStrategy` maps `"email_classifier"` → BALANCED tier → Gemini Flash.
 
-### 2026-02-28 — Блоки 2–4 реализованы и валидированы
+### 2026-02-28 — Blocks 2–4 implemented and validated
 
-**Реализация (diverges from RFC in several places):**
+**Implementation (diverges from RFC in several places):**
 
-- `EmailClassificationAgent` (`src/agents/email_classification_agent.py`) — реализован как агент (не сервис,
-  как было в RFC §2.1.1). Причина: требует BaseAgent инфраструктуры для LLM + tool calling loop.
-- `EmailProviderPort.list_emails` получил `query: Optional[str] = None` параметр (не было в RFC §2.1.2).
-  Adapter объединяет `query` и `date_from` в единый Gmail `q=` параметр.
-- `EmailProviderPort.batch_get_full_content` получил `deep: bool = False` (был в §6, но отсутствовал в
-  формальном контракте §2.1.2). `deep=False` (default) — body + attachment filenames only. `deep=True` —
-  также скачивает бинарные attachment для markitdown парсинга (Mode B).
-- `EmailIndexingService` получил `GMAIL_DEFAULT_QUERY = "{category:primary category:updates} -in:spam"` —
-  константа уровня модуля, дефолтный `gmail_query` параметр `run_indexing_job()`. Передаётся явно в
-  `run_indexing.py`; `--no-filter` флаг позволяет отключить для отладки.
-- `IndexedEmail` получил `embedding_pending: bool = False` поле (не было в RFC §5). Если embedding упал —
-  документ сохраняется с `embedding_pending=True`, repair service подхватывает позднее.
+- `EmailClassificationAgent` (`src/agents/email_classification_agent.py`) — implemented as an agent (not a service,
+  as it was in RFC §2.1.1). Reason: requires the BaseAgent infrastructure for LLM + tool calling loop.
+- `EmailProviderPort.list_emails` gained a `query: Optional[str] = None` parameter (was not in RFC §2.1.2).
+  Adapter merges `query` and `date_from` into a single Gmail `q=` parameter.
+- `EmailProviderPort.batch_get_full_content` gained `deep: bool = False` (was in §6, but absent from the
+  formal contract in §2.1.2). `deep=False` (default) — body + attachment filenames only. `deep=True` —
+  also downloads binary attachments for markitdown parsing (Mode B).
+- `EmailIndexingService` gained `GMAIL_DEFAULT_QUERY = "{category:primary category:updates} -in:spam"` —
+  a module-level constant, the default `gmail_query` parameter of `run_indexing_job()`. Passed explicitly in
+  `run_indexing.py`; the `--no-filter` flag allows disabling it for debugging.
+- `IndexedEmail` gained an `embedding_pending: bool = False` field (was not in RFC §5). If embedding failed —
+  the document is saved with `embedding_pending=True`, the repair service picks it up later.
 
-**Валидация (Блок 4):**
+**Validation (Block 4):**
 
-- Все три коллекции в `us-production` созданы и содержат корректные документы.
-- `development_domain_email_facts_v1`: все 4 векторных поля (`vector`, `tags_vector`, `metadata_vector`,
-  `attachments_vector`) либо заполнены, либо `null` при отсутствии вложений / при `embedding_pending=True`.
-- `development_email_indexing_state`: курсор `indexed_through` установлен корректно после каждого чанка.
-- `development_email_indexing_jobs_v1`: журнал работает; `status="completed"` при успехе.
-- Дедупликация by email_id работает из коробки через Firestore `batch.set(doc_id=email_id)`.
+- All three collections in `us-production` are created and contain correct documents.
+- `development_domain_email_facts_v1`: all 4 vector fields (`vector`, `tags_vector`, `metadata_vector`,
+  `attachments_vector`) are either populated, or `null` when there are no attachments / when `embedding_pending=True`.
+- `development_email_indexing_state`: the `indexed_through` cursor is set correctly after each chunk.
+- `development_email_indexing_jobs_v1`: the journal works; `status="completed"` on success.
+- Deduplication by email_id works out of the box via Firestore `batch.set(doc_id=email_id)`.
 
-**Расхождения с §16.2 исправлены** — все завершённые компоненты переведены в ✅.
+**Divergences from §16.2 fixed** — all completed components moved to ✅.
 
-**Блоки 1–4 полностью завершены.** Блок 5 (EmailAgent + EmailSearchAgent + Cabinet UI) — следующий этап.
+**Blocks 1–4 fully completed.** Block 5 (EmailAgent + EmailSearchAgent + Cabinet UI) is the next stage.
 
 ### 2026-02-28 — firestore.indexes.json + classification tests completed
 

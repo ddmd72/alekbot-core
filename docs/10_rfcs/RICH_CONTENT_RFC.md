@@ -112,7 +112,7 @@ Renders structured comparative data as an in-chat Slack block.
 ### 4.3 `weather_image` (removed in V1)
 
 Initially implemented in M1 (wttr.in PNG via `files_upload_v2`). Removed after testing:
-- ASCII-art PNG output is poor quality ("факир был пьян")
+- ASCII-art PNG output is poor quality ("it just didn't work out")
 - No actionable improvement path within Slack's file upload model
 
 Weather queries now return text-only responses.

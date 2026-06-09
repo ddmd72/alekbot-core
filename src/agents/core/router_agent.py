@@ -473,7 +473,10 @@ class RouterAgent(BaseAgent):
 
         raw_text = (response.text or "").strip()
 
-        # Robust JSON extraction
+        # Documented exception to the "no regex fallbacks" rule: response_schema +
+        # response_mime_type already force raw JSON here; the regex only strips accidental
+        # provider wrapping before the strict json.loads below (triage runs on every
+        # message — a parse-retry turn would double per-request latency).
         json_match = re.search(r"(\{.*\})", raw_text, re.DOTALL)
         if json_match:
             clean_json = json_match.group(1)

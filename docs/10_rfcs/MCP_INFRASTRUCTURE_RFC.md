@@ -385,6 +385,6 @@ raw JSON responses. Implementation details of `MCPClient` finalized after seeing
 1. `scripts/debug/test_mcp_maps.py` — raw MCP responses (prerequisite)
 2. `make test-unit` — all tests pass
 3. `make test-e2e-all` — `maps_query` intent works end-to-end
-4. Manual Slack: "знайди маршрут з Хрещатика до Бессарабки" → routes table
-5. Manual Slack: "яка погода зараз в Києві" → weather response
-6. Manual Slack: "де поїсти суші в центрі Києва" → places response
+4. Manual Slack: "find a route from Khreshchatyk to Bessarabka" → routes table
+5. Manual Slack: "what's the weather in Kyiv right now" → weather response
+6. Manual Slack: "where to eat sushi in central Kyiv" → places response

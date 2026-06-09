@@ -8,7 +8,7 @@ Migrate ~440 legacy facts (missing `domain` taxonomy) through **ConsolidationAge
 
 1. **Fetch** oldest N legacy facts (`domain IS NULL`)
 2. **Synthesize** user message: "На тобі факти про мене. Вони були класифіковані неефективно..."
-3. **Process** через ConsolidationAgent v3 → 8-step deliberate process
+3. **Process** through ConsolidationAgent v3 → 8-step deliberate process
 4. **Mark** old facts as `SUPERSEDED`
 5. **Repeat** until no legacy facts remain
 
