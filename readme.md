@@ -34,7 +34,7 @@ src/
   adapters/       — Firestore, Gemini, Claude, Grok, OpenAI, Slack, Telegram, Gmail, Microsoft To Do.
   services/       — Business logic (search enrichment, prompt assembly, fact writing, email indexing).
   agents/         — Multi-agent network. Receive all dependencies via constructor.
-  handlers/       — ConversationHandler, ConsolidationHandler, WorkerHandler.
+  handlers/       — ConversationHandler, WorkerHandler, AgentWorkerHandler (async agent tasks).
   infrastructure/ — AgentCoordinator, task queues, agent registry, agent manifest.
   composition/    — ServiceContainer: wires ports to adapters at startup.
   locales/        — Per-language UI string modules (uk, en, fr, es).
@@ -64,6 +64,35 @@ rule, and "ports are abstract" all run in the suite and fail the build on violat
 - **Deployment is manual by choice** — solo dev, a single live environment, and LLM behavior
   that tests can't fully verify make a deliberate `make deploy` saner than auto-deploy
   ([decision](docs/04_solution_strategy/decisions/ci_present_cd_deliberately_absent.md)).
+
+---
+
+## Engineered for AI-assisted development
+
+This codebase is built and maintained in daily AI pair-programming, and the engineering
+system is designed around that fact. What keeps ~150 source files coherent under
+high-velocity AI-generated change:
+
+- **Architecture rules are executable, not aspirational.** 30+ AST-based layer-isolation
+  rules run in the test suite ([`test_req_arch_01_hexagonal_isolation.py`](tests/unit/test_req_arch_01_hexagonal_isolation.py));
+  the file opens with a policy addressed directly to AI assistants: a failing rule means
+  fix `src/`, never the test. The few exceptions live in a tech-debt registry
+  ([`arch_tech_debt.py`](tests/unit/arch_tech_debt.py)) that requires explicit owner sign-off —
+  and its cross-port and cross-adapter whitelists are currently empty.
+- **Test density is the enforcement layer.** ~4,200 tests for ~150 source files is a
+  deliberate ratio, not over-testing: tests are the fastest feedback channel an AI
+  collaborator has, and the contract files ([`adapter_contracts.py`](tests/contracts/adapter_contracts.py))
+  carry the same explicit AI-modification policy as the architecture rules.
+- **Layered context for AI sessions.** A hierarchy of `CLAUDE.md` files (root + per-layer)
+  gives any AI session the local invariants — import rules, conventions, things that must
+  not be "helpfully fixed" — without relying on the model inferring them from code.
+- **Decisions are recorded so they don't get re-litigated.** 30+ compact decision records
+  and 35 RFCs ([`docs/04_solution_strategy/decisions/`](docs/04_solution_strategy/decisions/),
+  [`docs/10_rfcs/`](docs/10_rfcs/)) capture trade-offs and rejected alternatives — the third
+  defensive layer (after ports and tests) against silent regressions across sessions.
+- **Prompts are data, not code.** Agent prompts are assembled from versioned Firestore
+  tokens at runtime; there are no inline fallback prompts in agents — a missing prompt
+  fails fast instead of degrading silently.
 
 ---
 
@@ -100,6 +129,7 @@ crashing the request.
 | PdfGenerator | Gemini | async | One LLM call → HTML+CSS → Puppeteer renders PDF; delivers GCS link + Slack upload |
 | HtmlPageGenerator | Gemini | async | One LLM call → full HTML+CSS+JS page with Unsplash image integration; delivers GCS link |
 | DeepResearch | Claude | async | Long-running research jobs; Claude Cloud Run Job (default) or OpenAI webhook |
+| DomainResearcher | Gemini | sync, internal | Interactive domain-competency research for agent construction (bound channels only, experimental) |
 | Consolidation | Claude (PERFORMANCE) | async | Background long-term memory formation ("Life Chronicler") via Cloud Tasks |
 
 **Cost control is complexity-driven tier selection within Smart:** the Router's complexity score
@@ -207,7 +237,7 @@ Two independent language axes:
 
 ## Stack
 
-- **Runtime:** Python 3.13, asyncio throughout — no synchronous I/O
+- **Runtime:** Python 3.11 (Cloud Run image), asyncio throughout — no synchronous I/O
 - **LLM providers:** Google Gemini, Anthropic Claude, OpenAI, Grok (provider-agnostic; per-agent default + per-user override)
 - **Infrastructure:** GCP Cloud Run, Firestore (named database `us-production`), Cloud Tasks, Cloud Scheduler
 - **Interfaces:** Slack (Socket Mode dev / HTTP Events API prod), Telegram

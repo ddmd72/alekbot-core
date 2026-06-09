@@ -3,10 +3,9 @@
 # ================================
 FROM python:3.11-slim
 
-# Вимикаємо буферизацію (щоб логи лилися в консоль одразу)
+# Disable output buffering so logs stream to the console immediately
 ENV PYTHONUNBUFFERED=1
 
-# Робоча папка всередині контейнера
 WORKDIR /app
 
 # ffmpeg — required by pydub for audio format conversion (mp3, m4a, ogg)
@@ -14,10 +13,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Спочатку копіюємо тільки список бібліотек (для кешування)
+# Copy the dependency list first so this layer caches across code changes
 COPY requirements.txt .
 
-# Встановлюємо бібліотеки
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Playwright Chromium — required for widget rendering (ENABLE_HTML_RENDERER=true)
@@ -33,8 +31,6 @@ RUN cd docx_generator && npm install --omit=dev
 COPY pdf_generator/package.json pdf_generator/
 RUN cd pdf_generator && npm install --omit=dev
 
-# Копіюємо решту коду
 COPY . .
 
-# Запускаємо бота
 CMD ["python", "main.py"]
