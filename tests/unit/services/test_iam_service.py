@@ -31,12 +31,12 @@ class TestIAMServiceMessageGeneration:
             reason="not_registered"
         )
 
-        # Should be in Ukrainian
-        assert "Привіт" in message
-        assert "Відкрий" in message
+        # English onboarding (pre-auth system default)
+        assert "Hi!" in message
+        assert "Open" in message
         assert iam_service.CABINET_URL in message
         assert "670659908" in message  # Shows user ID
-        assert "повернись" in message
+        assert "come back" in message
 
     def test_get_rejection_message_slack_not_registered(self, iam_service):
         """Test Slack rejection message in English."""
@@ -98,7 +98,7 @@ class TestIAMServiceMessageGeneration:
         )
 
         # Should still work, just without ID
-        assert "Привіт" in message
+        assert "Hi!" in message
         assert iam_service.CABINET_URL in message
         # Should NOT have ID placeholder
         assert "(ID:" not in message
@@ -161,7 +161,7 @@ class TestIAMServiceAuthorization:
 
         assert decision.action == "reject"
         assert decision.message is not None
-        assert "Привіт" in decision.message  # Ukrainian for Telegram
+        assert "Hi!" in decision.message  # English onboarding (pre-auth default)
         assert decision.metadata.get("platform_user_id") == "999999999"
 
     @pytest.mark.asyncio

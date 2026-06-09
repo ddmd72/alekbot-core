@@ -88,23 +88,23 @@ class IAMService(PlatformAuthPort):
             Localized, platform-appropriate rejection message
         """
         if reason == "not_registered":
+            # Pre-auth: the user's language preference does not exist before
+            # registration, so onboarding is English (system default) on every platform.
             if platform == "telegram":
-                # Ukrainian for Telegram (primary audience)
                 msg = (
-                    f"👋 Привіт! Щоб використовувати бота, потрібно зареєструватися.\n\n"
-                    f"**Крок 1:** Відкрий {self.CABINET_URL}\n"
-                    f"**Крок 2:** Авторизуйся через Google\n"
-                    f"**Крок 3:** Підключи Telegram"
+                    f"👋 Hi! To use the bot, please register first.\n\n"
+                    f"**Step 1:** Open {self.CABINET_URL}\n"
+                    f"**Step 2:** Sign in with Google\n"
+                    f"**Step 3:** Link your Telegram account"
                 )
-                
+
                 if platform_user_id:
                     msg += f" (ID: `{platform_user_id}`)"
-                
-                msg += "\n\n🔙 Після цього повернись сюди і напиши будь-що!"
+
+                msg += "\n\n🔙 Then come back here and send a message!"
                 return msg
-                
+
             elif platform == "slack":
-                # English for Slack (international audience)
                 return (
                     f"👋 Hi! To use the bot, please register first.\n\n"
                     f"**Step 1:** Open {self.CABINET_URL}\n"
