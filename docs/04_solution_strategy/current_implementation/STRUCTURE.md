@@ -206,7 +206,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── locales/            # 🆕 Localization System
 │   ├── en.py           # English strings (Stub)
 │   └── uk.py           # Ukrainian strings (Primary)
-├── ports/              # Port Interfaces (~41 ABCs)
+├── ports/              # Port Interfaces (~58 ABCs)
 │   ├── llm_port.py  # LLM Provider Port (Gemini, Claude, Grok)
 │   ├── repository.py   # FactRepository interface (SCD Type 2)
 │   ├── session_store.py # Session persistence interface
@@ -368,7 +368,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 
 ### `ports/` - Port Interfaces (Abstractions)
 
-~41 port interfaces organized by domain concern:
+~58 port interfaces organized by domain concern:
 
 **Core Ports:**
 -   **`llm_port.py`**: `LLMPort` ABC. Interface for LLM provider operations (generate, stream, upload files). Re-exports from `domain/llm.py` for backward compatibility. Adapters: `GeminiAdapter`, `ClaudeAdapter`, `GrokAdapter`, `OpenAIAdapter`.

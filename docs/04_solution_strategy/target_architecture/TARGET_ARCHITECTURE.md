@@ -15,7 +15,7 @@ The system follows **Hexagonal Architecture (Ports & Adapters)** with explicit p
 3. **Domain Layer:** Multi-agent network (Router, Quick, Smart, Specialist agents).
 4. **Driven Adapters:** Provider-specific implementations of ports.
 
-**Port Examples (~36 ports total):**
+**Port Examples (~58 ports total):**
 
 Core:
 - `LLMPort` → `GeminiAdapter`, `ClaudeAdapter`, `GrokAdapter`, `OpenAIAdapter`

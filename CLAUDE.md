@@ -347,8 +347,10 @@ src/
                   Incl. prompt_builder.py (PromptBuilder + UserPromptBuilder), search enrichment, email
                   (indexing/search/repair/notification), tasks (indexing/setup), MCPAuthorizationService.
   agents/       — Multi-agent system (inherit BaseAgent). core/ — orchestrators; rest — specialists (see Key Mechanisms).
-  handlers/     — Exactly 3 entry points: ConversationHandler, ConsolidationHandler, WorkerHandler
-                  (dispatches /worker Cloud Tasks by task_type).
+  handlers/     — Entry points: ConversationHandler, WorkerHandler (dispatches /worker Cloud Tasks
+                  by task_type), AgentWorkerHandler (task_type="agent_execution" — async agent runs
+                  + deep-research delivery). consolidation_handler.py is a shim over
+                  ConsolidationService (kept for composition-layer compatibility).
   infrastructure/ — AgentCoordinator, queues, agent_config.py, agent_registry.py (AgentDescriptor + registry),
                   agent_manifest.py (Intent constants + all agent declarations — single source of truth),
                   delegation_engine.py (reusable multi-turn tool loop).
@@ -386,8 +388,9 @@ at the top of the file, implementation below. This allows reading the contract i
 - **`agents/`** — inherit BaseAgent, receive AgentMessage, return AgentResponse. Participate in
   multi-agent routing via AgentCoordinator. If it doesn't extend BaseAgent — it's not an agent.
 - **`handlers/`** — entry points for external events: HTTP request (Slack/Telegram webhook),
-  Cloud Task dispatch, Cloud Scheduler trigger. Exactly three exist. A new one only if a new
-  external event source is added — not because a class is large.
+  Cloud Task dispatch, Cloud Scheduler trigger. Three handler classes exist (Conversation,
+  Worker, AgentWorker). A new one only if a new external event source is added — not because
+  a class is large.
 - **`composition/`** — wiring layer. The only layer allowed to know about all other layers
   simultaneously. ServiceContainer + factories live here. If constructing an object requires
   importing from 2+ concrete layers — it belongs in composition/.
