@@ -1,7 +1,7 @@
 """
 Span coverage tests for the delegation tracing tree.
 
-Verifies the two врезки that give orchestrator→specialist hierarchy:
+Verifies the two instrumentation points that give orchestrator→specialist hierarchy:
   - DelegationEngine.execute  → `delegation.loop` span (wraps the multi-turn run)
   - AgentCoordinator.handle_delegation → `delegation` span (wraps specialist dispatch)
 

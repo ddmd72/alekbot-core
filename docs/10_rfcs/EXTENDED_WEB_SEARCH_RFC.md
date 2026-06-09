@@ -34,10 +34,10 @@ For research tasks (event analysis, product comparison, controversy investigatio
 ### 2.1 Single-Shot Search Limitation
 
 ```
-User: "Розкажи про скандали навколо Фальяс 2026"
+User: "Tell me about the scandals around Las Fallas 2026"
 
 Current WebSearchAgent:
-  → one Gemini grounding call: "скандали Фальяс 2026"
+  → one Gemini grounding call: "Las Fallas 2026 scandals"
   → returns first-page results
   → SmartAgent formats and responds
 
@@ -281,7 +281,7 @@ class AgentWorkerHandler:
         target = channel_id or user_id
         await self._slack_client.chat_postMessage(
             channel=target,
-            text=f"❌ Дослідження не вдалося: {error}",
+            text=f"❌ Research failed: {error}",
             thread_ts=thread_ts,
             mrkdwn=True,
         )
@@ -366,14 +366,14 @@ def _create_extended_web_search_agent(self, user_id: str) -> ExtendedWebSearchAg
 ## 5. ASYNC Flow: End-to-End
 
 ```
-User: "Досліди всі скандали та проблеми навколо Фальяс 2026"
+User: "Research all the scandals and problems around Las Fallas 2026"
 
 1. SmartAgent LLM:
    delegate_to_specialist(
      intent="search_web_extended",
-     query="скандали та проблеми Фальяс 2026",
+     query="Las Fallas 2026 scandals and problems",
      context={
-       "research_focus": "скандали, проблеми, критика, інциденти",
+       "research_focus": "scandals, problems, criticism, incidents",
        "output_intent": "analysis"
      }
    )
@@ -386,8 +386,8 @@ User: "Досліди всі скандали та проблеми навкол
    → returns {status: "started", message: "..."}
 
 3. SmartAgent formats ACK to user:
-   "🔍 Починаю глибоке дослідження Фальяс 2026.
-    Це займе хвилину-дві — надішлю результат окремо."
+   "🔍 Starting a deep research on Las Fallas 2026.
+    This will take a minute or two — I'll send the result separately."
 
 4. [~60-90 seconds later, Cloud Tasks worker]
 

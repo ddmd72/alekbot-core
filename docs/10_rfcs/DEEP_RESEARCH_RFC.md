@@ -184,8 +184,8 @@ Phase 1 — Preparation (synchronous, Smart Agent, prompt-driven):
        → identifies what is missing from the request (object / goal / scope / format)
        → asks only what is missing (may be 0 questions if request is complete)
        → formulates research brief
-       → presents brief: "Ось що досліджуватиму: [...]. Запускати?"
-  User:  confirms ("так" / "запускай" / "yes" / any confirming phrase)
+       → presents brief: "Here's what I'll research: [...]. Launch?"
+  User:  confirms ("yes" / "go ahead" / any confirming phrase)
   Smart: calls intent deep_research with {query: <brief>, language: <user_language>}
 
 Phase 2 — Execution (asynchronous):
@@ -198,7 +198,7 @@ Phase 2 — Execution (asynchronous):
     → returns ACK to Smart Agent
 
   Smart Agent:
-    → informs user: "Запустив. Орієнтовно 5–60 хв. Повідомлю коли буде готово."
+    → informs user: "Started. Roughly 5–60 min. I'll let you know when it's ready."
 
   [polling loop — Cloud Tasks, 120-second intervals]:
 
@@ -227,7 +227,7 @@ directly to brief formulation without asking any questions.
 2. Goal and context
    Why? What decision, action, or output does this research enable?
    Different goals produce fundamentally different reports.
-   "понять рынок" vs "выбрать между A и B" vs "написать статью" → different structure.
+   "understand the market" vs "choose between A and B" vs "write an article" → different structure.
 
 3. Scope and constraints
    Focus area: technical / business / historical / comparative / legal.
@@ -330,7 +330,7 @@ PROTOCOL_DEEP_RESEARCH_PREP {
 
     trigger {
         // Activate this protocol ONLY when the user's message contains
-        // "deep research" or "дип ресерч" (case-insensitive, anywhere in the message).
+        // "deep research" or its Ukrainian transliteration (case-insensitive, anywhere in the message).
         // Do NOT activate for general research questions without the explicit trigger phrase.
     }
 
@@ -349,7 +349,7 @@ PROTOCOL_DEEP_RESEARCH_PREP {
 
     brief_confirmation {
         // When all four points are known, formulate the research brief and present it:
-        //   "Ось що досліджуватиму: [brief]. Запускати?"
+        //   "Here's what I'll research: [brief]. Launch?"
         // Use the user's language for this confirmation message.
         // Wait for an explicit confirming response before dispatching.
         // If the user modifies the brief → update and re-confirm once.
@@ -705,7 +705,7 @@ accessible through the standard `LLMPort` interface. No `execution_context` need
 ## 5. End-to-End Flow
 
 ```
-User: "deep research: порівняй Supabase і PlanetScale для multi-tenant SaaS в 2026"
+User: "deep research: compare Supabase and PlanetScale for multi-tenant SaaS in 2026"
 
 1. Router: high complexity → Smart Agent
 
@@ -716,11 +716,11 @@ User: "deep research: порівняй Supabase і PlanetScale для multi-tena
      scope: 2026, comparative
      format: comparison (implied)
    - No clarifying questions needed
-   - Brief: "Порівняю Supabase і PlanetScale для multi-tenant SaaS продукту в 2026 —
-     архітектура, pricing, performance, обмеження, реальні кейси"
-   - Presents: "Ось що досліджуватиму: [...]. Запускати?"
+   - Brief: "I'll compare Supabase and PlanetScale for a multi-tenant SaaS product in 2026 —
+     architecture, pricing, performance, limitations, real-world cases"
+   - Presents: "Here's what I'll research: [...]. Launch?"
 
-3. User: "так"
+3. User: "yes"
 
 4. Smart Agent: delegate_to_specialist(
      intent="deep_research",
@@ -737,8 +737,8 @@ User: "deep research: порівняй Supabase і PlanetScale для multi-tena
    - Returns {status: "started", interaction_id: "..."}
 
 6. Smart Agent → user:
-   "Запустив. Gemini проводить дослідження — орієнтовно 5–60 хв.
-    Надішлю посилання на звіт як буде готово."
+   "Started. Gemini is running the research — roughly 5–60 min.
+    I'll send a link to the report when it's ready."
 
 [5–60 minutes — Cloud Tasks polling loop]
 
