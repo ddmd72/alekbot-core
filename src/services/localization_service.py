@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import List
 
 from ..domain.language import LanguageCode
-from ..domain.ui_messages import StatusType
+from ..domain.ui_messages import StatusType, UIMessage
 from ..ports.localization_port import LocalizationPort
 
 
@@ -32,3 +32,7 @@ class LocalizationService:
     def get_entertainment_intros(self, lang: LanguageCode) -> List[str]:
         """Intro phrases for the web-search entertainment message."""
         return self._port.get_entertainment_intros(lang)
+
+    def get_ui_string(self, lang: LanguageCode, message: UIMessage) -> str:
+        """Single fixed UI string (may be a str.format template)."""
+        return self._port.get_ui_string(lang, message)

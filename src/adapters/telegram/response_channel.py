@@ -8,7 +8,7 @@ import aiohttp
 from typing import Any, Optional, List
 from telegram import Bot
 from ...domain.messaging import ResponseChannel, RichContent
-from ...domain.ui_messages import StatusType
+from ...domain.ui_messages import StatusType, UIMessage
 from ...domain.language import LanguageCode
 from ...ports.localization_port import LocalizationPort
 from ...utils.message_chunker import MessageChunker
@@ -236,7 +236,7 @@ class TelegramResponseChannel(ResponseChannel):
             safe_length = int(TELEGRAM_MAX_MESSAGE_LENGTH * 0.7)  # 2867 chars safety margin
 
             if len(text) > safe_length:
-                text = text[:safe_length] + "\n\n... (занадто довга відповідь)"
+                text = text[:safe_length] + self._ui_string(UIMessage.RESPONSE_TRUNCATED_SUFFIX)
 
             formatted = self._format_for_platform(text)
             # Resolve link anchors AFTER formatting: \[N\] → [title](url)
@@ -377,7 +377,7 @@ class TelegramResponseChannel(ResponseChannel):
             return
 
         # Update first message (no content — link_list not needed here)
-        await self.update_message(message_id, "✅ Відповідь готова.")
+        await self.update_message(message_id, self._ui_string(UIMessage.RESPONSE_READY))
 
         # Send remaining chunks; link_list applies to all chunks
         for chunk in chunks:
@@ -410,6 +410,12 @@ class TelegramResponseChannel(ResponseChannel):
             return self._localization.get_status_phrases(self.language, status_type)
         from ...locales.uk import get_message as get_uk_message
         return get_uk_message(status_type)
+
+    def _ui_string(self, message: UIMessage) -> str:
+        if self._localization:
+            return self._localization.get_ui_string(self.language, message)
+        from ...locales.uk import UI_STRINGS
+        return UI_STRINGS[message.value]
 
     async def send_status(
         self,

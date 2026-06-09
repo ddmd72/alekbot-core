@@ -15,7 +15,7 @@ from typing import List
 
 from ..ports.localization_port import LocalizationPort
 from ..domain.language import LanguageCode
-from ..domain.ui_messages import StatusType
+from ..domain.ui_messages import StatusType, UIMessage
 from ..locales import uk, en, fr, es
 
 
@@ -50,3 +50,14 @@ class FileLocalizationAdapter(LocalizationPort):
         if "document" in mime_type or "text/" in mime_type:
             return mod.FILE_FALLBACK_DOCUMENT
         return mod.FILE_FALLBACK_GENERIC
+
+    def get_ui_string(self, lang: LanguageCode, message: UIMessage) -> str:
+        return self._module(lang).UI_STRINGS[message.value]
+
+    def get_ui_string_variants(self, message: UIMessage) -> List[str]:
+        variants: List[str] = []
+        for mod in self._REGISTRY.values():
+            text = mod.UI_STRINGS[message.value]
+            if text not in variants:
+                variants.append(text)
+        return variants

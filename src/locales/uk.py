@@ -5,7 +5,7 @@ Shared across all adapters (Slack, Telegram, Web, etc.)
 Adapters can override specific messages if needed, but 99% will use these.
 """
 from typing import Dict, List
-from ..domain.ui_messages import StatusType
+from ..domain.ui_messages import StatusType, UIMessage
 
 
 # Українські повідомлення (центральна бібліотека)
@@ -102,3 +102,11 @@ def get_message(status_type: StatusType, overrides: Dict[str, List[str]] = None)
         return overrides[status_type.value]
     
     return UK_MESSAGES.get(status_type.value, ["Обробка..."])
+# Fixed single-string UI messages (see domain.ui_messages.UIMessage)
+UI_STRINGS: Dict[str, str] = {
+    UIMessage.RESPONSE_READY.value: "✅ Відповідь готова.",
+    UIMessage.RESPONSE_TRUNCATED_SUFFIX.value: "\n\n... (занадто довга відповідь)",
+    UIMessage.EMPTY_MODEL_RESPONSE.value: "*(порожня відповідь від моделі)*",
+    UIMessage.UNKNOWN_COMMAND.value: "Невідома команда: `{command}`",
+    UIMessage.NEW_TOPIC_ACK.value: "Нова тема. Історію очищено.",
+}

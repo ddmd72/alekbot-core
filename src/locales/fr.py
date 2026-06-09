@@ -4,7 +4,7 @@ French UI messages library. Style: ironic, warm, slightly self-deprecating — s
 RFC: docs/10_rfcs/MULTILINGUAL_SUPPORT_RFC.md §14
 """
 from typing import Dict, List
-from ..domain.ui_messages import StatusType
+from ..domain.ui_messages import StatusType, UIMessage
 
 
 ENTERTAINMENT_INTROS: List[str] = [
@@ -73,3 +73,11 @@ def get_message(status_type: StatusType, overrides: Dict[str, List[str]] = None)
     if overrides and status_type.value in overrides:
         return overrides[status_type.value]
     return FR_MESSAGES.get(status_type.value, ["Traitement..."])
+# Fixed single-string UI messages (see domain.ui_messages.UIMessage)
+UI_STRINGS: Dict[str, str] = {
+    UIMessage.RESPONSE_READY.value: "✅ Réponse prête.",
+    UIMessage.RESPONSE_TRUNCATED_SUFFIX.value: "\n\n... (réponse tronquée)",
+    UIMessage.EMPTY_MODEL_RESPONSE.value: "*(réponse vide du modèle)*",
+    UIMessage.UNKNOWN_COMMAND.value: "Commande inconnue : `{command}`",
+    UIMessage.NEW_TOPIC_ACK.value: "Nouveau sujet. Historique effacé.",
+}

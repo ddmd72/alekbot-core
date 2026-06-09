@@ -8,7 +8,7 @@ import tempfile
 import aiohttp
 from typing import Any, Optional, Dict, List
 from ...domain.messaging import ResponseChannel, RichContent
-from ...domain.ui_messages import StatusType
+from ...domain.ui_messages import StatusType, UIMessage
 from ...domain.language import LanguageCode
 from ...ports.localization_port import LocalizationPort
 from ...utils.logger import logger
@@ -156,7 +156,7 @@ class SlackResponseChannel(ResponseChannel):
             # Apply Slack-specific formatting and truncation
             formatted = self._format_for_platform(text)
             if len(formatted) > SLACK_MAX_MESSAGE_LENGTH:
-                formatted = formatted[:SLACK_MAX_MESSAGE_LENGTH] + "\n\n... (занадто довга відповідь)"
+                formatted = formatted[:SLACK_MAX_MESSAGE_LENGTH] + self._ui_string(UIMessage.RESPONSE_TRUNCATED_SUFFIX)
             
             response = await self.client.chat_postMessage(
                 channel=self.channel_id,
@@ -188,10 +188,10 @@ class SlackResponseChannel(ResponseChannel):
             text = self._resolve_links_slack(text, link_list)
             # Apply Slack-specific formatting BEFORE truncation
             formatted = self._format_for_platform(text)
-            
+
             # Apply Slack-specific truncation
             if len(formatted) > SLACK_MAX_MESSAGE_LENGTH:
-                formatted = formatted[:SLACK_MAX_MESSAGE_LENGTH] + "\n\n... (занадто довга відповідь)"
+                formatted = formatted[:SLACK_MAX_MESSAGE_LENGTH] + self._ui_string(UIMessage.RESPONSE_TRUNCATED_SUFFIX)
             
             await self.client.chat_update(
                 channel=self.channel_id,
@@ -222,7 +222,7 @@ class SlackResponseChannel(ResponseChannel):
             await self.update_message(message_id, chunks[0])
             return
 
-        await self.update_message(message_id, "✅ Відповідь готова.")
+        await self.update_message(message_id, self._ui_string(UIMessage.RESPONSE_READY))
 
         thread_ts = thread_id if thread_id else message_id
         for chunk in chunks:
@@ -355,6 +355,12 @@ class SlackResponseChannel(ResponseChannel):
             return self._localization.get_status_phrases(self.language, status_type)
         from ...locales.uk import get_message as get_uk_message
         return get_uk_message(status_type)
+
+    def _ui_string(self, message: UIMessage) -> str:
+        if self._localization:
+            return self._localization.get_ui_string(self.language, message)
+        from ...locales.uk import UI_STRINGS
+        return UI_STRINGS[message.value]
 
     async def send_status(self, status_type: StatusType, thread_id: Optional[str] = None) -> str:
         """
