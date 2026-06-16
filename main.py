@@ -444,6 +444,7 @@ async def main():
             job_registry=job_registry,
             task_queue=agent_task_queue,
             anthropic_client=anthropic_client,
+            quota_service=quota_service,
         )
         _agent_factory_ref[0] = agent_factory  # Wire deferred reference for overflow_callback
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation

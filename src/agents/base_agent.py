@@ -220,6 +220,9 @@ class BaseAgent(ABC):
         # UserAgentFactory, like coordinator. None → capture skipped. The adapter
         # owns record building + the background-task set (best-effort, non-blocking).
         self._prompt_content_store = None
+        # Durable usage sink (QuotaService). Injected post-construction by
+        # UserAgentFactory, like coordinator. None → billing skipped.
+        self._quota_service = None
         self._user_timezone: str = "UTC"  # overridden by subclasses that receive user_timezone
         self._billing_account_id: Optional[str] = None
         self._billing_prompt_tokens: int = 0
@@ -710,37 +713,36 @@ class BaseAgent(ABC):
             )
 
     async def _flush_billing(self) -> None:
-        """Fire-and-forget usage report to billing_agent. No-op if coordinator/account_id not set."""
-        if not self.coordinator or not self._billing_account_id:
+        """Durably record this execution's usage. No-op if quota_service/account_id
+        unset or no tokens accrued.
+
+        Awaited, NOT fire-and-forget: the write must land while the request still
+        holds CPU. On Cloud Run a task detached after the request returns is starved
+        by CPU throttling and lost when the instance recycles (the old path also
+        buffered in-memory before writing — doubly lossy). Best-effort: the quota
+        service swallows write errors, so billing never breaks the agent response.
+        """
+        if not self._quota_service or not self._billing_account_id:
             return
         if not (self._billing_prompt_tokens or self._billing_completion_tokens
                 or self._billing_cache_read_tokens or self._billing_cache_creation_tokens):
             return
         from ..domain.billing import calculate_cost
-        from ..domain.agent import AgentMessage, AgentIntent
         model = getattr(self, "model_name", None) or self.config.llm_model or "unknown"
-        asyncio.create_task(
-            self.coordinator.route_message(
-                AgentMessage.create(
-                    sender=self.agent_id,
-                    recipient="billing_agent",
-                    intent=AgentIntent.INFORM,
-                    payload={
-                        "account_id": self._billing_account_id,
-                        "tokens": (self._billing_prompt_tokens + self._billing_completion_tokens
-                                   + self._billing_cache_read_tokens + self._billing_cache_creation_tokens),
-                        "cost": calculate_cost(
-                            model=model,
-                            prompt_tokens=self._billing_prompt_tokens,
-                            completion_tokens=self._billing_completion_tokens,
-                            cache_read_tokens=self._billing_cache_read_tokens,
-                            cache_creation_tokens=self._billing_cache_creation_tokens,
-                        ),
-                        "model": model,
-                    },
-                    context={},
-                )
-            )
+        tokens = (self._billing_prompt_tokens + self._billing_completion_tokens
+                  + self._billing_cache_read_tokens + self._billing_cache_creation_tokens)
+        cost = calculate_cost(
+            model=model,
+            prompt_tokens=self._billing_prompt_tokens,
+            completion_tokens=self._billing_completion_tokens,
+            cache_read_tokens=self._billing_cache_read_tokens,
+            cache_creation_tokens=self._billing_cache_creation_tokens,
+        )
+        await self._quota_service.record_usage(
+            account_id=self._billing_account_id,
+            model=model,
+            tokens=tokens,
+            cost=cost,
         )
 
     def _on_agent_error(self, error: Exception, context: str = "execute") -> None:
