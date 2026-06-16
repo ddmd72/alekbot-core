@@ -784,49 +784,51 @@ class TestOnAgentSuccess:
 
 
 # =============================================================================
-# _flush_billing (lines 510-516)
+# _flush_billing
 # =============================================================================
 
 class TestFlushBilling:
 
     @pytest.mark.asyncio
-    async def test_flush_billing_creates_task_with_coordinator(self):
-        """coordinator + account_id + tokens → asyncio.create_task called (lines 510-516)."""
-        config = AgentConfig(agent_id="a", agent_type="mock")
+    async def test_flush_billing_awaits_quota_service_with_cost(self):
+        """quota_service + account_id + tokens → record_usage awaited (durable write,
+        not a detached task — see _flush_billing docstring)."""
+        config = AgentConfig(agent_id="a", agent_type="mock", llm_model="claude-sonnet-4-6")
         agent = MockAgent(config)
-        agent.coordinator = MagicMock()
-        agent.coordinator.route_message = AsyncMock(return_value=None)
+        agent._quota_service = AsyncMock()
         agent._billing_account_id = "acc1"
         agent._billing_prompt_tokens = 100
         agent._billing_completion_tokens = 50
 
-        with patch("src.agents.base_agent.asyncio.create_task") as mock_create_task:
-            await agent._flush_billing()
-        mock_create_task.assert_called_once()
+        await agent._flush_billing()
+
+        agent._quota_service.record_usage.assert_awaited_once()
+        kw = agent._quota_service.record_usage.await_args.kwargs
+        assert kw["account_id"] == "acc1"
+        assert kw["tokens"] == 150  # prompt + completion (+ cache, here 0)
+        # input 100*$3/M + output 50*$15/M = $0.0003 + $0.00075 = $0.00105
+        assert kw["cost"] == pytest.approx((100 / 1_000_000) * 3.0 + (50 / 1_000_000) * 15.0)
 
     @pytest.mark.asyncio
-    async def test_flush_billing_noop_without_coordinator(self):
-        """No coordinator → no-op (early return)."""
+    async def test_flush_billing_noop_without_quota_service(self):
+        """No quota_service → no-op (early return)."""
         config = AgentConfig(agent_id="a", agent_type="mock")
         agent = MockAgent(config)
         agent._billing_account_id = "acc1"
         agent._billing_prompt_tokens = 100
-        # No coordinator set — should return silently
-        with patch("src.agents.base_agent.asyncio.create_task") as mock_create_task:
-            await agent._flush_billing()
-        mock_create_task.assert_not_called()
+        # No quota_service set — should return silently (and not raise)
+        await agent._flush_billing()
 
     @pytest.mark.asyncio
     async def test_flush_billing_noop_without_tokens(self):
-        """coordinator + account_id but no tokens → no-op (early return)."""
+        """quota_service + account_id but no tokens → no record_usage call."""
         config = AgentConfig(agent_id="a", agent_type="mock")
         agent = MockAgent(config)
-        agent.coordinator = MagicMock()
+        agent._quota_service = AsyncMock()
         agent._billing_account_id = "acc1"
         # all billing token counts remain 0
-        with patch("src.agents.base_agent.asyncio.create_task") as mock_create_task:
-            await agent._flush_billing()
-        mock_create_task.assert_not_called()
+        await agent._flush_billing()
+        agent._quota_service.record_usage.assert_not_awaited()
 
 
 # =============================================================================
