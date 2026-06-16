@@ -77,6 +77,8 @@ class TestRecordBilling:
     async def test_records_tokens_and_cache_cost(self):
         repo = self._patch_repo()
         result = {
+            "prompt_tokens": 40_000,
+            "completion_tokens": 60_000,
             "total_tokens": 100_000,
             "cache_read_tokens": 40_000,
             "cache_write_tokens": 5_000,
@@ -87,10 +89,33 @@ class TestRecordBilling:
         repo.increment_account_usage.assert_awaited_once()
         kw = repo.increment_account_usage.await_args.kwargs
         assert kw["account_id"] == "acct-1"
-        assert kw["tokens"] == 100_000
-        # claude-sonnet-4-6 input $3/M; prompt 100k = $0.30, +cache_read 40k*0.1*3/M
-        # +cache_write 5k*1.25*3/M → strictly greater than the no-cache cost.
-        assert kw["cost"] > (100_000 / 1_000_000) * 3.0
+        assert kw["tokens"] == 100_000  # counter = in+out, unchanged
+        # Output MUST be priced at the output rate ($15/M), not input ($3/M).
+        # input 40k*$3/M=$0.12 + output 60k*$15/M=$0.90 + cache → dominated by output.
+        # The old bug priced all 100k as input ($0.30); correct cost is far higher.
+        assert kw["cost"] > 0.90
+
+    async def test_output_priced_at_output_rate_not_input(self):
+        # Regression for the deep-research mispricing: completion tokens were billed
+        # at the (cheap) input rate. Same token total, all output vs all input, must
+        # produce different costs — output strictly more expensive.
+        repo = self._patch_repo()
+        all_output = {"prompt_tokens": 0, "completion_tokens": 100_000, "total_tokens": 100_000}
+        all_input = {"prompt_tokens": 100_000, "completion_tokens": 0, "total_tokens": 100_000}
+
+        with patch.object(job_main, "_build_account_repo", return_value=repo):
+            await job_main._record_billing("acct-1", "claude-sonnet-4-6", all_output)
+        cost_output = repo.increment_account_usage.await_args.kwargs["cost"]
+
+        repo.increment_account_usage.reset_mock()
+        with patch.object(job_main, "_build_account_repo", return_value=repo):
+            await job_main._record_billing("acct-1", "claude-sonnet-4-6", all_input)
+        cost_input = repo.increment_account_usage.await_args.kwargs["cost"]
+
+        # claude-sonnet-4-6: output $15/M, input $3/M → 5x ratio.
+        assert cost_output == pytest.approx((100_000 / 1_000_000) * 15.0)
+        assert cost_input == pytest.approx((100_000 / 1_000_000) * 3.0)
+        assert cost_output > cost_input
 
     async def test_noop_when_no_tokens(self):
         repo = self._patch_repo()

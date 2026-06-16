@@ -414,7 +414,7 @@ class TestResearchLoop:
         msg = _api_message("end_turn", [_text_block("Final report")])
         agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
 
-        text, tokens, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        text, _, _, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
         assert text == "Final report"
 
@@ -422,9 +422,11 @@ class TestResearchLoop:
         msg = _api_message("end_turn", [_text_block()], input_tokens=50, output_tokens=150)
         agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
 
-        _, tokens, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        _, input_tokens, output_tokens, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
-        assert tokens == 200
+        assert input_tokens == 50
+        assert output_tokens == 150
+        assert input_tokens + output_tokens == 200
 
     async def test_pause_then_end_turn_returns_accumulated_text(self):
         pause = _api_message("pause_turn", [_tool_block()])
@@ -432,7 +434,7 @@ class TestResearchLoop:
         client = _client_with_streams(_FakeStream([], pause), _FakeStream([], end))
         agent = _make_agent(client)
 
-        text, _, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        text, _, _, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
         assert text == "Final text"
 
@@ -442,9 +444,11 @@ class TestResearchLoop:
         client = _client_with_streams(_FakeStream([], pause), _FakeStream([], end))
         agent = _make_agent(client)
 
-        _, tokens, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        _, input_tokens, output_tokens, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
-        assert tokens == 300  # 100 + 200
+        assert input_tokens == 120   # 40 + 80
+        assert output_tokens == 180  # 60 + 120
+        assert input_tokens + output_tokens == 300
 
     async def test_pause_sends_accumulated_content_as_assistant_message(self):
         tool = _tool_block()
@@ -506,7 +510,7 @@ class TestResearchLoop:
         msg = _api_message("max_tokens", [_text_block("Partial output")])
         agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
 
-        text, _, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        text, _, _, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
         assert text == "Partial output"
 
@@ -521,7 +525,7 @@ class TestResearchLoop:
         msg = _api_message("end_turn", [_tool_block()])
         agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
 
-        text, _, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
+        text, _, _, _, _ = await agent._research_loop("query", "", "claude-sonnet-4-6")
 
         assert text == ""
 
@@ -811,6 +815,21 @@ class TestRun:
 
         # Token count logged internally; response still SUCCESS regardless of total
         assert response.status == AgentStatus.SUCCESS
+
+    async def test_result_carries_input_output_split_summed_over_passes(self):
+        # Billing prices output at the output rate, so the result must expose
+        # prompt/completion separately — not a single pre-summed total. Both passes
+        # accumulate: prompt=100+150, completion=200+250.
+        first = _api_message("end_turn", [_text_block("R1")], input_tokens=100, output_tokens=200)
+        second = _api_message("end_turn", [_text_block("R2")], input_tokens=150, output_tokens=250)
+        agent = _make_agent(_client_with_streams(_FakeStream([], first), _FakeStream([], second)))
+
+        with patch.object(ClaudeDeepResearchRunnerAgent, "_SECOND_PASS_ENABLED", True):
+            response = await agent.execute(_make_message())
+
+        assert response.result["prompt_tokens"] == 250
+        assert response.result["completion_tokens"] == 450
+        assert response.result["total_tokens"] == 700
 
     async def test_second_pass_false_env_var_respected(self):
         """DEEP_RESEARCH_SECOND_PASS=false must disable second pass."""

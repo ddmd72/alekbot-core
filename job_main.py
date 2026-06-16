@@ -62,10 +62,13 @@ async def _record_billing(account_id: str, model: str, result: dict) -> None:
     cache_write_tokens = result.get("cache_write_tokens", 0)
     if not (total_tokens or cache_read_tokens or cache_write_tokens):
         return
+    # Price input and output at their own rates. Collapsing both into prompt_tokens
+    # (the old bug) billed output — which dominates a research report — at the cheap
+    # input rate (e.g. Sonnet $3/M instead of $15/M).
     cost = calculate_cost(
         model=model,
-        prompt_tokens=total_tokens,
-        completion_tokens=0,
+        prompt_tokens=result.get("prompt_tokens", 0),
+        completion_tokens=result.get("completion_tokens", 0),
         cache_read_tokens=cache_read_tokens,
         cache_creation_tokens=cache_write_tokens,
     )

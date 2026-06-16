@@ -139,7 +139,13 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
         second_pass_enabled = context.get("second_pass", self._SECOND_PASS_ENABLED) and DEEP_RESEARCH_SECOND_PASS
 
         try:
-            result_text, total_tokens, cache_read_tokens, cache_write_tokens = await self._research_loop(
+            (
+                result_text,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+            ) = await self._research_loop(
                 query=query,
                 system_prompt=system_prompt,
                 model=model,
@@ -159,19 +165,31 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
             logger.info("[DeepResearchRunner] Starting second-pass critic session")
             critic_query = self._build_critic_query(original_query, result_text)
             try:
-                result_text, extra_tokens, extra_cr, extra_cw = await self._research_loop(
+                (
+                    result_text,
+                    extra_in,
+                    extra_out,
+                    extra_cr,
+                    extra_cw,
+                ) = await self._research_loop(
                     query=critic_query,
                     system_prompt=system_prompt,
                     model=model,
                 )
-                total_tokens += extra_tokens
+                input_tokens += extra_in
+                output_tokens += extra_out
                 cache_read_tokens += extra_cr
                 cache_write_tokens += extra_cw
-                logger.info("[DeepResearchRunner] Second-pass complete, extra_tokens=%d", extra_tokens)
+                logger.info(
+                    "[DeepResearchRunner] Second-pass complete, extra_tokens=%d",
+                    extra_in + extra_out,
+                )
             except Exception as exc:
                 logger.warning(
                     "[DeepResearchRunner] Second-pass failed (using first-pass result): %s", exc
                 )
+
+        total_tokens = input_tokens + output_tokens
 
         self._on_agent_success(
             char_count=len(result_text),
@@ -187,6 +205,10 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
                 "round1_text": round1_text,
                 "query": original_query,
                 "model": model,
+                # prompt/completion kept separate so billing prices output at the
+                # output rate; total_tokens stays for display/delivery.
+                "prompt_tokens": input_tokens,
+                "completion_tokens": output_tokens,
                 "total_tokens": total_tokens,
                 "cache_read_tokens": cache_read_tokens,
                 "cache_write_tokens": cache_write_tokens,
@@ -314,14 +336,16 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
 
     async def _research_loop(
         self, query: str, system_prompt: str, model: str
-    ) -> tuple[str, int, int, int]:
+    ) -> tuple[str, int, int, int, int]:
         """
         Single Claude session with native built-in tools.
 
         The API manages all tool execution server-side — we only handle pause_turn
         continuations by sending back the partial response as an assistant message.
 
-        Returns (result_text, total_tokens, cache_read_tokens, cache_write_tokens).
+        Returns (result_text, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens).
+        input/output are kept separate (not pre-summed) so the caller can price output
+        at the output rate — collapsing them into one total bills output as cheap input.
 
         Loop protocol:
           end_turn   → extract text blocks, return as final result.
@@ -350,6 +374,8 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
 
         messages: list[dict] = [{"role": "user", "content": query}]
         accumulated_content: list = []
+        total_input_tokens = 0
+        total_output_tokens = 0
         total_tokens = 0
         total_cache_read_tokens = 0
         total_cache_write_tokens = 0
@@ -379,8 +405,9 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
 
             if hasattr(response, "usage") and response.usage:
                 u = response.usage
-                turn_tokens = (u.input_tokens or 0) + (u.output_tokens or 0)
-                total_tokens += turn_tokens
+                total_input_tokens += u.input_tokens or 0
+                total_output_tokens += u.output_tokens or 0
+                total_tokens = total_input_tokens + total_output_tokens
                 total_cache_read_tokens += getattr(u, "cache_read_input_tokens", 0) or 0
                 total_cache_write_tokens += getattr(u, "cache_creation_input_tokens", 0) or 0
 
@@ -414,7 +441,13 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
                     turn=0,
                     model=model,
                 )
-                return text, total_tokens, total_cache_read_tokens, total_cache_write_tokens
+                return (
+                    text,
+                    total_input_tokens,
+                    total_output_tokens,
+                    total_cache_read_tokens,
+                    total_cache_write_tokens,
+                )
 
             if response.stop_reason == "pause_turn":
                 pause_count += 1
@@ -450,7 +483,13 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
                     turn=0,
                     model=model,
                 )
-                return partial, total_tokens, total_cache_read_tokens, total_cache_write_tokens
+                return (
+                    partial,
+                    total_input_tokens,
+                    total_output_tokens,
+                    total_cache_read_tokens,
+                    total_cache_write_tokens,
+                )
             raise RuntimeError(
                 f"[ClaudeDeepResearchRunner] stop_reason={response.stop_reason!r} with no text"
             )
