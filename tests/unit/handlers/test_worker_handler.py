@@ -1209,6 +1209,7 @@ def _make_account(
     daily_cost: float = 0.0,
     prev_daily_tokens: int = 0,
     prev_daily_cost: float = 0.0,
+    prev_daily_date: str = None,
 ) -> BillingAccount:
     return BillingAccount(
         account_id=account_id,
@@ -1218,6 +1219,7 @@ def _make_account(
             daily_cost=daily_cost,
             prev_daily_tokens=prev_daily_tokens,
             prev_daily_cost=prev_daily_cost,
+            prev_daily_date=prev_daily_date,
         ),
     )
 
@@ -1254,9 +1256,11 @@ class TestHandleBillingDailySummary:
 
     async def test_active_accounts_posts_to_webhook(self):
         worker, ns = _make_full_worker()
+        from datetime import datetime, timezone, timedelta
+        yday = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
         ns.account_repo.list_all_accounts.return_value = [
-            _make_account(_ACC_A, _USER_A, prev_daily_tokens=1000, prev_daily_cost=0.05),
-            _make_account(_ACC_B, _USER_B, prev_daily_tokens=500,  prev_daily_cost=0.02),
+            _make_account(_ACC_A, _USER_A, prev_daily_tokens=1000, prev_daily_cost=0.05, prev_daily_date=yday),
+            _make_account(_ACC_B, _USER_B, prev_daily_tokens=500,  prev_daily_cost=0.02, prev_daily_date=yday),
         ]
         profile_a = UserProfile(user_id=_USER_A, display_name="Alice")
         ns.user_repo.get_user.side_effect = lambda uid: (
@@ -1272,6 +1276,49 @@ class TestHandleBillingDailySummary:
         assert "Alice" in posted_text
         assert "1,000" in posted_text
         assert "Yesterday" in posted_text
+
+    async def test_idle_yesterday_with_earlier_active_day_not_reported(self):
+        # THE BUG: yesterday had no activity, but the day before did — its leftover
+        # total sits in prev_daily (stamped with the day-before's date). It must NOT
+        # be reported as yesterday's.
+        worker, ns = _make_full_worker()
+        from datetime import datetime, timezone, timedelta
+        day_before = (datetime.now(timezone.utc) - timedelta(days=2)).date().isoformat()
+        ns.account_repo.list_all_accounts.return_value = [
+            _make_account(
+                _ACC_A, _USER_A,
+                prev_daily_tokens=9999, prev_daily_cost=0.99, prev_daily_date=day_before,
+            ),
+        ]
+
+        result, status = await worker._handle_billing_daily_summary()
+
+        assert status == 200
+        assert result["reported"] == 0
+        ns.billing_webhook.post.assert_not_called()
+
+    async def test_yesterday_active_not_yet_rotated_is_reported(self):
+        # Yesterday was active and there's been no activity since → no rotation yet;
+        # yesterday's total still lives in the live daily_* counter and must be reported.
+        worker, ns = _make_full_worker()
+        from datetime import datetime, timezone, timedelta
+        yday_dt = datetime.now(timezone.utc) - timedelta(days=1)
+        acc = BillingAccount(
+            account_id=_ACC_A,
+            iam_policy={_USER_A: "owner"},
+            usage=AccountUsageStats(daily_tokens=777, daily_cost=0.03, daily_reset_at=yday_dt),
+        )
+        ns.account_repo.list_all_accounts.return_value = [acc]
+        ns.user_repo.get_user.side_effect = lambda uid: (
+            UserProfile(user_id=_USER_A, display_name="Bob") if uid == _USER_A else None
+        )
+
+        result, status = await worker._handle_billing_daily_summary()
+
+        assert status == 200
+        assert result["reported"] == 1
+        posted_text = ns.billing_webhook.post.call_args[0][0]
+        assert "777" in posted_text
 
 
 # ---------------------------------------------------------------------------

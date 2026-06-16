@@ -1,7 +1,7 @@
 from enum import Enum
-from typing import Dict, TYPE_CHECKING, Optional
+from typing import Dict, TYPE_CHECKING, Optional, Tuple
 from .language import LanguageCode
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import uuid4
 from pydantic import BaseModel, Field
 
@@ -30,10 +30,38 @@ class AccountUsageStats(BaseModel):
 
     prev_daily_tokens: int = 0
     prev_daily_cost: float = 0.0
+    # Calendar day (UTC, "YYYY-MM-DD") the prev_daily_* snapshot belongs to.
+    # None for accounts that never rotated. Without it a clock-driven report
+    # cannot tell "yesterday" from "the last day that had activity".
+    prev_daily_date: Optional[str] = None
 
     monthly_tokens: int = 0
     monthly_cost: float = 0.0
     monthly_reset_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def usage_for_date(self, target: date) -> Tuple[int, float]:
+        """Tokens/cost for a specific UTC calendar day, or (0, 0.0) if it was idle.
+
+        The daily counters are rotated lazily — only on the first request of a new
+        day — so a report that runs on the wall clock (the daily summary) must resolve
+        them against an explicit date instead of trusting the raw snapshot:
+
+          - prev_daily belongs to `prev_daily_date` (the day that ended at the last
+            rotation). If that equals the target, it IS the target's total.
+          - otherwise, if the live counter (`daily_reset_at`) still sits on the target,
+            the target was the last active day and no rotation has happened since —
+            its total lives in daily_*.
+          - otherwise the target had no activity → (0, 0.0).
+
+        This is correct even when the target day was idle but an earlier day was active
+        (the bug: that earlier day's value used to be reported as the target's).
+        """
+        target_str = target.isoformat()
+        if self.prev_daily_date == target_str:
+            return self.prev_daily_tokens, self.prev_daily_cost
+        if self.daily_reset_at and self.daily_reset_at.date() == target:
+            return self.daily_tokens, self.daily_cost
+        return 0, 0.0
 
 
 class BillingAccount(BaseModel):

@@ -734,15 +734,17 @@ class WorkerHandler:
 
         accounts = await self._account_repo.list_all_accounts()
         from datetime import timedelta
-        yesterday_str = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+        yesterday_str = yesterday.strftime("%Y-%m-%d")
 
         lines = [f"📊 *Billing Summary — {yesterday_str}*\n"]
         reported = 0
 
         for account in accounts:
             u = account.usage
-            prev_tokens = u.prev_daily_tokens
-            prev_cost = u.prev_daily_cost
+            # Resolve "yesterday" against the calendar, not the raw snapshot: an idle
+            # yesterday must report 0, never the last active day's leftover total.
+            prev_tokens, prev_cost = u.usage_for_date(yesterday)
             if prev_tokens == 0 and prev_cost == 0.0:
                 continue
 
