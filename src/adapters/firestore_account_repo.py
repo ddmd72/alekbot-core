@@ -72,10 +72,15 @@ class FirestoreAccountRepository(AccountRepository):
             }
 
             if daily_needs_reset:
-                # Snapshot yesterday's totals before resetting
+                # Snapshot the day that just ended before resetting. Stamp its
+                # calendar date so a clock-driven report can tell whether this
+                # snapshot actually belongs to "yesterday" (see
+                # AccountUsageStats.usage_for_date).
+                prev_date = daily_reset_at.date().isoformat() if daily_reset_at else None
                 updates.update({
                     "usage.prev_daily_tokens": usage.get("daily_tokens", 0),
                     "usage.prev_daily_cost": usage.get("daily_cost", 0.0),
+                    "usage.prev_daily_date": prev_date,
                     "usage.daily_tokens": tokens,
                     "usage.daily_cost": cost,
                     "usage.daily_reset_at": now,
