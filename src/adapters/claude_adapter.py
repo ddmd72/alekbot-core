@@ -276,6 +276,15 @@ class ClaudeAdapter(LLMPort):
                 raise LLMNetworkError(str(e)) from e
             except anthropic.APIStatusError as e:
                 status = getattr(e, "status_code", None)
+                # overloaded_error (HTTP 529) frequently arrives mid-stream as an SSE
+                # error event — the connection already returned 200, so the SDK builds
+                # an APIStatusError with status_code unset. Detect it by type (mirrors
+                # ClaudeDeepResearchRunnerAgent._call_with_overload_retry) so it still
+                # classifies as a transient server error and triggers provider failover
+                # via FAILOVER_TRIGGER_TYPES, instead of bubbling raw and degrading
+                # Smart → Quick.
+                if status == 529 or "overloaded_error" in str(e):
+                    raise LLMServerError(str(e), http_status=529) from e
                 if status == 503:
                     raise LLMUnavailableError(str(e), http_status=503) from e
                 if isinstance(status, int) and 500 <= status < 600:
@@ -335,8 +344,15 @@ class ClaudeAdapter(LLMPort):
                 raise LLMRateLimitError(str(e), http_status=429) from e
             except anthropic.APIStatusError as e:
                 status = getattr(e, "status_code", None)
+                # Same mid-stream overloaded_error / 5xx classification as the
+                # non-grounded path above — keep the two branches symmetric so a
+                # transient server error in the grounding loop also fails over.
+                if status == 529 or "overloaded_error" in str(e):
+                    raise LLMServerError(str(e), http_status=529) from e
                 if status == 503:
                     raise LLMUnavailableError(str(e), http_status=503) from e
+                if isinstance(status, int) and 500 <= status < 600:
+                    raise LLMServerError(str(e), http_status=status) from e
                 if isinstance(status, int) and 400 <= status < 500:
                     raise LLMClientError(str(e), http_status=status) from e
                 raise

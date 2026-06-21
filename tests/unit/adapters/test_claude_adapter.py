@@ -1203,3 +1203,106 @@ async def test_cache_last_message_empty_messages_does_not_raise():
     adapter = ClaudeAdapter(api_key="test-key")
     result = await adapter._convert_messages([], cache_last_message=True)
     assert result == []
+
+
+# ============================================================================
+# Error mapping: overloaded_error (HTTP 529) classification
+#
+# overloaded_error can arrive mid-stream as an SSE error event after the HTTP
+# connection already returned 200, so the SDK's APIStatusError carries no
+# status_code. The adapter must still classify it as LLMServerError(529) so it
+# lands in FAILOVER_TRIGGER_TYPES and provider failover engages — instead of
+# bubbling raw and degrading Smart → Quick. See claude_adapter.generate_content.
+# ============================================================================
+
+
+class _FakeAPIStatusError(anthropic.APIStatusError):
+    """anthropic.APIStatusError with controllable status_code/message.
+
+    Bypasses the SDK's httpx-bound __init__; the adapter only reads
+    ``.status_code`` and ``str(e)`` when classifying the error.
+    """
+
+    def __init__(self, message, status_code=None):
+        Exception.__init__(self, message)
+        self.status_code = status_code
+
+
+def _make_raising_cm(exc):
+    """Stream context manager whose get_final_message raises `exc` (mid-stream)."""
+    stream = AsyncMock()
+    stream.get_final_message = AsyncMock(side_effect=exc)
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=stream)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    return cm
+
+
+@pytest.mark.asyncio
+async def test_overloaded_error_midstream_no_status_maps_to_server_error():
+    """overloaded_error with status_code=None (mid-stream) → LLMServerError(529)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    exc = _FakeAPIStatusError(
+        "{'type': 'error', 'error': {'type': 'overloaded_error', "
+        "'message': 'Overloaded'}}",
+        status_code=None,
+    )
+    adapter.client.messages.stream = lambda **kwargs: _make_raising_cm(exc)
+
+    with pytest.raises(LLMServerError) as exc_info:
+        await adapter.generate_content(
+            request=LLMRequest(model_name="claude-sonnet-4-6", messages=_MESSAGES)
+        )
+    assert exc_info.value.http_status == 529
+
+
+@pytest.mark.asyncio
+async def test_overloaded_error_with_529_status_maps_to_server_error():
+    """overloaded_error carrying status_code=529 → LLMServerError(529)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    exc = _FakeAPIStatusError("Overloaded", status_code=529)
+    adapter.client.messages.stream = lambda **kwargs: _make_raising_cm(exc)
+
+    with pytest.raises(LLMServerError) as exc_info:
+        await adapter.generate_content(
+            request=LLMRequest(model_name="claude-sonnet-4-6", messages=_MESSAGES)
+        )
+    assert exc_info.value.http_status == 529
+
+
+@pytest.mark.asyncio
+async def test_grounded_loop_overloaded_error_maps_to_server_error():
+    """Grounding path classifies mid-stream overloaded_error as LLMServerError(529)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    exc = _FakeAPIStatusError(
+        "{'error': {'type': 'overloaded_error'}}", status_code=None
+    )
+    adapter.client.messages.stream = lambda **kwargs: _make_raising_cm(exc)
+
+    with pytest.raises(LLMServerError) as exc_info:
+        await adapter.generate_content(
+            request=LLMRequest(
+                model_name="claude-sonnet-4-6",
+                messages=_MESSAGES,
+                use_grounding=True,
+            )
+        )
+    assert exc_info.value.http_status == 529
+
+
+@pytest.mark.asyncio
+async def test_grounded_loop_plain_5xx_maps_to_server_error():
+    """Grounding path: a plain 5xx (no overloaded marker) → LLMServerError(status)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    exc = _FakeAPIStatusError("Internal Server Error", status_code=500)
+    adapter.client.messages.stream = lambda **kwargs: _make_raising_cm(exc)
+
+    with pytest.raises(LLMServerError) as exc_info:
+        await adapter.generate_content(
+            request=LLMRequest(
+                model_name="claude-sonnet-4-6",
+                messages=_MESSAGES,
+                use_grounding=True,
+            )
+        )
+    assert exc_info.value.http_status == 500
