@@ -7,6 +7,7 @@ Called by: WorkerHandler, microsoft_tasks_webhook.py, user_cabinet_app.py.
 No port needed — single implementation.
 """
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
@@ -144,9 +145,27 @@ class TaskSetupService:
             await self._task_config.save_config(user_id, config)
             return
 
+        updated = self._preserve_list_id(updated, sub)
         config.subscriptions = [updated if s.sub_id == sub_id else s for s in config.subscriptions]
         await self._task_config.save_config(user_id, config)
         logger.info(f"🔄 Renewed subscription {sub_id[:8]} for user {user_id[:8]}")
+
+    # ------------------------------------------------------------------
+    # _preserve_list_id
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _preserve_list_id(
+        updated: TaskSubscriptionConfig, previous: TaskSubscriptionConfig
+    ) -> TaskSubscriptionConfig:
+        """
+        A 204 No Content renewal carries no resource body, so the adapter returns
+        an empty ``list_id``. Keep the previously stored value rather than
+        clobbering it with a blank — the subscription still points at the same list.
+        """
+        if not updated.list_id and previous.list_id:
+            return replace(updated, list_id=previous.list_id)
+        return updated
 
     # ------------------------------------------------------------------
     # renew_expiring_subscriptions
@@ -166,6 +185,7 @@ class TaskSetupService:
             if sub.expires_at <= threshold:
                 try:
                     updated = await self._lifecycle.renew_subscription(user_id, sub.sub_id)
+                    updated = self._preserve_list_id(updated, sub)
                     renewed.append(updated)
                     logger.info(
                         f"🔄 Renewed expiring subscription {sub.sub_id[:8]} "
