@@ -678,7 +678,18 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
                 if not resp.ok:
                     text = await resp.text()
                     raise ValueError(f"Graph PATCH {path} failed ({resp.status}): {text}")
-                data = await resp.json()
+                # Graph PATCH on a subscription usually returns 200 + the updated
+                # resource, but can return 204 No Content — a successful renewal
+                # with no body. A 204 (or any empty body) has no JSON to decode;
+                # treat it as success and leave list_id empty. The caller keeps the
+                # previously stored list_id when this comes back blank.
+                if resp.status == 204:
+                    data = {}
+                else:
+                    try:
+                        data = await resp.json()
+                    except aiohttp.ContentTypeError:
+                        data = {}
         list_id = ""
         resource = data.get("resource", "")
         if "/lists/" in resource and "/tasks" in resource:

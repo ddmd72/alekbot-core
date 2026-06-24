@@ -24,6 +24,7 @@ Covers:
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
 from src.adapters.microsoft_todo_adapter import MicrosoftToDoAdapter
@@ -546,6 +547,53 @@ class TestSubscriptionLifecycle:
         with _patch_session(session):
             with pytest.raises(SubscriptionNotFoundError):
                 await adapter.renew_subscription(_USER_ID, "orphan-sub")
+
+    async def test_renew_succeeds_on_204_no_content(self):
+        """
+        Graph PATCH can return 204 No Content — a successful renewal with no body.
+        The adapter must treat it as success (never decode JSON) and return a
+        config with an empty list_id for the caller to backfill.
+
+        Regression guard for 2026-06-23: 204 reached `await resp.json()`, which
+        raised aiohttp.ContentTypeError and failed every daily renewal sweep.
+        """
+        adapter, _, _ = _make_adapter()
+        resp = MagicMock()
+        resp.status = 204
+        resp.ok = True
+        resp.json = AsyncMock(side_effect=AssertionError("json() must not be called on 204"))
+        resp.text = AsyncMock(return_value="")
+        resp.__aenter__ = AsyncMock(return_value=resp)
+        resp.__aexit__ = AsyncMock(return_value=False)
+        session = _mock_session({"patch": resp})
+
+        with _patch_session(session):
+            result = await adapter.renew_subscription(_USER_ID, "sub-1")
+
+        assert isinstance(result, TaskSubscriptionConfig)
+        assert result.sub_id == "sub-1"
+        assert result.list_id == ""
+
+    async def test_renew_tolerates_empty_body_content_type_error(self):
+        """
+        A 200 with an empty / non-JSON body raises aiohttp.ContentTypeError on
+        .json(). The adapter swallows it and returns a successful config with an
+        empty list_id rather than propagating the decode error.
+        """
+        adapter, _, _ = _make_adapter()
+        resp = MagicMock()
+        resp.status = 200
+        resp.ok = True
+        resp.json = AsyncMock(side_effect=aiohttp.ContentTypeError(MagicMock(), ()))
+        resp.text = AsyncMock(return_value="")
+        resp.__aenter__ = AsyncMock(return_value=resp)
+        resp.__aexit__ = AsyncMock(return_value=False)
+        session = _mock_session({"patch": resp})
+
+        with _patch_session(session):
+            result = await adapter.renew_subscription(_USER_ID, "sub-1")
+
+        assert result.list_id == ""
 
     async def test_delete_subscription_called(self):
         adapter, _, _ = _make_adapter()

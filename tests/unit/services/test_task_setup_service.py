@@ -211,6 +211,23 @@ class TestHandleSubscriptionRenewal:
         lifecycle.renew_subscription.assert_not_called()
         task_config.save_config.assert_not_called()
 
+    async def test_preserves_stored_list_id_when_renewal_returns_blank(self):
+        """
+        Webhook path: a 204 renewal returns an empty list_id. The service must
+        keep the stored list_id rather than persisting a blank.
+        """
+        sub = _make_sub(list_id="list-keep", hours_until_expiry=10.0)
+        config = TaskUserConfig(subscriptions=[sub])
+        svc, lifecycle, task_config, _, _, _, _ = _make_service(config=config)
+        lifecycle.renew_subscription.return_value = TaskSubscriptionConfig(
+            sub_id=_SUB_ID, list_id="", expires_at=_future(4320.0)
+        )
+
+        await svc.handle_subscription_renewal(_USER_ID, _SUB_ID)
+
+        saved_config: TaskUserConfig = task_config.save_config.call_args.args[1]
+        assert [s.list_id for s in saved_config.subscriptions] == ["list-keep"]
+
     async def test_self_heals_on_subscription_not_found(self):
         """
         Webhook-triggered renewal path: if Graph reports 404, drop the orphan
@@ -271,6 +288,26 @@ class TestRenewExpiringSubscriptions:
         await svc.renew_expiring_subscriptions(_USER_ID)
 
         task_config.save_config.assert_called_once()
+
+    async def test_preserves_stored_list_id_when_renewal_returns_blank(self):
+        """
+        A 204 renewal comes back with an empty list_id (no resource body). The
+        sweep must keep the previously stored list_id, not overwrite it with "".
+
+        Regression guard for 2026-06-23: a blank list_id would clobber the stored
+        value, so every later sweep saw list_id="" and could never resolve the list.
+        """
+        sub = _make_sub(list_id="list-keep", hours_until_expiry=10.0)
+        config = TaskUserConfig(subscriptions=[sub])
+        svc, lifecycle, task_config, _, _, _, _ = _make_service(config=config)
+        lifecycle.renew_subscription.return_value = TaskSubscriptionConfig(
+            sub_id=_SUB_ID, list_id="", expires_at=_future(4320.0)
+        )
+
+        await svc.renew_expiring_subscriptions(_USER_ID)
+
+        saved_config: TaskUserConfig = task_config.save_config.call_args.args[1]
+        assert [s.list_id for s in saved_config.subscriptions] == ["list-keep"]
 
     async def test_self_heals_on_subscription_not_found(self):
         """
