@@ -33,6 +33,12 @@ class InMemoryProviderResilience(ProviderResiliencePort):
             transitioning to HALF-OPEN on the next query. Default ``30.0``.
         time_source: Monotonic clock injection for tests; production uses
             ``time.monotonic``.
+        on_open: Optional sync callback invoked with the provider name exactly
+            once per CLOSED→OPEN transition. The escalation hook: failover keeps
+            the user served on transient faults, while a tripped breaker means
+            the failures are chronic and warrant a human signal. Must NOT raise
+            (it runs inside the hot-path failure handler) and must NOT block —
+            schedule any async delivery and return. Default ``None`` (no-op).
     """
 
     def __init__(
@@ -42,6 +48,7 @@ class InMemoryProviderResilience(ProviderResiliencePort):
         window_seconds: float = 60.0,
         cooldown_seconds: float = 30.0,
         time_source: Optional[Callable[[], float]] = None,
+        on_open: Optional[Callable[[str], None]] = None,
     ) -> None:
         if failure_threshold < 1:
             raise ValueError("failure_threshold must be >= 1")
@@ -54,6 +61,7 @@ class InMemoryProviderResilience(ProviderResiliencePort):
         self._window_seconds = window_seconds
         self._cooldown_seconds = cooldown_seconds
         self._now = time_source if time_source is not None else monotonic
+        self._on_open = on_open
 
         self._failures: Dict[str, Deque[float]] = {}
         self._opened_at: Dict[str, float] = {}
@@ -68,6 +76,13 @@ class InMemoryProviderResilience(ProviderResiliencePort):
             and len(window) >= self._failure_threshold
         ):
             self._opened_at[provider_name] = now
+            # Fire AFTER the OPEN marker is set so the breaker state is already
+            # consistent if the callback re-enters. Once per transition: the
+            # marker guard above ensures further failures while OPEN do not
+            # re-fire; a re-open after HALF-OPEN fires again (a sustained outage
+            # should keep nagging — the sink throttles).
+            if self._on_open is not None:
+                self._on_open(provider_name)
 
     def record_success(self, provider_name: str) -> None:
         self._failures.pop(provider_name, None)

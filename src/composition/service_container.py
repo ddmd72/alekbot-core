@@ -31,6 +31,7 @@ from ..services.fact_write_service import FactWriteService
 from ..services.provider_registry import ProviderRegistry
 from ..services.agent_context_builder import AgentContextBuilder
 from ..services.alerting_llm_proxy import AlertingLLMProxy
+from ..services.provider_breaker_alerter import ProviderBreakerAlerter
 from ..services.caching_llm_proxy import CachingLLMProxy
 from ..services.prompt_cache_strategy import PromptCacheStrategy
 from ..services.prompt_component_service import PromptComponentService
@@ -93,7 +94,14 @@ class ServiceContainer:
         # Provider-level circuit breaker — process-local singleton.
         # Shared by all agents via AgentExecutionContext.resilience_port.
         # Replace with Redis/Firestore adapter when multi-instance deployment lands.
-        self.resilience_port = InMemoryProviderResilience()
+        # on_open escalates a tripped breaker to Slack: failover keeps users served
+        # on transient faults, but a chronically-down provider would otherwise be
+        # masked silently — the breaker trip is the "transient became chronic" signal.
+        breaker_on_open = None
+        if alert_webhook is not None:
+            self.breaker_alerter = ProviderBreakerAlerter(alert_fn=alert_webhook.post)
+            breaker_on_open = self.breaker_alerter.on_open
+        self.resilience_port = InMemoryProviderResilience(on_open=breaker_on_open)
 
         # ------------------------------------------------------------------
         # Email search adapters (shared, stateless)
