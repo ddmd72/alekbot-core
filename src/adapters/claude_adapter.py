@@ -289,6 +289,17 @@ class ClaudeAdapter(LLMPort):
                     raise LLMUnavailableError(str(e), http_status=503) from e
                 if isinstance(status, int) and 500 <= status < 600:
                     raise LLMServerError(str(e), http_status=status) from e
+                # Grammar compilation timeout: a 400 by HTTP status, but a
+                # transient SERVER-side fault — Anthropic's constrained-decoding
+                # grammar compiler timed out building the response_schema, not a
+                # malformed request. Classify as a failover trigger (like the
+                # overloaded_error case above) so Smart is served by another
+                # provider instead of failing terminally. A chronic recurrence
+                # accumulates provider failures and trips the breaker, which
+                # alerts — so we recover transients silently and escalate only
+                # the persistent case, rather than masking it.
+                if status == 400 and "Grammar compilation timed out" in str(e):
+                    raise LLMServerError(str(e), http_status=status) from e
                 # 4xx (non-429, e.g. 400 credit-balance / bad request) → deterministic
                 # client error. Not a failover trigger; surfaces immediately + alerts.
                 if isinstance(status, int) and 400 <= status < 500:

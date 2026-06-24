@@ -964,6 +964,40 @@ async def test_api_status_400_raises_llm_client_error():
     assert exc_info.value.http_status == 400
 
 
+@pytest.mark.asyncio
+async def test_grammar_compilation_timeout_400_raises_llm_server_error():
+    """400 "Grammar compilation timed out" → LLMServerError, NOT LLMClientError.
+
+    A grammar-compilation timeout is a 400 by HTTP status but a transient
+    server-side fault: Anthropic's constrained-decoding compiler timed out
+    building the response_schema, not a malformed request. Classifying it as
+    LLMServerError makes it a FAILOVER_TRIGGER_TYPE so Smart is served by another
+    provider instead of failing terminally. Regression guard for 2026-06-23,
+    where this 400 reached the user as a terminal failure (lost reminder)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    sdk_exc = anthropic.APIStatusError(
+        message=(
+            "Error code: 400 - {'type': 'error', 'error': {'type': "
+            "'invalid_request_error', 'message': 'Grammar compilation timed out.'}}"
+        ),
+        response=MagicMock(status_code=400),
+        body={"error": {"type": "invalid_request_error",
+                        "message": "Grammar compilation timed out."}},
+    )
+    adapter.client.messages.stream = lambda **kw: _make_failing_cm(sdk_exc)
+
+    with pytest.raises(LLMServerError) as exc_info:
+        await adapter.generate_content(
+            request=LLMRequest(
+                model_name="claude-sonnet-4-6",
+                system_instruction="test",
+                messages=_MESSAGES,
+            )
+        )
+
+    assert exc_info.value.http_status == 400
+
+
 # ---------------------------------------------------------------------------
 # F4.5 Phase 2 — new exception translations
 # ---------------------------------------------------------------------------
