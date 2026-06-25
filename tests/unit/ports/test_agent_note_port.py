@@ -52,6 +52,12 @@ class TestAgentNotePortContract:
     def test_has_mark_fire_delivered(self):
         assert getattr(AgentNotePort.mark_fire_delivered, "__isabstractmethod__", False)
 
+    def test_has_claim_one_time_if_due_at(self):
+        assert getattr(AgentNotePort.claim_one_time_if_due_at, "__isabstractmethod__", False)
+
+    def test_claim_one_time_if_due_at_is_async(self):
+        assert inspect.iscoroutinefunction(AgentNotePort.claim_one_time_if_due_at)
+
     def test_all_abstract_methods_are_async(self):
         for name in ("create_note", "delete_note", "update_note", "get_note",
                      "list_active_notes", "list_due_reminders",
@@ -64,7 +70,7 @@ class TestAgentNotePortContract:
             name for name, method in inspect.getmembers(AgentNotePort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 9, f"Expected 9 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 10, f"Expected 10 abstract methods, got {abstract_methods}"
 
     def test_deprecated_reschedule_is_gone(self):
         """The unconditional reschedule() was removed in Step #7 because

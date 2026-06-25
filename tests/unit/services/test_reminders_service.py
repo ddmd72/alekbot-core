@@ -87,7 +87,7 @@ def notes_port():
     p.list_due_reminders.return_value = []
     # Default: every claim succeeds. Tests override per-scenario.
     p.reschedule_if_due_at.return_value = True
-    p.delete_if_due_at.return_value = True
+    p.claim_one_time_if_due_at.return_value = True
     return p
 
 
@@ -181,7 +181,7 @@ class TestUserResolution:
 
 
 # ---------------------------------------------------------------------------
-# One-time reminder — claim via delete_if_due_at
+# One-time reminder — claim via claim_one_time_if_due_at (marks fired, no delete)
 # ---------------------------------------------------------------------------
 
 class TestOneTimeReminder:
@@ -191,15 +191,18 @@ class TestOneTimeReminder:
     ):
         note = _make_note(recurrence=None)
         notes_port.list_due_reminders.return_value = [note]
-        notes_port.delete_if_due_at.return_value = True
+        notes_port.claim_one_time_if_due_at.return_value = True
 
         result, _ = await service.fire_due_reminders(now_utc=_NOW)
 
         assert result["enqueued"] == 1
-        notes_port.delete_if_due_at.assert_called_once_with(
+        # One-time claim marks fired (last_fired=now) WITHOUT deleting, so the
+        # worker can still read the note's content to build the alert.
+        notes_port.claim_one_time_if_due_at.assert_called_once_with(
             note_id=_NOTE_ID,
             user_id=_USER_ID,
             expected_due=note.due,
+            last_fired=_NOW,
         )
         notes_port.reschedule_if_due_at.assert_not_called()
         task_dispatch.enqueue_worker_task.assert_called_once()
@@ -211,7 +214,7 @@ class TestOneTimeReminder:
         claim_lost. No enqueue, no log noise that resembles a failure."""
         note = _make_note(recurrence=None)
         notes_port.list_due_reminders.return_value = [note]
-        notes_port.delete_if_due_at.return_value = False
+        notes_port.claim_one_time_if_due_at.return_value = False
 
         result, _ = await service.fire_due_reminders(now_utc=_NOW)
 
@@ -291,8 +294,8 @@ class TestMultipleNotes:
             _make_note(note_id="n3"),  # claim won
         ]
         notes_port.list_due_reminders.return_value = notes
-        # First and third one-time deletes succeed; middle one fails.
-        notes_port.delete_if_due_at.side_effect = [True, False, True]
+        # First and third one-time claims succeed; middle one fails.
+        notes_port.claim_one_time_if_due_at.side_effect = [True, False, True]
 
         result, _ = await service.fire_due_reminders(now_utc=_NOW)
 

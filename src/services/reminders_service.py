@@ -67,8 +67,9 @@ class RemindersService:
         For each due note:
           1. Resolve the user's timezone (skip if user gone).
           2. Recurrent → ``reschedule_if_due_at``; one-time →
-             ``delete_if_due_at``. The atomic precondition on ``due``
-             is the cross-process at-most-once primitive.
+             ``claim_one_time_if_due_at`` (marks fired, does NOT delete —
+             the worker reads the note and deletes it after delivery). The
+             atomic precondition is the cross-process at-most-once primitive.
           3. On successful claim, enqueue ``execute_reminder``.
           4. On failed claim (concurrent tick won), skip silently.
         """
@@ -108,14 +109,18 @@ class RemindersService:
                         note.user_id[:8],
                     )
             else:
-                claimed = await self._notes_port.delete_if_due_at(
+                # One-time: claim WITHOUT deleting so the execute-worker can
+                # still read the note's content to build the alert. The note
+                # is deleted by the worker after successful delivery.
+                claimed = await self._notes_port.claim_one_time_if_due_at(
                     note_id=note.note_id,
                     user_id=note.user_id,
                     expected_due=note.due,
+                    last_fired=now,
                 )
                 if claimed:
                     logger.info(
-                        "[Reminders] Claimed (one-time) %s: deleted (user=%s)",
+                        "[Reminders] Claimed (one-time) %s: marked fired (user=%s)",
                         note.note_id, note.user_id[:8],
                     )
 
