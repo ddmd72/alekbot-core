@@ -53,6 +53,7 @@ def _make_channel_info() -> NotificationChannel:
 def _make_response_channel(max_message_length: int = 4000) -> MagicMock:
     ch = MagicMock()
     ch.send_message = AsyncMock(return_value={"ts": "msg-placeholder-ts", "channel": "D0123456"})
+    ch.send_long_text = AsyncMock(return_value={"ts": "msg-placeholder-ts", "channel": "D0123456"})
     ch.send_rich_content = AsyncMock()
     ch.send_chunked_message = AsyncMock()
     ch.max_message_length = max_message_length
@@ -113,27 +114,29 @@ class TestNotifySmartResponse:
     """notify() correctly delivers all three fields of SmartResponse."""
 
     async def test_text_only_smart_response(self, service, coordinator, response_channel):
-        """Plain text SmartResponse: send_message called, no rich_content delivery."""
+        """Plain text SmartResponse: forwarded to send_long_text, no rich_content delivery."""
         smart = SmartResponse(text="Hello user")
         coordinator.route_message.return_value = _make_success_response(smart)
 
         await service.notify(_USER_ID, _ACCOUNT_ID, "some alert", kind=NotificationKind.INTERACTIVE)
 
-        response_channel.send_message.assert_awaited_once()
-        call_args = response_channel.send_message.call_args
+        # Delivery (single-vs-thread) is owned by the channel via send_long_text;
+        # notify only forwards the text + link_list.
+        response_channel.send_long_text.assert_awaited_once()
+        call_args = response_channel.send_long_text.call_args
         assert call_args[0][0] == "Hello user"
         assert call_args[1].get("link_list") is None
         response_channel.send_rich_content.assert_not_awaited()
 
     async def test_link_list_delivered(self, service, coordinator, response_channel):
-        """SmartResponse with link_list: send_message receives exact text and link_list."""
+        """SmartResponse with link_list: send_long_text receives exact text and link_list."""
         smart = SmartResponse(text="See [Report][1].", link_list=_LINK_LIST)
         coordinator.route_message.return_value = _make_success_response(smart)
 
         await service.notify(_USER_ID, _ACCOUNT_ID, "alert with links", kind=NotificationKind.INTERACTIVE)
 
-        response_channel.send_message.assert_awaited_once()
-        call_args = response_channel.send_message.call_args
+        response_channel.send_long_text.assert_awaited_once()
+        call_args = response_channel.send_long_text.call_args
         assert call_args[0][0] == "See [Report][1]."
         assert call_args[1]["link_list"] == _LINK_LIST
         response_channel.send_rich_content.assert_not_awaited()
@@ -145,8 +148,8 @@ class TestNotifySmartResponse:
 
         await service.notify(_USER_ID, _ACCOUNT_ID, "alert with table", kind=NotificationKind.INTERACTIVE)
 
-        response_channel.send_message.assert_awaited_once()
-        assert response_channel.send_message.call_args[0][0] == "Here is your table."
+        response_channel.send_long_text.assert_awaited_once()
+        assert response_channel.send_long_text.call_args[0][0] == "Here is your table."
         response_channel.send_rich_content.assert_awaited_once_with(_RICH_CONTENT)
 
     async def test_link_list_and_rich_content_delivered(self, service, coordinator, response_channel):
@@ -160,20 +163,20 @@ class TestNotifySmartResponse:
 
         await service.notify(_USER_ID, _ACCOUNT_ID, "deep research complete", kind=NotificationKind.INTERACTIVE)
 
-        response_channel.send_message.assert_awaited_once()
-        call_args = response_channel.send_message.call_args
+        response_channel.send_long_text.assert_awaited_once()
+        call_args = response_channel.send_long_text.call_args
         assert call_args[0][0] == "Research done. [Повний звіт][1]."
         assert call_args[1]["link_list"] == _LINK_LIST
         response_channel.send_rich_content.assert_awaited_once_with(_RICH_CONTENT)
 
     async def test_empty_link_list_not_forwarded(self, service, coordinator, response_channel):
-        """Empty link_list → send_message gets link_list=None, not an empty list."""
+        """Empty link_list → send_long_text gets link_list=None, not an empty list."""
         smart = SmartResponse(text="No links here.", link_list=[])
         coordinator.route_message.return_value = _make_success_response(smart)
 
         await service.notify(_USER_ID, _ACCOUNT_ID, "plain alert", kind=NotificationKind.INTERACTIVE)
 
-        call_kwargs = response_channel.send_message.call_args[1]
+        call_kwargs = response_channel.send_long_text.call_args[1]
         assert call_kwargs.get("link_list") is None
 
     async def test_no_send_when_text_empty(self, service, coordinator, response_channel):
@@ -186,44 +189,38 @@ class TestNotifySmartResponse:
         response_channel.send_message.assert_not_awaited()
         response_channel.send_rich_content.assert_awaited_once_with(_RICH_CONTENT)
 
-    async def test_long_text_uses_chunked_delivery(self, service, coordinator, channel_factory, state_repo):
-        """Text exceeding max_message_length: 📩 placeholder + send_chunked_message.
+    async def test_long_text_forwarded_whole_to_channel(self, service, coordinator, response_channel):
+        """notify() hands the FULL text + link_list to send_long_text untouched.
 
-        notify() posts a bare emoji as the placeholder (no locale dependency),
-        captures the ts, then expands via send_chunked_message.
-        SlackResponseChannel.send_message normalizes user ID → real DM channel ID on the
-        first post, so the subsequent chat.update inside send_chunked_message succeeds.
+        notify no longer estimates length or chooses single-vs-thread — that decision
+        moved into the channel (send_long_text), which measures the rendered length.
+        notify must therefore forward the complete body without truncating or pre-chunking.
         """
-        short_limit_channel = _make_response_channel(max_message_length=50)
-        channel_factory.create.return_value = short_limit_channel
-
-        long_text = "A" * 100  # exceeds limit of 50
+        long_text = "A" * 6000
         smart = SmartResponse(text=long_text, link_list=_LINK_LIST)
         coordinator.route_message.return_value = _make_success_response(smart)
 
         await service.notify(_USER_ID, _ACCOUNT_ID, "deep research alert", kind=NotificationKind.INTERACTIVE)
 
-        # First send_message call posts the placeholder emoji
-        short_limit_channel.send_message.assert_awaited_once_with("📩")
-        # send_chunked_message receives the full text + ts from placeholder
-        short_limit_channel.send_chunked_message.assert_awaited_once()
-        chunked_call = short_limit_channel.send_chunked_message.call_args
-        assert chunked_call[0][0] == long_text
-        assert chunked_call[0][1] == "msg-placeholder-ts"
-        assert chunked_call[1].get("link_list") == _LINK_LIST
+        response_channel.send_long_text.assert_awaited_once()
+        call_args = response_channel.send_long_text.call_args
+        assert call_args[0][0] == long_text  # full body, not truncated
+        assert call_args[1]["link_list"] == _LINK_LIST
+        # notify must not pre-empt the channel's decision with its own gating calls.
+        response_channel.send_chunked_message.assert_not_awaited()
 
 
 class TestNotifyLegacyStringResult:
     """notify() legacy path: result is a plain string, not SmartResponse."""
 
     async def test_string_result_delivered(self, service, coordinator, response_channel):
-        """Plain string result: delivered as-is, no link_list, no rich_content."""
+        """Plain string result: delivered as-is via send_long_text, no link_list, no rich_content."""
         coordinator.route_message.return_value = _make_success_response("Plain text answer")
 
         await service.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)
 
-        response_channel.send_message.assert_awaited_once()
-        assert response_channel.send_message.call_args[0][0] == "Plain text answer"
+        response_channel.send_long_text.assert_awaited_once()
+        assert response_channel.send_long_text.call_args[0][0] == "Plain text answer"
         response_channel.send_rich_content.assert_not_awaited()
 
     async def test_none_result_not_delivered(self, service, coordinator, response_channel):
@@ -301,10 +298,10 @@ class TestNotifyRaw:
     """notify_raw() delivers text directly without agent routing."""
 
     async def test_raw_text_delivered(self, service, state_repo, channel_factory, response_channel):
-        """notify_raw: send_message called with exact text."""
+        """notify_raw: send_long_text called with exact text (threads if long, no truncation)."""
         await service.notify_raw(_USER_ID, _ACCOUNT_ID, "📄 Full report: https://example.com")
 
-        response_channel.send_message.assert_awaited_once_with(
+        response_channel.send_long_text.assert_awaited_once_with(
             "📄 Full report: https://example.com"
         )
         response_channel.send_rich_content.assert_not_awaited()
@@ -396,7 +393,7 @@ class TestNotifySlackAndHistory:
         )
         await svc.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)
 
-        sent_text = response_channel.send_message.call_args[0][0]
+        sent_text = response_channel.send_long_text.call_args[0][0]
         assert sent_text.startswith("<@U1234567>")
 
     async def test_history_saved_when_session_store_configured(
@@ -711,13 +708,13 @@ class TestNotifyExceptionPath:
         assert result.agent_status == AgentStatus.FAILED
         assert "router boom" in (result.error or "")
 
-    async def test_send_message_exception_returns_failed_result(
+    async def test_send_long_text_exception_returns_failed_result(
         self, service, coordinator, response_channel
     ):
         coordinator.route_message.return_value = _make_success_response(
             SmartResponse(text="hi")
         )
-        response_channel.send_message = AsyncMock(
+        response_channel.send_long_text = AsyncMock(
             side_effect=RuntimeError("slack down")
         )
 

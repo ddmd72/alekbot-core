@@ -125,6 +125,33 @@ class ResponseChannel(Protocol):
         ...
 
     @abstractmethod
+    async def send_long_text(
+        self, text: str, link_list: Optional[list] = None, thread_id: Optional[str] = None
+    ) -> Any:
+        """
+        Deliver arbitrary-length text without truncation, threading any overflow.
+
+        The adapter owns the single-vs-thread decision because only it knows the
+        rendered length after platform link resolution and formatting. It resolves
+        link anchors and formats FIRST, then:
+          - rendered length fits → one message (no placeholder).
+          - rendered length overflows → a placeholder message + the body split into
+            threaded chunks (via send_chunked_message).
+
+        Callers must NOT pre-estimate length from the raw text — the raw length is
+        smaller than the rendered length once [N] anchors expand into full links.
+
+        Args:
+            text: Full message content (may contain [N] link anchors).
+            link_list: Optional [{anchor, title, url}] — anchors resolved platform-specifically.
+            thread_id: Optional thread/conversation identifier.
+
+        Returns:
+            Platform-specific object for the first (or only) message sent.
+        """
+        ...
+
+    @abstractmethod
     async def send_flat_response(self, text: str, status_message_id: str) -> None:
         """
         Send a response as top-level messages (no threads).

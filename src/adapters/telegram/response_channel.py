@@ -383,6 +383,28 @@ class TelegramResponseChannel(ResponseChannel):
         for chunk in chunks:
             await self.send_message(chunk, thread_id=thread_id or message_id, link_list=link_list)
 
+    async def send_long_text(
+        self, text: str, link_list: Optional[List] = None, thread_id: Optional[str] = None
+    ) -> Any:
+        """Deliver arbitrary-length text, threading overflow into chunks.
+
+        Mirrors send_message's truncation gates so the single-vs-thread decision is
+        made on the same lengths send_message would truncate on: the RAW text at
+        0.7×max (MarkdownV2 escaping inflates length) and the rendered text at the
+        hard max. A body that expands past either gate once [N] anchors become
+        [title](url) is routed to the threaded path instead of being truncated.
+        """
+        safe_length = int(TELEGRAM_MAX_MESSAGE_LENGTH * 0.7)
+        rendered = self._resolve_links_telegram(self._format_for_platform(text), link_list)
+        if len(text) <= safe_length and len(rendered) <= TELEGRAM_MAX_MESSAGE_LENGTH:
+            return await self.send_message(text, thread_id=thread_id, link_list=link_list)
+
+        placeholder = await self.send_message("📩", thread_id)
+        await self.send_chunked_message(
+            text, placeholder, thread_id=thread_id, link_list=link_list
+        )
+        return placeholder
+
     async def send_flat_response(self, text: str, status_message_id: str) -> None:
         """Send response as top-level messages. First chunk replaces status message."""
         chunks = self.chunker.split(text)

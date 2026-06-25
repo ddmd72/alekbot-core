@@ -157,7 +157,9 @@ class UserNotificationService:
             return
 
         try:
-            await response_channel.send_message(text)
+            # send_long_text so a long raw body threads instead of being truncated;
+            # no link_list here (notify_raw delivers verbatim text, no anchor resolution).
+            await response_channel.send_long_text(text)
             logger.info(
                 f"📬 [Notification] Raw delivery to {channel_info.platform} "
                 f"channel={channel_info.channel_id} user={user_id[:8]}"
@@ -311,14 +313,11 @@ class UserNotificationService:
                 if channel_info.platform == "slack" and channel_info.channel_id.startswith("U"):
                     text = f"<@{channel_info.channel_id}> {text}"
 
-                if len(text) > response_channel.max_message_length:
-                    placeholder = await response_channel.send_message("📩")
-                    message_id = placeholder['ts']
-                    await response_channel.send_chunked_message(
-                        text, message_id, link_list=link_list or None
-                    )
-                else:
-                    await response_channel.send_message(text, link_list=link_list or None)
+                # The channel owns the single-vs-thread decision: it measures the
+                # RENDERED length (after link resolution + formatting), so a body
+                # that fits raw but overflows once [N] anchors expand into full
+                # links is threaded instead of truncated.
+                await response_channel.send_long_text(text, link_list=link_list or None)
                 logger.info(
                     f"📬 [Notification] Sent to {channel_info.platform} "
                     f"channel={channel_info.channel_id} user={user_id[:8]} kind={kind.value}"

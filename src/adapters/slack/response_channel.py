@@ -228,6 +228,29 @@ class SlackResponseChannel(ResponseChannel):
         for chunk in chunks:
             await self.send_message(chunk, thread_ts)
 
+    async def send_long_text(
+        self, text: str, link_list: Optional[list] = None, thread_id: Optional[str] = None
+    ) -> Any:
+        """Deliver arbitrary-length text, threading overflow into chunks.
+
+        Measures the RENDERED length (after link resolution + mrkdwn formatting) —
+        the same string send_message would truncate on — so a body that sits under
+        the raw limit but expands past it once [N] anchors become <url|title> is
+        routed to the threaded path instead of being silently truncated.
+        """
+        rendered = self._format_for_platform(self._resolve_links_slack(text, link_list))
+        if len(rendered) <= SLACK_MAX_MESSAGE_LENGTH:
+            return await self.send_message(text, thread_id=thread_id, link_list=link_list)
+
+        # Overflow: post a placeholder, then expand into threaded chunks. The
+        # placeholder send also normalises channel_id (U… → D…) for the subsequent
+        # chat.update inside send_chunked_message.
+        placeholder = await self.send_message("📩", thread_id)
+        await self.send_chunked_message(
+            text, placeholder["ts"], thread_id=thread_id, link_list=link_list
+        )
+        return placeholder
+
     async def send_flat_response(self, text: str, status_message_id: str) -> None:
         """Send response as top-level messages. First chunk replaces status message."""
         formatted = self._format_for_platform(text)
