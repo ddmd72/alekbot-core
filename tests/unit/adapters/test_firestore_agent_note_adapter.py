@@ -716,6 +716,116 @@ class TestDeleteIfDueAt:
 
 
 # ---------------------------------------------------------------------------
+# claim_one_time_if_due_at tests
+# ---------------------------------------------------------------------------
+
+
+class TestClaimOneTimeIfDueAt:
+
+    @pytest.fixture(autouse=True)
+    def patch_async_transactional(self):
+        with patch(
+            "src.adapters.firestore_agent_note_adapter.firestore.async_transactional",
+            side_effect=lambda fn: fn,
+        ):
+            yield
+
+    def _setup(self, db_mock, col_mock, snapshot_data, *, exists=True):
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, snapshot_data, exists=exists,
+        ))
+        col_mock.document.return_value = doc_ref
+
+        transaction = MagicMock()
+        transaction.update = MagicMock()
+        db_mock.transaction.return_value = transaction
+        return doc_ref, transaction
+
+    async def test_returns_true_and_stamps_last_fired_when_unfired(
+        self, adapter, db_mock, col_mock,
+    ):
+        """Match + owned + not yet fired → stamp last_fired, do NOT delete."""
+        doc_ref, transaction = self._setup(
+            db_mock, col_mock,
+            {**_make_note_data(due=_PAST), "last_fired": None},
+        )
+
+        result = await adapter.claim_one_time_if_due_at(
+            note_id=_NOTE_ID, user_id=_USER_ID, expected_due=_PAST, last_fired=_NOW,
+        )
+
+        assert result is True
+        transaction.update.assert_called_once_with(doc_ref, {"last_fired": _NOW})
+
+    async def test_returns_false_when_already_fired_for_this_due(
+        self, adapter, db_mock, col_mock,
+    ):
+        """Re-claim guard: last_fired >= due → another tick already claimed."""
+        _, transaction = self._setup(
+            db_mock, col_mock,
+            {**_make_note_data(due=_PAST), "last_fired": _NOW},
+        )
+
+        result = await adapter.claim_one_time_if_due_at(
+            note_id=_NOTE_ID, user_id=_USER_ID, expected_due=_PAST, last_fired=_NOW,
+        )
+
+        assert result is False
+        transaction.update.assert_not_called()
+
+    async def test_returns_false_on_ownership_mismatch(
+        self, adapter, db_mock, col_mock,
+    ):
+        _, transaction = self._setup(
+            db_mock, col_mock,
+            {**_make_note_data(user_id=_OTHER_USER_ID, due=_PAST), "last_fired": None},
+        )
+
+        result = await adapter.claim_one_time_if_due_at(
+            note_id=_NOTE_ID, user_id=_USER_ID, expected_due=_PAST, last_fired=_NOW,
+        )
+
+        assert result is False
+        transaction.update.assert_not_called()
+
+    async def test_returns_false_when_due_moved(
+        self, adapter, db_mock, col_mock,
+    ):
+        _, transaction = self._setup(
+            db_mock, col_mock,
+            {**_make_note_data(due=_PAST + timedelta(hours=1)), "last_fired": None},
+        )
+
+        result = await adapter.claim_one_time_if_due_at(
+            note_id=_NOTE_ID, user_id=_USER_ID, expected_due=_PAST, last_fired=_NOW,
+        )
+
+        assert result is False
+        transaction.update.assert_not_called()
+
+    async def test_returns_false_when_doc_missing(
+        self, adapter, db_mock, col_mock,
+    ):
+        _, transaction = self._setup(db_mock, col_mock, {}, exists=False)
+
+        result = await adapter.claim_one_time_if_due_at(
+            note_id=_NOTE_ID, user_id=_USER_ID, expected_due=_PAST, last_fired=_NOW,
+        )
+
+        assert result is False
+        transaction.update.assert_not_called()
+
+    async def test_returns_false_for_empty_note_id(self, adapter, db_mock, col_mock):
+        result = await adapter.claim_one_time_if_due_at(
+            note_id="", user_id=_USER_ID, expected_due=_PAST, last_fired=_NOW,
+        )
+
+        assert result is False
+        col_mock.document.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # mark_fire_delivered tests
 # ---------------------------------------------------------------------------
 

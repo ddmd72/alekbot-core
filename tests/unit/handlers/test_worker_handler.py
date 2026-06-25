@@ -947,6 +947,79 @@ class TestHandleExecuteReminder:
             note_id=_EXECUTE_NOTE_ID, due_at=_EXECUTE_DUE,
         )
 
+    async def test_one_time_note_deleted_after_delivery(self):
+        """One-time note is claimed (not deleted) at fire-time, so the worker
+        removes it AFTER successful delivery — mark_fire_delivered first, then
+        delete_note."""
+        from src.domain.agent import AgentStatus
+        from src.domain.notify_result import NotifyResult
+
+        worker, ns = _make_full_worker()
+        ns.notes_port.get_note.return_value = _make_reminder_note()  # recurrence=None
+        profile = MagicMock()
+        profile.account_id = "acc-x"
+        ns.user_repo.get_user.return_value = profile
+        ns.notification.notify.return_value = NotifyResult(
+            delivered=True, agent_status=AgentStatus.SUCCESS,
+        )
+
+        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        assert status == 200
+        ns.notes_port.mark_fire_delivered.assert_awaited_once()
+        ns.notes_port.delete_note.assert_awaited_once_with(
+            note_id=_EXECUTE_NOTE_ID, user_id=_EXECUTE_USER_ID,
+        )
+
+    async def test_recurrent_note_not_deleted_after_delivery(self):
+        """Recurrent note is rescheduled (not deleted) — the worker must NOT
+        delete it after delivery, only stamp last_delivered_due."""
+        from src.domain.agent import AgentStatus
+        from src.domain.agent_note import AgentNote, ReminderRecurrence
+        from src.domain.notify_result import NotifyResult
+
+        worker, ns = _make_full_worker()
+        recurrent = AgentNote(
+            note_id=_EXECUTE_NOTE_ID,
+            user_id=_EXECUTE_USER_ID,
+            text="weekly sync",
+            instruction="Post the weekly sync agenda.",
+            due=_EXECUTE_DUE,
+            recurrence=ReminderRecurrence(type="weekly", interval=1),
+            last_fired=None,
+            created_at=_EXECUTE_DUE - timedelta(hours=1),
+        )
+        ns.notes_port.get_note.return_value = recurrent
+        profile = MagicMock()
+        profile.account_id = "acc-x"
+        ns.user_repo.get_user.return_value = profile
+        ns.notification.notify.return_value = NotifyResult(
+            delivered=True, agent_status=AgentStatus.SUCCESS,
+        )
+
+        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        assert status == 200
+        ns.notes_port.mark_fire_delivered.assert_awaited_once()
+        ns.notes_port.delete_note.assert_not_called()
+
+    async def test_already_delivered_one_time_is_cleaned_up(self):
+        """already_delivered retry for a one-time note (prior run crashed after
+        stamping, before deleting) → delete the inert note, no re-delivery."""
+        worker, ns = _make_full_worker()
+        ns.notes_port.get_note.return_value = _make_reminder_note(
+            last_delivered_due=_EXECUTE_DUE,  # recurrence=None
+        )
+
+        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        assert status == 200
+        assert result["status"] == "already_delivered"
+        ns.notification.notify.assert_not_called()
+        ns.notes_port.delete_note.assert_awaited_once_with(
+            note_id=_EXECUTE_NOTE_ID, user_id=_EXECUTE_USER_ID,
+        )
+
     async def test_passes_suppress_transient_retry(self):
         """Handler returns 5xx on failure → Cloud Tasks retries the task, so notify
         is told to suppress the agent's in-process retry (no layer1 × layer2)."""

@@ -551,8 +551,9 @@ class WorkerHandler:
 
         note = await self._notes_port.get_note(user_id=user_id, note_id=note_id)
         if note is None:
-            # One-time fired-and-deleted, or recurrent that the user has
-            # since removed. Either way: nothing to deliver, ack the task.
+            # One-time already delivered-and-deleted by a prior worker run, or
+            # a note the user has since removed. Either way: nothing to
+            # deliver, ack the task.
             logger.info(
                 "[Worker] execute_reminder: note_gone note=%s user=%s",
                 note_id, user_id[:8],
@@ -561,6 +562,10 @@ class WorkerHandler:
 
         # Idempotency guard against Cloud Tasks retries.
         if note.last_delivered_due is not None and note.last_delivered_due == due_at:
+            # Clean up a one-time note that was stamped but not yet deleted
+            # (prior run crashed between mark_fire_delivered and delete_note).
+            if note.recurrence is None:
+                await self._notes_port.delete_note(note_id=note_id, user_id=user_id)
             logger.info(
                 "[Worker] execute_reminder: already_delivered note=%s due=%s",
                 note_id, due_at.isoformat(),
@@ -615,7 +620,15 @@ class WorkerHandler:
                 "agent_status": result.agent_status.value,
             }, 500
 
+        # Stamp idempotency FIRST, then remove a fired one-time note. Order
+        # matters: if we crash between the two, a Cloud Tasks retry sees
+        # last_delivered_due == due_at and short-circuits (already_delivered)
+        # rather than re-delivering.
         await self._notes_port.mark_fire_delivered(note_id=note_id, due_at=due_at)
+        if note.recurrence is None:
+            # One-time reminder: claimed (not deleted) at fire-time so its
+            # content survived for this delivery; remove it now that it fired.
+            await self._notes_port.delete_note(note_id=note_id, user_id=user_id)
         logger.info(
             "[Worker] execute_reminder: ok note=%s user=%s due=%s",
             note_id, user_id[:8], due_at.isoformat(),

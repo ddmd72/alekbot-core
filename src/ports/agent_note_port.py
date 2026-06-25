@@ -91,6 +91,35 @@ class AgentNotePort(ABC):
         """
 
     @abstractmethod
+    async def claim_one_time_if_due_at(
+        self,
+        note_id: str,
+        user_id: str,
+        expected_due: datetime,
+        last_fired: datetime,
+    ) -> bool:
+        """One-time claim that marks the fire WITHOUT deleting the note.
+
+        Atomically stamps ``last_fired`` ONLY IF the note still belongs to
+        ``user_id``, its ``due`` equals ``expected_due``, AND it has not
+        already fired for this ``due`` (``last_fired`` is None or earlier
+        than ``due``). Returns ``True`` if this caller won the claim,
+        ``False`` otherwise (ownership mismatch, ``due`` moved, or a
+        concurrent tick already claimed it).
+
+        Unlike the recurrent ``reschedule_if_due_at``, ``due`` does not move,
+        so the ``last_fired < due`` guard is what makes the claim
+        at-most-once: after the first claim ``last_fired >= due`` and every
+        later tick fails the precondition.
+
+        The note is preserved so the execute-worker can load its content to
+        build the alert (the one-time note is deleted by the worker AFTER
+        successful delivery, mirroring the recurrent flow). This replaces the
+        old delete-at-claim path, which removed the note before the worker
+        could read it.
+        """
+
+    @abstractmethod
     async def mark_fire_delivered(self, note_id: str, due_at: datetime) -> None:
         """Record that the fire scheduled for ``due_at`` has been
         delivered to the user.

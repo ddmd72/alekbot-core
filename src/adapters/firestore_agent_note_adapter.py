@@ -246,6 +246,52 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
 
         return await _txn(transaction)
 
+    async def claim_one_time_if_due_at(
+        self,
+        note_id: str,
+        user_id: str,
+        expected_due: datetime,
+        last_fired: datetime,
+    ) -> bool:
+        """Atomic conditional one-time claim via Firestore transaction.
+
+        Same precondition pattern as ``reschedule_if_due_at`` (ownership +
+        ``due == expected_due``), with the extra ``last_fired < due`` guard.
+        Because ``due`` is NOT moved here (one-time has no next due), that
+        guard is the at-most-once primitive: after the first claim
+        ``last_fired >= due``, so every later tick fails the precondition.
+        The note is left in place for the execute-worker to read.
+        """
+        if not note_id:
+            return False
+        doc_ref = self._col.document(note_id)
+        transaction = self._db.transaction()
+
+        @firestore.async_transactional
+        async def _txn(txn) -> bool:
+            snapshot = await doc_ref.get(transaction=txn)
+            if not snapshot.exists:
+                return False
+            data = snapshot.to_dict()
+            if data.get("user_id") != user_id:
+                logger.debug(
+                    "[AgentNote] claim_one_time_if_due_at ownership mismatch: note=%s user=%s",
+                    note_id, user_id[:8],
+                )
+                return False
+            current_due = self._ensure_utc(data.get("due"))
+            expected = self._ensure_utc(expected_due)
+            if current_due != expected:
+                return False
+            # Re-claim guard: already fired for this due-time.
+            prev_fired = self._ensure_utc(data.get("last_fired"))
+            if prev_fired is not None and current_due is not None and prev_fired >= current_due:
+                return False
+            txn.update(doc_ref, {"last_fired": last_fired})
+            return True
+
+        return await _txn(transaction)
+
     async def mark_fire_delivered(self, note_id: str, due_at: datetime) -> None:
         """Stamp ``last_delivered_due`` with the fire-time we just delivered.
 
