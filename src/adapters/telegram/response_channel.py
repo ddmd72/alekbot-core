@@ -17,7 +17,9 @@ from ...utils.logger import logger
 
 # Telegram-specific constraints
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-TELEGRAM_CHUNK_SIZE = 4000
+# Chunk size must stay under send_message's raw safe_length (0.7×max = 2867),
+# otherwise each chunk would be re-truncated on send (MarkdownV2 escaping headroom).
+TELEGRAM_CHUNK_SIZE = 2800
 
 
 class TelegramResponseChannel(ResponseChannel):
@@ -362,48 +364,55 @@ class TelegramResponseChannel(ResponseChannel):
         link_list: Optional[List] = None,
     ) -> None:
         """
-        Send long message as multiple messages.
+        Send a long message across multiple Telegram messages.
+
+        Telegram private chats have NO Slack-style threads, so chunks are sent
+        as sequential messages: the first REPLACES the status/placeholder bubble
+        with real content (never a contentless "ready" marker), the rest follow
+        as new messages. ``thread_id`` is only meaningful for forum-topic
+        supergroups (``message_thread_id``); it is NOT a per-message reply
+        target, so the prior ``thread_id or message_id`` fallback was a bug —
+        message_id is a plain message id and Telegram rejects it as a topic id
+        in a DM ("message thread not found"), dropping every chunk.
 
         Args:
             text: Full message content
-            message_id: Message to update with first chunk
-            thread_id: Optional thread identifier
+            message_id: Message to update with the first chunk
+            thread_id: Optional forum-topic id (None in DMs)
             link_list: Optional [{anchor, title, url}] — [N] anchors resolved to [title](url)
         """
         chunks = self.chunker.split(text)
-
-        if len(chunks) == 1:
-            await self.update_message(message_id, chunks[0], link_list=link_list)
+        if not chunks:
             return
 
-        # Update first message (no content — link_list not needed here)
-        await self.update_message(message_id, self._ui_string(UIMessage.RESPONSE_READY))
+        # First chunk replaces the status bubble with real content.
+        await self.update_message(message_id, chunks[0], link_list=link_list)
 
-        # Send remaining chunks; link_list applies to all chunks
-        for chunk in chunks:
-            await self.send_message(chunk, thread_id=thread_id or message_id, link_list=link_list)
+        # Remaining chunks as follow-up messages (no fake thread_id).
+        for chunk in chunks[1:]:
+            await self.send_message(chunk, thread_id=thread_id, link_list=link_list)
 
     async def send_long_text(
         self, text: str, link_list: Optional[List] = None, thread_id: Optional[str] = None
     ) -> Any:
-        """Deliver arbitrary-length text, threading overflow into chunks.
+        """Deliver arbitrary-length text without truncation.
 
-        Mirrors send_message's truncation gates so the single-vs-thread decision is
-        made on the same lengths send_message would truncate on: the RAW text at
-        0.7×max (MarkdownV2 escaping inflates length) and the rendered text at the
-        hard max. A body that expands past either gate once [N] anchors become
-        [title](url) is routed to the threaded path instead of being truncated.
+        Decides single-vs-multi on the same lengths send_message would truncate
+        on: the RAW text at 0.7×max (MarkdownV2 escaping inflates length) and the
+        rendered text at the hard max. On overflow it sends sequential messages —
+        each chunk is a real message, no contentless placeholder, and no fake
+        thread_id (Telegram DMs have no threads). Returns the first message id.
         """
         safe_length = int(TELEGRAM_MAX_MESSAGE_LENGTH * 0.7)
         rendered = self._resolve_links_telegram(self._format_for_platform(text), link_list)
         if len(text) <= safe_length and len(rendered) <= TELEGRAM_MAX_MESSAGE_LENGTH:
             return await self.send_message(text, thread_id=thread_id, link_list=link_list)
 
-        placeholder = await self.send_message("📩", thread_id)
-        await self.send_chunked_message(
-            text, placeholder, thread_id=thread_id, link_list=link_list
-        )
-        return placeholder
+        chunks = self.chunker.split(text)
+        first = await self.send_message(chunks[0], thread_id=thread_id, link_list=link_list)
+        for chunk in chunks[1:]:
+            await self.send_message(chunk, thread_id=thread_id, link_list=link_list)
+        return first
 
     async def send_flat_response(self, text: str, status_message_id: str) -> None:
         """Send response as top-level messages. First chunk replaces status message."""

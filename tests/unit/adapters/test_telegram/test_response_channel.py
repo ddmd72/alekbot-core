@@ -171,13 +171,33 @@ class TestTelegramResponseChannel:
             thread_id=None
         )
 
-        # Should update first message to "готова"
+        # First message is updated with real content (chunk 0), not a "ready" marker.
         mock_bot.edit_message_text.assert_called_once()
         edit_call = mock_bot.edit_message_text.call_args
-        assert "Відповідь готова" in edit_call.kwargs['text']
+        assert "Paragraph" in edit_call.kwargs['text']
+        assert "Відповідь готова" not in edit_call.kwargs['text']
 
-        # Should send remaining chunks
+        # Remaining chunks sent as follow-up messages.
         assert mock_bot.send_message.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_send_chunked_message_no_fake_thread_id_in_dm(self, response_channel, mock_bot):
+        """Regression: follow-up chunks must NOT pass the placeholder message_id as
+        message_thread_id. Telegram DMs have no topics, so a non-topic id made the
+        API reject every chunk ('message thread not found') — only the bubble showed.
+        """
+        long_text = "Paragraph.\n\n" * 500  # ~5500 chars → multiple chunks
+        mock_message = MagicMock()
+        mock_message.message_id = 101
+        mock_bot.send_message.return_value = mock_message
+
+        await response_channel.send_chunked_message(
+            text=long_text, message_id="100", thread_id=None
+        )
+
+        assert mock_bot.send_message.call_count >= 1
+        for call in mock_bot.send_message.call_args_list:
+            assert call.kwargs.get("message_thread_id") is None
 
     @pytest.mark.asyncio
     async def test_send_rich_content_fallback(self, response_channel, mock_bot):
