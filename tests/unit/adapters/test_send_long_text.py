@@ -99,11 +99,12 @@ class TestTelegramSendLongText:
         return ch
 
     @pytest.mark.asyncio
-    async def test_raw_over_safe_length_threads(self):
-        """Telegram truncates raw at 0.7×max (2867); a 3000-char body must thread.
+    async def test_raw_over_safe_length_sends_sequential_messages(self):
+        """Telegram truncates raw at 0.7×max (2867); a 3000-char body must split.
 
-        The old service-level gate compared against the hard max (4096), so 3000
-        slipped through as a single message and got truncated at 2867.
+        Telegram DMs have no threads, so overflow is sent as SEQUENTIAL messages —
+        no contentless "📩" placeholder, no send_chunked indirection. The first
+        message carries real content.
         """
         ch = self._channel()
         safe_length = int(TELEGRAM_MAX_MESSAGE_LENGTH * 0.7)
@@ -113,11 +114,11 @@ class TestTelegramSendLongText:
 
         await ch.send_long_text(text)
 
-        ch.send_message.assert_awaited_once_with("📩", None)
-        ch.send_chunked_message.assert_awaited_once()
-        args, _ = ch.send_chunked_message.call_args
-        assert args[0] == text
-        assert args[1] == "ph-id"
+        ch.send_chunked_message.assert_not_awaited()
+        # Split into >= 2 real messages; first one is content, not a marker.
+        assert ch.send_message.await_count >= 2
+        first_arg = ch.send_message.await_args_list[0].args[0]
+        assert first_arg.startswith("C") and "📩" not in first_arg
 
     @pytest.mark.asyncio
     async def test_short_text_single_message(self):
