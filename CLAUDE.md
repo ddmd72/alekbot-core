@@ -772,6 +772,17 @@ DO — in this exact order:
 If the service writes debug files to GCS (e.g. `gs://...-debug-prompts/`), read the relevant
 request/response files with `gsutil cat` before theorizing about LLM behavior.
 
+**Reading logs/observability — "no `gcloud`" ≠ "no access".**
+- Local session: use the `gcloud logging read` / `gsutil` commands above.
+- Remote/web session (no CLI present): the SAME data is reachable from Python via the
+  Google client libraries (`google.cloud.logging`, `google.cloud.bigquery`) using the
+  service-account credentials that environment is already configured with. A missing
+  CLI does NOT mean the data is unavailable — query it programmatically.
+
+Two distinct sources (don't conflate): **Cloud Logging** = operational events / errors /
+tracebacks. **BigQuery observability dataset → `prompt_content` table** = actual LLM
+prompt/response content + tokens (30-day TTL). See `readme.md` (observability) for schema.
+
 **Reading logs costs 1 tool call. Building wrong theories costs 10+ turns and user patience.**
 
 ---
