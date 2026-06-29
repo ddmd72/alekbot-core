@@ -417,6 +417,13 @@ class ClaudeAdapter(LLMPort):
                     thought_signature=block.id,
                 ))
 
+        # TEMP tool-id tracing (2026-06-29): grounded path nulls raw_content — confirm the
+        # tool_use ids survive the pause_turn accumulation here.
+        if tool_calls:
+            _blocks = [(getattr(b, "name", None), getattr(b, "id", None))
+                       for b in accumulated_content if getattr(b, "type", None) == "tool_use"]
+            logger.info("🔎 [_grounded_stream_loop] tool_use blocks (name,id)=%s", _blocks)
+
         return LLMResponse(
             text=text,
             tool_calls=tool_calls,
@@ -555,9 +562,24 @@ class ClaudeAdapter(LLMPort):
                     if part.tool_call.thought_signature and part.tool_call.thought_signature not in used_ids:
                         return part.tool_call.thought_signature
 
+        # TEMP tracing (2026-06-29): dump what the backward search actually saw in every
+        # prior model message, so we know WHY no id matched (name mismatch? all sigs None?).
+        _seen = []
+        for i in range(current_idx - 1, -1, -1):
+            pm = messages[i]
+            if pm.role != "model":
+                continue
+            if pm.raw_content and hasattr(pm.raw_content, "content"):
+                _seen.append((i, "raw", [(getattr(b, "name", None), getattr(b, "id", None))
+                              for b in pm.raw_content.content
+                              if getattr(b, "type", None) == "tool_use"]))
+            else:
+                _seen.append((i, "parts", [(p.tool_call.name, p.tool_call.thought_signature)
+                              for p in pm.parts if p.tool_call]))
         logger.warning(
-            f"[ClaudeAdapter] Could not find tool_use ID for tool '{tool_name}'. "
-            f"This may cause API errors."
+            "🔎 [ClaudeAdapter] Could not find tool_use ID for tool '%s' (used_ids=%s) → 'unknown'. "
+            "Prior model messages' tool_use (idx,source,[(name,id)])=%s",
+            tool_name, sorted(i for i in used_ids if i and i != "unknown"), _seen,
         )
         return "unknown"
 
@@ -568,6 +590,18 @@ class ClaudeAdapter(LLMPort):
     ) -> List[Dict[str, Any]]:
         claude_messages = []
         for idx, msg in enumerate(messages):
+            # TEMP tool-id tracing (2026-06-29): for any message carrying tool parts, dump
+            # role / raw_content presence / each tool_call's thought_signature / each
+            # tool_response's carried tool_use_id. This shows the EXACT message where the id
+            # is missing in the history that the engine assembled.
+            _tc_sigs = [p.tool_call.thought_signature for p in msg.parts if p.tool_call]
+            _tr_ids = [(p.tool_response.get("name"), p.tool_response.get("tool_use_id"))
+                       for p in msg.parts if p.tool_response]
+            if _tc_sigs or _tr_ids:
+                logger.info(
+                    "🔎 [_convert_messages] msg %d role=%s raw_content=%s tool_call_sigs=%s tool_response=%s",
+                    idx, msg.role, msg.raw_content is not None, _tc_sigs, _tr_ids,
+                )
             # ====================================================================
             # MODIFIED Provider Refactor Session 22.1: Preserve provider-specific IDs
             # Issue: Round-trip loses Claude tool_use IDs when using raw_content
@@ -599,6 +633,15 @@ class ClaudeAdapter(LLMPort):
                 elif p.tool_call:
                     # Use thought_signature as ID (preserves Claude's original ID)
                     tool_id = p.tool_call.thought_signature or f"call_{int(time.time()*1000)}"
+                    if not p.tool_call.thought_signature:
+                        # TEMP tracing (2026-06-29): a tool_call reached serialization with NO id —
+                        # this is the orphan trigger. The matching tool_result will resolve to a
+                        # DIFFERENT value, so log loudly where it happened.
+                        logger.warning(
+                            "🔎 [_convert_messages] msg %d tool_call '%s' has NO thought_signature "
+                            "→ minted synthetic id=%s (orphan risk)",
+                            idx, p.tool_call.name, tool_id,
+                        )
                     content_parts.append({
                         "type": "tool_use",
                         "id": tool_id,
@@ -817,6 +860,14 @@ class ClaudeAdapter(LLMPort):
                     args=content.input,
                     thought_signature=content.id # Use ID as signature for Claude
                 ))
+
+        # TEMP tool-id tracing (2026-06-29): dump the raw SDK tool_use block ids so we
+        # can see whether the id is present AT PARSE TIME (the SDK boundary) or lost later.
+        if tool_calls:
+            _blocks = [(getattr(b, "name", None), getattr(b, "id", None))
+                       for b in response.content if getattr(b, "type", None) == "tool_use"]
+            logger.info("🔎 [_parse_response] SDK tool_use blocks (name,id)=%s  stop_reason=%s",
+                        _blocks, getattr(response, "stop_reason", None))
 
         # Parse usage metadata — cache tokens included directly
         usage = response.usage
