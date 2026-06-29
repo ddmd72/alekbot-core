@@ -12,7 +12,7 @@ Agent logging is split into two independent layers:
 | Layer | Purpose | Destination | Controlled by |
 |---|---|---|---|
 | **Lifecycle hooks** | Operational logs — start, success, error, delegation | Cloud Logging (stdout) | always on |
-| **Debug bucket** | Full LLM I/O for prompt debugging | GCS bucket or local filesystem | `DEBUG_PROMPTS=true` |
+| **Content store** | Full LLM prompt/response content + tokens | BigQuery `alek_observability_dev.prompt_content` | `DEBUG_PROMPTS=true` AND `BIGQUERY_PROMPT_DATASET` set |
 
 Both layers are owned by `BaseAgent`. Agents call hooks and `_call_llm()` — they do not import or configure logging infrastructure directly.
 
@@ -38,7 +38,7 @@ self._on_delegation(intent: str, query: str = "")
 | `_on_agent_error(error)` | In `except` block of `execute()` | `❌ [agent_id] error in execute: ...` |
 | `_on_delegation(intent, query)` | Before each specialist delegation | `[agent_id] → delegate: intent=X query='...'` |
 
-`_on_agent_success(output_text=...)` also writes the final user-facing text to the debug bucket (type=output) when `DEBUG_PROMPTS` is enabled.
+`_on_agent_success(output_text=...)` no longer writes the final user-facing text to any bucket — that GCS dump was dropped in the BigQuery migration (TD-1). Content capture now happens per-LLM-call inside `_call_llm()` via `PromptContentStore.record_turn()` (see Layer 2).
 
 ### Rule
 
@@ -50,7 +50,7 @@ Forbidden in `execute()`:
 
 ---
 
-## Layer 2 — Debug Bucket
+## Layer 2 — BigQuery Content Store
 
 ### Single entry point: `_call_llm()`
 
@@ -60,79 +60,71 @@ response = await self._call_llm(request, turn=0)
 
 All agents **must** use `_call_llm()` instead of calling `self.llm` / `self._llm` directly.
 
-`_call_llm()` does four things automatically:
+`_call_llm()` is the single LLM call site and the single content-capture point:
 1. Resolves `self.llm` or `self._llm`
-2. Logs the full `LLMRequest` via `log_llm_request()` → **request file**
-3. Calls `llm.generate_content(request=request)`
-4. Logs the full `LLMResponse` via `_debug_llm_response()` → **response file**
+2. Calls `llm.generate_content(request=request)`
+3. Records the full request + response to the BigQuery content store via
+   `PromptContentStore.record_turn()` (adapter: `BigQueryPromptContentAdapter`)
 
-Agents must **never** call `_debug_prompt()` or `_debug_response()` directly. Those methods exist only for backward compat and are not used.
+One row is written per LLM call. `request_text` is populated **even when the call fails** — a
+400'd request still produces a row (with empty `response_text`), so failed LLM calls are
+inspectable.
 
-### Request file format
+### Where it lands
 
-```
-================================================================================
-AGENT: websearch
-TIMESTAMP: 2026-03-07T12:34:56.123456
-MODEL: gemini-3-flash-preview
-temperature: 0.7  use_grounding: true
-================================================================================
+Table: `<project>.alek_observability_dev.prompt_content` — day-partitioned, 30-day TTL.
 
-[system]
-current_date_time: Saturday, 07 March 2026, 12:34 UTC
+Columns include: `trace_id`, `span_id`, `timestamp`, `user_id`, `account_id`, `agent_id`,
+`agent_type`, `model`, `provider`, `turn`, `request_text`, `response_text`, `tool_calls`,
+`prompt_tokens`, `completion_tokens`, `total_tokens`.
 
-class SearchAgent extends GoogleSearchAgent {
-  ...
-}
+Multi-turn agents pass `turn=N` to `_call_llm()` — the turn number is recorded on the row.
 
-[user]
-weather in Valencia
-```
+### Reading it
 
-Multi-turn agents pass `turn=N` to `_call_llm()` — the turn number appears in the header and filename.
+Query with `bq` locally (use `--format=json` for the large multi-line `request_text` — CSV
+breaks on embedded newlines):
 
-### Response file format
-
-Each LLM response is written as JSON:
-
-```json
-{
-  "text": "...",
-  "tool_calls": [
-    {"name": "delegate_to_specialist", "args": {"intent": "search_memory", "query": "..."}}
-  ],
-  "tokens": 1234
-}
+```bash
+bq query --project_id=<PROJECT_ID> --use_legacy_sql=false --format=json \
+  'SELECT request_text, response_text, tool_calls FROM
+   `<PROJECT_ID>.alek_observability_dev.prompt_content`
+   WHERE timestamp BETWEEN "<from>" AND "<to>" AND agent_type LIKE "%smart%" ORDER BY turn'
 ```
 
-`tool_calls` is omitted when empty. `tokens` is omitted when usage metadata is unavailable.
+### Raw-SDK escape hatch: `_debug_raw_turn()`
+
+Agents that bypass `LLMPort` and call the provider SDK directly (e.g.
+`ClaudeDeepResearchRunnerAgent` with native built-in tools) cannot route through `_call_llm()`.
+They call `_debug_raw_turn(...)`, which emits a **summary-only `logger.info` line** — no storage
+write. This is the only remaining "debug" helper; their full prompts are not captured to BigQuery.
 
 ### Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `DEBUG_PROMPTS` | `false` | Enable debug bucket writes |
-| `DEBUG_PROMPTS_BUCKET` | _(not set)_ | GCS bucket name for Cloud Run mode |
+| `DEBUG_PROMPTS` | `false` | Master on/off switch for BigQuery content capture |
+| `BIGQUERY_PROMPT_DATASET` | _(not set)_ | Dataset for the `prompt_content` table; capture wired only when set |
 
-When `DEBUG_PROMPTS_BUCKET` is not set, files are written locally to `debug_prompts/`.
-
-File naming: `YYYY-MM-DD_HH-MM-SS_request.txt`, `YYYY-MM-DD_HH-MM-SS_response.txt`, `YYYY-MM-DD_HH-MM-SS_response_tN.txt` (multi-turn).
-
-GCS path format: `{agent_type}/{YYYY-MM-DD}/YYYY-MM-DD_HH-MM-SS_request.txt`
+The content store is wired (in `src/composition/service_container.py`) only when
+`DEBUG_PROMPTS=true` AND `BIGQUERY_PROMPT_DATASET` is set. `DEBUG_PROMPTS` is now purely the
+BigQuery capture switch — it no longer controls any GCS path.
 
 ### Production safety
 
-All debug methods are complete no-ops when `DEBUG_PROMPTS=false` — no allocations, no I/O. The check is the first line of each method.
+When the content store is not wired, `_call_llm()` performs no capture — no allocations, no I/O
+beyond the LLM call itself.
 
 ---
 
 ## File Structure
 
 ```
-src/agents/base_agent.py              # _call_llm (single logging entry point),
-                                      # _debug_llm_response, lifecycle hooks (_on_agent_*)
-src/utils/debug_logger.py             # PromptDebugLogger — log_llm_request, log_response,
-                                      # GCS + local backend, file rotation
+src/agents/base_agent.py                          # _call_llm (single LLM call + capture point),
+                                                  # _debug_raw_turn (summary-only, raw-SDK agents),
+                                                  # lifecycle hooks (_on_agent_*)
+src/adapters/bigquery_prompt_content_adapter.py   # BigQueryPromptContentAdapter
+                                                  # (PromptContentStore.record_turn)
 ```
 
 ---
@@ -164,12 +156,25 @@ class MyAgent(BaseAgent):
 
 Do **not**:
 - Call `self.llm.generate_content()` or `self._llm.generate_content()` directly
-- Call `self._debug_prompt()` or `self._debug_response()` — redundant, logging is in `_call_llm`
 - Call `logger.error()` before re-raise in the main except block
 
 ---
 
 ## Changelog
+
+### 2026-06-29 — Legacy GCS prompt-dump removed (TD-1)
+
+- Deleted `src/utils/debug_logger.py` (`PromptDebugLogger`, `get_debug_logger()`), the
+  `DEBUG_PROMPTS_BUCKET` env var, and the local `debug_prompts/` fallback directory.
+- Removed `BaseAgent._debug_prompt` / `_debug_response` / `_debug_llm_response` and the
+  `_format_history_for_debug` helper.
+- LLM content capture is now the BigQuery content store: `PromptContentStore.record_turn()`
+  (`BigQueryPromptContentAdapter`) called from `_call_llm()`, landing in
+  `alek_observability_dev.prompt_content` (day-partitioned, 30-day TTL).
+- Gating is now `DEBUG_PROMPTS=true` AND `BIGQUERY_PROMPT_DATASET` set. `DEBUG_PROMPTS` is purely
+  the capture on/off switch — no longer GCS-related.
+- `_on_agent_success(output_text=...)` no longer writes a final-text dump anywhere.
+- `_debug_raw_turn(...)` retained as a summary-only `logger.info` line for raw-SDK agents.
 
 ### 2026-03-07 (2) — File naming simplified; history persistence
 

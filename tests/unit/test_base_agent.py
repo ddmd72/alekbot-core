@@ -542,54 +542,6 @@ class TestBuildDelegateToolDeclaration:
         assert "properties" not in context_param
 
 
-class TestFormatHistoryForDebug:
-    """Tests for BaseAgent._format_history_for_debug."""
-
-    def test_text_part(self):
-        from src.ports.llm_port import Message, MessagePart
-        msg = Message(role="user", parts=[MessagePart(text="hello")])
-        result = BaseAgent._format_history_for_debug([msg])
-        assert "hello" in result
-        assert "USER" in result
-
-    def test_tool_call_part(self):
-        from src.ports.llm_port import Message, MessagePart, ToolCall
-        tc = ToolCall(name="search_memory", args={"query": "test"})
-        msg = Message(role="model", parts=[MessagePart(tool_call=tc)])
-        result = BaseAgent._format_history_for_debug([msg])
-        assert "tool_call" in result
-        assert "search_memory" in result
-
-    def test_tool_response_dict(self):
-        from src.ports.llm_port import Message, MessagePart
-        msg = Message(role="user", parts=[MessagePart(tool_response={"name": "search_memory", "response": {}})])
-        result = BaseAgent._format_history_for_debug([msg])
-        assert "tool_response" in result
-        assert "search_memory" in result
-
-    def test_file_data_part(self):
-        from src.ports.llm_port import Message, MessagePart
-        msg = Message(role="user", parts=[MessagePart(file_data={"uri": "gs://bucket/f", "mime_type": "text/plain"})])
-        result = BaseAgent._format_history_for_debug([msg])
-        assert "file_data" in result
-
-    def test_empty_part_shows_raw_content(self):
-        from src.ports.llm_port import Message, MessagePart
-        part = MessagePart()
-        msg = Message(role="model", parts=[part])
-        result = BaseAgent._format_history_for_debug([msg])
-        assert "raw_content" in result
-
-    def test_multiple_messages_separated_by_dashes(self):
-        from src.ports.llm_port import Message, MessagePart
-        msgs = [
-            Message(role="user", parts=[MessagePart(text="q")]),
-            Message(role="model", parts=[MessagePart(text="a")]),
-        ]
-        result = BaseAgent._format_history_for_debug(msgs)
-        assert "---" in result
-
-
 class TestCallLlmNoLlm:
     """Tests for BaseAgent._call_llm when no LLM is configured."""
 
@@ -602,73 +554,6 @@ class TestCallLlmNoLlm:
         request = LLMRequest(model_name="test", messages=[])
         with pytest.raises(RuntimeError, match="no LLM service configured"):
             await agent._call_llm(request)
-
-
-class TestDebugMethods:
-    """Tests for _debug_prompt, _debug_response, _debug_llm_response."""
-
-    @pytest.fixture
-    def agent(self):
-        config = AgentConfig(agent_id="debug_agent", agent_type="mock")
-        return MockAgent(config)
-
-    def test_debug_prompt_disabled_noop(self, agent):
-        with patch("src.agents.base_agent.get_debug_logger") as mock_gdl:
-            mock_gdl.return_value.enabled = False
-            agent._debug_prompt("system", "content", turn=1, model="test")
-        mock_gdl.return_value.log_prompt.assert_not_called()
-
-    def test_debug_prompt_enabled_calls_log_prompt(self, agent):
-        with patch("src.agents.base_agent.get_debug_logger") as mock_gdl:
-            mock_logger = MagicMock()
-            mock_logger.enabled = True
-            mock_gdl.return_value = mock_logger
-            agent._debug_prompt("system instr", "user content", turn=2, model="gemini")
-        mock_logger.log_prompt.assert_called_once()
-        call_kwargs = mock_logger.log_prompt.call_args.kwargs
-        assert call_kwargs.get("system_instruction") == "system instr"
-        assert call_kwargs.get("metadata", {}).get("model") == "gemini"
-
-    def test_debug_response_disabled_noop(self, agent):
-        with patch("src.agents.base_agent.get_debug_logger") as mock_gdl:
-            mock_gdl.return_value.enabled = False
-            agent._debug_response("text", tokens=10, turn=1)
-        mock_gdl.return_value.log_response.assert_not_called()
-
-    def test_debug_response_enabled_calls_log_response(self, agent):
-        with patch("src.agents.base_agent.get_debug_logger") as mock_gdl:
-            mock_logger = MagicMock()
-            mock_logger.enabled = True
-            mock_gdl.return_value = mock_logger
-            agent._debug_response("response text", tokens=50, turn=3)
-        mock_logger.log_response.assert_called_once()
-
-    def test_debug_llm_response_disabled_noop(self, agent):
-        from src.ports.llm_port import LLMResponse
-        resp = MagicMock(spec=LLMResponse)
-        with patch("src.agents.base_agent.get_debug_logger") as mock_gdl:
-            mock_gdl.return_value.enabled = False
-            agent._debug_llm_response(resp, turn=1)
-        mock_gdl.return_value.log_response.assert_not_called()
-
-    def test_debug_llm_response_with_tool_calls_and_usage(self, agent):
-        from src.ports.llm_port import LLMResponse, ToolCall, UsageMetadata
-        resp = MagicMock()
-        resp.text = "Answer."
-        resp.tool_calls = [ToolCall(name="search_memory", args={"q": "test"})]
-        resp.usage_metadata = MagicMock()
-        resp.usage_metadata.total_tokens = 100
-        with patch("src.agents.base_agent.get_debug_logger") as mock_gdl:
-            mock_logger = MagicMock()
-            mock_logger.enabled = True
-            mock_gdl.return_value = mock_logger
-            agent._debug_llm_response(resp, turn=2)
-        mock_logger.log_response.assert_called_once()
-        logged_text = mock_logger.log_response.call_args.kwargs["response"]
-        import json
-        data = json.loads(logged_text)
-        assert "tool_calls" in data
-        assert data["tokens"] == 100
 
 
 # =============================================================================
@@ -770,17 +655,6 @@ class TestOnAgentSuccess:
         config = AgentConfig(agent_id="a", agent_type="mock")
         agent = MockAgent(config)
         agent._on_agent_success(char_count=100, token_count=0)
-
-    def test_with_output_text_does_not_call_debug_logger(self):
-        # GCS final-text dump dropped in the BigQuery-only migration; content
-        # capture now happens per-LLM-call via record_turn, not here.
-        config = AgentConfig(agent_id="a", agent_type="mock")
-        agent = MockAgent(config)
-        with patch("src.agents.base_agent.get_debug_logger") as mock_gdl:
-            mock_logger = MagicMock()
-            mock_gdl.return_value = mock_logger
-            agent._on_agent_success(char_count=20, token_count=10, output_text="hello")
-        mock_logger.log_response.assert_not_called()
 
 
 # =============================================================================

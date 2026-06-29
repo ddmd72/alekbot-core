@@ -467,11 +467,12 @@ Key log points:
 - LLM request/response (model, token count, tool calls)
 - Session persistence (batch size)
 
-**Debug prompt logging** (`src/utils/debug_logger.py`):
-- Controlled by `DEBUG_PROMPTS=true` env var (off by default in production).
-- When enabled, writes 3 items per agent per turn: LLM prompt (system + content), LLM response (raw text + tokens), final agent output.
-- Backend: GCS bucket when `DEBUG_PROMPTS_BUCKET` is set (Cloud Run); local `debug_prompts/` directory otherwise.
-- All agents use `BaseAgent._debug_prompt` / `_debug_response` — no direct `get_debug_logger()` imports in agent files.
+**LLM content capture** (`src/adapters/bigquery_prompt_content_adapter.py`):
+- Gated by `DEBUG_PROMPTS=true` env var AND `BIGQUERY_PROMPT_DATASET` set (off by default in production).
+- When wired, one row per LLM call is recorded via `PromptContentStore.record_turn()` from the single
+  LLM call site `BaseAgent._call_llm()` — full request/response content + tokens.
+- Backend: BigQuery table `alek_observability_dev.prompt_content` (day-partitioned, 30-day TTL).
+- `request_text` is populated even on failed calls, so 400'd requests are inspectable.
 
 See: [Logging Guide](../07_deployment/LOGGING.md)
 

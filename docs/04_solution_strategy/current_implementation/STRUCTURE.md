@@ -93,8 +93,8 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── agents/             # 🆕 Multi-Agent System (Specialized Task Handlers)
 │   ├── __init__.py
 │   ├── base_agent.py   # BaseAgent + CircuitBreaker + lifecycle hooks (_on_agent_start,
-│   │                   #   _on_agent_success, _on_agent_error, _on_delegation) + debug helpers
-│   │                   #   (_debug_prompt, _debug_response, _format_history_for_debug)
+│   │                   #   _on_agent_success, _on_agent_error, _on_delegation) + LLM content
+│   │                   #   capture in _call_llm (record_turn) + _debug_raw_turn (raw-SDK agents)
 │   ├── memory_search_agent.py    # FactsMemoryAgent — unified memory specialist (Quick+Smart).
 │   │                             #   Two intents: search_memory (RAG/vector search via SearchEnrichmentService)
 │   │                             #   + save_to_memory (explicit user save → attaches consolidation_text
@@ -293,7 +293,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 └── utils/
 ├── file_conversion.py     # File-to-text conversion (convert_file_to_text, is_native_binary, make_history_stub)
 ├── logger.py              # Centralized logging configuration
-├── debug_logger.py        # PromptDebugLogger — local/GCS prompt+response debug dumps (DEBUG_PROMPTS=true)
 ├── llm_response_parser.py # Unified parser for LLM response envelopes (full_response, response_summary, rich_content)
 ├── groovy_to_markdown_transformer.py # Groovy DSL → Markdown converter (USE_MARKDOWN_PROMPT feature, currently off)
 ├── performance_logger.py  # Performance timing helpers
@@ -459,7 +458,7 @@ The multi-agent system enables specialized task handling with different LLM mode
 -   **`base_agent.py`**: Abstract `BaseAgent` class with built-in resilience patterns (Circuit
     Breaker, Retries, Timeouts). Owns all cross-cutting agent behavior:
     - Lifecycle hooks: `_on_agent_start`, `_on_agent_success(output_text)`, `_on_agent_error`, `_on_delegation` — agents call these; infrastructure (logging, metrics) lives here only.
-    - Debug helpers: `_debug_prompt`, `_debug_response`, `_format_history_for_debug` — centralizes all `DEBUG_PROMPTS` logging. Agents never import `get_debug_logger()` directly.
+    - LLM content capture: `_call_llm()` records the full request/response to the BigQuery `prompt_content` store via `PromptContentStore.record_turn()` (gated by `DEBUG_PROMPTS=true` + `BIGQUERY_PROMPT_DATASET`). `_debug_raw_turn` emits a summary-only log line for agents that bypass `LLMPort` and call the SDK directly.
     - **Universal billing hook**: `_call_llm()` accumulates `prompt_tokens`, `completion_tokens`, `cache_read_tokens`, `cache_creation_tokens` from every LLM response. `process()` resets accumulators at request start and calls `_flush_billing()` after execute (success or exhausted retries). `_flush_billing()` fires a fire-and-forget `AgentMessage(INFORM)` to `billing_agent` via `coordinator`. No-op when `coordinator` or `account_id` not set. All agents get billing automatically — no per-agent `_track_usage` needed.
 -   **`infrastructure/billing_agent.py`**: Aggregates usage per `account_id`, flushes to `QuotaService` when threshold reached or periodic interval fires. `asyncio.Lock` protects the buffer. `start()` launches periodic flush task. Required payload fields: `account_id`, `tokens`, `cost`, `model`.
 -   **`infrastructure/logger_agent.py`**: Centralized log buffer with asyncio.Lock. `start()` launches periodic flush to GcpLogSink (prod) or stdout (dev).
@@ -528,10 +527,6 @@ The multi-agent system enables specialized task handling with different LLM mode
 
 ### `utils/` - Utilities
 -   **`logger.py`**: Centralized logging configuration (human-readable + trace IDs).
--   **`debug_logger.py`**: `PromptDebugLogger` — saves LLM prompts, responses, and final agent
-    output to GCS (when `DEBUG_PROMPTS_BUCKET` set) or local filesystem (local dev). Controlled by
-    `DEBUG_PROMPTS` env var. All agents use it via `BaseAgent._debug_prompt` / `_debug_response`
-    — never import `get_debug_logger()` directly from individual agent files.
 -   **`logging_context.py`**: Context propagation for trace/session/user IDs.
 -   **`telemetry.py`**: OpenTelemetry setup and trace helpers.
 -   **`performance_logger.py`**: Timing helper for perf logging.
