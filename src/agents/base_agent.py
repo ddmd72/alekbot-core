@@ -7,6 +7,7 @@ Provides abstract base class and utilities for all agents.
 
 import json
 import time
+import random
 import asyncio
 from datetime import datetime
 from abc import ABC, abstractmethod
@@ -19,6 +20,7 @@ from ..domain.exceptions import (
     LLMRateLimitError,
     LLMUnavailableError,
     ProviderBreakerOpenError,
+    TranscriptLockedError,
     TRANSIENT_RETRY_TYPES,
 )
 from ..domain.retry_policy import DEFAULT_RETRY_POLICY, NO_RETRY_POLICY, RetryPolicy
@@ -195,6 +197,12 @@ class BaseAgent(ABC):
     # See domain/retry_policy.py and
     # docs/04_solution_strategy/decisions/typed_retry_policy.md.
     RETRY_POLICY: ClassVar[RetryPolicy] = DEFAULT_RETRY_POLICY
+
+    # Same-provider retry budget for a transient FAILOVER error hit on a
+    # provider-locked multi-turn transcript (see ``_call_llm`` transcript
+    # invariant). Kept small: a transient blip clears in a few seconds, and the
+    # path is user-facing — on exhaustion we fail cleanly to Smart→Quick.
+    _SAME_PROVIDER_RETRY_ATTEMPTS: ClassVar[int] = 2
 
     def __init__(
         self,
@@ -994,6 +1002,17 @@ class BaseAgent(ABC):
           6. **On fallback failure (FAILOVER_TRIGGER_TYPES).**
              ``record_failure(fallback)``, then raise
              ``BothProvidersUnavailableError`` with primary cause.
+
+        **Transcript-integrity invariant (one transcript = one provider).** Steps
+        4–6 (cross-provider failover) run ONLY when ``request.messages`` carries no
+        provider-locked turn. If it does (any ``tool_call``/``tool_response`` part,
+        or any ``raw_content`` — i.e. a multi-turn delegation transcript), a
+        primary FAILOVER error is handled WITHOUT switching providers: retry the
+        same provider up to ``_SAME_PROVIDER_RETRY_ATTEMPTS`` times for transient
+        errors, else raise the terminal ``TranscriptLockedError`` (caught upstream
+        → clean Smart→Quick fallback). Mixing providers mid-transcript corrupts it
+        (tool_use ids / thinking / cache). See
+        decisions/transcript_integrity_one_provider.md.
         """
         llm = llm_override if llm_override is not None else (
             getattr(self, "llm", None) or getattr(self, "_llm", None)
@@ -1034,26 +1053,131 @@ class BaseAgent(ABC):
             ):
                 resilience.record_failure(primary_name)
 
-            fallback_provider = ctx.fallback_provider if ctx else None
-            fallback_name = ctx.fallback_provider_name if ctx else None
+            # ── Transcript-integrity invariant: one transcript = one provider ──
+            # A multi-turn transcript is provider-specific (tool_use ids, thinking
+            # blocks, raw_content, cache). Re-serving a turn on the FALLBACK
+            # provider mid-loop corrupts the next turn (2026-06-29 orphan
+            # tool_use_id → 400). When the transcript is provider-locked we never
+            # cross-provider-failover: retry the SAME provider for transient
+            # errors, else raise the terminal TranscriptLockedError (which flows
+            # to the existing Smart→Quick fallback with a clean transcript).
+            # tool-part presence catches the orphan-id bug; raw_content presence
+            # independently catches thinking-replay (a model turn can carry
+            # raw_content without a tool_call). raw_content is an SDK object never
+            # persisted to session history — set in-loop by build_tool_turn — so
+            # turn-1 / single-call requests are unlocked and behave as before.
+            # See decisions/transcript_integrity_one_provider.md.
+            transcript_locked = any(
+                part.tool_call or part.tool_response
+                for msg in request.messages
+                for part in msg.parts
+            ) or any(msg.raw_content is not None for msg in request.messages)
 
-            # Pre-fallback breaker check + missing-fallback check collapse to
-            # the same terminal outcome.
-            fallback_open = bool(
-                resilience
-                and fallback_name
-                and resilience.is_provider_open(fallback_name)
-            )
-            if fallback_provider is None or fallback_open:
+            if transcript_locked:
+                # Same-provider retry for transient mid-loop errors. Skipped for
+                # ProviderBreakerOpenError — the breaker is open, retrying the
+                # same provider is pointless; go straight to terminal.
+                retry_error = e
+                retried_ok = False
+                if not isinstance(e, ProviderBreakerOpenError):
+                    policy = self.retry_policy
+                    for attempt in range(1, self._SAME_PROVIDER_RETRY_ATTEMPTS + 1):
+                        backoff = policy.transient_backoff_base_seconds * (
+                            2 ** (attempt - 1)
+                        )
+                        if policy.transient_jitter_seconds > 0:
+                            backoff += random.uniform(0, policy.transient_jitter_seconds)
+                        logger.warning(
+                            "llm_same_provider_retry %s attempt=%d/%d cause=%s http=%s: %s",
+                            primary_name, attempt, self._SAME_PROVIDER_RETRY_ATTEMPTS,
+                            _ERROR_TYPE_LOG_LABEL[type(retry_error)],
+                            retry_error.http_status, str(retry_error)[:300],
+                            extra={
+                                "event": "llm_same_provider_retry",
+                                "agent_type": self.config.agent_type,
+                                "primary_provider": primary_name,
+                                "attempt": attempt,
+                                "error_type": _ERROR_TYPE_LOG_LABEL[type(retry_error)],
+                                "http_status": retry_error.http_status,
+                            },
+                        )
+                        await asyncio.sleep(backoff)
+                        try:
+                            response = await llm.generate_content(request=request)
+                            if resilience and primary_name:
+                                resilience.record_success(primary_name)
+                            retried_ok = True
+                            break
+                        except failover_tuple as retry_e:
+                            retry_error = retry_e
+                            if (
+                                resilience
+                                and primary_name
+                                and not isinstance(retry_e, ProviderBreakerOpenError)
+                            ):
+                                resilience.record_failure(primary_name)
+                if not retried_ok:
+                    logger.warning(
+                        # Cause folded into the message (extra fields don't reach Cloud Logging).
+                        "llm_transcript_locked %s cause=%s http=%s turn=%d: %s",
+                        primary_name, _ERROR_TYPE_LOG_LABEL[type(retry_error)],
+                        retry_error.http_status, turn, str(retry_error)[:300],
+                        extra={
+                            "event": "llm_transcript_locked",
+                            "agent_type": self.config.agent_type,
+                            "primary_provider": primary_name,
+                            "error_type": _ERROR_TYPE_LOG_LABEL[type(retry_error)],
+                            "http_status": retry_error.http_status,
+                            "turn": turn,
+                        },
+                    )
+                    raise TranscriptLockedError(
+                        provider_name=primary_name,
+                        cause=retry_error,
+                        turn=turn,
+                    ) from retry_error
+                # retried_ok: response is set → fall through to the success tail.
+            else:
+                fallback_provider = ctx.fallback_provider if ctx else None
+                fallback_name = ctx.fallback_provider_name if ctx else None
+
+                # Pre-fallback breaker check + missing-fallback check collapse to
+                # the same terminal outcome.
+                fallback_open = bool(
+                    resilience
+                    and fallback_name
+                    and resilience.is_provider_open(fallback_name)
+                )
+                if fallback_provider is None or fallback_open:
+                    logger.warning(
+                        # Cause folded into the message: StructuredLogHandler only serializes
+                        # record.labels, so `extra` fields never reach Cloud Logging.
+                        "%s %s→%s cause=%s http=%s: %s",
+                        "llm_both_open" if fallback_open else "llm_no_fallback",
+                        primary_name, fallback_name,
+                        _ERROR_TYPE_LOG_LABEL[type(e)], e.http_status, str(e)[:300],
+                        extra={
+                            "event": "llm_both_open" if fallback_open else "llm_no_fallback",
+                            "agent_type": self.config.agent_type,
+                            "primary_provider": primary_name,
+                            "fallback_provider": fallback_name,
+                            "error_type": _ERROR_TYPE_LOG_LABEL[type(e)],
+                            "http_status": e.http_status,
+                        },
+                    )
+                    raise BothProvidersUnavailableError(
+                        primary_name=primary_name,
+                        fallback_name=fallback_name,
+                        primary_cause=e,
+                    ) from e
+
                 logger.warning(
-                    # Cause folded into the message: StructuredLogHandler only serializes
-                    # record.labels, so `extra` fields never reach Cloud Logging.
-                    "%s %s→%s cause=%s http=%s: %s",
-                    "llm_both_open" if fallback_open else "llm_no_fallback",
+                    # Cause folded into the message (extra fields don't reach Cloud Logging).
+                    "llm_fallback %s→%s cause=%s http=%s: %s",
                     primary_name, fallback_name,
                     _ERROR_TYPE_LOG_LABEL[type(e)], e.http_status, str(e)[:300],
                     extra={
-                        "event": "llm_both_open" if fallback_open else "llm_no_fallback",
+                        "event": "llm_fallback",
                         "agent_type": self.config.agent_type,
                         "primary_provider": primary_name,
                         "fallback_provider": fallback_name,
@@ -1061,57 +1185,37 @@ class BaseAgent(ABC):
                         "http_status": e.http_status,
                     },
                 )
-                raise BothProvidersUnavailableError(
-                    primary_name=primary_name,
-                    fallback_name=fallback_name,
-                    primary_cause=e,
-                ) from e
-
-            logger.warning(
-                # Cause folded into the message (extra fields don't reach Cloud Logging).
-                "llm_fallback %s→%s cause=%s http=%s: %s",
-                primary_name, fallback_name,
-                _ERROR_TYPE_LOG_LABEL[type(e)], e.http_status, str(e)[:300],
-                extra={
-                    "event": "llm_fallback",
-                    "agent_type": self.config.agent_type,
-                    "primary_provider": primary_name,
-                    "fallback_provider": fallback_name,
-                    "error_type": _ERROR_TYPE_LOG_LABEL[type(e)],
-                    "http_status": e.http_status,
-                },
-            )
-            fallback_request = request.model_copy(
-                update={"model_name": ctx.fallback_model_name}
-            )
-            try:
-                response = await fallback_provider.generate_content(
-                    request=fallback_request
+                fallback_request = request.model_copy(
+                    update={"model_name": ctx.fallback_model_name}
                 )
-                # Asymmetry by design — see method docstring step 5.
-            except failover_tuple as fb_e:
-                if resilience and fallback_name:
-                    resilience.record_failure(fallback_name)
-                logger.warning(
-                    # Cause folded into the message (extra fields don't reach Cloud Logging).
-                    "llm_fallback_failed %s→%s primary=%s fallback=%s: %s",
-                    primary_name, fallback_name,
-                    _ERROR_TYPE_LOG_LABEL[type(e)], _ERROR_TYPE_LOG_LABEL[type(fb_e)],
-                    str(fb_e)[:300],
-                    extra={
-                        "event": "llm_fallback_failed",
-                        "agent_type": self.config.agent_type,
-                        "primary_provider": primary_name,
-                        "fallback_provider": fallback_name,
-                        "primary_error_type": _ERROR_TYPE_LOG_LABEL[type(e)],
-                        "fallback_error_type": _ERROR_TYPE_LOG_LABEL[type(fb_e)],
-                    },
-                )
-                raise BothProvidersUnavailableError(
-                    primary_name=primary_name,
-                    fallback_name=fallback_name,
-                    primary_cause=e,
-                ) from fb_e
+                try:
+                    response = await fallback_provider.generate_content(
+                        request=fallback_request
+                    )
+                    # Asymmetry by design — see method docstring step 5.
+                except failover_tuple as fb_e:
+                    if resilience and fallback_name:
+                        resilience.record_failure(fallback_name)
+                    logger.warning(
+                        # Cause folded into the message (extra fields don't reach Cloud Logging).
+                        "llm_fallback_failed %s→%s primary=%s fallback=%s: %s",
+                        primary_name, fallback_name,
+                        _ERROR_TYPE_LOG_LABEL[type(e)], _ERROR_TYPE_LOG_LABEL[type(fb_e)],
+                        str(fb_e)[:300],
+                        extra={
+                            "event": "llm_fallback_failed",
+                            "agent_type": self.config.agent_type,
+                            "primary_provider": primary_name,
+                            "fallback_provider": fallback_name,
+                            "primary_error_type": _ERROR_TYPE_LOG_LABEL[type(e)],
+                            "fallback_error_type": _ERROR_TYPE_LOG_LABEL[type(fb_e)],
+                        },
+                    )
+                    raise BothProvidersUnavailableError(
+                        primary_name=primary_name,
+                        fallback_name=fallback_name,
+                        primary_cause=e,
+                    ) from fb_e
         if response.usage_metadata:
             m = response.usage_metadata
             try:

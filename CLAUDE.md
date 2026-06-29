@@ -548,6 +548,12 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   `_debug_response`) is fully superseded by the BigQuery store and is no longer called from `_call_llm`.
   Do NOT route new code through it.
 - **CircuitBreaker** — in BaseAgent, protects against cascading failures.
+- **Transcript integrity — one delegation transcript = one provider.** `_call_llm` cross-provider-
+  fails-over only when `request.messages` is NOT provider-locked (no `tool_call`/`tool_response` part,
+  no `raw_content`). Once locked (mid delegation-loop), a transient FAILOVER error retries the **same**
+  provider (`_SAME_PROVIDER_RETRY_ATTEMPTS`) and otherwise raises terminal `TranscriptLockedError`
+  (→ Smart→Quick fallback with a clean transcript) — never a mixed transcript (would orphan `tool_use`
+  ids / break thinking-replay / cache). See `decisions/transcript_integrity_one_provider.md`.
 - **SCD2 versioning** — FactEntity uses valid_from/valid_to/is_current.
 - **Multi-tenant** — always pass account_id. Collections with env prefix.
 

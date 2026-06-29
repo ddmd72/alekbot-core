@@ -25,6 +25,7 @@ from src.domain.exceptions import (
     LLMTimeoutError,
     LLMUnavailableError,
     ProviderBreakerOpenError,
+    TranscriptLockedError,
 )
 from src.ports.llm_port import (
     LLMPort, LLMRequest, LLMResponse, ProviderCapabilities, Message, MessagePart,
@@ -454,3 +455,174 @@ async def test_server_error_triggers_fallback(agent, primary_llm, fallback_llm):
     response = await agent._call_llm(_make_request())
 
     assert response.text == "fallback ok"
+
+
+# ============================================================================
+# TD-2 — transcript-integrity invariant (one transcript = one provider)
+#
+# When request.messages carries a provider-locked turn (tool_call/tool_response
+# part, or raw_content), a primary FAILOVER error must NOT cross-provider-
+# failover (that corrupts the transcript: orphan tool_use_id / thinking-replay).
+# Instead: retry the SAME provider for transient errors, else terminal
+# TranscriptLockedError → upstream Smart→Quick fallback (clean transcript).
+# See decisions/transcript_integrity_one_provider.md.
+# ============================================================================
+
+def _make_locked_request() -> LLMRequest:
+    """A provider-locked multi-turn transcript: contains a tool turn
+    (tool_response part). Mirrors mid-delegation-loop state."""
+    return LLMRequest(
+        model_name="gemini-flash",
+        system_instruction="test",
+        messages=[
+            Message(role="user", parts=[MessagePart(text="hi")]),
+            Message(role="user", parts=[MessagePart(
+                tool_response={"name": "search_memory", "response": {"result": "x"}}
+            )]),
+        ],
+    )
+
+
+def _make_raw_content_request() -> LLMRequest:
+    """Provider-locked via raw_content only (thinking-replay case): a model turn
+    carrying a provider SDK object but NO tool parts."""
+    return LLMRequest(
+        model_name="gemini-flash",
+        system_instruction="test",
+        messages=[
+            Message(role="user", parts=[MessagePart(text="hi")]),
+            Message(
+                role="model",
+                parts=[MessagePart(text="reasoning trace")],
+                raw_content=object(),
+            ),
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_transcript_locked_server_error_retries_same_provider_then_succeeds(
+    agent, primary_llm, fallback_llm
+):
+    """Locked transcript + transient LLMServerError that clears on retry →
+    SAME provider retried, fallback never touched, transcript intact."""
+    primary_llm.generate_content = AsyncMock(side_effect=[
+        LLMServerError("529 overloaded", http_status=529),
+        _make_llm_response("primary recovered"),
+    ])
+    ctx = _make_execution_context(primary_llm, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    with patch("src.agents.base_agent.asyncio.sleep", new=AsyncMock()):
+        response = await agent._call_llm(_make_locked_request())
+
+    assert response.text == "primary recovered"
+    assert primary_llm.generate_content.call_count == 2  # initial + 1 retry
+    fallback_llm.generate_content.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_transcript_locked_exhausts_same_provider_raises_transcript_locked(
+    agent, primary_llm, fallback_llm
+):
+    """Locked transcript + persistent transient error → same-provider retries
+    exhausted → terminal TranscriptLockedError, fallback NEVER called,
+    record_failure counted per failed attempt (initial + retries)."""
+    exc = LLMServerError("529 overloaded", http_status=529)
+    primary_llm.generate_content = AsyncMock(side_effect=exc)
+    resilience = MagicMock(spec=ProviderResiliencePort)
+    resilience.is_provider_open.return_value = False
+    ctx = _make_ctx_with_resilience(primary_llm, resilience, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    with patch("src.agents.base_agent.asyncio.sleep", new=AsyncMock()):
+        with pytest.raises(TranscriptLockedError) as exc_info:
+            await agent._call_llm(_make_locked_request())
+
+    assert exc_info.value.provider_name == "gemini"
+    assert exc_info.value.cause is exc
+    fallback_llm.generate_content.assert_not_called()
+    expected_calls = 1 + agent._SAME_PROVIDER_RETRY_ATTEMPTS
+    assert primary_llm.generate_content.call_count == expected_calls
+    failures = [c.args[0] for c in resilience.record_failure.call_args_list]
+    assert failures == ["gemini"] * expected_calls
+
+
+@pytest.mark.asyncio
+async def test_transcript_locked_breaker_open_goes_terminal_no_retry(
+    agent, primary_llm, fallback_llm
+):
+    """Locked transcript + primary breaker open → NO same-provider retry
+    (pointless), NO record_failure (consequence of past failures), terminal
+    TranscriptLockedError, fallback never called."""
+    resilience = MagicMock(spec=ProviderResiliencePort)
+    resilience.is_provider_open.side_effect = lambda name: name == "gemini"
+    ctx = _make_ctx_with_resilience(primary_llm, resilience, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    with patch("src.agents.base_agent.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+        with pytest.raises(TranscriptLockedError) as exc_info:
+            await agent._call_llm(_make_locked_request())
+
+    assert isinstance(exc_info.value.cause, ProviderBreakerOpenError)
+    primary_llm.generate_content.assert_not_called()  # short-circuited, no retry
+    fallback_llm.generate_content.assert_not_called()
+    resilience.record_failure.assert_not_called()
+    mock_sleep.assert_not_called()  # retry loop never entered
+
+
+@pytest.mark.asyncio
+async def test_transcript_locked_via_raw_content_only(agent, primary_llm, fallback_llm):
+    """raw_content present, NO tool parts → still locked (thinking-replay guard).
+    Validates the OR-clause: FAILOVER error → same-provider path, no failover."""
+    primary_llm.generate_content = AsyncMock(
+        side_effect=LLMServerError("529", http_status=529)
+    )
+    ctx = _make_execution_context(primary_llm, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    with patch("src.agents.base_agent.asyncio.sleep", new=AsyncMock()):
+        with pytest.raises(TranscriptLockedError):
+            await agent._call_llm(_make_raw_content_request())
+
+    fallback_llm.generate_content.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unlocked_clean_request_still_failovers(agent, primary_llm, fallback_llm):
+    """Regression: a clean (unlocked) request still cross-provider-fails-over on
+    LLMServerError — the invariant gates ONLY locked transcripts."""
+    primary_llm.generate_content = AsyncMock(
+        side_effect=LLMServerError("500", http_status=500)
+    )
+    ctx = _make_execution_context(primary_llm, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    response = await agent._call_llm(_make_request())
+
+    assert response.text == "fallback ok"
+    fallback_llm.generate_content.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_transcript_locked_success_runs_billing_and_span(
+    agent, primary_llm, fallback_llm
+):
+    """When a same-provider retry succeeds, the shared success tail still runs:
+    billing accumulation reflects the recovered response's tokens (guards the
+    fall-through past the locked branch)."""
+    primary_llm.generate_content = AsyncMock(side_effect=[
+        LLMServerError("529", http_status=529),
+        _make_llm_response("recovered"),
+    ])
+    ctx = _make_execution_context(primary_llm, fallback_llm)
+    agent._set_execution_context(ctx)
+
+    tokens_before = agent._billing_prompt_tokens
+
+    with patch("src.agents.base_agent.asyncio.sleep", new=AsyncMock()):
+        response = await agent._call_llm(_make_locked_request())
+
+    assert response.text == "recovered"
+    # _make_llm_response carries prompt_tokens=5 → billing tail ran on retry success
+    assert agent._billing_prompt_tokens == tokens_before + 5
