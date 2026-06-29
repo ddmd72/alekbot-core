@@ -89,6 +89,27 @@ mandatory before team/multi-user rollout.
 
 ---
 
+## 🧹 Tech-Debt Backlog
+
+### TD-1: Remove legacy `PromptDebugLogger` (GCS prompt-dump) [P2]
+
+- **Problem:** LLM prompt/response capture moved to the BigQuery content store
+  (`PromptContentStore.record_turn`, R1 `3050b56`); `PromptDebugLogger` (GCS
+  `gs://…-debug-prompts/`) is no longer called from `BaseAgent._call_llm` and is fully
+  superseded. It lingers as dead-ish code (the `_debug_raw_turn` summary path in
+  `ClaudeDeepResearchRunnerAgent` is the only remaining caller) and as stale guidance that
+  has misled debugging sessions toward a bucket that hasn't been written since 2026-05-31.
+- **Fix:** Cut `PromptDebugLogger` + the GCS debug-prompts code path (`src/utils/debug_logger.py`
+  and the `_debug_*` wrappers in `base_agent.py`); migrate the DR summary line to the content
+  store or drop it; remove related CLAUDE.md/doc mentions. Keep the `DEBUG_PROMPTS` flag only if
+  still used to gate the BigQuery store wiring.
+- **Files:** `src/utils/debug_logger.py`, `src/agents/base_agent.py`,
+  `src/agents/claude_deep_research_runner_agent.py`, `src/composition/service_container.py`,
+  `src/config/settings.py`
+- **Note:** User reversed the earlier "do not delete" stance (2026-06-29) — removal approved.
+
+---
+
 ## 🏢 Planned Milestones (Phase 3: Enterprise)
 
 - **Milestone 7**: User Onboarding & OAuth
