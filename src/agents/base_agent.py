@@ -1046,7 +1046,12 @@ class BaseAgent(ABC):
             )
             if fallback_provider is None or fallback_open:
                 logger.warning(
+                    # Cause folded into the message: StructuredLogHandler only serializes
+                    # record.labels, so `extra` fields never reach Cloud Logging.
+                    "%s %s→%s cause=%s http=%s: %s",
                     "llm_both_open" if fallback_open else "llm_no_fallback",
+                    primary_name, fallback_name,
+                    _ERROR_TYPE_LOG_LABEL[type(e)], e.http_status, str(e)[:300],
                     extra={
                         "event": "llm_both_open" if fallback_open else "llm_no_fallback",
                         "agent_type": self.config.agent_type,
@@ -1063,7 +1068,10 @@ class BaseAgent(ABC):
                 ) from e
 
             logger.warning(
-                "llm_fallback",
+                # Cause folded into the message (extra fields don't reach Cloud Logging).
+                "llm_fallback %s→%s cause=%s http=%s: %s",
+                primary_name, fallback_name,
+                _ERROR_TYPE_LOG_LABEL[type(e)], e.http_status, str(e)[:300],
                 extra={
                     "event": "llm_fallback",
                     "agent_type": self.config.agent_type,
@@ -1085,7 +1093,11 @@ class BaseAgent(ABC):
                 if resilience and fallback_name:
                     resilience.record_failure(fallback_name)
                 logger.warning(
-                    "llm_fallback_failed",
+                    # Cause folded into the message (extra fields don't reach Cloud Logging).
+                    "llm_fallback_failed %s→%s primary=%s fallback=%s: %s",
+                    primary_name, fallback_name,
+                    _ERROR_TYPE_LOG_LABEL[type(e)], _ERROR_TYPE_LOG_LABEL[type(fb_e)],
+                    str(fb_e)[:300],
                     extra={
                         "event": "llm_fallback_failed",
                         "agent_type": self.config.agent_type,
