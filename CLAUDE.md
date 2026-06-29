@@ -51,6 +51,7 @@ make test-e2e-all      # E2E all agents
 make deploy            # Build + deploy to Cloud Run (single live environment)
 make logs              # Recent Cloud Run logs
 make logs-tail         # Live tail logs
+make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — see Debugging below)
 ```
 
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
@@ -178,7 +179,8 @@ background process extracts new facts from the conversation → bot gets smarter
   ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
   `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+
   `CloudRunJobsAdapter`; OpenAI backend = webhook. Gemini backend removed 2026-05-29. Two-pass critic via
-  `UserBotConfig.deep_research_second_pass`. Logs: `make logs-research-job-dev-tail`.
+  `UserBotConfig.deep_research_second_pass`. Job logs: `make logs-job` / `make fetch-logs-job [K]` →
+  `alek_debug_job.log`; single run: `make logs-execution EXECUTION=<name>`.
 - MapsSearch (SYNC, ECO, OpenAI `gpt-5.4-nano` default, intent `maps_query`, **`internal=True`**) — place
   search, routes, weather via Google Maps AI Grounding (MCP, `MapsToolsPort`). Not shown to LLMs;
   auto-triggered via `intent_fanout` when the orchestrator dispatches `search_web`, results merged
@@ -524,18 +526,16 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   adapter-specific serialization) + tool response messages (with `tool_response` parts).
   `BaseAgent._build_tool_turn()` is a thin wrapper. Used by DelegationEngine and NotesAgent.
   `tool_results`: list of `(ToolCall, result_str)` or `(ToolCall, result_str, file_data)` tuples.
-- **BaseAgent debug logging** — `_call_llm(request, turn)` is the single logging point for agents
-  that use `LLMPort`. Before calling the provider it logs the full `LLMRequest` via
-  `PromptDebugLogger.log_llm_request()` (model, temperature, use_grounding, messages with real
-  newlines). After the call it logs the `LLMResponse` via `_debug_llm_response()` (text +
-  tool_calls + tokens as JSON). All no-ops when `DEBUG_PROMPTS=false`. Agents must never call
-  `_debug_prompt()` or `_debug_response()` directly — those methods exist only for backward compat
-  and are unused. `_on_agent_success(output_text=...)` separately logs the final user-facing text
-  to the debug bucket.
-  **Escape hatch for raw SDK callers** — agents that must bypass `LLMPort` (e.g.
-  `ClaudeDeepResearchRunnerAgent` with native built-in tools) call `_debug_raw_turn(system_blocks,
-  user_content, response_texts, tokens, turn, model)` instead. Do NOT use `_debug_prompt/response`
-  from such agents.
+- **BaseAgent LLM-content capture** — `_call_llm(request, turn)` is the single LLM call site and the
+  one capture point: it records the full request+response to the **BigQuery content store** via
+  `PromptContentStore.record_turn()` (wired only when `DEBUG_PROMPTS=true` AND `BIGQUERY_PROMPT_DATASET`
+  set — see Debugging Cloud Run for how to read it). Changing capture = edit this method only.
+  **Escape hatch for raw SDK callers** — agents bypassing `LLMPort` (e.g. `ClaudeDeepResearchRunnerAgent`
+  with native built-in tools) call `_debug_raw_turn(...)` (summary only).
+  ⚠️ **LEGACY — candidate for removal (see `docs/12_risks/IMPLEMENTATION_ROADMAP.md`):**
+  `PromptDebugLogger` (the old GCS prompt-dump: `log_llm_request`/`_debug_llm_response`/`_debug_prompt`/
+  `_debug_response`) is fully superseded by the BigQuery store and is no longer called from `_call_llm`.
+  Do NOT route new code through it.
 - **CircuitBreaker** — in BaseAgent, protects against cascading failures.
 - **SCD2 versioning** — FactEntity uses valid_from/valid_to/is_current.
 - **Multi-tenant** — always pass account_id. Collections with env prefix.
@@ -753,37 +753,49 @@ A failing test is signal — not an obstacle to remove.
 
 ## ⛔⛔⛔ Debugging Cloud Run — MANDATORY PROTOCOL ⛔⛔⛔
 
-**When debugging any issue that manifests in Cloud Run, the FIRST action is ALWAYS to read the actual logs.**
+**When debugging any issue that manifests in Cloud Run, the FIRST action is ALWAYS to read the
+actual data. No theories, no speculation from code alone, no proposed fixes before seeing the
+actual error.**
 
-Do NOT:
-- Build theories about what might be failing
-- Speculate based on code reading alone
-- Propose fixes before seeing the actual error
+### Step 1 — Pull logs LOCALLY, then grep locally (do NOT loop `gcloud logging read`)
 
-DO — in this exact order:
-1. **Read the logs first.** Use `gcloud logging read` or `gcloud beta logging tail`:
-   ```
-   gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=SERVICE_NAME" \
-     --limit=50 --format="value(textPayload)" --project=PROJECT_ID
-   ```
-2. Find the actual error message, traceback, or unexpected output in the logs.
-3. Only then diagnose and propose a fix.
+`make fetch-logs [K=300]` writes the last K entries to `alek_debug.log`. **One fetch, then grep
+the local file** — far faster and cheaper than repeated remote `gcloud logging read` calls.
+- `make logs [K=300]` — quick view of last K entries (no file)
+- `make logs-tail` — live tail (`make logs-perf` = perf lines only)
+- Cloud Run Jobs (e.g. deep research): `make fetch-logs-job [K]` → `alek_debug_job.log`;
+  `make logs-job`; `make logs-execution EXECUTION=<name>`
 
-If the service writes debug files to GCS (e.g. `gs://...-debug-prompts/`), read the relevant
-request/response files with `gsutil cat` before theorizing about LLM behavior.
+### Step 2 — Two data sources. Pick by what you need; do NOT conflate them.
 
-**Reading logs/observability — "no `gcloud`" ≠ "no access".**
-- Local session: use the `gcloud logging read` / `gsutil` commands above.
-- Remote/web session (no CLI present): the SAME data is reachable from Python via the
-  Google client libraries (`google.cloud.logging`, `google.cloud.bigquery`) using the
-  service-account credentials that environment is already configured with. A missing
-  CLI does NOT mean the data is unavailable — query it programmatically.
+| Need | Source | How |
+|------|--------|-----|
+| Operational events, errors, tracebacks, control flow | **Cloud Logging** | `make fetch-logs` (above) |
+| Actual LLM prompt/response **content** + tokens | **BigQuery** `alek_observability_dev.prompt_content` | `bq query` (below) |
 
-Two distinct sources (don't conflate): **Cloud Logging** = operational events / errors /
-tracebacks. **BigQuery observability dataset → `prompt_content` table** = actual LLM
-prompt/response content + tokens (30-day TTL). See `readme.md` (observability) for schema.
+**`prompt_content`** — one row per LLM call, 30-day TTL. Columns: `trace_id, span_id, timestamp,
+user_id, account_id, agent_id, agent_type, model, provider, turn, request_text, response_text,
+tool_calls, prompt_tokens, completion_tokens, total_tokens`. **`request_text` is populated even
+when the call fails** — a 400'd request still has its row (with empty `response_text`), so failed
+LLM calls ARE inspectable here. Query locally; for the large multi-line `request_text` use
+`--format=json` and parse (CSV breaks on embedded newlines):
+```
+bq query --project_id=<PROJECT_ID> --use_legacy_sql=false --format=json \
+  'SELECT request_text, response_text, tool_calls FROM
+   `<PROJECT_ID>.alek_observability_dev.prompt_content`
+   WHERE timestamp BETWEEN "<from>" AND "<to>" AND agent_type LIKE "%smart%" ORDER BY turn'
+```
 
-**Reading logs costs 1 tool call. Building wrong theories costs 10+ turns and user patience.**
+### Scope discipline
+Investigate the **reported incident's time window**. Do NOT trawl unrelated prior-day errors. If
+checking for recurrence, search only the **same error signature** — and if you surface another
+error class, either analyze it fully or leave it; no half-analysis.
+
+### "No `gcloud`" ≠ "no access" (remote/web session)
+The same data is reachable from Python via `google.cloud.logging` / `google.cloud.bigquery` using
+the environment's service-account credentials. A missing CLI does NOT mean the data is unavailable.
+
+**Reading the right source costs 1–2 calls. Wrong theories cost 10+ turns and user patience.**
 
 ---
 
