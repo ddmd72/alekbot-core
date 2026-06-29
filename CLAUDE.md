@@ -56,7 +56,9 @@ make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — s
 
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/` before the unit suite, and CI (`.github/workflows/ci.yml`) runs `make check` on
-every push/PR. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
+every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite is green and runs ~1:14
+single-process — **safe to run in full** (any historical "don't run the full suite" warning was a
+since-fixed chunker infinite loop, not a standing hazard). Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 
@@ -108,6 +110,11 @@ index` (full); `codegraph status` shows index health.
   green. Small isolated changes can land on `main` directly — but every change keeps the
   affected docs (this file, arc42 in `docs/`, decision records) in sync. Documentation drift is
   the thing branch discipline exists to prevent.
+- **Deploy-substitution trap:** `make deploy` does `include .env` and passes some keys as cloudbuild
+  `--substitutions`, so any `.env` key reused that way bakes its **local** value into the deployed
+  revision (this leaked `localhost` into prod `OAUTH_REDIRECT_URI`). When a value differs between
+  local and deploy, give the deploy side its own key (e.g. `SERVICE_URL_DEV`) — never reuse the
+  dual-purpose local key. Deploy reads the **working tree, not git** — uncommitted changes still ship.
 
 ## What and Why
 
@@ -330,6 +337,10 @@ result reused by all agents.
   was a Quick-vs-Smart path split; primary routing is now Smart-only — see Multi-agent network above.)
 - Budget ~$100/month, 1 vCPU Cloud Run — async is mandatory
 - Solo-dev — maintainability beats architectural elegance
+- **Smart cost sweet spot (eval 2026-04-12):** `gpt-5.4-mini` + `reasoning_effort: medium` matched
+  flagship (sonnet-4-6 / gpt-5.4) quality on Smart's multi-step delegation, beat haiku/flash, ~3–5×
+  cheaper. Configure via `UserBotConfig.agent_thinking={"smart":"medium"}` + provider
+  `openai`/`gpt-5.4-mini`. Reasoning compensates for smaller model size on multi-step tasks.
 
 ## Architecture
 
@@ -705,6 +716,11 @@ Detailed docs in `docs/` (arc42). Read as needed:
 - RFCs: `docs/10_rfcs/`
 - Roadmap: `docs/12_risks/IMPLEMENTATION_ROADMAP.md`
 
+**Where to write records:** multi-step refactors with a migration plan → `docs/10_rfcs/`;
+single backward-looking decision records (50–150 lines: decision + alternatives + why) →
+`docs/04_solution_strategy/decisions/`. Do NOT add records to `docs/09_decisions/` (arc42 §9): it
+keeps only the older ADR-004–ADR-008, whose decisions still shape the code.
+
 ## Language
 
 - Respond to the user in whatever language they write in.
@@ -749,7 +765,10 @@ The ONLY self-authorized exceptions — no approval needed:
 This applies to: test files (`tests/`), conftest.py, shared test helpers, fixtures.
 
 Rationale: tests are the specification. Modifying them to make code pass destroys the specification.
-A failing test is signal — not an obstacle to remove.
+A failing test is signal — not an obstacle to remove. The ~3600+ tests across 233 files (for ~150
+source files) are **load-bearing, not over-engineering**: this codebase is AI-pair-programmed, and
+tests are the only enforcement that runs faster than generated code. Critical bugs map 1:1 to files
+lacking parallel tests. Never propose reducing coverage as "cleanup" or "simplification".
 
 ## ⛔⛔⛔ Debugging Cloud Run — MANDATORY PROTOCOL ⛔⛔⛔
 
