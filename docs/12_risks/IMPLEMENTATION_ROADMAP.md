@@ -108,6 +108,58 @@ mandatory before team/multi-user rollout.
   `src/config/settings.py`
 - **Note:** User reversed the earlier "do not delete" stance (2026-06-29) — removal approved.
 
+### TD-2: No cross-provider failover mid delegation-loop [P1] — ✅ RESOLVED 2026-06-29
+
+- **Resolution:** Transcript-integrity invariant (one delegation transcript = one provider)
+  centralized in `BaseAgent._call_llm`. When `request.messages` is provider-locked (any
+  `tool_call`/`tool_response` part, or `raw_content`), a primary FAILOVER error never
+  cross-provider-fails-over — it retries the **same** provider for transient errors
+  (`_SAME_PROVIDER_RETRY_ATTEMPTS=2`, backoff) and otherwise raises the new terminal
+  `TranscriptLockedError` (an `LLMError`, NOT in `FAILOVER_TRIGGER_TYPES`/`TRANSIENT_RETRY_TYPES`),
+  which flows to the existing Smart→Quick fallback with a clean transcript. Unlocked turn-1 /
+  single-call requests keep the existing per-call failover. Adapter and delegation engine untouched;
+  zero existing tests changed, 6 new tests added. Decision record:
+  `docs/04_solution_strategy/decisions/transcript_integrity_one_provider.md`. The 2026-06-29 TEMP
+  tool-id tracing (`4c8b64b`/`c037e59`) is deliberately retained for future verification.
+
+<details><summary>Original problem analysis (kept for reference)</summary>
+
+- **Problem:** `BaseAgent._call_llm` fails over **per LLM call**: when a turn's primary call hits a
+  FAILOVER_TRIGGER error, it re-serves that same turn on the fallback provider **mid-loop**, then
+  the delegation loop continues with the now-mixed transcript. But a multi-turn transcript is
+  **provider-specific** (tool_use ids, thinking blocks, raw_content, message format, cache all differ
+  per provider). Interleaving providers in one transcript violates the "one transcript = one provider"
+  invariant. This is the root cause of the 2026-06-29 `tool_use_id` orphan: turn-2 Claude hit a
+  (transient) error → failed over to Gemini → Gemini's tool turn carried no Claude-style id → turn-3
+  back on Claude → orphan → 400 → degraded delivery. tool_use_id is just the first symptom; thinking
+  replay and cache will break the same way.
+- **Root insight:** today's trigger was a **transient** mid-stream error (529 overloaded / timeout,
+  almost certainly). The right response to transient is **retry the SAME provider**, not switch.
+  Cross-provider failover is for a **persistently** down provider (breaker), and there it must never
+  produce a mixed transcript. Gap: a mid-stream 529 arrives as an SSE error **after** HTTP 200, so the
+  Anthropic SDK's built-in 429/5xx retry doesn't catch it → it bubbles to the transcript-corrupting
+  cross-provider path.
+- **Fix (tiered):**
+  1. **Transient mid-loop error → same-provider retry** (1–2×, backoff), including mid-stream
+     529/timeout. Cheap, transcript intact, covers the common case.
+  2. **Persistent provider down (breaker open) → fail the request → existing `AgentFallbackService`
+     (Smart→Quick), or a clean single-provider restart.** Never interleave.
+  3. **Invariant in code:** one delegation transcript = one provider. Narrow guard: allow
+     cross-provider failover only when the history has **no tool turns yet** (turn 1 / text-only); once
+     a tool turn exists, only same-provider retry or clean fail.
+  - Per-call failover stays fine for single-call agents (Quick formatter, specialists) — no transcript
+    to corrupt. The problem is specific to the multi-turn orchestrator.
+- **Files:** `src/agents/base_agent.py` (`_call_llm` failover gate + same-provider retry),
+  `src/adapters/claude_adapter.py` (mid-stream 529/timeout same-provider retry before raising),
+  `src/infrastructure/delegation_engine.py` (loop-level vs call-level failover boundary).
+- **Rejected alternative:** "restart the whole Smart request on the fallback" — clean transcript, but
+  re-runs already-done delegations (cost/latency) and risks double-firing side-effecting delegates
+  (`create_pdf`, `save_to_memory`). Prefer transient-retry + clean-fail over blind restart.
+- **Related:** the 2026-06-29 `tool_use_id` orphan tracing (`4c8b64b`) + failover-cause logging
+  (`c037e59`); decision record TBD.
+
+</details>
+
 ---
 
 ## 🏢 Planned Milestones (Phase 3: Enterprise)

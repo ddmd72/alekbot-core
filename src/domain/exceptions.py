@@ -100,6 +100,41 @@ class BothProvidersUnavailableError(LLMError):
         self.primary_cause = primary_cause
 
 
+class TranscriptLockedError(LLMError):
+    """Terminal error: a primary FAILOVER error hit mid-transcript and
+    same-provider retries were exhausted (or the breaker is open), so we
+    DELIBERATELY decline cross-provider failover to protect the transcript.
+
+    Enforces the invariant **one delegation transcript = one provider**. A
+    multi-turn transcript is provider-specific (``tool_use`` ids, thinking
+    blocks, ``raw_content``, cache); re-serving a turn on the fallback provider
+    mid-loop produces a mixed transcript that corrupts the next turn (the
+    2026-06-29 orphan ``tool_use_id`` → HTTP 400). Distinct from
+    ``BothProvidersUnavailableError``: there the fallback is exhausted; HERE the
+    fallback is **healthy** and we choose not to use it. NOT in
+    ``FAILOVER_TRIGGER_TYPES`` or ``TRANSIENT_RETRY_TYPES`` — it is terminal by
+    design and flows to the existing Smart→Quick fallback (clean transcript).
+    Carries ``cause`` (the primary FAILOVER error) and ``turn`` for forensics.
+    See decisions/transcript_integrity_one_provider.md.
+    """
+
+    def __init__(
+        self,
+        provider_name: str,
+        cause: LLMError,
+        turn: int,
+    ) -> None:
+        super().__init__(
+            f"transcript locked to provider {provider_name!r}: declined "
+            f"cross-provider failover at turn {turn}, "
+            f"cause={type(cause).__name__}",
+            http_status=None,
+        )
+        self.provider_name = provider_name
+        self.cause = cause
+        self.turn = turn
+
+
 # Stateless policy data: error types that warrant a switch to the fallback
 # provider on the first encounter. Lives in the domain, not on a port —
 # the decision is pure ``isinstance`` and has no system boundary.
