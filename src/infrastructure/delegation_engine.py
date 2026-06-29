@@ -283,6 +283,18 @@ class DelegationEngine:
                 all_delivery_items.extend(tr.delivery_items)
 
             # --- Append model message + tool responses to history ---
+            # Guard: tool_calls and tool_results must be 1:1. zip() would silently
+            # truncate on a skew, leaving a tool_use with no tool_result (or vice
+            # versa) — exactly the shape Anthropic rejects with a 400 on the next
+            # turn. Surface it loudly instead of corrupting history silently.
+            if len(tool_results) != len(response.tool_calls):
+                logger.error(
+                    "❌ [DelegationEngine] Turn %s — tool_call/tool_result count "
+                    "mismatch: %s calls vs %s results (caller=%s). History tool "
+                    "turn will be skewed; downstream Claude request may 400.",
+                    turn + 1, len(response.tool_calls), len(tool_results),
+                    calling_agent_id,
+                )
             turn_entries = [
                 (tc, tr.result_str, tr.file_data)
                 for tc, tr in zip(response.tool_calls, tool_results)

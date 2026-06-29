@@ -163,9 +163,15 @@ def build_tool_turn(response: "LLMResponse", tool_results: list) -> List[Message
     for entry in tool_results:
         tc, result_str = entry[0], entry[1]
         file_data = entry[2] if len(entry) > 2 else None
-        tool_parts.append(MessagePart(
-            tool_response={"name": tc.name, "response": {"result": result_str}},
-        ))
+        # Carry the originating tool_use id explicitly so adapters never have to
+        # re-derive it. `thought_signature` holds the provider's tool-call id
+        # (e.g. Claude's tool_use block id, set in the adapter's _parse_response).
+        # Re-deriving it downstream by name search is fragile when many same-named
+        # calls (delegate_to_specialist) repeat across turns / fan out in parallel.
+        tool_response = {"name": tc.name, "response": {"result": result_str}}
+        if tc.thought_signature:
+            tool_response["tool_use_id"] = tc.thought_signature
+        tool_parts.append(MessagePart(tool_response=tool_response))
         if file_data:
             tool_parts.append(MessagePart(file_data=file_data))
     messages.append(Message(role="user", parts=tool_parts))
