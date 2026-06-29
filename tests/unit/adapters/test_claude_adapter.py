@@ -1240,6 +1240,161 @@ async def test_cache_last_message_empty_messages_does_not_raise():
 
 
 # ============================================================================
+# tool_use_id resolution — explicit id (carried by build_tool_turn) vs the
+# legacy backward name search. Regression coverage for the 2026-06-29 Claude
+# 400 "unexpected tool_use_id in tool_result blocks" incident.
+# ============================================================================
+
+from src.ports.llm_port import ToolCall  # noqa: E402
+
+
+class _Block:
+    """SDK-like content block (mirrors anthropic types as accessed by the adapter)."""
+    def __init__(self, type, id=None, name=None, input=None):
+        self.type = type
+        self.id = id
+        self.name = name
+        self.input = input or {}
+
+
+class _RawContent:
+    """SDK-like Message object: only `.content` is read by the adapter."""
+    def __init__(self, blocks):
+        self.content = blocks
+
+
+def _tool_result_blocks(converted_msg):
+    return [b for b in converted_msg["content"] if b.get("type") == "tool_result"]
+
+
+@pytest.mark.asyncio
+async def test_tool_result_uses_explicit_tool_use_id():
+    """A tool_response carrying an explicit tool_use_id is serialized to that exact
+    id — independent of the tool name. The assistant turn here is raw_content with a
+    tool_use named 'delegate_to_specialist'; the tool_response name diverges
+    ('search_web', as a fan-out result might), which would defeat the legacy
+    name-based backward search. The explicit id keeps the pairing correct."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(
+            role="model",
+            parts=[MessagePart(tool_call=ToolCall(
+                name="delegate_to_specialist", args={"intent": "search_web"},
+                thought_signature="toolu_RIGHT"))],
+            raw_content=_RawContent([
+                _Block("tool_use", id="toolu_RIGHT", name="delegate_to_specialist",
+                       input={"intent": "search_web"}),
+            ]),
+        ),
+        Message(role="user", parts=[MessagePart(
+            tool_response={"name": "search_web", "tool_use_id": "toolu_RIGHT",
+                           "response": {"result": "..."}})]),
+    ]
+
+    result = await adapter._convert_messages(messages)
+
+    tr = _tool_result_blocks(result[1])
+    assert len(tr) == 1
+    assert tr[0]["tool_use_id"] == "toolu_RIGHT"
+
+
+@pytest.mark.asyncio
+async def test_explicit_id_takes_precedence_over_name_search():
+    """When both an explicit id and a name-search candidate exist and DIFFER, the
+    explicit id wins. Two same-named tool turns: the legacy search would resolve
+    the latest result to the most-recent tool_use; the explicit id pins it to the
+    correct (older) one."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="model", parts=[MessagePart(tool_call=ToolCall(
+            name="X", args={}, thought_signature="toolu_OLD"))]),
+        Message(role="user", parts=[MessagePart(
+            tool_response={"name": "X", "tool_use_id": "toolu_OLD",
+                           "response": {"result": "old"}})]),
+        Message(role="model", parts=[MessagePart(tool_call=ToolCall(
+            name="X", args={}, thought_signature="toolu_NEW"))]),
+        # This result explicitly belongs to the OLDER tool_use; name search would
+        # have grabbed toolu_NEW (most recent same-name).
+        Message(role="user", parts=[MessagePart(
+            tool_response={"name": "X", "tool_use_id": "toolu_OLD",
+                           "response": {"result": "late"}})]),
+    ]
+
+    result = await adapter._convert_messages(messages)
+
+    assert _tool_result_blocks(result[3])[0]["tool_use_id"] == "toolu_OLD"
+
+
+@pytest.mark.asyncio
+async def test_legacy_tool_response_without_id_falls_back_to_name_search():
+    """Backward compat: a tool_response with no explicit id (history built before
+    this change) still resolves via the legacy backward name search."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="model", parts=[MessagePart(tool_call=ToolCall(
+            name="search_memory", args={}, thought_signature="toolu_LEGACY"))]),
+        Message(role="user", parts=[MessagePart(
+            tool_response={"name": "search_memory", "response": {"result": "r"}})]),
+    ]
+
+    result = await adapter._convert_messages(messages)
+
+    assert _tool_result_blocks(result[1])[0]["tool_use_id"] == "toolu_LEGACY"
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_logs_on_orphaned_tool_use_id(monkeypatch):
+    """The diagnostic pass logs a detailed ERROR when a tool_result id has no
+    matching tool_use in the immediately-preceding message (the exact condition
+    Anthropic rejects with a 400), so a recurrence is debuggable from one log line."""
+    import src.adapters.claude_adapter as mod
+    errors = []
+    fake_logger = MagicMock()
+    fake_logger.error = lambda *a, **k: errors.append(a)
+    monkeypatch.setattr(mod, "logger", fake_logger)
+
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="model", parts=[MessagePart(tool_call=ToolCall(
+            name="X", args={}, thought_signature="toolu_A"))]),
+        Message(role="user", parts=[MessagePart(
+            tool_response={"name": "X", "tool_use_id": "toolu_ORPHAN",
+                           "response": {"result": "r"}})]),
+    ]
+
+    await adapter._convert_messages(messages)
+
+    assert errors, "expected an ERROR log for the orphaned tool_use_id"
+    logged = " ".join(str(x) for a in errors for x in a)
+    assert "toolu_ORPHAN" in logged
+    assert "mismatch" in logged.lower()
+
+
+@pytest.mark.asyncio
+async def test_no_diagnostic_when_pairing_is_valid(monkeypatch):
+    """No ERROR is logged when every tool_result id maps to a tool_use in the
+    previous message."""
+    import src.adapters.claude_adapter as mod
+    errors = []
+    fake_logger = MagicMock()
+    fake_logger.error = lambda *a, **k: errors.append(a)
+    monkeypatch.setattr(mod, "logger", fake_logger)
+
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="model", parts=[MessagePart(tool_call=ToolCall(
+            name="X", args={}, thought_signature="toolu_A"))]),
+        Message(role="user", parts=[MessagePart(
+            tool_response={"name": "X", "tool_use_id": "toolu_A",
+                           "response": {"result": "r"}})]),
+    ]
+
+    await adapter._convert_messages(messages)
+
+    assert not errors
+
+
+# ============================================================================
 # Error mapping: overloaded_error (HTTP 529) classification
 #
 # overloaded_error can arrive mid-stream as an SSE error event after the HTTP

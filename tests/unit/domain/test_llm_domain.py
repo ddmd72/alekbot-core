@@ -20,6 +20,7 @@ from src.domain.llm import (
     MessagePart,
     ToolCall,
     PROMPT_CACHE_BOUNDARY,
+    build_tool_turn,
 )
 
 
@@ -129,6 +130,47 @@ class TestPromptCacheConfig:
 class TestPromptCacheBoundary:
     def test_constant_value(self):
         assert PROMPT_CACHE_BOUNDARY == "<!-- CACHE_BOUNDARY -->"
+
+
+class TestBuildToolTurn:
+    """build_tool_turn must carry each tool_use id explicitly onto the matching
+    tool_response, so adapters never re-derive it by a fragile name search."""
+
+    def _response(self, tool_calls):
+        return LLMResponse(text="", tool_calls=tool_calls, raw_content=None)
+
+    def test_tool_response_carries_tool_use_id(self):
+        tc = ToolCall(name="delegate_to_specialist", args={"intent": "search_web"},
+                      thought_signature="toolu_ABC")
+        resp = self._response([tc])
+
+        msgs = build_tool_turn(resp, [(tc, "result text")])
+
+        # [0] = model/assistant message (tool_call), [1] = user message (tool_response)
+        assert len(msgs) == 2
+        tool_part = msgs[1].parts[0]
+        assert tool_part.tool_response["name"] == "delegate_to_specialist"
+        assert tool_part.tool_response["tool_use_id"] == "toolu_ABC"
+        assert tool_part.tool_response["response"] == {"result": "result text"}
+
+    def test_parallel_same_name_calls_each_keep_own_id(self):
+        tc1 = ToolCall(name="delegate_to_specialist", args={"q": 1}, thought_signature="toolu_1")
+        tc2 = ToolCall(name="delegate_to_specialist", args={"q": 2}, thought_signature="toolu_2")
+        resp = self._response([tc1, tc2])
+
+        msgs = build_tool_turn(resp, [(tc1, "r1"), (tc2, "r2")])
+
+        ids = [p.tool_response["tool_use_id"] for p in msgs[1].parts if p.tool_response]
+        assert ids == ["toolu_1", "toolu_2"]
+
+    def test_missing_signature_omits_tool_use_id(self):
+        # No provider call id (e.g. legacy / non-Claude path) → key omitted, not None.
+        tc = ToolCall(name="search_memory", args={}, thought_signature=None)
+        resp = self._response([tc])
+
+        msgs = build_tool_turn(resp, [(tc, "r")])
+
+        assert "tool_use_id" not in msgs[1].parts[0].tool_response
 
 
 class TestBackwardCompatImport:

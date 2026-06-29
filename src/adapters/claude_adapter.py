@@ -607,11 +607,17 @@ class ClaudeAdapter(LLMPort):
                     })
                     logger.debug(f"[ClaudeAdapter]   Part {part_idx}: tool_call name={p.tool_call.name} id={tool_id}")
                 elif p.tool_response:
-                    # Find matching tool_use ID from previous messages.
-                    # Pass used_ids to avoid duplicate IDs when the same tool was called
-                    # multiple times in parallel (e.g. 2x search_memory).
+                    # Prefer the tool_use id carried explicitly on the tool_response
+                    # (set by build_tool_turn from the originating ToolCall). This is
+                    # the exact id the provider assigned to the matching tool_use block,
+                    # so it is order-independent and immune to same-name collisions across
+                    # turns / parallel fan-out. Fall back to the legacy backward name
+                    # search only for history that predates the explicit id (e.g. tool
+                    # turns built before this change, or providers without a call id).
                     tool_name = p.tool_response.get("name", "")
-                    tool_id = self._find_tool_use_id(messages, tool_name, idx, used_tool_ids)
+                    tool_id = p.tool_response.get("tool_use_id")
+                    if not tool_id:
+                        tool_id = self._find_tool_use_id(messages, tool_name, idx, used_tool_ids)
                     used_tool_ids.add(tool_id)
                     content_parts.append({
                         "type": "tool_result",
@@ -730,7 +736,58 @@ class ClaudeAdapter(LLMPort):
                 if len(user_indices) >= 2:
                     _mark_last_block(user_indices[-2], "prev")
 
+        self._diagnose_tool_pairing(claude_messages)
         return claude_messages
+
+    @staticmethod
+    def _block_field(block: Any, field: str) -> Any:
+        """Read a field from a content block that may be a dict (reconstructed)
+        or an SDK object (passed through verbatim from raw_content)."""
+        if isinstance(block, dict):
+            return block.get(field)
+        return getattr(block, field, None)
+
+    def _diagnose_tool_pairing(self, claude_messages: List[Dict[str, Any]]) -> None:
+        """Assert Anthropic's tool-pairing invariant and log loudly on violation.
+
+        Anthropic rejects a request (HTTP 400 invalid_request_error) when a
+        tool_result block's tool_use_id does not correspond to a tool_use block
+        in the IMMEDIATELY preceding message. That 400 carries only an id and an
+        index — useless for diagnosis after the fact. This pass detects the same
+        condition before the call and logs the offending id alongside the ids
+        that WERE available, so a recurrence (this fired once in 30 days under
+        heavy parallel fan-out) is debuggable from one log line instead of a bare
+        provider error. Non-fatal by design: it adds visibility, not a new failure
+        mode — the request is still sent and the provider remains the source of truth.
+        """
+        for idx, msg in enumerate(claude_messages):
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            result_ids = [
+                self._block_field(b, "tool_use_id")
+                for b in content
+                if self._block_field(b, "type") == "tool_result"
+            ]
+            if not result_ids:
+                continue
+            prev_content = claude_messages[idx - 1].get("content") if idx > 0 else None
+            available_ids = set()
+            if isinstance(prev_content, list):
+                available_ids = {
+                    self._block_field(b, "id")
+                    for b in prev_content
+                    if self._block_field(b, "type") == "tool_use"
+                }
+            orphans = [rid for rid in result_ids if rid not in available_ids]
+            if orphans:
+                logger.error(
+                    "❌ [ClaudeAdapter] tool_result/tool_use mismatch at message %s: "
+                    "orphaned tool_use_id(s)=%s not in previous message's tool_use ids=%s "
+                    "(this WILL be rejected by Anthropic as invalid_request_error). "
+                    "result_ids=%s",
+                    idx, orphans, sorted(i for i in available_ids if i), result_ids,
+                )
 
     def _convert_tools(self, tools: List[Any]) -> List[Dict[str, Any]]:
         claude_tools = []
