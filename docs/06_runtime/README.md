@@ -467,11 +467,12 @@ latency. See `src/handlers/consolidation_handler.py` for implementation.
 
 
 
-**Debug prompt logging** (`src/utils/debug_logger.py`):
-- Controlled by `DEBUG_PROMPTS=true` env var (off by default in production).
-- When enabled, writes 3 items per agent per turn: LLM prompt (system + content), LLM response (raw text + tokens), final agent output.
-- Backend: GCS bucket when `DEBUG_PROMPTS_BUCKET` is set (Cloud Run); local `debug_prompts/` directory otherwise.
-- All agents use `BaseAgent._debug_prompt` / `_debug_response` — no direct `get_debug_logger()` imports in agent files.
+
+
+
+  
+
+
 
 
 

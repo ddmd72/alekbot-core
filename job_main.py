@@ -9,8 +9,7 @@ Environment variables (static — set at job deploy time):
   GOOGLE_CLOUD_PROJECT      GCP project ID.
   CLOUD_RUN_SERVICE_URL     Base URL of the Cloud Run service (for Cloud Tasks delivery).
   APP_ENV                   "development" | "production" (determines queue suffix).
-  DEBUG_PROMPTS             "true" | "false" — enables GCS debug prompt uploads.
-  DEBUG_PROMPTS_BUCKET      GCS bucket name for debug uploads.
+  DEBUG_PROMPTS             "true" | "false" — gates the BigQuery prompt-content store.
   GCS_MEDIA_BUCKET          GCS bucket for raw research result uploads (optional).
   DEEP_RESEARCH_SECOND_PASS "true" | "false" — enable/disable second-pass critic (fallback).
 

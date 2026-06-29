@@ -49,7 +49,6 @@ K ?= 300
 .PHONY: services status
 .PHONY: check-models check-pricing
 .PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
-.PHONY: create-debug-bucket
 .PHONY: delete
 
 # ============================================================================
@@ -188,7 +187,7 @@ check: lint test-unit ## CI gate: ruff lint + unit/architecture tests
 deploy: ## Build + deploy to Cloud Run (the single live environment)
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json
@@ -349,26 +348,6 @@ test-e2e-websearch: ## E2E: WebSearch agent
 
 test-e2e-all: ## E2E: All agents
 	@APP_ENV=development $(PYTHON) scripts/prompt/test_agent_e2e.py --agent-type all
-
-# ============================================================================
-# DEBUG INFRASTRUCTURE
-# ============================================================================
-
-create-debug-bucket: ## Create private GCS bucket for agent prompt/response debug logs
-	@[ -n "$(DEBUG_PROMPTS_BUCKET)" ] || (echo "❌ DEBUG_PROMPTS_BUCKET is not set in .env" && exit 1)
-	@echo "🪣 Creating debug bucket: $(DEBUG_PROMPTS_BUCKET)"
-	gcloud storage buckets create gs://$(DEBUG_PROMPTS_BUCKET) \
-		--project=$(PROJECT_ID) \
-		--location=$(REGION) \
-		--uniform-bucket-level-access \
-		--no-public-access-prevention
-	@echo "🔒 Granting Cloud Run SA write access..."
-	$(eval PROJECT_NUMBER := $(shell gcloud projects describe $(PROJECT_ID) --format="value(projectNumber)"))
-	gcloud storage buckets add-iam-policy-binding gs://$(DEBUG_PROMPTS_BUCKET) \
-		--member="serviceAccount:$(PROJECT_NUMBER)-compute@developer.gserviceaccount.com" \
-		--role="roles/storage.objectCreator"
-	@echo "✅ Bucket ready. Add to .env: DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET)"
-	@echo "   Add to Cloud Build trigger substitutions: _DEBUG_PROMPTS_BUCKET=$(DEBUG_PROMPTS_BUCKET)"
 
 # ============================================================================
 # CLEANUP (DANGEROUS)

@@ -5,7 +5,6 @@ Base Agent Infrastructure
 Provides abstract base class and utilities for all agents.
 """
 
-import json
 import time
 import random
 import asyncio
@@ -28,7 +27,6 @@ from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
 from ..utils.retry import retry_async
-from ..utils.debug_logger import get_debug_logger
 from ..utils.telemetry import get_tracer
 
 if TYPE_CHECKING:
@@ -843,87 +841,11 @@ class BaseAgent(ABC):
     # ---------------------------------------------------------------------- #
     # Debug logging helpers                                                  #
     # ---------------------------------------------------------------------- #
-    #
-    # Thin wrappers around PromptDebugLogger that:
-    #   • guard on debug.enabled (no-op when DEBUG_PROMPTS is off)
-    #   • standardise agent_name (agent_type or agent_id)
-    #   • format List[Message] history to a readable string
-    #
-    # Agents call self._debug_prompt / self._debug_response instead of
-    # importing get_debug_logger() themselves.
-    # ---------------------------------------------------------------------- #
-
-    def _debug_prompt(self, system: str, content, turn: int = 0, model: str = "") -> None:
-        """Log what was sent to the LLM (no-op when DEBUG_PROMPTS is off).
-
-        content: either a pre-formatted str or List[Message].
-        system:  system instruction (may be empty).
-        """
-        debug = get_debug_logger()
-        if not debug.enabled:
-            return
-        prompt_str = content if isinstance(content, str) else self._format_history_for_debug(content)
-        meta = {}
-        if model:
-            meta["model"] = model
-        if turn:
-            meta["turn"] = turn
-        debug.log_prompt(
-            agent_name=self.agent_type or self.agent_id,
-            prompt=prompt_str,
-            system_instruction=system or None,
-            metadata=meta or None,
-        )
-
-    def _debug_response(self, text: str, tokens: int = 0, turn: int = 0) -> None:
-        """Log what the LLM returned (no-op when DEBUG_PROMPTS is off)."""
-        debug = get_debug_logger()
-        if not debug.enabled:
-            return
-        meta = {}
-        if tokens:
-            meta["tokens"] = tokens
-        if turn:
-            meta["turn"] = turn
-        debug.log_response(
-            agent_name=self.agent_type or self.agent_id,
-            response=text,
-            metadata=meta or None,
-        )
-
-    def _debug_llm_response(self, response: "LLMResponse", turn: int = 0) -> None:
-        """Log full LLMResponse as JSON (no-op when DEBUG_PROMPTS is off).
-
-        Serialises text + tool_calls + tokens so the debug bucket always
-        contains the complete model output, not just the text fragment.
-        """
-        debug = get_debug_logger()
-        if not debug.enabled:
-            return
-        data: dict = {"text": response.text or ""}
-        if response.tool_calls:
-            data["tool_calls"] = [
-                {"name": tc.name, "args": tc.args}
-                for tc in response.tool_calls
-            ]
-        if response.usage_metadata:
-            m = response.usage_metadata
-            data["tokens"] = m.total_tokens
-            try:
-                data["prompt_tokens"] = int(m.prompt_tokens or 0)
-                data["completion_tokens"] = int(m.completion_tokens or 0)
-                cr = int(m.cache_read_tokens or 0)
-                cc = int(m.cache_creation_tokens or 0)
-                if cr or cc:
-                    data["cache"] = {"read": cr, "creation": cc}
-            except (TypeError, ValueError):
-                logger.debug("Non-numeric tokens in usage_metadata — skipping detailed debug")
-        meta = {"turn": turn} if turn else None
-        debug.log_response(
-            agent_name=self.agent_type or self.agent_id,
-            response=json.dumps(data, ensure_ascii=False, indent=2),
-            metadata=meta,
-        )
+    # ``_debug_raw_turn`` (below) is the only live debug helper: a summary-only
+    # ``logger.info`` line for agents that bypass ``LLMPort`` (e.g.
+    # ``ClaudeDeepResearchRunnerAgent``). The legacy GCS prompt-dump
+    # (``PromptDebugLogger``) was removed — content capture now goes to the
+    # BigQuery store via ``_call_llm`` → ``PromptContentStore.record_turn``.
 
     def _debug_raw_turn(
         self,
@@ -937,8 +859,9 @@ class BaseAgent(ABC):
         """Debug logging for agents that call the LLM SDK directly (not via LLMPort).
 
         Intended as an explicit escape hatch for ClaudeDeepResearchRunnerAgent and any
-        future agent that must bypass LLMPort (e.g. native built-in tools).
-        Do NOT call _debug_prompt/_debug_response from such agents — use this instead.
+        future agent that must bypass LLMPort (e.g. native built-in tools) and therefore
+        never reaches the BigQuery capture in _call_llm. This is the only debug helper —
+        the legacy GCS prompt-dump was removed (TD-1).
 
         system_blocks: raw system list[dict] as sent to the API (each has "text" key).
         user_content:  user message sent in messages[].
@@ -1280,30 +1203,6 @@ class BaseAgent(ABC):
                 span.end()
         except Exception as e:  # tracing must never break the LLM path
             logger.debug("llm.call span emission skipped: %s", e)
-
-    @staticmethod
-    def _format_history_for_debug(history: List[Message]) -> str:
-        """Render List[Message] as a human-readable string for debug logs."""
-        sections = []
-        for msg in history:
-            parts_strs = []
-            for p in msg.parts:
-                if p.text:
-                    parts_strs.append(p.text)
-                elif p.tool_call:
-                    parts_strs.append(f"[tool_call: {p.tool_call.name} args={p.tool_call.args}]")
-                elif p.tool_response:
-                    name = (
-                        p.tool_response.get("name", "?")
-                        if isinstance(p.tool_response, dict) else str(p.tool_response)
-                    )
-                    parts_strs.append(f"[tool_response: {name}]")
-                elif p.file_data:
-                    parts_strs.append("[file_data]")
-                else:
-                    parts_strs.append("[raw_content]")
-            sections.append(f"[{msg.role.upper()}]\n" + "\n".join(parts_strs))
-        return "\n---\n".join(sections)
 
     def _get_alternative_agents(self) -> Optional[list[str]]:
         """

@@ -31,8 +31,10 @@ How logs are structured, where to find them, and how to query them — for both 
 2026-02-18 14:32:01 | DEBUG    | src.adapters.grok_adapter | generate_content:174 | ...
 ```
 
-### Prompt/response files
-Enable with `DEBUG_PROMPTS=true` in `.env` → saved to `debug_prompts/` directory.
+### LLM prompt/response content
+Enable with `DEBUG_PROMPTS=true` AND `BIGQUERY_PROMPT_DATASET` set in `.env` → one row per LLM
+call captured to BigQuery `alek_observability_dev.prompt_content` (day-partitioned, 30-day TTL).
+Read it with `bq query` — see the [Agent Logging Guide](../05_building_blocks/agent_logging/README.md).
 
 ---
 
@@ -201,25 +203,15 @@ resource.type="cloud_run_job"
 resource.labels.job_name="alek-research-job-dev"
 ```
 
-### Debug prompts (GCS)
+### Debug prompts (deep-research runner)
 
-When `DEBUG_PROMPTS=true` and `DEBUG_PROMPTS_BUCKET` is set, the runner saves full prompts
-and responses to GCS after each research pass:
+The deep-research runner bypasses `LLMPort` and calls the Claude SDK directly (native built-in
+tools), so its full prompts are **not** captured to the BigQuery content store. Instead it emits a
+summary-only `logger.info` line per pass via `_debug_raw_turn` (no GCS, no storage write).
 
-```
-gs://{DEBUG_PROMPTS_BUCKET}/claude_deep_research_runner/{date}/{ts}_prompt.txt
-gs://{DEBUG_PROMPTS_BUCKET}/claude_deep_research_runner/{date}/{ts}_response.txt
-```
-
-Two pairs per execution (first pass + second-pass critic), saved at `end_turn` or `max_tokens`.
-
-```bash
-# List today's debug files
-gsutil ls gs://$(DEBUG_PROMPTS_BUCKET)/claude_deep_research_runner/$(date +%Y-%m-%d)/
-
-# Read a response
-gsutil cat gs://$(DEBUG_PROMPTS_BUCKET)/claude_deep_research_runner/$(date +%Y-%m-%d)/{ts}_response.txt
-```
+For all agents that go through `LLMPort`, full LLM prompt/response content lands in the BigQuery
+`prompt_content` store (table `alek_observability_dev.prompt_content`, gated by `DEBUG_PROMPTS=true`
++ `BIGQUERY_PROMPT_DATASET`). See the [Agent Logging Guide](../05_building_blocks/agent_logging/README.md).
 
 ---
 
@@ -230,7 +222,7 @@ gsutil cat gs://$(DEBUG_PROMPTS_BUCKET)/claude_deep_research_runner/$(date +%Y-%
 | `src/utils/logger.py` | Logger setup — detects Cloud Run, chooses handler |
 | `src/utils/logging_context.py` | Per-request context vars (user_id, session_id, event_id) |
 | `src/utils/telemetry.py` | OpenTelemetry + Cloud Trace integration |
-| `src/utils/debug_logger.py` | Local prompt/response file logger (`DEBUG_PROMPTS=true`) |
+| `src/adapters/bigquery_prompt_content_adapter.py` | BigQuery LLM content store (`DEBUG_PROMPTS=true` + `BIGQUERY_PROMPT_DATASET`) |
 
 ---
 

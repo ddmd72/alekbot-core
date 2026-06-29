@@ -290,80 +290,15 @@ which sends `Intent.CONSOLIDATE_FULL` to `ConsolidationAgent` via `AgentCoordina
 
 ## 8. Debug Logging
 
-All three stages log to GCS debug bucket when `DEBUG_PROMPTS=true` and
-`DEBUG_PROMPTS_BUCKET` is set.
+Consolidation LLM turns are captured to the BigQuery content store like every other agent —
+per LLM call, from the single call site `BaseAgent._call_llm()` → `PromptContentStore.record_turn()`.
+All three stages (each turn of each stage) land as rows in
+`alek_observability_dev.prompt_content` (day-partitioned, 30-day TTL), gated by `DEBUG_PROMPTS=true`
+AND `BIGQUERY_PROMPT_DATASET` set.
 
-### 8.1 File naming convention
-
-Files are written by `PromptDebugLogger` in `src/utils/debug_logger.py`:
-
-| File | When | Contains |
-|------|------|----------|
-| `consolidation/{date}/prompt_{label}_{ts}.txt` | Start of each stage | System prompt + user message |
-| `consolidation/{date}/response_t{N}_{type}_{ts}.txt` | Each LLM turn | LLM response |
-
-**Response file `{type}`:**
-
-| Value | When |
-|-------|------|
-| `_tools_Nx_{toolname}` | LLM called N tools; first tool name shown |
-| `_final` | LLM sent the final JSON REPORT (no tool calls) |
-
-**Prompt `{label}`:** slug of `system_instruction` parameter. Examples:
-- `prompt_multi_turn_deliberate_consolidation_stage_1_20260306_155137.txt`
-- `prompt_user_message_20260306_155309.txt`
-
-### 8.2 Response file content structure
-
-```
-================================================================================
-AGENT: consolidation
-TIMESTAMP: 2026-03-06T16:08:01
-TOKENS: 17533
-================================================================================
-
-=== TEXT ===
-## Step 4–5 — ANALYZE & DECIDE
-→ fact_id: abc... [prose with real newlines]
-
----
-
-## Step 8 — REPORT
-
----
-
-**Verdict:** ...
-
-=== JSON ===
-{
-  "operations": [
-    {"action": "DISCARD", "reason": "..."}
-  ]
-}
-
-=== TOKENS: 17533 ===
-```
-
-Embedded ` ```json ``` ` blocks are **extracted** from the text and placed as a separate
-`=== JSON ===` section. The prose in `=== TEXT ===` no longer contains the raw code fence.
-
-### 8.3 Reading a consolidation run from GCS
-
-For a single `consolidate_full` run you will typically see (in order):
-
-1. `prompt_multi_turn_deliberate_consolidation_stage_1_{ts}.txt` — Stage 1 system prompt
-2. `prompt_user_message_{ts}.txt` — Stage 1 conversation batch (user message)
-3. `response_t1_tools_Nx_search_existing_facts_{ts}.txt` — Turn 1: searches
-4. `response_t2_tools_Nx_count_words_{ts}.txt` — Turn 2: size checks (if any)
-5. `response_tN_tools_Nx_create_fact_{ts}.txt` — subsequent write turns
-6. `response_tN_final_{ts}.txt` — Stage 1 REPORT
-7. `prompt_multi_turn_deliberate_consolidation_stage_2_cluster_{ts}.txt` — Stage 2 prompt
-8. `prompt_user_message_{ts}.txt` — Stage 2 cluster (user message)
-9. `response_t1_tools_19x_count_words_{ts}.txt` — Stage 2 Turn 1: word counts for all cluster facts
-10. `response_tN_tools_Nx_create_fact_{ts}.txt` — Stage 2 write turns
-11. `response_tN_final_{ts}.txt` — Stage 2 REPORT
-12. `prompt_user_message_{ts}.txt` — Stage 3 email batch
-13. `response_tN_final_{ts}.txt` — Stage 3 REPORT
+Each row carries `agent_type`, `model`, `provider`, `turn`, full `request_text` / `response_text`,
+`tool_calls`, and token counts. To read a single `consolidate_full` run, query by `trace_id` and
+order by `turn`. See the [Agent Logging Guide](../agent_logging/README.md) for the `bq` query form.
 
 ---
 
@@ -414,7 +349,7 @@ writes still took effect, but `ops` count in the stage summary shows 0 (report n
 | `src/adapters/gcp_task_queue.py` → `enqueue_consolidation_task` | Cloud Tasks dispatch with `dispatch_deadline` |
 | `src/adapters/firestore_session_store.py` | Sliding window, overflow callback |
 | `src/services/fact_write_service.py` | Fact persistence (SCD2, embeddings) |
-| `src/utils/debug_logger.py` → `PromptDebugLogger` | GCS debug logging |
+| `src/adapters/bigquery_prompt_content_adapter.py` → `BigQueryPromptContentAdapter` | BigQuery LLM content capture |
 
 ---
 

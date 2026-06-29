@@ -542,11 +542,9 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   `PromptContentStore.record_turn()` (wired only when `DEBUG_PROMPTS=true` AND `BIGQUERY_PROMPT_DATASET`
   set — see Debugging Cloud Run for how to read it). Changing capture = edit this method only.
   **Escape hatch for raw SDK callers** — agents bypassing `LLMPort` (e.g. `ClaudeDeepResearchRunnerAgent`
-  with native built-in tools) call `_debug_raw_turn(...)` (summary only).
-  ⚠️ **LEGACY — candidate for removal (see `docs/12_risks/IMPLEMENTATION_ROADMAP.md`):**
-  `PromptDebugLogger` (the old GCS prompt-dump: `log_llm_request`/`_debug_llm_response`/`_debug_prompt`/
-  `_debug_response`) is fully superseded by the BigQuery store and is no longer called from `_call_llm`.
-  Do NOT route new code through it.
+  with native built-in tools) call `_debug_raw_turn(...)` (summary-only `logger.info`, no GCS).
+  The legacy GCS prompt-dump (`PromptDebugLogger`, `DEBUG_PROMPTS_BUCKET`) was removed (TD-1,
+  2026-06-29) — BigQuery is the only content-capture path now.
 - **CircuitBreaker** — in BaseAgent, protects against cascading failures.
 - **Transcript integrity — one delegation transcript = one provider.** `_call_llm` cross-provider-
   fails-over only when `request.messages` is NOT provider-locked (no `tool_call`/`tool_response` part,

@@ -91,7 +91,21 @@ mandatory before team/multi-user rollout.
 
 ## 🧹 Tech-Debt Backlog
 
-### TD-1: Remove legacy `PromptDebugLogger` (GCS prompt-dump) [P2]
+### TD-1: Remove legacy `PromptDebugLogger` (GCS prompt-dump) [P2] — ✅ RESOLVED 2026-06-29
+
+- **Resolution:** Deleted `src/utils/debug_logger.py` (`PromptDebugLogger`) and the dead
+  `_debug_prompt`/`_debug_response`/`_debug_llm_response` wrappers + orphaned
+  `_format_history_for_debug` in `base_agent.py`. Stripped `DEBUG_PROMPTS_BUCKET` /
+  `_DEBUG_PROMPTS_BUCKET` from `cloudbuild-dev.yaml` + `Makefile` (substitution + `create-debug-bucket`
+  target) and the stale `job_main.py` docstring. Deleted the orphaned dev script
+  `scripts/debug/eval_consolidation_cross_provider.py` and its tests
+  (`tests/unit/utils/test_debug_logger.py` + 3 groups in `tests/unit/test_base_agent.py`). KEPT:
+  the `DEBUG_PROMPTS` flag (now gates the BigQuery `PromptContentStore`), `_debug_raw_turn`
+  (summary-only `logger.info` used by the DR runner), and the live `GCS_MEDIA_BUCKET` (files / docs /
+  deep-research results — a physically separate bucket). The actual `…-debug-prompts` GCS bucket and
+  its historical data are left for manual deletion (the code just stops writing to it).
+
+<details><summary>Original problem analysis (kept for reference)</summary>
 
 - **Problem:** LLM prompt/response capture moved to the BigQuery content store
   (`PromptContentStore.record_turn`, R1 `3050b56`); `PromptDebugLogger` (GCS
@@ -107,6 +121,8 @@ mandatory before team/multi-user rollout.
   `src/agents/claude_deep_research_runner_agent.py`, `src/composition/service_container.py`,
   `src/config/settings.py`
 - **Note:** User reversed the earlier "do not delete" stance (2026-06-29) — removal approved.
+
+</details>
 
 ### TD-2: No cross-provider failover mid delegation-loop [P1] — ✅ RESOLVED 2026-06-29
 
