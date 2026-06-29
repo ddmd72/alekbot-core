@@ -219,6 +219,16 @@ class DelegationEngine:
 
             response: LLMResponse = await call_llm(request, turn + 1)
 
+            # TEMP tool-id tracing (2026-06-29 tool_use_id orphan hunt): does the LIVE
+            # response carry tool-call ids? Pinpoints whether id loss is at parse-time
+            # (SDK/adapter) vs downstream history handling.
+            if response.tool_calls:
+                logger.info(
+                    "🔎 [DelegationEngine] turn %s live response: raw_content=%s tool_calls=%s",
+                    turn + 1, response.raw_content is not None,
+                    [(tc.name, tc.thought_signature) for tc in response.tool_calls],
+                )
+
             if response.usage_metadata:
                 total_tokens += response.usage_metadata.total_tokens
 
