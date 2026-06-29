@@ -82,10 +82,14 @@ would defeat the design.
 > or forwards `file_ref`. GCS download is an **exact-key** match. Slack names every pasted image
 > `image.png`; dedup gives a unique `ref` (`image (4).png`), but if the label showed the original
 > `image.png`, the tool call would land on whatever stale object squats the un-suffixed slot
-> (e.g. a months-old `image.png`) → bot describes the *wrong/old* image. The debug logger only
-> serializes `p.text` (never `file_data`), so dumps cannot show whether an image was inlined —
-> do not diagnose vision from request dumps. Fixed 2026-05-30: `file_conversion_service.py`
-> builds the label from `ref`, not `filename`.
+> (e.g. a months-old `image.png`) → bot describes the *wrong/old* image. Fixed 2026-05-30:
+> `file_conversion_service.py` builds the label from `ref`, not `filename`.
+>
+> **Vision-debugging gotcha:** the BigQuery content store renders `request_text` via
+> `_render_messages` (`src/adapters/bigquery_prompt_content_adapter.py`) — text + tool_call/
+> tool_response only, **never `file_data`/image bytes**. So a stored `prompt_content` row cannot
+> tell you whether an image was actually sent. Don't diagnose vision from the stored request; read
+> the code path + the `open_file` binary size in logs.
 
 ---
 
