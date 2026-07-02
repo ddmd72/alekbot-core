@@ -215,6 +215,28 @@ services: ## Show service URL
 	@echo "🌐 Service URL:"
 	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format="value(status.url)" 2>/dev/null || echo "  $(SERVICE_NAME): Not deployed"
 
+# --- Claude PERFORMANCE-tier model kill-switch (Sonnet 5 rollout) -------------
+# The Claude PERFORMANCE tier (Consolidation + Claude-tier Smart) defaults to
+# claude-sonnet-5 (set in cloudbuild-dev.yaml). These flip the LIVE env var with
+# no rebuild/redeploy — the instant rollback lever. `make deploy` resets the env
+# to the cloudbuild default (claude-sonnet-5); for a permanent rollback also edit
+# CLAUDE_PERFORMANCE_MODEL in cloudbuild-dev.yaml.
+claude-model: ## Show the live CLAUDE_PERFORMANCE_MODEL (unset => default claude-sonnet-5)
+	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format=export 2>/dev/null \
+		| grep -A1 "name: CLAUDE_PERFORMANCE_MODEL" || echo "  CLAUDE_PERFORMANCE_MODEL unset => default claude-sonnet-5"
+
+claude-rollback: ## KILL-SWITCH: flip PERFORMANCE tier live -> Sonnet 4.6 (no redeploy)
+	@echo "⏪ Rolling Claude PERFORMANCE tier back to claude-sonnet-4-6 (live)..."
+	gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
+		--update-env-vars CLAUDE_PERFORMANCE_MODEL=claude-sonnet-4-6
+	@echo "✅ Live env flipped. (make deploy resets it to the cloudbuild default: claude-sonnet-5)"
+
+claude-forward: ## Flip PERFORMANCE tier live -> Sonnet 5 (no redeploy)
+	@echo "⏩ Rolling Claude PERFORMANCE tier forward to claude-sonnet-5 (live)..."
+	gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
+		--update-env-vars CLAUDE_PERFORMANCE_MODEL=claude-sonnet-5
+	@echo "✅ Live env flipped."
+
 status: ## Show service status
 	@echo "📊 Service status ($(SERVICE_NAME)):"
 	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format="table(status.conditions[0].type,status.conditions[0].status,metadata.labels)" 2>/dev/null || echo "  Not deployed"
