@@ -10,9 +10,15 @@ and result delivery (DocPlanner Cloud Task → DOCX → user notification).
 
 Tier → model mapping:
   ECO / TIER1-3 → claude-haiku-4-5-20251001  (fast + cheap debugging / light tasks)
-  BALANCED      → claude-sonnet-4-6           (research quality + cost efficiency)
-  PERFORMANCE   → claude-sonnet-4-6           (same as BALANCED for deep research)
+  BALANCED      → claude-sonnet-5             (research quality/cost sweet spot; from 4-6 2026-07-02)
+  PERFORMANCE   → claude-sonnet-5             (same as BALANCED for deep research)
   ULTRA         → claude-opus-4-8             (maximum quality; upgraded from 4-7 2026-05-30)
+
+Sonnet 5 note: the resolved model name is consumed by ClaudeDeepResearchRunnerAgent, whose
+native-SDK call omits `temperature` and raises `max_tokens` for the new-generation models
+(sonnet-5 / opus-4.7+ / fable) — see that agent's _NO_SAMPLING_MODELS gate. Rollback is coarse:
+`CLAUDE_DEEP_RESEARCH_MODEL` (model_override) pins EVERY tier, not just PERFORMANCE, so setting
+it to claude-sonnet-4-6 is a break-glass kill-switch (loses tier differentiation until removed).
 """
 import json
 import uuid
@@ -37,8 +43,8 @@ class ClaudeDeepResearchAdapter(DeepResearchPort):
 
     MODEL_TIERS = {
         PerformanceTier.ECO:         "claude-haiku-4-5-20251001",
-        PerformanceTier.BALANCED:    "claude-sonnet-4-6",
-        PerformanceTier.PERFORMANCE: "claude-sonnet-4-6",
+        PerformanceTier.BALANCED:    "claude-sonnet-5",
+        PerformanceTier.PERFORMANCE: "claude-sonnet-5",
         PerformanceTier.ULTRA:       "claude-opus-4-8",
         PerformanceTier.TIER1:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER2:       "claude-haiku-4-5-20251001",

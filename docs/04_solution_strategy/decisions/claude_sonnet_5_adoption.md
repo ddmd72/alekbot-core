@@ -1,9 +1,9 @@
 # Claude Sonnet 5 adoption (PERFORMANCE tier)
 
 **Status:** Accepted — 2026-07
-**Scope:** `ClaudeAdapter` only (Consolidation + any Claude-tier Smart path). The Deep-Research
-runner (`ClaudeDeepResearchRunnerAgent`, native built-in tools, Cloud Run Job) is a separate
-adapter and is **not** migrated here — deferred as a follow-up.
+**Scope:** `ClaudeAdapter` (Consolidation + any Claude-tier Smart path) — shipped 2026-07-02.
+The Deep-Research path (`ClaudeDeepResearchAdapter` kick-off + `ClaudeDeepResearchRunnerAgent`
+native-SDK loop, Cloud Run Job) was migrated in a follow-up — see **Deep Research follow-up** below.
 
 ## Decision
 
@@ -44,6 +44,40 @@ Rollout is guarded on three levers so a bad model day never becomes an outage:
 - **Force `temperature=1.0` for Sonnet 5** (1.0 is the API default, so accepted). Rejected in
   favour of omitting entirely — unambiguous per the migration guide ("omit these parameters"),
   and it also covers `top_p`/`top_k` should they ever be added to `LLMRequest`.
+
+## Deep Research follow-up (2026-07-02)
+
+Deep Research is cost-sensitive (Opus/Fable are out of budget for long-horizon runs), so Sonnet 5
+— ~Opus-4.8 quality at Sonnet price — is the deliberate quality/cost compromise here too.
+
+The DR path is a **separate code surface** from `ClaudeAdapter`: a kick-off adapter
+(`ClaudeDeepResearchAdapter`, resolves a model name → Cloud Run Job) plus a runner agent
+(`ClaudeDeepResearchRunnerAgent`) that calls the Anthropic SDK **directly** with native built-in
+tools (`web_search_20260209` / `web_fetch_20260209` / auto-injected `code_execution`). The same
+Sonnet 5 breaking changes therefore had to be re-handled on that native-SDK path:
+
+| Change | Handling in the DR path |
+|---|---|
+| Model default | `ClaudeDeepResearchAdapter.MODEL_TIERS`: BALANCED + PERFORMANCE `claude-sonnet-4-6` → **`claude-sonnet-5`** (BALANCED is the DR default tier). ECO→Haiku, ULTRA→Opus 4.8 unchanged. |
+| `temperature` non-default → 400 | `ClaudeDeepResearchRunnerAgent._research_loop` now **omits `temperature`** for the new-gen set and keeps `temperature=1.0` only for older thinking models (Sonnet 4.6 / Opus 4.6) + Haiku. Also fixes a **latent 400** that was live on the ULTRA/Opus-4.8 path (it was sending `temperature=1.0` to a no-sampling model). |
+| New tokenizer (~+30% tokens) | `max_tokens` raised **64K → 96K** for the new-gen set (same-length reports emit ~30% more tokens; 96K stays under the 128K extended-output beta ceiling and only bills actual output). Older thinking models keep 64K. |
+| Adaptive thinking | Unchanged — the DR loop already runs `thinking:{type:"adaptive"}` + `output_config:{effort:"high"}`, which Sonnet 5 accepts. DR **wants** thinking on (unlike Consolidation), so no `disabled` gate here. |
+| Native tools | No change — `web_search_20260209` / `web_fetch_20260209` were already validated on Sonnet 5 via `ClaudeAdapter._DYNAMIC_SEARCH_MODELS` (WebSearch agent, shipped 2026-07-02). |
+
+**Single new-gen set drives both effects.** The models that reject non-default sampling AND use the
+new tokenizer are the same generation, so both behaviours key off one `_NO_SAMPLING_MODELS` tuple.
+
+**Why the constant is duplicated, not shared.** `ClaudeDeepResearchRunnerAgent` lives in `agents/`,
+which **REQ-ARCH-12 bars from holding provider model-name strings** (as does `domain/`), and an agent
+may not import an adapter or `config/`. There is no layer both the adapter and the runner can import
+without breaking isolation, so `_NO_SAMPLING_MODELS` (like the pre-existing `_THINKING_MODELS`) is a
+deliberate per-file mirror; the runner is whitelisted in `arch_tech_debt.py::MODEL_NAME_WHITELIST_FILES`
+for exactly this reason. A "DRY into domain" refactor would violate the repo's own architecture test.
+
+**Rollback lever (coarse).** `CLAUDE_DEEP_RESEARCH_MODEL` (adapter `model_override`) overrides **every**
+tier, not just PERFORMANCE — so it's a break-glass kill-switch: `make dr-rollback` pins all DR tiers to
+Sonnet 4.6 (losing tier differentiation until `make dr-forward` removes it). The forward default ships
+via the `MODEL_TIERS` code flip with the override left unset, so ULTRA→Opus 4.8 / ECO→Haiku stay intact.
 
 ## Validation
 
