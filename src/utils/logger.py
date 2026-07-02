@@ -91,6 +91,20 @@ def setup_logger() -> logging.Logger:
         cloud_handler.setLevel(logging.INFO)
         cloud_handler.addFilter(_CloudContextFilter())
         logger.addHandler(cloud_handler)
+
+        # Debug capture: the Anthropic SDK emits raw HTTP request/response on the
+        # ``anthropic`` logger at DEBUG when ANTHROPIC_LOG is set — but the app-wide
+        # handler above is INFO, so those records would be dropped. Give the SDK logger
+        # its own DEBUG handler (propagate=False, so it does not also flood the INFO
+        # root handler) to surface the wire payload in Cloud Logging without lowering
+        # the app-wide level. Toggle with the ANTHROPIC_LOG env var; inert otherwise.
+        if os.getenv("ANTHROPIC_LOG"):
+            sdk_logger = logging.getLogger("anthropic")
+            sdk_logger.setLevel(logging.DEBUG)
+            sdk_handler = StructuredLogHandler(stream=sys.stdout)
+            sdk_handler.setLevel(logging.DEBUG)
+            sdk_logger.addHandler(sdk_handler)
+            sdk_logger.propagate = False
     else:
         # ----------------------------------------------------------------
         # Local: human-readable console + rolling debug file

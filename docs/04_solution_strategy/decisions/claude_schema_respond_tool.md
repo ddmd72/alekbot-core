@@ -1,77 +1,87 @@
-# Claude structured output: `respond` tool, not `output_config.format`
+# Claude structured output: `output_config.format` (native), not a synthesized tool
 
-**Date:** 2026-07-01
-**Status:** Accepted (reverts the 2026-04-23 `output_config.format` migration, `772beb8`)
+**Date:** 2026-07-02
+**Status:** Accepted — **supersedes** the 2026-07-01 `respond`-tool decision below (which itself
+reverted the 2026-04-23 `output_config.format` migration `772beb8`). Net: back to native
+`output_config.format`, now that the model that broke it (see History) is understood.
+
+> Filename kept (`claude_schema_respond_tool.md`) because CLAUDE.md files link to it; the `respond`
+> tool it was named for no longer exists.
 
 ## Decision
 
-On the Claude provider, `LLMRequest.response_schema` is enforced by injecting a synthesized
-`respond` tool (the schema becomes its `input_schema`, `nullable` stripped recursively via
-`_strip_nullable`) with `tool_choice=auto`. The adapter intercepts the `respond` tool call and
-returns its input as JSON text — callers see a normal `LLMResponse.text`. We do **not** use
-Anthropic's GA `output_config.format` (constrained-decode) for `response_schema`.
+On the Claude provider, `LLMRequest.response_schema` is forwarded **natively** via
+`output_config.format` (`{"type":"json_schema","schema": …}`) — the same shape as Gemini's
+`response_json_schema`. The model emits schema-valid JSON as **text**; the adapter returns it
+verbatim as `LLMResponse.text`. There is **no** synthesized `respond` tool, no tool-call
+interception, no safety-net retry.
 
-## Context
+The schema is shaped for Anthropic's grammar compiler before forwarding (`claude_adapter.py`):
 
-`772beb8` (2026-04-23) migrated Claude structured output from a `respond`-tool hack to the GA
-`output_config.format` API. On multi-turn delegation loops with adaptive thinking, that path
-produces degenerate output — two symptoms, both **[anthropic-sdk-python#1204](https://github.com/anthropics/anthropic-sdk-python/issues/1204)**:
+1. `_nullable_to_union` — `{"nullable": true}` → a JSON-Schema `["<type>", "null"]` union
+   (Anthropic's grammar has no `nullable` keyword).
+2. `_make_strict` — `additionalProperties: false` on every object; drop unsupported keywords
+   (`maxLength`, numeric/array constraints). **No `required` injection** → optional/variant keys
+   stay optional.
 
-- **Reasoning leak (Bug 2, observed on Sonnet):** the model's planning narration is trapped in
-  the first JSON string field (`full_response` starts with "...keeping full JSON structure in
-  mind...}. Let me format this now.}" + stray `}`). Structurally valid, semantically polluted.
-- **Empty text block (Bug 1, observed on Opus):** the model emits `{"type":"text","text":""}`
-  alongside its `tool_use` blocks; stored in `raw_content`, replayed next turn, and the API then
-  rejects it (`400 messages: text content blocks must be non-empty`) → Smart fails → Quick.
+## Why (the journey)
 
-Root cause: `output_config.format` forces every text output to match the schema, which fights a
-multi-turn tool loop (intermediate turns must delegate, not emit the final schema) and traps
-in-band reasoning in the constrained text block. The `respond`-tool path keeps the answer in the
-tool_use **input** and reasoning in the separate `thinking` block — no constrained-text failure mode.
+The synthesized `respond` tool (the previous decision) failed on **`claude-sonnet-5`**: the model
+leaked its internal `<parameter name="…">…</parameter>…</invoke>` tool-call serialization into the
+output. Debugged exhaustively 2026-07-02 with raw request/response capture (`ANTHROPIC_LOG=debug`
++ per-call `tools`/`content` dumps):
 
-## Alternatives considered
+- `tool_choice=auto` → the model bypassed `respond` into (clean) plain text, which tripped the
+  safety-net `tool_choice=any` retry — and **that forced retry** produced the leak (~100% of
+  bypasses on Sonnet 5; the doc's earlier "any 0/3" was measured on 4.x).
+- `tool_choice=any` (primary) → no bypass, but the forced `respond` call **still** crammed the whole
+  envelope as `<parameter>` XML into the first field (`input KEYS = ['full_response']`).
+- `strict: true` + discriminated `anyOf` → structure enforced (all 4 keys present) but content
+  **corrupted**: the real widget/summary/links bled into the strings as XML while grammar-forced
+  fields got stubs (`{"html":"<div></div>"}`). Worse than before.
 
-- **Keep `output_config.format`, wait for Anthropic (#1204 open).** Rejected: the degeneracy is
-  user-facing (hard 400s and silent empty answers) and the fix is fully ours to make.
-- **Filter empty text blocks on `raw_content` replay.** Rejected as masking a symptom, not the cause.
-- **Rely on the OUTPUT_FORMAT prompt token + parse-retry only.** Rejected: unenforced structure —
-  Anthropic breaks it periodically (this is the pre-schema failure mode we already lived through).
-- **Force `tool_choice=any` (legacy).** Rejected: verified 2026-07-01 that `any` makes Sonnet
-  spuriously call `delegate_to_specialist` on a terminal turn (extra loop iteration).
+Conclusion: the `<parameter>` leak **is** the tool-call format. No `tool_choice`, prompt, or
+schema tuning removes it — it is intrinsic to Sonnet 5 generating this multi-field tool call.
+Removing the tool removes the format that leaks. `output_config.format` constrains the model to
+emit JSON as **text**, where no tool-call serialization exists.
 
-## `tool_choice=auto` + enriched declaration + non-leaky safety net
+**Why `output_config.format` is safe again.** It was reverted 2026-07-01 over
+[anthropic-sdk-python#1204](https://github.com/anthropics/anthropic-sdk-python/issues/1204)
+(reasoning leak / empty-text-block on multi-turn + adaptive thinking). Re-verified **live on Sonnet 5,
+2026-07-02**: clean valid JSON, real widgets/tables, no reasoning leak, no empty-text-block 400.
+That bug is outdated for the current model generation.
 
-- **Primary: `tool_choice=auto`.** Empirically (2026-07-01, opus/sonnet/haiku 4.x) the model calls
-  `respond` on the terminal turn; `any` as the primary spuriously delegates on Sonnet.
-- **Enriched declaration.** A bare `respond` tool makes the model bypass (write plain text) or leak
-  Claude's internal `<parameter>` tool-call format into the first field on complex prompts. So the
-  adapter gives `respond` an explicit generic description ("call this tool; don't emit plain text or
-  XML tags") — it cannot reference an agent's OUTPUT_FORMAT, which it doesn't know exists — and each
-  agent adds per-field `description`s to its own schema (Smart's `_RESPONSE_SCHEMA`).
-- **Safety net: `tool_choice=any` retry.** On a plain-text bypass the adapter re-issues once with
-  `any`, which forces respond (structured) or a real delegation call (engine continues) — never plain
-  text. The adapter is universal and must not hand plain text to a schema agent that `json.loads` the
-  result directly. `any` does NOT leak `<parameter>` the way forcing the *specific* respond tool does
-  (verified: specific-tool ~1/4 leak on long output, `any` 0/3). On retry failure it degrades to the
-  primary result rather than raising.
+## Grammar limit — schema must stay compilable
 
-## Known residual: stochastic model degeneracy (not fully solved)
-
-On **complex, long** structured outputs opus intermittently dumps the `<parameter>` XML tool-call
-format into the first string field even via the tool path. The rate is **stochastic and batch-
-dependent** (same config observed at 0/3 and 4/5 across batches), so prompt/description tuning only
-moves it in the noise — it is an Anthropic-side degeneracy that affects both `output_config.format`
-(reasoning leak / empty text block) and the respond-tool (`<parameter>` leak). The tool path is kept
-because it avoids the **hard 400** (empty text block → Smart→Quick) that `output_config.format`
-caused; the residual leak is cosmetic (valid JSON, polluted field). Decision 2026-07-02: **leave as
-is, do not chase with more prompt tuning** — track incidence; a targeted strip of the `<parameter>`
-artifact (the real answer precedes the marker) is a documented fallback if incidence rises.
+`output_config.format` uses the **same grammar compiler as strict tool use**, so a complex schema
+returns `400 invalid_request_error: "Schema is too complex."` (each optional key ~doubles the
+grammar state space). The first strict attempt 400'd on `rich_content.data`'s flat bag of ~8
+optional variant keys (`2^8` states). Fix: model `rich_content` as a discriminated **`anyOf`**
+(`null | widget | table | file`), each variant a closed object declaring only its own keys — 4
+small branches instead of `2^N`. Same output shape (`{type, data, fallback}`); downstream
+rendering unchanged. This lives in `SmartResponseAgent._RESPONSE_SCHEMA`.
 
 ## Consequences
 
-- Gemini/OpenAI paths unchanged (native `response_schema`). Only the Claude adapter diverges.
-- `_make_schema_strict` (additionalProperties/required injection for the GA path) is removed —
-  the `respond` tool uses the schema as-is minus `nullable` (via `_strip_nullable`), so
-  mutually-exclusive variant keys (`rich_content.data`) stay optional.
-- Verified end-to-end live across opus/sonnet/haiku with the real `_RESPONSE_SCHEMA` (nested
-  `nullable` in `rich_content` strips cleanly, no 400).
+- Gemini/OpenAI paths unchanged (native `response_schema`). The Claude path now matches them
+  conceptually (schema forwarded natively) instead of diverging through a tool.
+- Removed from the adapter: the `respond` tool injection, `_schema_tool_active`, `tool_choice=any`
+  forcing, the plain-text-bypass safety net, `_retry_respond_any`, and the respond-call intercept.
+- `_make_strict` / `_nullable_to_union` are **live** (they shape the `output_config.format` schema).
+  `_strip_nullable` is now dead (superseded) but retained pending a separate test-cleanup.
+- `_RESPONSE_SCHEMA.rich_content` is a discriminated `anyOf` (was a flat variant bag).
+- Verified live on `claude-sonnet-5` (widget + table render, JSON valid, no leak) and via a
+  provider smoke test that Gemini accepts the `anyOf` schema.
+
+---
+
+## History — the superseded `respond`-tool decision (2026-07-01)
+
+Kept for the record. `772beb8` (2026-04-23) had migrated Claude structured output to the GA
+`output_config.format` API; on 2026-07-01 that was reverted to a synthesized `respond` tool
+(schema as `input_schema`, `nullable` stripped via `_strip_nullable`, `tool_choice=auto`, adapter
+intercepts the call → JSON text) because `output_config.format` produced degenerate output on
+multi-turn + adaptive-thinking loops (#1204: reasoning trapped in the first JSON string field on
+Sonnet; empty text block alongside `tool_use` → `400` on replay on Opus). A `tool_choice=any`
+retry recovered plain-text bypasses. That approach held on the 4.x models but broke on Sonnet 5 —
+see **Why (the journey)** above.

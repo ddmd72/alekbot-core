@@ -141,11 +141,12 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   intent_fanout?)`.
   Smart: passes `terminal_tool="deliver_response"`, but this is **vestigial** — no adapter declares a
   `deliver_response` tool, so the engine's terminal-tool branch never fires. Smart's structured output
-  arrives via `response_schema` instead: on Claude the synthesized `respond` tool is intercepted in the
-  adapter and returned as JSON *text* with `tool_calls=[]` (see [`src/adapters/CLAUDE.md`](../adapters/CLAUDE.md)
-  → Agent Output Format Standards); Gemini/OpenAI return native JSON. The loop therefore always ends via
-  the *no-tool-calls → return text* branch, and `_build_smart_response` parses `result.text` (the
-  `terminal_tool_args` path is unreachable — see IMPLEMENTATION_ROADMAP.md TD-3).
+  arrives via `response_schema` instead: on Claude it is forwarded natively via `output_config.format`
+  (schema-valid JSON as *text*; no tool — the synthesized `respond` tool was removed 2026-07-02, see
+  [`src/adapters/CLAUDE.md`](../adapters/CLAUDE.md) → Agent Output Format Standards); Gemini/OpenAI return
+  native JSON. The loop therefore always ends via the *no-tool-calls → return text* branch, and
+  `_build_smart_response` parses `result.text` (the `terminal_tool_args` path is unreachable — see
+  IMPLEMENTATION_ROADMAP.md TD-3).
   Quick: `intent_remap={}` (disabled), `intent_fanout` from descriptor.
   Bound agents: plain text response, no terminal tool, no remap, no fanout.
   `DelegationResult` carries: `text`, `terminal_tool_args`, `total_tokens`, `delivery_items`,

@@ -96,38 +96,75 @@ class SmartResponseAgent(BaseAgent):
         "properties": {
             "full_response":    {"type": "string", "description": "The full answer shown to the user, in the user's language."},
             "response_summary": {"type": "string", "maxLength": 300, "description": "Short summary of the answer, for conversation history."},
+            # Discriminated union (null | widget | table | file). Modelled as anyOf of CLOSED
+            # variants — not one object with a flat bag of optional keys — because under Claude
+            # strict tool use the flat bag compiles to a 2^N grammar ("Schema is too complex" 400,
+            # each optional key ~doubles the grammar state space). Same OUTPUT shape as before
+            # ({type, data, fallback}); downstream rendering is unchanged.
             "rich_content": {
-                "type": "object",
-                "nullable": True,  # null for text-only responses
-                "description": "Optional table/widget/file attachment; null when the answer is plain text.",
-                "properties": {
-                    "type":     {"type": "string", "enum": ["widget", "file", "table"]},
-                    "fallback": {"type": "string"},
-                    "data": {
+                "description": "Optional attachment; null for a plain-text answer, else one of widget/table/file.",
+                "anyOf": [
+                    {"type": "null"},
+                    {   # widget
                         "type": "object",
+                        "required": ["type", "data", "fallback"],
                         "properties": {
-                            # table
-                            "title":    {"type": "string"},
-                            "headers":  {"type": "array", "items": {"type": "string"}},
-                            "rows": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "cells": {"type": "array", "items": {"type": "string"}},
-                                    },
+                            "type":     {"type": "string", "enum": ["widget"]},
+                            "data": {
+                                "type": "object",
+                                "required": ["html"],
+                                "properties": {
+                                    "html":     {"type": "string"},
+                                    "alt_text": {"type": "string"},
                                 },
                             },
-                            "footer":   {"type": "string"},
-                            # widget
-                            "html":     {"type": "string"},
-                            "alt_text": {"type": "string"},
-                            # file
-                            "filename": {"type": "string"},
-                            "content":  {"type": "string"},
+                            "fallback": {"type": "string"},
                         },
                     },
-                },
+                    {   # table
+                        "type": "object",
+                        "required": ["type", "data", "fallback"],
+                        "properties": {
+                            "type":     {"type": "string", "enum": ["table"]},
+                            "data": {
+                                "type": "object",
+                                "required": ["headers", "rows"],
+                                "properties": {
+                                    "title":   {"type": "string"},
+                                    "headers": {"type": "array", "items": {"type": "string"}},
+                                    "rows": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "required": ["cells"],
+                                            "properties": {
+                                                "cells": {"type": "array", "items": {"type": "string"}},
+                                            },
+                                        },
+                                    },
+                                    "footer":  {"type": "string"},
+                                },
+                            },
+                            "fallback": {"type": "string"},
+                        },
+                    },
+                    {   # file
+                        "type": "object",
+                        "required": ["type", "data"],
+                        "properties": {
+                            "type":     {"type": "string", "enum": ["file"]},
+                            "data": {
+                                "type": "object",
+                                "required": ["filename", "content"],
+                                "properties": {
+                                    "filename": {"type": "string"},
+                                    "title":    {"type": "string"},
+                                    "content":  {"type": "string"},
+                                },
+                            },
+                        },
+                    },
+                ],
             },
             # required forces presence; no-source turns correctly yield [] (verified —
             # Gemini does not fabricate URLs to fill it).

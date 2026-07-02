@@ -3,7 +3,9 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 import anthropic
 
-from src.adapters.claude_adapter import ClaudeAdapter, _strip_nullable, _nullable_to_union
+from src.adapters.claude_adapter import (
+    ClaudeAdapter, _strip_nullable, _nullable_to_union, _make_strict,
+)
 from src.domain.user import PerformanceTier
 from src.domain.exceptions import (
     LLMClientError,
@@ -655,19 +657,20 @@ async def test_no_cache_config_single_block_no_cache_control():
 # ============================================================================
 # Wire tests: response_schema -> respond-tool substitution (NOT output_config.format)
 # ============================================================================
-# The GA output_config.format path was reverted (2026-07-01): on multi-turn tool loops
-# with adaptive thinking it made Claude emit degenerate output (reasoning leaking into the
-# first JSON string field, or an empty text block alongside tool_use rejected on replay —
-# anthropic-sdk-python#1204). Structure is now carried by a synthesized "respond" tool.
+# Structured output on Claude is NATIVE via output_config.format (2026-07-02) — mirrors
+# Gemini's response_json_schema. The synthesized `respond` tool was removed: on Sonnet 5 it
+# leaked Claude's internal <parameter> tool-call serialization into the output. The schema is
+# shaped for the grammar compiler (_nullable_to_union → _make_strict) before forwarding.
+# See docs/04_solution_strategy/decisions/claude_schema_respond_tool.md.
 
 @pytest.mark.asyncio
-async def test_response_schema_injects_respond_tool():
-    """When response_schema is present, adapter injects a `respond` tool (carrying the
-    schema as input_schema) and does NOT set output_config.format. The respond call's
-    input is returned as JSON text."""
+async def test_response_schema_sets_output_config_format():
+    """When response_schema is present, the adapter forwards it via output_config.format
+    (native structured output) and injects NO `respond` tool. The model's JSON text is
+    returned as-is."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
-    cm = _make_claude_cm(_make_sdk_tool_response("respond", {"answer": "42"}, "call_r"))
+    cm = _make_claude_cm(_make_sdk_response('{"answer": "42"}'))
 
     def capturing_stream(**kwargs):
         captured.update(kwargs)
@@ -685,30 +688,31 @@ async def test_response_schema_injects_respond_tool():
         )
     )
 
-    # No output_config.format
-    output_config = captured.get("output_config") or {}
-    assert "format" not in output_config
-
-    # A `respond` tool IS injected, carrying the schema as input_schema
-    tools = captured.get("tools", [])
-    respond = next((t for t in tools if t.get("name") == "respond"), None)
-    assert respond is not None
-    assert respond["input_schema"] == {"type": "object", "properties": {"answer": {"type": "string"}}}
-
-    # respond call input is returned as JSON text
+    # output_config.format carries the schema (json_schema), shaped for the grammar compiler
+    fmt = (captured.get("output_config") or {}).get("format")
+    assert fmt == {
+        "type": "json_schema",
+        "schema": {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    }
+    # NO respond tool injected
+    assert all(t.get("name") != "respond" for t in captured.get("tools", []))
+    # model's JSON text returned unchanged
     assert result.text == '{"answer": "42"}'
     assert result.tool_calls == []
 
 
 @pytest.mark.asyncio
-async def test_respond_tool_schema_preserves_optional_variant_keys():
-    """The respond tool input_schema does NOT inject additionalProperties:false (unlike the
-    old strict output_config.format path). Mutually-exclusive variant keys (e.g.
-    rich_content.data table/widget/file fields) must stay optional — forcing them all
-    required/closed would break the schema."""
+async def test_output_config_format_schema_is_strict_shaped():
+    """The schema forwarded via output_config.format is grammar-compiler-legal: every object
+    gets additionalProperties:false, and optional properties stay optional (no `required`
+    injection — variant keys like rich_content.data must remain optional)."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
-    cm = _make_claude_cm(_make_sdk_tool_response("respond", {}, "call_r"))
+    cm = _make_claude_cm(_make_sdk_response("{}"))
 
     def capturing_stream(**kwargs):
         captured.update(kwargs)
@@ -732,26 +736,22 @@ async def test_respond_tool_schema_preserves_optional_variant_keys():
         )
     )
 
-    tools = captured.get("tools", [])
-    respond = next((t for t in tools if t.get("name") == "respond"), None)
-    assert respond is not None
-    schema = respond["input_schema"]
-    assert "additionalProperties" not in schema
-    assert "additionalProperties" not in schema["properties"]["nested"]
-    assert "additionalProperties" not in schema["properties"]["array"]["items"]
+    schema = captured["output_config"]["format"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["nested"]["additionalProperties"] is False
+    assert schema["properties"]["array"]["items"]["additionalProperties"] is False
+    # arrays don't get additionalProperties; no required injected
+    assert "additionalProperties" not in schema["properties"]["array"]
+    assert "required" not in schema
 
 
 @pytest.mark.asyncio
-async def test_response_schema_strips_nullable_recursively():
-    """'nullable' is stripped at every nesting level, not just the top.
-
-    Regression: Smart/Quick _RESPONSE_SCHEMA has nullable=True on the nested
-    rich_content property — Anthropic tool input_schema (JSON Schema 2020-12) does not
-    define 'nullable', so it is stripped at every level via _strip_nullable.
-    """
+async def test_output_config_format_schema_converts_nullable_to_union():
+    """'nullable: True' is translated to a JSON-Schema ["<type>", "null"] union at every level
+    before it reaches output_config.format (Anthropic's grammar has no 'nullable' keyword)."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
-    cm = _make_claude_cm(_make_sdk_tool_response("respond", {}, "call_r"))
+    cm = _make_claude_cm(_make_sdk_response("{}"))
 
     def capturing_stream(**kwargs):
         captured.update(kwargs)
@@ -767,7 +767,6 @@ async def test_response_schema_strips_nullable_recursively():
             tools=_TOOLS,
             response_schema={
                 "type": "object",
-                "nullable": True,
                 "properties": {
                     "rich_content": {
                         "type": "object",
@@ -779,21 +778,18 @@ async def test_response_schema_strips_nullable_recursively():
         )
     )
 
-    tools = captured.get("tools", [])
-    respond = next((t for t in tools if t.get("name") == "respond"), None)
-    assert respond is not None
-    schema = respond["input_schema"]
-    assert "nullable" not in schema
+    schema = captured["output_config"]["format"]["schema"]
     assert "nullable" not in schema["properties"]["rich_content"]
+    assert schema["properties"]["rich_content"]["type"] == ["object", "null"]
 
 
 @pytest.mark.asyncio
-async def test_response_schema_with_thinking_keeps_effort_no_format():
-    """When both thinking and response_schema are active, output_config carries effort ONLY
-    (no format — structure comes from the respond tool), and thinking is set."""
+async def test_response_schema_with_thinking_keeps_effort_and_format():
+    """With both thinking and response_schema active, output_config carries BOTH effort and
+    format, and thinking is set."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
-    cm = _make_claude_cm(_make_sdk_tool_response("respond", {}, "call_r"))
+    cm = _make_claude_cm(_make_sdk_response("{}"))
 
     def capturing_stream(**kwargs):
         captured.update(kwargs)
@@ -814,10 +810,9 @@ async def test_response_schema_with_thinking_keeps_effort_no_format():
 
     output_config = captured.get("output_config", {})
     assert output_config.get("effort") == "medium"
-    assert "format" not in output_config
+    assert output_config.get("format", {}).get("type") == "json_schema"
     assert captured.get("thinking") == {"type": "adaptive"}
-    tools = captured.get("tools", [])
-    assert any(t.get("name") == "respond" for t in tools)
+    assert all(t.get("name") != "respond" for t in captured.get("tools", []))
 
 
 @pytest.mark.asyncio
@@ -850,10 +845,10 @@ async def test_no_response_schema_no_output_config_format():
 
 @pytest.mark.asyncio
 async def test_response_schema_without_delegation_tools():
-    """The respond tool is injected even when no delegation tools are passed."""
+    """output_config.format is set even when no delegation tools are passed; no respond tool."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
-    cm = _make_claude_cm(_make_sdk_tool_response("respond", {"result": "ok"}, "call_r"))
+    cm = _make_claude_cm(_make_sdk_response('{"result": "ok"}'))
 
     def capturing_stream(**kwargs):
         captured.update(kwargs)
@@ -870,10 +865,8 @@ async def test_response_schema_without_delegation_tools():
         )
     )
 
-    tools = captured.get("tools", [])
-    assert any(t.get("name") == "respond" for t in tools)
-    output_config = captured.get("output_config") or {}
-    assert "format" not in output_config
+    assert captured["output_config"]["format"]["type"] == "json_schema"
+    assert all(t.get("name") != "respond" for t in captured.get("tools", []))
     assert result.text == '{"result": "ok"}'
 
 
@@ -980,93 +973,50 @@ def test_nullable_to_union_edge_cases():
     }
 
 
-def _sequenced_stream(cms):
-    """Return a capturing stream that yields the given cms in order, recording kwargs."""
-    calls = []
+def test_make_strict_shapes_schema_for_strict_tool_use():
+    """_make_strict adds additionalProperties:false to every object, drops unsupported
+    keywords (maxLength), preserves required + optional properties + type unions."""
+    schema = {
+        "type": "object",
+        "required": ["full_response", "rich_content"],
+        "properties": {
+            "full_response": {"type": "string"},
+            "response_summary": {"type": "string", "maxLength": 300},  # optional + unsupported kw
+            "rich_content": {
+                "type": ["object", "null"],
+                "properties": {
+                    "data": {
+                        "type": "object",
+                        "properties": {"html": {"type": "string"}},  # variant key, optional
+                    },
+                },
+            },
+            "link_list": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": {"url": {"type": "string"}},
+                },
+            },
+        },
+    }
+    out = _make_strict(schema)
 
-    def stream(**kwargs):
-        calls.append(kwargs)
-        return cms[len(calls) - 1]
-
-    return stream, calls
-
-
-@pytest.mark.asyncio
-async def test_plaintext_bypass_retries_with_any_and_returns_structured():
-    """Bypass (no tool_calls under auto) → adapter re-issues with tool_choice=any; the
-    retry's respond call is returned as structured JSON, with merged usage."""
-    adapter = ClaudeAdapter(api_key="test-key")
-    first = _make_claude_cm(_make_sdk_response("plain text answer"))
-    retry = _make_claude_cm(_make_sdk_tool_response("respond", {"result": "structured"}, "call_r"))
-    stream, calls = _sequenced_stream([first, retry])
-    adapter.client.messages.stream = stream
-
-    result = await adapter.generate_content(
-        request=LLMRequest(
-            model_name="claude-sonnet-4-6",
-            system_instruction="test",
-            messages=_MESSAGES,
-            tools=_TOOLS,
-            response_schema={"type": "object", "properties": {"result": {"type": "string"}}},
-        )
-    )
-
-    assert len(calls) == 2, "safety net must issue a second (any) call"
-    # non-leaky recovery: tool_choice=any (NOT the specific respond tool)
-    assert calls[1]["tool_choice"] == {"type": "any"}
-    assert result.text == '{"result": "structured"}'
-    assert result.tool_calls == []
-    assert result.usage_metadata.prompt_tokens == 20  # merged 10 + 10
-
-
-@pytest.mark.asyncio
-async def test_plaintext_bypass_any_retry_delegate_passthrough():
-    """If the any-retry yields a real delegation call (not respond), it is passed through
-    unchanged so the DelegationEngine continues the loop — never plain text."""
-    adapter = ClaudeAdapter(api_key="test-key")
-    first = _make_claude_cm(_make_sdk_response("plain text answer"))
-    retry = _make_claude_cm(_make_sdk_tool_response("search_memory", {"q": "x"}, "call_d"))
-    stream, calls = _sequenced_stream([first, retry])
-    adapter.client.messages.stream = stream
-
-    result = await adapter.generate_content(
-        request=LLMRequest(
-            model_name="claude-sonnet-4-6",
-            system_instruction="test",
-            messages=_MESSAGES,
-            tools=_TOOLS,
-            response_schema={"type": "object", "properties": {"result": {"type": "string"}}},
-        )
-    )
-
-    assert len(calls) == 2
-    assert calls[1]["tool_choice"] == {"type": "any"}
-    assert len(result.tool_calls) == 1
-    assert result.tool_calls[0].name == "search_memory"
-
-
-@pytest.mark.asyncio
-async def test_plaintext_bypass_any_retry_failure_degrades_to_primary():
-    """If the any-retry itself fails, the safety net degrades to the primary (plain-text)
-    result rather than raising — never worse than the bypass it recovers from."""
-    adapter = ClaudeAdapter(api_key="test-key")
-    first = _make_claude_cm(_make_sdk_response("primary plain text"))
-    failing = _make_failing_cm(RuntimeError("network blip"))
-    stream, calls = _sequenced_stream([first, failing])
-    adapter.client.messages.stream = stream
-
-    result = await adapter.generate_content(
-        request=LLMRequest(
-            model_name="claude-sonnet-4-6",
-            system_instruction="test",
-            messages=_MESSAGES,
-            tools=_TOOLS,
-            response_schema={"type": "object", "properties": {"result": {"type": "string"}}},
-        )
-    )
-
-    assert len(calls) == 2
-    assert result.text == "primary plain text"
+    # additionalProperties:false on every object node
+    assert out["additionalProperties"] is False
+    assert out["properties"]["rich_content"]["additionalProperties"] is False
+    assert out["properties"]["rich_content"]["properties"]["data"]["additionalProperties"] is False
+    assert out["properties"]["link_list"]["items"]["additionalProperties"] is False
+    # arrays don't get additionalProperties
+    assert "additionalProperties" not in out["properties"]["link_list"]
+    # unsupported keyword dropped
+    assert "maxLength" not in out["properties"]["response_summary"]
+    # required preserved; optional properties NOT forced into required
+    assert out["required"] == ["full_response", "rich_content"]
+    assert "response_summary" not in out["required"]
+    # type union preserved
+    assert out["properties"]["rich_content"]["type"] == ["object", "null"]
 
 
 # ============================================================================
