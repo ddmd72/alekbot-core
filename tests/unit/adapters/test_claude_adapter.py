@@ -38,8 +38,23 @@ def test_claude_model_for_tier():
 
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "claude-haiku-4-5-20251001"
     assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-haiku-4-5-20251001"
-    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-4-6"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-5"
     assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-opus-4-8"
+
+
+def test_claude_performance_tier_env_override(monkeypatch):
+    """CLAUDE_PERFORMANCE_MODEL env / constructor arg rolls PERFORMANCE back to Sonnet 4.6."""
+    # Default (no override): Sonnet 5.
+    monkeypatch.delenv("CLAUDE_PERFORMANCE_MODEL", raising=False)
+    assert ClaudeAdapter(api_key="k").get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-5"
+    # Constructor arg wins.
+    arg_adapter = ClaudeAdapter(api_key="k", performance_model="claude-sonnet-4-6")
+    assert arg_adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-4-6"
+    # Env var override (rollback kill-switch); other tiers unaffected.
+    monkeypatch.setenv("CLAUDE_PERFORMANCE_MODEL", "claude-sonnet-4-6")
+    env_adapter = ClaudeAdapter(api_key="k")
+    assert env_adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-4-6"
+    assert env_adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-opus-4-8"
 
 
 def test_claude_unsupported_tier_raises():
@@ -1626,3 +1641,120 @@ async def test_grounded_loop_plain_5xx_maps_to_server_error():
             )
         )
     assert exc_info.value.http_status == 500
+
+
+# ============================================================================
+# Sonnet 5: sampling gate + same-provider model fallback
+# ============================================================================
+
+
+def _capturing_stream(captured, cm):
+    def _stream(**kwargs):
+        captured.update(kwargs)
+        return cm
+    return _stream
+
+
+@pytest.mark.asyncio
+async def test_temperature_omitted_for_sonnet_5():
+    """Sonnet 5 rejects a non-default temperature (400) → adapter must not send it."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
+    await adapter.generate_content(
+        request=LLMRequest(model_name="claude-sonnet-5", messages=_MESSAGES, temperature=0.7)
+    )
+    assert "temperature" not in captured, (
+        f"Sonnet 5 must not receive a temperature param, got {captured.get('temperature')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_temperature_present_for_sonnet_4_6():
+    """Sonnet 4.6 still accepts temperature — the gate must not strip it."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
+    await adapter.generate_content(
+        request=LLMRequest(model_name="claude-sonnet-4-6", messages=_MESSAGES, temperature=0.7)
+    )
+    assert captured.get("temperature") == 0.7
+
+
+@pytest.mark.asyncio
+async def test_temperature_omitted_for_opus_4_8():
+    """Opus 4.7/4.8 are also sampling-restricted — temperature must be omitted (latent-bug fix)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
+    await adapter.generate_content(
+        request=LLMRequest(model_name="claude-opus-4-8", messages=_MESSAGES, temperature=0.5)
+    )
+    assert "temperature" not in captured
+
+
+@pytest.mark.asyncio
+async def test_sonnet_5_falls_back_to_sonnet_4_6_on_transient():
+    """A transient 529 on Sonnet 5 retries once on Sonnet 4.6 (same provider)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    models_tried = []
+    exc = _FakeAPIStatusError(
+        "{'type':'error','error':{'type':'overloaded_error','message':'Overloaded'}}",
+        status_code=None,
+    )
+
+    def stream(**kwargs):
+        models_tried.append(kwargs.get("model"))
+        if kwargs.get("model") == "claude-sonnet-5":
+            return _make_raising_cm(exc)
+        return _make_claude_cm(_make_sdk_response("recovered"))
+
+    adapter.client.messages.stream = stream
+    result = await adapter.generate_content(
+        request=LLMRequest(model_name="claude-sonnet-5", messages=_MESSAGES)
+    )
+    assert models_tried == ["claude-sonnet-5", "claude-sonnet-4-6"]
+    assert result.text == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_sonnet_5_no_fallback_on_4xx():
+    """A 400 (real incompatibility) must NOT fall back — surfaces as LLMClientError."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    models_tried = []
+    exc = _FakeAPIStatusError("bad request", status_code=400)
+
+    def stream(**kwargs):
+        models_tried.append(kwargs.get("model"))
+        return _make_raising_cm(exc)
+
+    adapter.client.messages.stream = stream
+    with pytest.raises(LLMClientError):
+        await adapter.generate_content(
+            request=LLMRequest(model_name="claude-sonnet-5", messages=_MESSAGES)
+        )
+    assert models_tried == ["claude-sonnet-5"], "Must not retry on a 4xx"
+
+
+@pytest.mark.asyncio
+async def test_sonnet_5_disables_thinking_when_no_effort():
+    """Sonnet 5 thinks by default when thinking is omitted → adapter sends {'type':'disabled'}."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
+    await adapter.generate_content(
+        request=LLMRequest(model_name="claude-sonnet-5", messages=_MESSAGES)  # no thinking effort
+    )
+    assert captured.get("thinking") == {"type": "disabled"}
+
+
+@pytest.mark.asyncio
+async def test_sonnet_4_6_no_thinking_key_when_no_effort():
+    """Sonnet 4.6 stays off when thinking omitted — no 'thinking' key sent (unchanged)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
+    await adapter.generate_content(
+        request=LLMRequest(model_name="claude-sonnet-4-6", messages=_MESSAGES)
+    )
+    assert "thinking" not in captured

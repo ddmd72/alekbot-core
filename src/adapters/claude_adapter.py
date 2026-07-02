@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import time
 import anthropic
 from anthropic import types, AsyncAnthropic
@@ -61,7 +62,7 @@ class ClaudeAdapter(LLMPort):
     MODEL_TIERS = {
         PerformanceTier.ECO:         "claude-haiku-4-5-20251001",
         PerformanceTier.BALANCED:    "claude-haiku-4-5-20251001",
-        PerformanceTier.PERFORMANCE: "claude-sonnet-4-6",
+        PerformanceTier.PERFORMANCE: "claude-sonnet-5",
         PerformanceTier.ULTRA:       "claude-opus-4-8",
         PerformanceTier.TIER1:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER2:       "claude-haiku-4-5-20251001",
@@ -78,6 +79,28 @@ class ClaudeAdapter(LLMPort):
     # Haiku 4.5 only supports the legacy web_search_20250305 (no dynamic filtering, no code_execution).
     _DYNAMIC_SEARCH_MODELS = ("claude-sonnet", "claude-opus")
 
+    # Sampling-restricted models (Sonnet 5, Opus 4.7/4.8, Fable 5): setting temperature /
+    # top_p / top_k to a non-default value returns HTTP 400. The adapter omits the sampling
+    # parameter entirely for these (Anthropic's recommended migration path). Sonnet 4.6 /
+    # Opus 4.6 / Haiku keep accepting temperature. Substrings are exact enough to exclude the
+    # 4.6 line (`sonnet-5` ≠ `sonnet-4-6`, `opus-4-8` ≠ `opus-4-6`).
+    _NO_SAMPLING_MODELS = ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-fable")
+
+    # Same-provider model fallback: a brand-new model that flakes on a transient/capacity
+    # error (529/503/5xx) retries once on the previous Sonnet before the request propagates
+    # to the cross-provider (AgentExecutionContext) failover — keeping quality on Claude
+    # during a Sonnet 5 capacity blip. NOT applied to 4xx (a 400 is a real incompatibility we
+    # must surface, not mask). The instant rollback kill-switch is the CLAUDE_PERFORMANCE_MODEL
+    # env var (see __init__).
+    _MODEL_FALLBACK = {"claude-sonnet-5": "claude-sonnet-4-6"}
+
+    # Models that run adaptive thinking BY DEFAULT when the `thinking` field is omitted
+    # (Sonnet 5 — unlike Sonnet 4.6 / Opus 4.7+, which stay off when omitted). When no effort
+    # is requested, the adapter sends thinking={"type":"disabled"} for these so the caller's
+    # "no thinking" intent (e.g. ConsolidationAgent with thinking_effort=None) is preserved and
+    # there's no surprise thinking-token cost. Fable 5 is excluded — its thinking can't be disabled.
+    _ADAPTIVE_DEFAULT_ON_MODELS = ("claude-sonnet-5",)
+
     # ========================================================================
     # NEW Provider Refactor Session 7: Provider capability declaration
     # Plan: docs/architecture/provider_refactor/PROVIDER_REFACTOR_EXECUTION_PLAN.md
@@ -91,7 +114,7 @@ class ClaudeAdapter(LLMPort):
         native_grounding=True,  # web_search_20250305 built-in tool
     )
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, performance_model: Optional[str] = None):
         # read=120s: timeout between individual SSE chunks during streaming.
         # Anthropic stalls mid-stream on long responses (e.g. DocGenerator max_tokens=64k)
         # without ever raising — get_final_message() waits indefinitely by default (600s).
@@ -100,6 +123,12 @@ class ClaudeAdapter(LLMPort):
             api_key=api_key,
             timeout=anthropic.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
         )
+        # PERFORMANCE-tier model is env-overridable (CLAUDE_PERFORMANCE_MODEL) so a Sonnet 5
+        # rollout can be rolled back to Sonnet 4.6 instantly, without a redeploy. Other tiers
+        # keep the class-level defaults. Explicit constructor arg wins over the env var.
+        override = performance_model or os.getenv("CLAUDE_PERFORMANCE_MODEL")
+        if override:
+            self.MODEL_TIERS = {**self.MODEL_TIERS, PerformanceTier.PERFORMANCE: override}
 
     async def generate_content(self, request: LLMRequest) -> LLMResponse:
         model_name = request.model_name
@@ -225,6 +254,13 @@ class ClaudeAdapter(LLMPort):
             logger.info(
                 f"[ClaudeAdapter] Adaptive thinking enabled, effort={effort}, model={model_name}"
             )
+        elif not effort and any(m in model_name for m in self._ADAPTIVE_DEFAULT_ON_MODELS):
+            # Sonnet 5 thinks by default when `thinking` is omitted — disable it explicitly to
+            # honour a "no thinking effort" request and keep parity with Sonnet 4.6.
+            thinking_param = {"type": "disabled"}
+            logger.info(
+                f"[ClaudeAdapter] Thinking disabled (no effort requested), model={model_name}"
+            )
 
         create_kwargs: dict = dict(
             model=model_name,
@@ -233,8 +269,12 @@ class ClaudeAdapter(LLMPort):
             system=system_parts,
             messages=claude_messages,
             tools=claude_tools if claude_tools else [],
-            temperature=temperature,
         )
+        # Sampling gate: Sonnet 5 / Opus 4.7+ / Fable reject a non-default temperature with a
+        # 400 — omit it entirely for those. Older models (Sonnet 4.6, Opus 4.6, Haiku) keep
+        # receiving it (including the forced 1.0 when thinking is on, set above).
+        if not any(m in model_name for m in self._NO_SAMPLING_MODELS):
+            create_kwargs["temperature"] = temperature
         if thinking_param:
             create_kwargs["thinking"] = thinking_param
         # Only attach output_config.effort when the model supports it.
@@ -261,56 +301,77 @@ class ClaudeAdapter(LLMPort):
         else:
             request_timeout = request.timeout
 
-            async def _do_stream() -> Any:
-                async with self.client.messages.stream(**create_kwargs) as stream:
-                    return await stream.get_final_message()
+            async def _attempt(kwargs: dict) -> Any:
+                """Run one streamed request, mapping SDK errors to typed LLMError."""
+                async def _do_stream() -> Any:
+                    async with self.client.messages.stream(**kwargs) as stream:
+                        return await stream.get_final_message()
+                try:
+                    if request_timeout:
+                        return await asyncio.wait_for(_do_stream(), timeout=request_timeout)
+                    return await _do_stream()
+                except asyncio.TimeoutError as e:
+                    # Wall-clock budget from request.timeout exhausted.
+                    raise LLMTimeoutError(f"request timeout after {request_timeout}s") from e
+                except anthropic.APITimeoutError as e:
+                    # SDK-level timeout (default httpx read=120s when request.timeout is None).
+                    raise LLMTimeoutError(str(e)) from e
+                except anthropic.RateLimitError as e:
+                    raise LLMRateLimitError(str(e), http_status=429) from e
+                except anthropic.APIConnectionError as e:
+                    raise LLMNetworkError(str(e)) from e
+                except anthropic.APIStatusError as e:
+                    status = getattr(e, "status_code", None)
+                    # overloaded_error (HTTP 529) frequently arrives mid-stream as an SSE
+                    # error event — the connection already returned 200, so the SDK builds
+                    # an APIStatusError with status_code unset. Detect it by type (mirrors
+                    # ClaudeDeepResearchRunnerAgent._call_with_overload_retry) so it still
+                    # classifies as a transient server error and triggers provider failover
+                    # via FAILOVER_TRIGGER_TYPES, instead of bubbling raw and degrading
+                    # Smart → Quick.
+                    if status == 529 or "overloaded_error" in str(e):
+                        raise LLMServerError(str(e), http_status=529) from e
+                    if status == 503:
+                        raise LLMUnavailableError(str(e), http_status=503) from e
+                    if isinstance(status, int) and 500 <= status < 600:
+                        raise LLMServerError(str(e), http_status=status) from e
+                    # Grammar compilation timeout: a 400 by HTTP status, but a
+                    # transient SERVER-side fault — Anthropic's constrained-decoding
+                    # grammar compiler timed out building the response_schema, not a
+                    # malformed request. Classify as a failover trigger (like the
+                    # overloaded_error case above) so Smart is served by another
+                    # provider instead of failing terminally. A chronic recurrence
+                    # accumulates provider failures and trips the breaker, which
+                    # alerts — so we recover transients silently and escalate only
+                    # the persistent case, rather than masking it.
+                    if status == 400 and "Grammar compilation timed out" in str(e):
+                        raise LLMServerError(str(e), http_status=status) from e
+                    # 4xx (non-429, e.g. 400 credit-balance / bad request) → deterministic
+                    # client error. Not a failover trigger; surfaces immediately + alerts.
+                    if isinstance(status, int) and 400 <= status < 500:
+                        raise LLMClientError(str(e), http_status=status) from e
+                    raise
 
             try:
-                if request_timeout:
-                    response = await asyncio.wait_for(_do_stream(), timeout=request_timeout)
-                else:
-                    response = await _do_stream()
-            except asyncio.TimeoutError as e:
-                # Wall-clock budget from request.timeout exhausted.
-                raise LLMTimeoutError(f"request timeout after {request_timeout}s") from e
-            except anthropic.APITimeoutError as e:
-                # SDK-level timeout (default httpx read=120s when request.timeout is None).
-                raise LLMTimeoutError(str(e)) from e
-            except anthropic.RateLimitError as e:
-                raise LLMRateLimitError(str(e), http_status=429) from e
-            except anthropic.APIConnectionError as e:
-                raise LLMNetworkError(str(e)) from e
-            except anthropic.APIStatusError as e:
-                status = getattr(e, "status_code", None)
-                # overloaded_error (HTTP 529) frequently arrives mid-stream as an SSE
-                # error event — the connection already returned 200, so the SDK builds
-                # an APIStatusError with status_code unset. Detect it by type (mirrors
-                # ClaudeDeepResearchRunnerAgent._call_with_overload_retry) so it still
-                # classifies as a transient server error and triggers provider failover
-                # via FAILOVER_TRIGGER_TYPES, instead of bubbling raw and degrading
-                # Smart → Quick.
-                if status == 529 or "overloaded_error" in str(e):
-                    raise LLMServerError(str(e), http_status=529) from e
-                if status == 503:
-                    raise LLMUnavailableError(str(e), http_status=503) from e
-                if isinstance(status, int) and 500 <= status < 600:
-                    raise LLMServerError(str(e), http_status=status) from e
-                # Grammar compilation timeout: a 400 by HTTP status, but a
-                # transient SERVER-side fault — Anthropic's constrained-decoding
-                # grammar compiler timed out building the response_schema, not a
-                # malformed request. Classify as a failover trigger (like the
-                # overloaded_error case above) so Smart is served by another
-                # provider instead of failing terminally. A chronic recurrence
-                # accumulates provider failures and trips the breaker, which
-                # alerts — so we recover transients silently and escalate only
-                # the persistent case, rather than masking it.
-                if status == 400 and "Grammar compilation timed out" in str(e):
-                    raise LLMServerError(str(e), http_status=status) from e
-                # 4xx (non-429, e.g. 400 credit-balance / bad request) → deterministic
-                # client error. Not a failover trigger; surfaces immediately + alerts.
-                if isinstance(status, int) and 400 <= status < 500:
-                    raise LLMClientError(str(e), http_status=status) from e
-                raise
+                response = await _attempt(create_kwargs)
+            except (LLMServerError, LLMUnavailableError) as e:
+                # Same-provider model fallback: a transient/capacity error on a brand-new
+                # model (Sonnet 5) retries once on the previous Sonnet before the request
+                # propagates to the cross-provider failover. 4xx client errors are NOT caught
+                # here — real incompatibilities surface instead of being masked.
+                fallback_model = self._MODEL_FALLBACK.get(model_name)
+                if fallback_model is None:
+                    raise
+                logger.warning(
+                    "[ClaudeAdapter] transient error on %s (%s) — retrying once on %s",
+                    model_name, e, fallback_model,
+                )
+                create_kwargs["model"] = fallback_model
+                # The fallback model may accept a sampling param the primary rejected —
+                # re-add temperature when the fallback isn't itself sampling-restricted.
+                if not any(m in fallback_model for m in self._NO_SAMPLING_MODELS):
+                    create_kwargs["temperature"] = temperature
+                response = await _attempt(create_kwargs)
             llm_response = self._parse_response(response)
 
         # ── Safety net: recover from a plain-text bypass ──
