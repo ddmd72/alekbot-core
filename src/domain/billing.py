@@ -128,6 +128,10 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # --- Claude (Opus 4.8 for ULTRA tier from 2026-05-30; same pricing as 4.7) ---
     "claude-haiku-4-5-20251001":         {"input": 1.00,  "output": 5.00,  "cache_read": 0.10, "cache_write": 1.25},
     "claude-sonnet-4-6":                 {"input": 3.00,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
+    # Sonnet 5 (PERFORMANCE tier default from 2026-07): standard $3/$15 (same as 4.6). Intro
+    # pricing is $2/$10 through 2026-08-31 — we track standard list price (conservative; correct
+    # after the promo ends) so cost is never under-reported.
+    "claude-sonnet-5":                   {"input": 3.00,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-6":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-8":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
     # --- OpenAI (gpt-5.4 family, Mar 2026; gpt-5.5-pro for ULTRA tier from 2026-05-30) ---
