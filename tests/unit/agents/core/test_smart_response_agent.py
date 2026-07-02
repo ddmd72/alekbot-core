@@ -1205,12 +1205,19 @@ class TestResponseSchemaFullyDescribed:
         assert set(item["properties"]) == {"anchor", "title", "url"}
 
     def test_rich_content_data_is_fully_structured(self):
-        # A flat {"type": "object"} data field comes back as {} on Gemini Flash (widget
-        # dropped). Every variant field (table/widget/file) must be declared so the model
-        # populates it. Verified on gemini-flash-latest via responseJsonSchema.
-        data = SmartResponseAgent._RESPONSE_SCHEMA["properties"]["rich_content"]["properties"]["data"]
-        assert data["type"] == "object"
-        props = data["properties"]
-        assert {"title", "headers", "rows", "footer", "html", "alt_text", "filename", "content"} <= set(props)
+        # rich_content is a discriminated anyOf (null | widget | table | file). Each typed
+        # variant declares every field its `data` uses — a flat {"type": "object"} comes back
+        # as {} on Gemini Flash (widget/table content dropped). anyOf also keeps the Claude
+        # strict grammar compilable ("Schema is too complex" was the old flat-bag shape).
+        variants = SmartResponseAgent._RESPONSE_SCHEMA["properties"]["rich_content"]["anyOf"]
+        assert "null" in {v.get("type") for v in variants}  # null branch for plain-text answers
+        by_type = {
+            v["properties"]["type"]["enum"][0]: v["properties"]["data"]["properties"]
+            for v in variants if v.get("type") == "object"
+        }
+        assert set(by_type) == {"widget", "table", "file"}
+        assert {"html", "alt_text"} <= set(by_type["widget"])
+        assert {"title", "headers", "rows", "footer"} <= set(by_type["table"])
+        assert {"filename", "title", "content"} <= set(by_type["file"])
         # rows preserves the {cells: [str]} row-object shape
-        assert props["rows"]["items"]["properties"]["cells"]["items"]["type"] == "string"
+        assert by_type["table"]["rows"]["items"]["properties"]["cells"]["items"]["type"] == "string"

@@ -17,6 +17,64 @@ metadata:
     zone: trusted
 token_id: OUTPUT_FORMAT_JSON
 ---
+    output_schema {
+        contract: "RAW JSON only — first char '{', last char '}'. No prose, no code blocks, no XML/<parameter> tags. Output MUST validate against json_schema below. Emit every field as a real JSON key — NEVER serialise a field as text inside another field; never write </parameter> or <invoke>."
+
+        json_schema: {
+            "type": "object",
+            "required": ["full_response", "response_summary", "rich_content", "link_list"],
+            "properties": {
+                "full_response":    { "type": "string" },
+                "response_summary": { "type": "string", "maxLength": 300 },
+                "rich_content": {
+                    "anyOf": [
+                        { "type": "null" },
+                        {
+                            "type": "object",
+                            "required": ["type", "data", "fallback"],
+                            "properties": {
+                                "type":     { "enum": ["widget"] },
+                                "data":     { "type": "object", "required": ["html"],
+                                              "properties": { "html": {"type": "string"}, "alt_text": {"type": "string"} } },
+                                "fallback": { "type": "string" }
+                            }
+                        },
+                        {
+                            "type": "object",
+                            "required": ["type", "data", "fallback"],
+                            "properties": {
+                                "type":     { "enum": ["table"] },
+                                "data":     { "type": "object", "required": ["headers", "rows"],
+                                              "properties": {
+                                                  "title":   { "type": "string" },
+                                                  "headers": { "type": "array", "items": { "type": "string" } },
+                                                  "rows":    { "type": "array", "items": { "type": "object", "required": ["cells"],
+                                                               "properties": { "cells": { "type": "array", "items": { "type": "string" } } } } },
+                                                  "footer":  { "type": "string" }
+                                              } },
+                                "fallback": { "type": "string" }
+                            }
+                        },
+                        {
+                            "type": "object",
+                            "required": ["type", "data"],
+                            "properties": {
+                                "type": { "enum": ["file"] },
+                                "data": { "type": "object", "required": ["filename", "content"],
+                                          "properties": { "filename": {"type": "string"}, "title": {"type": "string"}, "content": {"type": "string"} } }
+                            }
+                        }
+                    ]
+                },
+                "link_list": {
+                    "type": "array",
+                    "items": { "type": "object", "required": ["anchor", "title", "url"],
+                               "properties": { "anchor": {"type": "string"}, "title": {"type": "string"}, "url": {"type": "string"} } }
+                }
+            }
+        }
+    }
+
     field_guidelines {
         full_response: "Slack mrkdwn: *bold*, _italic_, • for lists. No HTML, no **double-asterisk**, no # headers. Natural flow with line breaks. Use emojis."
         response_summary: "Max 300 chars, plain text. Preserve tone and emojis."
