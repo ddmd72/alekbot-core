@@ -103,7 +103,7 @@ class QuickAgentConfig:
 @dataclass
 class SmartAgentConfig:
     context_window: int = 30
-    max_delegation_turns: int = 8
+    max_delegation_turns: int = 15
     max_agent_retries: int = 2
     retry_backoff_seconds: float = 1.0
     delegation_temperature: float = 1.0
