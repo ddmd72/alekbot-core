@@ -92,11 +92,12 @@ class SmartResponseAgent(BaseAgent):
         "type": "object",
         "required": ["full_response", "response_summary", "rich_content", "link_list"],
         "properties": {
-            "full_response":    {"type": "string"},
-            "response_summary": {"type": "string", "maxLength": 300},
+            "full_response":    {"type": "string", "description": "The full answer shown to the user, in the user's language."},
+            "response_summary": {"type": "string", "maxLength": 300, "description": "Short summary of the answer, for conversation history."},
             "rich_content": {
                 "type": "object",
                 "nullable": True,  # null for text-only responses
+                "description": "Optional table/widget/file attachment; null when the answer is plain text.",
                 "properties": {
                     "type":     {"type": "string", "enum": ["widget", "file", "table"]},
                     "fallback": {"type": "string"},
@@ -130,6 +131,7 @@ class SmartResponseAgent(BaseAgent):
             # Gemini does not fabricate URLs to fill it).
             "link_list": {
                 "type": "array",
+                "description": "Sources cited as [N] in the answer; empty array if none.",
                 "items": {
                     "type": "object",
                     "required": ["anchor", "title", "url"],
