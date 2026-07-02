@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 import anthropic
 
-from src.adapters.claude_adapter import ClaudeAdapter, _strip_nullable
+from src.adapters.claude_adapter import ClaudeAdapter, _strip_nullable, _nullable_to_union
 from src.domain.user import PerformanceTier
 from src.domain.exceptions import (
     LLMClientError,
@@ -931,6 +931,53 @@ def test_strip_nullable_recursive():
     assert "additionalProperties" not in out
     assert "additionalProperties" not in out["properties"]["rich_content"]
     assert out["properties"]["rich_content"]["properties"] == {"x": {"type": "string"}}
+
+
+def test_nullable_to_union_converts_to_type_union():
+    """_nullable_to_union translates 'nullable: True' into a JSON-Schema nullable
+    'type' union instead of dropping it, at every nesting level, injecting nothing else."""
+    schema = {
+        "type": "object",
+        "required": ["rich_content"],
+        "properties": {
+            "rich_content": {
+                "type": "object",
+                "nullable": True,
+                "properties": {"x": {"type": "string"}},
+            },
+            "items": {
+                "type": "array",
+                "items": {"type": "object", "nullable": True, "properties": {}},
+            },
+        },
+    }
+    out = _nullable_to_union(schema)
+
+    # 'nullable' marker is gone everywhere ...
+    assert "nullable" not in out["properties"]["rich_content"]
+    assert "nullable" not in out["properties"]["items"]["items"]
+    # ... translated into a ["<type>", "null"] union (order preserved, "null" appended)
+    assert out["properties"]["rich_content"]["type"] == ["object", "null"]
+    assert out["properties"]["items"]["items"]["type"] == ["object", "null"]
+    # required is preserved unchanged — the field stays required, its value may be null
+    assert out["required"] == ["rich_content"]
+    # sibling structure and non-nullable nodes are untouched
+    assert out["properties"]["rich_content"]["properties"] == {"x": {"type": "string"}}
+    assert out["properties"]["items"]["type"] == "array"
+    assert "additionalProperties" not in out
+
+
+def test_nullable_to_union_edge_cases():
+    """No concrete 'type' → marker dropped; an existing 'type' list gains 'null' once."""
+    # nullable without a type: nothing to unionize, marker simply dropped
+    assert _nullable_to_union({"nullable": True, "description": "x"}) == {"description": "x"}
+    # type already a union: 'null' appended once, no duplication
+    assert _nullable_to_union({"type": ["string", "null"], "nullable": True}) == {
+        "type": ["string", "null"]
+    }
+    assert _nullable_to_union({"type": ["string"], "nullable": True}) == {
+        "type": ["string", "null"]
+    }
 
 
 def _sequenced_stream(cms):

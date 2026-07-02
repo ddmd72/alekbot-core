@@ -48,6 +48,38 @@ def _strip_nullable(schema: Any) -> Any:
     return schema
 
 
+def _nullable_to_union(schema: Any) -> Any:
+    """Recursively translate the OpenAPI/Gemini ``"nullable": True`` marker into a
+    JSON-Schema 2020-12 nullable ``type`` union (e.g. ``"object"`` -> ``["object", "null"]``).
+
+    Used to shape the ``respond`` tool's ``input_schema`` for Claude. Anthropic tool
+    input_schema is JSON Schema 2020-12, which has no ``nullable`` keyword — so the marker
+    must be *translated*, not merely dropped. Dropping it (the older ``_strip_nullable``
+    behaviour) left ``rich_content`` declared as a **required, non-null object** while the
+    OUTPUT_FORMAT prompt token instructs "null by default" — a contradiction that pushed the
+    model off the tool-schema path and made it dump its internal ``<parameter>`` tool-call
+    serialization into the first string field (leak observed at ~43% on claude-sonnet-5 vs
+    0/93 on sonnet-4.6). Keeping the field ``required`` but its ``type`` a ``[..., "null"]``
+    union lets the model return ``null`` for text-only answers without fighting the schema.
+
+    Injects nothing else (no ``additionalProperties`` / ``required``), so the mutually-
+    exclusive ``rich_content.data`` variant keys stay optional.
+    """
+    if isinstance(schema, dict):
+        out = {k: _nullable_to_union(v) for k, v in schema.items() if k != "nullable"}
+        if schema.get("nullable") is True:
+            t = out.get("type")
+            if isinstance(t, str) and t != "null":
+                out["type"] = [t, "null"]
+            elif isinstance(t, list) and "null" not in t:
+                out["type"] = [*t, "null"]
+            # No concrete ``type`` to attach null to → the marker is simply dropped.
+        return out
+    if isinstance(schema, list):
+        return [_nullable_to_union(i) for i in schema]
+    return schema
+
+
 class ClaudeAdapter(LLMPort):
     """
     Adapter for Anthropic Claude API.
@@ -220,7 +252,7 @@ class ClaudeAdapter(LLMPort):
         # on the rare plain-text bypass, re-forces respond (safety net below).
         _schema_tool_active = False
         if response_schema and isinstance(response_schema, dict):
-            respond_tool_schema = _strip_nullable(response_schema)
+            respond_tool_schema = _nullable_to_union(response_schema)
             claude_tools = claude_tools + [{
                 "name": "respond",
                 "description": (
