@@ -76,8 +76,10 @@ class SmartResponseAgent(BaseAgent):
     DELEGATION_TEMPERATURE = SMART.delegation_temperature
 
     # Structured output envelope. Enforced by Gemini via response_json_schema and by Claude
-    # via output_config.format. OpenAI/Grok react via json_object mode without forwarding the
-    # inner schema — actual envelope shape is enforced by the OUTPUT_FORMAT token in the prompt.
+    # via a synthesized `respond` tool whose input_schema IS this envelope (the adapter
+    # intercepts the call and returns its input as JSON text — the output_config.format path
+    # was removed 2026-07-01). OpenAI reacts via json_schema; Grok via json_object mode without
+    # forwarding the inner schema — its envelope shape leans on the OUTPUT_FORMAT token.
     # See CLAUDE.md "Agent Output Format Standards" for the per-provider matrix.
     # Fully describes the response envelope so Gemini's constrained decoding populates
     # every field. Gemini will NOT generate content for an under-specified field: an

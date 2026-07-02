@@ -17,15 +17,6 @@ metadata:
     zone: trusted
 token_id: OUTPUT_FORMAT_JSON
 ---
-    output_schema {
-        contract: "RAW JSON only — first char '{', last char '}'. No prose, no code blocks."
-
-        // Field structure is enforced natively from code (_RESPONSE_SCHEMA): Gemini via
-        // responseJsonSchema, Claude via output_config, OpenAI via json_schema. The field
-        // contract the model follows lives in field_guidelines + rich_content_types + examples
-        // below — no duplicated JSON schema here (it drifted from the code copy).
-    }
-
     field_guidelines {
         full_response: "Slack mrkdwn: *bold*, _italic_, • for lists. No HTML, no **double-asterisk**, no # headers. Natural flow with line breaks. Use emojis."
         response_summary: "Max 300 chars, plain text. Preserve tone and emojis."
