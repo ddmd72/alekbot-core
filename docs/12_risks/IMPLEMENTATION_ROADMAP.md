@@ -176,6 +176,30 @@ mandatory before team/multi-user rollout.
 
 </details>
 
+### TD-3: Dead `deliver_response` / `terminal_tool` machinery in delegation loop [P3] — 🔲 OPEN
+
+- **Problem:** Smart passes `terminal_tool="deliver_response"` to `DelegationEngine`
+  (`smart_response_agent.py:376`), but **no adapter declares a `deliver_response` tool**. On every
+  provider the final structured answer arrives via `response_schema` instead: on Claude the
+  synthesized `respond` tool is intercepted in the adapter and returned as JSON *text* with
+  `tool_calls=[]` (`claude_adapter.py:341-348`); Gemini/OpenAI return native JSON. So the engine's
+  terminal-tool branch (`delegation_engine.py:236-254`) never matches, `DelegationResult.terminal_tool_args`
+  is never populated, and Smart's `_build_smart_response` `terminal_tool_args` path
+  (`smart_response_agent.py:447-465`) is unreachable — the fallback `parse_llm_response(result.text)`
+  always runs. The code works, but the vestigial machinery is misleading: it cost a full
+  investigation to rediscover the real flow (2026-07-02, during the Smart `max_delegation_turns`
+  8→15 bump). `terminal_tool` has exactly one caller (Smart) and it is dead — Quick/bound agents
+  pass `None`, so the entire `terminal_tool` mechanism is currently unused.
+- **Fix:** either (a) drop the `terminal_tool` param + terminal-tool branch from the engine and the
+  `terminal_tool_args` field, and simplify `_build_smart_response` to its single text path; or
+  (b) keep the generic `terminal_tool` param but delete Smart's dead `deliver_response` wiring.
+  Prefer (a) unless a near-term non-schema agent needs a real terminal tool.
+- **Files:** `src/infrastructure/delegation_engine.py` (terminal-tool branch + `DelegationResult.terminal_tool_args`),
+  `src/agents/core/smart_response_agent.py` (`terminal_tool=` arg + `_build_smart_response` terminal path).
+- **Scope note:** tests are load-bearing — deleting the branch means updating/removing any test that
+  exercises `terminal_tool_args`; enumerate them first (`grep -rn terminal_tool_args tests/`).
+- **Related:** CLAUDE.md DelegationEngine bullet corrected 2026-07-02 to describe the real flow.
+
 ---
 
 ## 🏢 Planned Milestones (Phase 3: Enterprise)
