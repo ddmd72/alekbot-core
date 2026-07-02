@@ -606,9 +606,24 @@ Every agent that produces structured LLM output MUST follow these rules — no e
   and natively enforced (`OpenAIAdapter._to_openai_json_schema` lowercases Gemini-style uppercase
   types; suppressed when `use_grounding` is set — Web Search + JSON mode → 400). Grok: still
   `json_object` mode (schema not forwarded; structure from the OUTPUT_FORMAT token + examples).
-  Claude: translated to `output_config={"format":{"type":"json_schema","schema":...}}` (GA
-  structured outputs API, no beta header). Works with tools and with thinking in the same
-  request. Model returns JSON directly in a text block — no tool interception needed.
+  Claude: `response_schema` injects a synthesized **`respond` tool** (schema as its
+  `input_schema`, `nullable` stripped recursively via `_strip_nullable`) with
+  `tool_choice=auto`; the adapter intercepts the `respond` call and returns its input as
+  JSON text. Structure is carried by tool_use input, NOT constrained-decode text.
+  The GA `output_config.format` path was reverted 2026-07-01: on multi-turn tool loops with
+  adaptive thinking it made Claude emit degenerate output — reasoning leaking into the first
+  JSON string field, or an empty text block alongside tool_use that the API then rejects on
+  replay (anthropic-sdk-python#1204). The tool path keeps reasoning in the thinking block.
+  The tool's own **description matters**: a bare declaration makes the model bypass respond
+  (write plain text) or leak Claude's internal `<parameter>` tool-call format into the first
+  field on complex prompts — so the adapter gives `respond` an explicit "call this tool, don't
+  emit plain text or XML tags" description, and agents add per-field `description`s on their
+  schema (e.g. Smart's `_RESPONSE_SCHEMA`). Safety net for the rare plain-text bypass (model
+  ignores respond under `auto`): the adapter re-issues once with **`tool_choice=any`** — which
+  forces respond (structured) or a real delegation call (engine continues), never plain text,
+  and does NOT leak `<parameter>` the way forcing the *specific* respond tool does (~1/4 on
+  long outputs). The adapter must never return plain text to a schema agent — some `json.loads`
+  the result directly. See `docs/04_solution_strategy/decisions/claude_schema_respond_tool.md`.
 
   **OUTPUT_FORMAT token** — prompt-level instruction in Firestore blueprint. The authoritative
   source of truth for output structure. All JSON agents must have one. `response_schema` and
@@ -619,7 +634,7 @@ Every agent that produces structured LLM output MUST follow these rules — no e
   - JSON agents WITHOUT tools: `response_mime_type` + `response_schema` (both).
     Gemini uses both natively. OpenAI enforces `response_schema` via json_schema (strict:false);
     Grok reacts via json_object. Claude: `response_mime_type` is silently ignored;
-    `response_schema` triggers `output_config.format`.
+    `response_schema` injects a synthesized `respond` tool (see above).
   - JSON agents WITH tools: `response_schema` only (no `response_mime_type`).
     Gemini cannot combine mime_type + tools. Schema works with tools on all providers.
   - Non-JSON agents: neither. OUTPUT_FORMAT token handles everything.
@@ -628,7 +643,7 @@ Every agent that produces structured LLM output MUST follow these rules — no e
   in `AgentProviderStrategy.STRATEGIES` (`allowed_providers`). If an agent uses
   `response_mime_type` without `response_schema`, it **must not** run on Claude
   (`response_mime_type` is still silently ignored by Claude — only `response_schema` is
-  honoured via `output_config.format`).
+  honoured, via the synthesized `respond` tool).
 
 - **`_RESPONSE_SCHEMA` on Quick/Smart.** Both orchestrators pass
   `response_schema=_RESPONSE_SCHEMA` to `LLMRequest` even when tools are active. It now
@@ -640,7 +655,7 @@ Every agent that produces structured LLM output MUST follow these rules — no e
   Gemini's `responseJsonSchema`, which accepts the nesting — the earlier "keep data flat for the
   nesting limit" note applied to the stricter `responseSchema` path and is obsolete. The
   OUTPUT_FORMAT_JSON token no longer duplicates this schema (it drifted); structure is enforced
-  from code (Gemini responseJsonSchema, Claude output_config, OpenAI json_schema).
+  from code (Gemini responseJsonSchema, Claude synthesized `respond` tool, OpenAI json_schema).
 
 - **`rich_content.data.rows` format: `[{"cells": [...]}, ...]`.** Each table row is an object with
   a `cells` key (array of strings). Never use `[[...], [...]]` (Gemini hangs on

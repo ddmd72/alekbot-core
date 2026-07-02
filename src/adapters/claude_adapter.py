@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 import anthropic
 from anthropic import types, AsyncAnthropic
@@ -26,39 +27,25 @@ from ..domain.exceptions import (
 from ..utils.logger import logger
 
 
-def _make_schema_strict(schema: dict) -> dict:
-    """
-    Recursively strips Anthropic-unsupported keys and injects required constraints.
+def _strip_nullable(schema: Any) -> Any:
+    """Recursively drop the non-standard "nullable" keyword from a JSON-Schema value.
 
-    - Removes "nullable" at every nesting level (Claude GA rejects it with 400).
-      Semantic side-effect: Gemini with nullable=True allows the model to return null for
-      that field (e.g. "rich_content": null); Claude without nullable must return an object
-      (e.g. "rich_content": {}). Both are handled correctly by the agent parsers.
-    - Injects "additionalProperties": False on object types (required by GA strict mode).
-    """
-    if not isinstance(schema, dict):
-        return schema
+    "nullable" is an OpenAPI/Gemini-ism; Anthropic's tool input_schema is JSON Schema
+    2020-12, which does not define it. This changes nothing else — no
+    ``additionalProperties``/``required`` injection — so mutually-exclusive variant keys
+    (e.g. ``rich_content.data``'s table/widget/file fields) stay optional and are not
+    forced present. Used to shape the ``respond`` tool's input_schema.
 
-    strict_schema = {k: v for k, v in schema.items() if k != "nullable"}
-    if strict_schema.get("type") == "object" and "additionalProperties" not in strict_schema:
-        strict_schema["additionalProperties"] = False
-        
-    if "properties" in strict_schema:
-        strict_schema["properties"] = {
-            k: _make_schema_strict(v) for k, v in strict_schema["properties"].items()
-        }
-        
-    if "items" in strict_schema:
-        if isinstance(strict_schema["items"], dict):
-            strict_schema["items"] = _make_schema_strict(strict_schema["items"])
-        elif isinstance(strict_schema["items"], list):
-            strict_schema["items"] = [_make_schema_strict(i) for i in strict_schema["items"]]
-            
-    for key in ["anyOf", "allOf", "oneOf"]:
-        if key in strict_schema:
-            strict_schema[key] = [_make_schema_strict(i) for i in strict_schema[key]]
-            
-    return strict_schema
+    Semantic note: Gemini with ``nullable=True`` lets the model return null for a field
+    (e.g. ``"rich_content": null``); Claude without it returns an object (``{}``). Both
+    are handled by the agent parsers.
+    """
+    if isinstance(schema, dict):
+        return {k: _strip_nullable(v) for k, v in schema.items() if k != "nullable"}
+    if isinstance(schema, list):
+        return [_strip_nullable(i) for i in schema]
+    return schema
+
 
 class ClaudeAdapter(LLMPort):
     """
@@ -191,6 +178,31 @@ class ClaudeAdapter(LLMPort):
                     {"type": "web_fetch_20250910",  "name": "web_fetch"},
                 ] + claude_tools
 
+        # Structured output on Claude: inject a "respond" tool so the final answer is
+        # carried in the tool_use INPUT (validated against the schema) rather than via
+        # Anthropic's output_config.format constrained decode. The GA output_config.format
+        # path was removed (2026-07-01): on multi-turn tool loops with adaptive thinking it
+        # made Claude emit degenerate output — reasoning leaking into the first JSON string
+        # field, or an empty text block alongside tool_use that the API then rejects on
+        # replay (anthropic-sdk-python#1204). The tool path keeps reasoning in the separate
+        # thinking block. tool_choice stays auto (NOT forced): opus/sonnet/haiku 4.x call
+        # respond reliably on the terminal turn (verified 2026-07-01), while forcing "any"
+        # spuriously delegates on Sonnet. The response side intercepts the respond call and,
+        # on the rare plain-text bypass, re-forces respond (safety net below).
+        _schema_tool_active = False
+        if response_schema and isinstance(response_schema, dict):
+            respond_tool_schema = _strip_nullable(response_schema)
+            claude_tools = claude_tools + [{
+                "name": "respond",
+                "description": (
+                    "Submit your final answer to the user by calling this tool with the fields "
+                    "defined in its schema. Always call this tool — never write the answer as "
+                    "plain text or emit XML/parameter tags."
+                ),
+                "input_schema": respond_tool_schema,
+            }]
+            _schema_tool_active = True
+
         # Regular request
         # Claude API rejects tool_choice=null — must be omitted entirely when not forcing a tool
         thinking_effort = request.thinking
@@ -234,13 +246,7 @@ class ClaudeAdapter(LLMPort):
         # drops effort here instead of crashing the request.
         if effort and any(m in model_name for m in self._THINKING_MODELS):
             create_kwargs["output_config"] = {"effort": effort}
-            
-        if response_schema and isinstance(response_schema, dict):
-            schema = _make_schema_strict(response_schema)
-            output_config = create_kwargs.get("output_config", {})
-            output_config["format"] = {"type": "json_schema", "schema": schema}
-            create_kwargs["output_config"] = output_config
-            
+
         if force_tool_use and claude_tools:
             # thinking is incompatible with tool_choice="any" — fall back to "auto"
             create_kwargs["tool_choice"] = {"type": "auto" if thinking_param else "any"}
@@ -307,7 +313,74 @@ class ClaudeAdapter(LLMPort):
                 raise
             llm_response = self._parse_response(response)
 
+        # ── Safety net: recover from a plain-text bypass ──
+        # Under tool_choice=auto the model MAY ignore the respond tool and answer in plain
+        # text. The adapter is universal — some schema agents json.loads() the result
+        # directly and would fail on plain text — so we must not return unstructured text.
+        # Re-issue forcing SOME tool with tool_choice=any: it yields either a respond call
+        # (structured) or a real delegation call (the engine continues the loop), never plain
+        # text. Unlike forcing the SPECIFIC respond tool, `any` does NOT leak Claude's
+        # internal <parameter> tool-call format into the field on long outputs (verified
+        # 2026-07-01: specific-tool ~1/4 leak, any 0/3). Skipped for the grounded path.
+        if (
+            _schema_tool_active
+            and not _use_dynamic_search
+            and not llm_response.tool_calls
+            and response is not None
+        ):
+            llm_response = await self._retry_respond_any(create_kwargs, first_parsed=llm_response)
+
+        # ── Structured output via the respond tool (replaces output_config.format) ──
+        # The respond call's INPUT is the structured answer — return it as JSON text so
+        # callers see a normal text response. Real delegation tool_calls carry no respond
+        # call → fall through unchanged so the DelegationEngine continues the loop.
+        if _schema_tool_active and llm_response.tool_calls:
+            respond_call = next(
+                (tc for tc in llm_response.tool_calls if tc.name == "respond"), None
+            )
+            if respond_call:
+                return LLMResponse(
+                    text=json.dumps(respond_call.args or {}, ensure_ascii=False),
+                    tool_calls=[],
+                    raw_content=llm_response.raw_content,
+                    usage_metadata=llm_response.usage_metadata,
+                    cache_metadata=llm_response.cache_metadata,
+                )
+
         return llm_response
+
+    async def _retry_respond_any(
+        self, create_kwargs: dict, *, first_parsed: LLMResponse
+    ) -> LLMResponse:
+        """Bypass recovery: re-issue the same request with tool_choice=any.
+
+        `any` forces the model to call a tool — respond (structured) or a real delegation
+        tool (engine continues) — so a schema agent never receives plain text. It does not
+        leak the <parameter> format the way forcing the specific respond tool does. Usage
+        is merged. On any retry failure the primary (plain-text) parse is returned unchanged
+        so the safety net never makes things worse than the bypass it is recovering from.
+        """
+        retry_kwargs = dict(create_kwargs)
+        retry_kwargs["tool_choice"] = {"type": "any"}
+        logger.warning(
+            "[ClaudeAdapter] respond bypassed under tool_choice=auto — retrying with tool_choice=any"
+        )
+        try:
+            async with self.client.messages.stream(**retry_kwargs) as stream:
+                retry_response = await stream.get_final_message()
+        except Exception as e:  # noqa: BLE001 — safety net must not raise; degrade to primary
+            logger.warning("[ClaudeAdapter] tool_choice=any retry failed (%s); using primary result", e)
+            return first_parsed
+        retry_parsed = self._parse_response(retry_response)
+        u1, u2 = first_parsed.usage_metadata, retry_parsed.usage_metadata
+        retry_parsed.usage_metadata = UsageMetadata(
+            prompt_tokens=(u1.prompt_tokens or 0) + (u2.prompt_tokens or 0),
+            completion_tokens=(u1.completion_tokens or 0) + (u2.completion_tokens or 0),
+            total_tokens=(u1.total_tokens or 0) + (u2.total_tokens or 0),
+            cache_read_tokens=(u1.cache_read_tokens or 0) + (u2.cache_read_tokens or 0),
+            cache_creation_tokens=(u1.cache_creation_tokens or 0) + (u2.cache_creation_tokens or 0),
+        )
+        return retry_parsed
 
     async def _grounded_stream_loop(self, create_kwargs: dict) -> LLMResponse:
         """
