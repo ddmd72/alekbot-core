@@ -18,7 +18,9 @@ All tool execution is server-side. The API manages context internally — we do 
 serialise tool results or maintain history across turns. The only state we manage is the
 growing messages[] array for pause_turn continuations.
 
-Thinking: adaptive, effort=high. Temperature must be 1.0 when thinking is active.
+Thinking: adaptive, effort=high. Temperature is omitted for the new-generation models
+(Sonnet 5 / Opus 4.7+ / Fable 5 — they 400 on a non-default sampling param) and pinned to
+1.0 for older thinking models (Sonnet 4.6 / Opus 4.6) where thinking forces temperature=1.0.
 
 Message payload shape (from AgentWorkerHandler):
   message.payload = {"query": <full research brief>, "intent": "execute_deep_research_claude"}
@@ -86,6 +88,18 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
     # Unified 2026-05-30 to fix divergence where opus-4-7/4-8 ULTRA fell to Haiku-style
     # fallback. See decisions/claude_ultra_tier_to_opus_4_8_plus_dr_gate_unification.md.
     _THINKING_MODELS = ("claude-sonnet", "claude-opus")
+
+    # New-generation Claude models (the Sonnet 5 / Opus 4.7+ / Fable 5 line). This single set
+    # captures two properties that arrived together in that generation:
+    #   1. They reject a non-default temperature/top_p/top_k with a 400 → we omit temperature.
+    #   2. They use the new tokenizer (~+30% tokens for the same text) → the same report exhausts
+    #      a fixed output budget ~30% sooner, so we raise max_tokens (96K vs 64K) to avoid
+    #      truncating long research reports.
+    # Exact mirror of ClaudeAdapter._NO_SAMPLING_MODELS (claude_adapter.py:87). There is no shared
+    # home: REQ-ARCH-12 bars these Claude model-name strings from domain/ (and config/), and an
+    # agent may not import an adapter — so this set is duplicated across the two provider-bound
+    # Claude files BY DESIGN (this file is whitelisted in arch_tech_debt.py). Keep the two in sync.
+    _NO_SAMPLING_MODELS = ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-fable")
 
     # Dynamic filtering enabled (no allowed_callers restriction).
     # code_execution_20250825 is auto-injected by the API — do NOT declare it explicitly.
@@ -358,19 +372,28 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
             if system_prompt else []
         )
 
+        is_new_gen = any(m in model for m in self._NO_SAMPLING_MODELS)
+
         if any(m in model for m in self._THINKING_MODELS):
-            max_tokens = 64_000  # extended output beta supports up to 128K; 64K is safe ceiling
+            # New-gen models use the ~+30%-token tokenizer → give them more output headroom
+            # (96K) so long reports don't truncate; older thinking models keep 64K. Both are
+            # under the 128K extended-output beta ceiling and only bill actual output tokens.
+            max_tokens = 96_000 if is_new_gen else 64_000
             extra_kwargs: dict = {
                 "thinking": {"type": "adaptive"},
                 "output_config": {"effort": "high"},
-                "temperature": 1.0,
             }
         else:
             max_tokens = 32_000
             extra_kwargs = {
                 "thinking": {"type": "enabled", "budget_tokens": 24_000},
-                "temperature": 1.0,
             }
+
+        # Sampling gate: new-gen models 400 on a non-default temperature, so omit it for them.
+        # Older thinking models require temperature=1.0 while extended thinking is active; the
+        # non-thinking (Haiku) path also keeps 1.0. See _NO_SAMPLING_MODELS above.
+        if not is_new_gen:
+            extra_kwargs["temperature"] = 1.0
 
         messages: list[dict] = [{"role": "user", "content": query}]
         accumulated_content: list = []

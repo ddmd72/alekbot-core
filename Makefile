@@ -47,6 +47,7 @@ K ?= 300
 .PHONY: logs-mode-clean logs-mode-full
 .PHONY: logs-job fetch-logs-job list-jobs logs-execution cancel-job
 .PHONY: services status
+.PHONY: claude-model claude-rollback claude-forward dr-model dr-rollback dr-forward
 .PHONY: check-models check-pricing
 .PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
 .PHONY: delete
@@ -236,6 +237,26 @@ claude-forward: ## Flip PERFORMANCE tier live -> Sonnet 5 (no redeploy)
 	gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
 		--update-env-vars CLAUDE_PERFORMANCE_MODEL=claude-sonnet-5
 	@echo "✅ Live env flipped."
+
+# Deep Research model levers. NOTE: CLAUDE_DEEP_RESEARCH_MODEL (model_override) pins EVERY
+# DR tier, not just PERFORMANCE — it is a coarse break-glass kill-switch. The forward default
+# (BALANCED/PERFORMANCE -> Sonnet 5, ULTRA -> Opus 4.8, ECO -> Haiku) comes from the adapter's
+# MODEL_TIERS map when the override is UNSET; `make dr-forward` restores that by removing it.
+dr-model: ## Show the live CLAUDE_DEEP_RESEARCH_MODEL (unset => tier map: Sonnet 5 default)
+	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format=export 2>/dev/null \
+		| grep -A1 "name: CLAUDE_DEEP_RESEARCH_MODEL" || echo "  CLAUDE_DEEP_RESEARCH_MODEL unset => tier map (BALANCED/PERFORMANCE => claude-sonnet-5)"
+
+dr-rollback: ## KILL-SWITCH: pin ALL Deep Research tiers live -> Sonnet 4.6 (no redeploy)
+	@echo "⏪ Pinning ALL Deep Research tiers to claude-sonnet-4-6 (live, coarse kill-switch)..."
+	gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
+		--update-env-vars CLAUDE_DEEP_RESEARCH_MODEL=claude-sonnet-4-6
+	@echo "✅ Live env flipped. Run 'make dr-forward' to restore the tier map (Sonnet 5)."
+
+dr-forward: ## Remove the DR override -> back to tier map (BALANCED/PERFORMANCE = Sonnet 5)
+	@echo "⏩ Removing CLAUDE_DEEP_RESEARCH_MODEL override -> tier map governs (live)..."
+	gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
+		--remove-env-vars CLAUDE_DEEP_RESEARCH_MODEL
+	@echo "✅ Override removed. Deep Research now follows MODEL_TIERS (Sonnet 5 default)."
 
 status: ## Show service status
 	@echo "📊 Service status ($(SERVICE_NAME)):"

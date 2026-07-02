@@ -594,6 +594,9 @@ class TestResearchLoop:
         Regression guard for the 2026-05-30 unification of _THINKING_MODELS
         from exact-match set to substring tuple. Pre-unification, opus-4-7
         silently fell to the Haiku-style fallback (32k max_tokens).
+
+        opus-4-7 is new-gen (_NO_SAMPLING_MODELS): 96k max_tokens (new tokenizer)
+        and temperature omitted (400s on non-default sampling).
         """
         msg = _api_message("end_turn", [_text_block("Done")])
         client = MagicMock()
@@ -603,12 +606,13 @@ class TestResearchLoop:
         await agent._research_loop("query", "", "claude-opus-4-7")
 
         call_kwargs = client.messages.stream.call_args.kwargs
-        assert call_kwargs["max_tokens"] == 64_000
+        assert call_kwargs["max_tokens"] == 96_000
         assert call_kwargs["thinking"] == {"type": "adaptive"}
         assert call_kwargs["output_config"] == {"effort": "high"}
+        assert "temperature" not in call_kwargs
 
     async def test_opus_4_8_uses_thinking_path(self):
-        """Current ULTRA model. Same expectation as opus-4-7."""
+        """Current ULTRA model. Same expectation as opus-4-7 (new-gen: 96k, no temperature)."""
         msg = _api_message("end_turn", [_text_block("Done")])
         client = MagicMock()
         client.messages.stream.return_value = _FakeStream([], msg)
@@ -617,9 +621,41 @@ class TestResearchLoop:
         await agent._research_loop("query", "", "claude-opus-4-8")
 
         call_kwargs = client.messages.stream.call_args.kwargs
-        assert call_kwargs["max_tokens"] == 64_000
+        assert call_kwargs["max_tokens"] == 96_000
         assert call_kwargs["thinking"] == {"type": "adaptive"}
         assert call_kwargs["output_config"] == {"effort": "high"}
+        assert "temperature" not in call_kwargs
+
+    async def test_sonnet_5_uses_thinking_path_96k_no_temperature(self):
+        """Sonnet 5 (the 2026-07-02 DR default): new-gen adaptive-thinking path.
+
+        New tokenizer → 96k max_tokens; non-default sampling 400s → temperature omitted.
+        """
+        msg = _api_message("end_turn", [_text_block("Done")])
+        client = MagicMock()
+        client.messages.stream.return_value = _FakeStream([], msg)
+        agent = _make_agent(client)
+
+        await agent._research_loop("query", "", "claude-sonnet-5")
+
+        call_kwargs = client.messages.stream.call_args.kwargs
+        assert call_kwargs["max_tokens"] == 96_000
+        assert call_kwargs["thinking"] == {"type": "adaptive"}
+        assert call_kwargs["output_config"] == {"effort": "high"}
+        assert "temperature" not in call_kwargs
+
+    async def test_sonnet_4_6_keeps_temperature_and_64k(self):
+        """Older thinking model: temperature=1.0 stays (thinking forces it), 64k budget."""
+        msg = _api_message("end_turn", [_text_block("Done")])
+        client = MagicMock()
+        client.messages.stream.return_value = _FakeStream([], msg)
+        agent = _make_agent(client)
+
+        await agent._research_loop("query", "", "claude-sonnet-4-6")
+
+        call_kwargs = client.messages.stream.call_args.kwargs
+        assert call_kwargs["max_tokens"] == 64_000
+        assert call_kwargs["temperature"] == 1.0
 
     async def test_non_thinking_model_uses_32k_max_tokens(self):
         msg = _api_message("end_turn", [_text_block("Done")])
@@ -631,6 +667,9 @@ class TestResearchLoop:
 
         call_kwargs = client.messages.stream.call_args.kwargs
         assert call_kwargs["max_tokens"] == 32_000
+        # Non-new-gen path (Haiku) keeps temperature=1.0 + explicit budget_tokens thinking.
+        assert call_kwargs["temperature"] == 1.0
+        assert call_kwargs["thinking"] == {"type": "enabled", "budget_tokens": 24_000}
 
     async def test_extended_output_beta_header_present(self):
         msg = _api_message("end_turn", [_text_block("Done")])
