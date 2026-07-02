@@ -15,7 +15,7 @@ make test-e2e-all      # E2E all agents (against real APIs)
 
 ```
 tests/
-  conftest.py      — Shared fixtures: mock_env_config, mock_llm_service, mock_repository
+  conftest.py      — Shared fixtures: mock_env_config, mock_llm_port, mock_repository
   unit/            — No external dependencies. AsyncMock for ports.
   integration/     — With mocked external services.
   performance/     — Benchmarks (@pytest.mark.performance).
