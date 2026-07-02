@@ -45,11 +45,21 @@ schema tuning removes it — it is intrinsic to Sonnet 5 generating this multi-f
 Removing the tool removes the format that leaks. `output_config.format` constrains the model to
 emit JSON as **text**, where no tool-call serialization exists.
 
-**Why `output_config.format` is safe again.** It was reverted 2026-07-01 over
-[anthropic-sdk-python#1204](https://github.com/anthropics/anthropic-sdk-python/issues/1204)
-(reasoning leak / empty-text-block on multi-turn + adaptive thinking). Re-verified **live on Sonnet 5,
-2026-07-02**: clean valid JSON, real widgets/tables, no reasoning leak, no empty-text-block 400.
-That bug is outdated for the current model generation.
+**Attribution — UNRESOLVED, do not over-credit `output_config.format`.** `output_config.format` was
+reverted 2026-07-01 over [anthropic-sdk-python#1204](https://github.com/anthropics/anthropic-sdk-python/issues/1204)
+(reasoning leak / empty-text-block on multi-turn + adaptive thinking), and it was still leaking two days
+before this change. When we switched back to it (2026-07-02) we **simultaneously** re-added the full
+formal `json_schema` to the `OUTPUT_FORMAT_JSON` prompt token (it had drifted / been de-duplicated
+before). Both changed at once — **the variables were not isolated** (the prompt-only-without-format
+revision was never tested), so "the format just works now / #1204 is outdated" is **not proven**.
+
+**Working hypothesis (owner's observation, treated as baseline until disproven):** the key stabilizer
+is the **full formal schema in the prompt token** — Anthropic relies on the prompt-level schema to get
+complex outputs right; the grammar (`output_config.format`) constrains *structure*, the prompt schema
+guides *content*. To prove it, use the still-live debug capture (`ANTHROPIC_LOG=debug`) and remove ONE
+variable at a time (drop the token schema, or drop `output_config.format`) and watch for the leak.
+Result observed 2026-07-02 with BOTH live on `claude-sonnet-5`: clean valid JSON, real widgets/tables,
+no `<parameter>` leak.
 
 ## Grammar limit — schema must stay compilable
 
