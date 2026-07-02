@@ -22,8 +22,17 @@ mocks cannot detect translation regressions) + contract validators in
   When picking a default tier for a new agent, verify the resolved model accepts every
   parameter the agent sends. Concrete trap: `BALANCED` on Claude → `claude-haiku-4-5-20251001`,
   which rejects `output_config.effort` (HTTP 400). ConsolidationAgent default is therefore
-  `PERFORMANCE` (`claude-sonnet-4-6`) in `_DEFAULT_AGENT_TIERS`. See
-  `docs/05_building_blocks/provider_resolution/README.md` §2.1, §2.4.
+  `PERFORMANCE` → **`claude-sonnet-5`** in `ClaudeAdapter.MODEL_TIERS` (was `claude-sonnet-4-6`
+  until 2026-07; env-overridable via `CLAUDE_PERFORMANCE_MODEL` for instant rollback). See
+  `docs/05_building_blocks/provider_resolution/README.md` §2.1, §2.4 and the Sonnet 5 gates below.
+- **Sonnet 5 sampling / thinking gates** — Sonnet 5 (and Opus 4.7/4.8, Fable 5) **400 on a
+  non-default `temperature`/`top_p`/`top_k`**, so `ClaudeAdapter._NO_SAMPLING_MODELS` omits the
+  sampling param entirely for them (Sonnet 4.6 / Opus 4.6 / Haiku keep it). Sonnet 5 also runs
+  **adaptive thinking by default** when `thinking` is omitted (unlike 4.6) — `_ADAPTIVE_DEFAULT_ON_MODELS`
+  sends `thinking:{type:"disabled"}` when no effort is requested, to honour the caller's intent.
+  New tokenizer (~30% more tokens) — keep `max_tokens` headroom. Transient-error rollback:
+  `_MODEL_FALLBACK` retries `claude-sonnet-5`→`claude-sonnet-4-6` once on 529/503/5xx (not 4xx).
+  Decision: `docs/04_solution_strategy/decisions/claude_sonnet_5_adoption.md`.
 - **ProviderRegistry** — runtime LLM provider selection (gemini/claude/grok).
 - **Adapter capability gates** — each adapter silently drops parameters the resolved model
   doesn't accept instead of forwarding and crashing on 400. ClaudeAdapter gates `thinking`,
