@@ -43,6 +43,7 @@ class BiographicalFactsFormatter:
         "work": "Work",
         "network": "Network",
         "preference": "Preference",
+        "agent_directive": "Agent Directive",
         "skill": "Skill",
         "project": "Project",
         "finance": "Finance",
@@ -56,7 +57,8 @@ class BiographicalFactsFormatter:
         """Format facts into domain-grouped Markdown sections.
 
         Args:
-            facts: List of fact dictionaries from cache.
+            facts: List of fact dictionaries from cache. Directives are separated upstream
+                by PromptBuilder (own channel) and never reach this method.
 
         Returns:
             Markdown string ready for prompt injection.
@@ -81,6 +83,19 @@ class BiographicalFactsFormatter:
             sections.append(self._render_semantic_section(grouped["semantic"]))
 
         return "\n\n".join(section for section in sections if section)
+
+    def format_directives(self, directives: List[Dict]) -> str:
+        """Render a pre-separated directive list as a flat rulebook (newest first, no dates).
+
+        The caller (PromptBuilder) owns the domain partition; this method only renders.
+        Returns "" when empty — caller skips the block entirely.
+        """
+        items = [d for d in directives if isinstance(d, dict) and (d.get("text") or "").strip()]
+        if not items:
+            return ""
+
+        items.sort(key=lambda d: d.get("created_at", ""), reverse=True)
+        return "\n".join(f"- {d['text'].strip()}" for d in items)
 
     def _group_by_domain(self, facts: List[Dict]) -> Dict[str, List[Dict]]:
         """Group facts by domain and sort within each domain.

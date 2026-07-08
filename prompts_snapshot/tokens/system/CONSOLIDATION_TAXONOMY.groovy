@@ -61,6 +61,7 @@ uploaded_by: local_script
             WORK: "Occupation, career, employment (job title, company, salary, methodologies)"
             NETWORK: "Contacts, relationships (family, friends, colleagues, mentors)"
             PREFERENCE: "Habits, likes, dislikes, anchors (food, values, principles, routines)"
+            AGENT_DIRECTIVE: "Standing behavioral orders from the user to the agent — how to respond, reason, format (NOT the user's own habits/tastes)"
             SKILL: "Abilities, knowledge, languages (programming, certifications, tools)"
             PROJECT: "Active work, temporary endeavors (current projects, evaluations, experiments) - USUALLY EPHEMERAL"
             FINANCE: "Money matters (income, expenses, investments, savings, debts, budgets)"
@@ -246,6 +247,52 @@ uploaded_by: local_script
             ]
 
             rationale: "Core beliefs/identity rarely change - verify before overwriting"
+        }
+
+        rule Directive_Maintenance() {
+
+            domain: "AGENT_DIRECTIVE"
+
+            definition: "Standing behavioral orders the user issued for the agent (response style rules, reasoning protocols, prohibitions). Injected into the orchestrator's prompt verbatim as an always-active rulebook."
+
+            purpose: "This rulebook is injected VERBATIM into the orchestrator agent's system prompt on every request, as its binding standing_directives block. You are not archiving facts — you are AUTHORING a system-instruction section. It must read as one coherent, tight, authoritative set: non-contradictory, zero overlap, zero white noise."
+
+            classification: "User instructs or corrects HOW THE AGENT must behave, reason, or respond -> AGENT_DIRECTIVE. User's own habits, tastes, values, life principles -> PREFERENCE."
+
+            syntax: [
+                "Write the rule itself in imperative second person, as an order to the agent: 'Never ...', 'Always ...', 'Before X, do Y'",
+                "ENGLISH ONLY — every directive in English. The ONLY exception is a quoted literal string the agent must output verbatim or match against (a required phrase, a forbidden phrase): keep that literal in its original language inside quotes, translate the rest.",
+                "FORBIDDEN in directive content: 'Agent must ...', 'User demands ...', 'User prohibits ...' — any third-person narrative about the agent or the user",
+                "FORBIDDEN in directive content: dates, month/year markers, 'non-negotiable', meta-commentary. The rulebook is timeless.",
+                "Self-contained atomic rule, max 40 words — terse; strip every non-load-bearing word"
+            ]
+
+            optimization_targets: [
+                "SEMANTIC PRECISION: each directive = exactly one unambiguous behavioral rule the agent can act on verbatim; sharpen or cut vague wording",
+                "TOKEN EFFICIENCY: terse imperative; strip preambles, dates, meta-commentary, decorative mottos",
+                "COHERENCE ACROSS THE SET: no overlap (merge), no contradiction (reconcile) — the set forms a clean rulebook, not an accumulated pile"
+            ]
+
+            examples: [
+                {
+                    input: "User prohibits partial answers followed by opt-in follow-up offers (Jun 25, 2026)",
+                    output: "Never give a partial answer with an opt-in follow-up; deliver complete information upfront in a single response."
+                },
+                {
+                    input: "Agent policy Zero_Interpolation (Mar 29, 2026): agent must always search tools first for any factual variable",
+                    output: "Search tools/memory before answering any factual query. If search returns null, proceed with logic but explicitly disclose the assumption."
+                }
+            ]
+
+            maintenance: [
+                "New user feedback about agent behavior is authoritative by definition — Core_Identity_Caution does NOT apply",
+                "Overlapping directive exists -> UPDATE it or MERGE into one refined rule; NEVER create a near-duplicate alongside",
+                "Two or more incidents expressing one underlying principle -> generalize into a single directive that supersedes the specifics",
+                "A directive is one atomic rule — do not decompose it as a multi-concept fact",
+                "NEVER merge a directive with a non-directive fact, even when semantically similar",
+                "HARD CAP 15: the rulebook holds at most 15 directives. MERGE only genuinely adjacent rules (same behavioral domain) — do NOT fuse unrelated behaviors into an 'umbrella' directive just to preserve everything; a bundled directive mixing distinct behaviors is worse than a focused set. When over 15 with no genuinely-adjacent merge available, INVALIDATE the least essential (lowest-priority, most situational, rarely load-bearing) — dropping the weakest to protect precision is correct; hoarding is not",
+                "CONVERGENCE, not churn: REWRITE any directive that falls short of the target form (third-person narrative, verbose, dated, ambiguous, non-English, or overlapping another) — that IS the improvement, not churn. A directive already imperative, atomic, terse, English and date-free is at its optimum: leave it untouched. Anti-churn guards the optimum; it does NOT block the first optimisation pass"
+            ]
         }
 
         rule Negation_And_Invalidation() {

@@ -814,6 +814,7 @@ class FirestoreFactRepository(FactRepository):
             cache_doc = {
                 "biographical_facts": context["facts"],
                 "principles": context["principles"],
+                "directives": context.get("directives", []),
                 "refreshed_at": firestore.SERVER_TIMESTAMP,
                 "facts_count": len(context["facts"]),
                 "principles_count": len(context["principles"]),
@@ -870,12 +871,13 @@ class FirestoreFactRepository(FactRepository):
 
             data = doc.to_dict()
             
-            # Load facts and principles (v3+ cache structure)
+            # Load facts, principles, directives (v3+ cache structure)
             facts = data.get("biographical_facts", [])
             principles = data.get("principles", [])
-            
-            # Merge both lists (formatter will separate by type)
-            combined = facts + principles
+            directives = data.get("directives", [])
+
+            # Merge all lists (formatter separates: directives by domain, principles by tag)
+            combined = facts + principles + directives
             
             if not combined:
                 logger.warning(f"⚠️ [Cache] Empty cache for {owner_id[:12]}...")
@@ -896,7 +898,7 @@ class FirestoreFactRepository(FactRepository):
             
             logger.debug(
                 f"📖 [Cache] Loaded {len(facts)} facts + {len(principles)} principles "
-                f"for {owner_id[:12]}... (total: {len(sanitized)})"
+                f"+ {len(directives)} directives for {owner_id[:12]}... (total: {len(sanitized)})"
             )
 
             # SESSION 2026-02-08: Return FULL cache (limits applied during cache refresh)

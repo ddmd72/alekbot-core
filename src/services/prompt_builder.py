@@ -13,6 +13,7 @@ from ..domain.prompt import (
     ANONYMOUS_USER_ID,
     ANONYMOUS_ACCOUNT_ID
 )
+from ..domain.entities import FactDomain
 from ..ports.prompt_builder_port import PromptBuilderPort
 
 if TYPE_CHECKING:
@@ -119,6 +120,7 @@ class PromptBuilder(PromptBuilderPort):
         biographical_facts: Optional[List[Dict]] = None,
         conversation_history: Optional[List[dict]] = None,
         include_biographical: bool = True,
+        include_directives: bool = True,
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         extra_static_blocks: Optional[List[str]] = None,
@@ -166,16 +168,27 @@ class PromptBuilder(PromptBuilderPort):
         if conversation_history is None:
             conversation_history = []
 
-        # Split biographical_facts: static (long-term) vs query-specific (tagged semantic_lens).
-        # Agents call merge_enriched_context_with_biographical() before build_for_agent(), which
-        # tags router-enriched facts with "semantic_lens". The assembly service never sees that tag.
+        # Partition the flat cache list into named channels (single split point):
+        #   - directives (agent_directive domain)  → standing_directives block (orchestrator-only)
+        #   - query-specific (semantic_lens tag)    → query_specific_context (post-boundary)
+        #   - static_bio (everything else)          → knowledge_base.biographical_context
+        # Router-enriched facts are tagged "semantic_lens" via merge_enriched_context_with_biographical().
+        def _tags(f) -> list:
+            return f.get("tags", []) if isinstance(f, dict) else []
+
+        def _domain(f) -> str:
+            return f.get("domain", "") if isinstance(f, dict) else ""
+
+        directive_facts = [
+            f for f in biographical_facts if _domain(f) == FactDomain.AGENT_DIRECTIVE.value
+        ] if include_directives else []
         static_bio = [
             f for f in biographical_facts
-            if "semantic_lens" not in (f.get("tags", []) if isinstance(f, dict) else [])
+            if "semantic_lens" not in _tags(f)
+            and _domain(f) != FactDomain.AGENT_DIRECTIVE.value
         ]
         qs_facts = [
-            f for f in biographical_facts
-            if "semantic_lens" in (f.get("tags", []) if isinstance(f, dict) else [])
+            f for f in biographical_facts if "semantic_lens" in _tags(f)
         ]
         if qs_facts:
             qs_lines = ["**Query-Specific Context:**"]
@@ -198,6 +211,7 @@ class PromptBuilder(PromptBuilderPort):
             biographical_facts=static_bio,
             conversation_history=conversation_history,
             query_specific_context=query_specific_context,
+            directives=directive_facts,
             kb_preamble=kb_preamble,
             agent_notes=agent_notes,
             user_timezone=user_timezone,

@@ -66,6 +66,7 @@ class PromptAssemblyService:
         biographical_facts: Optional[List[Dict]] = None,
         conversation_history: Optional[List[dict]] = None,
         query_specific_context: Optional[str] = None,
+        directives: Optional[List[Dict]] = None,
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         user_timezone: str = "UTC",
@@ -128,6 +129,7 @@ class PromptAssemblyService:
             conversation_history,
             user_id or "anonymous",
             query_specific_context=query_specific_context,
+            directives=directives,
             kb_preamble=kb_preamble,
             agent_notes=agent_notes,
             user_timezone=user_timezone,
@@ -352,6 +354,7 @@ class PromptAssemblyService:
         conversation_history: List[dict],
         user_id: str,
         query_specific_context: Optional[str] = None,
+        directives: Optional[List[Dict]] = None,
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         user_timezone: str = "UTC",
@@ -386,6 +389,18 @@ class PromptAssemblyService:
             logger.debug(f"Validated biographical facts: {bio_result.risk_level.value}")
         else:
             validated_bio = ""
+
+        # Standing directives — pre-separated channel from PromptBuilder; user-derived, UNTRUSTED.
+        validated_directives = ""
+        if directives:
+            directives_text = self.bio_formatter.format_directives(directives)
+            if directives_text:
+                dir_result = await self.security_port.validate(
+                    directives_text,
+                    context=f"directives_user_{user_id}",
+                    zone=TrustZone.UNTRUSTED
+                )
+                validated_directives = dir_result.sanitized_text
 
         # Validate query-specific context (UNTRUSTED zone)
         if query_specific_context:
@@ -448,6 +463,20 @@ class PromptAssemblyService:
                 prompt = prompt + "\n\n" + kb_block
         elif extra_static_blocks and kb_preamble:
             prompt = "\n\n".join(extra_static_blocks) + "\n\n" + prompt
+
+        # Standing directives — last static block: binding rules, highest recency salience.
+        # Changes only on consolidation (bio cache refresh), so provider caching is preserved.
+        if validated_directives:
+            indented = "\n".join(f"    {line}" for line in validated_directives.splitlines())
+            prompt = (
+                prompt
+                + "\n\nstanding_directives {\n"
+                + "    // Standing orders the user has issued for YOUR behavior.\n"
+                + "    // Binding on every response — not stale-able data, not context. Apply, don't weigh.\n"
+                + "    // Newest first. Conversation history may refine a directive, never silently cancel it.\n"
+                + indented
+                + "\n}"
+            )
 
         # Append cache boundary + dynamic content
         dynamic_parts = []

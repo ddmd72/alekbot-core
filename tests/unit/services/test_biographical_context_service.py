@@ -60,13 +60,18 @@ class TestBiographicalContextService:
         assert first_call == call("acc-123", domain="biographical", limit=65)
 
     async def test_no_fill_when_biographical_reaches_limit(self, service, mock_repo):
-        """Second query not issued when biographical facts fill the limit."""
+        """No all-domain fill query when biographical facts fill the limit.
+
+        Two queries are still issued: biographical facts + the separate directive-rulebook
+        fetch (STANDING_DIRECTIVES_RFC). The all-domain fill query is what is skipped here.
+        """
         biog_facts = [make_fact(f"fact {i}") for i in range(65)]  # exactly at default limit
         mock_repo.get_active_facts_ordered.return_value = biog_facts
 
         await service.refresh_context("acc-123")
 
-        assert mock_repo.get_active_facts_ordered.call_count == 1
+        # biographical query + directive query; no fill query
+        assert mock_repo.get_active_facts_ordered.call_count == 2
 
     async def test_fill_from_all_domains_when_biographical_insufficient(self, service, mock_repo):
         """When biographical < limit, second query fetches all domains for fill."""
@@ -75,13 +80,14 @@ class TestBiographicalContextService:
         biog_facts = [biog_fact]
         all_ordered = [biog_fact, health_fact]  # same object (same ID) + extra
 
-        mock_repo.get_active_facts_ordered.side_effect = [biog_facts, all_ordered]
+        # Q1 biographical, Q2 directive rulebook (empty here), Q3 all-domain fill
+        mock_repo.get_active_facts_ordered.side_effect = [biog_facts, [], all_ordered]
 
         result = await service.refresh_context("acc-123")
 
-        assert mock_repo.get_active_facts_ordered.call_count == 2
-        second_call = mock_repo.get_active_facts_ordered.call_args_list[1]
-        assert second_call == call("acc-123", limit=65)
+        assert mock_repo.get_active_facts_ordered.call_count == 3
+        fill_call = mock_repo.get_active_facts_ordered.call_args_list[2]
+        assert fill_call == call("acc-123", limit=65)
         # biog_fact + health_fact (deduped biog_fact from all_ordered)
         assert len(result["facts"]) == 2
 
@@ -92,7 +98,8 @@ class TestBiographicalContextService:
 
         mock_repo.get_active_facts_ordered.side_effect = [
             [biog_fact],
-            [biog_fact, extra_fact],  # Q2 includes the same biog fact
+            [],                        # Q2 directive rulebook (empty)
+            [biog_fact, extra_fact],   # Q3 fill includes the same biog fact
         ]
 
         result = await service.refresh_context("acc-123")
@@ -198,3 +205,43 @@ class TestBiographicalContextService:
 
         assert result["facts"] == []
         assert len(result["principles"]) == 1
+
+
+class TestDirectivesChannel:
+    """Standing directives fetched separately + never evicted (STANDING_DIRECTIVES_RFC)."""
+
+    @pytest.fixture
+    def mock_repo(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def service(self, mock_repo):
+        return BiographicalContextService(repository=mock_repo, config_service=None, account_repo=None)
+
+    async def test_directives_fetched_by_own_query_and_returned(self, service, mock_repo):
+        directive = make_fact("Never give partial answers.", domain=FactDomain.AGENT_DIRECTIVE)
+        # Q1 biographical (reaches nothing special), Q2 directives, no fill (biog empty→fill runs)
+        mock_repo.get_active_facts_ordered.side_effect = [[], [directive], []]
+
+        result = await service.refresh_context("acc-123")
+
+        # a dedicated directive query with the agent_directive domain was issued
+        dir_calls = [
+            c for c in mock_repo.get_active_facts_ordered.call_args_list
+            if c.kwargs.get("domain") == "agent_directive"
+        ]
+        assert len(dir_calls) == 1
+        assert [d["text"] for d in result["directives"]] == ["Never give partial answers."]
+
+    async def test_directives_excluded_from_fill_and_bio_facts(self, service, mock_repo):
+        directive = make_fact("Always trace logic.", domain=FactDomain.AGENT_DIRECTIVE)
+        biog = make_fact("Born in Kyiv")
+        # Q1 biographical (under limit → fill), Q2 directives, Q3 fill returns bio + a directive
+        mock_repo.get_active_facts_ordered.side_effect = [[biog], [directive], [biog, directive]]
+
+        result = await service.refresh_context("acc-123")
+
+        bio_texts = [f["text"] for f in result["facts"]]
+        assert "Always trace logic." not in bio_texts  # directive never leaks into bio channel
+        assert "Born in Kyiv" in bio_texts
+        assert [d["text"] for d in result["directives"]] == ["Always trace logic."]

@@ -45,6 +45,11 @@ class SearchConfig:
     # RFC: docs/10_rfcs/BIOGRAPHICAL_CACHE_MULTI_VECTOR_RFC.md
     DEFAULT_BIOGRAPHICAL_CACHE_LIMIT: int = 65
     DEFAULT_PRINCIPLES_CACHE_LIMIT: int = 20
+    # Standing directives (agent_directive domain, STANDING_DIRECTIVES_RFC):
+    # injection bound = the cap. Consolidator curates the rulebook to <=15 in Stage 2b and a
+    # deterministic code backstop enforces the same 15 in storage; this bound guarantees the
+    # orchestrator prompt can never exceed it, whatever the rulebook state.
+    DEFAULT_DIRECTIVES_CACHE_LIMIT: int = 15
 
     # History optimization (2026-02-18): Tiered history loading
     DEFAULT_HISTORY_RECENT_FULL_TURNS: int = 2
