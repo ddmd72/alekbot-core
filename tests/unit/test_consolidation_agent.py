@@ -261,6 +261,7 @@ class TestConsolidationAgentV3:
         repo = Mock()
         repo.get_observations = AsyncMock(return_value=[])
         repo.get_active_facts = AsyncMock(return_value=[])
+        repo.get_active_facts_ordered = AsyncMock(return_value=[])  # Stage 2b directive review → empty rulebook
         repo.archive_observations = AsyncMock()
         repo.refresh_biographical_context_cache = AsyncMock()
         repo.get_biographical_context_cached = AsyncMock(return_value=[])

@@ -248,3 +248,33 @@ class TestFormatDate:
 
     def test_unknown_type_returns_empty(self):
         assert BiographicalFactsFormatter._format_date(12345) == ""
+
+
+# ---------------------------------------------------------------------------
+# format_directives() — standing_directives rulebook (STANDING_DIRECTIVES_RFC)
+# ---------------------------------------------------------------------------
+
+class TestFormatDirectives:
+
+    def test_empty_returns_empty_string(self):
+        assert BiographicalFactsFormatter().format_directives([]) == ""
+
+    def test_renders_bullets_no_dates(self):
+        out = BiographicalFactsFormatter().format_directives([
+            {"text": "Never give a partial answer.", "created_at": "2026-01-01T00:00:00Z"},
+        ])
+        assert out == "- Never give a partial answer."
+        assert "2026" not in out  # directives are timeless — no date suffix
+
+    def test_newest_first_ordering(self):
+        out = BiographicalFactsFormatter().format_directives([
+            {"text": "older", "created_at": "2026-01-01T00:00:00Z"},
+            {"text": "newer", "created_at": "2026-06-01T00:00:00Z"},
+        ])
+        assert out.index("newer") < out.index("older")
+
+    def test_skips_blank_and_non_dict(self):
+        out = BiographicalFactsFormatter().format_directives([
+            {"text": "  "}, "not-a-dict", {"text": "Keep this."},
+        ])
+        assert out == "- Keep this."

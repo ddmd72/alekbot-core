@@ -25,6 +25,7 @@ class FactDomain(str, Enum):
     WORK = "work"
     NETWORK = "network"
     PREFERENCE = "preference"
+    AGENT_DIRECTIVE = "agent_directive"  # standing behavioral orders from the user to the agent
     SKILL = "skill"
     PROJECT = "project"
     FINANCE = "finance"

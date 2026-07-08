@@ -22,6 +22,9 @@ def _make_service():
 
     bio_formatter = Mock()
     bio_formatter.format = Mock(side_effect=lambda facts: "\n".join(f"- {f['text']}" for f in facts))
+    bio_formatter.format_directives = Mock(
+        side_effect=lambda directives: "\n".join(f"- {d['text']}" for d in directives)
+    )
 
     formatter = Mock()
     formatter.format = Mock(side_effect=lambda hist: "history_content")
@@ -51,13 +54,14 @@ TEMPLATE = (
 )
 
 
-async def _inject(service, facts=None, history=None, query_specific_context=None):
+async def _inject(service, facts=None, history=None, query_specific_context=None, directives=None):
     return await service._inject_runtime_context(
         prompt=TEMPLATE,
         biographical_facts=facts or [],
         conversation_history=history or [],
         user_id="test_user",
         query_specific_context=query_specific_context,
+        directives=directives,
     )
 
 
@@ -253,3 +257,35 @@ def test_normalize_whitespace_collapses_blank_lines():
     assert "\n\n\n" not in result
     assert "line1" in result
     assert "line2" in result
+
+
+# ---------------------------------------------------------------------------
+# standing_directives block (STANDING_DIRECTIVES_RFC)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_standing_directives_block_before_boundary_when_present():
+    """Directives render as a standing_directives block BEFORE the cache boundary."""
+    service = _make_service()
+    result = await _inject(service, directives=[{"text": "Never give partial answers."}])
+    boundary_pos = result.index(PROMPT_CACHE_BOUNDARY)
+    assert "standing_directives {" in result
+    assert result.index("standing_directives {") < boundary_pos
+    assert "Never give partial answers." in result
+
+
+@pytest.mark.asyncio
+async def test_standing_directives_absent_when_no_directives():
+    """No standing_directives block when the directive channel is empty/None."""
+    service = _make_service()
+    assert "standing_directives" not in await _inject(service, directives=None)
+    assert "standing_directives" not in await _inject(service, directives=[])
+
+
+@pytest.mark.asyncio
+async def test_standing_directives_validated_via_security_port():
+    """Directive text passes through SecurityPort (UNTRUSTED, user-derived)."""
+    service = _make_service()
+    await _inject(service, directives=[{"text": "Always trace conditional logic."}])
+    contexts = [c.kwargs.get("context", "") for c in service.security_port.validate.call_args_list]
+    assert any("directives_user_" in ctx for ctx in contexts)

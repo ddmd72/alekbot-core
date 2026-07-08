@@ -68,7 +68,10 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `renew_task_subscriptions`). `GoogleTasksAdapter` is frozen/deactivated. `TaskIndexingService`
   (embed→index + `resolve_short_id`), `TaskSearchIndex` (2-vector RRF). See `docs/05_building_blocks/tasks_integration/`.
 - Consolidation (PERFORMANCE, Claude; Cloud Tasks) — background long-term memory formation
-  (mechanism in root `CLAUDE.md` → Consolidation).
+  (mechanism in root `CLAUDE.md` → Consolidation). **Stage 2b `_review_directives`** (unconditional,
+  every pass) curates the `agent_directive` rulebook → `standing_directives` block; hard cap 15 via
+  prompt + code backstop `_enforce_directive_cap`. See root `CLAUDE.md` → Standing Directives +
+  `decisions/standing_directives.md`.
 - DeepResearch (async, provider-agnostic, intent `deep_research`) — `create_interaction()` returns
   ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
   `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+

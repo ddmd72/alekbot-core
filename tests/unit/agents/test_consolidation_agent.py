@@ -1186,6 +1186,7 @@ class TestExecuteDeliberateProcessV3:
         fm = AsyncMock(spec=FactManagementPort)
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
         agent.INLINE_CLUSTER_REVIEW = False
+        agent._review_directives = AsyncMock(return_value=[])  # isolate Stage 2a
 
         ops1 = [{"action": "CREATE", "fact_id": "new-1"}]
         agent._run_consolidation_loop = AsyncMock(return_value=ops1)
@@ -1205,6 +1206,8 @@ class TestExecuteDeliberateProcessV3:
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
         agent.INLINE_CLUSTER_REVIEW = True
 
+        agent._review_directives = AsyncMock(return_value=[])  # isolate Stage 2a
+
         ops1 = [{"action": "DISCARD", "reason": "already known"}]
         agent._run_consolidation_loop = AsyncMock(return_value=ops1)
         # Tracker.changed will be empty since fm methods are not called via tool loop
@@ -1222,6 +1225,8 @@ class TestExecuteDeliberateProcessV3:
         fm = AsyncMock(spec=FactManagementPort)
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
         agent.INLINE_CLUSTER_REVIEW = True
+
+        agent._review_directives = AsyncMock(return_value=[])  # isolate Stage 2a
 
         ops1 = [{"action": "CREATE", "fact_id": "f-new"}]
         ops2 = [{"action": "UPDATE", "fact_id": "f-old"}]
@@ -1258,6 +1263,8 @@ class TestExecuteDeliberateProcessV3:
         fm = AsyncMock(spec=FactManagementPort)
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
         agent.INLINE_CLUSTER_REVIEW = True
+
+        agent._review_directives = AsyncMock(return_value=[])  # isolate Stage 2a
 
         ops1 = [{"action": "CREATE", "fact_id": "f-new"}]
         agent._run_consolidation_loop = AsyncMock(return_value=ops1)
@@ -1589,3 +1596,102 @@ class TestBuildReviewClusterNoFactId:
 
         assert len(result) == 1
         assert result[0]["fact_id"] == "f1"
+
+
+class TestReviewDirectives:
+    """Stage 2b — unconditional directive-rulebook curation (STANDING_DIRECTIVES_RFC)."""
+
+    def _directive(self, fid, text):
+        d = MagicMock()
+        d.id = fid
+        d.text = text
+        return d
+
+    @pytest.mark.asyncio
+    async def test_empty_rulebook_skips_loop(self):
+        agent, repo, _, _ = _make_agent()
+        repo.get_active_facts_ordered = AsyncMock(return_value=[])
+        agent._run_consolidation_loop = AsyncMock(return_value=[{"action": "CREATE"}])
+
+        ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [])
+
+        assert ops == []
+        agent._run_consolidation_loop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_full_rulebook_fed_to_loop(self):
+        agent, repo, _, _ = _make_agent()
+        repo.get_active_facts_ordered = AsyncMock(return_value=[
+            self._directive("d1", "Never give partial answers."),
+            self._directive("d2", "Always trace conditional logic."),
+        ])
+        agent._run_consolidation_loop = AsyncMock(return_value=[{"action": "MERGE"}])
+
+        ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [])
+
+        assert ops == [{"action": "MERGE"}]
+        # fetched by directive domain
+        assert repo.get_active_facts_ordered.call_args.kwargs["domain"] == "agent_directive"
+        # both directives + cap rule present in the review message
+        msg = agent._run_consolidation_loop.call_args.kwargs["user_message_text"]
+        assert "Never give partial answers." in msg
+        assert "Always trace conditional logic." in msg
+        assert "HARD CAP 15" in msg
+
+    @pytest.mark.asyncio
+    async def test_review_gated_include_directives_false(self):
+        agent, repo, _, pb = _make_agent()
+        repo.get_active_facts_ordered = AsyncMock(return_value=[self._directive("d1", "Rule.")])
+        agent._run_consolidation_loop = AsyncMock(return_value=[])
+
+        await agent._review_directives(_USER_ID, _ACCOUNT_ID, [])
+
+        assert pb.build_for_agent.call_args.kwargs["include_directives"] is False
+
+    @pytest.mark.asyncio
+    async def test_backstop_noop_at_cap(self):
+        """Backstop does nothing when the rulebook is at or under the hard cap."""
+        fm = AsyncMock(spec=FactManagementPort)
+        agent, repo, _, _ = _make_agent(fact_management=fm)
+        repo.get_active_facts_ordered = AsyncMock(
+            return_value=[self._directive(f"d{i}", f"rule {i}") for i in range(agent.DIRECTIVE_HARD_CAP)]
+        )
+
+        ops = await agent._enforce_directive_cap(_ACCOUNT_ID)
+
+        assert ops == []
+        fm.update_fact.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_backstop_invalidates_lowest_priority_tail(self):
+        """Backstop invalidates the tail beyond the cap (ordered priority ASC → tail = least essential)."""
+        fm = AsyncMock(spec=FactManagementPort)
+        agent, repo, _, _ = _make_agent(fact_management=fm)
+        cap = agent.DIRECTIVE_HARD_CAP
+        ordered = [self._directive(f"d{i}", f"rule {i}") for i in range(cap + 2)]  # 2 over cap
+        repo.get_active_facts_ordered = AsyncMock(return_value=ordered)
+
+        ops = await agent._enforce_directive_cap(_ACCOUNT_ID)
+
+        assert [o["action"] for o in ops] == ["INVALIDATE", "INVALIDATE"]
+        assert {o["fact_id"] for o in ops} == {f"d{cap}", f"d{cap + 1}"}  # the tail two
+        assert fm.update_fact.await_count == 2
+        for call in fm.update_fact.await_args_list:
+            assert call.args[1] == {"state": "invalidated"}
+
+    @pytest.mark.asyncio
+    async def test_v3_process_always_reviews_directives_even_without_changes(self):
+        agent, repo, _, _ = _make_agent(fact_management=MagicMock())
+        # Stage 1 writes nothing; Stage 2a is therefore skipped.
+        agent._run_consolidation_loop = AsyncMock(return_value=[])
+        agent._review_directives = AsyncMock(return_value=[{"action": "UPDATE"}])
+
+        result = await agent._execute_deliberate_process_v3(
+            messages=[{"role": "user", "content": "hi"}],
+            user_id=_USER_ID,
+            account_id=_ACCOUNT_ID,
+            bio_context_raw=[],
+        )
+
+        agent._review_directives.assert_awaited_once()
+        assert {"action": "UPDATE"} in result["operations"]

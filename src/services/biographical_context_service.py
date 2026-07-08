@@ -138,12 +138,24 @@ class BiographicalContextService:
             account_id, domain=FactDomain.BIOGRAPHICAL.value, limit=facts_limit
         )
 
+        # Standing directives: fetched separately, NEVER subject to facts_limit eviction —
+        # they render as the binding standing_directives block (STANDING_DIRECTIVES_RFC).
+        # The consolidator caps the rulebook itself (soft cap ~12).
+        directive_facts = await self._repo.get_active_facts_ordered(
+            account_id,
+            domain=FactDomain.AGENT_DIRECTIVE.value,
+            limit=SearchConfig().DEFAULT_DIRECTIVES_CACHE_LIMIT,
+        )
+
         current_facts = list(biog_facts)
         if len(current_facts) < facts_limit:
             remaining = facts_limit - len(current_facts)
             biog_ids = {f.id for f in current_facts}
             all_ordered = await self._repo.get_active_facts_ordered(account_id, limit=facts_limit)
-            fill = [f for f in all_ordered if f.id not in biog_ids][:remaining]
+            fill = [
+                f for f in all_ordered
+                if f.id not in biog_ids and f.domain != FactDomain.AGENT_DIRECTIVE
+            ][:remaining]
             current_facts.extend(fill)
             logger.debug(
                 f"📊 [BiographicalContext] Loaded {len(biog_facts)} biographical + {len(fill)} fill facts"
@@ -154,7 +166,7 @@ class BiographicalContextService:
             )
 
         selected_facts = current_facts
-        
+
         # ========================================================================
         # STEP 3: Separate into facts vs principles + convert to dict format
         # Facts are already in priority order from Firestore — no Python sorting needed.
@@ -163,8 +175,8 @@ class BiographicalContextService:
         biographical_facts = []
         principles_list = []
 
-        for fact in selected_facts:
-            fact_dict = {
+        def _to_dict(fact) -> Dict:
+            return {
                 "id": fact.id,
                 "text": fact.text,
                 "domain": fact.domain.value if fact.domain else "unknown",
@@ -173,18 +185,24 @@ class BiographicalContextService:
                 "created_at": fact.created_at.isoformat() if fact.created_at else None,
             }
 
+        for fact in selected_facts:
+            fact_dict = _to_dict(fact)
             if "mindset" in fact.tags:
                 if len(principles_list) < principles_limit:
                     principles_list.append(fact_dict)
             else:
                 biographical_facts.append(fact_dict)
 
+        directives_list = [_to_dict(fact) for fact in directive_facts]
+
         logger.info(
             f"✅ [BiographicalContext] Cache refreshed for {account_id[:8]}: "
-            f"{len(biographical_facts)} facts, {len(principles_list)} principles"
+            f"{len(biographical_facts)} facts, {len(principles_list)} principles, "
+            f"{len(directives_list)} directives"
         )
-        
+
         return {
             "facts": biographical_facts,
-            "principles": principles_list
+            "principles": principles_list,
+            "directives": directives_list,
         }

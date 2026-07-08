@@ -192,6 +192,22 @@ a duplicate beats a loss). 3 vectors/fact + SCD2; biographical cache updated for
 **Serialization:** model parts use `p.text` (summary), NOT `p.full_text` (verbose + web_search_context);
 user parts `p.consolidation_text or p.text` (prefixed `\n\n`).
 
+**Standing Directives** — user behavioral rules ("never give partial answers", "trace conditional
+logic before judging") are a first-class fact domain `FactDomain.AGENT_DIRECTIVE`, rendered as a
+binding `standing_directives {}` block in the **orchestrator's** system prompt every request (NOT
+biographical `preference`, NOT firing self-reminders). Rendering = a channel split at
+`PromptBuilder.build_for_agent` (mirrors `query_specific_context`): partitions the flat cache list
+into `static_bio` / `directives`, each its own `assemble()` param; gated by `include_directives`
+(False for the consolidator — it curates them as records, never obeys). Curation = **unconditional
+Stage 2b** (`ConsolidationAgent._review_directives`, runs every consolidation, fed the FULL rulebook)
+that optimises them as a system-instruction section: imperative English (except quoted literals the
+agent must output/match), terse, one rule each, no overlap — *convergence not churn* (already-optimal
+→ NO-OP). **Hard cap 15, two layers:** prompt (merge adjacent, else invalidate least essential — no
+"umbrella" merges of unrelated behaviors) + deterministic code backstop `_enforce_directive_cap`
+(invalidates lowest-priority tail if LLM left >15); injection independently bounded by
+`DEFAULT_DIRECTIVES_CACHE_LIMIT=15`. See `decisions/standing_directives.md` +
+`docs/10_rfcs/STANDING_DIRECTIVES_RFC.md`.
+
 **Prompt Builder (Token System)** — assembly, not hardcoded prompts: verified Tokens (humor, voice,
 cognitive process…) + static Blueprints with `{{CLASS_NAME}}` slots; 4 priority levels
 USER > ACCOUNT > AGENT > SYSTEM; static template cached in-memory (24h TTL, 5ms vs 110ms cold). Runtime
