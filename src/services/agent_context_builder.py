@@ -235,6 +235,51 @@ class AgentContextBuilder:
         provider_name = settings.provider_override or self.resolve_provider_name(agent_type, config)
         return self._build(agent_type, config, provider_name, settings.tier)
 
+    def resolve_next_provider(
+        self,
+        agent_type: str,
+        config: UserBotConfig,
+        tier: PerformanceTier,
+        attempted: set[str],
+    ) -> Optional[AgentExecutionContext]:
+        """Resolve a full execution context on the next allowed provider not yet
+        attempted and whose breaker is closed, preserving ``tier``.
+
+        Powers cross-provider execution retry (provider rotation): on a terminal
+        ``TranscriptLockedError`` the orchestrator re-runs from scratch on another
+        provider at the SAME tier. Each provider resolves its own tier→model via
+        ``get_model_for_tier`` — no equivalence map. Walks
+        ``AgentProviderStrategy.allowed_providers`` in declared order, skipping
+        providers already tried and any with an open breaker.
+
+        Reuses ``_build`` (canonical assembly: caching / alerting / resilience /
+        single-provider fallback all wired); a provider that fails to resolve is
+        skipped, mirroring the single-fallback path in ``_build``. Note ``_build``
+        applies ``config.get_model_override`` — a cross-provider model pin carries
+        over (pre-existing in ``resolve_for_task`` + provider_override; rare).
+
+        Returns ``None`` when every allowed provider is exhausted (caller then
+        drops to the Quick fallback).
+        """
+        strategy = AgentProviderStrategy.get_strategy(agent_type)
+        for name in strategy["allowed_providers"]:
+            if name in attempted:
+                continue
+            if self._resilience_port.is_provider_open(name):
+                continue
+            try:
+                return self._build(agent_type, config, name, tier)
+            except Exception:
+                logger.warning(
+                    "llm_rotation_provider_unavailable",
+                    extra={
+                        "event": "llm_rotation_provider_unavailable",
+                        "agent_type": agent_type,
+                        "rotation_provider": name,
+                    },
+                )
+        return None
+
     def _build(
         self,
         agent_type: str,

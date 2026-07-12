@@ -321,3 +321,46 @@ class TestReturnTypeContract:
         assert result is not None
         # Stub builder produces "resolved-<tier>" — SMALL_TALK default tier is ECO
         assert result.execution_context.model_name == "resolved-eco"
+
+
+# --------------------------------------------------------------------------- #
+# next_provider_override — cross-provider execution retry (provider rotation)  #
+# --------------------------------------------------------------------------- #
+
+
+def test_next_provider_override_wraps_resolved_context():
+    builder = MagicMock()
+    ctx = _make_ctx(model_name="rotated")
+    builder.resolve_next_provider = MagicMock(return_value=ctx)
+    resolver = TaskExecutionResolver(builder)
+
+    override = resolver.next_provider_override(
+        agent_type="smart",
+        config=UserBotConfig(),
+        tier=PerformanceTier.PERFORMANCE,
+        attempted={"claude"},
+        thinking_effort="high",
+    )
+
+    assert isinstance(override, ExecutionOverride)
+    assert override.execution_context is ctx
+    assert override.thinking_effort == "high"
+    call = builder.resolve_next_provider.call_args
+    assert call.kwargs["agent_type"] == "smart"
+    assert call.kwargs["tier"] == PerformanceTier.PERFORMANCE
+    assert call.kwargs["attempted"] == {"claude"}
+
+
+def test_next_provider_override_none_when_exhausted():
+    builder = MagicMock()
+    builder.resolve_next_provider = MagicMock(return_value=None)
+    resolver = TaskExecutionResolver(builder)
+
+    override = resolver.next_provider_override(
+        agent_type="smart",
+        config=UserBotConfig(),
+        tier=PerformanceTier.PERFORMANCE,
+        attempted={"claude", "openai", "gemini", "grok"},
+    )
+
+    assert override is None

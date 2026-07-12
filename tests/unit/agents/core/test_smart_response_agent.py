@@ -31,8 +31,9 @@ from src.ports.llm_port import Message, MessagePart, ToolCall, LLMResponse, Usag
 from src.services.agent_context_builder import AgentExecutionContext
 from src.domain.user import PerformanceTier, UserBotConfig
 from src.ports.llm_port import ProviderCapabilities
-from src.infrastructure.task_execution_resolver import TaskExecutionResolver
+from src.infrastructure.task_execution_resolver import TaskExecutionResolver, ExecutionOverride
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
+from src.domain.exceptions import TranscriptLockedError, LLMError
 
 
 # =========================================================================
@@ -1221,3 +1222,112 @@ class TestResponseSchemaFullyDescribed:
         assert {"filename", "title", "content"} <= set(by_type["file"])
         # rows preserves the {cells: [str]} row-object shape
         assert by_type["table"]["rows"]["items"]["properties"]["cells"]["items"]["type"] == "string"
+
+
+# =========================================================================
+# Cross-provider execution retry (provider rotation)
+# =========================================================================
+
+class TestSmartProviderRotation:
+    """execute() rotates to the next allowed provider on a terminal
+    TranscriptLockedError (same tier), then drops to the standard failure
+    (→ Quick fallback) once the provider list is exhausted.
+    See decisions/cross_provider_execution_retry.md."""
+
+    def _prime_provider(self, smart_agent, provider_name):
+        # Give the agent's default execution context an explicit provider name so
+        # `attempted` accumulates real names as it rotates.
+        smart_agent.execution_context = AgentExecutionContext(
+            agent_type="smart",
+            provider=smart_agent.execution_context.provider,
+            model_name=f"{provider_name}-model",
+            tier=PerformanceTier.BALANCED,
+            capabilities=ProviderCapabilities(),
+            provider_name=provider_name,
+            resilience_port=InMemoryProviderResilience(),
+        )
+
+    def _override_on(self, provider_name):
+        ctx = AgentExecutionContext(
+            agent_type="smart",
+            provider=AsyncMock(spec=LLMPort),
+            model_name=f"{provider_name}-model",
+            tier=PerformanceTier.BALANCED,
+            capabilities=ProviderCapabilities(),
+            provider_name=provider_name,
+            resilience_port=InMemoryProviderResilience(),
+        )
+        return ExecutionOverride(execution_context=ctx, thinking_effort=None)
+
+    def _locked(self, provider_name):
+        return TranscriptLockedError(
+            provider_name=provider_name, cause=LLMError("529 overloaded"), turn=2
+        )
+
+    @pytest.mark.asyncio
+    async def test_rotates_to_next_provider_then_succeeds(self, smart_agent):
+        self._prime_provider(smart_agent, "gemini")
+        success = AgentResponse.success(
+            task_id="t", agent_id=smart_agent.agent_id, result=SmartResponse(text="ok")
+        )
+        smart_agent._run = AsyncMock(side_effect=[self._locked("gemini"), success])
+        smart_agent.resolver.next_provider_override = MagicMock(
+            return_value=self._override_on("claude")
+        )
+
+        response = await smart_agent.execute(create_query_message("hi"))
+
+        assert response.status == AgentStatus.SUCCESS
+        assert smart_agent._run.await_count == 2
+        call = smart_agent.resolver.next_provider_override.call_args
+        # failed provider excluded from the next lookup; tier preserved
+        assert call.kwargs["attempted"] == {"gemini"}
+        assert call.kwargs["tier"] == PerformanceTier.BALANCED
+        assert call.kwargs["agent_type"] == "smart"
+
+    @pytest.mark.asyncio
+    async def test_exhausted_rotation_returns_failure(self, smart_agent):
+        self._prime_provider(smart_agent, "gemini")
+        smart_agent._run = AsyncMock(side_effect=self._locked("gemini"))
+        smart_agent.resolver.next_provider_override = MagicMock(return_value=None)
+
+        response = await smart_agent.execute(create_query_message("hi"))
+
+        assert response.status == AgentStatus.FAILED
+        assert "Smart response failed" in response.error
+        assert smart_agent._run.await_count == 1
+        smart_agent.resolver.next_provider_override.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_rotation_on_success(self, smart_agent):
+        success = AgentResponse.success(
+            task_id="t", agent_id=smart_agent.agent_id, result=SmartResponse(text="ok")
+        )
+        smart_agent._run = AsyncMock(return_value=success)
+        smart_agent.resolver.next_provider_override = MagicMock()
+
+        response = await smart_agent.execute(create_query_message("hi"))
+
+        assert response.status == AgentStatus.SUCCESS
+        smart_agent.resolver.next_provider_override.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rotates_through_multiple_providers(self, smart_agent):
+        self._prime_provider(smart_agent, "gemini")
+        success = AgentResponse.success(
+            task_id="t", agent_id=smart_agent.agent_id, result=SmartResponse(text="ok")
+        )
+        smart_agent._run = AsyncMock(side_effect=[
+            self._locked("gemini"), self._locked("claude"), success,
+        ])
+        smart_agent.resolver.next_provider_override = MagicMock(side_effect=[
+            self._override_on("claude"), self._override_on("openai"),
+        ])
+
+        response = await smart_agent.execute(create_query_message("hi"))
+
+        assert response.status == AgentStatus.SUCCESS
+        assert smart_agent._run.await_count == 3
+        # second rotation lookup accumulates both already-failed providers
+        second_call = smart_agent.resolver.next_provider_override.call_args_list[1]
+        assert second_call.kwargs["attempted"] == {"gemini", "claude"}

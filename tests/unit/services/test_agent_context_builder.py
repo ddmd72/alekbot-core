@@ -222,3 +222,59 @@ def test_wrapped_provider_delegates_capabilities(builder_with_cache):
     # Should delegate to inner Claude provider
     caps = ctx.provider.get_capabilities()
     assert caps.context_caching is True
+
+
+# --------------------------------------------------------------------------- #
+# resolve_next_provider — cross-provider execution retry (provider rotation)   #
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_next_provider_skips_attempted(builder):
+    # smart allowed order: claude, openai, gemini, grok. claude attempted → openai.
+    ctx = builder.resolve_next_provider(
+        "smart", UserBotConfig(), PerformanceTier.PERFORMANCE, attempted={"claude"}
+    )
+    assert ctx.provider.name == "openai"
+    assert ctx.model_name == "openai-model-for-performance"
+
+
+def test_resolve_next_provider_preserves_tier(builder):
+    ctx = builder.resolve_next_provider(
+        "smart", UserBotConfig(), PerformanceTier.ECO, attempted={"claude"}
+    )
+    assert ctx.tier == PerformanceTier.ECO
+    assert ctx.model_name == "openai-model-for-eco"
+
+
+def test_resolve_next_provider_skips_breaker_open():
+    reg = ProviderRegistry()
+    reg.register("claude", FakeProvider("claude"))
+    reg.register("openai", FakeProvider("openai"))
+    reg.register("gemini", FakeProvider("gemini"))
+    resilience = MagicMock()
+    resilience.is_provider_open = MagicMock(side_effect=lambda name: name == "claude")
+    b = AgentContextBuilder(reg, resilience_port=resilience)
+
+    ctx = b.resolve_next_provider(
+        "smart", UserBotConfig(), PerformanceTier.BALANCED, attempted=set()
+    )
+    # claude breaker open → skipped → openai (next in allowed order)
+    assert ctx.provider.name == "openai"
+
+
+def test_resolve_next_provider_skips_unresolvable_provider(builder):
+    # grok is NOT registered in the fixture; claude+openai+gemini attempted →
+    # only grok remains, _build raises inside registry.get → skipped → None.
+    ctx = builder.resolve_next_provider(
+        "smart", UserBotConfig(), PerformanceTier.PERFORMANCE,
+        attempted={"claude", "openai", "gemini"},
+    )
+    assert ctx is None
+
+
+def test_resolve_next_provider_exhausted_returns_none(builder):
+    ctx = builder.resolve_next_provider(
+        "smart", UserBotConfig(), PerformanceTier.PERFORMANCE,
+        attempted={"claude", "openai", "gemini", "grok"},
+    )
+    assert ctx is None
