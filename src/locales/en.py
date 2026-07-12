@@ -104,4 +104,5 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.EMPTY_MODEL_RESPONSE.value: "*(empty response from the model)*",
     UIMessage.UNKNOWN_COMMAND.value: "Unknown command: `{command}`",
     UIMessage.NEW_TOPIC_ACK.value: "New topic. History cleared.",
+    UIMessage.SOURCES_HEADING.value: "Sources:",
 }
