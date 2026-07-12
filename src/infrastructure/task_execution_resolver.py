@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 
 from ..domain.complexity_settings import ComplexitySettings, DEFAULT_COMPLEXITY_SETTINGS
 from ..domain.task_complexity import TaskComplexity
-from ..domain.user import UserBotConfig
+from ..domain.user import UserBotConfig, PerformanceTier
 from ..ports.llm_port import AgentExecutionContext
 from ..utils.logger import logger
 
@@ -120,4 +120,33 @@ class TaskExecutionResolver:
             execution_context=execution_context,
             thinking_effort=merged_thinking,
             intent_remap=merged_remap or {},
+        )
+
+    def next_provider_override(
+        self,
+        agent_type: str,
+        config: UserBotConfig,
+        tier: PerformanceTier,
+        attempted: set[str],
+        thinking_effort: Optional[str] = None,
+    ) -> Optional[ExecutionOverride]:
+        """Build an ``ExecutionOverride`` on the next allowed provider (same
+        tier) for cross-provider execution retry (provider rotation).
+
+        Delegates provider selection to ``AgentContextBuilder.resolve_next_provider``
+        (walks allowed providers, skips already-tried + breaker-open). Preserves
+        ``thinking_effort`` from the failed attempt. Returns ``None`` when the
+        provider list is exhausted — the caller then drops to the Quick fallback.
+        """
+        execution_context = self.context_builder.resolve_next_provider(
+            agent_type=agent_type,
+            config=config,
+            tier=tier,
+            attempted=attempted,
+        )
+        if execution_context is None:
+            return None
+        return ExecutionOverride(
+            execution_context=execution_context,
+            thinking_effort=thinking_effort,
         )

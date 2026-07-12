@@ -25,6 +25,7 @@ from ...domain.agent import (
     RoutingMetadata,
 )
 from ...domain.messaging import SmartResponse, RichContent
+from ...domain.exceptions import TranscriptLockedError
 from ...ports.llm_port import (
     LLMResponse,
     Message,
@@ -257,9 +258,58 @@ class SmartResponseAgent(BaseAgent):
         No lock, no mutation of ``self.*``. Concurrent ``execute()`` calls
         for the same user instance run in parallel; each carries its own
         ``_EffectiveExecution`` through every downstream call site.
+
+        **Cross-provider execution retry (provider rotation).** A terminal
+        ``TranscriptLockedError`` (transient provider outage mid locked-transcript,
+        L1 same-provider retry exhausted) rotates the whole run to the next allowed
+        provider at the SAME tier and re-runs from scratch. Exhausting the provider
+        list yields the same failure as before → Quick fallback. This is an L2
+        retry, not a degradation — see decisions/cross_provider_execution_retry.md.
         """
         eff = self._resolve_effective(message)
-        return await self._run(message, eff)
+        attempted: set[str] = set()
+        while True:
+            try:
+                return await self._run(message, eff)
+            except TranscriptLockedError as e:
+                attempted.add(eff.ctx.provider_name)
+                override = self.resolver.next_provider_override(
+                    agent_type="smart",
+                    config=self.user_config,
+                    tier=eff.ctx.tier,
+                    attempted=attempted,
+                    thinking_effort=eff.thinking_effort,
+                )
+                if override is None:
+                    logger.warning(
+                        "smart_provider_rotation_exhausted attempted=%s cause=%s",
+                        sorted(attempted), str(e)[:200],
+                        extra={
+                            "event": "smart_provider_rotation_exhausted",
+                            "attempted_providers": sorted(attempted),
+                        },
+                    )
+                    self._on_agent_error(e)
+                    return AgentResponse.failure(
+                        task_id=message.task_id,
+                        agent_id=self.agent_id,
+                        error=f"Smart response failed: {str(e)}",
+                    )
+                logger.warning(
+                    "smart_provider_rotation %s→%s attempted=%s",
+                    eff.ctx.provider_name,
+                    override.execution_context.provider_name,
+                    sorted(attempted),
+                    extra={
+                        "event": "smart_provider_rotation",
+                        "from_provider": eff.ctx.provider_name,
+                        "to_provider": override.execution_context.provider_name,
+                    },
+                )
+                eff = _EffectiveExecution(
+                    ctx=override.execution_context,
+                    thinking_effort=override.thinking_effort,
+                )
 
     def _resolve_effective(self, message: AgentMessage) -> _EffectiveExecution:
         """Build per-call ``_EffectiveExecution`` from message + agent defaults.
@@ -466,6 +516,10 @@ class SmartResponseAgent(BaseAgent):
                 delivery_items=delivery_items,
             )
 
+        except TranscriptLockedError:
+            # Terminal provider-transient lock — let execute() rotate to the next
+            # allowed provider (cross-provider execution retry). Not swallowed here.
+            raise
         except Exception as e:
             self._on_agent_error(e)
             return AgentResponse.failure(
