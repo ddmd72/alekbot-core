@@ -1247,6 +1247,65 @@ async def test_gcs_ref_file_data_no_error():
 
 
 # ---------------------------------------------------------------------------
+# Parallel tool turn + file output — the image must nest INTO its tool_result,
+# never interleave between two tool_result blocks (Anthropic orphans the later
+# tool_use → HTTP 400 "tool_use ids ... without tool_result blocks immediately
+# after"). Regression: Smart fan-out (open_file + search_web) on Claude, 2026-07-10.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_parallel_tool_result_file_nests_into_tool_result_not_interleaved():
+    """A parallel tool turn where one tool_result carries a binary file (open_file →
+    image) must keep the tool_result blocks contiguous and nest the image inside its
+    owning tool_result.content — not emit it as a sibling block between the two."""
+    from src.domain.llm import ToolCall
+
+    adapter = ClaudeAdapter(api_key="test-key")
+    messages = [
+        Message(role="user", parts=[MessagePart(text="analyse this")]),
+        Message(role="model", parts=[
+            MessagePart(tool_call=ToolCall(
+                name="delegate_to_specialist", args={"intent": "open_file"},
+                thought_signature="toolu_A")),
+            MessagePart(tool_call=ToolCall(
+                name="delegate_to_specialist", args={"intent": "search_web"},
+                thought_signature="toolu_B")),
+        ]),
+        Message(role="user", parts=[
+            MessagePart(tool_response={
+                "name": "delegate_to_specialist", "tool_use_id": "toolu_A",
+                "response": {"result": "opened IMG_7136.jpg"}}),
+            MessagePart(file_data={"base64": "QUJDRA==", "mime_type": "image/jpeg"}),
+            MessagePart(tool_response={
+                "name": "delegate_to_specialist", "tool_use_id": "toolu_B",
+                "response": {"result": "web result"}}),
+        ]),
+    ]
+
+    result = await adapter._convert_messages(messages)
+
+    tool_turn = result[-1]
+    assert tool_turn["role"] == "user"
+    content = tool_turn["content"]
+
+    # No sibling image between/after the tool_results — both blocks are tool_result.
+    assert [b["type"] for b in content] == ["tool_result", "tool_result"], (
+        f"expected two contiguous tool_result blocks, got {[b['type'] for b in content]}"
+    )
+
+    # The image nests inside open_file's tool_result (toolu_A), as a list of blocks.
+    first, second = content[0], content[1]
+    assert first["tool_use_id"] == "toolu_A"
+    assert isinstance(first["content"], list)
+    assert "image" in [b["type"] for b in first["content"]], (
+        f"image must nest into open_file's tool_result, got {first['content']}"
+    )
+    # The second tool_result is intact and image-free.
+    assert second["tool_use_id"] == "toolu_B"
+    assert second["content"] == "{'result': 'web result'}"
+
+
+# ---------------------------------------------------------------------------
 # cache_last_message — multi-turn loop caching breakpoint on the last block
 # ---------------------------------------------------------------------------
 
