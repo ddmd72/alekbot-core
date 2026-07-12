@@ -225,3 +225,57 @@ async def test_history_filters_response_ready_in_every_language():
 
     texts = [part.text for m in messages for part in m.parts]
     assert texts == ["real reply"]
+
+
+# ---------------------------------------------------------------------------
+# ConversationHandler._append_unanchored_sources
+# ---------------------------------------------------------------------------
+
+
+def test_append_sources_when_links_have_no_anchors():
+    handler = _make_handler(LocalizationService(FileLocalizationAdapter()))
+    ctx = _make_context("en")
+    links = [
+        {"anchor": 1, "title": "A", "url": "http://a"},
+        {"anchor": 2, "title": "B", "url": "http://b"},
+    ]
+    out = handler._append_unanchored_sources("Here is the answer.", links, ctx)
+    assert out == "Here is the answer.\n\nSources:\n[1]\n[2]"
+
+
+def test_append_sources_localized_heading():
+    handler = _make_handler(LocalizationService(FileLocalizationAdapter()))
+    out = handler._append_unanchored_sources(
+        "text", [{"anchor": 1, "title": "A", "url": "http://a"}], _make_context("uk")
+    )
+    assert "Джерела:" in out
+    assert out.endswith("[1]")
+
+
+def test_no_append_when_bare_anchor_already_present():
+    handler = _make_handler(LocalizationService(FileLocalizationAdapter()))
+    ctx = _make_context("en")
+    links = [{"anchor": 1, "title": "A", "url": "http://a"}]
+    text = "See [1] for details."
+    assert handler._append_unanchored_sources(text, links, ctx) == text
+
+
+def test_no_append_when_reference_style_anchor_present():
+    handler = _make_handler(LocalizationService(FileLocalizationAdapter()))
+    ctx = _make_context("en")
+    links = [{"anchor": 1, "title": "A", "url": "http://a"}]
+    text = "See [the doc][1]."
+    assert handler._append_unanchored_sources(text, links, ctx) == text
+
+
+def test_no_append_when_link_list_empty():
+    handler = _make_handler(LocalizationService(FileLocalizationAdapter()))
+    ctx = _make_context("en")
+    assert handler._append_unanchored_sources("text", [], ctx) == "text"
+
+
+def test_no_append_when_items_lack_anchor_key():
+    handler = _make_handler(LocalizationService(FileLocalizationAdapter()))
+    ctx = _make_context("en")
+    links = [{"title": "A", "url": "http://a"}]  # malformed: no "anchor"
+    assert handler._append_unanchored_sources("text", links, ctx) == "text"

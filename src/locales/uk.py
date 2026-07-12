@@ -109,4 +109,5 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.EMPTY_MODEL_RESPONSE.value: "*(порожня відповідь від моделі)*",
     UIMessage.UNKNOWN_COMMAND.value: "Невідома команда: `{command}`",
     UIMessage.NEW_TOPIC_ACK.value: "Нова тема. Історію очищено.",
+    UIMessage.SOURCES_HEADING.value: "Джерела:",
 }

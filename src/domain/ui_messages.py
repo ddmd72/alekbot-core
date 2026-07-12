@@ -24,3 +24,4 @@ class UIMessage(Enum):
     EMPTY_MODEL_RESPONSE = "empty_model_response"
     UNKNOWN_COMMAND = "unknown_command"
     NEW_TOPIC_ACK = "new_topic_ack"
+    SOURCES_HEADING = "sources_heading"

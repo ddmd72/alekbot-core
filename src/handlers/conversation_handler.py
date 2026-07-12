@@ -263,6 +263,35 @@ class ConversationHandler(ConversationHandlerPort):
             template = UI_STRINGS[message.value]
         return template.format(**fmt) if fmt else template
 
+    def _append_unanchored_sources(
+        self, text: str, link_list: list, context: MessageContext
+    ) -> str:
+        """Rescue links the model returned but never anchored in the text.
+
+        Link rendering (``_resolve_links_*`` in the response channels) replaces
+        ``[N]`` anchors with platform links; a populated ``link_list`` with NO
+        anchors in the text resolves to nothing and every link is silently
+        dropped (2026-07-12: 11 links, zero anchors — all lost, the bot claimed
+        it sent them). When that happens, append the links as bare ``[N]``
+        anchors under a localized "Sources" heading so the existing per-platform
+        resolvers render them. Reference-style ``[N]`` is platform-agnostic —
+        both the Slack and Telegram channels resolve it — so this stays in the
+        handler (once, pre-chunk) instead of in each adapter.
+        """
+        if not link_list:
+            return text
+        anchors = [str(item["anchor"]) for item in link_list if "anchor" in item]
+        if not anchors:
+            return text
+        # A resolvable anchor already present (bare [N] or the [N] of [title][N])
+        # means the model cited at least one link — leave the text untouched.
+        if any(f"[{a}]" in text for a in anchors):
+            return text
+        heading = self._ui_string(context, UIMessage.SOURCES_HEADING)
+        lines = "\n".join(f"[{a}]" for a in anchors)
+        sep = "\n\n" if text.strip() else ""
+        return f"{text}{sep}{heading}\n{lines}"
+
     async def validate_model_output(self, response_text: str, user_id: str) -> str:
         """
         Validate model output before storing in conversation history (Phase 4).
@@ -583,6 +612,12 @@ class ConversationHandler(ConversationHandlerPort):
                 response_text = str(response_payload) if response_payload is not None else ""
                 structured_data = None
                 response_link_list = []
+
+            # Rescue links the model returned without any [N] anchor in the text —
+            # otherwise link resolution drops them silently (see helper docstring).
+            response_text = self._append_unanchored_sources(
+                response_text, response_link_list, context
+            )
 
             # History text starts as full response — will be replaced by summary after Slack delivery
             history_text = response_text
