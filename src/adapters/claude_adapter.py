@@ -775,9 +775,14 @@ class ClaudeAdapter(LLMPort):
             # Convert from domain objects
             content_parts = []
             used_tool_ids: set = set()  # Track matched tool_use IDs within this message
+            # Most recent tool_result block emitted in THIS message. A file_data part
+            # that follows a tool_response belongs to that tool's output and must nest
+            # INTO its tool_result.content — see the file_data branch below.
+            last_tool_result: Optional[Dict[str, Any]] = None
             for part_idx, p in enumerate(msg.parts):
                 if p.text:
                     content_parts.append({"type": "text", "text": p.text})
+                    last_tool_result = None
                     logger.debug(f"[ClaudeAdapter]   Part {part_idx}: text ({len(p.text)} chars)")
                 elif p.tool_call:
                     # Use thought_signature as ID (preserves Claude's original ID)
@@ -797,6 +802,7 @@ class ClaudeAdapter(LLMPort):
                         "name": p.tool_call.name,
                         "input": p.tool_call.args
                     })
+                    last_tool_result = None
                     logger.debug(f"[ClaudeAdapter]   Part {part_idx}: tool_call name={p.tool_call.name} id={tool_id}")
                 elif p.tool_response:
                     # Prefer the tool_use id carried explicitly on the tool_response
@@ -811,61 +817,35 @@ class ClaudeAdapter(LLMPort):
                     if not tool_id:
                         tool_id = self._find_tool_use_id(messages, tool_name, idx, used_tool_ids)
                     used_tool_ids.add(tool_id)
-                    content_parts.append({
+                    tool_result_block = {
                         "type": "tool_result",
                         "tool_use_id": tool_id,
                         "content": str(p.tool_response["response"])
-                    })
+                    }
+                    content_parts.append(tool_result_block)
+                    last_tool_result = tool_result_block
                     logger.debug(f"[ClaudeAdapter]   Part {part_idx}: tool_response name={tool_name} id={tool_id}")
                 elif p.file_data:
-                    # 🆕 HEXAGONAL: Adapter handles provider-specific file preparation
-                    if "base64" in p.file_data:
-                        # Already base64 encoded (from history)
-                        mime_type = p.file_data["mime_type"]
-                        content_type = self._get_claude_content_type(mime_type)
-                        if content_type is None:
-                            logger.warning(f"[ClaudeAdapter]   Part {part_idx}: skipping unsupported MIME type '{mime_type}' (Claude only accepts image/* and application/pdf)")
-                        else:
-                            content_parts.append({
-                                "type": content_type,
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": mime_type,
-                                    "data": p.file_data["base64"]
-                                }
-                            })
-                            logger.debug(f"[ClaudeAdapter]   Part {part_idx}: {content_type} from history ({mime_type}, {len(p.file_data['base64'])} chars)")
-                    elif "path" in p.file_data:
-                        # New file: read and encode to base64
-                        try:
-                            import aiofiles
-                            import base64
-
-                            async with aiofiles.open(p.file_data["path"], "rb") as f:
-                                file_content = await f.read()
-
-                            base64_data = base64.b64encode(file_content).decode("utf-8")
-                            mime_type = p.file_data["mime_type"]
-                            content_type = self._get_claude_content_type(mime_type)
-                            if content_type is None:
-                                logger.warning(f"[ClaudeAdapter]   Part {part_idx}: skipping unsupported MIME type '{mime_type}' (Claude only accepts image/* and application/pdf)")
-                            else:
-                                content_parts.append({
-                                    "type": content_type,
-                                    "source": {
-                                        "type": "base64",
-                                        "media_type": mime_type,
-                                        "data": base64_data
-                                    }
-                                })
-                                logger.info(f"📎 [ClaudeAdapter]   Part {part_idx}: {content_type} encoded ({mime_type}, {len(base64_data)} chars)")
-                        except Exception as e:
-                            logger.error(f"❌ [ClaudeAdapter]   Part {part_idx}: Failed to encode file: {e}")
-                    elif "ref" in p.file_data:
-                        # GCS reference — no content to display, text label already in message
-                        logger.debug(f"[ClaudeAdapter]   Part {part_idx}: file ref '{p.file_data['ref']}' (no binary content)")
+                    # 🆕 HEXAGONAL: Adapter handles provider-specific file preparation.
+                    block = await self._build_file_content_block(p.file_data, part_idx)
+                    if block is None:
+                        continue  # ref-only / unsupported: nothing to inline
+                    if last_tool_result is not None:
+                        # This file is the binary output of the preceding tool_result
+                        # (e.g. open_file returning an image). Anthropic requires the
+                        # tool_result blocks that answer a parallel tool_use turn to be
+                        # CONTIGUOUS at the start of the user message — a sibling image
+                        # block between two tool_results orphans the later tool_use and
+                        # 400s ("tool_use ids ... without tool_result blocks immediately
+                        # after"). Nest the file INTO its owning tool_result.content
+                        # instead (Anthropic accepts a list of text/image blocks there).
+                        existing = last_tool_result["content"]
+                        if isinstance(existing, str):
+                            existing = [{"type": "text", "text": existing}] if existing else []
+                            last_tool_result["content"] = existing
+                        existing.append(block)
                     else:
-                        logger.warning(f"[ClaudeAdapter]   Part {part_idx}: Unsupported file_data format: {list(p.file_data.keys())}")
+                        content_parts.append(block)
 
             # Claude roles are 'user' and 'assistant'
             role = "assistant" if msg.role == "model" else "user"
@@ -930,6 +910,58 @@ class ClaudeAdapter(LLMPort):
 
         self._diagnose_tool_pairing(claude_messages)
         return claude_messages
+
+    async def _build_file_content_block(
+        self, file_data: Dict[str, Any], part_idx: int
+    ) -> Optional[Dict[str, Any]]:
+        """Build a Claude image/document content block from a MessagePart.file_data.
+
+        Returns None when there is nothing to inline (GCS reference-only, unsupported
+        MIME type, or read failure) — the caller skips it. Placement (sibling block vs
+        nested inside a tool_result) is the caller's concern; this only prepares the
+        block.
+        """
+        if "base64" in file_data:
+            # Already base64 encoded (from history).
+            mime_type = file_data["mime_type"]
+            content_type = self._get_claude_content_type(mime_type)
+            if content_type is None:
+                logger.warning(f"[ClaudeAdapter]   Part {part_idx}: skipping unsupported MIME type '{mime_type}' (Claude only accepts image/* and application/pdf)")
+                return None
+            logger.debug(f"[ClaudeAdapter]   Part {part_idx}: {content_type} from history ({mime_type}, {len(file_data['base64'])} chars)")
+            return {
+                "type": content_type,
+                "source": {"type": "base64", "media_type": mime_type, "data": file_data["base64"]},
+            }
+        if "path" in file_data:
+            # New file: read and encode to base64.
+            try:
+                import aiofiles
+                import base64
+
+                async with aiofiles.open(file_data["path"], "rb") as f:
+                    file_content = await f.read()
+
+                base64_data = base64.b64encode(file_content).decode("utf-8")
+                mime_type = file_data["mime_type"]
+                content_type = self._get_claude_content_type(mime_type)
+                if content_type is None:
+                    logger.warning(f"[ClaudeAdapter]   Part {part_idx}: skipping unsupported MIME type '{mime_type}' (Claude only accepts image/* and application/pdf)")
+                    return None
+                logger.info(f"📎 [ClaudeAdapter]   Part {part_idx}: {content_type} encoded ({mime_type}, {len(base64_data)} chars)")
+                return {
+                    "type": content_type,
+                    "source": {"type": "base64", "media_type": mime_type, "data": base64_data},
+                }
+            except Exception as e:
+                logger.error(f"❌ [ClaudeAdapter]   Part {part_idx}: Failed to encode file: {e}")
+                return None
+        if "ref" in file_data:
+            # GCS reference — no content to display, text label already in message.
+            logger.debug(f"[ClaudeAdapter]   Part {part_idx}: file ref '{file_data['ref']}' (no binary content)")
+            return None
+        logger.warning(f"[ClaudeAdapter]   Part {part_idx}: Unsupported file_data format: {list(file_data.keys())}")
+        return None
 
     @staticmethod
     def _block_field(block: Any, field: str) -> Any:
