@@ -172,9 +172,25 @@ mandatory before team/multi-user rollout.
   re-runs already-done delegations (cost/latency) and risks double-firing side-effecting delegates
   (`create_pdf`, `save_to_memory`). Prefer transient-retry + clean-fail over blind restart.
 - **Related:** the 2026-06-29 `tool_use_id` orphan tracing (`4c8b64b`) + failover-cause logging
-  (`c037e59`); decision record TBD.
+  (`c037e59`); decision record `decisions/transcript_integrity_one_provider.md`.
 
 </details>
+
+### TD-2b: Cross-provider execution retry (provider rotation) [P1] — ✅ RESOLVED 2026-07-13
+
+- **Follow-on to TD-2.** TD-2's `TranscriptLockedError` previously dropped straight to Quick, losing
+  Smart's tier + delegation. Now `SmartResponseAgent.execute()` catches it and **rotates**: rebuilds the
+  full run on the next `allowed_provider` at the same tier (`AgentContextBuilder.resolve_next_provider`,
+  `TaskExecutionResolver.next_provider_override`) and re-runs from scratch (`event="smart_provider_rotation"`);
+  exhausting the list falls through to the existing Quick rung. This is the **deliberate** "restart on
+  another provider" that TD-2 rejected *as its integrity fix* — here it is an L2 retry rung, transcript
+  integrity preserved (clean rebuild, no mid-transcript mixing).
+- **Deferred (variant 3):** rotate on the non-locked `BothProvidersUnavailableError` + generalize L1's
+  single-call failover in `_call_llm` from one `ctx.fallback_provider` to walk `allowed_providers`.
+  Independent; does not fix the locked-transcript incident; wider blast radius (every single-call agent).
+- **Decision:** `decisions/cross_provider_execution_retry.md`. Surfaced the OpenAI `reasoning.effort`
+  floor gate (`gpt-5.5-pro` rejects `low`) when rotation lands ULTRA on OpenAI — see
+  `05_building_blocks/openai_integration/README.md`.
 
 ### TD-3: Dead `deliver_response` / `terminal_tool` machinery in delegation loop [P3] — 🔲 OPEN
 

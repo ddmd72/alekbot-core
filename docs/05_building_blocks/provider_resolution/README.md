@@ -58,6 +58,13 @@ gate; until then, **never send effort to a non-thinking model**.
 **SDK pin:** `anthropic >= 0.97.0` (see `requirements.txt`). Older versions
 lack typed support for the GA `output_config.format` structured outputs API.
 
+**OpenAIAdapter** (`src/adapters/openai_adapter.py`):
+
+| Parameter                     | Gated to                                      | Behavior on unsupported model                |
+| ----------------------------- | --------------------------------------------- | -------------------------------------------- |
+| sampling (`temperature`, …)   | `_REASONING_PREFIXES = gpt-5, o1, o3`         | Dropped for reasoning models (they 400 on non-default sampling). |
+| `reasoning.effort = "low"`    | `_MIN_MEDIUM_EFFORT_PREFIXES = gpt-5.5-pro`   | **Clamped up to `"medium"`** — `gpt-5.5-pro` rejects `low` (`400 Unsupported value: 'low' … Supported: 'medium', 'high', 'xhigh'`; floor verified via live API probe 2026-07-13). The 5.4 family (nano/mini/5.4) accepts `low`. The clamp sits after effort is resolved, so it covers BOTH sources: an explicit `thinking="low"` and the grounding-forced `"low"`. Prefix match (`startswith`) so dated snapshots inherit it. |
+
 ### 2.3 AgentProviderStrategy
 
 Defines the default provider and allowed overrides for each agent type.
@@ -183,40 +190,36 @@ The result is an `AgentExecutionContext` DTO containing:
 - `fallback_provider` — raw `LLMPort` instance (no caching proxy) for the strategy's `"fallback"` entry, or `None`.
 - `fallback_model_name`, `fallback_provider_name` — resolved at build time from the fallback provider.
 
-### 3.6 Runtime Fallback
+### 3.6 Runtime Fallback & Retry Ladder
 
-When a primary provider returns 429 (rate limit) or 503 (unavailable), `BaseAgent._call_llm()`
-catches `LLMRateLimitError` / `LLMUnavailableError` and transparently retries with `fallback_provider`.
+`BaseAgent._call_llm()` handles transient provider errors (429/503/5xx, translated by adapters to
+`LLMRateLimitError` / `LLMUnavailableError` / `LLMServerError` — hexagonal isolation: `base_agent.py`
+imports only domain types). The ladder is governed by one invariant — **one delegation transcript =
+one provider** (`decisions/transcript_integrity_one_provider.md`): a multi-turn transcript is
+provider-specific (tool_use ids, thinking, raw_content, cache), so it is never re-served on another
+provider mid-loop.
 
-```python
-# BaseAgent._call_llm() — simplified
-try:
-    response = await llm.generate_content(request=request)
-except (LLMRateLimitError, LLMUnavailableError) as e:
-    ctx = self._agent_execution_context
-    if ctx and ctx.fallback_provider:
-        logger.warning("llm_fallback", extra={
-            "event": "llm_fallback",
-            "primary_provider": ctx.provider_name,
-            "fallback_provider": ctx.fallback_provider_name,
-            "error_type": "rate_limit" if isinstance(e, LLMRateLimitError) else "unavailable",
-            "http_status": e.http_status,
-        })
-        fallback_request = request.model_copy(update={"model_name": ctx.fallback_model_name})
-        response = await ctx.fallback_provider.generate_content(request=fallback_request)
-    else:
-        raise
-```
+- **L1 — same-provider retry (locked transcript).** When `request.messages` carries provider-locked
+  state (any `tool_call`/`tool_response` part, or `raw_content`), a transient error retries the SAME
+  provider up to `_SAME_PROVIDER_RETRY_ATTEMPTS` times (`event="llm_same_provider_retry"`), then raises
+  the terminal `TranscriptLockedError` (`event="llm_transcript_locked"`). Never switches provider
+  mid-transcript.
+- **L1 — single-call cross-provider failover (unlocked).** For single-call agents / turn-1 requests
+  (no locked state), a transient error fails over once to `ctx.fallback_provider`
+  (`event="llm_fallback"`; raw provider, no `CachingLLMProxy`). `"fallback": None` agents (e.g.
+  `postprocessing`, `maps_search`) let it propagate. Both providers open → `BothProvidersUnavailableError`.
+- **L2 — cross-provider execution retry / provider rotation (Smart).** On `TranscriptLockedError`,
+  `SmartResponseAgent.execute()` rotates: `AgentContextBuilder.resolve_next_provider()` walks
+  `allowed_providers` (skipping already-tried + breaker-open), rebuilds the full execution context on
+  the next provider at the **same tier** (each provider resolves its own `get_model_for_tier` — no
+  equivalence map), and re-runs the whole delegation from scratch (`event="smart_provider_rotation"`).
+  Exhausting the list yields the standard failure. See `decisions/cross_provider_execution_retry.md`.
+- **L3 — Quick fallback.** A FAILED Smart response degrades to Quick, then a synthetic apology
+  (`AgentFallbackService.try_quick_fallback`).
 
-Key properties of the fallback mechanism:
-
-- **Transparent to agents** — no agent-level awareness. Logic lives entirely in `BaseAgent._call_llm()`.
-- **Fallback gets raw provider** (no `CachingLLMProxy`) — cache is useless when switching providers.
-- **Single retry** — if fallback also fails, the exception propagates normally (Circuit Breaker records the failure).
-- **Structured log** — `event="llm_fallback"` enables GCP Log-based alerts for monitoring provider health.
-- **Domain exceptions** — adapters translate SDK-specific errors to `LLMRateLimitError` / `LLMUnavailableError` in `src/domain/exceptions.py`. This preserves hexagonal isolation: `base_agent.py` imports only domain types, never SDK types.
-
-The `"fallback"` key in `AgentProviderStrategy.STRATEGIES` controls which agents have a fallback configured. Agents with `"fallback": None` (e.g. `postprocessing`, `maps_search`) let the error propagate unchanged.
+All events are structured (`event=…`) for GCP log-based alerts on provider health. The `"fallback"`
+key in `AgentProviderStrategy.STRATEGIES` controls L1 non-locked failover; the L2 rotation walks the
+full `allowed_providers` list instead.
 
 ---
 

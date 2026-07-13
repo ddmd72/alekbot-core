@@ -185,8 +185,17 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   fails-over only when `request.messages` is NOT provider-locked (no `tool_call`/`tool_response` part,
   no `raw_content`). Once locked (mid delegation-loop), a transient FAILOVER error retries the **same**
   provider (`_SAME_PROVIDER_RETRY_ATTEMPTS`) and otherwise raises terminal `TranscriptLockedError`
-  (→ Smart→Quick fallback with a clean transcript) — never a mixed transcript (would orphan `tool_use`
-  ids / break thinking-replay / cache). See `decisions/transcript_integrity_one_provider.md`.
+  — never a mixed transcript (would orphan `tool_use` ids / break thinking-replay / cache). See
+  `decisions/transcript_integrity_one_provider.md`.
+- **Cross-provider execution retry (provider rotation) — Smart.** `TranscriptLockedError` does NOT go
+  straight to Quick. `SmartResponseAgent.execute()` catches it and **rotates**: rebuilds the full run
+  on the next `allowed_provider` at the **same tier** (`AgentContextBuilder.resolve_next_provider` →
+  walks `allowed_providers`, skips already-tried + breaker-open; `TaskExecutionResolver.next_provider_override`
+  → `ExecutionOverride`) and re-runs from scratch (`event="smart_provider_rotation"`). Only exhausting
+  the provider list falls through to the existing `AgentFallbackService` Quick rung. L2 retry, not a
+  degradation — zero domain/handler/fallback change; `_run` re-raises the lock, `execute` owns the loop.
+  See `decisions/cross_provider_execution_retry.md`. **Read before touching `smart_response_agent.execute`
+  / `_run` / `resolve_next_provider` / `next_provider_override`.**
 
 ## Creating a New Agent
 
