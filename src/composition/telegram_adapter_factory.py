@@ -53,6 +53,7 @@ class TelegramAdapterFactory:
         language_service: Optional[LanguageServicePort] = None,
         localization: Optional[LocalizationService] = None,
         file_conversion_service=None,
+        alert_webhook=None,
     ) -> TelegramWebhookAdapter:
         """
         Create TelegramWebhookAdapter with RichContentService wired in.
@@ -99,6 +100,7 @@ class TelegramAdapterFactory:
             overflow_callback=consolidation_service.consolidate_now if consolidation_service else None,
             localization=localization,
             file_conversion_service=file_conversion_service,
+            alert_webhook=alert_webhook,
         )
 
         logger.info("TelegramAdapterFactory: wiring complete (html_renderer=%s)", html_renderer is not None)

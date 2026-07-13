@@ -65,6 +65,7 @@ class SlackAdapterFactory:
         localization: Optional[LocalizationService] = None,
         file_conversion_service=None,
         channel_binding_service: Optional[ChannelBindingService] = None,
+        alert_webhook=None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -125,6 +126,7 @@ class SlackAdapterFactory:
             file_conversion_service=file_conversion_service,
             channel_binding_service=channel_binding_service,
             channel_history_source=channel_history_source,
+            alert_webhook=alert_webhook,
         )
 
         if env_config.is_socket_mode:

@@ -454,3 +454,38 @@ def test_strategies_has_no_orphans():
         f"STRATEGIES entries not used in factory and not in the known exceptions list: {orphans}. "
         f"Either add to _FACTORY_AGENT_TYPES or _NON_FACTORY_STRATEGIES."
     )
+
+
+# ============================================================================
+# Provider-name case normalization (incident 2026-07-13: "openAI" not registered)
+# ============================================================================
+
+
+def test_resolve_provider_name_folds_mixed_case(builder):
+    """A mixed-case config value must fold to the lowercase key — otherwise it fails the
+    allowed-providers membership check (silently ignored) or crashes registry.get('openAI')."""
+    config = UserBotConfig(
+        agent_providers={"smart": "openAI"},
+        default_tier=PerformanceTier.PERFORMANCE,
+    )
+    assert builder.resolve_provider_name("smart", config) == "openai"
+
+
+def test_resolve_provider_name_folds_global_preference_case(builder):
+    config = UserBotConfig(
+        provider_preference="Claude",
+        default_tier=PerformanceTier.PERFORMANCE,
+    )
+    assert builder.resolve_provider_name("smart", config) == "claude"
+
+
+def test_build_folds_mixed_case_provider(builder):
+    """Full build path: a mixed-case per-agent provider resolves AND looks up the registry
+    (the choke-point normalization defends override callers too)."""
+    config = UserBotConfig(
+        agent_providers={"smart": "Claude"},
+        default_tier=PerformanceTier.PERFORMANCE,
+    )
+    context = builder.build(agent_type="smart", config=config)
+    assert context.provider_name == "claude"
+    assert context.provider.get_model_for_tier.return_value == "claude-sonnet-4-5"

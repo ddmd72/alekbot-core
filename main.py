@@ -667,6 +667,7 @@ async def main():
             localization=_localization,
             file_conversion_service=container.file_conversion_service,
             channel_binding_service=channel_binding_service,
+            alert_webhook=_alert_webhook,
         )
         notification_channel_factory.register_factory(
             "slack",
@@ -762,6 +763,7 @@ async def main():
                             language_service=_language_service,
                             localization=_localization,
                             file_conversion_service=container.file_conversion_service,
+                            alert_webhook=_alert_webhook,
                         )
                         def _make_telegram_channel(adapter, channel_id):
                             try:
