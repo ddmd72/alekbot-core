@@ -31,6 +31,7 @@ Migration from Chat Completions to Responses API (2026-04):
 """
 
 import asyncio
+import hashlib
 import json
 import openai
 from typing import List, Any, Optional, Set
@@ -65,22 +66,22 @@ class OpenAIAdapter(LLMPort):
     """
 
     # ========================================================================
-    # Tier-to-model mapping
-    # ECO:         gpt-5.4-nano  (cheapest, fastest; no 5.5-nano exists)
-    # BALANCED:    gpt-5.4-mini  (mid-tier quality + reasoning support; no 5.5-mini exists)
-    # PERFORMANCE: gpt-5.4       (lower-cost frontier; 5.5 is 2× the cost and 5.4 has no
-    #                             deprecation deadline; see
-    #                             decisions/openai_ultra_tier_to_gpt_5_5_pro.md)
-    # ULTRA:       gpt-5.5-pro   (highest quality; upgraded from 5.4-pro 2026-05-30 —
-    #                             same price ($30/$180), better benchmarks)
-    # TIERx:       gpt-5.4-nano  (reserved slots, default to ECO)
+    # Tier-to-model mapping — GPT-5.6 family (Luna/Terra/Sol) from 2026-07.
+    # ECO:         gpt-5.4-nano   (cheapest/fastest; NO 5.6 sub-Luna tier exists, nano is
+    #                              cheaper than Luna and not deprecated — kept on 5.4)
+    # BALANCED:    gpt-5.6-luna   ($1/$6; replaces gpt-5.4-mini, whose API shutdown is 2026-12-11)
+    # PERFORMANCE: gpt-5.6-terra  ($2.50/$15; "GPT-5.5-class at half price")
+    # ULTRA:       gpt-5.6-sol    ($5/$30; agentic-tool SOTA, ~1/6 the cost of gpt-5.5-pro)
+    # TIERx:       gpt-5.4-nano   (reserved slots, default to ECO)
+    # Migration: docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md. Effort floors live-probed 2026-07-13 —
+    # all three 5.6 tiers accept none/low/medium (no floor, unlike gpt-5.5-pro).
     # Verify model IDs at https://platform.openai.com/docs/models
     # ========================================================================
     MODEL_TIERS = {
         PerformanceTier.ECO:         "gpt-5.4-nano",
-        PerformanceTier.BALANCED:    "gpt-5.4-mini",
-        PerformanceTier.PERFORMANCE: "gpt-5.4",
-        PerformanceTier.ULTRA:       "gpt-5.5-pro",
+        PerformanceTier.BALANCED:    "gpt-5.6-luna",
+        PerformanceTier.PERFORMANCE: "gpt-5.6-terra",
+        PerformanceTier.ULTRA:       "gpt-5.6-sol",
         PerformanceTier.TIER1:       "gpt-5.4-nano",
         PerformanceTier.TIER2:       "gpt-5.4-nano",
         PerformanceTier.TIER3:       "gpt-5.4-nano",
@@ -97,6 +98,13 @@ class OpenAIAdapter(LLMPort):
     # Pro-tier reasoning models (gpt-5.5-pro) floor at medium; the mini / nano / 5.4
     # models accept "low". Matched by name prefix; low is clamped up to medium.
     _MIN_MEDIUM_EFFORT_PREFIXES = ("gpt-5.5-pro",)
+
+    # Models that DEPRECATED `prompt_cache_retention` (GPT-5.6 and later families). On these,
+    # the 24h retention param is accepted-but-ignored (probed 2026-07-13 — no 400); retention is
+    # 30m-only. Implicit caching stays automatic (no breakpoints), but OpenAI recommends setting
+    # `prompt_cache_key` for reliable prefix matching. Extend when 5.7+ ships. See
+    # decisions / GPT_5_6_MIGRATION_RFC.md §3.3.
+    _DEPRECATED_RETENTION_PREFIXES = ("gpt-5.6",)
 
     # ========================================================================
     # Provider capability declaration
@@ -135,8 +143,12 @@ class OpenAIAdapter(LLMPort):
         use_grounding = request.use_grounding
         thinking = request.thinking
 
-        # Strip PROMPT_CACHE_BOUNDARY marker — OpenAI doesn't use it.
+        # Strip PROMPT_CACHE_BOUNDARY marker — OpenAI doesn't use it. Capture the static
+        # prefix (before the boundary) first: it is the stable cacheable head, used to derive
+        # the GPT-5.6 `prompt_cache_key`. Falls back to the full instruction when unmarked.
+        cache_key_seed = system_instruction
         if system_instruction and PROMPT_CACHE_BOUNDARY in system_instruction:
+            cache_key_seed = system_instruction.split(PROMPT_CACHE_BOUNDARY, 1)[0]
             system_instruction = system_instruction.replace(PROMPT_CACHE_BOUNDARY, "\n")
 
         # Convert domain messages to Responses API input items
@@ -235,7 +247,15 @@ class OpenAIAdapter(LLMPort):
         if text_format:
             create_kwargs["text"] = text_format
         if cache_config and cache_config.enabled:
-            create_kwargs["prompt_cache_retention"] = "24h"
+            if self._deprecates_retention(model_name):
+                # GPT-5.6+: `prompt_cache_retention` is deprecated (ignored, ttl 30m-only). Implicit
+                # caching is automatic — no breakpoints. Set `prompt_cache_key` for the reliable
+                # prefix matching OpenAI recommends on 5.6+. SDK 2.30 has no kwarg → send via extra_body.
+                cache_key = self._prompt_cache_key(cache_key_seed)
+                if cache_key:
+                    create_kwargs.setdefault("extra_body", {})["prompt_cache_key"] = cache_key
+            else:
+                create_kwargs["prompt_cache_retention"] = "24h"
 
         request_timeout = request.timeout
         # Honor an explicit caller timeout at the SDK level via the per-request
@@ -290,6 +310,20 @@ class OpenAIAdapter(LLMPort):
     def _is_reasoning_model(self, model_name: str) -> bool:
         """Return True for models that do not support sampling params (temperature etc.)."""
         return any(model_name.startswith(p) for p in self._REASONING_PREFIXES)
+
+    def _deprecates_retention(self, model_name: str) -> bool:
+        """True for models (GPT-5.6+) where `prompt_cache_retention` is deprecated → use
+        `prompt_cache_key` instead. See `_DEPRECATED_RETENTION_PREFIXES`."""
+        return any(model_name.startswith(p) for p in self._DEPRECATED_RETENTION_PREFIXES)
+
+    @staticmethod
+    def _prompt_cache_key(seed: Optional[str]) -> Optional[str]:
+        """Derive a stable `prompt_cache_key` from the static prompt prefix. Requests sharing the
+        same cacheable head hash to the same key, which OpenAI uses to route them to a machine
+        holding the cached prefix (better implicit-cache hit-rate on GPT-5.6+). None → no key."""
+        if not seed:
+            return None
+        return "alek-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:48]
 
     @staticmethod
     def _to_openai_json_schema(schema: dict) -> dict:

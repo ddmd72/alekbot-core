@@ -134,7 +134,13 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "claude-sonnet-5":                   {"input": 3.00,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-6":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-8":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
-    # --- OpenAI (gpt-5.4 family, Mar 2026; gpt-5.5-pro for ULTRA tier from 2026-05-30) ---
+    # --- OpenAI GPT-5.6 family (Luna/Terra/Sol, GA 2026-07-09) — active tier defaults ---
+    # cache_write 1.25: GPT-5.6 bills cache writes at 1.25x uncached input (new vs 5.4/5.5 = free).
+    # NOTE: only charged if usage surfaces cache-write tokens — verify extraction (RFC §3.4).
+    "gpt-5.6-luna":                      {"input": 1.00,  "output": 6.00,  "cache_read": 0.10, "cache_write": 1.25},
+    "gpt-5.6-terra":                     {"input": 2.50,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
+    "gpt-5.6-sol":                       {"input": 5.00,  "output": 30.00, "cache_read": 0.10, "cache_write": 1.25},
+    # --- OpenAI (gpt-5.4 family, Mar 2026; gpt-5.5-pro retained for rollback/history) ---
     "gpt-5.4-nano":                      {"input": 0.20,  "output": 1.25,  "cache_read": 0.10},
     "gpt-5.4-mini":                      {"input": 0.75,  "output": 4.50,  "cache_read": 0.10},
     "gpt-5.4":                           {"input": 2.50,  "output": 15.00, "cache_read": 0.10},
