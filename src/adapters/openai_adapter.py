@@ -92,6 +92,12 @@ class OpenAIAdapter(LLMPort):
     # Detected by model name prefix.
     _REASONING_PREFIXES = ("gpt-5", "o1", "o3")
 
+    # Reasoning models whose minimum `reasoning.effort` is "medium": they 400 on
+    # "low" ("Unsupported value: 'low' ... Supported: 'medium', 'high', 'xhigh'").
+    # Pro-tier reasoning models (gpt-5.5-pro) floor at medium; the mini / nano / 5.4
+    # models accept "low". Matched by name prefix; low is clamped up to medium.
+    _MIN_MEDIUM_EFFORT_PREFIXES = ("gpt-5.5-pro",)
+
     # ========================================================================
     # Provider capability declaration
     # ========================================================================
@@ -216,6 +222,13 @@ class OpenAIAdapter(LLMPort):
                 )
             elif use_grounding:
                 reasoning_effort = "low"
+        # Capability gate: some reasoning models reject "low" (min "medium"). Clamp
+        # instead of forwarding → avoids HTTP 400 (2026-07-13: gpt-5.5-pro + a "low"
+        # thinking value or grounding-forced "low"). Covers both sources above.
+        if reasoning_effort == "low" and any(
+            model_name.startswith(p) for p in self._MIN_MEDIUM_EFFORT_PREFIXES
+        ):
+            reasoning_effort = "medium"
         if reasoning_effort:
             create_kwargs["reasoning"] = {"effort": reasoning_effort}
 

@@ -373,6 +373,60 @@ async def test_generate_content_includes_temperature_for_gpt4():
     assert captured_kwargs["temperature"] == 0.8
 
 
+# ---------------------------------------------------------------------------
+# reasoning.effort minimum-floor gate (gpt-5.5-pro rejects "low")
+# ---------------------------------------------------------------------------
+
+
+async def _capture_reasoning(model_name: str, *, thinking=None, use_grounding=False) -> dict:
+    adapter = OpenAIAdapter(api_key="test-key")
+    captured_kwargs = {}
+
+    async def mock_create(**kwargs):
+        captured_kwargs.update(kwargs)
+        return _make_response(text="Hello")
+
+    adapter.client.responses.create = mock_create
+    await adapter.generate_content(
+        request=LLMRequest(
+            model_name=model_name,
+            system_instruction="You are helpful.",
+            messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+            thinking=thinking,
+            use_grounding=use_grounding,
+        )
+    )
+    return captured_kwargs
+
+
+@pytest.mark.asyncio
+async def test_reasoning_low_clamped_to_medium_for_gpt55_pro():
+    """gpt-5.5-pro rejects effort='low' (min 'medium') — adapter clamps instead of 400."""
+    captured = await _capture_reasoning("gpt-5.5-pro", thinking="low")
+    assert captured["reasoning"] == {"effort": "medium"}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_grounding_low_clamped_to_medium_for_gpt55_pro():
+    """Grounding-forced 'low' is clamped for gpt-5.5-pro too (both sources gated)."""
+    captured = await _capture_reasoning("gpt-5.5-pro", use_grounding=True)
+    assert captured["reasoning"] == {"effort": "medium"}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_medium_unchanged_for_gpt55_pro():
+    """A supported effort passes through untouched."""
+    captured = await _capture_reasoning("gpt-5.5-pro", thinking="medium")
+    assert captured["reasoning"] == {"effort": "medium"}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_low_preserved_for_gpt54_mini():
+    """Non-pro models still accept 'low' — clamp must not touch them."""
+    captured = await _capture_reasoning("gpt-5.4-mini", thinking="low")
+    assert captured["reasoning"] == {"effort": "low"}
+
+
 @pytest.mark.asyncio
 async def test_generate_content_json_mode():
     """response_mime_type=application/json activates text.format=json_object."""
