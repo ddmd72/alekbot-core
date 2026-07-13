@@ -104,6 +104,7 @@ class ConversationHandler(ConversationHandlerPort):
         file_conversion_service: Optional["FileConversionService"] = None,
         channel_binding_service: Optional[ChannelBindingService] = None,
         channel_history_source: Optional[Any] = None,
+        alert_webhook: Optional[Any] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -120,7 +121,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._user_repo = user_repo
         self._overflow_callback = overflow_callback
         self._localization = localization
-        self._fallback_service = AgentFallbackService(coordinator)
+        self._fallback_service = AgentFallbackService(coordinator, alert_webhook=alert_webhook)
         self._channel_binding = channel_binding_service
         self._channel_history = channel_history_source
 

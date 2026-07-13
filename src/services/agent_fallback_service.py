@@ -12,7 +12,7 @@ Why Quick and not a Smart retry:
   (_SYSTEM_NOTE is injected so the model knows to apologize gracefully, not expose
   technical details). A raw retry or static string cannot do this.
 """
-from typing import List, Protocol
+from typing import Any, List, Optional, Protocol
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus, AgentResponse
 from ..domain.messaging import MessageContext
@@ -47,8 +47,12 @@ class AgentFallbackService:
         "Please try again or rephrase your question."
     )
 
-    def __init__(self, coordinator: MessageRouter) -> None:
+    def __init__(self, coordinator: MessageRouter, alert_webhook: Optional[Any] = None) -> None:
         self._coordinator = coordinator
+        # Optional ops webhook (SlackWebhookAdapter.post — async, text). When set, a primary
+        # (Smart) failure fires an alert so the silent Quick fallback doesn't mask systematic
+        # Smart outages (e.g. a bad provider/model config). See ConversationHandler wiring.
+        self._alert_webhook = alert_webhook
 
     async def try_quick_fallback(
         self,
@@ -72,6 +76,19 @@ class AgentFallbackService:
             "[AgentFallbackService] Primary agent failed (%s), attempting QuickAgent fallback",
             failed_response.status,
         )
+
+        # Surface primary (Smart) failures to ops — otherwise the Quick fallback masks them and
+        # all traffic silently looks like it's on Quick (incident 2026-07-13: a mis-cased provider
+        # made Smart fail 100%). Best-effort; never let alerting break the degradation path.
+        if self._alert_webhook is not None:
+            try:
+                detail = (failed_response.error or "")[:400]
+                await self._alert_webhook.post(
+                    f"⚠️ Smart primary FAILED ({failed_response.status.value}) → Quick fallback. "
+                    f"user={context.user_id[:8]} detail: {detail or 'n/a'}"
+                )
+            except Exception as exc:
+                logger.warning("[AgentFallbackService] primary-failure alert failed: %s", exc)
 
         system_note = MessagePart(text=self._SYSTEM_NOTE)
         fallback_message = AgentMessage.create(

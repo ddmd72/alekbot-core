@@ -197,11 +197,16 @@ class AgentContextBuilder:
         strategy = AgentProviderStrategy.get_strategy(agent_type)
         provider_name = strategy["default_provider"]
 
-        agent_provider = config.get_provider_for_agent(agent_type)
+        # Normalize config-supplied names to lowercase: the registry keys and strategy
+        # allowed_providers are lowercase, so a user value like "openAI" must be folded —
+        # otherwise it fails the membership check (silently ignored) OR reaches the registry
+        # and 400s "Provider 'openAI' not registered". (Incident 2026-07-13.)
+        agent_provider = (config.get_provider_for_agent(agent_type) or "").strip().lower() or None
+        pref = (config.provider_preference or "").strip().lower() or None
         if agent_provider and agent_provider in strategy["allowed_providers"]:
             provider_name = agent_provider
-        elif config.provider_preference and config.provider_preference in strategy["allowed_providers"]:
-            provider_name = config.provider_preference
+        elif pref and pref in strategy["allowed_providers"]:
+            provider_name = pref
 
         return provider_name
 
@@ -289,6 +294,10 @@ class AgentContextBuilder:
     ) -> AgentExecutionContext:
         """Shared context assembly for build() and resolve_for_task()."""
         strategy = AgentProviderStrategy.get_strategy(agent_type)
+        # Defensive normalization: covers every caller, incl. resolve_for_task's
+        # `settings.provider_override` (rotation/execution overrides) which bypasses
+        # resolve_provider_name. Registry keys are lowercase — fold before lookup.
+        provider_name = provider_name.lower() if isinstance(provider_name, str) else provider_name
         provider = self.registry.get(provider_name)
         capabilities = provider.get_capabilities()
 
