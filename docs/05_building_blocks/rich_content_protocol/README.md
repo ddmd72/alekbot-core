@@ -258,7 +258,24 @@ Platform-specific resolution (before display):
 - URL escaping: `)` → `\)` inside the URL part (Telegram MarkdownV2 spec).
 - Output: `[display text](url)` or `[escaped title](url)`.
 
-### 9.4 Pass-Through in QuickResponseAgent
+### 9.4 Unanchored-Link Rescue
+
+Resolution only replaces `[N]` anchors. If the model returns a populated `link_list` but places
+**no `[N]` anchor** in the text, resolution matches nothing and every link is silently dropped
+(2026-07-12 incident: 11 links, zero anchors — all lost, the bot claimed it sent them).
+
+`ConversationHandler._append_unanchored_sources(text, link_list, context)` guards this: when
+`link_list` is non-empty and no anchor is present in the text (substring check catches both bare `[N]`
+and `[title][N]`), it appends a localized **Sources** heading (`UIMessage.SOURCES_HEADING` → uk
+`Джерела:` / en `Sources:` / fr `Sources :` / es `Fuentes:`) followed by bare `[N]` lines, which the
+existing per-platform resolvers then render.
+
+Placement is the **handler, once, pre-chunk** — NOT the adapters: Telegram resolves links per chunk
+(`send_chunked_message` splits raw text first), so an adapter-level append would duplicate the block
+across chunks. Bare `[N]` is platform-agnostic (both resolvers handle it), so the handler stays
+platform-free. No-op when links are already anchored, empty, or malformed (missing `anchor` key).
+
+### 9.5 Pass-Through in QuickResponseAgent
 
 `QuickResponseAgent` preserves `link_list` through the full loop:
 - `parse_llm_response()` extracts `link_list` from the JSON envelope.
@@ -266,13 +283,14 @@ Platform-specific resolution (before display):
 - `ConversationHandler` passes it to all three `send_*` methods on the response channel.
 - `link_list` is never modified or filtered by the agent.
 
-### 9.5 Tests
+### 9.6 Tests
 
 | File | What it tests |
 |------|--------------|
 | `tests/unit/adapters/test_slack_link_resolution.py` | `_resolve_links_slack`: reference-style, bare anchor, normalization, no-op cases |
 | `tests/unit/adapters/test_telegram_link_resolution.py` | `_resolve_links_telegram`: same scenarios on pre-formatted text, URL escaping |
 | `tests/unit/agents/core/test_quick_response_agent.py::TestLinkListPassThrough` | link_list survives execute() end-to-end |
+| `tests/unit/test_ui_message_strings.py` (`_append_unanchored_sources` tests) | unanchored-link rescue: appends localized Sources block, no-op when anchored/empty/malformed |
 
 ---
 

@@ -91,6 +91,30 @@ _REASONING_PREFIXES = ("gpt-5", "o1", "o3")
 
 Temperature is excluded from `create_kwargs` for any model whose name starts with one of these prefixes.
 
+### Reasoning Effort Floor (`reasoning.effort`)
+
+The unified `thinking` parameter maps to `reasoning.effort` (`low`/`medium`/`high`); grounding without
+an explicit `thinking` forces `"low"` so agentic web search stays enabled. **`gpt-5.5-pro` (ULTRA)
+rejects `"low"`** — its floor is `medium`:
+
+```
+400 Unsupported value: 'low' is not supported with the 'gpt-5.5-pro' model.
+    Supported values are: 'medium', 'high', and 'xhigh'.
+```
+
+The adapter clamps `low → medium` for these models via prefix match, mirroring the sampling gate:
+
+```python
+_MIN_MEDIUM_EFFORT_PREFIXES = ("gpt-5.5-pro",)
+```
+
+The clamp runs after `reasoning_effort` is resolved (so it covers both the explicit `thinking="low"`
+and the grounding-forced `"low"`) and before it is written into `create_kwargs["reasoning"]`. Floor
+map verified via live API probe 2026-07-13 — `gpt-5.4-nano/mini` and `gpt-5.4` accept `low`; only
+`gpt-5.5-pro` floors at `medium`. This surfaced through the Smart provider-rotation path (a hard
+question → ULTRA tier; on a claude 529 the rotation rebuilds Smart on OpenAI at the same tier →
+`gpt-5.5-pro` + `low`). See `decisions/cross_provider_execution_retry.md`.
+
 ### Default Provider Strategy
 
 OpenAI is added to `allowed_providers` in `AgentProviderStrategy` for Router, Quick, and Smart.
@@ -221,6 +245,13 @@ Adapters are pure API clients — no Cloud Task or queue logic.
 ---
 
 ## Changelog
+
+### 2026-07-13 — reasoning.effort floor gate
+
+`gpt-5.5-pro` rejects `reasoning.effort="low"` (floor `medium`). Added `_MIN_MEDIUM_EFFORT_PREFIXES`
+gate that clamps `low → medium` for it, mirroring the sampling-parameter gate. Fixes HTTP 400s on
+both the direct-primary path and the Smart provider-rotation path landing on OpenAI ULTRA. Floor map
+verified via live API probe. See the Reasoning Effort Floor section above.
 
 ### 2026-04-03 — Migration to Responses API
 
