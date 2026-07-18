@@ -264,6 +264,22 @@ class ConversationHandler(ConversationHandlerPort):
             template = UI_STRINGS[message.value]
         return template.format(**fmt) if fmt else template
 
+    async def _pick_next_status_phrase(
+        self, response_channel, status_type: StatusType, current: str,
+    ) -> str:
+        """Pick a fresh status phrase of ``status_type`` for the animation loop.
+
+        Rotates the "thinking" bubble so a long wait stays lively. Avoids an
+        immediate repeat when the pool has more than one entry (best-effort within
+        a few tries); with a single-phrase pool it simply returns that phrase.
+        """
+        phrase = current
+        for _ in range(4):
+            phrase = await response_channel.get_status_phrase(status_type)
+            if phrase != current:
+                break
+        return phrase
+
     def _append_unanchored_sources(
         self, text: str, link_list: list, context: MessageContext
     ) -> str:
@@ -416,6 +432,7 @@ class ConversationHandler(ConversationHandlerPort):
 
         stop_event = asyncio.Event()
         current_status_phrase = ""
+        current_status_type = StatusType.THINKING
         dots_count = 1
         thread_id_for_reply = context.thread_id if mode.use_threads else None
         status_message_id, current_status_phrase = await response_channel.send_status_with_phrase(
@@ -424,14 +441,17 @@ class ConversationHandler(ConversationHandlerPort):
         )
 
         async def update_status_animation(message_id: str):
-            nonlocal dots_count
+            nonlocal dots_count, current_status_phrase
             while not stop_event.is_set():
-                # ✅ Throttled: 5 seconds instead of 1 (reduces API spam)
-                # Telegram rate limit: 1 msg/sec per chat
-                # Status updates every 5 sec = more reasonable for production
+                # ✅ Throttled: 5 seconds (Telegram rate limit: 1 msg/sec per chat).
+                # Each tick rotates to a FRESH phrase of the active status type so the
+                # wait stays lively, avoiding an immediate repeat when the pool has >1.
                 await asyncio.sleep(5)
                 if stop_event.is_set():
                     break
+                current_status_phrase = await self._pick_next_status_phrase(
+                    response_channel, current_status_type, current_status_phrase
+                )
                 dots_count = (dots_count % 5) + 1
                 try:
                     await response_channel.update_status_with_phrase_and_dots(
@@ -480,6 +500,7 @@ class ConversationHandler(ConversationHandlerPort):
                 message_parts.append(MessagePart(text=context.text))
 
             if context.attachments:
+                current_status_type = StatusType.PROCESSING_FILE
                 new_phrase = await response_channel.get_status_phrase(StatusType.PROCESSING_FILE)
                 current_status_phrase = new_phrase
                 dots_count = 1
@@ -903,8 +924,15 @@ class ConversationHandler(ConversationHandlerPort):
                     messages=serialized
                 )
                 
+                # Immediate ack — the consolidation runs synchronously below (awaited,
+                # minutes on Cloud Run). Without this the user only sees the generic
+                # THINKING status, indistinguishable from a normal request.
+                await response_channel.send_message(
+                    self._ui_string(context, UIMessage.CONSOLIDATION_STARTED),
+                    thread_id=context.thread_id,
+                )
                 await response_channel.send_status(StatusType.THINKING, thread_id=context.thread_id)
-                
+
                 # Enqueue
                 await self.consolidation_queue.enqueue_batch(batch)
                 
