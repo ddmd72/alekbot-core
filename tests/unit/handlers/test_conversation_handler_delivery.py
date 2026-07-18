@@ -1268,8 +1268,12 @@ class TestHandleCommandConsolidateExtra:
         call_kwargs = notif.notify.call_args[1]
         assert call_kwargs["user_id"] == _USER_ID
         assert "system_alert" in call_kwargs
-        # No fallback message sent to channel
-        channel.send_message.assert_not_called()
+        # The only direct send_message is the start ack; the result goes via notify(),
+        # NOT the raw "Consolidation complete" fallback.
+        sent_texts = [c.args[0] for c in channel.send_message.call_args_list]
+        assert len(sent_texts) == 1
+        assert "консолідац" in sent_texts[0].lower()
+        assert not any("Consolidation complete" in t for t in sent_texts)
 
     async def test_consolidate_notify_routes_to_origin_channel(self):
         """$consolidate is synchronous → report goes back to the initiating channel,
@@ -1298,6 +1302,27 @@ class TestHandleCommandConsolidateExtra:
         assert call_kwargs["channel_id_override"] == "C0ORIGIN"
         assert call_kwargs["platform_override"] == "slack"
 
+    async def test_consolidate_sends_start_ack_first(self):
+        """$consolidate posts an immediate localized 'started' ack before the
+        (awaited, minutes-long) consolidation — restores the lost UX so it is not
+        indistinguishable from a generic THINKING status."""
+        notif = MagicMock()
+        notif.notify = AsyncMock()
+
+        handler, _, session_store, _ = self._make_command_handler(notification_service=notif)
+        channel = self._make_channel()
+        ctx = self._make_context()
+
+        session = self._make_session_with_messages()
+        session_store.load_session = AsyncMock(return_value=session)
+        session_store.save_session = AsyncMock()
+
+        await handler.handle_command("consolidate", ctx, channel)
+
+        # First user-visible message is the start ack (uk fallback — no localization wired).
+        first_text = channel.send_message.call_args_list[0].args[0]
+        assert "консолідац" in first_text.lower()
+
     async def test_consolidate_without_notification_service_sends_message(self):
         """_notification_service absent → send_message fallback. (Line 801-805)"""
         handler, _, session_store, _ = self._make_command_handler(notification_service=None)
@@ -1310,7 +1335,11 @@ class TestHandleCommandConsolidateExtra:
 
         await handler.handle_command("consolidate", ctx, channel)
 
-        channel.send_message.assert_called_once()
+        # Two messages: the start ack, then the "Consolidation complete" fallback
+        # (no notification_service → raw send_message result path).
+        sent_texts = [c.args[0] for c in channel.send_message.call_args_list]
+        assert len(sent_texts) == 2
+        assert any("Consolidation complete" in t for t in sent_texts)
 
 
 # ---------------------------------------------------------------------------

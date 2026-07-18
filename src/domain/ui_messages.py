@@ -25,3 +25,4 @@ class UIMessage(Enum):
     UNKNOWN_COMMAND = "unknown_command"
     NEW_TOPIC_ACK = "new_topic_ack"
     SOURCES_HEADING = "sources_heading"
+    CONSOLIDATION_STARTED = "consolidation_started"

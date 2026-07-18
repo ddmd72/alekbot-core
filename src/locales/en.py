@@ -35,7 +35,22 @@ EN_MESSAGES: Dict[str, List[str]] = {
         "Activating cognitive modules at full power",
         "Trying not to overheat from your brilliant ideas",
         "Consulting with my personality core",
-        "Gathering my thoughts (they keep running away)"
+        "Gathering my thoughts (they keep running away)",
+        "Weighing the options... most are silly, hunting for the smart one",
+        "Skimming my inner manual 'How to Sound Clever'",
+        "Warming my circuits up to operating temperature",
+        "Thinking so hard you can hear my fan spin up",
+        "Consulting my subconscious... it's silent, as usual",
+        "Switching off 'lazy mode', switching on 'genius mode'",
+        "Summoning the muse... she's on a smoke break again",
+        "Computing the answer across 47 parallel universes",
+        "Dusting off my algorithms",
+        "Meditating on your request like a proper monk",
+        "Rebooting my common sense... almost there",
+        "Looking for an answer worthy of your question",
+        "Holding a pause for dramatic effect",
+        "One more second... I'm almost a genius",
+        "Running the scenarios where I definitely don't mess up"
     ],
     StatusType.SEARCHING_MEMORY.value: [
         "Flipping through your archives... it was here somewhere",
@@ -105,4 +120,5 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.UNKNOWN_COMMAND.value: "Unknown command: `{command}`",
     UIMessage.NEW_TOPIC_ACK.value: "New topic. History cleared.",
     UIMessage.SOURCES_HEADING.value: "Sources:",
+    UIMessage.CONSOLIDATION_STARTED.value: "🧠 Memory consolidation started…",
 }
