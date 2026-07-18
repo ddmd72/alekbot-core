@@ -1271,6 +1271,33 @@ class TestHandleCommandConsolidateExtra:
         # No fallback message sent to channel
         channel.send_message.assert_not_called()
 
+    async def test_consolidate_notify_routes_to_origin_channel(self):
+        """$consolidate is synchronous → report goes back to the initiating channel,
+        not the background primary/last-active fallback. notify() must receive both
+        channel_id_override and platform_override from context.metadata."""
+        notif = MagicMock()
+        notif.notify = AsyncMock()
+
+        handler, _, session_store, _ = self._make_command_handler(notification_service=notif)
+        channel = self._make_channel()
+        ctx = MessageContext(
+            text="$consolidate",
+            session_id=_SESSION_ID,
+            user_id=_USER_ID,
+            account_id=_ACCOUNT_ID,
+            metadata={"event_type": "command", "platform": "slack", "channel": "C0ORIGIN"},
+        )
+
+        session = self._make_session_with_messages()
+        session_store.load_session = AsyncMock(return_value=session)
+        session_store.save_session = AsyncMock()
+
+        await handler.handle_command("consolidate", ctx, channel)
+
+        call_kwargs = notif.notify.call_args[1]
+        assert call_kwargs["channel_id_override"] == "C0ORIGIN"
+        assert call_kwargs["platform_override"] == "slack"
+
     async def test_consolidate_without_notification_service_sends_message(self):
         """_notification_service absent → send_message fallback. (Line 801-805)"""
         handler, _, session_store, _ = self._make_command_handler(notification_service=None)

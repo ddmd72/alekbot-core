@@ -927,11 +927,16 @@ class ConversationHandler(ConversationHandlerPort):
                     f"{len(serialized)} messages were processed and new facts extracted into memory."
                 )
                 if self._notification_service:
+                    # $consolidate is synchronous — deliver back to the channel it was
+                    # initiated from (both override args required), NOT the background
+                    # primary/last-active fallback that notify() uses by default.
                     await self._notification_service.notify(
                         kind=NotificationKind.INTERACTIVE,
                         user_id=context.user_id,
                         account_id=context.account_id,
                         system_alert=system_alert,
+                        channel_id_override=context.metadata.get("channel"),
+                        platform_override=context.metadata.get("platform"),
                     )
                 else:
                     await response_channel.send_message(

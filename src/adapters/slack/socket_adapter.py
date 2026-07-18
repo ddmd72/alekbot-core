@@ -120,7 +120,12 @@ class SocketModeAdapter(SlackAdapter):
                     user_id=user_id,
                     account_id=account_id,  # SESSION_26
                     language=ui_lang.value,
-                    metadata={"event_type": "command", "slack_user_id": slack_user_id}
+                    metadata={
+                        "event_type": "command",
+                        "platform": "slack",
+                        "slack_user_id": slack_user_id,
+                        "channel": message["channel"],
+                    }
                 )
                 response_channel = SlackResponseChannel(
                     self.app.client,
