@@ -443,10 +443,11 @@ class ConversationHandler(ConversationHandlerPort):
         async def update_status_animation(message_id: str):
             nonlocal dots_count, current_status_phrase
             while not stop_event.is_set():
-                # ✅ Throttled: 5 seconds (Telegram rate limit: 1 msg/sec per chat).
+                # ✅ Throttled: 10 seconds (well within Telegram's 1 msg/sec/chat
+                # limit; tuned up from 5s after UAT — 5s rotated too fast to read).
                 # Each tick rotates to a FRESH phrase of the active status type so the
                 # wait stays lively, avoiding an immediate repeat when the pool has >1.
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)
                 if stop_event.is_set():
                     break
                 current_status_phrase = await self._pick_next_status_phrase(
