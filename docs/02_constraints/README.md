@@ -154,7 +154,7 @@
 
 | Constraint          | Limit      | Impact                                    |
 | ------------------- | ---------- | ----------------------------------------- |
-| **Message Rate**    | 1 msg/sec  | Status updates throttled to 5s intervals  |
+| **Message Rate**    | 1 msg/sec  | Status updates throttled to 10s intervals |
 | **Payload Size**    | 3000 chars | Message chunking for long responses       |
 | **File Upload**     | 1GB        | Gemini upload service proxies large files |
 | **Webhook Timeout** | 3 seconds  | Response channel async, immediate 200 OK  |
