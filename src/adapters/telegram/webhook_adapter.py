@@ -186,6 +186,32 @@ class TelegramWebhookAdapter(PlatformPort):
                 localization=self._localization,
             )
 
+            thread_id = str(message.message_thread_id) if message.is_topic_message else None
+
+            # Explicit command protocol ($command) — mirrors Slack adapters.
+            # Without this, "$consolidate" & co. fall through to the agent stack as
+            # normal messages and the LLM roleplays a fake result. "channel" carries
+            # chat_id so channel-binding commands ($agent) resolve like on Slack.
+            if text.startswith("$"):
+                command = text.lstrip("$").strip().lower()
+                context = MessageContext(
+                    text=text,
+                    session_id=session_id,
+                    user_id=user_id,
+                    account_id=account_id,
+                    language=ui_lang.value,
+                    thread_id=thread_id,
+                    metadata={
+                        "event_type": "command",
+                        "platform": "telegram",
+                        "channel": str(chat_id),
+                        "chat_id": chat_id,
+                        "telegram_user_id": telegram_user_id,
+                    },
+                )
+                await self.conversation_handler.handle_command(command, context, response_channel)
+                return
+
             # 5. Translate attachments (ASYNC!)
             attachments = []
             if message.photo or message.document:
@@ -208,7 +234,7 @@ class TelegramWebhookAdapter(PlatformPort):
                 account_id=account_id,
                 language=ui_lang.value,
                 attachments=attachments,
-                thread_id=str(message.message_thread_id) if message.is_topic_message else None,
+                thread_id=thread_id,
                 metadata={
                     "platform": "telegram",
                     "chat_id": chat_id,
