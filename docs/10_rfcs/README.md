@@ -30,7 +30,7 @@ This directory contains Request for Comments (RFC) documents that describe propo
 | [RICH_CONTENT](./RICH_CONTENT_RFC.md) | Implemented V1 | File delivery (md/html/xlsx/docx) via SlackMediaAdapter — in production. |
 | [TESTING_STRATEGY](./TESTING_STRATEGY_RFC.md) | Active | Testing framework and protocols. |
 | [TASKS_AGENT](./TASKS_AGENT_RFC.md) | Implemented | Tasks specialist agent — single `manage_user_tasks` intent, tool-calling loop, Google Tasks adapter. |
-| [TELEGRAM_CHANNEL_READER](./TELEGRAM_CHANNEL_READER_RFC.md) | Proposed | On-demand read-only Telegram channel reading via MTProto user session (Telethon); pull-only specialist agent, no persistence. |
+| [TELEGRAM_CHANNEL_READER](./TELEGRAM_CHANNEL_READER_RFC.md) | Proposed | On-demand read-only Telegram channel reading via MTProto user session (Telethon); pull-only specialist agent, no persistence. Multi-user QR device-linking in Cabinet; per-user session behind a swappable `TelegramSessionRepository` port (Secret-Manager MVP). |
 | [WEBSEARCH_STRUCTURED_OUTPUT](./WEBSEARCH_STRUCTURED_OUTPUT_RFC.md) | Draft | Structured JSON output for WebSearchAgent. |
 
 ---
