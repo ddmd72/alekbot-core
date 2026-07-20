@@ -92,7 +92,7 @@ Universality lives in the **port** (a generic "read from Telegram" boundary, reu
 messages, a specific group, etc.), never in the **LLM-facing tool surface**. The port declares only
 read methods; no write method exists in the codepath, so no injection can invoke one.
 
-### 2.5 QR device-linking + session storage behind a port (swap seam over scale)
+### 2.5 QR device-linking + session storage behind a port
 
 Telegram has **no OAuth** for user accounts — the only ways to obtain a user session are the
 interactive phone→code→2FA login or **QR device-linking** (`auth.exportLoginToken` /
@@ -100,20 +100,15 @@ interactive phone→code→2FA login or **QR device-linking** (`auth.exportLogin
 backend never sees the phone number, login code, or 2FA password — the session is authorized *on the
 user's own device* by scanning. Phone+code is a fallback only.
 
-Storage target is **dozens of users, not thousands**, so the deciding criterion is *hexagonal
-cleanliness and future swappability*, not raw scale. Decision: a single storage-neutral port
-`TelegramSessionRepository`, implemented first by a **Secret-Manager-per-user** adapter (one secret
-`telegram-session-<user_id>`). Rationale:
+The session is stored behind a storage-neutral port `TelegramSessionRepository`. Its backend is
+**Firestore + `CipherPort`** (application-layer KMS encryption of the session string) — **uniform with
+OAuth credential storage**, per SECRETS_AT_REST_RFC. That RFC defines the `CipherPort` mechanism and
+ships it first; the Telegram session is its second consumer and requires *zero new crypto code* — only
+a `FirestoreTelegramSessionRepository` composing the already-proven `CipherPort`. See §5.
 
-- Google Secret Manager gives encryption-at-rest, IAM, Cloud Audit Logs on access, versioning, and
-  rotation **with zero crypto code on our side** — no `KmsCipherPort`, no envelope logic leaking into
-  the adapter. One port, one self-contained adapter.
-- The **port is the swap seam**: a future move to KMS-encrypt + Firestore ciphertext (the scale
-  answer), Vault, or a BYO-HSM is a new adapter behind the same port — services and the agent do not
-  change. Swappability is a property of the port, so we start with the simplest adequate backend.
-
-KMS+Firestore was considered and deferred *because* scale is not a goal; it is documented in §5 as the
-drop-in alternative the port already accommodates.
+(An earlier draft proposed Secret-Manager-per-user here. That is superseded: once `CipherPort` exists
+for OAuth, reusing it gives one encryption mechanism across all per-user secrets — consistency over two
+storage backends.)
 
 ---
 
@@ -130,7 +125,7 @@ Reading (channel content):
 
 Account connection (per-user session — see §4/§5):
   ports/telegram_session_repository.py          — TelegramSessionRepository (ABC). Storage-neutral.
-  adapters/…/secret_manager_telegram_session_repository.py — Secret-Manager-per-user impl.
+  adapters/…/firestore_telegram_session_repository.py — Firestore + CipherPort impl (SECRETS_AT_REST_RFC).
   ports/telegram_login_state_store.py           — TelegramLoginStateStore (ABC). Ephemeral QR-handshake state.
   adapters/…/firestore_telegram_login_state_store.py — Firestore + native TTL impl.
   services/telegram_connection_service.py       — TelegramConnectionService. Drives the QR connect/disconnect flow.
@@ -278,33 +273,34 @@ their env vars.
 
 Two distinct lifecycles, each stored by what it is good at — behind two ports so both are swappable.
 
-| Data | Lifecycle | Port | MVP adapter | Why |
-|------|-----------|------|-------------|-----|
-| Authorized user session (`StringSession`) | Durable credential | `TelegramSessionRepository` | Secret-Manager-per-user (`telegram-session-<user_id>`) | Managed encryption/IAM/audit/rotation, zero crypto code; port is the swap seam |
-| QR/login handshake state | Ephemeral (minutes) | `TelegramLoginStateStore` | Firestore doc + native TTL | TTL churns Secret Manager versions; Firestore has first-class TTL |
+| Data | Lifecycle | Port | Adapter | Why |
+|------|-----------|------|---------|-----|
+| Authorized user session (`StringSession`) | Durable credential | `TelegramSessionRepository` | Firestore + `CipherPort` (KMS-encrypted session field) | Uniform with OAuth credentials; app-layer encryption; port is the swap seam |
+| QR/login handshake state | Ephemeral (minutes) | `TelegramLoginStateStore` | Firestore doc + native TTL (session field CipherPort-encrypted) | First-class TTL; the pending session is sensitive too, so it is encrypted the same way |
 
 **The session `StringSession` IS the credential** — the MTProto equivalent of a long-lived access key
 (there is no "refresh-token only" option; the session is what grants access). So the security work is
-storing that credential correctly, and both stores are chosen accordingly.
+storing that credential correctly.
 
-**Why Secret-Manager-per-user for MVP (not KMS+Firestore).** Target scale is dozens of users, so the
-deciding criterion is hexagonal cleanliness, not throughput. Secret Manager delivers the full
-no-leak property set (below) with **no crypto code on our side** — one port, one self-contained
-adapter, no `KmsCipherPort` or envelope logic leaking into the domain. Because storage sits behind
-`TelegramSessionRepository`, the scale answer — **KMS-encrypt the session + store ciphertext in
-Firestore** (direct `kms.encrypt`, session < 64 KiB so no DEK needed) — is a **drop-in adapter** for
-the same port if user counts ever grow. We start with the simplest adequate backend precisely because
-the port guarantees the swap.
+**Storage = Firestore + `CipherPort`, uniform with OAuth (SECRETS_AT_REST_RFC).** The session string is
+KMS-encrypted at the application layer before it touches Firestore (direct `kms.encrypt`, session
+< 64 KiB so no DEK). This reuses the exact mechanism that RFC ships first for OAuth tokens — **no new
+crypto code here**, only `FirestoreTelegramSessionRepository` composing `CipherPort`. A Firestore reader
+sees only ciphertext; a usable session needs both Firestore read *and* KMS decrypt. AAD binds the
+ciphertext to `f"{user_id}:telegram_session"`.
 
-**Port keeps the backend out of the contract** (storage-neutral names — no `secret`/`kms` leaking in):
+**Port keeps the backend out of the contract** (storage-neutral names — no `firestore`/`kms` leaking):
 
 ```python
 class TelegramSessionRepository(ABC):
     async def get_session(self, user_id: str) -> Optional[str]: ...
-    async def save_session(self, user_id: str, session: str) -> None: ...   # add secret version
-    async def delete_session(self, user_id: str) -> None: ...               # destroy + disable
+    async def save_session(self, user_id: str, session: str) -> None: ...
+    async def delete_session(self, user_id: str) -> None: ...
     async def list_connected_users(self) -> List[str]: ...                  # for future push digest
 ```
+
+Because storage sits behind this port, a later move to any other backend (Secret Manager, Vault, a
+BYO-HSM) is a new adapter with no change to the service or agent.
 
 ---
 
@@ -378,13 +374,15 @@ than an API-key leak, so every layer matters):**
 
 | Layer | Control |
 |-------|---------|
-| At rest | Only the encrypted secret in Secret Manager (Google-managed or CMEK). A full DB/config dump yields nothing usable. |
+| At rest | Session is KMS-encrypted at the app layer (`CipherPort`) before Firestore. A full DB dump/export yields only ciphertext. |
+| Two-key requirement | A usable session needs **both** Firestore read **and** KMS `useToDecrypt` — separate IAM, separate grantees (SECRETS_AT_REST_RFC §4). |
 | In transit | TLS on all GCP APIs; MTProto is itself encrypted. |
 | In use | Decrypted session exists **only transiently in instance memory** during a read. Never in logs, `prompt_content` BigQuery, tracebacks, or error messages — session strings + login tokens are on an explicit log-redaction deny-list. |
-| Access control | `secretmanager.versions.access` granted **only** to the Cloud Run runtime SA, least-privilege; separated from other data access. |
-| Auditability | Cloud Audit Logs record every session access with the calling identity — anomalous reads are detectable post-hoc. |
-| Handshake state | The pending QR/login session (§5) is equally sensitive but short-lived — Firestore-at-rest encryption + minutes-long TTL + auto-delete on success/expiry. |
-| Revocation | Cabinet disconnect → `log_out()` (revoked at Telegram) **and** `delete_session` (destroyed locally). A future KMS backend adds key rotation as an extra blast-radius control. |
+| Access control | `cloudkms.cryptoKeyVersions.useToDecrypt` granted **only** to the Cloud Run runtime SA, least-privilege; separated from Firestore access. |
+| Auditability | Cloud Audit Logs record every decrypt with the calling identity — anomalous reads are detectable post-hoc. |
+| AAD binding | Ciphertext is bound to `f"{user_id}:telegram_session"` — cannot be relocated across users inside the DB. |
+| Handshake state | The pending QR/login session (§5) is equally sensitive — CipherPort-encrypted + minutes-long TTL + auto-delete on success/expiry. |
+| Revocation | Cabinet disconnect → `log_out()` (revoked at Telegram) **and** `delete_session` (destroyed locally). KMS key rotation is an extra blast-radius control. |
 
 **QR trust story.** QR device-linking means the backend never receives the phone number, login code,
 or 2FA password — nothing to intercept in the web tier, unlike the phone+code anti-pattern where the
@@ -410,8 +408,6 @@ user types a login code into a form.
 - **Cabinet curated channel groups / aliases.** "my crypto channels" → a stored subset; per-channel
   standing interest text. A channel-selection convenience (distinct from account connection, which is
   MVP). Only worth it once live-subscription resolution proves too coarse.
-- **KMS+Firestore session backend.** The scale answer — a drop-in adapter behind
-  `TelegramSessionRepository` (§5) if user counts outgrow Secret-Manager economics.
 - **Write actions of any kind.** Explicitly never, without a dedicated future RFC and its own threat
   model.
 
