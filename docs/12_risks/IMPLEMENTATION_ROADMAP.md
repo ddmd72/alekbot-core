@@ -218,6 +218,42 @@ mandatory before team/multi-user rollout.
 
 ---
 
+### TD-4: `update_fact` overwrites fact text in place — no SCD2 history [P2] — 🔲 OPEN
+
+- **Problem:** `update_fact` (`fact_management_adapter.py:212-272`) mutates the **same** document:
+  it sets `existing.text = new_content`, bumps `existing.version += 1` and calls
+  `_repo.update_fact(existing)`. No new version document is written, so the **previous text is
+  overwritten and unrecoverable**. The incrementing `version` counter actively implies a version
+  history that does not exist. This is the **only** place in the fact lifecycle that destroys
+  content: `merge_facts` preserves its sources (marks them `SUPERSEDED` +
+  `is_current=False` + `valid_to=now`, `fact_management_adapter.py:309-311`) and `invalidate_fact`
+  is a soft state flip (`firestore_repo.py:306-314`) — every other retirement path keeps the old
+  document intact.
+- **Why it matters:** ConsolidationAgent calls `update_fact` on every Stage-2 rewrite. If the LLM
+  narrows a fact — drops a qualifier, a date, a number — the original wording is gone. Evidence
+  (non-current fact audit, 2026-07-22, dev account): a fact had reached `version=7`, i.e. six
+  earlier texts no longer exist anywhere. Consequently that audit could verify what consolidation
+  *superseded*, but **not** what it *rewrote* — the rewrite history is simply absent.
+- **Fix:** make update SCD2-consistent with the rest of the lifecycle — on update, write a **new**
+  document sharing the same `lineage_id` with `version+1` / `valid_from=now`, and transition the
+  previous document to `state=SUPERSEDED`, `is_current=False`, `valid_to=now` (exactly the
+  transition `merge_facts` already applies to its sources). Reads are unaffected:
+  `get_active_facts` filters `state == "current"` (`firestore_repo.py:222`). The required SCD2
+  fields already exist on `FactEntity` (`lineage_id`, `state`, `valid_from`/`valid_to`,
+  `is_current` — `domain/entities.py:109,140,165-166`).
+- **Files:** `src/adapters/fact_management_adapter.py` (`update_fact`),
+  `src/adapters/firestore_repo.py` (versioned-write path alongside the existing in-place update).
+- **Scope note:** storage grows by one document per rewrite — negligible at current volume
+  (~1000 docs/account). Tests are load-bearing: enumerate `grep -rn "update_fact" tests/` before
+  changing semantics, and expect fixtures that assert in-place mutation.
+- **Related (found in the same audit, not yet ticketed):** (a) `merge_facts` writes the merged fact
+  through `add_facts_batch` with a **new** `lineage_id` (`fact_management_adapter.py:344`), leaving
+  no provenance link from a superseded source to the fact that absorbed it — carry-forward can only
+  be checked semantically; (b) the legacy `is_current` flag is desynced from `state` (67 superseded
+  documents still carry `is_current=True`) and is not used by any read path.
+
+---
+
 ## 🏢 Planned Milestones (Phase 3: Enterprise)
 
 - **Milestone 7**: User Onboarding & OAuth

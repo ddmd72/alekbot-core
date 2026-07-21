@@ -1,22 +1,32 @@
 # RFC: Per-User Secrets at Rest — Application-Layer Encryption via CipherPort
 
 **Status:** PROPOSED
-**Date:** 2026-07-20
+**Date:** 2026-07-20 (revised 2026-07-22)
 **Owner:** AI Engineering
 **Milestone:** Security — Credential Storage Hardening
 
 **Related:** `ports/oauth_credentials_port.py` + `adapters/firestore_oauth_credentials_adapter.py`
-(the credential store being hardened); TELEGRAM_CHANNEL_READER_RFC (first *new* consumer — reuses this
-mechanism for the MTProto session, §7).
+(the credential store being hardened); `adapters/firestore_mcp_client_repository.py` +
+`domain/mcp.py` (second plaintext secret store — §3.5); TELEGRAM_CHANNEL_READER_RFC (first *new*
+consumer — reuses this mechanism for the MTProto session, §7, and is **blocked on this RFC shipping**).
 
 ---
 
 ## 1. Problem Statement
 
-Per-user access credentials are currently stored **in Firestore as plaintext**.
-`FirestoreOAuthCredentialsAdapter._to_firestore()` writes `access_token` and `refresh_token` as raw
-strings (`firestore_oauth_credentials_adapter.py:33-42`). The `refresh_token` is a long-lived key to
-the user's entire Gmail mailbox / Microsoft To Do account.
+Per-user access credentials are currently stored **in Firestore as plaintext**, in two independent
+places.
+
+**1. OAuth credentials.** `FirestoreOAuthCredentialsAdapter._to_firestore()` writes `access_token`
+and `refresh_token` as raw strings (`firestore_oauth_credentials_adapter.py:33-42`), for providers
+`gmail`, `google_tasks`, and `microsoft_todo`. The `refresh_token` is a long-lived key to the user's
+entire mailbox / task account.
+
+**2. MCP OAuth client secrets.** `MCPClient.client_secret` is stored raw in
+`{env}_mcp_oauth_clients` (`domain/mcp.py:20-32`). This one is *deliberate* and documented — the
+`mcp` SDK authenticates clients via `hmac.compare_digest(client.client_secret, presented_secret)`
+with no hashing hook. That rationale is sound but **narrower than it reads**: it rules out *hashing*,
+not *encryption* (§3.5).
 
 **Firestore encrypts at rest by default — but that does not address this threat.** Google's default
 at-rest encryption protects against someone stealing the physical disk; it does **nothing** against an
@@ -134,6 +144,27 @@ already-encrypted docs. Runs against live Firestore with the `us-production` dat
 backfill is verified, a follow-up removes the legacy plaintext read branch in `_from_firestore`
 (closing the transitional window).
 
+### 3.5 MCP client secrets (`FirestoreMCPClientRepository`)
+
+`MCPClient.client_secret` is stored plaintext by design, because the `mcp` SDK compares the presented
+secret against the stored value with `hmac.compare_digest` and offers no hashing hook
+(`domain/mcp.py:20-32`).
+
+**That rationale rules out hashing, not encryption.** `CipherPort` is decrypt-on-read: the adapter
+returns the raw secret to the SDK exactly as today, and the SDK's comparison is unaffected. The
+plaintext-at-rest exposure disappears at no behavioural cost. So this is in scope, and it is the
+cheapest possible consumer — same dual-read pattern, AAD `f"{client_id}:mcp_client_secret"`, and the
+`domain/mcp.py` docstring is corrected to say *not hashed* rather than *not protected*.
+
+**Explicitly deferred — MCP authorization codes.** `{env}_mcp_auth_codes` stores the code itself as
+the document ID, in the clear. Note the asymmetry inside the same repository: refresh tokens are
+stored as `sha256(token_value)`, auth codes are not. The exposure is materially smaller — codes are
+single-use, expire in 10 minutes, and an attacker holding one still needs the PKCE `code_verifier`
+(only the challenge is stored) plus the client secret. The correct fix is also *different* from this
+RFC's mechanism: hash the document ID to match the refresh-token treatment, rather than encrypt a
+field. Deferred as its own small change; trigger to revisit is any widening of MCP beyond its current
+dev-only, experimental status.
+
 ---
 
 ## 4. Security & Threat Model
@@ -157,13 +188,21 @@ Blast-radius summary: a leaked service-account key that can read Firestore but l
 
 ## 5. Scope / Non-Goals
 
-- **In scope:** `CipherPort` + KMS adapter; encrypting OAuth `access_token`/`refresh_token`; backfill.
+- **In scope:** `CipherPort` + KMS adapter; encrypting OAuth `access_token`/`refresh_token` + backfill
+  (§3.3–3.4); encrypting MCP `client_secret` (§3.5).
 - **Not encrypting non-secret fields** (`user_id`, `provider`, `expiry`, `scopes`) — needed plaintext
   for queries. `email_address` is PII but not an access credential — left plaintext in MVP; encrypting
   it is a documented possible extension (it is not queried by the current port).
-- **No consumer changes** — Gmail/Microsoft adapters, indexing, and renewal jobs are untouched.
+- **MCP authorization codes — explicitly deferred** with rationale in §3.5 (different fix: hash the
+  doc ID, not encrypt a field).
+- **No consumer changes** — Gmail/Microsoft adapters, the `mcp` SDK token handler, indexing, and
+  renewal jobs are untouched. Encryption is internal to each adapter.
 - **No envelope/DEK layer** — payloads < 64 KiB (§2.3).
 - **Other collections** (facts, sessions, etc.) are out of scope — this RFC is per-user *credentials*.
+
+**Completeness note.** The two stores in §1 are the result of an audit of what this system persists
+that grants access. MCP refresh tokens are already `sha256`-hashed and need no change. If a third
+per-user secret appears later, it composes `CipherPort` — that is the point of the primitive.
 
 ---
 
@@ -176,8 +215,13 @@ The mechanism ships **first**, as a standalone primitive, before any new feature
 2. Migrate `FirestoreOAuthCredentialsAdapter` to encrypt tokens (dual-read) + backfill script; run and
    verify the backfill on live data.
 3. Remove the legacy plaintext read branch once backfill is confirmed.
-4. **(Later, separate work)** Telegram `FirestoreTelegramSessionRepository` composes the same
+4. Migrate `FirestoreMCPClientRepository.client_secret` (§3.5) — same dual-read + backfill shape, much
+   smaller collection. Sequenced after OAuth so the pattern is settled on the higher-value store first.
+5. **(Later, separate work)** Telegram `FirestoreTelegramSessionRepository` composes the same
    `CipherPort` — the mechanism is already proven in production by then.
+
+Steps 1–4 are a **hard prerequisite** for TELEGRAM_CHANNEL_READER_RFC, by owner decision: secrets are
+stored correctly before a full-account MTProto session is added to the system.
 
 ---
 
@@ -185,9 +229,9 @@ The mechanism ships **first**, as a standalone primitive, before any new feature
 
 TELEGRAM_CHANNEL_READER_RFC originally proposed Secret-Manager-per-user for the MTProto session. With
 this RFC accepted, that is superseded: the Telegram session is stored Firestore + `CipherPort`, uniform
-with OAuth credentials. The Telegram RFC's §2.5 and §5 are updated to reference this mechanism instead
-of Secret Manager. Telegram is the **validation case** for reuse, implemented after this mechanism is
-live — it should require *zero* new crypto code, only a new repository adapter composing `CipherPort`.
+with OAuth credentials. The Telegram RFC's §2.6 and §5 reference this mechanism instead of Secret
+Manager. Telegram is the **validation case** for reuse, implemented only after this mechanism is live —
+it should require *zero* new crypto code, only a new repository adapter composing `CipherPort`.
 
 ---
 
@@ -202,7 +246,9 @@ live — it should require *zero* new crypto code, only a new repository adapter
   without `enc_v` still reads (plaintext branch) until backfill. Queryable fields stay plaintext
   (assert `list_users_by_provider` still works over ciphertext docs).
 - **Backfill script:** idempotent (re-run is a no-op on `enc_v` docs); converts a plaintext doc.
-- **Redaction:** token plaintext never appears in emitted log records.
+- **MCP client repo:** `save_client` writes ciphertext; `get_client` returns the raw secret so
+  `hmac.compare_digest` still matches (assert an end-to-end client-auth comparison passes against an
+  encrypted-at-rest client); dual-read for legacy plaintext clients.
+- **Redaction:** token and client-secret plaintext never appear in emitted log records.
 - **Fail-closed:** prod composition without `KMS_CRYPTO_KEY` refuses to start; local passthrough is
   only selected when explicitly unconfigured.
-</content>
