@@ -28,10 +28,10 @@ This directory contains Request for Comments (RFC) documents that describe propo
 | [NATIVE_TOOLS_INTEGRATION](./NATIVE_TOOLS_INTEGRATION_RFC.md) | Partial | SearchEnrichmentService implemented. Quick delegation loop + WebSearchLightAgent added (session 7). |
 | [PROMPT_BUILDER_V4](./PROMPT_BUILDER_V4_RFC.md) | Implemented | Blueprint + ProfileToken override system (4 levels). Code done; Firestore upload pending. |
 | [RICH_CONTENT](./RICH_CONTENT_RFC.md) | Implemented V1 | File delivery (md/html/xlsx/docx) via SlackMediaAdapter — in production. |
-| [SECRETS_AT_REST](./SECRETS_AT_REST_RFC.md) | Proposed | Application-layer encryption of per-user credentials via a KMS-backed `CipherPort`; migrates plaintext OAuth tokens in Firestore to ciphertext. Shipped first; Telegram session reuses it. |
+| [SECRETS_AT_REST](./SECRETS_AT_REST_RFC.md) | Proposed | Application-layer encryption of per-user credentials via a KMS-backed `CipherPort`; migrates plaintext OAuth tokens **and MCP client secrets** in Firestore to ciphertext. Ships first — hard prerequisite for the Telegram session. |
 | [TESTING_STRATEGY](./TESTING_STRATEGY_RFC.md) | Active | Testing framework and protocols. |
 | [TASKS_AGENT](./TASKS_AGENT_RFC.md) | Implemented | Tasks specialist agent — single `manage_user_tasks` intent, tool-calling loop, Google Tasks adapter. |
-| [TELEGRAM_CHANNEL_READER](./TELEGRAM_CHANNEL_READER_RFC.md) | Proposed | On-demand read-only Telegram channel reading via MTProto user session (Telethon); pull-only specialist agent, no persistence. Multi-user QR device-linking in Cabinet; per-user session behind a swappable `TelegramSessionRepository` port (Secret-Manager MVP). |
+| [TELEGRAM_CHANNEL_READER](./TELEGRAM_CHANNEL_READER_RFC.md) | Proposed — gated on spike | Read-only Telegram channel reading via MTProto user session (Telethon); one specialist agent behind one intent, reached by both the scheduled daily digest and on-demand requests. No persistence. Multi-user QR device-linking in Cabinet; session encrypted via `CipherPort`. Blocked on SECRETS_AT_REST + a QR-resumption spike. |
 | [WEBSEARCH_STRUCTURED_OUTPUT](./WEBSEARCH_STRUCTURED_OUTPUT_RFC.md) | Draft | Structured JSON output for WebSearchAgent. |
 
 ---
