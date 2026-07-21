@@ -711,7 +711,7 @@ class TestSessionFormatConsistency:
         ("U_abc", "C_general"),
         ("U_abc", "D_dm_xyz"),
         ("U_abc", "-100123456"),
-        ("f1d66955-cb00-4d2b-8044-4eeff781b7f4", "C_channel"),
+        ("00000000-1111-2222-3333-444444444444", "C_channel"),  # UUID-shaped user_id
         ("user_123", "12345"),
     ])
     def test_split_roundtrip(self, user_id, channel_id):
