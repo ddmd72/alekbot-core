@@ -8,10 +8,13 @@ Provides abstract base class and utilities for all agents.
 import time
 import random
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from abc import ABC, abstractmethod
-from typing import ClassVar, Dict, Optional, List, TYPE_CHECKING
+from typing import ClassVar, Dict, Iterator, Optional, List, TYPE_CHECKING
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig
+from ..domain.billing import TokenLedger
 from ..domain.exceptions import (
     _ERROR_TYPE_LOG_LABEL,
     BothProvidersUnavailableError,
@@ -32,6 +35,27 @@ from ..utils.telemetry import get_tracer
 if TYPE_CHECKING:
     from ..domain.llm import LLMRequest, LLMResponse
     from ..ports.llm_port import LLMPort, AgentExecutionContext
+
+
+# ---------------------------------------------------------------------------
+# Per-execution token accounting.
+#
+# An agent instance is a per-user singleton in the AgentCoordinator registry, and
+# DelegationEngine dispatches a tool batch via ``asyncio.gather`` — so N executions of
+# ONE instance run concurrently. Instance-level accumulators therefore pooled unrelated
+# executions and each flush billed the running total, inflating the daily counter
+# (~3.6x in production, 2026-07-28). A ContextVar is the right scope: ``asyncio.gather``
+# wraps each coroutine in a Task, and a Task copies the context at creation, so a ``set()``
+# inside one execution is invisible to its siblings.
+#
+# ``None`` means "no execution in scope" — accumulation is skipped rather than silently
+# banked into an unowned ledger that nothing would ever flush. Every production
+# ``_call_llm`` call site sits inside an agent's ``execute()``, which only runs under
+# ``process()``, which always opens a scope.
+# ---------------------------------------------------------------------------
+_EXECUTION_LEDGER: ContextVar[Optional[TokenLedger]] = ContextVar(
+    "agent_execution_ledger", default=None
+)
 
 
 # ---------------------------------------------------------------------------
@@ -230,11 +254,8 @@ class BaseAgent(ABC):
         # UserAgentFactory, like coordinator. None → billing skipped.
         self._quota_service = None
         self._user_timezone: str = "UTC"  # overridden by subclasses that receive user_timezone
-        self._billing_account_id: Optional[str] = None
-        self._billing_prompt_tokens: int = 0
-        self._billing_completion_tokens: int = 0
-        self._billing_cache_read_tokens: int = 0
-        self._billing_cache_creation_tokens: int = 0
+        # NOTE: token accumulators are deliberately NOT instance state — see
+        # _EXECUTION_LEDGER / _execution_billing_scope.
 
         logger.info(
             f"🤖 Agent initialized: {config.agent_id} "
@@ -547,12 +568,35 @@ class BaseAgent(ABC):
         # same budget cannot succeed). asyncio.CancelledError is honored
         # outright. Any other Exception is treated as deterministic and
         # surfaced immediately.
-        self._billing_account_id = message.context.get("account_id")
-        self._billing_prompt_tokens = 0
-        self._billing_completion_tokens = 0
-        self._billing_cache_read_tokens = 0
-        self._billing_cache_creation_tokens = 0
+        #
+        # The billing scope wraps the whole retry loop: retries of one execution share
+        # one ledger (their tokens all belong to this execution), while concurrent
+        # executions of this same instance each get their own.
+        with self._execution_billing_scope(message.context.get("account_id")):
+            return await self._run_retry_loop(message)
 
+    @contextmanager
+    def _execution_billing_scope(self, account_id: Optional[str]) -> Iterator[TokenLedger]:
+        """Open a fresh TokenLedger for one execution, current for the duration.
+
+        ``reset(token)`` is mandatory, not hygiene: a specialist awaited *inline* by an
+        orchestrator (no intervening Task, so no context copy) would otherwise leave its
+        own ledger current, and the orchestrator's later turns — and its flush — would
+        land on the specialist's ledger.
+        """
+        ledger = TokenLedger(account_id=account_id)
+        token = _EXECUTION_LEDGER.set(ledger)
+        try:
+            yield ledger
+        finally:
+            _EXECUTION_LEDGER.reset(token)
+
+    async def _run_retry_loop(self, message: AgentMessage) -> AgentResponse:
+        """Retry loop + terminal-outcome handling for one execution.
+
+        Split out of ``process()`` so the billing scope can wrap it as a single
+        expression; the behavior is unchanged.
+        """
         # Typed retry via the shared executor (src/utils/retry.py). Retries only
         # TRANSIENT_RETRY_TYPES (LLMRateLimitError / LLMUnavailableError) with the
         # agent's RetryPolicy; everything else propagates out of retry_async and is
@@ -688,39 +732,18 @@ class BaseAgent(ABC):
     def _on_agent_success(self, char_count: int = 0, token_count: int = 0, output_text: str = "") -> None:
         """Lifecycle hook: called before returning a successful AgentResponse.
 
-        output_text: final text shown to the user. When provided and DEBUG_PROMPTS
-        is enabled, it is written to the debug bucket as type=output.
+        output_text: final text shown to the user. Accepted for call-site compatibility;
+        it had fed the GCS prompt-dump bucket, which was removed with PromptDebugLogger
+        (TD-1, 2026-06-29) — BigQuery is the only content-capture path now.
         """
         if token_count:
             logger.info(f"✅ [{self.agent_id}] done ({char_count} chars, {token_count} tokens)")
         else:
             logger.info(f"✅ [{self.agent_id}] done ({char_count} chars)")
-        if output_text:
-            from ..domain.billing import calculate_cost
-            model = getattr(self, "model_name", None) or self.config.llm_model or "unknown"
-            meta: dict = {
-                "type": "output",
-                "model": model,
-                "tokens": token_count,
-                "prompt_tokens": self._billing_prompt_tokens,
-                "completion_tokens": self._billing_completion_tokens,
-                "chars": char_count,
-            }
-            if self._billing_cache_read_tokens:
-                meta["cache_read_tokens"] = self._billing_cache_read_tokens
-            if self._billing_cache_creation_tokens:
-                meta["cache_creation_tokens"] = self._billing_cache_creation_tokens
-            meta["cost"] = calculate_cost(
-                model=model,
-                prompt_tokens=self._billing_prompt_tokens,
-                completion_tokens=self._billing_completion_tokens,
-                cache_read_tokens=self._billing_cache_read_tokens,
-                cache_creation_tokens=self._billing_cache_creation_tokens,
-            )
 
     async def _flush_billing(self) -> None:
         """Durably record this execution's usage. No-op if quota_service/account_id
-        unset or no tokens accrued.
+        unset, no billing scope is open, or no tokens accrued.
 
         Awaited, NOT fire-and-forget: the write must land while the request still
         holds CPU. On Cloud Run a task detached after the request returns is starved
@@ -728,24 +751,16 @@ class BaseAgent(ABC):
         buffered in-memory before writing — doubly lossy). Best-effort: the quota
         service swallows write errors, so billing never breaks the agent response.
         """
-        if not self._quota_service or not self._billing_account_id:
+        ledger = _EXECUTION_LEDGER.get()
+        if not self._quota_service or ledger is None or not ledger.account_id:
             return
-        if not (self._billing_prompt_tokens or self._billing_completion_tokens
-                or self._billing_cache_read_tokens or self._billing_cache_creation_tokens):
+        if ledger.is_empty:
             return
-        from ..domain.billing import calculate_cost
         model = getattr(self, "model_name", None) or self.config.llm_model or "unknown"
-        tokens = (self._billing_prompt_tokens + self._billing_completion_tokens
-                  + self._billing_cache_read_tokens + self._billing_cache_creation_tokens)
-        cost = calculate_cost(
-            model=model,
-            prompt_tokens=self._billing_prompt_tokens,
-            completion_tokens=self._billing_completion_tokens,
-            cache_read_tokens=self._billing_cache_read_tokens,
-            cache_creation_tokens=self._billing_cache_creation_tokens,
-        )
+        tokens = ledger.total_tokens
+        cost = ledger.cost(model)
         await self._quota_service.record_usage(
-            account_id=self._billing_account_id,
+            account_id=ledger.account_id,
             model=model,
             tokens=tokens,
             cost=cost,
@@ -1139,15 +1154,23 @@ class BaseAgent(ABC):
                         fallback_name=fallback_name,
                         primary_cause=e,
                     ) from fb_e
-        if response.usage_metadata:
+        ledger = _EXECUTION_LEDGER.get()
+        if response.usage_metadata and ledger is not None:
             m = response.usage_metadata
             try:
-                self._billing_prompt_tokens += m.prompt_tokens
-                self._billing_completion_tokens += m.completion_tokens
-                self._billing_cache_read_tokens += getattr(m, "cache_read_tokens", 0)
-                self._billing_cache_creation_tokens += getattr(m, "cache_creation_tokens", 0)
+                ledger.add(
+                    prompt_tokens=m.prompt_tokens,
+                    completion_tokens=m.completion_tokens,
+                    cache_read_tokens=getattr(m, "cache_read_tokens", 0),
+                    cache_creation_tokens=getattr(m, "cache_creation_tokens", 0),
+                )
             except (TypeError, AttributeError):
                 logger.debug("Non-conforming usage_metadata (e.g. test mock) — skipping billing accumulation")
+        elif response.usage_metadata:
+            logger.debug(
+                "No billing scope open for %s — usage not accumulated "
+                "(expected only outside process())", self.agent_id
+            )
         latency_ms = (time.perf_counter() - _t0) * 1000.0
         self._emit_llm_span(request, response, turn, latency_ms, primary_name, _t0_ns)
         # Best-effort content capture. record_turn builds the record + schedules
@@ -1159,7 +1182,7 @@ class BaseAgent(ABC):
                 response=response,
                 agent_id=self.agent_id,
                 agent_type=self.agent_type,
-                account_id=self._billing_account_id,
+                account_id=ledger.account_id if ledger else None,
                 turn=turn,
                 latency_ms=latency_ms,
                 provider=primary_name,

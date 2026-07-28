@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple
 
-from ..domain.billing import BillingAccount
+from ..domain.billing import BillingAccount, UsageIncrement
 
 
 class AccountRepository(ABC):
@@ -23,8 +23,14 @@ class AccountRepository(ABC):
         pass
 
     @abstractmethod
-    async def increment_account_usage(self, account_id: str, tokens: int, cost: float) -> None:
-        """Atomically increment account usage with transactional resets."""
+    async def increment_account_usage(
+        self, account_id: str, tokens: int, cost: float
+    ) -> UsageIncrement:
+        """Atomically increment account usage with transactional resets.
+
+        Returns the resulting daily-spend position so callers can detect a budget
+        limit crossing without re-reading the account.
+        """
         pass
 
     @abstractmethod

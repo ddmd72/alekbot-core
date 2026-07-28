@@ -9,12 +9,17 @@ never raised into the caller's response path.
 from unittest.mock import AsyncMock
 
 from src.adapters.firestore_quota_service import FirestoreQuotaService
+from src.domain.billing import UsageIncrement
 
 
 class TestRecordUsage:
 
     async def test_awaits_increment_with_account_tokens_cost(self):
         repo = AsyncMock()
+        # Conform to the port contract: the increment reports the daily-spend position.
+        repo.increment_account_usage.return_value = UsageIncrement(
+            daily_cost_before=0.0, daily_cost_after=0.0012, daily_cost_limit=5.0
+        )
         svc = FirestoreQuotaService(repo)
 
         await svc.record_usage("acct-1", "claude-sonnet-4-6", tokens=150, cost=0.0012)
