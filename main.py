@@ -182,8 +182,19 @@ async def main():
         # notification_service and media_storage wired below after they are created
         agent_worker_handler = AgentWorkerHandler(coordinator=coordinator)
 
+        # Ops alert sink — shared by AlertingLLMProxy (LLM 4xx alerts), the billing daily
+        # summary, and the daily budget alert in FirestoreQuotaService. Optional: wired
+        # only when BILLING_SLACK_WEBHOOK_URL is set. Built here (before the quota
+        # service) because that is the earliest consumer.
+        _alert_webhook = None
+        _alert_webhook_url = os.getenv("BILLING_SLACK_WEBHOOK_URL")
+        if _alert_webhook_url:
+            from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
+            _alert_webhook = SlackWebhookAdapter(_alert_webhook_url)
+            logger.info("✅ Ops Slack webhook configured (billing + LLM client-error alerts)")
+
         logger.info("💳 Initializing Billing Agent...")
-        quota_service = FirestoreQuotaService(account_repo)
+        quota_service = FirestoreQuotaService(account_repo, alert_sink=_alert_webhook)
         billing_agent = BillingAgent(
             config=AgentConfig(
                 agent_id="billing_agent",
@@ -291,15 +302,6 @@ async def main():
                     logger.warning("⚠️ Consolidation queue not initialized, overflow batch lost!")
             except Exception as e:
                 logger.error(f"❌ Error in overflow_callback: {e}", exc_info=True)
-
-        # Ops alert sink — shared by AlertingLLMProxy (LLM 4xx alerts) and the billing
-        # daily summary. Optional: wired only when BILLING_SLACK_WEBHOOK_URL is set.
-        _alert_webhook = None
-        _alert_webhook_url = os.getenv("BILLING_SLACK_WEBHOOK_URL")
-        if _alert_webhook_url:
-            from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
-            _alert_webhook = SlackWebhookAdapter(_alert_webhook_url)
-            logger.info("✅ Ops Slack webhook configured (billing + LLM client-error alerts)")
 
         # 1. Shared service container (LLM adapters, repositories, prompt infra, session store)
         logger.info("🏭 Initializing Service Container...")

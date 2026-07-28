@@ -177,6 +177,18 @@ stale `running` jobs.
   (OpenAI/Gemini subtract cached from total).
 - **Billing daily summary** — Scheduler 09:00 Europe/Madrid → `billing_daily_summary`: posts yesterday's
   `prev_daily_tokens/cost` snapshot to Slack. Per-provider cache pricing Claude 0.1×/OpenAI 0.1×/Gemini 0.25×.
+- **Token accounting is per-execution, NOT per-instance.** `TokenLedger` (`domain/billing.py`) lives in a
+  `ContextVar` opened by `BaseAgent._execution_billing_scope()`; `_call_llm` accumulates into it,
+  `_flush_billing` reads it. Agent instances are per-user singletons and `DelegationEngine` fans a tool
+  batch out via `asyncio.gather`, so instance-level accumulators billed each concurrent execution the
+  running total (3.6× inflation, fixed 2026-07-28). The scope's `reset(token)` is load-bearing — an
+  inline-awaited specialist would otherwise capture its caller's ledger. **Account counters written before
+  2026-07-28 are inflated; for historical cost use BigQuery `prompt_content`, not `usage.*`.**
+- **Daily budget alert (advisory, never a gate).** `BillingAccount.daily_cost_limit` (default $5) →
+  `increment_account_usage` returns `UsageIncrement`; `FirestoreQuotaService` posts to the ops sink
+  (`AlertSinkPort`, `BILLING_SLACK_WEBHOOK_URL`) when the day *crosses* the limit — once per day, not
+  while-over. `check_quota` is dead **by decision** (alert-only; owner dropped the hard cap 2026-07-26).
+  See `decisions/billing_execution_scoped_ledger.md`.
 - **Daily Email Review** (`gmail_daily_review*` in `UserBotConfig`; hourly `start_daily_email_review`
   fan-out → per-user `daily_email_review`) — fetches last-24h emails (cap 200, full body, cleaned by
   adapter: BS4 + `html.unescape` + invisible-Unicode strip), passes a structured JSON array to Smart via

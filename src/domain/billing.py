@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, TYPE_CHECKING, Optional, Tuple
 from .language import LanguageCode
@@ -64,6 +65,34 @@ class AccountUsageStats(BaseModel):
         return 0, 0.0
 
 
+# Daily spend that trips the budget alert. Advisory, NOT a gate: crossing it posts to
+# the ops channel and execution continues (the hard monthly cap was dropped 2026-07-26).
+# Sized against measured usage — a normal day is ~$3.75, so $5 flags an anomaly, not a
+# busy morning.
+DEFAULT_DAILY_COST_LIMIT = 5.0
+
+
+class UsageIncrement(BaseModel):
+    """Outcome of one usage increment — enough to detect a budget-limit crossing.
+
+    Returned by the increment so the caller can alert without a second read: the
+    transaction already held the account document.
+    """
+    daily_cost_before: float
+    daily_cost_after: float
+    daily_cost_limit: float
+
+    @property
+    def crossed_daily_limit(self) -> bool:
+        """True only on the increment that took the day from under the limit to over it.
+
+        Crossing, not "is over": this fires exactly once per day, so the alert cannot
+        spam every subsequent request. It also means a counter that is already inflated
+        above the limit stays quiet until the next daily rotation resets it.
+        """
+        return self.daily_cost_before < self.daily_cost_limit <= self.daily_cost_after
+
+
 class BillingAccount(BaseModel):
     """
     Billing account entity (tenant in multi-tenant architecture).
@@ -75,6 +104,7 @@ class BillingAccount(BaseModel):
 
     daily_token_limit: int = 100_000
     monthly_cost_limit: float = 50.0
+    daily_cost_limit: float = DEFAULT_DAILY_COST_LIMIT
 
     # ========================================================================
     # OAuth Multi-Tenant Session 1: IAM Policy & Configuration Inheritance
@@ -183,3 +213,68 @@ def calculate_cost(
         + (cache_creation_tokens / 1_000_000) * input_price * cache_write_mult
     )
     return round(cost, 6)
+
+
+@dataclass
+class TokenLedger:
+    """Token accumulator for exactly ONE agent execution.
+
+    Scoped per execution on purpose. An agent instance is a per-user singleton in the
+    AgentCoordinator registry, and DelegationEngine dispatches a tool batch through
+    ``asyncio.gather`` — so several executions of the same instance run concurrently.
+    Accumulating on the instance therefore pooled unrelated executions and billed each
+    one the running total (a 22-way fetch_url batch inflated the daily counter ~3.6x;
+    found 2026-07-28). The ledger is held in a ContextVar by ``BaseAgent.process()``,
+    which gives each execution — and each ``asyncio.gather`` child — its own instance.
+
+    Mutable by design: ``_call_llm`` adds every turn's usage to the live ledger.
+    """
+
+    account_id: Optional[str] = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+
+    def add(
+        self,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+    ) -> None:
+        """Add one LLM turn's usage."""
+        self.prompt_tokens += prompt_tokens
+        self.completion_tokens += completion_tokens
+        self.cache_read_tokens += cache_read_tokens
+        self.cache_creation_tokens += cache_creation_tokens
+
+    @property
+    def total_tokens(self) -> int:
+        """Billable token count: uncached input + output + both cache legs.
+
+        Mirrors what the account counters track — cache reads and writes are billed
+        (at a multiplier), so they belong in the total even though providers report
+        them outside ``prompt_tokens``.
+        """
+        return (
+            self.prompt_tokens
+            + self.completion_tokens
+            + self.cache_read_tokens
+            + self.cache_creation_tokens
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        """True when no usage accrued — nothing to bill."""
+        return self.total_tokens == 0
+
+    def cost(self, model: str) -> float:
+        """Cost in USD for the accumulated usage on ``model``."""
+        return calculate_cost(
+            model=model,
+            prompt_tokens=self.prompt_tokens,
+            completion_tokens=self.completion_tokens,
+            cache_read_tokens=self.cache_read_tokens,
+            cache_creation_tokens=self.cache_creation_tokens,
+        )

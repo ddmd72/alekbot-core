@@ -4,7 +4,11 @@ from typing import List, Optional, Tuple
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 
-from ..domain.billing import BillingAccount
+from ..domain.billing import (
+    DEFAULT_DAILY_COST_LIMIT,
+    BillingAccount,
+    UsageIncrement,
+)
 from ..ports.account_repository import AccountRepository
 
 
@@ -42,12 +46,20 @@ class FirestoreAccountRepository(AccountRepository):
         await doc_ref.set(data)
         return account
 
-    async def increment_account_usage(self, account_id: str, tokens: int, cost: float) -> None:
+    async def increment_account_usage(
+        self, account_id: str, tokens: int, cost: float
+    ) -> UsageIncrement:
+        """Atomically increment usage; report the resulting daily-spend position.
+
+        The return value exists so a caller can raise a budget alert without a second
+        read — the transaction already held the document, and only it knows whether the
+        daily counter rotated (a new day starts the comparison from zero).
+        """
         doc_ref = self.accounts_collection.document(account_id)
         now = datetime.now(timezone.utc)
 
         @firestore.async_transactional
-        async def _transaction(transaction):
+        async def _transaction(transaction) -> UsageIncrement:
             snapshot = await doc_ref.get(transaction=transaction)
             if not snapshot.exists:
                 raise ValueError(f"Account {account_id} not found")
@@ -70,6 +82,10 @@ class FirestoreAccountRepository(AccountRepository):
                 "usage.total_cost": firestore.Increment(cost),
                 "usage.total_requests": firestore.Increment(1),
             }
+
+            # Daily spend before/after this increment. On a rotation the day starts
+            # fresh, so "before" is 0 regardless of the counter's leftover value.
+            daily_cost_before = 0.0 if daily_needs_reset else usage.get("daily_cost", 0.0)
 
             if daily_needs_reset:
                 # Snapshot the day that just ended before resetting. Stamp its
@@ -105,8 +121,14 @@ class FirestoreAccountRepository(AccountRepository):
 
             transaction.update(doc_ref, updates)
 
+            return UsageIncrement(
+                daily_cost_before=daily_cost_before,
+                daily_cost_after=daily_cost_before + cost,
+                daily_cost_limit=data.get("daily_cost_limit", DEFAULT_DAILY_COST_LIMIT),
+            )
+
         transaction = self.db_client.transaction()
-        await _transaction(transaction)
+        return await _transaction(transaction)
 
     async def list_all_accounts(self) -> List[BillingAccount]:
         docs = self.accounts_collection.where(

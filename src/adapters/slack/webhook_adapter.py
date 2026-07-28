@@ -1,9 +1,10 @@
 import aiohttp
 
+from ...ports.alert_sink import AlertSinkPort
 from ...utils.logger import logger
 
 
-class SlackWebhookAdapter:
+class SlackWebhookAdapter(AlertSinkPort):
     """Sends messages to a Slack channel via incoming webhook URL."""
 
     def __init__(self, webhook_url: str) -> None:

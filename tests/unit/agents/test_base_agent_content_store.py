@@ -49,11 +49,11 @@ class TestContentCapture:
         agent = _agent()
         store = AsyncMock(spec=PromptContentStore)
         agent._prompt_content_store = store
-        agent._billing_account_id = "acct-1"
         agent.llm = AsyncMock()
         agent.llm.generate_content = AsyncMock(return_value=_response())
 
-        resp = await agent._call_llm(_request(), turn=2)
+        with agent._execution_billing_scope("acct-1"):
+            resp = await agent._call_llm(_request(), turn=2)
 
         assert resp.text == "hi there"
         store.record_turn.assert_awaited_once()

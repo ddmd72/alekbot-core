@@ -618,11 +618,10 @@ async def test_transcript_locked_success_runs_billing_and_span(
     ctx = _make_execution_context(primary_llm, fallback_llm)
     agent._set_execution_context(ctx)
 
-    tokens_before = agent._billing_prompt_tokens
-
-    with patch("src.agents.base_agent.asyncio.sleep", new=AsyncMock()):
-        response = await agent._call_llm(_make_locked_request())
+    with agent._execution_billing_scope(None) as ledger:
+        with patch("src.agents.base_agent.asyncio.sleep", new=AsyncMock()):
+            response = await agent._call_llm(_make_locked_request())
 
     assert response.text == "recovered"
     # _make_llm_response carries prompt_tokens=5 → billing tail ran on retry success
-    assert agent._billing_prompt_tokens == tokens_before + 5
+    assert ledger.prompt_tokens == 5

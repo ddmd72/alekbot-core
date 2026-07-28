@@ -670,11 +670,9 @@ class TestFlushBilling:
         config = AgentConfig(agent_id="a", agent_type="mock", llm_model="claude-sonnet-4-6")
         agent = MockAgent(config)
         agent._quota_service = AsyncMock()
-        agent._billing_account_id = "acc1"
-        agent._billing_prompt_tokens = 100
-        agent._billing_completion_tokens = 50
-
-        await agent._flush_billing()
+        with agent._execution_billing_scope("acc1") as ledger:
+            ledger.add(prompt_tokens=100, completion_tokens=50)
+            await agent._flush_billing()
 
         agent._quota_service.record_usage.assert_awaited_once()
         kw = agent._quota_service.record_usage.await_args.kwargs
@@ -798,10 +796,11 @@ class TestCallLlmFullPaths:
         ))
         agent = self._make_agent_with_llm(mock_llm)
         request = LLMRequest(model_name="test", messages=[])
-        response = await agent._call_llm(request)
+        with agent._execution_billing_scope(None) as ledger:
+            response = await agent._call_llm(request)
         assert response.text == "answer"
-        assert agent._billing_prompt_tokens == 10
-        assert agent._billing_completion_tokens == 5
+        assert ledger.prompt_tokens == 10
+        assert ledger.completion_tokens == 5
 
     @pytest.mark.asyncio
     async def test_call_llm_records_turn_to_content_store(self):
