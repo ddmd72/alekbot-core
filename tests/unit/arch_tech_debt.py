@@ -135,7 +135,17 @@ HANDLER_IMPLEMENTS_PORT_WHITELIST: set[tuple[str, str]] = {
 # Consumed by REQ-ARCH-20.
 # ---------------------------------------------------------------------------
 PLATFORM_FORMAT_WHITELIST_FILES: set[str] = {
-    # _FALLBACK_FETCH_SYSTEM is a minimal hardcoded prompt for fetch_url (acceptable by design).
+    # _FALLBACK_FETCH_SYSTEM — the fetch_url system prompt. TWO deliberate exceptions,
+    # both tracked as IMPLEMENTATION_ROADMAP.md TD-6, both accepted by the owner
+    # 2026-07-29 rather than fixed inline:
+    #   1. REQ-ARCH-20 (this rule): it carries "Slack mrkdwn" formatting instructions.
+    #   2. CLAUDE.md "No fallback prompts / Firestore is the single source of truth":
+    #      the name says fallback, but _handle_fetch_url passes it unconditionally and
+    #      never calls the prompt builder — so fetch_url has NO Firestore prompt at all.
+    #      An orphaned `websearch_light` profile + WEBSEARCH_LIGHT_* tokens already exist
+    #      in Firestore with zero code references; that is the intended landing spot.
+    # Until then the wording is tuned deliberately (see the constant's comment) — it is
+    # production behaviour for ~73% of the briefing's web_search cost, not dead code.
     os.path.normpath("src/agents/web_search_agent.py"),
     # Prompt builder assembles platform-specific formatting rules by design.
     os.path.normpath("src/services/prompt_builder.py"),

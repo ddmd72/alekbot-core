@@ -27,8 +27,21 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   Deferred-deletion tech debt — see `docs/04_solution_strategy/decisions/quick_agent_deferred_deletion.md`.
 - WebSearch — provider-native grounded search (`use_grounding=True`; each adapter injects its own:
   Gemini Google Search, OpenAI `web_search`, Claude `web_search_20250305`+`web_fetch_20250910`),
-  called by Smart. QUICK/RESEARCH cognitive triage. JSON output (findings/source/url) enforced via
-  `response_schema`. Intents: `search_web`, `fetch_url`.
+  called by Smart. QUICK/RESEARCH cognitive triage. Intents: `search_web`, `fetch_url`.
+  - **JSON output is prompt-only, NOT schema-enforced.** `use_grounding` makes the OpenAI adapter
+    suppress `text.format` (Web Search + JSON mode → 400), so the findings/source/url shape comes
+    from the `WEBSEARCH_OUTPUT_FORMAT` token alone. The agent has **no `_parse_response`** either —
+    `_call_grounded_llm` hands `response.text` to the orchestrator verbatim. Malformed JSON
+    therefore never raises; it just degrades what Smart can compose. `confidence` is
+    `len(text)/500`, so a terse answer reads as low-confidence downstream.
+  - **Per-intent tier.** `search_web` runs on the agent's resolved tier (BALANCED); `fetch_url`
+    runs on `WebSearchAgentConfig.fetch_url_tier` (ECO), resolved to a model by the provider via
+    `LLMPort.get_model_for_tier` — the agent names a tier, never a model. `None` disables the
+    downgrade. Measured 2026-07-29, `scripts/websearch/`. See
+    `decisions/websearch_per_intent_tier.md`.
+  - `fetch_url`'s system prompt is an inline constant (`_FALLBACK_FETCH_SYSTEM`), not a Firestore
+    prompt — tracked exception, IMPLEMENTATION_ROADMAP.md TD-6. Its wording is tuned and
+    load-bearing; read the comment before editing it.
 - Memory — MemorySearchAgent (ECO): LLM extracts search keys → multi-vector RRF. Intents:
   `search_memory`; `save_to_memory` (zero LLM — orchestrator fills `context.text` via `context_schemas`;
   agent attaches `consolidation_text` on `MessagePart` → picked up in the normal consolidation batch).

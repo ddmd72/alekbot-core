@@ -74,6 +74,12 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # Multi-turn cache markers in the Claude adapter (cache_last_message +
     # sliding rolling window) further offset cost on later turns.
     "consolidation": PerformanceTier.PERFORMANCE,
+    # Stays BALANCED for the agent as a whole — this tier serves the `search_web` intent,
+    # which is genuine multi-angle research. Measured 2026-07-29 on real user queries
+    # (scripts/websearch/ab_user_queries.py): ECO/nano was 3.7x cheaper but returned 6.0
+    # findings vs 7.9, dropped the OUTPUT_FORMAT JSON on 1 of 7, and ran 38.7s avg vs 18.7s
+    # with a 79s outlier against a 90s agent timeout. The cheap tier is applied only to the
+    # mechanical `fetch_url` intent — see WebSearchAgentConfig.fetch_url_tier.
     "web_search": PerformanceTier.BALANCED,
     # BALANCED → gpt-5.4-mini on OpenAI (maps_search default provider). ECO/nano
     # proved too weak for the multi-turn tool synthesis; mini adds reasoning

@@ -254,6 +254,86 @@ mandatory before team/multi-user rollout.
 
 ---
 
+### TD-5: Self-reminder `update_note` overwrites `instruction` in place — no history, no protection [P2] — 🔲 OPEN (Phase 1 planned)
+
+- **Problem:** `update_note` (`firestore_agent_note_adapter.py:141`) does `doc_ref.update(updates)` —
+  a plain in-place field overwrite. No snapshot, no version chain (`AgentNote` has no SCD2 fields,
+  unlike `FactEntity`), so a rewritten `instruction` is **unrecoverable**. `instruction` is a
+  monolithic string: any "small correction" regenerates and replaces the whole blob — there is no
+  field-level patch. **Same defect class as TD-4** (`update_fact` in-place overwrite), reminders
+  instead of facts.
+- **Why it matters:** important recurring reminders (e.g. the daily morning briefing, note_id
+  `1775554448451`) are crafted over long sessions, yet the firing alert
+  (`reminders_service.py:197-200`) explicitly invites the autonomous agent to edit/delete on
+  **every** fire ("The manage_self_reminders intent is available if you decide to update or delete
+  it" + "act on anything you judge valuable right now"). A daily reminder is therefore a daily
+  invitation to silently rewrite itself, with no recovery. Incident 2026-07-26: the bot fully
+  overwrote the briefing instruction during a user-driven "small correction" and could not diff
+  against the original ("оригінал не зберігся"). The only current safeguard — `notify_raw` per CRUD
+  (`notes_agent.py:473`) — detects post-hoc but neither prevents nor recovers.
+- **Fix — Phase 1 (planned):**
+  - **A. Revision history (recoverability).** Before `update_note` writes, snapshot the prior content
+    to an append-only `revisions` subcollection (recommended over a capped array — cheap, keeps the
+    full tail, and parallels the TD-4 SCD2 fix). Firing-path reschedules bypass `update_note`
+    (`reschedule_if_due_at:206`, `claim_one_time_if_due_at:290`), so daily fires do **not** spam
+    revisions — only genuine content edits do.
+  - **C. Strip the mutation invitation for protected notes.** Add `protected: bool` to `AgentNote`
+    (data only in Phase 1). For protected notes, omit the "manage_self_reminders is available…" +
+    "act on anything valuable" lines from `build_reminder_alert` — don't hand the firing agent the
+    temptation and the tool pointer.
+- **Files:** `src/domain/agent_note.py` (`protected` field), `src/adapters/firestore_agent_note_adapter.py`
+  (`update_note` revision snapshot), `src/services/reminders_service.py` (`build_reminder_alert`
+  conditional), `src/ports/agent_note_port.py` (revision read/write if surfaced).
+- **Scope note:** storage grows by one small doc per content edit — negligible (edits are rare vs
+  fires). Tests are load-bearing: `grep -rn "update_note\|build_reminder_alert" tests/` before
+  changing semantics.
+- **Deferred — Phase 2 (not in this cut):** (B) enforce protection — refuse content edits to a
+  protected note when the request originates from an autonomous fire, via an `origin` signal threaded
+  through the firing→delegation context; user-only `set_reminder_protection` toggle. (E)
+  propose-before-persist: on protected `instruction` edits, surface the new text + diff to the user
+  and write only on confirmation.
+- **Evaluate first:** review results of the current (2026-07-26) rewritten morning-briefing reminder
+  before committing the Phase 1 build — validates whether C's "don't invite edits" materially reduces
+  autonomous drift.
+
+---
+
+### TD-6: `fetch_url` has no Firestore prompt — inline prompt is the production path [P2] — 🔲 OPEN
+
+- **Problem:** `WebSearchAgent._handle_fetch_url` (`web_search_agent.py:132`) passes
+  `_FALLBACK_FETCH_SYSTEM` **unconditionally** and never calls `prompt_builder.build_for_agent()`.
+  The name is wrong: nothing falls back to it — it is the only prompt the `fetch_url` intent has
+  ever used. That breaks the CLAUDE.md rule "No fallback prompts. Agents must not contain
+  inline/hardcoded fallback prompts. The Firestore prompt is the single source of truth."
+  It is also the existing REQ-ARCH-20 whitelist entry in `tests/unit/arch_tech_debt.py`
+  (hardcoded "Slack mrkdwn"), so one file carries two exceptions to two different rules.
+- **Why it matters:** this is not dead code — `fetch_url` is 31 of the morning briefing's 40
+  web_search calls and ~73% of its web_search cost. The prompt therefore drives real spend and
+  real output quality, while sitting outside the prompt system: no per-user override, no A/B via
+  Firestore, no cache-boundary participation, and every wording change needs a deploy.
+  Demonstrated concretely on 2026-07-29: the shipped wording ("return the complete page text
+  without omissions") contradicted the per-call instruction to extract specific items. Luna
+  absorbed the contradiction; on the cheaper model now used for this intent
+  (`decisions/websearch_per_intent_tier.md`) it surfaced as page chrome and empty answers on bare
+  URLs. Fixed by editing the constant — exactly the deploy-coupled workflow this TD is about.
+- **Landing spot already exists:** Firestore holds an orphaned `websearch_light` prompt profile +
+  blueprint (`websearch_light_agent_v1`) and `WEBSEARCH_LIGHT_{PROPERTIES,COGNITIVE_PROCESS,
+  EXECUTION,OUTPUT_FORMAT}` tokens with **zero code references**; the dev user's stored config even
+  carries `agent_tiers["websearch_light"] = "eco"`. Someone built this path and never wired it.
+- **Fix:** author a `fetch_url` profile (adapt `websearch_light`, whose current text is phrased for
+  search, not URL fetch), call `build_for_agent()` in `_handle_fetch_url`, and on failure return
+  `AgentResponse.failure()` per the fail-fast rule instead of degrading to an inline string. Then
+  delete the constant and drop the `arch_tech_debt.py` whitelist entry.
+- **Constraint the migration must preserve:** the prompt serves two request shapes, because
+  `user_content = f"{query}\n\n{url}" if query else url`. A wording that only covers the
+  query-present case regresses bare-URL fetches badly — measured on nano, 2.1 links / 160
+  page-furniture markers vs 29.4 / 0 across 7 sources. Harness:
+  `scripts/websearch/tune_fetch_prompt.py`.
+- **Deferred deliberately** (owner, 2026-07-29): keep the prompt inline for now, fix only the
+  wording. Revisit with the broader morning-briefing optimisation.
+
+---
+
 ## 🏢 Planned Milestones (Phase 3: Enterprise)
 
 - **Milestone 7**: User Onboarding & OAuth

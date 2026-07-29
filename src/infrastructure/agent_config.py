@@ -27,6 +27,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+from ..domain.user import PerformanceTier
+
 
 # ========================================================================
 # ARCHITECTURE FIX: Feature flags read from env ONCE at import time.
@@ -132,8 +134,30 @@ class MemorySearchAgentConfig:
 
 @dataclass
 class WebSearchAgentConfig:
+    """Behavior parameters for WebSearchAgent (two intents: search_web, fetch_url)."""
+
     temperature: float = 1.0
     timeout_ms: int = 90_000
+
+    # Performance tier for the `fetch_url` intent ONLY. `search_web` always uses the
+    # agent's resolved tier (UserBotConfig.get_tier_for_agent("web_search")).
+    #
+    # WHY A SEPARATE TIER: the two intents are different jobs. `search_web` is multi-angle
+    # research — plan searches, weigh sources, reconcile contradictions. `fetch_url` opens
+    # one known page and extracts the items named in the request. Measured 2026-07-29
+    # (scripts/websearch/): on fetch_url the ECO model matched BALANCED on extracted-item
+    # count at ~4.7x lower cost, while on search_web it lost ~25% of findings, ran 2x
+    # slower, and dropped the required JSON shape on 1 of 7 real user queries.
+    #
+    # HOW IT IS APPLIED: this is a TIER, not a model. WebSearchAgent hands it to
+    # LLMPort.get_model_for_tier(), so each provider maps it to its own cheap model
+    # (OpenAI → gpt-5.4-nano, Gemini → flash-lite, Claude → haiku). The agent never names
+    # a model — see the CLAUDE.md rule "the agent does not select the model itself".
+    # Only OpenAI (the web_search default provider) was measured; the others are reached
+    # on failover only.
+    #
+    # Set to None to disable the downgrade and run fetch_url on the agent's own tier.
+    fetch_url_tier: Optional[PerformanceTier] = PerformanceTier.ECO
 
 
 # ---------------------------------------------------------------------------

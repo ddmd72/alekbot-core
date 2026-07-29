@@ -135,7 +135,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | Router (Gemini) | ECO | — | LLM triage every request; **always routes to Smart** |
 | Smart | per-config | `delegate_to_specialist` | primary path; re-evaluates after tool results |
 | Quick | ECO | — | emergency fallback + `notify` formatter (never primary) |
-| WebSearch | BALANCED | `search_web`, `fetch_url` | provider-native grounded search |
+| WebSearch | BALANCED / **ECO on `fetch_url`** | `search_web`, `fetch_url` | provider-native grounded search |
 | Memory | ECO | `search_memory`, `save_to_memory` | multi-vector RRF; save = zero-LLM |
 | EmailSearch | ECO | `search_emails`, `get_email_details`, `get_email_attachment` | |
 | EmailClassification | BALANCED | — | called by EmailIndexingService, not by agents |

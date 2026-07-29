@@ -18,6 +18,9 @@ class TestWebSearchAgent:
     def mock_llm(self):
         llm = MagicMock(spec=LLMPort)
         llm.generate_content = AsyncMock(return_value=LLMResponse(text=""))
+        # fetch_url resolves its own (cheaper) tier through the port — see
+        # WebSearchAgentConfig.fetch_url_tier. Port contract returns a model name.
+        llm.get_model_for_tier = MagicMock(return_value="gpt-5.4-nano")
         return llm
 
     @pytest.fixture
