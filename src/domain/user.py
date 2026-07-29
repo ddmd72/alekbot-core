@@ -81,9 +81,31 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # with a 79s outlier against a 90s agent timeout. The cheap tier is applied only to the
     # mechanical `fetch_url` intent — see WebSearchAgentConfig.fetch_url_tier.
     "web_search": PerformanceTier.BALANCED,
-    # BALANCED → gpt-5.4-mini on OpenAI (maps_search default provider). ECO/nano
-    # proved too weak for the multi-turn tool synthesis; mini adds reasoning
-    # quality. Latency stays bounded by thinking="low" + turn count, not model size.
+    # BALANCED → gpt-5.6-luna on OpenAI (maps_search default provider). Was gpt-5.4-mini
+    # until the GPT-5.6 tier remap on 2026-07-13 — maps moved model as a side effect of
+    # that remap, not by decision. Latency stays bounded by thinking="low" + turn count,
+    # not model size.
+    #
+    # Re-tested 2026-07-29 against cheap Gemini and OpenAI models on a purpose-built geo
+    # suite through the real agent and live MCP (scripts/websearch/ab_maps_models.py).
+    # Keep luna. The cheap models are cheap because they skip the work, and they fail
+    # SILENTLY — the answer looks well-formed:
+    #   • gemini-3.5-flash-lite ($0.30/$2.50, 2x faster) matches luna on small lookups
+    #     (3 Carrefour stores, 2 police stations — identical grounded facts), but on
+    #     "top 10 museums by rating" it spent 3 tool calls where luna spent 13 and
+    #     invented the numbers: review counts rounded as "27,000+"/"800+" where Maps
+    #     returns 57,563/3,917, ratings off by 0.1-0.3, wrong street numbers — all under
+    #     REAL place links. It also ignored "ranked by rating" and padded the list with a
+    #     non-museum. Fabrication under a valid citation is the worst failure mode here.
+    #   • gemini-3.6-flash is 5x DEARER than luna ($1.50/$7.50 plus more turns) and
+    #     fabricated three alternative Puçol→Angers routes with road names and tolls from
+    #     memory, all sharing the single distance the route tool actually returned.
+    #   • gpt-5.4-nano made ZERO tool calls across 6 queries while still emitting text —
+    #     it does not register that it has tools. Confirms the original ECO rejection.
+    # Only luna consistently states what the tools cannot answer (no showtimes, no route
+    # alternatives) instead of filling the gap. Full analysis + the query suite live in
+    # the harness; see also decisions/websearch_per_intent_tier.md for the sibling
+    # per-intent split on web_search.
     "maps_search": PerformanceTier.BALANCED,
     "facts_memory": PerformanceTier.ECO,
     "email_search": PerformanceTier.ECO,
