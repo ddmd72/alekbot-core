@@ -49,9 +49,32 @@ class WebSearchAgent(BaseAgent):
 
     TEMPERATURE = WEB_SEARCH.temperature
 
+    # NOT a fallback despite the name: _handle_fetch_url passes this unconditionally and
+    # never consults the prompt builder, so this IS the fetch_url prompt. That makes it a
+    # tracked exception to the "no inline prompts, Firestore is the single source of truth"
+    # rule in CLAUDE.md — see IMPLEMENTATION_ROADMAP.md TD-6 for the migration, and the
+    # PLATFORM_FORMAT_WHITELIST_FILES entry in tests/unit/arch_tech_debt.py.
+    #
+    # Wording is load-bearing and was tuned against gpt-5.4-nano (ECO), 2026-07-29 —
+    # scripts/websearch/tune_fetch_prompt.py. Two rules earned their place:
+    #
+    #   1. It must serve BOTH request shapes, because _handle_fetch_url builds
+    #      `user_content = f"{query}\n\n{url}" if query else url`. The previous wording
+    #      only described the "return everything" case; on a bare URL nano averaged 2.1
+    #      links and 160 page-furniture markers per 7 sources (one source came back as a
+    #      12.5k-char line-numbered dump of nav menus and button labels). Naming the
+    #      no-request case explicitly took that to 29.4 links and zero markers.
+    #   2. Never ask for "the complete page text without omissions" — it contradicts the
+    #      per-call instruction to extract specific items. A strong model silently ignores
+    #      the contradiction; a small one obeys it and returns chrome instead of content.
     _FALLBACK_FETCH_SYSTEM = (
-        "Fetch the provided URL and return its full content in detail. "
-        "Return the complete page text without omissions. "
+        "Fetch the provided URL and report its substantive content.\n"
+        "If the request states what to extract, return exactly that and nothing else.\n"
+        "If it states nothing, report what the page holds: for a feed or index page, "
+        "list its items; for a single article, give its content in full.\n"
+        "Report editorial content only. Ignore navigation, menus, buttons, ads, "
+        "cookie and subscription notices, related-article rails and other page furniture.\n"
+        "Give the source URL for every item you list.\n"
         "Slack mrkdwn only. No JSON. No code blocks."
     )
 
@@ -111,7 +134,11 @@ class WebSearchAgent(BaseAgent):
             )
 
             system_instruction = f"current_date_time: {current_time_str}\n\n{system_instruction}"
-            return await self._call_grounded_llm(message, system_instruction, query, start_time, context=query)
+            # search_web runs on the agent's own resolved tier — this is real research.
+            return await self._call_grounded_llm(
+                message, system_instruction, query, start_time,
+                context=query, model_name=self.model_name,
+            )
 
         except Exception as e:
             self._on_agent_error(e)
@@ -129,7 +156,8 @@ class WebSearchAgent(BaseAgent):
             query = message.payload.get("query", "")
             user_content = f"{query}\n\n{url}" if query else url
             return await self._call_grounded_llm(
-                message, self._FALLBACK_FETCH_SYSTEM, user_content, start_time, context=url
+                message, self._FALLBACK_FETCH_SYSTEM, user_content, start_time,
+                context=url, model_name=self._fetch_model_name(),
             )
 
         except Exception as e:
@@ -140,6 +168,39 @@ class WebSearchAgent(BaseAgent):
                 error=f"URL fetch failed: {str(e)}",
             )
 
+    def _fetch_model_name(self) -> str:
+        """Resolve the model for the `fetch_url` intent.
+
+        The two intents deserve different models: `search_web` is multi-angle research,
+        `fetch_url` opens one known page and extracts the requested items. The cheap tier
+        for the mechanical one is declared in `WebSearchAgentConfig.fetch_url_tier`
+        (`None` → no downgrade, run on the agent's own model).
+
+        This method hands a TIER to the provider and lets it name the model
+        (`LLMPort.get_model_for_tier`) — the agent never hardcodes a model or branches on
+        provider identity, so the "agents do not select the model themselves" rule holds.
+        Nothing is written to `self`: the result is per call, per
+        `decisions/per_call_execution_context.md`.
+
+        Note the failover asymmetry: if `_call_llm` falls over to the fallback provider it
+        uses `AgentExecutionContext.fallback_model_name`, which is the fallback's BALANCED
+        model, not this tier. Deliberate — on the failover path finishing the job matters
+        more than its price.
+        """
+        tier = WEB_SEARCH.fetch_url_tier
+        if tier is None:
+            return self.model_name
+        try:
+            return self._llm.get_model_for_tier(tier)
+        except (ValueError, AttributeError) as e:
+            # Provider does not publish this tier. Degrading to the agent's own model is
+            # always safe — it is what every fetch used before the split.
+            logger.warning(
+                f"⚠️ [WebSearchAgent] provider cannot resolve tier {tier} for fetch_url "
+                f"({type(e).__name__}: {e}) — falling back to {self.model_name}"
+            )
+            return self.model_name
+
     async def _call_grounded_llm(
         self,
         message: AgentMessage,
@@ -147,13 +208,20 @@ class WebSearchAgent(BaseAgent):
         user_content: str,
         start_time: float,
         context: str,
+        model_name: str,
     ) -> AgentResponse:
-        """Shared grounded LLM call + response packaging for both intents."""
+        """Shared grounded LLM call + response packaging for both intents.
+
+        model_name: resolved by the caller, because the two intents run on different
+            tiers — `search_web` passes ``self.model_name``, `fetch_url` passes
+            ``self._fetch_model_name()``. Passed explicitly rather than read from
+            ``self`` so this method stays intent-agnostic.
+        """
         logger.debug("   → Calling LLM with grounding...")
         llm_start = time.time()
 
         request = LLMRequest(
-            model_name=self.model_name,
+            model_name=model_name,
             system_instruction=system_instruction,
             messages=[Message(role="user", parts=[MessagePart(text=user_content)])],
             use_grounding=True,
