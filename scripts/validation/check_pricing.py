@@ -1,10 +1,30 @@
 """
-Model pricing audit: fetch live prices from providers, compare with billing.py.
+Model pricing audit: two-source consensus against billing.py.
 
-Sources:
-  - OpenRouter  GET https://openrouter.ai/api/v1/models  (no auth, all providers)
-  - OpenAI      GET https://api.openai.com/v1/models     (lists available model IDs)
-  - Gemini      genai.list_models()                      (lists available model IDs)
+VOTING sources — both track provider LIST prices, i.e. what we are actually billed:
+  - LiteLLM     model_prices_and_context_window.json (BerriAI/litellm, raw GitHub)
+  - models.dev  GET https://models.dev/api.json
+
+NON-VOTING, reference only:
+  - OpenRouter  GET https://openrouter.ai/api/v1/models
+
+  OpenRouter is a RESELLER quoting its own rates. It used to be the sole reference, which
+  on 2026-07-29 produced 6 wrong verdicts out of 8 — e.g. it called `gpt-5.6-luna`
+  ($1.00/$6.00, confirmed by both catalogs and OpenAI's own docs) a mismatch because it
+  resells at $0.50/$3.00. A materially lower OR price is an arbitrage lead, never a
+  correction. It is kept in the table for exactly that.
+
+Supporting lookups:
+  - OpenAI      GET /v1/models + a minimal completion per alias → resolved model id
+  - Gemini      client.models.list() + a minimal generate per alias → model_version
+
+  Alias resolution is LOAD-BEARING: the catalogs key on concrete models, and the previous
+  audit resolved aliases live but then compared prices through a stale hardcoded map,
+  yielding false ✅ verdicts for every Gemini `*-latest` entry.
+
+The verdict rule and the dated PRICE_SCHEDULE live in `price_consensus.py` (pure, unit
+tested in tests/unit/validation/test_price_consensus.py). Read that module before changing
+any price.
 
 Output: scripts/memory/pricing_report.md  (gitignored)
 
@@ -22,6 +42,10 @@ from datetime import datetime, timezone
 
 import truststore
 from dotenv import load_dotenv
+
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+import price_consensus  # noqa: E402  (pure logic, no side effects)
+from price_consensus import Price  # noqa: E402
 
 truststore.inject_into_ssl()  # trust the OS keychain (e.g. Charles CA) before any TLS client is built
 load_dotenv()
@@ -47,6 +71,94 @@ async def _fetch_openrouter_prices() -> dict[str, dict]:
         except (ValueError, TypeError):
             pass
     return result
+
+
+# models.dev sits behind a CDN that 403s the default Python-urllib User-Agent.
+_UA = {"User-Agent": "alekbot-pricing-audit/1.0 (+https://github.com/ddmd72/alekbot-core)"}
+
+
+def _get_json(url: str, timeout: int = 60):
+    """GET + parse JSON with a real User-Agent."""
+    import json
+    import urllib.request
+    req = urllib.request.Request(url, headers=_UA)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def _fetch_litellm_prices() -> dict[str, Price]:
+    """LiteLLM's price catalog → {model_id: (input, output)} per million tokens.
+
+    A voting source: it tracks provider LIST prices, which is what we are billed.
+    Keys are sometimes bare (`gpt-5.6-luna`) and sometimes provider-scoped
+    (`vertex_ai/gemini-...`); both forms are indexed under the bare id.
+    """
+    url = ("https://raw.githubusercontent.com/BerriAI/litellm/main/"
+           "model_prices_and_context_window.json")
+    try:
+        data = _get_json(url)
+    except Exception as e:
+        # A source outage must degrade to "single source → review", never kill the audit.
+        print(f"  [warn] LiteLLM catalog unavailable: {e}", file=sys.stderr)
+        return {}
+
+    out: dict[str, Price] = {}
+    for key, v in data.items():
+        if not isinstance(v, dict) or v.get("input_cost_per_token") is None:
+            continue
+        bare = key.split("/")[-1]
+        price = (round(float(v["input_cost_per_token"]) * 1e6, 4),
+                 round(float(v.get("output_cost_per_token") or 0) * 1e6, 4))
+        out.setdefault(bare, price)
+    return out
+
+
+def _fetch_modelsdev_prices() -> dict[str, Price]:
+    """models.dev catalog → {model_id: (input, output)} per million tokens.
+
+    The second voting source. Shape: {provider: {models: {model_id: {cost: {...}}}}}.
+    """
+    try:
+        data = _get_json("https://models.dev/api.json")
+    except Exception as e:
+        print(f"  [warn] models.dev catalog unavailable: {e}", file=sys.stderr)
+        return {}
+
+    out: dict[str, Price] = {}
+    for provider in data.values():
+        for mid, m in (provider.get("models") or {}).items():
+            cost = m.get("cost") or {}
+            if cost.get("input") is None:
+                continue
+            out.setdefault(mid, (round(float(cost["input"]), 4),
+                                 round(float(cost.get("output") or 0), 4)))
+    return out
+
+
+def _lookup_keys(billing_key: str, resolved: dict[str, str]) -> list[str]:
+    """Model ids to price this billing.py entry against, best first.
+
+    Alias resolution is LOAD-BEARING, not informational: catalogs key on concrete models,
+    so a `*-latest` alias either misses entirely or gets priced as whichever generation
+    each catalog happened to resolve it to. That is what produced three bogus
+    SOURCES_DISAGREE verdicts before this existed.
+
+    The bare key is added as a FALLBACK only when the resolved id is a dated snapshot of
+    the same model (`gpt-5.4` → `gpt-5.4-2026-03-05`) — catalogs often carry only the
+    undated id, and both name the same thing. It is deliberately NOT added for a moving
+    alias (`gemini-flash-lite-latest` → `gemini-3.5-flash-lite`), where the alias and the
+    target are different models and falling back would resurrect the original bug.
+    """
+    target = resolved.get(billing_key, billing_key)
+    if target.startswith("error:"):          # live resolution failed — fall back
+        target = billing_key
+    if target.startswith("models/"):         # Gemini ids come back prefixed
+        target = target[len("models/"):]
+    if target == billing_key:
+        return [target]
+    if target.startswith(billing_key):       # dated snapshot of the same model
+        return [target, billing_key]
+    return [target]
 
 
 async def _fetch_openai_model_ids() -> list[str]:
@@ -143,6 +255,10 @@ _EXPECTED_CACHE: dict[str, dict[str, float]] = {
     "gemini-":         {"cache_read": 0.25},
     "models/gemini-":  {"cache_read": 0.25},
     "deep-research-":  {"cache_read": 0.25},
+    # GPT-5.6 bills cache WRITES at 1.25x uncached input (the 5.4/5.5 families do not).
+    # OpenAI: "Cache writes cost 1.25x the uncached input rate, with a 30-minute minimum
+    # cache life." Longest prefix wins, so this beats the generic "gpt-" entry below.
+    "gpt-5.6-":        {"cache_read": 0.10, "cache_write": 1.25},
     "gpt-":            {"cache_read": 0.10},
     "o3-":             {"cache_read": 0.10},
     "o4-":             {"cache_read": 0.10},
@@ -150,11 +266,13 @@ _EXPECTED_CACHE: dict[str, dict[str, float]] = {
 
 
 def _get_expected_cache(key: str) -> dict[str, float] | None:
-    """Return expected cache multipliers for a billing key, or None if no cache expected."""
-    for prefix, expected in _EXPECTED_CACHE.items():
-        if key.startswith(prefix):
-            return expected
-    return None
+    """Return expected cache multipliers for a billing key, or None if no cache expected.
+
+    LONGEST matching prefix wins — "gpt-5.6-" must beat "gpt-", otherwise dict order
+    decides and the 5.6 family gets judged by the generic no-cache-write expectation.
+    """
+    matches = [(len(p), e) for p, e in _EXPECTED_CACHE.items() if key.startswith(p)]
+    return max(matches)[1] if matches else None
 
 
 _BILLING_TO_OR: dict[str, str] = {
@@ -214,11 +332,26 @@ PROVIDERS = {
 _OR_PREFIXES = tuple(PROVIDERS.keys())
 
 
+def _first_quote(catalog: dict[str, Price], candidates: list[str]) -> Price | None:
+    """First candidate id this catalog knows about."""
+    for c in candidates:
+        if c in catalog:
+            return catalog[c]
+    return None
+
+
+def _p(price: "Price | None") -> str:
+    """Table cell for an optional price pair."""
+    return f"{price[0]:g}/{price[1]:g}" if price else "—"
+
+
 def _build_report(
     or_prices: dict[str, dict],
     openai_ids: list[str],
     gemini_ids: list[str],
     billing: dict[str, dict],
+    litellm_prices: dict[str, Price],
+    modelsdev_prices: dict[str, Price],
     gemini_aliases: dict[str, str] | None = None,
     openai_aliases: dict[str, str] | None = None,
 ) -> str:
@@ -227,7 +360,7 @@ def _build_report(
 
     lines.append(f"# Model Pricing Report — {now}\n")
     lines.append("Generated by `make check-pricing`.\n")
-    lines.append("> Prices per million tokens (USD). Source: OpenRouter API.\n")
+    lines.append("> Prices per million tokens (USD). Voting sources: LiteLLM + models.dev. OpenRouter is reference-only.\n")
 
     # -----------------------------------------------------------------------
     # Section 1: Live prices by provider
@@ -304,43 +437,87 @@ def _build_report(
     # Section 4: billing.py audit
     # -----------------------------------------------------------------------
     lines.append("\n---\n")
-    lines.append("## billing.py audit\n")
-    lines.append("Compares every entry in `src/domain/billing.py` against live OpenRouter prices.\n")
-    lines.append("| billing.py key | Billed input | Billed output | OR input | OR output | Status |")
-    lines.append("|----------------|-------------:|--------------:|---------:|----------:|--------|")
+    lines.append("## billing.py audit — two-source consensus\n")
+    lines.append(
+        "Voting sources: **LiteLLM** and **models.dev**, both tracking provider LIST prices "
+        "(what we are billed). Agreement confirms; disagreement, single coverage and no "
+        "coverage all go to review. A dated `PRICE_SCHEDULE` entry overrides consensus — the "
+        "catalogs publish today's number with no expiry.\n"
+    )
+    lines.append(
+        "> OpenRouter is shown for reference only and does **not** vote: it is a reseller "
+        "quoting its own rates. Treating it as truth caused 6 wrong verdicts on 2026-07-29. "
+        "A materially lower OR price is an arbitrage lead, not a correction.\n"
+    )
+    lines.append("| billing.py key | priced as | ours | LiteLLM | models.dev | OR (fyi) | Verdict |")
+    lines.append("|----------------|-----------|-----:|--------:|-----------:|---------:|---------|")
 
-    ok = mismatch = missing = skipped = 0
+    _ICON = {
+        price_consensus.CONFIRMED: "✅",
+        price_consensus.CONSENSUS_DIFFERS: "⚠️",
+        price_consensus.SOURCES_DISAGREE: "🔍",
+        price_consensus.SINGLE_SOURCE: "🔍",
+        price_consensus.UNCOVERED: "❓",
+        price_consensus.SCHEDULE_DRIFT: "⏰",
+        price_consensus.SCHEDULE_STALE: "⚠️",
+    }
+    # Gemini aliases are resolved via "models/<alias>", so strip the prefix from the KEYS
+    # too — _lookup_key is called with the bare billing.py key.
+    resolved_map = {
+        (k[len("models/"):] if k.startswith("models/") else k): v
+        for k, v in {**(gemini_aliases or {}), **(openai_aliases or {})}.items()
+    }
+    today = datetime.now(timezone.utc).date()
+
+    confirmed = 0
+    review: list[str] = []
+    upcoming: list[str] = []
+
     for key, billed in sorted(billing.items()):
-        or_id = _billing_key_to_or(key)
-        if not or_id:
-            lines.append(
-                f"| `{key}` | {billed['input']:.3f} | {billed['output']:.3f} "
-                f"| — | — | ⏭ no OR mapping |"
-            )
-            skipped += 1
-            continue
-        live = or_prices.get(or_id)
-        if not live:
-            lines.append(
-                f"| `{key}` | {billed['input']:.3f} | {billed['output']:.3f} "
-                f"| — | — | ❓ not on OpenRouter |"
-            )
-            missing += 1
-            continue
-        in_match  = abs(billed["input"]  - live["input"])  < 0.001
-        out_match = abs(billed["output"] - live["output"]) < 0.001
-        if in_match and out_match:
-            status = "✅ match"
-            ok += 1
-        else:
-            status = "⚠️ MISMATCH"
-            mismatch += 1
-        lines.append(
-            f"| `{key}` | {billed['input']:.3f} | {billed['output']:.3f} "
-            f"| {live['input']:.3f} | {live['output']:.3f} | {status} |"
-        )
+        candidates = _lookup_keys(key, resolved_map)
+        target = candidates[0]
+        ours = (billed["input"], billed["output"])
+        quotes = {
+            "LiteLLM": _first_quote(litellm_prices, candidates),
+            "models.dev": _first_quote(modelsdev_prices, candidates),
+        }
+        v = price_consensus.resolve_verdict(target, ours, quotes, today)
 
-    lines.append(f"\n**Summary:** {ok} match · {mismatch} mismatch · {missing} not found · {skipped} no OR mapping\n")
+        or_p = or_prices.get(_billing_key_to_or(key) or "")
+        cells = [
+            f"`{key}`",
+            f"`{target}`" if target != key else "—",
+            _p(ours),
+            _p(quotes["LiteLLM"]),
+            _p(quotes["models.dev"]),
+            f"{or_p['input']:g}/{or_p['output']:g}" if or_p else "—",
+            f"{_ICON.get(v.status, '')} {v.status}",
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+
+        if v.status == price_consensus.CONFIRMED:
+            confirmed += 1
+        else:
+            review.append(f"- `{key}` — **{v.status}**: {v.detail}")
+        if v.upcoming:
+            when, price = v.upcoming
+            upcoming.append(
+                f"- `{key}` → {price_consensus._fmt(price)} effective **{when.isoformat()}** "
+                f"(update billing.py on that date; this audit will flag it as `schedule_drift`)"
+            )
+
+    lines.append(
+        f"\n**Summary:** {confirmed} confirmed · {len(review)} need review "
+        f"(of {len(billing)} entries)\n"
+    )
+    if review:
+        lines.append("### Needs review\n")
+        lines.extend(sorted(set(review)))
+        lines.append("")
+    if upcoming:
+        lines.append("### Scheduled price changes\n")
+        lines.extend(sorted(set(upcoming)))
+        lines.append("")
 
     # -------------------------------------------------------------------
     # Section 5: cache multiplier audit
@@ -401,6 +578,14 @@ async def main(out_path: str) -> None:
     gemini_ids = _fetch_gemini_model_ids()
     print(f"  {len(gemini_ids)} models")
 
+    print("Fetching LiteLLM price catalog...", flush=True)
+    litellm_prices = _fetch_litellm_prices()
+    print(f"  {len(litellm_prices)} models")
+
+    print("Fetching models.dev price catalog...", flush=True)
+    modelsdev_prices = _fetch_modelsdev_prices()
+    print(f"  {len(modelsdev_prices)} models")
+
     print("Loading billing.py...", flush=True)
     billing = _load_billing_entries()
     print(f"  {len(billing)} entries")
@@ -425,7 +610,10 @@ async def main(out_path: str) -> None:
             for alias, resolved in openai_aliases.items():
                 print(f"  {alias} → {resolved}")
 
-    report = _build_report(or_prices, openai_ids, gemini_ids, billing, gemini_aliases, openai_aliases)
+    report = _build_report(
+        or_prices, openai_ids, gemini_ids, billing,
+        litellm_prices, modelsdev_prices, gemini_aliases, openai_aliases,
+    )
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:

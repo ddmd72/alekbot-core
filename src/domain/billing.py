@@ -149,8 +149,14 @@ class BillingAccount(BaseModel):
 # cache_write: multiplier for cache creation tokens. Claude: 1.25 (25% surcharge), others: 0.
 _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # --- Gemini ("latest" aliases resolve to current stable generation) ---
-    "gemini-flash-lite-latest":          {"input": 0.10,  "output": 0.40,  "cache_read": 0.25},
-    "gemini-flash-latest":               {"input": 1.50,  "output": 9.00,  "cache_read": 0.25},
+    # These two price a MOVING alias, so they go stale whenever Google promotes a new
+    # generation behind it — silently UNDER-reporting spend. Corrected 2026-07-29 after
+    # `make check-pricing` resolved the aliases live and both catalogs agreed:
+    #   gemini-flash-lite-latest → gemini-3.5-flash-lite  ($0.10/$0.40 → $0.30/$2.50)
+    #   gemini-flash-latest      → gemini-3.6-flash       ($1.50/$9.00 → $1.50/$7.50)
+    # Re-run the audit after any Gemini generation bump; it compares the RESOLVED id.
+    "gemini-flash-lite-latest":          {"input": 0.30,  "output": 2.50,  "cache_read": 0.25},
+    "gemini-flash-latest":               {"input": 1.50,  "output": 7.50,  "cache_read": 0.25},
     "gemini-pro-latest":                 {"input": 2.00,  "output": 12.00, "cache_read": 0.25},
     "gemini-3-flash-preview":            {"input": 0.50,  "output": 3.00,  "cache_read": 0.25},
     "deep-research-pro-preview-12-2025": {"input": 1.25,  "output": 10.00, "cache_read": 0.25},
@@ -161,6 +167,9 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # Sonnet 5 (PERFORMANCE tier default from 2026-07): standard $3/$15 (same as 4.6). Intro
     # pricing is $2/$10 through 2026-08-31 — we track standard list price (conservative; correct
     # after the promo ends) so cost is never under-reported.
+    # Consequence, measured 2026-07-29: Sonnet spend reads 1.5x high until 2026-09-01 (July
+    # volume = $16.19 actual vs $24.28 reported). Deliberate; `make check-pricing` knows this
+    # policy via price_consensus.HOLD_FINAL_PRICE and will not report it as drift.
     "claude-sonnet-5":                   {"input": 3.00,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-6":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-8":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
