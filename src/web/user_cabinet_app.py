@@ -17,6 +17,7 @@ from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
 from ..ports.task_queue import TaskQueue
 from ..ports.language_service_port import LanguageServicePort
 from ..ports.agent_note_port import AgentNotePort
+from ..ports.recurrence_port import RecurrencePort
 from ..utils.logger import logger
 
 # Documentation owner (loaded from environment variable - Secret Manager)
@@ -40,6 +41,7 @@ def create_user_cabinet_blueprint(
     tasks_provider=None,
     language_service: Optional[LanguageServicePort] = None,
     agent_note_port: Optional[AgentNotePort] = None,
+    recurrence_port: Optional[RecurrencePort] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -490,6 +492,15 @@ def create_user_cabinet_blueprint(
     # Bot Reminders (self-reminders / orchestrator notes)
     # ------------------------------------------------------------------
 
+    def _normalize_rule(raw) -> Optional[str]:
+        """Request body value → canonical RRULE. ValueError surfaces as 400."""
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        if not recurrence_port:
+            raise ValueError("Recurrence is not configured on this deployment")
+        return recurrence_port.normalize(text)
+
     @bp.route("/api/user/reminders", methods=["GET"])
     @auth_required
     async def list_reminders():
@@ -512,9 +523,16 @@ def create_user_cabinet_blueprint(
                         "text": n.text,
                         "instruction": n.instruction,
                         "due": n.due.astimezone(user_tz).isoformat() if n.due else None,
-                        "recurrence": (
-                            {"type": n.recurrence.type, "interval": n.recurrence.interval}
-                            if n.recurrence else None
+                        "recurrence": n.recurrence,
+                        # Phrased server-side: the rule grammar lives behind the port,
+                        # the UI must not learn to parse RRULE.
+                        "recurrence_label": (
+                            recurrence_port.describe(n.recurrence)
+                            if (n.recurrence and recurrence_port) else None
+                        ),
+                        "complexity": n.complexity.value if n.complexity else None,
+                        "last_fired": (
+                            n.last_fired.astimezone(user_tz).isoformat() if n.last_fired else None
                         ),
                         "created_at": n.created_at.isoformat() if n.created_at else None,
                     }
@@ -532,7 +550,7 @@ def create_user_cabinet_blueprint(
         """Create a new reminder. Body: {text, instruction, due (ISO), recurrence?}"""
         if not agent_note_port:
             return jsonify({"error": "Reminders not configured"}), 501
-        from ..domain.agent_note import NoteCreate, ReminderRecurrence
+        from ..domain.agent_note import NoteCreate
         from zoneinfo import ZoneInfo
         try:
             body = await request.get_json(force=True) or {}
@@ -550,13 +568,14 @@ def create_user_cabinet_blueprint(
             from datetime import timezone as tz
             due_utc = due.astimezone(tz.utc)
 
-            recurrence = None
-            rec = body.get("recurrence")
-            if rec and isinstance(rec, dict) and rec.get("type"):
-                recurrence = ReminderRecurrence(
-                    type=rec["type"],
-                    interval=rec.get("interval", 1),
+            recurrence = _normalize_rule(body.get("recurrence"))
+            if recurrence:
+                first = recurrence_port.first_occurrence(
+                    recurrence, not_before=due_utc, tz=str(user_tz)
                 )
+                if first is None:
+                    return jsonify({"error": "Recurrence yields no occurrence"}), 400
+                due_utc = first
 
             note = await agent_note_port.create_note(NoteCreate(
                 user_id=g.user_id,
@@ -578,7 +597,7 @@ def create_user_cabinet_blueprint(
         """Update a reminder. Body: {text?, instruction?, due?, recurrence?}"""
         if not agent_note_port:
             return jsonify({"error": "Reminders not configured"}), 501
-        from ..domain.agent_note import NoteUpdate, ReminderRecurrence
+        from ..domain.agent_note import NoteUpdate
         from zoneinfo import ZoneInfo
         try:
             body = await request.get_json(force=True) or {}
@@ -595,14 +614,10 @@ def create_user_cabinet_blueprint(
                 from datetime import timezone as tz
                 due_utc = due.astimezone(tz.utc)
 
-            recurrence = None
-            rec = body.get("recurrence")
-            if rec is not None:
-                if isinstance(rec, dict) and rec.get("type"):
-                    recurrence = ReminderRecurrence(
-                        type=rec["type"],
-                        interval=rec.get("interval", 1),
-                    )
+            recurrence = _normalize_rule(body.get("recurrence"))
+            # An explicitly empty recurrence means "stop repeating" — None alone
+            # cannot say it, PATCH reads None as "leave unchanged".
+            clear_recurrence = "recurrence" in body and not recurrence
 
             update = NoteUpdate(
                 note_id=note_id,
@@ -611,6 +626,7 @@ def create_user_cabinet_blueprint(
                 instruction=body.get("instruction"),
                 due=due_utc,
                 recurrence=recurrence,
+                clear_recurrence=clear_recurrence,
             )
             note = await agent_note_port.update_note(update)
             return jsonify({"note_id": note.note_id, "status": "updated"}), 200

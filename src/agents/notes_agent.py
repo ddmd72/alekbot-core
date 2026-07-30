@@ -37,19 +37,41 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
-from ..domain.agent_note import NoteCreate, NoteUpdate, ReminderRecurrence
+from ..domain.agent_note import NoteCreate, NoteUpdate
 from ..domain.task_complexity import TaskComplexity
 from ..infrastructure.agent_config import NOTES as NOTES_CFG
 from ..infrastructure.agent_manifest import Intent, NOTES as NOTES_DESCRIPTOR
 from ..ports.agent_note_port import AgentNotePort
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, MessagePart
 from ..ports.prompt_builder_port import PromptBuilderPort
+from ..ports.recurrence_port import RecurrencePort
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..services.user_notification_service import UserNotificationService
 
 _NOTES_SOFT_THRESHOLD = 20
+
+# One schedule language for both tools. RRULE (RFC 5545) rather than a fixed
+# type+interval pair: "Tuesdays and Fridays", "08:00 and 20:00" and "last Sunday of
+# the month" are all one reminder, not the duplicates a single-interval model forced.
+_RECURRENCE_PARAM = {
+    "type": "string",
+    "description": (
+        "Repeat schedule as an RFC 5545 RRULE, without DTSTART — 'due' is the anchor "
+        "and the first fire. Omit for a one-time reminder (the default; use it unless "
+        "repetition was asked for). Time of day comes from 'due' unless BYHOUR says "
+        "otherwise. Examples: "
+        "FREQ=DAILY — every day at the due time; "
+        "FREQ=DAILY;INTERVAL=2 — every second day; "
+        "FREQ=WEEKLY;BYDAY=TU,FR — every Tuesday and Friday; "
+        "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO — every other Monday; "
+        "FREQ=DAILY;BYHOUR=8,20;BYMINUTE=0 — twice a day, 08:00 and 20:00; "
+        "FREQ=MONTHLY;BYDAY=-1SU — the last Sunday of each month; "
+        "FREQ=MONTHLY;BYMONTHDAY=1,15 — the 1st and the 15th. "
+        "COUNT and UNTIL are rejected — end a reminder by deleting it."
+    ),
+}
 
 _TOOL_DECLARATIONS = [
     {
@@ -75,21 +97,7 @@ _TOOL_DECLARATIONS = [
                     "type": "string",
                     "description": "ISO-8601 datetime in the user's local time when to fire.",
                 },
-                "recurrence": {
-                    "type": "object",
-                    "description": "Recurrence schedule. Use type='once' for one-time reminders (default). Only use repeating types when explicitly requested.",
-                    "properties": {
-                        "type": {
-                            "type": "string",
-                            "enum": ["once", "hourly", "daily", "weekly", "monthly"],
-                        },
-                        "interval": {
-                            "type": "integer",
-                            "description": "Every N units. Default 1.",
-                        },
-                    },
-                    "required": ["type"],
-                },
+                "recurrence": _RECURRENCE_PARAM,
                 "complexity": {
                     "type": "string",
                     "enum": ["small_talk", "simple_analytics", "deep_reasoning"],
@@ -134,19 +142,19 @@ _TOOL_DECLARATIONS = [
                     "description": "New ISO-8601 due datetime in user's local time. Omit to keep unchanged.",
                 },
                 "recurrence": {
-                    "type": "object",
-                    "description": "New recurrence settings. Replaces existing. Omit to keep unchanged.",
-                    "properties": {
-                        "type": {
-                            "type": "string",
-                            "enum": ["hourly", "daily", "weekly", "monthly"],
-                        },
-                        "interval": {
-                            "type": "integer",
-                            "description": "Every N units. Default 1.",
-                        },
-                    },
-                    "required": ["type"],
+                    **_RECURRENCE_PARAM,
+                    "description": (
+                        "New repeat schedule, replacing the current one. Omit to keep it "
+                        "unchanged; to stop repeating use clear_recurrence. "
+                        + _RECURRENCE_PARAM["description"]
+                    ),
+                },
+                "clear_recurrence": {
+                    "type": "boolean",
+                    "description": (
+                        "True turns a repeating reminder into a one-time one (fires once "
+                        "more at 'due', then is deleted). Cannot be combined with recurrence."
+                    ),
                 },
                 "complexity": {
                     "type": "string",
@@ -205,15 +213,6 @@ def _parse_dt(value: Optional[str], user_tz: ZoneInfo) -> Optional[datetime]:
         return None
 
 
-def _parse_recurrence(args: Optional[Dict[str, Any]]) -> Optional[ReminderRecurrence]:
-    if not args or not args.get("type") or args.get("type") == "once":
-        return None
-    return ReminderRecurrence(
-        type=args["type"],
-        interval=int(args.get("interval") or 1),
-    )
-
-
 def _parse_complexity(value: Optional[str]) -> Optional[TaskComplexity]:
     if not value:
         return None
@@ -240,6 +239,7 @@ class NotesAgent(BaseAgent):
         config: AgentConfig,
         execution_context: AgentExecutionContext,
         notes_port: AgentNotePort,
+        recurrence: RecurrencePort,
         prompt_builder: Optional[PromptBuilderPort] = None,
         user_timezone: str = "UTC",
         notification_service: Optional["UserNotificationService"] = None,
@@ -249,7 +249,9 @@ class NotesAgent(BaseAgent):
         self._llm = execution_context.provider
         self.model_name = execution_context.model_name
         self._notes = notes_port
+        self._recurrence = recurrence
         self._prompt_builder = prompt_builder
+        self._user_tz_name = user_timezone or "UTC"
         self._user_tz = _resolve_tz(user_timezone)
         self._notification_service = notification_service
 
@@ -306,8 +308,19 @@ class NotesAgent(BaseAgent):
             lines = []
             for n in active_notes:
                 due_str = n.due.astimezone(self._user_tz).strftime("%Y-%m-%d %H:%M %Z") if n.due else "no due"
-                rec_str = f", repeats {n.recurrence.type}" if n.recurrence else ""
-                lines.append(f"  - [{n.note_id}] \"{n.text}\" | fires: {due_str}{rec_str}")
+                # Every stored field the tools can write, so an edit is never blind:
+                # the rule verbatim (it is what update_self_reminder takes), the
+                # execution tier, and the last fire.
+                rec_str = f", rrule: {n.recurrence}" if n.recurrence else ""
+                cx_str = f", complexity: {n.complexity.value}" if n.complexity else ""
+                fired_str = (
+                    f", last fired: {n.last_fired.astimezone(self._user_tz).strftime('%Y-%m-%d %H:%M %Z')}"
+                    if n.last_fired else ""
+                )
+                lines.append(
+                    f"  - [{n.note_id}] \"{n.text}\" | fires: {due_str}"
+                    f"{rec_str}{cx_str}{fired_str}"
+                )
                 lines.append(f"    instruction: {n.instruction}")
             system_prompt += "\n\nactive_reminders {\n" + "\n".join(lines) + "\n}"
 
@@ -407,13 +420,26 @@ class NotesAgent(BaseAgent):
             due = _parse_dt(args.get("due"), self._user_tz)
             if due is None:
                 return {"error": "create_self_reminder requires 'due' field (ISO-8601 datetime)."}
+            try:
+                rule = self._normalize_rule(args.get("recurrence"))
+            except ValueError as exc:
+                return {"error": str(exc)}
+            if rule:
+                snapped = self._recurrence.first_occurrence(
+                    rule, not_before=due, tz=self._user_tz_name
+                )
+                if snapped is None:
+                    return {"error": f"Recurrence {rule!r} yields no occurrence after the due date."}
+                # "Tue and Fri" proposed with a Wednesday due must fire Friday — the
+                # rule owns the schedule, the proposed due only says "not before".
+                due = snapped
             instruction = args.get("instruction", "")
             note = await self._notes.create_note(NoteCreate(
                 user_id=user_id,
                 text=args.get("text", ""),
                 instruction=instruction,
                 due=due,
-                recurrence=_parse_recurrence(args.get("recurrence")),
+                recurrence=rule,
                 complexity=_parse_complexity(args.get("complexity")),
             ))
             result: Dict[str, Any] = {"note_id": note.note_id, "status": "created"}
@@ -427,7 +453,7 @@ class NotesAgent(BaseAgent):
             await self._notify(
                 user_id, account_id,
                 f"📌 Reminder set: \"{note.text}\" — {self._fmt_due(note.due)}"
-                + (f" (repeats {note.recurrence.type})" if note.recurrence else ""),
+                + self._fmt_recurrence(note.recurrence),
             )
             return result
 
@@ -435,18 +461,42 @@ class NotesAgent(BaseAgent):
             note_id = str(args.get("note_id") or "").strip()
             if not note_id:
                 return {"error": "update_self_reminder requires non-empty 'note_id'. Read it from active_reminders block; never fabricate or omit."}
+            clear_recurrence = bool(args.get("clear_recurrence"))
+            try:
+                rule = self._normalize_rule(args.get("recurrence"))
+            except ValueError as exc:
+                return {"error": str(exc)}
+            if clear_recurrence and rule:
+                return {"error": "Pass either 'recurrence' or 'clear_recurrence', not both."}
+
+            due = _parse_dt(args.get("due"), self._user_tz)
+            if rule:
+                # A new rule must own the schedule, so the fire time is snapped onto
+                # it — against the new due when given, otherwise the stored one.
+                anchor = due or await self._current_due(note_id, user_id)
+                if anchor is None:
+                    return {"error": f"Reminder {note_id!r} not found."}
+                snapped = self._recurrence.first_occurrence(
+                    rule, not_before=anchor, tz=self._user_tz_name
+                )
+                if snapped is None:
+                    return {"error": f"Recurrence {rule!r} yields no occurrence after the due date."}
+                due = snapped
+
             note = await self._notes.update_note(NoteUpdate(
                 note_id=note_id,
                 user_id=user_id,
                 text=args.get("text"),
                 instruction=args.get("instruction"),
-                due=_parse_dt(args.get("due"), self._user_tz),
-                recurrence=_parse_recurrence(args.get("recurrence")),
+                due=due,
+                recurrence=rule,
                 complexity=_parse_complexity(args.get("complexity")),
+                clear_recurrence=clear_recurrence,
             ))
             await self._notify(
                 user_id, account_id,
-                f"📝 Reminder updated: \"{note.text}\" — {self._fmt_due(note.due)}",
+                f"📝 Reminder updated: \"{note.text}\" — {self._fmt_due(note.due)}"
+                + self._fmt_recurrence(note.recurrence),
             )
             return {"note_id": note.note_id, "status": "updated"}
 
@@ -466,9 +516,31 @@ class NotesAgent(BaseAgent):
     # Helpers
     # ------------------------------------------------------------------
 
+    def _normalize_rule(self, raw: Any) -> Optional[str]:
+        """Tool argument → canonical RRULE, or None when no schedule was given.
+
+        Raises ``ValueError`` carrying the port's reason — returned to the LLM as a
+        tool error so it can correct the rule instead of silently storing a broken one.
+        """
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        try:
+            return self._recurrence.normalize(text)
+        except ValueError as exc:
+            raise ValueError(f"Invalid recurrence rule {text!r}: {exc}") from exc
+
+    async def _current_due(self, note_id: str, user_id: str) -> Optional[datetime]:
+        note = await self._notes.get_note(user_id=user_id, note_id=note_id)
+        return note.due if note else None
+
     def _fmt_due(self, due: datetime) -> str:
         """Format UTC datetime as user-local string for transparency notifications."""
         return due.astimezone(self._user_tz).strftime("%d %b %Y %H:%M %Z")
+
+    def _fmt_recurrence(self, rule: Optional[str]) -> str:
+        """User-facing schedule suffix — phrased, never the raw rule."""
+        return f" (repeats {self._recurrence.describe(rule)})" if rule else ""
 
     async def _notify(self, user_id: str, account_id: str, text: str) -> None:
         """Best-effort transparency notification — failure is logged and swallowed."""

@@ -975,7 +975,7 @@ class TestHandleExecuteReminder:
         """Recurrent note is rescheduled (not deleted) — the worker must NOT
         delete it after delivery, only stamp last_delivered_due."""
         from src.domain.agent import AgentStatus
-        from src.domain.agent_note import AgentNote, ReminderRecurrence
+        from src.domain.agent_note import AgentNote
         from src.domain.notify_result import NotifyResult
 
         worker, ns = _make_full_worker()
@@ -985,7 +985,7 @@ class TestHandleExecuteReminder:
             text="weekly sync",
             instruction="Post the weekly sync agenda.",
             due=_EXECUTE_DUE,
-            recurrence=ReminderRecurrence(type="weekly", interval=1),
+            recurrence="FREQ=WEEKLY",
             last_fired=None,
             created_at=_EXECUTE_DUE - timedelta(hours=1),
         )

@@ -392,8 +392,7 @@ class TestUpdateNote:
         doc_ref.update.assert_called_once_with({"due": new_due})
         assert note.due == new_due
 
-    async def test_update_recurrence_serialised_to_dict(self, adapter, col_mock):
-        from src.domain.agent_note import ReminderRecurrence
+    async def test_update_recurrence_written_as_rrule_string(self, adapter, col_mock):
         doc_ref = MagicMock()
         doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
             _NOTE_ID, _make_note_data()
@@ -401,13 +400,54 @@ class TestUpdateNote:
         doc_ref.update = AsyncMock()
         col_mock.document.return_value = doc_ref
 
-        recurrence = ReminderRecurrence(type="weekly", interval=2)
-        upd = NoteUpdate(note_id=_NOTE_ID, user_id=_USER_ID, recurrence=recurrence)
+        upd = NoteUpdate(
+            note_id=_NOTE_ID, user_id=_USER_ID, recurrence="FREQ=WEEKLY;INTERVAL=2"
+        )
         await adapter.update_note(upd)
 
         doc_ref.update.assert_called_once_with(
-            {"recurrence": {"type": "weekly", "interval": 2}}
+            {"recurrence": "FREQ=WEEKLY;INTERVAL=2"}
         )
+
+    async def test_clear_recurrence_writes_null(self, adapter, col_mock):
+        """The only way back to a one-time reminder: PATCH's None already means
+        'leave unchanged', so removal needs its own flag."""
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, {**_make_note_data(), "recurrence": "FREQ=DAILY"}
+        ))
+        doc_ref.update = AsyncMock()
+        col_mock.document.return_value = doc_ref
+
+        upd = NoteUpdate(note_id=_NOTE_ID, user_id=_USER_ID, clear_recurrence=True)
+        note = await adapter.update_note(upd)
+
+        doc_ref.update.assert_called_once_with({"recurrence": None})
+        assert note.recurrence is None
+
+    async def test_legacy_recurrence_map_is_read_as_rrule(self, adapter, col_mock):
+        """Documents written before 2026-07-30 hold {type, interval}; they must keep
+        firing without a backfill."""
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, {**_make_note_data(), "recurrence": {"type": "daily", "interval": 3}}
+        ))
+        col_mock.document.return_value = doc_ref
+
+        note = await adapter.get_note(user_id=_USER_ID, note_id=_NOTE_ID)
+
+        assert note.recurrence == "FREQ=DAILY;INTERVAL=3"
+
+    async def test_legacy_recurrence_map_without_interval(self, adapter, col_mock):
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_make_doc_snapshot(
+            _NOTE_ID, {**_make_note_data(), "recurrence": {"type": "weekly"}}
+        ))
+        col_mock.document.return_value = doc_ref
+
+        note = await adapter.get_note(user_id=_USER_ID, note_id=_NOTE_ID)
+
+        assert note.recurrence == "FREQ=WEEKLY"
 
     async def test_update_complexity_serialised_to_value(self, adapter, col_mock):
         from src.domain.task_complexity import TaskComplexity

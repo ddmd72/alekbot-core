@@ -15,13 +15,6 @@ from .task_complexity import TaskComplexity
 
 
 @dataclass
-class ReminderRecurrence:
-    """How to reschedule a reminder after it fires."""
-    type: str       # "hourly" | "daily" | "weekly" | "monthly"
-    interval: int = 1  # every N units (e.g. interval=2, type="daily" → every 2 days)
-
-
-@dataclass
 class AgentNote:
     """Persisted orchestrator self-reminder."""
     note_id: str
@@ -30,7 +23,10 @@ class AgentNote:
     instruction: str                        # Full execution context, run when fired
     created_at: datetime
     due: datetime                           # UTC — when to fire
-    recurrence: Optional[ReminderRecurrence] = None
+    # RFC 5545 RRULE without DTSTART ("FREQ=WEEKLY;BYDAY=TU,FR"); None → one-time.
+    # The anchor is always ``due``, so the rule is a pure pattern. Evaluated
+    # against the user's local wall clock via RecurrencePort.
+    recurrence: Optional[str] = None
     last_fired: Optional[datetime] = None   # UTC — updated after each fire
     # Execution tier for Smart when this reminder fires.
     # None → default simple_analytics (BALANCED + thinking=low).
@@ -52,7 +48,7 @@ class NoteCreate:
     text: str                               # Short display label
     instruction: str                        # Full execution context
     due: datetime                           # UTC
-    recurrence: Optional[ReminderRecurrence] = None
+    recurrence: Optional[str] = None        # RRULE, see AgentNote.recurrence
     complexity: Optional[TaskComplexity] = None
 
 
@@ -64,5 +60,9 @@ class NoteUpdate:
     text: Optional[str] = None
     instruction: Optional[str] = None
     due: Optional[datetime] = None          # UTC
-    recurrence: Optional[ReminderRecurrence] = None
+    recurrence: Optional[str] = None        # RRULE; None = leave unchanged
     complexity: Optional[TaskComplexity] = None
+    # PATCH cannot express "remove" through None — that already means "leave
+    # unchanged" — so turning a recurring reminder back into a one-time one needs
+    # its own flag. Without it the only way back was delete + recreate.
+    clear_recurrence: bool = False

@@ -27,14 +27,12 @@ This removes both defects #2 and #3 from the 2026-04-30 incident:
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Tuple
-from zoneinfo import ZoneInfo
 
-from dateutil.relativedelta import relativedelta
-
-from ..domain.agent_note import AgentNote, ReminderRecurrence
+from ..domain.agent_note import AgentNote
 from ..ports.agent_note_port import AgentNotePort
+from ..ports.recurrence_port import RecurrencePort
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -54,10 +52,12 @@ class RemindersService:
         notes_port: AgentNotePort,
         user_repo: Any,
         task_dispatch: "TaskDispatchService",
+        recurrence: RecurrencePort,
     ) -> None:
         self._notes_port = notes_port
         self._user_repo = user_repo
         self._task_dispatch = task_dispatch
+        self._recurrence = recurrence
 
     async def fire_due_reminders(
         self, now_utc: Optional[datetime] = None
@@ -91,11 +91,25 @@ class RemindersService:
                 skipped += 1
                 continue
 
-            user_tz = ZoneInfo(user_profile.config.timezone or "UTC")
+            user_tz = user_profile.config.timezone or "UTC"
 
             # Step 1 — atomic claim of this fire-time.
             if note.recurrence:
-                next_due = _compute_next_due(note.due, note.recurrence, user_tz)
+                next_due = self._recurrence.next_occurrence(
+                    note.recurrence, after=note.due, tz=user_tz
+                )
+                if next_due is None:
+                    # Rules are validated as open-ended, so this means a corrupted or
+                    # hand-edited rule. Leaving the note untouched is the safe outcome:
+                    # it stops firing and stays inspectable, instead of being rescheduled
+                    # to a guessed time.
+                    logger.error(
+                        "[Reminders] Cannot reschedule %s — rule %r yields no next "
+                        "occurrence (user=%s). Skipped.",
+                        note.note_id, note.recurrence, note.user_id[:8],
+                    )
+                    skipped += 1
+                    continue
                 claimed = await self._notes_port.reschedule_if_due_at(
                     note_id=note.note_id,
                     expected_due=note.due,
@@ -176,10 +190,12 @@ def build_reminder_alert_summary(note: AgentNote) -> str:
 
 def build_reminder_alert(note: AgentNote) -> str:
     if note.recurrence:
-        interval = note.recurrence.interval or 1
+        # Raw RRULE on purpose — this text is read by the orchestrator, which parses
+        # RFC 5545 natively and needs the exact rule to edit it. Human phrasing is a
+        # user-facing concern (RecurrencePort.describe).
         schedule = (
-            f"this reminder recurs every {interval} {note.recurrence.type} "
-            f"— it will fire again on the next cycle."
+            f"this reminder recurs on RRULE {note.recurrence} "
+            f"— it will fire again on the next occurrence."
         )
     else:
         schedule = "this was a one-time reminder, it fires once."
@@ -204,39 +220,3 @@ def build_reminder_alert(note: AgentNote) -> str:
         f"active reminders (manage_self_reminders), user tasks (manage_user_tasks), "
         f"web (search_web), email archive (search_emails)."
     )
-
-
-# ---------------------------------------------------------------------------
-# Utility: compute next due datetime for recurrent reminders
-# ---------------------------------------------------------------------------
-
-def _compute_next_due(
-    current_due: datetime,
-    recurrence: ReminderRecurrence,
-    user_tz: ZoneInfo,
-) -> datetime:
-    """
-    Compute next UTC due datetime after firing.
-
-    - hourly: pure UTC arithmetic (DST-safe by definition)
-    - daily / weekly / monthly: arithmetic in user timezone to preserve wall-clock time
-      (e.g. "every day at 9am" stays at 9am local even across DST transitions)
-    """
-    interval = recurrence.interval or 1
-
-    if recurrence.type == "hourly":
-        return current_due + timedelta(hours=interval)
-
-    local_due = current_due.astimezone(user_tz)
-
-    if recurrence.type == "daily":
-        next_local = local_due + timedelta(days=interval)
-    elif recurrence.type == "weekly":
-        next_local = local_due + timedelta(weeks=interval)
-    elif recurrence.type == "monthly":
-        next_local = local_due + relativedelta(months=interval)
-    else:
-        logger.warning("[compute_next_due] Unknown recurrence type %r, defaulting to daily", recurrence.type)
-        next_local = local_due + timedelta(days=interval)
-
-    return next_local.astimezone(timezone.utc)

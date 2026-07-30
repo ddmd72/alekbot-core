@@ -47,6 +47,7 @@ from ..adapters.firestore_email_job_repo import FirestoreEmailJobRepository
 from ..adapters.firestore_email_exclusions_adapter import FirestoreEmailExclusionsAdapter
 # GoogleTasksAdapter frozen — deactivated in favour of MicrosoftToDoAdapter
 # from ..adapters.google_tasks_adapter import GoogleTasksAdapter
+from ..adapters.dateutil_recurrence_adapter import DateutilRecurrenceAdapter
 from ..adapters.firestore_agent_note_adapter import FirestoreAgentNoteAdapter
 from ..adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from ..adapters.firestore_task_search_index import FirestoreTaskSearchIndex
@@ -148,6 +149,7 @@ class ServiceContainer:
             )
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
+        self.recurrence_adapter = DateutilRecurrenceAdapter()
 
         # ------------------------------------------------------------------
         # Config + biographical context (shared; per-user limits resolved later)
@@ -334,6 +336,7 @@ class ServiceContainer:
             "tasks_provider": self.ms_todo_adapter,
             "task_indexing": self.task_indexing,
             "notes_provider": self.notes_adapter,
+            "recurrence": self.recurrence_adapter,
             "file_conversion_service": self.file_conversion_service,
             "file_storage": self.file_storage,
             "prompt_content_store": self.prompt_content_store,

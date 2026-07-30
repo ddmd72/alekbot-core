@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.adapters.dateutil_recurrence_adapter import DateutilRecurrenceAdapter
 from src.agents.notes_agent import NotesAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.agent_note import AgentNote, NoteCreate, NoteUpdate
@@ -47,6 +48,10 @@ def _make_agent():
     port = AsyncMock(spec=AgentNotePort)
     port.list_active_notes.return_value = []
 
+    # Real evaluator, not a stub: the agent's create/update paths validate and snap
+    # against it, and a mock would let a broken rule through the assertions.
+    recurrence = DateutilRecurrenceAdapter()
+
     execution_context = MagicMock(spec=AgentExecutionContext)
     execution_context.provider = AsyncMock()
     execution_context.model_name = "test-model"
@@ -63,6 +68,7 @@ def _make_agent():
         ),
         execution_context=execution_context,
         notes_port=port,
+        recurrence=recurrence,
         prompt_builder=prompt_builder,
     )
     return agent, port
@@ -386,33 +392,29 @@ class TestParseDt:
 # =============================================================================
 
 
-class TestParseRecurrence:
+class TestNormalizeRule:
+    """Replaces TestParseRecurrence: the tool argument is an RRULE string now, and
+    the agent canonicalises it through RecurrencePort instead of building a value
+    object from a {type, interval} map."""
 
-    def test_valid_recurrence_returns_object(self):
-        from src.agents.notes_agent import _parse_recurrence
-        from src.domain.agent_note import ReminderRecurrence
-
-        result = _parse_recurrence({"type": "daily", "interval": 1})
-        assert isinstance(result, ReminderRecurrence)
-        assert result.type == "daily"
-        assert result.interval == 1
+    def test_valid_rule_is_canonicalised(self):
+        agent, _ = _make_agent()
+        assert agent._normalize_rule("rrule:freq=weekly;byday=tu,fr") == "FREQ=WEEKLY;BYDAY=TU,FR"
 
     def test_none_input_returns_none(self):
-        from src.agents.notes_agent import _parse_recurrence
+        agent, _ = _make_agent()
+        assert agent._normalize_rule(None) is None
 
-        assert _parse_recurrence(None) is None
+    def test_blank_input_returns_none(self):
+        agent, _ = _make_agent()
+        assert agent._normalize_rule("   ") is None
 
-    def test_missing_type_returns_none(self):
-        from src.agents.notes_agent import _parse_recurrence
-
-        assert _parse_recurrence({"interval": 2}) is None
-
-    def test_default_interval_is_one(self):
-        from src.agents.notes_agent import _parse_recurrence
-
-        result = _parse_recurrence({"type": "weekly"})
-        assert result is not None
-        assert result.interval == 1
+    def test_invalid_rule_raises_with_the_reason(self):
+        """The message reaches the LLM as a tool error, so it must name the rule and
+        why it was refused — enough to retry without guessing."""
+        agent, _ = _make_agent()
+        with pytest.raises(ValueError, match="FREQ"):
+            agent._normalize_rule("INTERVAL=2")
 
 
 # =============================================================================
@@ -437,6 +439,7 @@ class TestRunMissingPromptBuilder:
             ),
             execution_context=execution_context,
             notes_port=port,
+            recurrence=DateutilRecurrenceAdapter(),
             prompt_builder=None,  # explicitly no prompt_builder
         )
 
@@ -474,6 +477,7 @@ class TestRunActiveNotesFormatting:
             ),
             execution_context=execution_context,
             notes_port=port,
+            recurrence=DateutilRecurrenceAdapter(),
             prompt_builder=prompt_builder,
         )
 
@@ -582,6 +586,7 @@ class TestNotify:
             ),
             execution_context=execution_context,
             notes_port=port,
+            recurrence=DateutilRecurrenceAdapter(),
             notification_service=notification_service,
         )
 

@@ -503,9 +503,23 @@ class PromptAssemblyService:
                         timing_str = f" (expires: {expires_after})"
                 else:
                     timing_str = ""
-                line = f"    - {text}{timing_str} [id: {note_id}]"
+                # Rendered only when set: a one-time reminder on the default tier stays
+                # a one-line entry. This block sits after the cache boundary, so every
+                # field here is re-sent on every request.
+                detail = ""
+                if recurrence := note.get("recurrence"):
+                    detail += f", repeats: {recurrence}"
+                if complexity := note.get("complexity"):
+                    detail += f", complexity: {complexity}"
+                if last_fired := note.get("last_fired"):
+                    try:
+                        fired_dt = datetime.fromisoformat(str(last_fired))
+                        detail += f", last fired: {fired_dt.strftime('%b %d %H:%M UTC')}"
+                    except (ValueError, TypeError):
+                        detail += f", last fired: {last_fired}"
+                line = f"    - {text}{timing_str}{detail} [id: {note_id}]"
                 note_lines.append(line)
-            header = "    // Reminders you set for yourself. Not visible to the user. Snapshot from turn start.\n    // Full execution context is stored internally. To update or delete — delegate with the id shown in brackets.\n    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time."
+            header = "    // Reminders you set for yourself. Not visible to the user. Snapshot from turn start.\n    // Full execution context is stored internally. To update or delete — delegate with the id shown in brackets.\n    // 'repeats' is an RFC 5545 RRULE anchored on the fire time; delegate the new rule verbatim to change it.\n    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time."
             dynamic_parts.append("active_reminders {\n" + header + "\n" + "\n".join(note_lines) + "\n}")
 
         if include_datetime:
