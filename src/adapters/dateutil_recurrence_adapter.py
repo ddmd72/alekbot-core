@@ -135,7 +135,7 @@ class DateutilRecurrenceAdapter(RecurrencePort):
         if byday := parts.get("BYDAY"):
             phrase.append("on " + ", ".join(self._day_label(d) for d in byday.split(",")))
         if bymonthday := parts.get("BYMONTHDAY"):
-            phrase.append("on day " + ", ".join(bymonthday.split(",")))
+            phrase.append("on " + ", ".join(self._monthday_label(d) for d in bymonthday.split(",")))
         if byhour := parts.get("BYHOUR"):
             minute = parts.get("BYMINUTE", "0").split(",")[0]
             try:
@@ -147,6 +147,16 @@ class DateutilRecurrenceAdapter(RecurrencePort):
             except ValueError:
                 return rule
         return " ".join(phrase)
+
+    @staticmethod
+    def _monthday_label(token: str) -> str:
+        """``15`` → day 15; ``-1`` → the last day (RFC 5545 counts back from month end)."""
+        value = token.strip()
+        if value == "-1":
+            return "the last day"
+        if value.startswith("-") and value[1:].isdigit():
+            return f"the {_ORDINALS.get(value, value)} day"
+        return f"day {value}"
 
     @staticmethod
     def _day_label(token: str) -> str:
