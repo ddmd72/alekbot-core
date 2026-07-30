@@ -48,6 +48,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.adapters.openai_adapter import OpenAIAdapter
+from src.agents.web_search_agent import WebSearchAgent
 from src.domain.billing import calculate_cost
 from src.domain.llm import LLMRequest, Message, MessagePart
 
@@ -58,8 +59,11 @@ DEFAULT_MODEL = "gpt-5.4-nano"
 # --------------------------------------------------------------------------- #
 
 CANDIDATES: Dict[str, str] = {
-    # Shipped today. Baseline — "without omissions" is the line that backfires.
-    "current": (
+    # The prompt actually in production — read from the agent so it cannot drift from
+    # this harness. (Before 2026-07-29 this was the "without omissions" wording whose
+    # self-contradiction the tuning below fixed; kept as `legacy` for regression checks.)
+    "shipped": WebSearchAgent._FALLBACK_FETCH_SYSTEM,
+    "legacy": (
         "Fetch the provided URL and return its full content in detail. "
         "Return the complete page text without omissions. "
         "Slack mrkdwn only. No JSON. No code blocks."
@@ -167,6 +171,10 @@ async def main() -> None:
     ap.add_argument("--prompts", default=",".join(CANDIDATES),
                     help="comma-separated candidate names")
     ap.add_argument("--sources", type=int, default=0, help="cap sources (0 = all)")
+    ap.add_argument("--urls", default="",
+                    help="comma-separated URLs to vet instead of SOURCES — use with "
+                         "--prompts shipped to decide whether a candidate source is worth "
+                         "adding to the briefing's source list")
     ap.add_argument("--concurrency", type=int, default=6)
     args = ap.parse_args()
 
@@ -174,7 +182,11 @@ async def main() -> None:
     unknown = [n for n in names if n not in CANDIDATES]
     if unknown:
         raise SystemExit(f"unknown candidates: {unknown}. Known: {list(CANDIDATES)}")
-    sources = SOURCES[: args.sources] if args.sources else SOURCES
+    if args.urls:
+        sources = [{"url": u.strip(), "kind": "candidate"}
+                   for u in args.urls.split(",") if u.strip()]
+    else:
+        sources = SOURCES[: args.sources] if args.sources else SOURCES
 
     adapter = OpenAIAdapter(api_key=os.environ["OPENAI_API_KEY"])
     sem = asyncio.Semaphore(args.concurrency)
