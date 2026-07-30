@@ -39,6 +39,55 @@ def _make_cloud_trace_processor():
         return None
 
 
+def _content_capture_enabled() -> bool:
+    """Whether prompt/response text is attached to Logfire spans.
+
+    Kill switch for the all-or-nothing content capture: flipping the env var
+    reverts to metadata-only tracing without a code deploy.
+    """
+    return os.getenv("LOGFIRE_CAPTURE_CONTENT", "false").lower() == "true"
+
+
+def _instrument_llm_sdks(logfire) -> None:
+    """Attach Logfire's LLM instrumentation to the provider SDKs.
+
+    Instruments the SDK *classes* (no client argument), so this is independent
+    of when ServiceContainer builds its adapter singletons. ``version='latest'``
+    emits OTel GenAI semantic-convention attributes (gen_ai.input.messages /
+    gen_ai.output.messages / gen_ai.system_instructions) — the LLM panels and
+    the conversation view are driven by those, not by our custom ``llm.*`` ones.
+
+    One instrumentation failure (SDK absent, upstream API change) must not take
+    the process down: tracing is diagnostic, never load-bearing.
+
+    **Known gap — Gemini content is NOT captured.** instrument_google_genai()
+    needs `opentelemetry-instrumentation-google-genai`, which requires
+    `opentelemetry-api~=1.43`, while logfire 4.34 pins `opentelemetry-sdk<1.42`.
+    The two cannot co-install, and the pinned OTel set here is deliberate (see
+    requirements.txt). The call is kept so it self-enables once upstream relaxes
+    the pin; until then it logs one line at startup and Gemini traffic (Router
+    triage, Compute) stays metadata-only in Logfire — still fully captured in
+    BigQuery. Anthropic and OpenAI (which covers Grok, and Smart's primary
+    model) are unaffected.
+    """
+    # google-genai captures message content only behind this OTel opt-in, and
+    # it is read at instrumentation time.
+    os.environ.setdefault("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true")
+
+    # openai covers Grok too — GrokAdapter drives the same AsyncOpenAI client.
+    for label, instrument in (
+        ("anthropic", lambda: logfire.instrument_anthropic(version="latest")),
+        ("openai", lambda: logfire.instrument_openai(version="latest")),
+        ("google_genai", lambda: logfire.instrument_google_genai()),
+    ):
+        try:
+            instrument()
+        except Exception as e:
+            # google_genai is the expected, documented failure — see docstring.
+            note = " (known dependency conflict, expected)" if label == "google_genai" else ""
+            print(f"⚠️ Logfire {label} instrumentation unavailable{note}: {e}")
+
+
 def _init_logfire(service_name: str, also_cloud_trace: bool) -> bool:
     """Configure Logfire as the global OTel provider. Returns False to fall back.
 
@@ -72,6 +121,10 @@ def _init_logfire(service_name: str, also_cloud_trace: bool) -> bool:
         send_to_logfire=True,
         additional_span_processors=extra or None,
     )
+
+    if _content_capture_enabled():
+        _instrument_llm_sdks(logfire)
+
     return True
 
 

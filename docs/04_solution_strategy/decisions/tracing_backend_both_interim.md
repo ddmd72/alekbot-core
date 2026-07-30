@@ -1,6 +1,10 @@
 # Decision: Remove Logfire — Cloud Trace is the sole tracing backend (in-house)
 
-**Status:** **REOPENED 2026-05-31** — a load-bearing reason for removal was factually wrong (see correction). `both` stays active while the call is reconsidered; the user is evaluating hands-on for a few days.
+**Status:** **SUPERSEDED 2026-07-30 by [`logfire_prompt_content_capture.md`](logfire_prompt_content_capture.md) — never executed.** The removal below did not happen and will not; Logfire is kept and its role was *expanded* to full prompt/response capture. The open question at the bottom of this record is answered there. Retained for the reasoning trail — the correction block is still the authoritative account of the PII misconception.
+
+> **Why the outcome flipped.** This record weighed "pre-built GenAI panels (metadata-only) vs SQL over BigQuery" and correctly found that a convenience delta did not justify an external vendor. The requirement then changed: the goal became a **searchable cascade of actual prompt/response content**, which BigQuery cannot represent at all (no `parent_span_id`, and the stored `span_id` points at the enclosing span). Different question, different answer — not a reversal of this record's logic.
+
+**Historical status:** REOPENED 2026-05-31 — a load-bearing reason for removal was factually wrong (see correction). `both` stayed active while the call was reconsidered.
 
 > **Correction (primary source).** An earlier version of this record claimed Logfire's LLM dashboards are "empty by design because content must be sent (PII)." **That is false.** Logfire's GenAI instrumentation does NOT capture prompt/completion content by default — without `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`, spans show `<elided>` and carry **metadata only** (model, tokens, latency). Source: https://pydantic.dev/docs/logfire/integrations/llms/google-genai/ . So metadata-only LLM/agent dashboards ARE achievable, **PII-safe**. The dashboards are empty today only because the GenAI instrumentation (`logfire.instrument_anthropic/openai/google_genai` + the `opentelemetry-instrumentation-*` packages) is not wired — not because of any PII blocker.
 **Date:** 2026-05-31
