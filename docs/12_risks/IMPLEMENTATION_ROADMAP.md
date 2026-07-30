@@ -334,6 +334,58 @@ mandatory before team/multi-user rollout.
 
 ---
 
+### TD-7: usage cost is priced by the agent's DEFAULT model, not the model that ran [P2] — 🔲 OPEN
+
+- **Problem:** `BaseAgent._flush_billing` (`base_agent.py`, the line
+  `model = getattr(self, "model_name", None) or self.config.llm_model or "unknown"`) prices the
+  whole execution with the agent's **default** model from its `AgentExecutionContext`, then calls
+  `ledger.cost(model)`. `TokenLedger` (`domain/billing.py`) is a single bucket with one price, so
+  any execution whose real model differs from the agent default is priced wrong. **Token counts are
+  correct** — this is purely a price defect, and it survived the 2026-07-29 ledger fix (TD in
+  `decisions/billing_execution_scoped_ledger.md`) because that fix addressed *scope*, not *pricing*.
+- **Two live divergences, in opposite directions:**
+  - **Smart — UNDER-reports (pre-existing, the expensive one).** Smart resolves its tier per request
+    via `TaskExecutionResolver` → `ExecutionOverride` (`complexity: deep_reasoning` → ULTRA →
+    `gpt-5.6-sol`, $5/$30), while `self.model_name` stays the agent default (BALANCED → `gpt-5.6-luna`,
+    $1/$6). Every historical `daily_cost` therefore under-states the single most expensive model in
+    the system.
+  - **WebSearch `fetch_url` — OVER-reports (introduced 2026-07-29).** `_fetch_model_name()` resolves
+    the per-intent ECO tier to `gpt-5.4-nano` ($0.20/$1.25) and puts it on the request, but
+    `self.model_name` is still luna. See `decisions/websearch_per_intent_tier.md`.
+  - **Also check:** Smart's cross-provider rotation (`decisions/cross_provider_execution_retry.md`)
+    rebuilds the run on another provider mid-execution — verify whether `self.model_name` follows it.
+    A single execution legitimately spanning two models is exactly what a one-bucket ledger cannot
+    express.
+- **Evidence (2026-07-30 morning briefing, reproduced to the cent):** Firestore `daily_cost` =
+  **$1.4458**; priced from BigQuery at each call's real model = **$1.1815**. Repricing *both* Smart
+  and fetch_url as luna reproduces $1.4458 exactly. Component deltas: Smart $0.6235 → $0.1247
+  (−$0.4988), fetch $0.1940 → $0.9571 (+$0.7631). They partly cancelled that day (net +$0.2643);
+  on a day with heavy interactive Smart traffic the under-report dominates.
+- **Already ruled out — do not re-investigate:**
+  - Token miscounting: BigQuery billable tokens = 1,257,708 = `usage.daily_tokens` exactly, two days
+    running (2026-07-29 and 07-30). The ledger-scope fix is sound.
+  - `cache_creation_tokens`: zero on every OpenAI row that day, so the `cache_write: 1.25` leg is not
+    the cause.
+  - Daily-rotation truncation at `daily_reset_at`: ruled out by the exact token match.
+  - Per-flush logs: `FirestoreQuotaService` logs "Usage recorded …" at DEBUG, which prod does not
+    emit — do not go looking for it.
+- **Fix — accumulate per model.** `TokenLedger` should key its legs by model (`add(model, prompt, …)`,
+  `cost()` summing across models); `_call_llm` already has the truth in `request.model_name`.
+  `_flush_billing` then sums cost over every model the execution touched.
+  **De-risked:** `QuotaService.record_usage(account_id, model, tokens, cost)` takes `model` but
+  `FirestoreQuotaService` never uses it — only `account_id`, `tokens`, `cost` reach
+  `increment_account_usage`. So a multi-model execution can pass any summary label (or the dominant
+  model) without touching the write path or the port contract.
+- **Tests to extend:** `tests/unit/domain/test_billing_accounting.py` (TokenLedger arithmetic),
+  `tests/unit/test_base_agent.py::TestFlushBilling`,
+  `tests/unit/agents/test_base_agent_billing_isolation.py` (per-execution isolation must keep
+  holding). Add a case where one execution spans two models and asserts the cost is the sum, not
+  either model's price applied to all tokens.
+- **Blast radius:** `usage.daily_cost` / `monthly_cost` / `total_cost`, the 09:00 Slack billing
+  summary, and the advisory $5 daily budget alert (`daily_cost_limit`) all consume this number.
+
+---
+
 ## 🏢 Planned Milestones (Phase 3: Enterprise)
 
 - **Milestone 7**: User Onboarding & OAuth
