@@ -215,15 +215,51 @@ For all agents that go through `LLMPort`, full LLM prompt/response content lands
 
 ---
 
+## Reading the cascade in Logfire (since 2026-07-30)
+
+Logfire holds the same prompt/response content **plus the call tree** — which agent delegated to
+whom, what each received and returned. Reach for it whenever the question involves *relationships
+between calls*; BigQuery cannot express them (no `parent_span_id`; the stored `span_id` points at the
+enclosing span, and `trace_id` carries a `tr_` prefix that must be stripped before joining).
+
+Enabled by `LOGFIRE_CAPTURE_CONTENT=true` + `TRACING_BACKEND=both|logfire`. Design and threat model:
+[`decisions/logfire_prompt_content_capture.md`](../04_solution_strategy/decisions/logfire_prompt_content_capture.md).
+**Gemini content is absent** (dependency conflict — see that record); Gemini turns stay in BigQuery.
+
+### Querying it from Claude Code (optional, local-only)
+
+Logfire exposes an MCP server, so an agent session can run SQL over the telemetry directly instead
+of asking for `bq query` output. This is **local tooling — not a project dependency**: nothing is
+added to `requirements.txt` or the container.
+
+```bash
+claude mcp add --transport http logfire https://logfire-us.pydantic.dev/mcp   # US is the default region
+```
+
+Then authenticate: run `claude` **in a terminal** (the VSCode extension only prints status), `/mcp`,
+pick `logfire`, approve in the browser. The OAuth grant lands scopes such as `project:read`,
+`project:read_alert`, `project:read_dashboard` — and `project:write_dashboard`, which is granted by
+default, so the token is not purely read-only. For a strictly read-only client, skip OAuth and pass a
+Logfire API key scoped `project:read` as a Bearer header on `claude mcp add` instead.
+
+**Gotcha that costs a session:** after authenticating, tools may still be missing even though
+`claude mcp list` reports `✔ Connected`. Claude Code caches "this server needs auth" in
+`~/.claude/mcp-needs-auth-cache.json`; an entry written *before* the successful login keeps the
+session from loading the server's tools, and `/mcp reconnect` does not clear it. Remove the stale
+entry and start a **new** session — a reconnect alone is not enough, since tool discovery only runs
+at session start.
+
+---
+
 ## Code Reference
 
 | File | Role |
 |------|------|
 | `src/utils/logger.py` | Logger setup — detects Cloud Run, chooses handler |
 | `src/utils/logging_context.py` | Per-request context vars (user_id, session_id, event_id) |
-| `src/utils/telemetry.py` | OpenTelemetry + Cloud Trace integration |
+| `src/utils/telemetry.py` | OpenTelemetry + Cloud Trace / Logfire; `_instrument_llm_sdks` attaches prompt-content capture (`LOGFIRE_CAPTURE_CONTENT`) |
 | `src/adapters/bigquery_prompt_content_adapter.py` | BigQuery LLM content store (`DEBUG_PROMPTS=true` + `BIGQUERY_PROMPT_DATASET`) |
 
 ---
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-07-30
