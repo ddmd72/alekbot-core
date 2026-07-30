@@ -217,7 +217,11 @@ class TestDescribe:
         ("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO", "every 2 weeks on Mon"),
         ("FREQ=DAILY;BYHOUR=8,20;BYMINUTE=0", "every day at 08:00, 20:00"),
         ("FREQ=MONTHLY;BYDAY=-1SU", "every month on last Sun"),
-        ("FREQ=MONTHLY;BYMONTHDAY=1,15", "every month on day 1, 15"),
+        ("FREQ=MONTHLY;BYMONTHDAY=1,15", "every month on day 1, day 15"),
+        # Negative month days count back from the end — "day -1" reached the user
+        # verbatim in the first live test (2026-07-30).
+        ("FREQ=MONTHLY;BYMONTHDAY=-1", "every month on the last day"),
+        ("FREQ=MONTHLY;BYMONTHDAY=-2", "every month on the 2nd-to-last day"),
     ])
     def test_phrases_common_shapes(self, adapter, rule, expected):
         assert adapter.describe(rule) == expected

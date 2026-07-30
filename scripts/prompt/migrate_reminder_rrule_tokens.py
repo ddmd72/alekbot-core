@@ -89,6 +89,25 @@ _NOTES_NEW_RECURRENCE = '''        recurrence: """
             the user asked for, instead of overwriting the rest.
         """'''
 
+# Follow-up 2026-07-30, from the first live test: asked for "Tuesdays and Fridays" on a
+# Thursday, the model anchored `due` on next Tuesday instead of tomorrow (Friday); asked
+# for "the last day of every month" on 30 July, it anchored on 31 August instead of 31
+# July. The rule is right, the anchor skipped a whole cycle. Code cannot fix this — the
+# snap deliberately moves `due` FORWARD only, so that "start in September" stays possible.
+_NOTES_OLD_ANCHOR = """            Format: an RFC 5545 RRULE string without DTSTART. 'due' is the anchor and the
+            first fire; the time of day comes from 'due' unless BYHOUR overrides it."""
+
+_NOTES_NEW_ANCHOR = """            Format: an RFC 5545 RRULE string without DTSTART. 'due' is the anchor and the
+            first fire; the time of day comes from 'due' unless BYHOUR overrides it.
+
+            'due' MUST be the NEAREST future moment that matches the rule — never the next
+            full cycle. Work it out from 'now' before you call the tool:
+              Thursday, 'every Tuesday and Friday at 11:00'  → due = TOMORROW (Friday) 11:00,
+                                                               NOT next Tuesday.
+              30 July, 'the last day of every month'         → due = 31 JULY, NOT 31 August.
+            The only exception is an explicit later start ('starting in September',
+            'from next month') — then anchor on that start instead."""
+
 _NOTES_OLD_FIELDS = (
     "            Only YOUR schema matters: note_id, text, instruction, due, recurrence, complexity."
 )
@@ -145,6 +164,7 @@ _SMART_NEW_HOW = '''        schedules: """
 _EDITS = {
     "COGNITIVE_PROCESS_NOTES": [
         (_NOTES_OLD_RECURRENCE, _NOTES_NEW_RECURRENCE),
+        (_NOTES_OLD_ANCHOR, _NOTES_NEW_ANCHOR),
         (_NOTES_OLD_FIELDS, _NOTES_NEW_FIELDS),
     ],
     "PROTOCOL_SMART_AGENT_SELECTION": [
@@ -177,14 +197,22 @@ async def _run(mode: str, backup_path: str | None) -> int:
         content = (doc.to_dict() or {}).get("content", "")
         originals[token_id] = content
         new_content = content
+        applied = 0
         for old, new in edits:
+            # Re-runnable: an edit already present is skipped, so the script can be
+            # extended and replayed after a partial rollout (checked before the anchor
+            # because a new text may contain its own anchor).
+            if new in new_content:
+                continue
             if old not in new_content:
                 print(f"❌ {token_id}: anchor not found — token was re-worded, patch by hand:\n{old[:120]}…")
                 return 1
             new_content = new_content.replace(old, new, 1)
+            applied += 1
         patched[token_id] = new_content
         delta = len(new_content) - len(content)
-        print(f"✅ {token_id}: {len(edits)} edit(s) applied, {delta:+d} chars")
+        state = f"{applied}/{len(edits)} edit(s) applied" if applied else "already up to date"
+        print(f"✅ {token_id}: {state}, {delta:+d} chars")
 
     if mode == "dry-run":
         print("\n(dry run — nothing written)")
