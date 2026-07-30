@@ -671,7 +671,7 @@ class TestFlushBilling:
         agent = MockAgent(config)
         agent._quota_service = AsyncMock()
         with agent._execution_billing_scope("acc1") as ledger:
-            ledger.add(prompt_tokens=100, completion_tokens=50)
+            ledger.add("claude-sonnet-4-6", prompt_tokens=100, completion_tokens=50)
             await agent._flush_billing()
 
         agent._quota_service.record_usage.assert_awaited_once()
@@ -680,6 +680,48 @@ class TestFlushBilling:
         assert kw["tokens"] == 150  # prompt + completion (+ cache, here 0)
         # input 100*$3/M + output 50*$15/M = $0.0003 + $0.00075 = $0.00105
         assert kw["cost"] == pytest.approx((100 / 1_000_000) * 3.0 + (50 / 1_000_000) * 15.0)
+
+    @pytest.mark.asyncio
+    async def test_flush_billing_sums_per_model_and_ignores_the_agent_default(self):
+        """TD-7: the price comes from the models that ran, not from the agent's default.
+
+        Smart's default stays luna ($1/$6) while a turn escalates to sol ($5/$30) —
+        pricing everything as luna under-reported the run.
+        """
+        config = AgentConfig(agent_id="a", agent_type="mock", llm_model="gpt-5.6-luna")
+        agent = MockAgent(config)
+        agent.model_name = "gpt-5.6-luna"  # agent default — must not price the run
+        agent._quota_service = AsyncMock()
+        with agent._execution_billing_scope("acc1") as ledger:
+            ledger.add("gpt-5.6-luna", prompt_tokens=1_000, completion_tokens=1_000)
+            ledger.add("gpt-5.6-sol", prompt_tokens=1_000, completion_tokens=1_000)
+            await agent._flush_billing()
+
+        kw = agent._quota_service.record_usage.await_args.kwargs
+        luna = (1_000 / 1_000_000) * 1.0 + (1_000 / 1_000_000) * 6.0
+        sol = (1_000 / 1_000_000) * 5.0 + (1_000 / 1_000_000) * 30.0
+        assert kw["tokens"] == 4_000
+        assert kw["cost"] == pytest.approx(luna + sol)
+        assert kw["cost"] != pytest.approx(2 * luna)  # the old, under-reporting price
+        assert kw["model"] == "gpt-5.6-sol"  # label = costliest leg, not the default
+
+    @pytest.mark.asyncio
+    async def test_flush_billing_prices_a_downgraded_run_below_the_agent_default(self):
+        """WebSearch's `fetch_url` runs on ECO (nano) under a luna default — the flush
+        must bill nano's rate, not the default's (the 2026-07-29 over-report leg)."""
+        config = AgentConfig(agent_id="a", agent_type="mock", llm_model="gpt-5.6-luna")
+        agent = MockAgent(config)
+        agent.model_name = "gpt-5.6-luna"
+        agent._quota_service = AsyncMock()
+        with agent._execution_billing_scope("acc1") as ledger:
+            ledger.add("gpt-5.4-nano", prompt_tokens=10_000, completion_tokens=2_000)
+            await agent._flush_billing()
+
+        kw = agent._quota_service.record_usage.await_args.kwargs
+        assert kw["cost"] == pytest.approx(
+            (10_000 / 1_000_000) * 0.20 + (2_000 / 1_000_000) * 1.25
+        )
+        assert kw["model"] == "gpt-5.4-nano"
 
     @pytest.mark.asyncio
     async def test_flush_billing_noop_without_quota_service(self):
@@ -799,8 +841,9 @@ class TestCallLlmFullPaths:
         with agent._execution_billing_scope(None) as ledger:
             response = await agent._call_llm(request)
         assert response.text == "answer"
-        assert ledger.prompt_tokens == 10
-        assert ledger.completion_tokens == 5
+        # Booked under the model the request actually ran on (request.model_name).
+        assert ledger.by_model["test"].prompt_tokens == 10
+        assert ledger.by_model["test"].completion_tokens == 5
 
     @pytest.mark.asyncio
     async def test_call_llm_records_turn_to_content_store(self):

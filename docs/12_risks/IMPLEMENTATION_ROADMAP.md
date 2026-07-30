@@ -334,7 +334,7 @@ mandatory before team/multi-user rollout.
 
 ---
 
-### TD-7: usage cost is priced by the agent's DEFAULT model, not the model that ran [P2] — 🔲 OPEN
+### TD-7: usage cost is priced by the agent's DEFAULT model, not the model that ran [P2] — ✅ DONE (2026-07-30)
 
 - **Problem:** `BaseAgent._flush_billing` (`base_agent.py`, the line
   `model = getattr(self, "model_name", None) or self.config.llm_model or "unknown"`) prices the
@@ -369,18 +369,18 @@ mandatory before team/multi-user rollout.
   - Daily-rotation truncation at `daily_reset_at`: ruled out by the exact token match.
   - Per-flush logs: `FirestoreQuotaService` logs "Usage recorded …" at DEBUG, which prod does not
     emit — do not go looking for it.
-- **Fix — accumulate per model.** `TokenLedger` should key its legs by model (`add(model, prompt, …)`,
-  `cost()` summing across models); `_call_llm` already has the truth in `request.model_name`.
-  `_flush_billing` then sums cost over every model the execution touched.
-  **De-risked:** `QuotaService.record_usage(account_id, model, tokens, cost)` takes `model` but
-  `FirestoreQuotaService` never uses it — only `account_id`, `tokens`, `cost` reach
-  `increment_account_usage`. So a multi-model execution can pass any summary label (or the dominant
-  model) without touching the write path or the port contract.
-- **Tests to extend:** `tests/unit/domain/test_billing_accounting.py` (TokenLedger arithmetic),
-  `tests/unit/test_base_agent.py::TestFlushBilling`,
-  `tests/unit/agents/test_base_agent_billing_isolation.py` (per-execution isolation must keep
-  holding). Add a case where one execution spans two models and asserts the cost is the sum, not
-  either model's price applied to all tokens.
+- **Shipped 2026-07-30 — accumulate per model.** `TokenLedger.by_model: Dict[str, ModelUsage]`,
+  `add(model, …)` from `_call_llm` keyed on `request.model_name` (rebound to the fallback model
+  when a cross-provider failover re-serves the turn), `cost()` sums each leg at its own rates.
+  `_flush_billing` no longer reads `self.model_name`; `record_usage(model=…)` gets
+  `ledger.dominant_model` as a label — `FirestoreQuotaService` ignores it, so the port is
+  unchanged. Smart's provider rotation needs nothing: it rebuilds the run and each `_call_llm`
+  carries its own model. See `decisions/billing_per_model_pricing.md`.
+- **Covered by:** `tests/unit/domain/test_billing_accounting.py` (two-model execution = sum, not
+  either price on all tokens; downgraded leg; unpriced leg; `dominant_model`),
+  `tests/unit/test_base_agent.py::TestFlushBilling` (agent default ignored both directions),
+  `tests/unit/agents/core/test_base_agent_fallback.py` (failover leg on the fallback model),
+  `tests/unit/agents/test_base_agent_billing_isolation.py` (per-execution isolation still holds).
 - **Blast radius:** `usage.daily_cost` / `monthly_cost` / `total_cost`, the 09:00 Slack billing
   summary, and the advisory $5 daily budget alert (`daily_cost_limit`) all consume this number.
 

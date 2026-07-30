@@ -403,7 +403,8 @@ def _install_ledger_probe() -> None:
         ledger = ba._EXECUTION_LEDGER.get()
         if ledger is not None:
             model = getattr(self, "model_name", "") or ""
-            _LAST_LEDGER[model] = _LAST_LEDGER.get(model, 0.0) + ledger.cost(model)
+            # Grouped by the agent's configured model; priced per model that ran.
+            _LAST_LEDGER[model] = _LAST_LEDGER.get(model, 0.0) + ledger.cost()
         await original(self)
 
     ba.BaseAgent._flush_billing = probing_flush
