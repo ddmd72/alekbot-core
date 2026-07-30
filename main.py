@@ -547,6 +547,7 @@ async def main():
             tasks_provider=container.ms_todo_adapter,
             language_service=_language_service,
             agent_note_port=container.notes_adapter,
+            recurrence_port=container.recurrence_adapter,
         )
 
         # Services for WorkerHandler — wrap ports so the handler never imports ports directly
@@ -566,6 +567,7 @@ async def main():
             notes_port=container.notes_adapter,
             user_repo=user_repo,
             task_dispatch=_task_dispatch_service,
+            recurrence=container.recurrence_adapter,
         ) if (container.notes_adapter and _task_dispatch_service) else None
         _email_embedding_repair_service = EmailEmbeddingRepairService(
             email_repo=indexed_email_repo,

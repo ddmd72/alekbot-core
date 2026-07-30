@@ -1365,13 +1365,21 @@
                   </div>
                   <div style="flex:1;min-width:140px">
                     <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Repeat</label>
-                    <select id="rem-recurrence" class="inp" style="width:100%;margin-top:4px;padding:10px">
+                    <select id="rem-recurrence" class="inp" style="width:100%;margin-top:4px;padding:10px" onchange="onRecurrenceChange()">
                       <option value="">Once</option>
-                      <option value="hourly">Hourly</option>
-                      <option value="daily">Daily</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="monthly">Monthly</option>
+                      <option value="FREQ=HOURLY">Hourly</option>
+                      <option value="FREQ=DAILY">Daily</option>
+                      <option value="FREQ=WEEKLY">Weekly</option>
+                      <option value="FREQ=MONTHLY">Monthly</option>
+                      <option value="__custom__">Custom rule…</option>
                     </select>
+                  </div>
+                </div>
+                <div id="rem-rrule-row" style="display:none;margin-bottom:12px">
+                  <label style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Recurrence rule (RRULE)</label>
+                  <input id="rem-rrule" class="inp" style="width:100%;margin-top:4px" placeholder="FREQ=WEEKLY;BYDAY=TU,FR">
+                  <div style="font-size:12px;color:var(--text-subtle);margin-top:4px">
+                    RFC 5545, no DTSTART. e.g. <code>FREQ=DAILY;BYHOUR=8,20;BYMINUTE=0</code> · <code>FREQ=MONTHLY;BYDAY=-1SU</code>
                   </div>
                 </div>
                 <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -1959,7 +1967,7 @@
         }
         list.innerHTML = _remindersData.map(r => {
           const due = r.due ? new Date(r.due).toLocaleString(undefined, {dateStyle:"medium",timeStyle:"short"}) : "—";
-          const rec = r.recurrence ? `🔁 ${r.recurrence.type}${r.recurrence.interval > 1 ? ` (every ${r.recurrence.interval})` : ""}` : "once";
+          const rec = r.recurrence ? `🔁 ${esc(r.recurrence_label || r.recurrence)}` : "once";
           const instr = (r.instruction || "").replace(/\n/g, "<br>");
           return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
@@ -1990,8 +1998,18 @@
         } else {
           document.getElementById("rem-due").value = "";
         }
-        document.getElementById("rem-recurrence").value = note?.recurrence?.type || "";
+        const rule = note?.recurrence || "";
+        const sel = document.getElementById("rem-recurrence");
+        const preset = [...sel.options].some(o => o.value === rule && rule);
+        sel.value = rule ? (preset ? rule : "__custom__") : "";
+        document.getElementById("rem-rrule").value = preset ? "" : rule;
+        onRecurrenceChange();
         document.getElementById("reminder-form").style.display = "block";
+      }
+
+      function onRecurrenceChange() {
+        const custom = document.getElementById("rem-recurrence").value === "__custom__";
+        document.getElementById("rem-rrule-row").style.display = custom ? "block" : "none";
       }
 
       function hideReminderForm() {
@@ -2008,9 +2026,14 @@
         const text = document.getElementById("rem-text").value.trim();
         const instruction = document.getElementById("rem-instruction").value.trim();
         const due = document.getElementById("rem-due").value;
-        const recType = document.getElementById("rem-recurrence").value;
+        const recSel = document.getElementById("rem-recurrence").value;
+        const recurrence = recSel === "__custom__"
+          ? document.getElementById("rem-rrule").value.trim()
+          : recSel;
         if (!text || !instruction || !due) { showToast("Fill in all fields", "error"); return; }
-        const body = { text, instruction, due, recurrence: recType ? { type: recType, interval: 1 } : null };
+        if (recSel === "__custom__" && !recurrence) { showToast("Enter a recurrence rule", "error"); return; }
+        // Always sent: an empty string is how the API is told to stop repeating.
+        const body = { text, instruction, due, recurrence };
         try {
           const url = editId ? `${API}/api/user/reminders/${editId}` : `${API}/api/user/reminders`;
           const method = editId ? "PUT" : "POST";

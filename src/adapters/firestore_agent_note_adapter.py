@@ -16,6 +16,8 @@ Required Firestore index:
 Migration note: existing documents may have visible_after/expires_after fields.
 These are silently ignored — _dict_to_note does not map them.
 Existing documents without 'instruction' fall back to 'text'.
+'recurrence' was a map {type, interval} before 2026-07-30 and is a bare RRULE string
+now; _read_recurrence translates the old shape on read (no backfill).
 """
 
 from datetime import datetime, timezone
@@ -25,7 +27,7 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..config.environment import EnvironmentConfig
-from ..domain.agent_note import AgentNote, NoteCreate, NoteUpdate, ReminderRecurrence
+from ..domain.agent_note import AgentNote, NoteCreate, NoteUpdate
 from ..domain.task_complexity import TaskComplexity
 from ..ports.agent_note_port import AgentNotePort
 from ..utils.logger import logger
@@ -71,10 +73,7 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             "due": data.due,
             "last_fired": None,
         }
-        if data.recurrence:
-            doc["recurrence"] = {"type": data.recurrence.type, "interval": data.recurrence.interval}
-        else:
-            doc["recurrence"] = None
+        doc["recurrence"] = data.recurrence or None
         if data.complexity:
             doc["complexity"] = data.complexity.value
 
@@ -132,8 +131,10 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             updates["instruction"] = data.instruction
         if data.due is not None:
             updates["due"] = data.due
-        if data.recurrence is not None:
-            updates["recurrence"] = {"type": data.recurrence.type, "interval": data.recurrence.interval}
+        if data.clear_recurrence:
+            updates["recurrence"] = None
+        elif data.recurrence is not None:
+            updates["recurrence"] = data.recurrence
         if data.complexity is not None:
             updates["complexity"] = data.complexity.value
 
@@ -319,13 +320,32 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             return dt.replace(tzinfo=timezone.utc)
         return dt
 
+    @staticmethod
+    def _read_recurrence(raw) -> Optional[str]:
+        """Stored recurrence → RRULE.
+
+        Documents written before 2026-07-30 hold the pre-RRULE map
+        ``{"type": "daily", "interval": 2}``; they are translated on read and
+        rewritten as RRULE by the next update. No backfill — the mapping is total
+        and the fire path only ever reads through here.
+        """
+        if not raw:
+            return None
+        if isinstance(raw, str):
+            return raw
+        if isinstance(raw, dict) and raw.get("type"):
+            freq = str(raw["type"]).upper()
+            interval = int(raw.get("interval") or 1)
+            rule = f"FREQ={freq}"
+            return rule if interval == 1 else f"{rule};INTERVAL={interval}"
+        logger.warning("⚠️ [AgentNote] Unreadable recurrence %r — treated as one-time", raw)
+        return None
+
     @classmethod
     def _dict_to_note(cls, note_id: str, data: dict) -> AgentNote:
         created_at = cls._ensure_utc(data.get("created_at")) or datetime.now(timezone.utc)
 
-        recurrence: Optional[ReminderRecurrence] = None
-        if rec := data.get("recurrence"):
-            recurrence = ReminderRecurrence(type=rec["type"], interval=rec.get("interval", 1))
+        recurrence = cls._read_recurrence(data.get("recurrence"))
 
         # Migration: existing docs without 'instruction' fall back to 'text'
         instruction = data.get("instruction") or data.get("text", "")

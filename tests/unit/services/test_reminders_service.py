@@ -28,11 +28,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from src.domain.agent_note import AgentNote, ReminderRecurrence
+from src.adapters.dateutil_recurrence_adapter import DateutilRecurrenceAdapter
+from src.domain.agent_note import AgentNote
 from src.ports.agent_note_port import AgentNotePort
 from src.services.reminders_service import (
     RemindersService,
-    _compute_next_due,
     build_reminder_alert,
     build_reminder_alert_summary,
 )
@@ -54,7 +54,7 @@ def _make_note(
     *,
     note_id: str = _NOTE_ID,
     user_id: str = _USER_ID,
-    recurrence: ReminderRecurrence = None,
+    recurrence: str = None,
     last_fired: datetime = None,
     due: datetime = None,
 ) -> AgentNote:
@@ -111,6 +111,9 @@ def service(notes_port, user_repo, task_dispatch):
         notes_port=notes_port,
         user_repo=user_repo,
         task_dispatch=task_dispatch,
+        # Real evaluator: rescheduling is what this service exists to do, and a
+        # stubbed next-due would assert nothing about the schedule it produces.
+        recurrence=DateutilRecurrenceAdapter(),
     )
 
 
@@ -231,7 +234,7 @@ class TestRecurrentReminder:
     async def test_successful_claim_enqueues_with_correct_payload(
         self, service, notes_port, task_dispatch,
     ):
-        note = _make_note(recurrence=ReminderRecurrence(type="daily", interval=1))
+        note = _make_note(recurrence="FREQ=DAILY")
         notes_port.list_due_reminders.return_value = [note]
         notes_port.reschedule_if_due_at.return_value = True
 
@@ -260,7 +263,7 @@ class TestRecurrentReminder:
     ):
         """Concurrent cron tick already rescheduled — atomic precondition
         fails → silently skip. This is the canonical fix for defect #3."""
-        note = _make_note(recurrence=ReminderRecurrence(type="daily", interval=1))
+        note = _make_note(recurrence="FREQ=DAILY")
         notes_port.list_due_reminders.return_value = [note]
         notes_port.reschedule_if_due_at.return_value = False
 
@@ -373,9 +376,12 @@ class TestBuildReminderAlert:
         assert "one-time" in alert
 
     def test_recurrent_schedule_label(self):
-        note = _make_note(recurrence=ReminderRecurrence(type="daily", interval=2))
+        """The rule verbatim, not a phrasing: this alert is read by the orchestrator,
+        which needs the exact RRULE to edit the schedule. Human wording is a
+        user-facing concern (RecurrencePort.describe)."""
+        note = _make_note(recurrence="FREQ=DAILY;INTERVAL=2")
         alert = build_reminder_alert(note)
-        assert "2 daily" in alert
+        assert "FREQ=DAILY;INTERVAL=2" in alert
 
     def test_self_reminder_framing(self):
         note = _make_note()
@@ -385,66 +391,13 @@ class TestBuildReminderAlert:
 
 
 # ---------------------------------------------------------------------------
-# _compute_next_due
+# Schedule arithmetic
 # ---------------------------------------------------------------------------
-
-class TestComputeNextDue:
-
-    _UTC = ZoneInfo("UTC")
-    _KYIV = ZoneInfo("Europe/Kyiv")
-    _BASE = datetime(2026, 3, 15, 10, 0, 0, tzinfo=timezone.utc)
-
-    def test_hourly_adds_one_hour(self):
-        result = _compute_next_due(
-            self._BASE, ReminderRecurrence(type="hourly", interval=1), self._UTC
-        )
-        assert result == self._BASE + timedelta(hours=1)
-
-    def test_hourly_interval_2(self):
-        result = _compute_next_due(
-            self._BASE, ReminderRecurrence(type="hourly", interval=2), self._UTC
-        )
-        assert result == self._BASE + timedelta(hours=2)
-
-    def test_daily_adds_one_day(self):
-        result = _compute_next_due(
-            self._BASE, ReminderRecurrence(type="daily", interval=1), self._UTC
-        )
-        assert result == self._BASE + timedelta(days=1)
-
-    def test_weekly_adds_seven_days(self):
-        result = _compute_next_due(
-            self._BASE, ReminderRecurrence(type="weekly", interval=1), self._UTC
-        )
-        assert result == self._BASE + timedelta(weeks=1)
-
-    def test_monthly_adds_one_month(self):
-        base = datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        result = _compute_next_due(
-            base, ReminderRecurrence(type="monthly", interval=1), self._UTC
-        )
-        assert result.month == 2
-        assert result.day == 15
-
-    def test_monthly_end_of_month(self):
-        base = datetime(2026, 1, 31, 10, 0, 0, tzinfo=timezone.utc)
-        result = _compute_next_due(
-            base, ReminderRecurrence(type="monthly", interval=1), self._UTC
-        )
-        # dateutil handles month-end clamping (Jan 31 + 1 month = Feb 28)
-        assert result.month == 2
-
-    def test_result_is_utc(self):
-        result = _compute_next_due(
-            self._BASE, ReminderRecurrence(type="daily", interval=1), self._KYIV
-        )
-        assert result.tzinfo == timezone.utc
-
-    def test_unknown_type_defaults_to_daily(self):
-        result = _compute_next_due(
-            self._BASE, ReminderRecurrence(type="biannual", interval=1), self._UTC
-        )
-        assert result == self._BASE + timedelta(days=1)
+#
+# TestComputeNextDue lived here until 2026-07-30, when the schedule algebra moved
+# behind RecurrencePort (RRULE). Its cases now live — as RRULE equivalents — in
+# tests/unit/adapters/test_dateutil_recurrence_adapter.py. This service is left
+# owning the claim/enqueue flow only.
 
 
 class TestBuildReminderAlertSummary:

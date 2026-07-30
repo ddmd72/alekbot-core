@@ -128,6 +128,15 @@ populates from `UserBotConfig`. Uses it when computing `due` UTC from LLM-provid
 
 ## 5. Recurrence Model
 
+> **⚠ Superseded 2026-07-30 — this section describes the original schedule model.** Recurrence
+> is now an RFC 5545 RRULE string (`AgentNote.recurrence: Optional[str]`, no `DTSTART` — `due` is
+> the anchor), evaluated behind `RecurrencePort` / `DateutilRecurrenceAdapter`. The `{type,
+> interval}` map could not express several weekdays, several times a day, or "the last Sunday of
+> the month", so the agent produced duplicate reminders instead. Legacy documents are translated
+> on read. Month-end behaviour changed with it (skip, not clamp). See
+> `docs/04_solution_strategy/decisions/reminder_rrule_schedules.md` — it is the current spec for
+> everything below in §5, the `recurrence` fields in §6, and the `recurrence` row in §7.
+
 Simpler than `TaskRecurrence` — we compute `next_due` in Python, no dependency on MS Graph.
 
 ```python
@@ -232,7 +241,7 @@ New/changed fields per document:
 | Field         | Type              | Notes                                             |
 |---------------|-------------------|---------------------------------------------------|
 | `instruction` | `string`          | Full execution context. New required field.       |
-| `recurrence`  | `map` or `null`   | `{type, interval}` or null                        |
+| `recurrence`  | `string` or `null` | RRULE, e.g. `FREQ=WEEKLY;BYDAY=TU,FR` (was a `{type, interval}` map before 2026-07-30 — read-translated, not backfilled) |
 | `last_fired`  | `timestamp` or `null` | Updated after each fire                       |
 
 Removed fields (existing records may have them — adapter ignores):

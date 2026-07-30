@@ -68,7 +68,13 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
 - Notes / Proactive Self-Reminders (PERFORMANCE, OpenAI, intent `manage_self_reminders`) — deferred
   instructions the system writes to itself that fire autonomously as new conversations. Two-field model:
   `text` (≤15-word label) + `instruction` (self-contained execution context). Tools: create/update/delete
-  + `delegate_to_specialist` (multi-turn, max 3). Recurrence enum incl. `once` (default). Firing:
+  + `delegate_to_specialist` (multi-turn, max 3). **Schedule = RFC 5545 RRULE string** (no
+  `DTSTART` — `due` is the anchor and first fire), validated/expanded via `RecurrencePort` →
+  `DateutilRecurrenceAdapter`: one reminder covers several weekdays, several times a day or "last
+  Sunday of the month" — never duplicate reminders. `COUNT`/`UNTIL` rejected (a reminder ends by
+  deletion); `clear_recurrence` turns a repeating one back into a one-off; create snaps `due` onto
+  the rule. Both context blocks (orchestrator + specialist) render the rule verbatim plus
+  `complexity`/`last_fired`. See `decisions/reminder_rrule_schedules.md`. Firing:
   Cloud Scheduler every 15 min → `fire_due_reminders` → per-fire `_build_reminder_alert` →
   `notify(agent_id_override=smart_response_agent_…)` → **Smart** runs it. One-time deleted after firing;
   recurrent (`hourly/daily/weekly/monthly`) → `reschedule()` (DST-safe, user timezone). Idempotency:

@@ -82,6 +82,7 @@ from ..adapters.unsplash_adapter import UnsplashAdapter
 from ..ports.task_queue import TaskQueue
 from ..ports.tasks_provider_port import TasksProviderPort
 from ..ports.agent_note_port import AgentNotePort
+from ..ports.recurrence_port import RecurrencePort
 from ..services.email_search_service import EmailSearchService
 from ..services.task_indexing_service import TaskIndexingService
 from ..ports.indexed_email_repository import IndexedEmailRepository
@@ -137,6 +138,7 @@ class UserAgentFactory(AgentFactoryPort):
         tasks_provider: Optional[TasksProviderPort] = None,
         task_indexing: Optional[TaskIndexingService] = None,
         notes_provider: Optional[AgentNotePort] = None,
+        recurrence: Optional[RecurrencePort] = None,
         notification_service: Optional[object] = None,
         job_registry: Optional[ProviderRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
@@ -171,6 +173,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.tasks_provider = tasks_provider
         self.task_indexing = task_indexing
         self.notes_provider = notes_provider
+        self.recurrence = recurrence
         self.notification_service = notification_service
         self.job_registry: Optional[ProviderRegistry] = job_registry
         self.task_queue = task_queue
@@ -321,7 +324,7 @@ class UserAgentFactory(AgentFactoryPort):
         )
 
         notes_agent = None
-        if self.notes_provider:
+        if self.notes_provider and self.recurrence:
             notes_context = self.context_builder.build("notes", user_profile.config)
             notes_agent = NotesAgent(
                 config=AgentConfig(
@@ -332,6 +335,7 @@ class UserAgentFactory(AgentFactoryPort):
                 ),
                 execution_context=notes_context,
                 notes_port=self.notes_provider,
+                recurrence=self.recurrence,
                 prompt_builder=prompt_builder,
                 user_timezone=user_profile.config.timezone,
                 notification_service=self.notification_service,

@@ -360,7 +360,12 @@ NOTES = AgentDescriptor(
             "Use for any reminder management: create, update, delete, list. "
             "Pass the user's request as natural language in 'query' — the specialist parses "
             "intent, schedule, and identifiers itself. Do not format JSON, do not invent "
-            "field names, do not pre-resolve IDs."
+            "field names, do not pre-resolve IDs. "
+            "One reminder can carry any repeat schedule — several weekdays, several times a "
+            "day, the last Sunday of the month, every other week. Never split a schedule "
+            "into duplicate reminders; state it in full and let the specialist encode it. "
+            "Everything is editable after the fact, including the schedule and stopping "
+            "repetition entirely; the rule shown in active_reminders is what you edit."
         ),
     },
     internal=False,

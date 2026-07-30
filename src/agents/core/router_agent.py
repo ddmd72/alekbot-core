@@ -345,11 +345,17 @@ class RouterAgent(BaseAgent):
                     user_id=self.user_id,
                     as_of=datetime.now(timezone.utc),
                 )
+                # The orchestrator edits reminders by delegation, so it needs every
+                # field a delegation can change — a schedule it cannot see is a
+                # schedule it can only overwrite blindly.
                 agent_notes = [
                     {
                         "note_id": n.note_id,
                         "text": n.text,
                         "due": n.due.isoformat() if n.due else None,
+                        "recurrence": n.recurrence,
+                        "complexity": n.complexity.value if n.complexity else None,
+                        "last_fired": n.last_fired.isoformat() if n.last_fired else None,
                     }
                     for n in raw_notes
                 ]
