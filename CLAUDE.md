@@ -559,13 +559,23 @@ the local file** — far faster and cheaper than repeated remote `gcloud logging
 |------|--------|-----|
 | Operational events, errors, tracebacks, control flow | **Cloud Logging** | `make fetch-logs` (above) |
 | Actual LLM prompt/response **content** + tokens | **BigQuery** `alek_observability_dev.prompt_content` | `bq query` (below) |
+| The **cascade** — who delegated to whom, what each agent got and returned, failed calls | **Logfire** | trace tree in the UI, or SQL via the Logfire MCP server |
+
+**Logfire holds prompt/response content too since 2026-07-30** (`LOGFIRE_CAPTURE_CONTENT=true`).
+Prefer it whenever the question involves *relationships between calls* — BigQuery cannot express
+them: no `parent_span_id`, and the stored `span_id` points at the enclosing span, not the LLM call.
+Prefer BigQuery for bulk/historical SQL over turns. See
+`decisions/logfire_prompt_content_capture.md`.
 
 **`prompt_content`** — one row per LLM call, 30-day TTL. Columns: `trace_id, span_id, timestamp,
 user_id, account_id, agent_id, agent_type, model, provider, turn, request_text, response_text,
-tool_calls, prompt_tokens, completion_tokens, total_tokens`. **`request_text` is populated even
-when the call fails** — a 400'd request still has its row (with empty `response_text`), so failed
-LLM calls ARE inspectable here. Query locally; for the large multi-line `request_text` use
-`--format=json` and parse (CSV breaks on embedded newlines):
+tool_calls, prompt_tokens, completion_tokens, total_tokens`. **A failed LLM call has NO row here**
+(and no span): both `record_turn` and `_emit_llm_span` sit on the success return path
+(`base_agent.py:1181,1185`), so an exception exits before either. Failed calls are inspectable in
+**Logfire only**. (An earlier version of this file claimed the opposite — corrected 2026-07-30.)
+`trace_id` is stored with a `tr_` prefix, so joining to Logfire needs `SUBSTR` first. Query locally;
+for the large multi-line `request_text` use `--format=json` and parse (CSV breaks on embedded
+newlines):
 ```
 bq query --project_id=<PROJECT_ID> --use_legacy_sql=false --format=json \
   'SELECT request_text, response_text, tool_calls FROM

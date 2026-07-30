@@ -40,6 +40,7 @@ from src.domain.billing import calculate_cost
 from src.infrastructure.agent_manifest import Intent
 from src.services.deep_research_delivery import deliver_deep_research
 from src.utils.logger import logger
+from src.utils.telemetry import init_telemetry
 
 
 def _build_account_repo() -> FirestoreAccountRepository:
@@ -146,6 +147,10 @@ async def _capture_research_result(
 
 
 async def main() -> None:
+    # Without this the job runs on the default no-op provider and is invisible
+    # to tracing — the deep-research path was the one blind spot in the stack.
+    init_telemetry("alek-research-job")
+
     query = os.environ["JOB_QUERY"]
     context = json.loads(os.environ["JOB_CONTEXT_JSON"])
 
