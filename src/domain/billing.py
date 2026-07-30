@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 from typing import Dict, TYPE_CHECKING, Optional, Tuple
 from .language import LanguageCode
@@ -225,38 +225,13 @@ def calculate_cost(
 
 
 @dataclass
-class TokenLedger:
-    """Token accumulator for exactly ONE agent execution.
+class ModelUsage:
+    """Usage accumulated on ONE model within an execution."""
 
-    Scoped per execution on purpose. An agent instance is a per-user singleton in the
-    AgentCoordinator registry, and DelegationEngine dispatches a tool batch through
-    ``asyncio.gather`` — so several executions of the same instance run concurrently.
-    Accumulating on the instance therefore pooled unrelated executions and billed each
-    one the running total (a 22-way fetch_url batch inflated the daily counter ~3.6x;
-    found 2026-07-28). The ledger is held in a ContextVar by ``BaseAgent.process()``,
-    which gives each execution — and each ``asyncio.gather`` child — its own instance.
-
-    Mutable by design: ``_call_llm`` adds every turn's usage to the live ledger.
-    """
-
-    account_id: Optional[str] = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
-
-    def add(
-        self,
-        prompt_tokens: int = 0,
-        completion_tokens: int = 0,
-        cache_read_tokens: int = 0,
-        cache_creation_tokens: int = 0,
-    ) -> None:
-        """Add one LLM turn's usage."""
-        self.prompt_tokens += prompt_tokens
-        self.completion_tokens += completion_tokens
-        self.cache_read_tokens += cache_read_tokens
-        self.cache_creation_tokens += cache_creation_tokens
 
     @property
     def total_tokens(self) -> int:
@@ -273,13 +248,8 @@ class TokenLedger:
             + self.cache_creation_tokens
         )
 
-    @property
-    def is_empty(self) -> bool:
-        """True when no usage accrued — nothing to bill."""
-        return self.total_tokens == 0
-
     def cost(self, model: str) -> float:
-        """Cost in USD for the accumulated usage on ``model``."""
+        """Cost in USD for this usage priced on ``model``."""
         return calculate_cost(
             model=model,
             prompt_tokens=self.prompt_tokens,
@@ -287,3 +257,71 @@ class TokenLedger:
             cache_read_tokens=self.cache_read_tokens,
             cache_creation_tokens=self.cache_creation_tokens,
         )
+
+
+@dataclass
+class TokenLedger:
+    """Token accumulator for exactly ONE agent execution, keyed by model.
+
+    Scoped per execution on purpose. An agent instance is a per-user singleton in the
+    AgentCoordinator registry, and DelegationEngine dispatches a tool batch through
+    ``asyncio.gather`` — so several executions of the same instance run concurrently.
+    Accumulating on the instance therefore pooled unrelated executions and billed each
+    one the running total (a 22-way fetch_url batch inflated the daily counter ~3.6x;
+    found 2026-07-28). The ledger is held in a ContextVar by ``BaseAgent.process()``,
+    which gives each execution — and each ``asyncio.gather`` child — its own instance.
+
+    Per-model legs, not one bucket: an execution legitimately spans several models
+    (Smart resolves its tier per request, WebSearch downgrades ``fetch_url`` to ECO,
+    a provider failover re-serves the turn on the fallback model). Pricing the whole
+    execution with the agent's default model under-reported Smart and over-reported
+    ``fetch_url`` (TD-7, found 2026-07-30) — the price belongs to the model that ran.
+
+    Mutable by design: ``_call_llm`` adds every turn's usage to the live ledger.
+    """
+
+    account_id: Optional[str] = None
+    by_model: Dict[str, ModelUsage] = dataclass_field(default_factory=dict)
+
+    def add(
+        self,
+        model: str,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+    ) -> None:
+        """Add one LLM turn's usage under the model that actually served it."""
+        leg = self.by_model.setdefault(model, ModelUsage())
+        leg.prompt_tokens += prompt_tokens
+        leg.completion_tokens += completion_tokens
+        leg.cache_read_tokens += cache_read_tokens
+        leg.cache_creation_tokens += cache_creation_tokens
+
+    @property
+    def total_tokens(self) -> int:
+        """Billable token count across every model this execution touched."""
+        return sum(leg.total_tokens for leg in self.by_model.values())
+
+    @property
+    def is_empty(self) -> bool:
+        """True when no usage accrued — nothing to bill."""
+        return self.total_tokens == 0
+
+    def cost(self) -> float:
+        """Cost in USD: each model's usage priced at that model's rates, summed."""
+        return round(
+            sum(leg.cost(model) for model, leg in self.by_model.items()), 6
+        )
+
+    @property
+    def dominant_model(self) -> Optional[str]:
+        """The costliest model of the execution — a label, not the price basis.
+
+        ``cost()`` already sums every leg; this only names the execution for the
+        ``model`` argument of ``QuotaService.record_usage`` (which no implementation
+        reads). Ties resolve to the first model added.
+        """
+        if not self.by_model:
+            return None
+        return max(self.by_model, key=lambda m: self.by_model[m].cost(m))

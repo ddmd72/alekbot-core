@@ -756,14 +756,15 @@ class BaseAgent(ABC):
             return
         if ledger.is_empty:
             return
-        model = getattr(self, "model_name", None) or self.config.llm_model or "unknown"
-        tokens = ledger.total_tokens
-        cost = ledger.cost(model)
+        # Priced per model by the ledger — NOT by the agent's default model. Smart
+        # resolves its tier per request and WebSearch downgrades fetch_url, so the
+        # default under-/over-reported whole executions (TD-7). `model` here is only
+        # a label for the port's signature; no implementation reads it.
         await self._quota_service.record_usage(
             account_id=ledger.account_id,
-            model=model,
-            tokens=tokens,
-            cost=cost,
+            model=ledger.dominant_model or "unknown",
+            tokens=ledger.total_tokens,
+            cost=ledger.cost(),
         )
 
     def _on_agent_error(self, error: Exception, context: str = "execute") -> None:
@@ -969,6 +970,9 @@ class BaseAgent(ABC):
         primary_name = ctx.provider_name if ctx else ""
         resilience = ctx.resilience_port if ctx else None
         failover_tuple = tuple(FAILOVER_TRIGGER_TYPES)
+        # The model that actually served this turn — the billing basis. Rebound below
+        # when a cross-provider failover re-serves the turn on the fallback model.
+        served_model = request.model_name
 
         _t0 = time.perf_counter()
         _t0_ns = time.time_ns()
@@ -1130,6 +1134,7 @@ class BaseAgent(ABC):
                     response = await fallback_provider.generate_content(
                         request=fallback_request
                     )
+                    served_model = fallback_request.model_name
                     # Asymmetry by design — see method docstring step 5.
                 except failover_tuple as fb_e:
                     if resilience and fallback_name:
@@ -1159,6 +1164,7 @@ class BaseAgent(ABC):
             m = response.usage_metadata
             try:
                 ledger.add(
+                    model=served_model,
                     prompt_tokens=m.prompt_tokens,
                     completion_tokens=m.completion_tokens,
                     cache_read_tokens=getattr(m, "cache_read_tokens", 0),

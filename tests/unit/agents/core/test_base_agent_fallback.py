@@ -605,6 +605,25 @@ async def test_unlocked_clean_request_still_failovers(agent, primary_llm, fallba
 
 
 @pytest.mark.asyncio
+async def test_fallback_books_usage_under_the_fallback_model(
+    agent, primary_llm, fallback_llm
+):
+    """Cross-provider failover re-serves the turn on the fallback model, so the tokens
+    belong to that model's price — not the primary's (TD-7)."""
+    primary_llm.generate_content = AsyncMock(
+        side_effect=LLMRateLimitError("rate limit", http_status=429)
+    )
+    ctx = _make_execution_context(primary_llm, fallback_llm, fallback_model="claude-sonnet-4-6")
+    agent._set_execution_context(ctx)
+
+    with agent._execution_billing_scope(None) as ledger:
+        await agent._call_llm(_make_request())
+
+    assert "gemini-flash" not in ledger.by_model  # primary never served the turn
+    assert ledger.by_model["claude-sonnet-4-6"].prompt_tokens == 5
+
+
+@pytest.mark.asyncio
 async def test_transcript_locked_success_runs_billing_and_span(
     agent, primary_llm, fallback_llm
 ):
@@ -623,5 +642,6 @@ async def test_transcript_locked_success_runs_billing_and_span(
             response = await agent._call_llm(_make_locked_request())
 
     assert response.text == "recovered"
-    # _make_llm_response carries prompt_tokens=5 → billing tail ran on retry success
-    assert ledger.prompt_tokens == 5
+    # _make_llm_response carries prompt_tokens=5 → billing tail ran on retry success.
+    # Same-provider retry re-serves the SAME request, so the leg stays on the primary model.
+    assert ledger.by_model["gemini-flash"].prompt_tokens == 5

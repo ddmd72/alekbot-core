@@ -184,6 +184,14 @@ stale `running` jobs.
   running total (3.6× inflation, fixed 2026-07-28). The scope's `reset(token)` is load-bearing — an
   inline-awaited specialist would otherwise capture its caller's ledger. **Account counters written before
   2026-07-28 are inflated; for historical cost use BigQuery `prompt_content`, not `usage.*`.**
+- **Cost is priced per model that RAN, not per agent default.** `TokenLedger.by_model` keys a
+  `ModelUsage` leg per model (`add(model, …)` from `_call_llm` using `request.model_name`, or the
+  fallback model after a cross-provider failover); `cost()` sums each leg at its own rates. An
+  execution legitimately spans models (Smart's per-request tier, WebSearch's `fetch_url` ECO
+  downgrade, failover) — pricing it all with `self.model_name` under-reported Smart and
+  over-reported `fetch_url` (fixed 2026-07-30, so cost before that date is wrong too).
+  `record_usage(model=…)` receives `dominant_model` as a label only. See
+  `decisions/billing_per_model_pricing.md`.
 - **Daily budget alert (advisory, never a gate).** `BillingAccount.daily_cost_limit` (default $5) →
   `increment_account_usage` returns `UsageIncrement`; `FirestoreQuotaService` posts to the ops sink
   (`AlertSinkPort`, `BILLING_SLACK_WEBHOOK_URL`) when the day *crosses* the limit — once per day, not
