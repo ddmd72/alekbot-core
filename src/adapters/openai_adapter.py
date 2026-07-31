@@ -74,8 +74,11 @@ class OpenAIAdapter(LLMPort):
     # TIERx:       gpt-5.4-nano   (reserved slots, default to ECO)
     # Prices per 1M after OpenAI's 2026-07-30 cut (luna -80%, terra -20%, sol unchanged).
     # NOTE: the cut erased the ECO/BALANCED price gap — nano was ~5x cheaper than Luna, it is now
-    # the same input price and marginally dearer on output. Keeping nano on ECO is now a latency
-    # choice, no longer a cost one; whether ECO should just become Luna is an open question.
+    # the same input price and marginally dearer on output. ECO stays on nano for LATENCY, and it
+    # is measured, not assumed: on the router workload nano is 2.3x faster (p50 1.7s vs 3.9s),
+    # because Luna spends ~183 hidden reasoning tokens per triage at its default effort — which
+    # also overruns the router's max_tokens=300 and truncates its JSON. Re-run
+    # scripts/validation/ab_router_latency_nano_vs_luna.py before revisiting.
     # Migration: docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md. Effort floors live-probed 2026-07-13 —
     # all three 5.6 tiers accept none/low/medium (no floor, unlike gpt-5.5-pro).
     # Verify model IDs at https://platform.openai.com/docs/models
