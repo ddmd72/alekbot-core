@@ -11,6 +11,7 @@ from ...domain.messaging import ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType, UIMessage
 from ...domain.language import LanguageCode
 from ...ports.localization_port import LocalizationPort
+from ...utils.file_conversion import safe_temp_suffix
 from ...utils.message_chunker import MessageChunker
 from ...utils.logger import logger
 
@@ -591,9 +592,13 @@ class TelegramResponseChannel(ResponseChannel):
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:
                     if response.status == 200:
+                        # Bounded to NAME_MAX bytes — see the Slack twin. Cyrillic names hit
+                        # this at ~120 characters, since each costs 2 bytes in UTF-8.
                         filename = url.split('/')[-1]
 
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as tmp:
+                        with tempfile.NamedTemporaryFile(
+                            delete=False, suffix=safe_temp_suffix(filename)
+                        ) as tmp:
                             while True:
                                 chunk = await response.content.read(1024)
                                 if not chunk:
