@@ -27,6 +27,13 @@ dearer than today's `gpt-5.4-mini` ($0.75/$4.50). This is a real cost step for t
 accepted because the mini shutdown leaves no cheaper same-gen option, and Luna is still far below
 Terra/Sol.
 
+> **Superseded 2026-07-30 — the cost premium this RFC accepted no longer exists.** OpenAI cut
+> Luna to **$0.20/$1.20** and Terra to **$2/$12** (Sol unchanged); see
+> [`decisions/openai_gpt56_price_cut.md`](../04_solution_strategy/decisions/openai_gpt56_price_cut.md).
+> BALANCED is now ~4× *cheaper* than the `gpt-5.4-mini` it replaced, not 33% dearer. The prices
+> below are kept as the state of the world when the migration was decided — `billing.py` is the
+> live source. Two conclusions inverted by the cut are flagged inline (§2, §3.3).
+
 ---
 
 ## 2. Target tier mapping
@@ -41,6 +48,10 @@ Terra/Sol.
 
 ECO stays on nano: there is no 5.6 sub-Luna tier, nano is cheaper ($0.20/$1.25 vs Luna $1/$6) and
 not deprecated. Revisit only if OpenAI ships a 5.6 nano.
+
+> **Inverted by the 2026-07-30 cut:** nano and Luna now cost the same on input ($0.20) and nano is
+> marginally *dearer* on output ($1.25 vs $1.20), so "nano is cheaper" no longer holds. ECO stays on
+> nano for latency, not price — an open question, not a decision (see `openai_adapter.py` §MODEL_TIERS).
 
 Edit site: `OpenAIAdapter.MODEL_TIERS` — [`openai_adapter.py:79-87`](../../src/adapters/openai_adapter.py#L79-L87).
 Keep `gpt-5.5-pro` in `billing.py` (rollback / historical rows); it just leaves the tier map.
@@ -132,7 +143,15 @@ lost. Combined with Luna's higher base input price ($1 vs $0.75) and the new 1.2
 BALANCED input cost rises more than the sticker delta. Acceptable (mini is being shut down anyway), but
 budget-track it after rollout.
 
+> **Inverted by the 2026-07-30 cut:** at $0.20 input, Luna's base is now well *below* mini's $0.75,
+> so the lost 24h retention no longer compounds a price increase. The retention regression itself
+> stands; only its cost consequence is void.
+
 ### 3.4 Pricing (per 1M tokens) → `billing.py`
+
+Prices **as of the migration (2026-07-09)**. Superseded by the 2026-07-30 cut — luna `0.20/1.20`,
+terra `2.00/12.00`, sol unchanged. `billing.py` is the live source; this table is kept for the
+cost analysis above to remain readable.
 
 | Model | input | output | cache_read (0.1×) | cache_write (1.25×) |
 |-------|-------|--------|-------------------|---------------------|
