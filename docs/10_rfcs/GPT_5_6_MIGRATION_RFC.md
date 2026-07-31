@@ -51,7 +51,9 @@ not deprecated. Revisit only if OpenAI ships a 5.6 nano.
 
 > **Inverted by the 2026-07-30 cut:** nano and Luna now cost the same on input ($0.20) and nano is
 > marginally *dearer* on output ($1.25 vs $1.20), so "nano is cheaper" no longer holds. ECO stays on
-> nano for latency, not price — an open question, not a decision (see `openai_adapter.py` §MODEL_TIERS).
+> nano on **latency**, measured 2026-07-31: 2.3× faster on the router workload, because Luna spends
+> ~183 hidden reasoning tokens per triage at its default effort and overruns `max_tokens=300`.
+> Harness: `scripts/validation/ab_router_latency_nano_vs_luna.py`.
 
 Edit site: `OpenAIAdapter.MODEL_TIERS` — [`openai_adapter.py:79-87`](../../src/adapters/openai_adapter.py#L79-L87).
 Keep `gpt-5.5-pro` in `billing.py` (rollback / historical rows); it just leaves the tier map.

@@ -65,6 +65,17 @@ change we verified at the provider" instead of asserting the schedule is at faul
   not a defect. **Delete both `PRICE_SCHEDULE` entries once the catalogs carry the cut** — they
   are a bridge over catalog lag, not a permanent record.
 - The ECO/BALANCED price gap is gone: `gpt-5.4-nano` ($0.20/$1.25) and Luna ($0.20/$1.20) now
-  cost the same on input, and nano is marginally dearer on output. Keeping nano on ECO is now a
-  latency argument only. Left as an open question — it needs latency measurements, not a price
-  table. Two conclusions in `GPT_5_6_MIGRATION_RFC.md` are inverted by this and flagged there.
+  cost the same on input, and nano is marginally dearer on output. Two conclusions in
+  `GPT_5_6_MIGRATION_RFC.md` are inverted by this and flagged there.
+- **ECO stays on nano — measured, not assumed** (`scripts/validation/ab_router_latency_nano_vs_luna.py`,
+  2026-07-31, 56 real router calls replayed through the production adapter). On the router
+  triage workload nano is **2.3× faster** (p50 1.7s vs 3.9s) and won 26 of 28 paired calls.
+  Cause: with no `thinking` passed, each model runs at its API default effort, and Luna spends
+  **~183 hidden reasoning tokens** per triage (nano: ~0). That also breaks the router outright —
+  `max_tokens=300` minus the reasoning leaves too little, and Luna truncates its own JSON
+  mid-string (50–78% parseable). Public throughput benchmarks favour Luna and do not transfer:
+  they measure long generations, this is 130 output tokens where the pre-generation reasoning
+  dominates, and their TTFT is irrelevant because we do not stream.
+  Moving ECO to Luna would require an explicit `effort=none` plus a larger token budget, and
+  the first is currently inexpressible: `openai_adapter.py` maps `thinking` through
+  `{"low","medium","high"}.get(thinking, "medium")`, so `"none"` silently becomes `medium`.
