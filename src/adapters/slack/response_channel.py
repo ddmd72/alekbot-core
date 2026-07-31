@@ -11,6 +11,7 @@ from ...domain.messaging import ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType, UIMessage
 from ...domain.language import LanguageCode
 from ...ports.localization_port import LocalizationPort
+from ...utils.file_conversion import safe_temp_suffix
 from ...utils.logger import logger
 
 
@@ -557,11 +558,16 @@ class SlackResponseChannel(ResponseChannel):
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers) as response:
                     if response.status == 200:
-                        # Extract filename from URL
+                        # Extract filename from URL. It is only a debugging aid — the real
+                        # name travels in the attachment — but it must not overflow NAME_MAX:
+                        # a browser-saved page carries the whole URL in its name (2026-07-31
+                        # incident, errno 36 → attachment silently dropped).
                         filename = url.split('/')[-1]
-                        
+
                         # Create temporary file
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as tmp:
+                        with tempfile.NamedTemporaryFile(
+                            delete=False, suffix=safe_temp_suffix(filename)
+                        ) as tmp:
                             while True:
                                 chunk = await response.content.read(1024)
                                 if not chunk:

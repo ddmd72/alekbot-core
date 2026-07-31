@@ -348,6 +348,37 @@ class TestTelegramResponseChannel:
 
     @pytest.mark.asyncio
     @patch('aiohttp.ClientSession')
+    async def test_download_file_over_long_name(self, mock_session_class, response_channel):
+        """Regression (2026-07-31, Slack twin): an over-long filename made the tempfile name
+        exceed NAME_MAX (255 BYTES — Cyrillic costs 2 per character) and errno 36 was
+        swallowed, silently dropping the attachment."""
+        import os
+
+        from src.utils.file_conversion import NAME_MAX_BYTES
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.content.read = AsyncMock(side_effect=[b"data", b""])
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get = MagicMock(return_value=mock_response)
+        mock_session_class.return_value = mock_session
+
+        url = "https://api.telegram.org/file/bot123/" + "отчёт" * 40 + ".docx"
+        result = await response_channel.download_file(url, "application/octet-stream")
+
+        assert result is not None
+        try:
+            assert len(os.path.basename(result).encode("utf-8")) <= NAME_MAX_BYTES
+        finally:
+            os.unlink(result)
+
+    @pytest.mark.asyncio
+    @patch('aiohttp.ClientSession')
     async def test_download_file_404(self, mock_session_class, response_channel):
         """Test file download with 404 error."""
         # Mock 404 response

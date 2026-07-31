@@ -12,6 +12,7 @@ and are handled natively by each adapter.
 
 import asyncio
 import os
+import tempfile
 from typing import TYPE_CHECKING, Optional
 
 from .logger import logger
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
 MAX_FILE_BYTES = 5 * 1024 * 1024    # 5 MB — context window would explode beyond this
 MAX_CONVERTED_CHARS = 30_000         # ~7K tokens — hard truncation to protect context
 HISTORY_PREVIEW_CHARS = 1000         # chars kept in history stub per file
+
+NAME_MAX_BYTES = 255                 # ext4 / overlayfs limit for ONE path component, in bytes
+_MAX_KEPT_EXTENSION = 12             # ".markdown" fits; a 300-char "extension" is not one
 
 _NATIVE_BINARY_EXACT = frozenset(["application/pdf"])
 
@@ -43,6 +47,44 @@ def is_audio(mime_type: str) -> bool:
     """Return True for audio MIME types handled via AudioTranscriptionPort."""
     return mime_type in _AUDIO_MIME_TYPES
 
+
+
+def safe_temp_suffix(filename: str) -> str:
+    """Build a `tempfile` suffix from `filename` that cannot overflow NAME_MAX.
+
+    `tempfile` spends its own budget first (`gettempprefix()` + 8 random chars) and applies the
+    suffix verbatim, so an unbounded suffix raises `OSError: [Errno 36] File name too long` —
+    which is exactly how a browser-saved page (255-char name) silently lost its attachment on
+    2026-07-31. The budget is counted in BYTES, not characters: one Cyrillic character costs 2
+    and an emoji 4, so a character-based cap still overflows.
+
+    The leading part of the name is kept (that is what identifies the file to a human reading
+    logs) and the extension is preserved when it is plausibly one.
+    """
+    if not filename:
+        return ""
+
+    stem, dot, extension = filename.rpartition(".")
+    if not dot or len(extension.encode("utf-8")) > _MAX_KEPT_EXTENSION:
+        stem, extension = filename, ""      # no extension, or something too long to be one
+    tail = f".{extension}" if extension else ""
+
+    budget = (
+        NAME_MAX_BYTES
+        - len(tempfile.gettempprefix())
+        - 8                                  # tempfile's random component
+        - 1                                  # our "_" separator
+        - len(tail.encode("utf-8"))
+    )
+    return "_" + _truncate_bytes(stem, budget) + tail
+
+
+def _truncate_bytes(text: str, limit: int) -> str:
+    """Cut `text` to at most `limit` UTF-8 bytes without splitting a character."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    return encoded[:max(limit, 0)].decode("utf-8", errors="ignore")
 
 
 def _size_alert(filename: str, size_bytes: int) -> str:
