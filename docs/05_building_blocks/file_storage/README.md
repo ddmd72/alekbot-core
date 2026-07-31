@@ -103,6 +103,9 @@ Platform Adapter (Slack/Telegram)
         v
 ConversationHandler
         |
+        |-- response_channel.download_file(url) -> local_path | None
+        |       None --> system note in the attachment's slot (see 2.1.1), no file part
+        |
         |-- FileConversionService present?
         |       YES --> process_attachment()
         |               |-- Read bytes from local_path
@@ -115,6 +118,26 @@ ConversationHandler
         v
 LLM adapters encode file_data.path for current turn if present
 ```
+
+#### 2.1.1 A file that never arrives
+
+`download_file` returns `None` on any platform-side failure. The attachment slot then carries
+`file_conversion.download_alert()` — a `[System: …]` note naming the file, instructing the agent
+to say it did not arrive and **not** to guess its content. Same contract as `_size_alert`
+(too large) and `_conversion_alert` (unreadable): the input is gone, the request is still
+answerable, so the ordinary agent explains it in the user's language.
+
+This is **not** the Quick fallback (`AgentFallbackService`), which is for a primary agent that
+could not answer at all. Here the primary is healthy and one input is missing — falling back
+would trade Smart + delegation for the emergency ECO agent and apologise for a *delay* the user
+never experienced.
+
+Failure mode this replaced (2026-07-31): both response channels used the attachment's name as a
+`tempfile` suffix unbounded, so a browser-saved page (255-char name → 267-byte path component)
+raised `OSError errno 36`, `download_file` swallowed it, and the file vanished with only a log
+warning. Bounded since by `file_conversion.safe_temp_suffix()` — **in bytes**, since one Cyrillic
+character costs 2 and NAME_MAX is 255 bytes. The adapter still logs `logger.error`, which is what
+the ops alert policy watches.
 
 ### 2.2 Fetch Flow (orchestrator-driven)
 
