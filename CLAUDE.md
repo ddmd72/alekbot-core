@@ -249,8 +249,12 @@ GCS → reference-only MessagePart (no content in history). Fetch: specialist de
 `AgentCoordinator._resolve_file_refs()` downloads + converts + injects `file_content`; FileManagementAgent
 handles direct `open_file`/`delete_file`. `GcsFileStorageAdapter`: Finder-style dedup + sanitization;
 conditional on `GCS_MEDIA_BUCKET`. **Bound channels:** ConversationHandler strips `path` from `file_data`
-(`mode.is_bound`) — agent sees `[File: name (size)]` label, accesses via `open_file`. See
-`docs/05_building_blocks/file_storage/README.md`.
+(`mode.is_bound`) — agent sees `[File: name (size)]` label, accesses via `open_file`.
+**A file that never arrives** (`download_file` → None) leaves a `[System: …]` note in its slot via
+`file_conversion.download_alert()` — same contract as the size/conversion alerts, NOT a Quick fallback
+(the primary agent did not fail; one input did). Temp-file names are bounded by `safe_temp_suffix()`
+in **bytes** — NAME_MAX is 255 bytes and a Cyrillic character costs 2. See
+`docs/05_building_blocks/file_storage/README.md` §2.1.1.
 
 **Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic; each channel (Slack
 C.../D..., Telegram chat_id) has its own session/history/consolidation stream (a DM is just channel D...).
@@ -273,7 +277,14 @@ One search per request, result reused by all agents.
 - Cost optimization is complexity-driven tier selection within Smart: simple requests resolve to a
   cheaper tier model (ECO/BALANCED), expensive models reserved for complex requests. (Earlier this
   was a Quick-vs-Smart path split; primary routing is now Smart-only — see Multi-agent network above.)
-- Budget ~$100/month, 1 vCPU Cloud Run — async is mandatory
+- 1 vCPU Cloud Run — async is mandatory. The ~$100/month budget cap was **dropped 2026-07-26**
+  (owner decision): report cost when asked, but do not treat it as a binding design constraint.
+  The `daily_cost_limit` alert is advisory and never gates a request.
+- **Prices change under you.** OpenAI cut GPT-5.6 by up to 80% on 2026-07-30, three weeks after
+  GA. `make check-pricing` audits `billing.py` against two catalogs, but they lag a fresh
+  announcement by days — a dated `PRICE_SCHEDULE` entry outranks them. Act on `consensus_differs`
+  / `schedule_drift`; everything else is a lead to verify at the provider. See
+  `decisions/openai_gpt56_price_cut.md`.
 - Solo-dev — maintainability beats architectural elegance
 - **Smart cost sweet spot (eval 2026-04-12):** `gpt-5.4-mini` + `reasoning_effort: medium` matched
   flagship (sonnet-4-6 / gpt-5.4) quality on Smart's multi-step delegation, beat haiku/flash, ~3–5×

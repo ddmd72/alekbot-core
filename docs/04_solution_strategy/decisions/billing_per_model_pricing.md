@@ -15,6 +15,11 @@ one set of counters. Two live divergences in opposite directions (TD-7):
 - **WebSearch `fetch_url` over-reported** since 2026-07-29: the per-intent ECO downgrade runs
   `gpt-5.4-nano` ($0.20/$1.25), still billed as luna.
 
+> Prices above are the ones in force when this defect was found. OpenAI cut luna and terra the
+> next day — see [`openai_gpt56_price_cut.md`](openai_gpt56_price_cut.md). The divergence this
+> record describes is unaffected: it is about *which* model prices a turn, not what that model
+> costs. The reproduction figures below stay at the old prices, or they stop reproducing.
+
 Reproduced to the cent on the 2026-07-30 briefing: counter $1.4458 vs $1.1815 priced at each
 call's real model; repricing Smart + fetch_url as luna reproduces $1.4458 exactly. Token
 counts were never wrong — BigQuery billable tokens matched `usage.daily_tokens` exactly two
