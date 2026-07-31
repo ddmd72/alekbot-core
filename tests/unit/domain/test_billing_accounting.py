@@ -107,13 +107,13 @@ class TestTokenLedger:
         each model's own price — not one model's price applied to all tokens.
 
         Reproduces the live shape: Smart escalates a turn to sol ($5/$30) while the
-        agent default stays luna ($1/$6).
+        agent default stays luna ($0.20/$1.20).
         """
         ledger = TokenLedger()
         ledger.add("gpt-5.6-luna", prompt_tokens=1_000, completion_tokens=1_000)
         ledger.add("gpt-5.6-sol", prompt_tokens=1_000, completion_tokens=1_000)
 
-        luna = (1_000 / 1_000_000) * 1.0 + (1_000 / 1_000_000) * 6.0
+        luna = (1_000 / 1_000_000) * 0.20 + (1_000 / 1_000_000) * 1.20
         sol = (1_000 / 1_000_000) * 5.0 + (1_000 / 1_000_000) * 30.0
         assert ledger.cost() == pytest.approx(luna + sol, abs=1e-9)
         # Neither single-model reading is right — that is exactly the old behavior.
@@ -135,7 +135,7 @@ class TestTokenLedger:
         ledger = TokenLedger()
         ledger.add("gpt-5.6-luna", prompt_tokens=1_000, completion_tokens=1_000)
         ledger.add("no-such-model", prompt_tokens=9_000, completion_tokens=9_000)
-        expected = (1_000 / 1_000_000) * 1.0 + (1_000 / 1_000_000) * 6.0
+        expected = (1_000 / 1_000_000) * 0.20 + (1_000 / 1_000_000) * 1.20
         assert ledger.cost() == pytest.approx(expected, abs=1e-9)
         assert ledger.total_tokens == 20_000  # tokens still counted
 

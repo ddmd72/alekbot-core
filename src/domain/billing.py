@@ -176,8 +176,16 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # --- OpenAI GPT-5.6 family (Luna/Terra/Sol, GA 2026-07-09) — active tier defaults ---
     # cache_write 1.25: GPT-5.6 bills cache writes at 1.25x uncached input (new vs 5.4/5.5 = free).
     # NOTE: only charged if usage surfaces cache-write tokens — verify extraction (RFC §3.4).
-    "gpt-5.6-luna":                      {"input": 1.00,  "output": 6.00,  "cache_read": 0.10, "cache_write": 1.25},
-    "gpt-5.6-terra":                     {"input": 2.50,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
+    # PRICE CUT 2026-07-30, read off the provider pricing page (developers.openai.com/api/docs/pricing):
+    #   luna  $1.00/$6.00  → $0.20/$1.20 (-80%)
+    #   terra $2.50/$15.00 → $2.00/$12.00 (-20%)
+    #   sol   unchanged
+    # Cached input on that page is $0.02/$0.20/$0.50 = 0.1x input, so cache_read stays 0.10.
+    # The catalogs behind `make check-pricing` still quoted the pre-cut numbers on 2026-07-31 —
+    # price_consensus.PRICE_SCHEDULE carries the dated change so the audit does not push these back.
+    # Cost recorded for 2026-07-30..31 is over-reported for luna/terra (BALANCED/PERFORMANCE tiers).
+    "gpt-5.6-luna":                      {"input": 0.20,  "output": 1.20,  "cache_read": 0.10, "cache_write": 1.25},
+    "gpt-5.6-terra":                     {"input": 2.00,  "output": 12.00, "cache_read": 0.10, "cache_write": 1.25},
     "gpt-5.6-sol":                       {"input": 5.00,  "output": 30.00, "cache_read": 0.10, "cache_write": 1.25},
     # --- OpenAI (gpt-5.4 family, Mar 2026; gpt-5.5-pro retained for rollback/history) ---
     "gpt-5.4-nano":                      {"input": 0.20,  "output": 1.25,  "cache_read": 0.10},

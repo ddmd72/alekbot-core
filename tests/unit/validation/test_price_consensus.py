@@ -119,6 +119,58 @@ class TestHoldFinalPricePolicy:
         assert v.needs_review
 
 
+class TestScheduleOverridesCatalogs:
+    """OpenAI cut the GPT-5.6 prices on 2026-07-30 and the catalogs still quoted the pre-cut
+    numbers the next day (LiteLLM luna $1/$6, models.dev $0.1/$0.6; both terra $2.50/$15).
+    A dated entry is a price verified at the provider, so it must outrank them — otherwise the
+    audit demands a revert to the stale price, or never reaches the schedule at all."""
+
+    AFTER_CUT = date(2026, 7, 31)
+
+    def test_schedule_carries_the_announced_cut(self):
+        assert pc.scheduled_price("gpt-5.6-luna", self.AFTER_CUT) == (0.20, 1.20)
+        assert pc.scheduled_price("gpt-5.6-terra", self.AFTER_CUT) == (2.00, 12.00)
+
+    def test_schedule_is_silent_before_the_effective_date(self):
+        """The cut must not retro-apply: on 2026-07-29 those models were unscheduled."""
+        assert pc.scheduled_price("gpt-5.6-luna", date(2026, 7, 29)) is None
+        v = verdict((1.0, 6.0), (1.0, 6.0), (1.0, 6.0), model="gpt-5.6-luna")
+        assert v.status == pc.CONFIRMED
+
+    def test_schedule_wins_when_catalogs_cannot_agree(self):
+        """The luna case — no consensus exists, so coverage rules would have stranded it."""
+        v = verdict((0.20, 1.20), (1.0, 6.0), (0.1, 0.6),
+                    model="gpt-5.6-luna", today=self.AFTER_CUT)
+        assert v.status == pc.CONFIRMED
+        assert not v.needs_review
+        assert "no catalog consensus" in v.detail
+
+    def test_lagging_catalogs_do_not_demand_a_revert(self):
+        """The terra case — the answer must never be `consensus_differs` on the corrected price."""
+        v = verdict((2.00, 12.00), (2.5, 15.0), (2.5, 15.0),
+                    model="gpt-5.6-terra", today=self.AFTER_CUT)
+        assert v.status == pc.SCHEDULE_STALE
+        assert v.status != pc.CONSENSUS_DIFFERS
+        assert "have not caught up" in v.detail
+
+    def test_billing_left_on_the_pre_cut_price_is_drift(self):
+        v = verdict((2.5, 15.0), (2.5, 15.0), (2.5, 15.0),
+                    model="gpt-5.6-terra", today=self.AFTER_CUT)
+        assert v.status == pc.SCHEDULE_DRIFT
+        assert v.needs_review
+
+    def test_catalogs_catching_up_makes_it_plain_confirmed(self):
+        v = verdict((2.00, 12.00), (2.0, 12.0), (2.0, 12.0),
+                    model="gpt-5.6-terra", today=self.AFTER_CUT)
+        assert v.status == pc.CONFIRMED
+        assert "no catalog consensus" not in v.detail
+
+    def test_uncovered_scheduled_model_is_still_judged_by_the_schedule(self):
+        v = verdict((0.20, 1.20), None, None, model="gpt-5.6-luna", today=self.AFTER_CUT)
+        assert v.status == pc.CONFIRMED
+        assert "no coverage" in v.detail
+
+
 class TestReviewClassification:
 
     @pytest.mark.parametrize("status", sorted(pc.NEEDS_REVIEW))
