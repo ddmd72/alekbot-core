@@ -67,12 +67,15 @@ class OpenAIAdapter(LLMPort):
 
     # ========================================================================
     # Tier-to-model mapping — GPT-5.6 family (Luna/Terra/Sol) from 2026-07.
-    # ECO:         gpt-5.4-nano   (cheapest/fastest; NO 5.6 sub-Luna tier exists, nano is
-    #                              cheaper than Luna and not deprecated — kept on 5.4)
-    # BALANCED:    gpt-5.6-luna   ($1/$6; replaces gpt-5.4-mini, whose API shutdown is 2026-12-11)
-    # PERFORMANCE: gpt-5.6-terra  ($2.50/$15; "GPT-5.5-class at half price")
+    # ECO:         gpt-5.4-nano   ($0.20/$1.25; NO 5.6 sub-Luna tier exists, kept on 5.4)
+    # BALANCED:    gpt-5.6-luna   ($0.20/$1.20; replaces gpt-5.4-mini, API shutdown 2026-12-11)
+    # PERFORMANCE: gpt-5.6-terra  ($2/$12; "GPT-5.5-class at half price")
     # ULTRA:       gpt-5.6-sol    ($5/$30; agentic-tool SOTA, ~1/6 the cost of gpt-5.5-pro)
     # TIERx:       gpt-5.4-nano   (reserved slots, default to ECO)
+    # Prices per 1M after OpenAI's 2026-07-30 cut (luna -80%, terra -20%, sol unchanged).
+    # NOTE: the cut erased the ECO/BALANCED price gap — nano was ~5x cheaper than Luna, it is now
+    # the same input price and marginally dearer on output. Keeping nano on ECO is now a latency
+    # choice, no longer a cost one; whether ECO should just become Luna is an open question.
     # Migration: docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md. Effort floors live-probed 2026-07-13 —
     # all three 5.6 tiers accept none/low/medium (no floor, unlike gpt-5.5-pro).
     # Verify model IDs at https://platform.openai.com/docs/models

@@ -685,7 +685,7 @@ class TestFlushBilling:
     async def test_flush_billing_sums_per_model_and_ignores_the_agent_default(self):
         """TD-7: the price comes from the models that ran, not from the agent's default.
 
-        Smart's default stays luna ($1/$6) while a turn escalates to sol ($5/$30) —
+        Smart's default stays luna ($0.20/$1.20) while a turn escalates to sol ($5/$30) —
         pricing everything as luna under-reported the run.
         """
         config = AgentConfig(agent_id="a", agent_type="mock", llm_model="gpt-5.6-luna")
@@ -698,7 +698,7 @@ class TestFlushBilling:
             await agent._flush_billing()
 
         kw = agent._quota_service.record_usage.await_args.kwargs
-        luna = (1_000 / 1_000_000) * 1.0 + (1_000 / 1_000_000) * 6.0
+        luna = (1_000 / 1_000_000) * 0.20 + (1_000 / 1_000_000) * 1.20
         sol = (1_000 / 1_000_000) * 5.0 + (1_000 / 1_000_000) * 30.0
         assert kw["tokens"] == 4_000
         assert kw["cost"] == pytest.approx(luna + sol)

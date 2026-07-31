@@ -84,6 +84,13 @@ PRICE_SCHEDULE: Dict[str, List[Tuple[date, Price]]] = {
         (date(2026, 1, 1), (2.00, 10.00)),
         (date(2026, 9, 1), (3.00, 15.00)),
     ],
+    # OpenAI cut GPT-5.6 prices on 2026-07-30 (Luna -80%, Terra -20%, Sol unchanged), read off
+    # developers.openai.com/api/docs/pricing. The catalogs still quoted the pre-cut numbers a day
+    # later — without these entries the audit would report the corrected billing.py as
+    # `consensus_differs` and invite an "obvious" revert to the stale price. Drop them once both
+    # catalogs carry the cut (the verdict becomes plain `confirmed` either way).
+    "gpt-5.6-luna": [(date(2026, 7, 30), (0.20, 1.20))],
+    "gpt-5.6-terra": [(date(2026, 7, 30), (2.00, 12.00))],
 }
 
 # Models where billing.py DELIBERATELY holds the final scheduled price rather than the one
@@ -132,6 +139,16 @@ def resolve_verdict(
     """
     covered = {src: p for src, p in quotes.items() if p is not None}
     upcoming = next_scheduled_change(model, today)
+    consensus = _consensus(covered)
+    due = scheduled_price(model, today)
+
+    # A dated entry is a price we verified at the provider ourselves, so it outranks the
+    # catalogs — including when they cover the model badly or not at all. Judging coverage
+    # first would strand a just-announced change: on 2026-07-31 the two catalogs still quoted
+    # gpt-5.6-luna at the pre-cut $1/$6 and $0.1/$0.6 respectively, i.e. no consensus to reach
+    # the schedule at all.
+    if due is not None:
+        return _judge_against_schedule(model, ours, due, consensus, covered, upcoming)
 
     if not covered:
         return Verdict(UNCOVERED,
@@ -143,46 +160,11 @@ def resolve_verdict(
                        f"only {src} covers it ({_fmt(price)}) — a lead, not a fact",
                        upcoming=upcoming)
 
-    distinct = set(covered.values())
-    if len(distinct) > 1:
-        quoted = ", ".join(f"{s}={_fmt(p)}" for s, p in sorted(covered.items()))
+    if consensus is None:
         return Verdict(SOURCES_DISAGREE,
-                       f"catalogs contradict each other ({quoted}) — for a *-latest key "
-                       f"this usually means the alias was not resolved first",
+                       f"catalogs contradict each other ({_quoted(covered)}) — for a *-latest "
+                       f"key this usually means the alias was not resolved first",
                        upcoming=upcoming)
-
-    consensus = distinct.pop()
-    due = scheduled_price(model, today)
-
-    if due is not None:
-        if consensus != due:
-            return Verdict(SCHEDULE_STALE,
-                           f"our schedule says {_fmt(due)} is in force but the catalogs "
-                           f"agree on {_fmt(consensus)} — the schedule needs updating",
-                           consensus=consensus, upcoming=upcoming)
-
-        if model in HOLD_FINAL_PRICE:
-            final = sorted(PRICE_SCHEDULE[model])[-1][1]
-            if ours == final:
-                note = (f"deliberately holds the final scheduled price {_fmt(final)}"
-                        if final == due else
-                        f"deliberately holds the final scheduled price {_fmt(final)}; "
-                        f"today's actual is {_fmt(due)}, so this model's spend reads "
-                        f"{final[1] / due[1]:.2f}x high until then (documented policy)")
-                return Verdict(CONFIRMED, note, consensus=consensus, upcoming=upcoming)
-            return Verdict(SCHEDULE_DRIFT,
-                           f"policy is to hold the final scheduled price {_fmt(final)} but "
-                           f"billing.py holds {_fmt(ours)}",
-                           consensus=consensus, upcoming=upcoming)
-
-        if ours != due:
-            return Verdict(SCHEDULE_DRIFT,
-                           f"scheduled price is {_fmt(due)} as of today but billing.py "
-                           f"holds {_fmt(ours)} — update billing.py",
-                           consensus=consensus, upcoming=upcoming)
-        return Verdict(CONFIRMED,
-                       f"matches the scheduled price {_fmt(due)}",
-                       consensus=consensus, upcoming=upcoming)
 
     if consensus != ours:
         return Verdict(CONSENSUS_DIFFERS,
@@ -190,6 +172,60 @@ def resolve_verdict(
                        consensus=consensus, upcoming=upcoming)
     return Verdict(CONFIRMED, "both catalogs agree with billing.py",
                    consensus=consensus, upcoming=upcoming)
+
+
+def _judge_against_schedule(
+    model: str,
+    ours: Price,
+    due: Price,
+    consensus: Optional[Price],
+    covered: Dict[str, Price],
+    upcoming: Optional[Tuple[date, Price]],
+) -> Verdict:
+    """Judge a model whose price the schedule declares. billing.py is checked first, then
+    the catalogs are used to sanity-check the schedule itself."""
+    if model in HOLD_FINAL_PRICE:
+        final = sorted(PRICE_SCHEDULE[model])[-1][1]
+        expected, drift = final, (
+            f"policy is to hold the final scheduled price {_fmt(final)} but "
+            f"billing.py holds {_fmt(ours)}")
+    else:
+        final, expected, drift = due, due, (
+            f"scheduled price is {_fmt(due)} as of today but billing.py "
+            f"holds {_fmt(ours)} — update billing.py")
+
+    if ours != expected:
+        return Verdict(SCHEDULE_DRIFT, drift, consensus=consensus, upcoming=upcoming)
+
+    if consensus is not None and consensus != due:
+        return Verdict(SCHEDULE_STALE,
+                       f"our schedule says {_fmt(due)} is in force but the catalogs "
+                       f"agree on {_fmt(consensus)} — either the schedule is wrong, or they "
+                       f"have not caught up with a change we verified at the provider",
+                       consensus=consensus, upcoming=upcoming)
+
+    if model in HOLD_FINAL_PRICE:
+        note = (f"deliberately holds the final scheduled price {_fmt(final)}"
+                if final == due else
+                f"deliberately holds the final scheduled price {_fmt(final)}; "
+                f"today's actual is {_fmt(due)}, so this model's spend reads "
+                f"{final[1] / due[1]:.2f}x high until then (documented policy)")
+    elif consensus is None:
+        note = (f"matches the scheduled price {_fmt(due)}; no catalog consensus to check it "
+                f"against ({_quoted(covered) or 'no coverage'})")
+    else:
+        note = f"matches the scheduled price {_fmt(due)}"
+    return Verdict(CONFIRMED, note, consensus=consensus, upcoming=upcoming)
+
+
+def _consensus(covered: Dict[str, Price]) -> Optional[Price]:
+    """The price at least two catalogs agree on, or None when they cannot deliver one."""
+    distinct = set(covered.values())
+    return distinct.pop() if len(covered) >= 2 and len(distinct) == 1 else None
+
+
+def _quoted(covered: Dict[str, Price]) -> str:
+    return ", ".join(f"{s}={_fmt(p)}" for s, p in sorted(covered.items()))
 
 
 def _fmt(p: Price) -> str:
