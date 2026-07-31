@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from ..ports.audio_transcription_port import AudioTranscriptionPort
     from ..services.file_conversion_service import FileConversionService
 from ..utils.file_conversion import (
-    convert_file_to_text, is_native_binary, make_history_stub,
+    convert_file_to_text, download_alert, is_native_binary, make_history_stub,
 )
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
@@ -547,7 +547,17 @@ class ConversationHandler(ConversationHandlerPort):
                         message_parts.append(file_part)
                         logger.info(f"📎 File prepared: {attachment.filename} ({attachment.mime_type})")
                     else:
+                        # The attachment is lost, but the request is still answerable — so the
+                        # slot carries a system note rather than nothing. Without it the agent
+                        # cannot distinguish "no file was sent" from "the file did not arrive"
+                        # and may answer from the text alone as if nothing were missing.
+                        # NOT a Quick fallback: the primary agent has not failed, one input has.
                         logger.warning(f"⚠️ Failed to download file: {attachment.filename}")
+                        # No history stub: the note is one line and belongs in history intact,
+                        # so a later turn still shows that a file was attempted and lost.
+                        message_parts.append(
+                            MessagePart(text=download_alert(attachment.filename or "unknown"))
+                        )
 
             # SESSION_27: Set Request Context for implicit multi-tenant operations
             # All search_facts() calls inside will automatically use account_id
