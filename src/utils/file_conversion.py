@@ -96,6 +96,23 @@ def _size_alert(filename: str, size_bytes: int) -> str:
     )
 
 
+def download_alert(filename: str) -> str:
+    """System note standing in for an attachment that never reached us.
+
+    Public, unlike its `_size_alert` / `_conversion_alert` siblings: the download happens in the
+    response channel, one layer above conversion, so ConversationHandler builds this part itself.
+    Same contract though — the attachment slot carries an instruction, and the ordinary agent
+    tells the user in its own voice instead of the failure being invisible (2026-07-31: an
+    over-long filename dropped a file and only the model's guesswork revealed it).
+    """
+    return (
+        f"[System: User attached '{filename}' but the file could not be retrieved from the "
+        f"messaging platform, so its content is NOT available in this message. "
+        f"Do not guess what it contained. Tell the user the file did not arrive and ask them "
+        f"to send it again.]"
+    )
+
+
 def _conversion_alert(filename: str, mime_type: str = "") -> str:
     mime_suffix = f" ({mime_type})" if mime_type else ""
     return (
