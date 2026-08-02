@@ -114,6 +114,11 @@ class SmartAgentConfig:
     # UserNotificationService (NotificationKind/SLA) — see notification_sla.py.
     # Retry behavior lives in BaseAgent.RETRY_POLICY (RetryPolicy domain object).
     timeout_ms: int = 300_000
+    # 64000: increased to accommodate 730-line system prompt + developer_message anchors
+    # on OpenAI. Real prompts consume ~10k tokens before answer space.
+    # Personality grounding via developer_message is load-bearing; truncation mid-response
+    # destroys structured JSON and personality. Providers clamp to model max.
+    max_tokens: int = 64_000
 
 
 # ---------------------------------------------------------------------------

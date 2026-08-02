@@ -75,6 +75,7 @@ class SmartResponseAgent(BaseAgent):
     MAX_AGENT_RETRIES = SMART.max_agent_retries
     RETRY_BACKOFF_SECONDS = SMART.retry_backoff_seconds
     DELEGATION_TEMPERATURE = SMART.delegation_temperature
+    MAX_TOKENS = SMART.max_tokens
 
     # Structured output envelope. Enforced by Gemini via response_json_schema and by Claude
     # via a synthesized `respond` tool whose input_schema IS this envelope (the adapter
@@ -444,6 +445,7 @@ class SmartResponseAgent(BaseAgent):
                 temperature=self.DELEGATION_TEMPERATURE,
                 response_schema=self._RESPONSE_SCHEMA,
                 thinking=eff.thinking_effort,
+                max_tokens=self.MAX_TOKENS,
             )
 
             # Closure: every LLM call inside the engine routes through the
