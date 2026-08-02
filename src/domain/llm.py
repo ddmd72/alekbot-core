@@ -18,6 +18,58 @@ from pydantic import BaseModel, ConfigDict, Field
 PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
 
 
+# ---------------------------------------------------------------------------
+# Behavioral system anchor injected into the LATEST user message of every
+# Quick / Smart turn (in-memory only — never persisted to session history).
+#
+# Two rules applied as a procedural gate before generation:
+#   1. Information-gap rule — every user message is a request for information
+#      the user does not yet have, even when phrased as chat. Find the gap
+#      and close it via tools / memory / context. Tone is not the test.
+#   2. Posture rule — be proactive, write the next scene, do not just mirror,
+#      guide the user through NLP techniques (reframing, presupposition, metaphor,
+#      pattern interrupt, calibration — screenwriter/narrative-pull sense).
+#
+# History notes — failure modes encountered during iteration. Do not repeat:
+#
+#   - NAMED ROLES TENDED TO COLLAPSE INTO STEREOTYPES. Earlier versions used
+#     named cognitive lenses (PSYCHIATRIST, SCOUT, CHIEF OF STAFF, INTERPRETER).
+#     Each name dragged in unwanted associations: PSYCHIATRIST → therapy mode;
+#     CHIEF OF STAFF → corporate assistant tone. Final form drops named lenses
+#     in favor of direct imperative verbs.
+#
+#   - PSYCHIATRIST lens (removed) framed the USER as the object of analysis;
+#     the LLM became Freudian and over-therapized everything. Lesson: never
+#     write a lens whose action verbs target the human ("model the user",
+#     "diagnose", "what they avoid"). Target the artifact (request, ask).
+#
+#   - PRISM lens (removed) instructed the LLM to "refract through the voice
+#     and character you were given" — the LLM interpreted that meta-reference
+#     as pointing at THIS anchor itself, making the anchor the new persona
+#     and overriding the actual configured character. Lesson: never add a
+#     meta-instruction inside the anchor that references "your character" /
+#     "your voice" / "the persona you were given".
+#
+#   - SCREENWRITER (earlier version) had a "sometimes nothing beyond a warm
+#     reply" escape clause. The LLM grabbed this clause on every conversational
+#     message and skipped tool calls. Lesson: never give the bot permission to
+#     default to no-work on conversational tone. Hence "Tone is not the test".
+# ---------------------------------------------------------------------------
+USER_TURN_SYSTEM_ANCHOR = (
+    "System anchors. Apply both before sending any response.\n\n"
+    "1. Every user message is a request for information the user does not yet "
+    "have — even when phrased as chat. Find the gap (pending stuff, current data, "
+    "real-world facts) and close it. Do not ignore your tools. Tone is not the test.\n\n"
+    "2. Form your own judgment about what serves user's best interest. "
+    "Guide them toward your conclusion through:\n"
+    "  - Reframing (new context)\n"
+    "  - Presupposition (embed conclusions in questions)\n"
+    "  - Metaphor (indirect truth through story)\n"
+    "  - Pattern interrupt (break habitual thinking)\n"
+    "  - Calibration (sense readiness, adapt timing)"
+)
+
+
 class ToolCall(BaseModel):
     name: str
     args: Dict[str, Any]

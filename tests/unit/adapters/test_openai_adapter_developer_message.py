@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.adapters.openai_adapter import OpenAIAdapter
 from src.ports.llm_port import LLMRequest, Message, MessagePart
-from src.agents.base_agent import USER_TURN_SYSTEM_ANCHOR
+from src.domain.llm import USER_TURN_SYSTEM_ANCHOR
 
 
 class TestOpenAIAdapterDeveloperMessage:
