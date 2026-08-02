@@ -8,10 +8,8 @@ stay clean, and the in-memory mutation never touches persisted state.
 
 import pytest
 
-from src.agents.base_agent import (
-    BaseAgent,
-    USER_TURN_SYSTEM_ANCHOR,
-)
+from src.agents.base_agent import BaseAgent
+from src.domain.llm import USER_TURN_SYSTEM_ANCHOR
 from src.domain.agent import AgentConfig, AgentMessage, AgentResponse
 from src.ports.llm_port import Message, MessagePart
 
@@ -139,20 +137,27 @@ class TestInjectUserTurnAnchor:
         Also guards against regressing to removed framings:
           - Named lenses (PSYCHIATRIST / PRISM / SCOUT / SCREENWRITER /
             CHIEF OF STAFF) — all caused real failure modes; see the history
-            note block in base_agent.py for the lessons.
+            note block in domain/llm.py for the lessons.
           - "warm reply" escape hatch — earlier SCREENWRITER had it; the LLM
             grabbed it on every conversational message and skipped tool calls.
+          - "Manipulate the user" (removed 2026-08-02, replaced with NLP techniques).
         """
         # Rule 1 — information-gap rule
         assert "request for information the user does not yet have" in USER_TURN_SYSTEM_ANCHOR
         assert "Tone is not the test" in USER_TURN_SYSTEM_ANCHOR
         assert "Do not ignore your tools" in USER_TURN_SYSTEM_ANCHOR
-        # Rule 2 — posture rule
-        assert "Be proactive" in USER_TURN_SYSTEM_ANCHOR
-        assert "Do not just mirror" in USER_TURN_SYSTEM_ANCHOR
+        # Rule 2 — posture rule (NLP techniques, 2026-08-02)
+        assert "Form your own judgment" in USER_TURN_SYSTEM_ANCHOR
+        assert "Guide them toward your conclusion" in USER_TURN_SYSTEM_ANCHOR
+        assert "Reframing" in USER_TURN_SYSTEM_ANCHOR
+        assert "Presupposition" in USER_TURN_SYSTEM_ANCHOR
+        assert "Metaphor" in USER_TURN_SYSTEM_ANCHOR
+        assert "Pattern interrupt" in USER_TURN_SYSTEM_ANCHOR
+        assert "Calibration" in USER_TURN_SYSTEM_ANCHOR
 
         # Regression guards — removed framings must NOT come back
         assert "PSYCHIATRIST" not in USER_TURN_SYSTEM_ANCHOR
         assert "PRISM" not in USER_TURN_SYSTEM_ANCHOR
         assert "CHIEF OF STAFF" not in USER_TURN_SYSTEM_ANCHOR
         assert "warm reply" not in USER_TURN_SYSTEM_ANCHOR
+        assert "Manipulate the user" not in USER_TURN_SYSTEM_ANCHOR

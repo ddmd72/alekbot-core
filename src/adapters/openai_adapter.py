@@ -47,7 +47,7 @@ from ..ports.llm_port import (
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
 )
-from ..agents.base_agent import USER_TURN_SYSTEM_ANCHOR
+from ..domain.llm import USER_TURN_SYSTEM_ANCHOR
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
     LLMClientError,
