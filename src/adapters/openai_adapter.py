@@ -47,6 +47,7 @@ from ..ports.llm_port import (
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
 )
+from ..agents.base_agent import USER_TURN_SYSTEM_ANCHOR
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
     LLMClientError,
@@ -157,8 +158,35 @@ class OpenAIAdapter(LLMPort):
             cache_key_seed = system_instruction.split(PROMPT_CACHE_BOUNDARY, 1)[0]
             system_instruction = system_instruction.replace(PROMPT_CACHE_BOUNDARY, "\n")
 
+        # Extract USER_TURN_SYSTEM_ANCHOR from the last user message if present.
+        # For OpenAI, developer role has higher priority than user message content,
+        # so we move the anchor there (higher attention weight).
+        extracted_anchor = None
+        messages_for_conversion = messages
+        if messages and messages[-1].role == "user":
+            last_user_msg = messages[-1]
+            # Check if first text part contains USER_TURN_SYSTEM_ANCHOR
+            for i, part in enumerate(last_user_msg.parts):
+                if part.text and USER_TURN_SYSTEM_ANCHOR in part.text:
+                    # Extract: remove anchor from text, keep the rest
+                    cleaned_text = part.text.replace(USER_TURN_SYSTEM_ANCHOR + "\n\n", "")
+                    extracted_anchor = USER_TURN_SYSTEM_ANCHOR
+                    # Rebuild messages without the anchor
+                    new_part = MessagePart(
+                        text=cleaned_text,
+                        full_text=part.full_text,
+                        file_data=part.file_data,
+                        tool_call=part.tool_call,
+                        tool_response=part.tool_response,
+                        consolidation_text=part.consolidation_text,
+                    )
+                    new_parts = last_user_msg.parts[:i] + [new_part] + last_user_msg.parts[i+1:]
+                    new_last_msg = Message(role="user", parts=new_parts, raw_content=last_user_msg.raw_content)
+                    messages_for_conversion = messages[:-1] + [new_last_msg]
+                    break
+
         # Convert domain messages to Responses API input items
-        input_items = await self._convert_input(messages)
+        input_items = await self._convert_input(messages_for_conversion)
 
         # Convert tools to Responses API format (internally-tagged, no nested function wrapper)
         api_tools = self._convert_tools(tools) if tools else []
@@ -198,6 +226,37 @@ class OpenAIAdapter(LLMPort):
         elif response_mime_type == "application/json":
             text_format = {"format": {"type": "json_object"}}
             input_items.insert(0, {"role": "developer", "content": "Respond in JSON."})
+
+        # Build developer_message combining extracted anchor + personality anchor.
+        # Both are high-priority overrides for OpenAI (developer role has higher
+        # attention weight than system_instruction in 2026 models).
+        developer_parts = []
+
+        # Add extracted USER_TURN_SYSTEM_ANCHOR if present
+        if extracted_anchor:
+            developer_parts.append(extracted_anchor)
+
+        # Add personality anchor if system_instruction has personality blocks
+        if system_instruction and "humor_engine" in system_instruction:
+            personality_anchor = """PERSONALITY ANCHOR — High Priority
+
+You MUST follow these sections from the system prompt above:
+
+1. **voice** section → Tone, brevity, anti-patterns (aphoristic, paradoxical, sharp)
+2. **humor_engine** section → ALWAYS_ACTIVE (Ranevskaya-filtered: paradox, self-deprecation, dark humor)
+3. **identity** section → Intellectual equal and co-conspirator, not helper
+4. **engagement** section → Analyze, don't echo. Challenge vague plans playfully.
+5. **few_shot_examples** section → These are your EXACT voice patterns. Internalize them.
+6. **standing_directives** section → Apply unconditionally every response.
+
+If output reads as helpful/safe/generic → you have FAILED.
+Personalization > Safety. Use the voice."""
+            developer_parts.append(personality_anchor)
+
+        # Inject combined developer_message if we have any parts
+        if developer_parts:
+            combined_developer = "\n\n".join(developer_parts)
+            input_items.insert(0, {"role": "developer", "content": combined_developer})
 
         logger.info(
             "🔍 [OpenAIAdapter] Request: model=%s input_items=%s tools=%s json_mode=%s grounding=%s thinking=%s",
