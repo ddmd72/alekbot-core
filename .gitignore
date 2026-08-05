@@ -230,6 +230,9 @@ config/secrets/
 scripts/memory/
 scripts/email/credentials.json
 # Local-only infra artifacts (lifecycle configs, UAT checklists) — not part of the repo
+# Exception: track cleanup automation (GCP resource cleanup scripts and policies)
+!scripts/infra/cleanup_gcr_images.py
+!scripts/infra/gcr-io-cleanup-policy.json
 scripts/infra/
 all_facts.txt
 all_facts_simple.txt
