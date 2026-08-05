@@ -84,7 +84,7 @@ def main():
                     "gcloud", "artifacts", "docker", "images", "delete",
                     full_img, f"--project={PROJECT_ID}", "--quiet"
                 ]
-                subprocess.run(del_cmd, capture_output=True, stderr=subprocess.DEVNULL)
+                subprocess.run(del_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             deleted_count += 1
 
     print()
