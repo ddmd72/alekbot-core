@@ -88,6 +88,36 @@ the Docker layer cache as long as `pdf_generator/package.json` is unchanged.
 
 ---
 
+## Artifact Registry Image Cleanup
+
+The `gcr.io` Artifact Registry repository stores Docker images pushed by `make deploy` via
+`cloudbuild-dev.yaml`. Every deploy overwrites the `:latest` tag but leaves the previous digest as
+an untagged orphan. Without active cleanup, storage accumulates unbounded: the repo was **~120 GB**
+in July 2026 (before cleanup), with 136 dead prod images + 489 dev images, costing ~$10.71/month.
+
+**Automatic cleanup via `set-cleanup-policies` does not work reliably** in the current gcloud CLI
+version (578.0.0+), so cleanup is manual:
+
+```bash
+# Dry-run: see what would be deleted
+python3 scripts/infra/cleanup_gcr_images.py --dry-run
+
+# Actual cleanup: delete untagged images older than 7 days
+python3 scripts/infra/cleanup_gcr_images.py
+```
+
+The script deletes all untagged images older than 7 days, keeping only recent builds (typically
+~10 images = one week of roughly-daily manual deploys), plus any images explicitly tagged with
+`:dev` or similar.
+
+**Recommended cadence:** Run monthly or after a week of active development (when `alek-bot-dev`
+accumulates untagged digests). The source of truth for the policy is
+[`scripts/infra/gcr-io-cleanup-policy.json`](../../scripts/infra/gcr-io-cleanup-policy.json)
+(currently a placeholder for future `set-cleanup-policies` adoption; the Python script is the
+working implementation).
+
+---
+
 ## Related Documentation
 
 - **[06_runtime/README.md](../06_runtime/README.md)** - Runtime architecture
