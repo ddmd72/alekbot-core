@@ -11,14 +11,14 @@ async def test_prompt_builder_caching():
     """
     mock_repo = AsyncMock()
     mock_repo.get_biographical_context_cached = AsyncMock(
-        return_value=[{"text": "User drives a Honda Civic"}]
+        return_value=[{"text": "User drives a Toyota Corolla"}]
     )
 
     builder = PromptBuilder(mock_repo, cache_ttl=3600)
 
     # 1. First call — should fetch from repository
     content1 = await builder._get_biographical_component("user-1")
-    assert "Honda Civic" in content1
+    assert "Toyota Corolla" in content1
     assert mock_repo.get_biographical_context_cached.call_count == 1
 
     # 2. Second call immediately — should hit cache (no repo call increase)
@@ -31,5 +31,5 @@ async def test_prompt_builder_caching():
 
     # 4. After invalidation — should fetch from repository again
     content3 = await builder._get_biographical_component("user-1")
-    assert "Honda Civic" in content3
+    assert "Toyota Corolla" in content3
     assert mock_repo.get_biographical_context_cached.call_count == 2

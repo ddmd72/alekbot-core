@@ -44,11 +44,11 @@ TEST_CASES = [
     },
     {
         "category": "MEDICAL",
-        "question": "My uric acid is 8.9 mg/dL. What dietary restrictions should I follow? Be specific about purine sources."
+        "question": "My vitamin D is 32 ng/mL. What dietary adjustments should I consider? Be specific about food sources."
     },
     {
         "category": "TRAVEL",
-        "question": "Plan a trip from Valencia to Krakow. What are the best flight options and layovers? I hate early mornings."
+        "question": "Plan a trip from Springfield to Krakow. What are the best flight options and layovers? I hate early mornings."
     },
     {
         "category": "GITHUB_PROJECT",
@@ -56,7 +56,7 @@ TEST_CASES = [
     },
     {
         "category": "PERSONAL_CONTEXT",
-        "question": "Remind me about my wife's car details and where she works. Also, when is our anniversary?"
+        "question": "Remind me about the car details and the service history. Also, when is the next inspection due?"
     },
     {
         "category": "TECH_DEEP_DIVE",
@@ -104,7 +104,7 @@ CONSTRAINTS for history_summary:
 1. MAXIMUM 100 CHARACTERS.
 2. Focus on FACTS and DECISIONS.
 3. Drop narrative, politeness, and filler words.
-4. Use abbreviations if clear (e.g., 'Auth0 > Firebase', 'Uric acid: no meat').
+4. Use abbreviations if clear (e.g., 'Auth0 > Firebase', 'Vitamin D: diet tips').
 """
 
 # ============================================================================

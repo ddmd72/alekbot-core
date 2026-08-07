@@ -357,7 +357,7 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
 {
   "biographical_facts": [
     {
-      "text": "Software engineer, lives in Kyiv...",
+      "text": "Software engineer, lives in Springfield...",
       "type": "event",
       "tags": ["bio", "location"],
       "created_at": "timestamp" // ISO string
@@ -873,8 +873,8 @@ Added 2026-02-18 for User Cabinet facts browser (`GET /api/user/facts/browse`). 
 {
   "note_id": "1742700000000",           // epoch-ms string, same as document ID
   "user_id": "550e8400-...",
-  "text": "Send Valencia morning news", // short display label ≤15 words
-  "instruction": "The user asked for a daily morning news briefing about Valencia...", // full execution context, no limit
+  "text": "Send Springfield morning news", // short display label ≤15 words
+  "instruction": "The user asked for a daily morning news briefing about Springfield...", // full execution context, no limit
   "due": "2026-03-23T08:00:00Z",        // UTC datetime when reminder fires
   "recurrence": {                        // null for one-time reminders
     "type": "daily",                    // "hourly" | "daily" | "weekly" | "monthly"

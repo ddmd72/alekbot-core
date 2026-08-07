@@ -37,7 +37,7 @@ async def test_e2e_context_integration():
     mock_repo = AsyncMock()
     # Mock biographical context response
     mock_repo.get_biographical_context.return_value = [
-        MagicMock(text="User's name is Dmytro", tags=["identity"], type=MagicMock(value="STATE")),
+        MagicMock(text="User's name is Alex", tags=["identity"], type=MagicMock(value="STATE")),
         MagicMock(text="User has a wife named Jane", tags=["family"], type=MagicMock(value="STATE"))
     ]
     # Mock anchors
@@ -124,8 +124,8 @@ async def test_e2e_context_integration():
         
     # Check if specific context content is present
     print("   → Checking for specific context content...")
-    if "User's name is Dmytro" in prompt_text:
-        print("   ✅ Context content 'User's name is Dmytro' FOUND in prompt")
+    if "User's name is Alex" in prompt_text:
+        print("   ✅ Context content 'User's name is Alex' FOUND in prompt")
     else:
         print("   ❌ Context content MISSING from prompt")
         

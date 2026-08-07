@@ -39,9 +39,9 @@ SCRIPT_MOVES: Dict[str, str] = {
     "debug_prod_vectors.py": "vectors/debug_prod_vectors.py",
     "test_vector_search.py": "vectors/test_vector_search.py",
     "test_prod_vector_search.py": "vectors/test_prod_vector_search.py",
-    "check_dev_glove.py": "vectors/check_dev_glove.py",
-    "check_glove_data.py": "vectors/check_glove_data.py",
-    "test_glove_search.py": "vectors/test_glove_search.py",
+    "check_dev_fact.py": "vectors/check_dev_fact.py",
+    "check_sample_fact_data.py": "vectors/check_sample_fact_data.py",
+    "test_sample_fact_search.py": "vectors/test_sample_fact_search.py",
 
     # Validation
     "check_models.py": "validation/check_models.py",

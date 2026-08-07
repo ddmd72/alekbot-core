@@ -6,7 +6,7 @@
 ## Context
 
 A day with no interactive use (two self-reminders: the 06:05 HTML morning briefing and
-the 16:30 Valencia event radar) was reported as **$9.69 / 9,037,142 tokens** by the
+the 16:30 Springfield event radar) was reported as **$9.69 / 9,037,142 tokens** by the
 Slack billing summary. BigQuery `prompt_content` — which records every LLM turn —
 accounted for only **2,516,130 tokens / $3.75** over the same window. The counters were
 over-reporting by ~3.6x.

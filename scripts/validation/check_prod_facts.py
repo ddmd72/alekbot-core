@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Check if glove data exists in PRODUCTION facts collection.
+Check if sample fact data exists in PRODUCTION facts collection.
 """
 import asyncio
 import sys
@@ -10,7 +10,7 @@ sys.path.append('src')
 from src.config.settings import load_settings
 
 async def main():
-    print("🔍 Checking glove data in PRODUCTION facts collection...")
+    print("🔍 Checking sample fact data in PRODUCTION facts collection...")
 
     # Load settings
     settings = load_settings()
@@ -22,31 +22,31 @@ async def main():
     # Check production facts collection directly
     prod_facts_col = db_client.collection('facts')
 
-    print("🔍 Querying production facts for glove data...")
+    print("🔍 Querying production facts for sample fact data...")
 
-    # Get all facts and search for glove data
+    # Get all facts and search for sample fact data
     docs = prod_facts_col.where("owner_id", "==", "YOUR_USER_ID").where("is_current", "==", True).stream()
 
-    found_glove_facts = []
+    found_facts = []
     async for doc in docs:
         data = doc.to_dict()
         text = data.get('text', '')
-        if 'glove' in text.lower() or 'перчатки' in text.lower():
-            found_glove_facts.append({
+        if 'sample fact' in text.lower() or 'тестовий фактки' in text.lower():
+            found_facts.append({
                 'id': doc.id,
                 'text': text,
                 'tags': data.get('tags', [])
             })
 
-    if found_glove_facts:
-        print(f"✅ Found {len(found_glove_facts)} glove facts in PRODUCTION:")
-        for fact in found_glove_facts:
+    if found_facts:
+        print(f"✅ Found {len(found_facts)} matching facts in PRODUCTION:")
+        for fact in found_facts:
             print(f"  ID: {fact['id']}")
             print(f"  Text: {fact['text']}")
             print(f"  Tags: {fact['tags']}")
             print()
     else:
-        print("❌ No glove facts found in PRODUCTION collection")
+        print("❌ No matching facts found in PRODUCTION collection")
 
     # Check specific fact
     print("🔍 Checking specific fact ID 'fact_bio_002' in production...")

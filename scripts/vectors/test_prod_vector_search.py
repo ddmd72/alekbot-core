@@ -26,9 +26,9 @@ async def main():
     # Test queries
     queries = [
         "какая марка моего авто",
-        "размер перчаток",
+        "тестовий факт",
         "Toyota Corolla",
-        "glove size"
+        "sample fact"
     ]
 
     prod_facts_col = db_client.collection('facts')
@@ -57,11 +57,11 @@ async def main():
             data = result.to_dict()
             text = data.get('text', '')
             
-            # Check if relevant to car or gloves
+            # Check if relevant to car or sample facts
             is_car = any(kw in text.lower() for kw in ['toyota', 'corolla', 'авто', 'машина', 'car'])
-            is_glove = any(kw in text.lower() for kw in ['glove', 'перчат'])
+            is_sample = any(kw in text.lower() for kw in ['sample fact',])
             
-            if is_car or is_glove:
+            if is_car or is_sample:
                 found_relevant = True
                 print(f"   ✅ FOUND RELEVANT (rank {count}): {text[:100]}...")
             else:

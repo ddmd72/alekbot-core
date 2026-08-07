@@ -126,7 +126,7 @@ For special cases (e.g., ConsolidationAgent searching for MERGE candidates), sem
 
 ```python
 enriched = await search_enrichment.enrich_context(
-    keywords=["car", "honda"],
+    keywords=["car", "toyota"],
     search_phrase_1="User car details",
     skip_semantic_dedup=True  # Keep ALL facts with different IDs
 )
@@ -209,9 +209,9 @@ enriched = await search_enrichment.enrich_context(
 
 ```python
 enriched = await search_enrichment.enrich_context(
-    keywords=["car", "honda"],
-    search_phrase_1="User car honda details",
-    search_phrase_2="Honda vehicle information",
+    keywords=["car", "toyota"],
+    search_phrase_1="User car toyota details",
+    search_phrase_2="Toyota vehicle information",
     limits=SearchLimits(total_limit=20),
     dedup_threshold=1.0,         # Only exact duplicates
     skip_semantic_dedup=True     # Keep ALL different IDs
@@ -226,11 +226,11 @@ enriched = await search_enrichment.enrich_context(
 
 ```
 Found facts:
-1. "Honda Civic 2015" (fact_id=abc)
-2. "Honda has automatic gearbox" (fact_id=def)
+1. "Toyota Corolla 2012" (fact_id=abc)
+2. "Toyota has automatic gearbox" (fact_id=def)
 3. "Car in Example City" (fact_id=ghi)
 
-Agent decision: MERGE all 3 → "Honda Civic 2015 with automatic gearbox in Example City"
+Agent decision: MERGE all 3 → "Toyota Corolla 2012 with automatic gearbox in Example City"
 ```
 
 Without consolidation mode, search would return only fact #1, losing #2 and #3.
@@ -386,16 +386,16 @@ class EnrichedFact:
 `MemorySearchAgent` formats its result as a single string — fact blocks joined by `---` separators. Each block contains the fact text followed by optional supplementary fields when present.
 
 ```
-User's 2024 Q1-Summer travel: Valencia (Jan), Paris (Jan), Barcelona (Mar)...
+User's 2024 Q1-Summer travel: Springfield (Jan), Riverton (Jan), Fairview (Mar)...
 context: 2024 travel history Q1-Summer
 reported: 2026-03-06
-metadata: {"year": 2024, "trips": [{"city": "Valencia", "month": "Jan"}, ...]}
+metadata: {"year": 2024, "trips": [{"city": "Springfield", "month": "Jan"}, ...]}
 ---
-User follows intermittent fasting (16-18 hour interval)...
-context: dietary protocol
+User follows a structured daily routine...
+context: daily routine
 reported: 2026-02-24
 ---
-User is diagnosed with Posterior Pelvic Tilt...
+User is enrolled in a local sports club...
 reported: 2025-09-12
 ```
 

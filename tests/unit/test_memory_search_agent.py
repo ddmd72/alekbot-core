@@ -81,7 +81,7 @@ class TestMemorySearchAgent:
             account_id="account-1",
             created_by_user_id="user123",
             lineage_id="lineage-1",
-            text="User owns a Honda Civic",
+            text="User owns a Toyota Corolla",
             tags=["possessions"],
             type=FactType.EVENT
         )
@@ -97,7 +97,7 @@ class TestMemorySearchAgent:
         response = await agent.execute(message)
 
         assert response.status == AgentStatus.SUCCESS
-        assert "User owns a Honda Civic" in response.result
+        assert "User owns a Toyota Corolla" in response.result
         assert response.confidence > 0.0
         
         # Verify calls

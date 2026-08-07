@@ -134,8 +134,8 @@ Messaging scenarios between the user and the bot via Slack or Telegram.
 
 **Flow:**
 1. `SmartResponseAgent` determines that both tools are needed
-2. Turn 1: `search_memory("my car")` → `MemorySearchAgent` → "Honda Civic 2019"
-3. Turn 2: `ask_web_search_agent("gas price Valencia")` → "€1.45/L"
+2. Turn 1: `search_memory("my car")` → `MemorySearchAgent` → "Toyota Corolla 2012"
+3. Turn 2: `ask_web_search_agent("gas price Springfield")` → "€1.45/L"
 4. Turn 3: `deliver_response(...)` — synthesis from both sources
 
 **Result:** Personalized response with data from memory and the internet
@@ -199,7 +199,7 @@ Scenarios for working with long-term memory — facts, consolidation, search.
 
 **Flow:**
 1. `ConsolidationAgent` extracts the new fact: "User lives in Madrid"
-2. Vector search finds the existing fact: "User lives in Valencia" (high similarity)
+2. Vector search finds the existing fact: "User lives in Springfield" (high similarity)
 3. Deduplication: numbers do not differ, fact has substantially changed → NOT duplicate
 4. `FactWriteService` applies SCD2:
    - Existing fact: `is_current=False`, `valid_to=now`

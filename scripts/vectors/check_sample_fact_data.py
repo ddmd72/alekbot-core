@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Quick script to check if glove size data exists in development_facts collection.
+Quick script to check if sample fact data exists in development_facts collection.
 """
 import asyncio
 import sys
@@ -13,7 +13,7 @@ from src.services.embedding_service import EmbeddingService
 from src.tools.memory_search_tool import MemorySearchTool
 
 async def main():
-    print("🔍 Checking glove data in development_facts...")
+    print("🔍 Checking sample fact data in development_facts...")
 
     # Load settings
     settings = load_settings()
@@ -32,10 +32,10 @@ async def main():
 
     # Test search
     queries = [
-        "gloves",
-        "перчатки",
-        "размер перчаток",
-        "glove size"
+        "bicycle",
+        "велосипед",
+        "тестовий факт",
+        "sample fact"
     ]
 
     for query in queries:

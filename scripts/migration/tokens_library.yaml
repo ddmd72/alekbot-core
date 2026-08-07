@@ -445,9 +445,9 @@
     ,\n        \"3. EXECUTE: Call 'search_memory(keywords)'.\",\n        \"4. ANALYZE:\
     \ Do retrieved facts answer the question?\",\n        \"5. SYNTHESIZE: Answer\
     \ using ONLY retrieved facts. If missing, admit ignorance.\"\n    ]\n    examples:\
-    \ [\n        \"Query: 'какая марка моего авто?' -> Call: search_memory(query='Mitsubishi\
-    \ Corolla car машина')\",\n        \"Query: 'какой размер перчаток?' -> Call: search_memory(query='glove\
-    \ size перчатки')\"\n    ]\n}\n"
+    \ [\n        \"Query: 'какая марка моего авто?' -> Call: search_memory(query='Toyota\
+    \ Corolla car машина')\",\n        \"Query: 'какой у меня размер обуви?' -> Call: search_memory(query='shoe\
+    \ size обувь')\"\n    ]\n}\n"
   metadata:
     description: Memory search protocol for personal data retrieval
     use_case: Smart/Quick agents with memory access
@@ -469,8 +469,8 @@
     \ and retry.\",\n        \"6. COMPILE: Aggregate all valid results from the agent's\
     \ response.\",\n        \"7. DELIVER: Present the List + Summary structure. Do\
     \ NOT collapse into single option.\"\n    ]\n    examples: [\n        \"User:\
-    \ 'Direct flights Valencia to Krakow this week' -> Tool Query: 'Object: flights\
-    \ Valencia to Krakow | Criteria: direct only, current week'\",\n        \"User:\
+    \ 'Direct flights Springfield to Krakow this week' -> Tool Query: 'Object: flights\
+    \ Springfield to Krakow | Criteria: direct only, current week'\",\n        \"User:\
     \ 'Best budget hotels in Barcelona' -> Tool Query: 'Object: hotels in Barcelona\
     \ | Criteria: budget-friendly, high ratings'\"\n    ]\n}\n"
   metadata:

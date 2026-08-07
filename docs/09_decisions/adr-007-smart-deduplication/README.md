@@ -27,7 +27,7 @@ From deduplication reports:
 - 39% of fact pairs had similarity 0.95-0.96 (moderately similar)
 - Many "duplicates" were actually **complementary information**:
   - "Weight 75 kg" vs "Weight 75 kg in Example City, representing 15kg loss"
-  - "HbA1c 5.1%" vs "HbA1c 5.1%, indicating no diabetes"
+  - "Vitamin D 32 ng/mL" vs "Vitamin D 32 ng/mL, within reference range"
 
 ---
 

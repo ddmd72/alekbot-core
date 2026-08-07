@@ -213,7 +213,7 @@ class LifeChronicler extends Agent {{
             
             example_state_fact: {{
                 "id": "fact_weight_feb2026",
-                "content": "User weighs 82kg as of February 2026",
+                "content": "User weighs 72kg as of February 2026",
                 "tags": ["health", "biometrics", "weight"],
                 "type": "STATE",
                 "metadata": {{"weight_kg": 82, "date": "2026-02"}}
@@ -245,13 +245,13 @@ class LifeChronicler extends Agent {{
             
             case_confirmation_pattern: {{
                 input: \"\"\"
-ASSISTANT: So you weigh 82kg?
+ASSISTANT: So you weigh 72kg?
 USER: Да, точно
 \"\"\",
                 output: {{
                     "new_facts": [{{
                         "id": "fact_weight_confirmed",
-                        "content": "User weighs 82kg",
+                        "content": "User weighs 72kg",
                         "tags": ["health", "weight"],
                         "type": "STATE",
                         "metadata": {{"weight_kg": 82}}
@@ -264,7 +264,7 @@ USER: Да, точно
             case_assistant_inference: {{
                 input: \"\"\"
 USER: Привет
-ASSISTANT: Based on history, you weigh 82kg
+ASSISTANT: Based on history, you weigh 72kg
 \"\"\",
                 output: {{
                     "new_facts": [],

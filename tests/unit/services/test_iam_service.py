@@ -27,7 +27,7 @@ class TestIAMServiceMessageGeneration:
         """Test Telegram rejection message includes platform ID."""
         message = iam_service.get_rejection_message(
             platform="telegram",
-            platform_user_id="670659908",
+            platform_user_id="123456789",
             reason="not_registered"
         )
 
@@ -35,7 +35,7 @@ class TestIAMServiceMessageGeneration:
         assert "Hi!" in message
         assert "Open" in message
         assert iam_service.CABINET_URL in message
-        assert "670659908" in message  # Shows user ID
+        assert "123456789" in message  # Shows user ID
         assert "come back" in message
 
     def test_get_rejection_message_slack_not_registered(self, iam_service):
@@ -141,7 +141,7 @@ class TestIAMServiceAuthorization:
 
         decision = await iam_service.authorize(
             platform="telegram",
-            platform_user_id="670659908"
+            platform_user_id="123456789"
         )
 
         assert decision.action == "allow"
@@ -184,7 +184,7 @@ class TestIAMServiceAuthorization:
 
         decision = await iam_service.authorize(
             platform="telegram",
-            platform_user_id="670659908"
+            platform_user_id="123456789"
         )
 
         assert decision.action == "reject"

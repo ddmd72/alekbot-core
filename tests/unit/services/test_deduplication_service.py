@@ -233,8 +233,8 @@ class TestSmartDeduplication:
     def test_medical_interpretation_added(self, service):
         """Medical fact with interpretation → NOT duplicate if detailed."""
         is_dup, reason = service.is_duplicate(
-            "HbA1c was 5.1%, indicating no diabetes",  # New: with interpretation
-            "HbA1c was 5.1%",  # Existing: just value
+            "Vitamin D was 32 ng/mL, within reference range",  # New: with interpretation
+            "Vitamin D was 32 ng/mL",  # Existing: just value
             0.96
         )
         
@@ -295,8 +295,8 @@ class TestSmartDeduplication:
     
     def test_extract_floats(self, service):
         """Extract float numbers."""
-        numbers = service._extract_and_sort_numbers("HbA1c 5.1%")
-        # Note: Extracts "1" from "HbA1c" and "5.1" from value
+        numbers = service._extract_and_sort_numbers("Marker A1 5.1%")
+        # Note: Extracts "1" from "Marker A1" and "5.1" from value
         assert numbers == [1.0, 5.1]
     
     def test_extract_multiple_numbers(self, service):

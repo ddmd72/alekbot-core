@@ -211,7 +211,7 @@ search_memory_protocol {
       
       examples: [
         "Query: 'какая марка моего авто?' -> Call: search_memory(query='Toyota Corolla car машина')",
-        "Query: 'какой размер перчаток?' -> Call: search_memory(query='glove size перчатки')"
+        "Query: 'коли я купив велосипед?' -> Call: search_memory(query='bicycle purchase date велосипед')"
       ]
     }
 
@@ -234,7 +234,7 @@ search_memory_protocol {
       ]
       
       examples: [
-        "User: 'Direct flights Valencia to Krakow this week' -> Tool Query: 'Object: flights Valencia to Krakow | Criteria: direct only, current week'",
+        "User: 'Direct flights Springfield to Krakow this week' -> Tool Query: 'Object: flights Springfield to Krakow | Criteria: direct only, current week'",
         "User: 'Best budget hotels in Barcelona' -> Tool Query: 'Object: hotels in Barcelona | Criteria: budget-friendly, high ratings'"
       ]
     }"""

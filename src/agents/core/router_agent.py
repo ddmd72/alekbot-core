@@ -66,7 +66,7 @@ class RouterAgent(BaseAgent):
 
     Example complex requests:
     - Personal data queries: "What shoe size do I wear?"
-    - External data queries: "What's the weather in Valencia?"
+    - External data queries: "What's the weather in Springfield?"
     - Multi-step reasoning: "Compare these two options..."
     """
 

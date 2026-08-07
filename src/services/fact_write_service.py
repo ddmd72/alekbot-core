@@ -100,7 +100,7 @@ class FactWriteService(FactWritePort):
         
         Example:
             facts_data = [
-                {"text": "User owns 2005 Honda Civic", "tags": ["vehicle", "car"], "type": "event"},
+                {"text": "User owns 2012 Toyota Corolla", "tags": ["vehicle", "car"], "type": "event"},
                 {"text": "User dislikes Brussels sprouts", "tags": ["food", "preference"], "type": "state"}
             ]
             saved, skipped = await service.add_facts_batch(account_id, user_id, facts_data)

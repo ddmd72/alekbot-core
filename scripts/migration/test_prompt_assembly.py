@@ -83,7 +83,7 @@ async def test_smart_agent_assembly(env: str, project_id: str = None):
 
     # Test data
     biographical_facts = [
-        "Name: Dmytro",
+        "Name: Alex",
         "Location: Kyiv, Ukraine",
         "Occupation: Software Engineer",
         "Languages: Ukrainian, English, Russian"

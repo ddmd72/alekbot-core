@@ -98,7 +98,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     #     REAL place links. It also ignored "ranked by rating" and padded the list with a
     #     non-museum. Fabrication under a valid citation is the worst failure mode here.
     #   • gemini-3.6-flash is 5x DEARER than luna ($1.50/$7.50 plus more turns) and
-    #     fabricated three alternative Puçol→Angers routes with road names and tolls from
+    #     fabricated three alternative Northgate→Toulouse routes with road names and tolls from
     #     memory, all sharing the single distance the route tool actually returned.
     #   • gpt-5.4-nano made ZERO tool calls across 6 queries while still emitting text —
     #     it does not register that it has tools. Confirms the original ECO rejection.
@@ -225,7 +225,7 @@ class UserBotConfig(BaseModel):
     # Set via Cabinet UI. Used for: datetime injection in prompts, reminder due resolution, next_due computation.
     timezone: str = "UTC"
 
-    # Location (free text, e.g. "Valencia, Spain"). Set via Cabinet UI.
+    # Location (free text, e.g. "Springfield, USA"). Set via Cabinet UI.
     # Injected into knowledge_base {} for agent context (maps, weather, local awareness).
     location: Optional[str] = None
 

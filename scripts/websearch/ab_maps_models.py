@@ -146,7 +146,7 @@ GEO_SELECTORS: List[str] = [
     "Find current jewellers and gold jewellery repair services",   # place discovery
     "worth seeing in Serra",                                       # places + route + dinner
     "retrieve current live weather and today's forecast",           # weather lookup
-    "verify current weather in Puçol and Valencia",                 # weather lookup
+    "verify current weather in Northgate and Springfield",                 # weather lookup
 ]
 
 
@@ -164,22 +164,22 @@ GEO_SELECTORS: List[str] = [
 # route alternatives. Whether a model states that limit or invents past it is the point.
 FRESH_GEO_QUERIES: List[str] = [
     # 1. place discovery + driving radius + ranking by rating
-    "Find Carrefour stores within a 15 km drive of Puçol, Valencia, Spain. "
+    "Find Carrefour stores within a 15 km drive of Northgate, Springfield, USA. "
     "Sort them by customer rating (best first) and give for each: name, full address, "
-    "rating and number of reviews, opening hours, and driving distance and time from Puçol.",
+    "rating and number of reviews, opening hours, and driving distance and time from Northgate.",
     # 2. place discovery + NON-CAR routing + opening hours
     "List police stations that are sensible to reach by bicycle from Av. Font de Mora 3, "
-    "Puçol, Valencia, Spain. For each: name, full address, opening hours, phone, and the "
+    "Northgate, Springfield, USA. For each: name, full address, opening hours, phone, and the "
     "cycling distance and time from that address. Exclude any that are impractical by bike.",
     # 3. place discovery + ranking, needs 10 distinct results
-    "Top 10 museums in Valencia, Spain, ranked by rating. For each give name, address, "
+    "Top 10 museums in Springfield, USA, ranked by rating. For each give name, address, "
     "rating with review count, and opening hours for today.",
     # 4. BOUNDARY: cinema listings are place data, today's VOSE showtimes are not
-    "List cinemas in Valencia, Spain that are showing films in VOSE (original version with "
+    "List cinemas in Springfield, USA that are showing films in VOSE (original version with "
     "Spanish subtitles) today. For each: cinema name, address, and which VOSE films are "
     "screening today with their times.",
     # 5. BOUNDARY: long international route with THREE alternatives
-    "Driving distance from Puçol, Valencia, Spain to Angers, France. Give three "
+    "Driving distance from Northgate, Springfield, USA to Toulouse, France. Give three "
     "alternative routes with details for each: total distance, driving time, the main "
     "roads and countries crossed, and any tolls.",
 ]

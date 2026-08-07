@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Check if glove document has vector data.
+Check if sample document has vector data.
 """
 import asyncio
 import sys
@@ -10,7 +10,7 @@ sys.path.append('src')
 from src.config.settings import load_settings
 
 async def main():
-    print("🔍 Checking vector data for glove document...")
+    print("🔍 Checking vector data for sample document...")
 
     # Load settings
     settings = load_settings()
@@ -19,9 +19,9 @@ async def main():
     from google.cloud import firestore
     db_client = firestore.AsyncClient(project=settings["GOOGLE_CLOUD_PROJECT"])
 
-    # Check the glove document
+    # Check a single fact document
     dev_facts_col = db_client.collection('development_facts')
-    doc_id = "e58f31e6-ce42-4036-87e6-b11be4492b28"
+    doc_id = os.getenv("FACT_ID") or "<fact-uuid>"
 
     print(f"🔍 Checking document {doc_id}...")
     doc = await dev_facts_col.document(doc_id).get()
@@ -50,7 +50,7 @@ async def main():
     try:
         from src.services.embedding_service import EmbeddingService
         embedding = EmbeddingService(settings["GEMINI_API_KEY"])
-        test_vector = await embedding.get_embedding("gloves size")
+        test_vector = await embedding.get_embedding("sample fact")
         print(f"✅ Generated test embedding, length: {len(test_vector)}")
 
         # Try vector search

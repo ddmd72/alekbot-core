@@ -593,7 +593,7 @@ single Gemini grounding call with a cognitive process prompt instructing 5-vecto
 | Query type | Latency | Search queries | Coverage |
 |---|---|---|---|
 | News (Kyiv events) | 35s | 6 queries / 15 sources | 5 topic sections |
-| Weather (Valencia week) | 16-31s | 6-15 queries | Daily table 22-28.02 |
+| Weather (Springfield week) | 16-31s | 6-15 queries | Daily table 22-28.02 |
 | Local search (wine near Example City) | 18-23s | 6-18 queries | Tiered by shop type + hours |
 
 ### Why the RFC architecture is not needed

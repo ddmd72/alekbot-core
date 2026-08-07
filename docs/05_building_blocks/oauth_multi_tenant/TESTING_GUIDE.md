@@ -237,15 +237,15 @@ Expected response:
 3. **Copy external_user_id to YOUR_USER_ID:**
    ```python
    # Get your existing user
-   dmytro = db.collection("dev_users_oauth").document("YOUR_USER_ID").get()
-   dmytro_data = dmytro.to_dict()
+   user_doc = db.collection("dev_users_oauth").document("YOUR_USER_ID").get()
+   user_data = user_doc.to_dict()
 
    # Update with OAuth identity
-   dmytro_data['external_user_id'] = external_user_id  # From step 2
-   dmytro_data['auth_metadata'] = new_user['auth_metadata']
+   user_data['external_user_id'] = external_user_id  # From step 2
+   user_data['auth_metadata'] = new_user['auth_metadata']
 
    # Save
-   db.collection("dev_users_oauth").document("YOUR_USER_ID").set(dmytro_data)
+   db.collection("dev_users_oauth").document("YOUR_USER_ID").set(user_data)
 
    print("✅ OAuth linked to YOUR_USER_ID")
    ```

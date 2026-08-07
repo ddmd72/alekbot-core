@@ -64,7 +64,7 @@ Use:
   knowledge_base {
     biographical_context: '''
       **Biographical**
-      - Born in Kyiv (Jan 01, 2000)
+      - Born in Springfield (Jan 01, 2000)
       - Software engineer (Feb 10, 2025)
     '''
   }

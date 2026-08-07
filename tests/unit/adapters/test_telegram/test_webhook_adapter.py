@@ -99,12 +99,12 @@ class TestTelegramWebhookAdapter:
         adapter.dedup_store.try_mark_processed = AsyncMock(return_value=True)
         
         mock_user = MagicMock()
-        mock_user.id = 670659908
+        mock_user.id = 123456789
         mock_user.is_bot = False
         mock_user.first_name = "Test"
         
         mock_chat = MagicMock()
-        mock_chat.id = 670659908
+        mock_chat.id = 123456789
         mock_chat.type = "private"
         
         mock_message = MagicMock()
@@ -151,14 +151,14 @@ class TestTelegramWebhookAdapter:
         adapter.iam_service.authorize.return_value = IAMDecision(
             action="reject",
             message="👋 Привіт! Щоб використовувати бота...",
-            metadata={"platform_user_id": "670659908"}
+            metadata={"platform_user_id": "123456789"}
         )
         
         mock_user = MagicMock()
-        mock_user.id = 670659908
+        mock_user.id = 123456789
         
         mock_chat = MagicMock()
-        mock_chat.id = 670659908
+        mock_chat.id = 123456789
         
         mock_message = MagicMock()
         mock_message.from_user = mock_user
@@ -200,10 +200,10 @@ class TestTelegramWebhookAdapter:
         )
         
         mock_user = MagicMock()
-        mock_user.id = 670659908
+        mock_user.id = 123456789
         
         mock_chat = MagicMock()
-        mock_chat.id = 670659908
+        mock_chat.id = 123456789
         
         mock_message = MagicMock()
         mock_message.from_user = mock_user

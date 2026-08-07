@@ -27,8 +27,8 @@ class TestFitsWithinNameMax:
     def test_the_incident_filename_now_fits(self):
         filename = (
             "view-source_https___www.correosaduanas.es_webauth_correosAduanas_private_"
-            "tramitacionEnvioListado_tipoTramitacion=TRAMITACION_CORREOS&numEnvio=LT074295510GB"
-            "&idEnvio=52992369&numEnvioDom=LT074295510GB&descEstadoTram=PENDIENTE+INSPECCION"
+            "tramitacionEnvioListado_tipoTramitacion=TRAMITACION_CORREOS&numEnvio=LT000000000GB"
+            "&idEnvio=00000000&numEnvioDom=LT000000000GB&descEstadoTram=PENDIENTE+INSPECCION"
             "+PARADUANERA&ide.html"
         )
         # 255 chars on its own — it is tempfile's own 12-byte prefix that tips it over, which

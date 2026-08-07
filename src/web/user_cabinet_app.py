@@ -206,7 +206,7 @@ def create_user_cabinet_blueprint(
         Link user account to platform (Slack, Telegram, etc).
         Body:
             platform: "slack" | "telegram"
-            platform_user_id: "U0AC0NL3L8K" (Slack) or "@username" (Telegram)
+            platform_user_id: "U0123456789" (Slack) or "@username" (Telegram)
         """
         try:
             body = await request.get_json()
@@ -427,7 +427,7 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/user/location", methods=["PUT"])
     @auth_required
     async def set_location():
-        """Update the user's location. Body: {"location": "Valencia, Spain"}"""
+        """Update the user's location. Body: {"location": "Springfield, USA"}"""
         try:
             body = await request.get_json(force=True) or {}
             location = body.get("location", "").strip()

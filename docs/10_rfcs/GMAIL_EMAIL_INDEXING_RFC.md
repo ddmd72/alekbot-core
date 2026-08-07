@@ -561,8 +561,8 @@ Cloud Scheduler (daily) → POST /worker/email-digest
 [system_alert] Daily email digest trigger.
 New confirmed facts indexed from Gmail (last 24h):
 
-1. [travel] User booked flight KBP→BCN March 15 2025, ref RYR1234
-2. [healthcare] Lab results received: GFR >90, HbA1c 5.1%
+1. [travel] User booked flight AAA→BBB March 15 2025, ref RYR0000
+2. [healthcare] Lab results received: all markers within reference range
 3. [finance] Invoice paid to DigitalOcean $24.00
 
 Search the web for any relevant context (upcoming events, related news).
@@ -622,7 +622,7 @@ Step 3 — Return to delegating agent:
 **Intent: `get_email_details`** — full Gmail body, no LLM
 
 ```
-payload: { email_id: "19bd6ad70f3e911b" }
+payload: { email_id: "msg_example001" }
 
 EmailSearchService.get_details(email_id, user_id):
   → get OAuth credentials (refresh if expired)
@@ -635,7 +635,7 @@ Returns: formatted text string to delegating agent.
 **Intent: `get_email_attachment`** — extract attachment as text, no LLM
 
 ```
-payload: { email_id: "19bd6ad70f3e911b", filename: "cerfa-15646.pdf" }
+payload: { email_id: "msg_example001", filename: "consent_form.pdf" }
 
 EmailSearchService.get_attachment(email_id, filename, user_id):
   → get OAuth credentials (refresh if expired)
@@ -742,7 +742,7 @@ account_id: "account_xyz"
 source: "gmail"               # "gmail" | "outlook"
 
 # Content — mirrors FactEntity
-text: "User booked flight KBP→BCN on March 15 2025, ref RYR1234 via Ryanair"
+text: "User booked flight AAA→BBB on March 15 2025, ref RYR0000 via Ryanair"
                               # Extracted fact sentence — primary search field
 vector: [0.042, -0.318, ...]  # embed(text) — 768 dim
 tags_vector: [0.123, -0.456, ...]     # embed(tags joined) — 768 dim
@@ -751,14 +751,14 @@ attachments_vector: [0.211, 0.034, ...]  # embed(attachment filenames joined) �
 
 # Classification
 category: "travel"            # See §3.5 for category list
-tags: ["flight", "ryanair", "booking", "bcn", "kyiv"]
+tags: ["flight", "ryanair", "booking", "route"]
 valuable_type: "confirmed_event"  # "confirmed_event" | "biographical_signal"
                               # confirmed_event: directly proves a specific event occurred
                               # biographical_signal: reveals lasting context (school, membership, location)
 
 # Structured metadata (for display + metadata_vector embedding)
 metadata:
-  subject: "Your flight KBP-BCN is confirmed"
+  subject: "Your flight AAA-BBB is confirmed"
   from_address: "noreply@ryanair.com"
   snippet: "Booking confirmed. Flight FR8421..."  # kept in metadata only
   flight_number: "FR8421"
@@ -769,7 +769,7 @@ metadata:
   confirmation_code: "ABC123"
 
 # Email-specific fields
-subject: "Your flight KBP-BCN is confirmed"  # top-level for display
+subject: "Your flight AAA-BBB is confirmed"  # top-level for display
 from_address: "noreply@ryanair.com"
 email_date: 2025-03-10T14:30:00Z              # original email date
 attachments: ["booking_confirmation.pdf"]     # attachment filenames (top-level, not just metadata)
@@ -943,8 +943,8 @@ Two-test selection model (email passes if EITHER test is satisfied):
   "email_id": "msg_xyz123",
   "valuable": true,
   "category": "travel",
-  "fact": "User booked flight KBP→BCN on March 15 2025, ref RYR1234 via Ryanair",
-  "tags": ["flight", "ryanair", "booking", "bcn", "kyiv"],
+  "fact": "User booked flight AAA→BBB on March 15 2025, ref RYR0000 via Ryanair",
+  "tags": ["flight", "ryanair", "booking", "route"],
   "valuable_type": "confirmed_event",
   "reason": "Confirmed booking with reference number — remains useful in 30+ days"
 }
@@ -955,10 +955,10 @@ Two-test selection model (email passes if EITHER test is satisfied):
   "email_id": "msg_ecole456",
   "valuable": true,
   "category": "personal",
-  "fact": "User received notification from Example School regarding a meeting for parents of 11th-grade students on March 3, 2026",
-  "tags": ["school", "parents", "angers", "ecole"],
+  "fact": "User received notification from Example School regarding a parents' meeting on March 3, 2026",
+  "tags": ["school", "parents", "notification"],
   "valuable_type": "biographical_signal",
-  "reason": "Reveals child's school and grade level — lasting biographical context"
+  "reason": "Reveals a school affiliation — lasting biographical context"
 }
 ```
 
@@ -1027,17 +1027,17 @@ message history so the agent can resolve pronouns and contextual references.
 ### 5.3 Example Extraction
 
 ```
-Input: EMAIL_SEARCH_REQUEST "family and France information from the last two months"
+Input: EMAIL_SEARCH_REQUEST "family and travel information from the last two months"
 
 Output:
 {
-  "primary_query": "family members visiting France location dates",
-  "alternative_query": "Jane Bob Alice Lyon visit",
-  "tags": ["Family Travel", "France Base", "Visits"]
+  "primary_query": "family members visiting abroad location dates",
+  "alternative_query": "Jane Bob Alice Riverton visit",
+  "tags": ["Family Travel", "Family Base", "Visits"]
 }
 ```
 
-The biographical context (facts about Jane, Bob, Alice Smith in Lyon) allows the LLM
+The biographical context (facts about Jane, Bob, Alice Smith in Riverton) allows the LLM
 to expand the vague "family" reference into concrete person names, improving vector search recall.
 
 ---
@@ -1671,7 +1671,7 @@ Router → SmartAgent
 SmartAgent → delegate_to_specialist(intent="search_emails", query="...")
   → EmailSearchAgent: ECO LLM extracts keys (~0.5s)
        primary_query:   "medical test results lab report 2025"
-       alternative_query: "Synevo GFR HbA1c kidney analysis"
+       alternative_query: "Example Lab cholesterol vitamin panel"
        tags: ["healthcare", "medical", "lab results"]
   → EmailSearchService.vector_search() 7-stream RRF (~1.5s)
   → returns JSON { "count": 5, "emails": [...fact sentences + email_ids...] }
@@ -1679,9 +1679,9 @@ SmartAgent synthesizes response from JSON (~1s)
 
 Bot: (~4–6s total)
 "Found 5 medical emails from 2025:
-  📋 March 28 — GFR (CKD-EPI) >90 mL/min (Normal). HbA1c 5.1%.
+  📋 March 28 — Cholesterol 4.8 mmol/L (Normal). Vitamin D 32 ng/mL.
      📎 lab_report_march.pdf
-  📋 January 15 — Blood panel: Uric acid elevated (Hyperuricemia confirmed).
+  📋 January 15 — Blood panel: all values within reference range.
   ..."
 
 User: "show me the details of the March lab results"
@@ -1691,20 +1691,20 @@ SmartAgent → delegate_to_specialist(intent="get_email_details", email_id="msg_
   → GmailProviderAdapter.batch_get_full_content([email_id], deep=False)
   → returns subject, from, date, body_text[:5000], attachment filenames
 
-Bot: "March 28 — Synevo. ..." (full body text formatted by SmartAgent)
+Bot: "March 28 — Example Lab. ..." (full body text formatted by SmartAgent)
 ```
 
-**Production example** (2026-03-01, ~5.9s, query: "family and France last two months"):
+**Production example** (2026-03-01, ~5.9s, query: "family and travel last two months"):
 ```json
 {
-  "primary_query": "family members visiting France location dates",
-  "alternative_query": "Jane Bob Alice Lyon visit",
-  "tags": ["Family Travel", "France Base", "Visits"]
+  "primary_query": "family members visiting abroad location dates",
+  "alternative_query": "Jane Bob Alice Riverton visit",
+  "tags": ["Family Travel", "Family Base", "Visits"]
 }
 → 10 emails returned:
-  Ryanair flight (for Nantes/Lyon trip, May 2026),
-  cerfa exit permit for child, Location Sharing with Jane+Bob,
-  school notification from Example School (Lyon)
+  Ryanair flight (for a Fairview/Riverton trip, May 2026),
+  travel consent form for a family member, Location Sharing with Jane+Bob,
+  school notification from Example School (Riverton)
 ```
 
 ---
@@ -1720,9 +1720,9 @@ Bot: "March 28 — Synevo. ..." (full body text formatted by SmartAgent)
 - Output: 19 biographical facts created, 0 noise written, 132 silently discarded
 - Elapsed: 183s (single Opus call, multi-turn tool loop)
 - Quality: correct domain/temporal_class/context_priority on all 19; rich structured metadata
-  (card_last_4, dates, costs, institutions); cross-email merging (Bank of America: multiple
+  (card_last_4, dates, costs, institutions); cross-email merging (Example Bank: multiple
   receipts → one fact with card_last_4 and account_last_4); biographical context used
-  correctly (ISP service + school location tied to family base in Lyon)
+  correctly (ISP service + school location tied to the family base abroad)
 - Batch size note: 150-fact batch produced _more accurate_ results than smaller batches —
   ConsolidationAgent detects patterns across items (e.g., recurring subscriptions, related accounts)
 
@@ -1741,7 +1741,7 @@ ConsolidationAgent prompt (system_alert):
    Evaluate the incoming data and process it according to your own algorithm.
 
    Candidates:
-   1. {"email_id": "msg_xyz123", "fact": "User booked flight KBP→BCN March 15 2025 ref RYR1234",
+   1. {"email_id": "msg_xyz123", "fact": "User booked flight AAA→BBB March 15 2025 ref RYR0000",
        "category": "travel", "tags": ["flight", "ryanair", "booking"],
        "date": "2025-03-10", "attachments": ["booking_confirmation.pdf"],
        "metadata": {"subject": "Your flight confirmed", "from": "noreply@ryanair.com"}}
@@ -2350,8 +2350,8 @@ Cloud Run at 300s before this fix. Next occurrence will have a clear `TimeoutErr
 
 - 19 biographical facts (CREATE), 132 discarded, 0 noise written. Elapsed: 183s.
 - Pattern detection across batch: multiple bank receipts → one consolidated fact with
-  card/account last_4; recurring subscriptions merged; biographical context (Lyon family
-  base) correctly applied to ISP service + school entries.
+  card/account last_4; recurring subscriptions merged; biographical context (family
+  base abroad) correctly applied to ISP service + school entries.
 - Larger batches (150) outperform smaller ones — cross-item patterns visible.
 - Pending: add `email` tag instruction to consolidation prompt before production.
 - `test_consolidation_dryrun.py` script added to §17 POC Scripts table.

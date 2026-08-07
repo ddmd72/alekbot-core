@@ -66,7 +66,7 @@ Fact A: 1/(60+1) + 1/(60+3) = 0.0323
 #### Stage 1: Single Text Vector (v1.0)
 
 ```
-User Query → RouterAgent → Semantic Lens: ["car", "honda"]
+User Query → RouterAgent → Semantic Lens: ["car", "toyota"]
                         ↓
                    Single embedding
                         ↓
@@ -84,7 +84,7 @@ User Query → RouterAgent → Semantic Lens: ["car", "honda"]
 #### Stage 2: Multi-Vector with Adaptive Routing (v2.0)
 
 ```
-Semantic Lens: ["car", "honda"] → 3 different embeddings:
+Semantic Lens: ["car", "toyota"] → 3 different embeddings:
     1. tags_vector (domain knowledge)
     2. metadata_vector (structured data)
     3. vector (natural language)
@@ -98,8 +98,8 @@ Imagine looking at a fact through 3 different lenses:
 
 1. **Tags Lens** (compressed knowledge)
    - Sees: Domain categories, entity types
-   - Best for: "Show me car", "What honda"
-   - Example: Tags [automotive, honda, civic] compress knowledge
+   - Best for: "Show me car", "What toyota"
+   - Example: Tags [automotive, toyota, corolla] compress knowledge
 
 2. **Metadata Lens** (structured view)
    - Sees: Dates, numbers, IDs, schemas
@@ -108,7 +108,7 @@ Imagine looking at a fact through 3 different lenses:
 
 3. **Text Lens** (natural language)
    - Sees: Full narrative, context, relationships
-   - Best for: "my car is Honda Civic 2015"
+   - Best for: "my car is Toyota Corolla 2012"
    - Example: Text preserves complete story
 
 **Multi-Vector = Using all 3 lenses simultaneously**
@@ -135,7 +135,7 @@ Imagine looking at a fact through 3 different lenses:
 **Rationale:** Domain nouns = compressed knowledge
 
 ```
-Keywords: ["car", "honda", "civic"]
+Keywords: ["car", "toyota", "corolla"]
 
 Why tags_vector?
 - Tags are compressed representations of domain knowledge
@@ -147,8 +147,8 @@ Why tags_vector?
 **Example:**
 
 ```python
-Fact: "I have a Honda Civic 2015"
-Tags: [automotive, honda, civic, personal_asset]
+Fact: "I have a Toyota Corolla 2012"
+Tags: [automotive, toyota, corolla, personal_asset]
 
 Query: "car"
 tags_vector match: 0.79 ✅ (high precision)
@@ -171,7 +171,7 @@ Why vector (text)?
 **Example:**
 
 ```python
-Fact: "Changed oil in Honda 15.01.2025, mileage 45000 km"
+Fact: "Changed oil in Toyota 01.01.2020, mileage 10000 km"
 
 Query: "oil change history"
 text_vector match: 0.75 ✅ (captures narrative)
@@ -406,7 +406,7 @@ Semantic Lens extracts keywords → 3 different embeddings:
 
 1. **Category Queries**
    - "Show me car facts"
-   - "What do I know about honda"
+   - "What do I know about toyota"
    - Tags vector excels here
 
 2. **Mixed-Type Queries**
@@ -641,14 +641,14 @@ ConsolidationAgent needs to see ALL candidate duplicates to make MERGE decisions
 ```python
 # Consolidation search
 results = await search_enrichment.enrich_context(
-    keywords=["car", "honda"],
-    search_phrase_1="User car honda details",
+    keywords=["car", "toyota"],
+    search_phrase_1="User car toyota details",
     skip_semantic_dedup=True  # ← Keep ALL facts
 )
 
 # Result: Agent sees ALL similar facts:
-# - "Honda Civic 2015"
-# - "Honda has automatic gearbox"
+# - "Toyota Corolla 2012"
+# - "Toyota has automatic gearbox"
 # - "Car in Example City"
 
 # Agent decides: MERGE all 3 → comprehensive fact

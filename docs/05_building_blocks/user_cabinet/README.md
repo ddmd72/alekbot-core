@@ -71,8 +71,8 @@ Returns current platform link state for the authenticated user.
 ```json
 {
   "platforms": {
-    "slack": "U0A93H4Q6QY",
-    "telegram": "670659908"
+    "slack": "U0123456789",
+    "telegram": "123456789"
   }
 }
 ```
@@ -80,13 +80,13 @@ Unlinked platforms are absent from the map.
 
 #### `POST /api/user/link-platform`
 
-**Body:** `{ "platform": "slack", "platform_user_id": "U0A93H4Q6QY" }`
+**Body:** `{ "platform": "slack", "platform_user_id": "U0123456789" }`
 
 #### `DELETE /api/user/link-platform?platform=slack`
 
 #### `POST /api/user/link-telegram`
 
-**Body:** `{ "telegram_user_id": "670659908" }`
+**Body:** `{ "telegram_user_id": "123456789" }`
 
 ---
 
@@ -110,7 +110,7 @@ Cursor-based paginated retrieval ordered by `created_at DESC`.
   "facts": [
     {
       "id": "doc_id",
-      "text": "User lives in Valencia, Spain.",
+      "text": "User lives in Springfield, USA.",
       "domain": "location",
       "type": "fact",
       "created_at": "2026-02-17T10:32:00"

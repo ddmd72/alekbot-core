@@ -44,8 +44,8 @@ EXAMPLES:
 
 Query: "Погода в Валенсии на неделю"
 {{
-  "full_response": "*Weather forecast for Valencia:*\\n\\nMonday-Wednesday sunny 16-19°C. Thursday rain, 14°C. Weekend cooler with clouds.",
-  "history_summary": "Valencia weather: Mon-Wed sunny 16-19°C, Thu rain 14°C, weekend cloudy 12-16°C",
+  "full_response": "*Weather forecast for Springfield:*\\n\\nMonday-Wednesday sunny 16-19°C. Thursday rain, 14°C. Weekend cooler with clouds.",
+  "history_summary": "Springfield weather: Mon-Wed sunny 16-19°C, Thu rain 14°C, weekend cloudy 12-16°C",
   "rich_content": {{
     "type": "table",
     "columns": ["Day", "Temp", "Condition", "Humidity", "Wind"],
@@ -143,7 +143,7 @@ def main() -> None:
     queries = [
         "Weather in Madrid for next week",
         "Quien es el presidente de España?",
-        "Top 5 restaurants in Valencia",
+        "Top 5 restaurants in Springfield",
         "When was Python programming language created?",
         "Compare iPhone 15 vs Samsung S24",
     ]

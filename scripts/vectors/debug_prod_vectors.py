@@ -36,8 +36,8 @@ async def main():
     db_client = firestore.AsyncClient(project=settings["GOOGLE_CLOUD_PROJECT"])
     embedding = EmbeddingService(settings["GEMINI_API_KEY"])
 
-    # 1. Find the Mitsubishi document in production
-    print("\n1. Fetching Mitsubishi document from production...")
+    # 1. Find the car document in production
+    print("\n1. Fetching car document from production...")
     prod_facts_col = db_client.collection('facts')
     query = prod_facts_col.where("owner_id", "==", "YOUR_USER_ID").where("is_current", "==", True)
     docs = query.stream()
@@ -45,13 +45,13 @@ async def main():
     target_doc = None
     async for doc in docs:
         data = doc.to_dict()
-        if 'mitsubishi' in data.get('text', '').lower():
+        if 'toyota' in data.get('text', '').lower():
             target_doc = data
             target_id = doc.id
             break
     
     if not target_doc:
-        print("❌ Could not find Mitsubishi document in production!")
+        print("❌ Could not find car document in production!")
         return
 
     print(f"✅ Found document: {target_id}")

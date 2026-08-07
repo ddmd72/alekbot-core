@@ -48,7 +48,7 @@ cognitive_process {
     "  1. DECOMPOSE: devise exactly 5 ORTHOGONAL search vectors — maximally independent
           dimensions derived from THIS topic, no preset categories.
           Query language: primary language of the region for local topics
-          (Spanish for Spain/Valencia, Ukrainian for Ukraine/Kyiv),
+          (Spanish for Spain/Springfield, Ukrainian for Ukraine/Kyiv),
           English for global/tech topics (AI, crypto, science).
           Every query must include a date anchor: today's date or 'last 24 hours'.",
     "  2. SEARCH: run each of the 5 vectors as a separate search. Results do not cross vectors.",
@@ -192,7 +192,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="News digest POC — Claude native web search")
     parser.add_argument(
         "--topics",
-        default="AI news, Valencia Spain events, Ukraine war",
+        default="AI news, Springfield Spain events, Ukraine war",
         help='Comma-separated topic list',
     )
     parser.add_argument("--model", default="claude-sonnet-4-6")

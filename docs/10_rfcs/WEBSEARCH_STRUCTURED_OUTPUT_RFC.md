@@ -98,10 +98,10 @@ USE rich_content FOR:
 
 EXAMPLES:
 
-Query: "Weather in Valencia for the week"
+Query: "Weather in Springfield for the week"
 {
-  "full_response": "*Weather forecast for Valencia:*\n\nMonday-Wednesday sunny 16-19°C. Thursday rain, 14°C. Weekend cooler with clouds.",
-  "history_summary": "Valencia weather: Mon-Wed sunny 16-19°C, Thu rain 14°C, weekend cloudy 12-16°C",
+  "full_response": "*Weather forecast for Springfield:*\n\nMonday-Wednesday sunny 16-19°C. Thursday rain, 14°C. Weekend cooler with clouds.",
+  "history_summary": "Springfield weather: Mon-Wed sunny 16-19°C, Thu rain 14°C, weekend cloudy 12-16°C",
   "rich_content": {
     "type": "table",
     "columns": ["Day", "Temp", "Condition", "Humidity", "Wind"],

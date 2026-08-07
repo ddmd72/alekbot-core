@@ -150,9 +150,9 @@ LLM: no tool call → parse JSON → return full_response
 
 **Example (with web search):**
 ```
-User: "What's today's weather in Valencia?"
+User: "What's today's weather in Springfield?"
   ↓
-QuickResponseAgent: Turn 1 — LLM calls search_web_light("Valencia weather today")
+QuickResponseAgent: Turn 1 — LLM calls search_web_light("Springfield weather today")
   ↓
 WebSearchLightAgent: Gemini grounding → "22°C, sunny" (plain mrkdwn)
   ↓
@@ -244,12 +244,12 @@ User: "What's my car and current gas prices?"
 SmartResponseAgent: Load history with tiered context
   ↓
 Turn 1: LLM calls search_memory("my car")
-  → MemorySearchAgent returns: "Honda Civic 2019"
-Turn 2: LLM calls ask_web_search_agent("gas prices Valencia")
+  → MemorySearchAgent returns: "Toyota Corolla 2012"
+Turn 2: LLM calls ask_web_search_agent("gas prices Springfield")
   → WebSearchAgent returns: "€1.45/liter"
 Turn 3: LLM calls deliver_response(
-    full_response="You have a Honda Civic 2019...",
-    history_summary="Q: car+gas. A: Civic 2019, €1.45/l. 🚗⛽"
+    full_response="You have a Toyota Corolla 2012...",
+    history_summary="Q: car+gas. A: Corolla 2012, €1.45/l. 🚗⛽"
   )
   → Loop terminates, response delivered
 ```
@@ -287,7 +287,7 @@ User: "What's the model of my car?"
   ↓
 MemorySearchAgent: Vector search("car model")
   ↓
-Finds: "User owns a Honda Civic 2019" (score: 0.92)
+Finds: "User owns a Toyota Corolla 2012" (score: 0.92)
   ↓
 Returns to SmartResponseAgent for synthesis
 ```
@@ -321,13 +321,13 @@ Returns to SmartResponseAgent for synthesis
 
 **Example:**
 ```
-User: "What's the weather in Valencia today?"
+User: "What's the weather in Springfield today?"
   ↓
-WebSearchAgent: Gemini Grounding search("Valencia weather")
+WebSearchAgent: Gemini Grounding search("Springfield weather")
   ↓
 Finds: Current weather data
   ↓
-Returns: "Valencia: 22°C, sunny, light breeze"
+Returns: "Springfield: 22°C, sunny, light breeze"
 ```
 
 **Why Separate Agent:**
@@ -417,21 +417,21 @@ SmartResponseAgent: Analyzes query, decides to delegate
 │ searches "my car"    │  │ searches "gas prices" │
 └──────────────────────┘  └───────────────────────┘
     ↓                          ↓
-"Honda Civic 2019"       "€1.45/liter in Valencia"
+"Toyota Corolla 2012"       "€1.45/liter in Springfield"
     ↓──────────────┬────────────↓
                    ↓
            SmartResponseAgent synthesizes
                    ↓
            ConversationHandler persists session
                    ↓
-User: "You have a Honda Civic 2019. Current gas prices
-       in Valencia are around €1.45 per liter."
+User: "You have a Toyota Corolla 2012. Current gas prices
+       in Springfield are around €1.45 per liter."
 ```
 
 ### Asynchronous Flow (Learning - v6.0)
 
 ```
-User: "I moved to Valencia last month"
+User: "I moved to Springfield last month"
     ↓
 SmartResponseAgent: Responds immediately
     ↓
@@ -446,7 +446,7 @@ SessionStore: Creates batch in ConsolidationQueue
 Fetches batch → Triggers ConsolidationAgent
     ↓
 ConsolidationAgent:
-    Extracts: "User lives in Valencia" (high conf)
+    Extracts: "User lives in Springfield" (high conf)
     Extracts: "User moved recently" (medium conf)
     ↓
 Creates Fact: "User resides in Berlin, Germany"

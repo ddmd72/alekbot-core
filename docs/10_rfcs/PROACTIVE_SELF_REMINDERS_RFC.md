@@ -15,7 +15,7 @@ creates two real failures:
 1. **"Remind me in 2 hours"** — the bot has no way to fire a reminder after 2 hours if the user
    hasn't written anything. It can create the note, but can't act on it proactively.
 
-2. **"Tell me Valencia news every morning"** — the LLM cannot confidently use the reminder
+2. **"Tell me Springfield news every morning"** — the LLM cannot confidently use the reminder
    mechanism for recurring tasks because it doesn't understand that the reminder will *actually
    execute* at the right time. Without a clear mental model, it invents complex workarounds or
    gives up.
@@ -44,8 +44,8 @@ context available when the reminder fires (no conversation history, no user mess
 
 Example:
 ```
-text:        "Send Valencia morning news briefing"
-instruction: "The user asked to receive a daily morning news briefing about Valencia, Spain.
+text:        "Send Springfield morning news briefing"
+instruction: "The user asked to receive a daily morning news briefing about Springfield, USA.
               Search for today's news: events, weather, cultural highlights. Format as a
               concise morning briefing. Send it to the user directly."
 ```
@@ -425,9 +425,9 @@ manage_self_reminders_agent {
 
     examples: [
         {
-            user: "remind me every morning about Valencia news"
-            text: "Send Valencia morning news briefing"
-            instruction: "The user asked for a daily news briefing about Valencia, Spain.
+            user: "remind me every morning about Springfield news"
+            text: "Send Springfield morning news briefing"
+            instruction: "The user asked for a daily news briefing about Springfield, USA.
                           Search for today's news (events, weather, cultural highlights, local
                           news). Format as a short morning briefing and send to the user."
             due: "tomorrow 08:00 (user's local time)"
