@@ -1,0 +1,90 @@
+# Real bank names - git pre-commit hook will block these in code/docs
+# If needed as generic examples, add to allowed-phrases.txt or allowed-files.txt
+
+# Spain/Portugal
+Santander
+BBVA
+CaixaBank
+Bankinter
+Sabadell
+Unicaja
+Ibercaja
+Kutxabank
+Banco BPI
+Millennium BCP
+Caixa Geral de Depósitos
+Banco Português de Investimento
+
+# UK
+HSBC
+Barclays
+Lloyds
+NatWest
+Standard Chartered
+Metro Bank
+Virgin Money
+TSB
+Nationwide
+
+# France
+BNP Paribas
+Société Générale
+Crédit Agricole
+Crédit Mutuel
+Banque Populaire
+La Banque Postale
+Caisse d'Épargne
+Banque de France
+
+# Netherlands/Belgium
+ING
+ABN Amro
+Rabobank
+Triodos Bank
+KBC
+Belfius
+
+# Germany/Austria/Switzerland
+Deutsche Bank
+Commerzbank
+DKB
+Sparkasse
+ÖZB
+UBS
+Credit Suisse
+Postbank
+Landesbank
+
+# Italy
+UniCredit
+IntesaSanpaolo
+Monte dei Paschi
+Banco Popolare
+Credito Emiliano
+
+# USA
+JPMorgan Chase
+Bank of America
+Wells Fargo
+Citibank
+Citigroup
+Goldman Sachs
+Morgan Stanley
+US Bank
+PNC
+Capital One
+Discover
+American Express
+Charles Schwab
+TD Ameritrade
+Fidelity
+
+# Fintech/Online
+Revolut
+Wise
+N26
+Monzo
+Bunq
+Chime
+SoFi
+Ally Bank

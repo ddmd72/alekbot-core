@@ -1,0 +1,207 @@
+# Real company names - git pre-commit hook will block these in code/docs
+# If needed as generic examples, add to allowed-phrases.txt or allowed-files.txt
+
+# Tech Giants
+Google
+Alphabet
+Microsoft
+Apple
+Meta
+Facebook
+Amazon
+Netflix
+Adobe
+Salesforce
+Oracle
+IBM
+Intel
+Nvidia
+AMD
+Cisco
+
+# Cloud/SaaS/DevOps
+AWS
+Azure
+Google Cloud
+Heroku
+Slack
+Stripe
+Twilio
+SendGrid
+Atlassian
+Jira
+Datadog
+HashiCorp
+Supabase
+Firebase
+Vercel
+Netlify
+
+# E-Commerce/Marketplace
+eBay
+Alibaba
+AliExpress
+Shopify
+Etsy
+Walmart
+Target
+Home Depot
+
+# Payment/Fintech
+PayPal
+Square
+Klarna
+Coinbase
+Kraken
+Binance
+OpenSea
+Uniswap
+
+# Travel/Hospitality
+Airbnb
+Uber
+Lyft
+Booking.com
+Expedia
+TripAdvisor
+Skyscanner
+Kayak
+
+# Social/Communication
+Twitter
+TikTok
+Snapchat
+LinkedIn
+WhatsApp
+Telegram
+Discord
+Twitch
+YouTube
+Vimeo
+Pinterest
+Reddit
+
+# Entertainment/Media
+Disney
+HBO
+Hulu
+Spotify
+Paramount
+Warner Bros
+Sony
+DreamWorks
+Universal
+20th Century Fox
+
+# Retail/Consumer
+Nike
+Adidas
+H&M
+Zara
+Forever 21
+IKEA
+Decathlon
+Lidl
+Aldi
+Costco
+Starbucks
+McDonald's
+KFC
+Burger King
+Subway
+Domino's
+
+# Automotive
+Tesla
+BMW
+Mercedes
+Mercedes-Benz
+Audi
+Volkswagen
+Toyota
+Honda
+Ford
+Chevrolet
+Porsche
+Ferrari
+Lamborghini
+Jaguar
+Bentley
+
+# Pharma/Healthcare
+Pfizer
+Moderna
+Johnson & Johnson
+AstraZeneca
+Sanofi
+Roche
+GlaxoSmithKline
+Eli Lilly
+Bristol Myers
+Merck
+
+# Manufacturing/Industrial
+Siemens
+General Electric
+3M
+Caterpillar
+Bosch
+ABB
+Mitsubishi Electric
+Schneider Electric
+
+# Telecom
+Vodafone
+Telefonica
+Orange
+Deutsche Telekom
+Swisscom
+Telenor
+Verizon
+AT&T
+T-Mobile
+Sprint
+
+# Energy/Utilities
+Shell
+BP
+Chevron
+ExxonMobil
+ConocoPhillips
+Equinor
+NextEra Energy
+
+# Transport/Logistics
+DHL
+FedEx
+UPS
+Hermes
+DB Deutsche Bahn
+SNCF
+Eurostar
+KLM
+Lufthansa
+Ryanair
+easyJet
+Turkish Airlines
+Emirates
+
+# Insurance/Financial
+AXA
+Allianz
+Munich Re
+Generali
+Zurich Insurance
+KPMG
+Deloitte
+PwC
+EY
+
+# Real Estate/Hospitality
+Hilton Hotels
+Marriott
+Four Seasons
+Hyatt
+InterContinental
+Accor
+Best Western
