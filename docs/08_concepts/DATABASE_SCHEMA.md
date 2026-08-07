@@ -357,7 +357,7 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 {
   "biographical_facts": [
     {
-      "text": "Software engineer, lives in Kyiv...",
+      
       "type": "event",
       
       
@@ -873,8 +873,8 @@ Used by `SearchEnrichmentService` and `FirestoreFactRepository.search_facts()`. 
 {
   
   
-  "text": "Send Valencia morning news", // short display label ≤15 words
-  "instruction": "The user asked for a daily morning news briefing about Valencia...", // full execution context, no limit
+  
+  
   
   
     

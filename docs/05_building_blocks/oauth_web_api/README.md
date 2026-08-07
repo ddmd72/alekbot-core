@@ -165,12 +165,12 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
 {
   "success": true,
   "user": {
-    "user_id": "64235d4b-ac08-4d4b-b504-07568f88aff1",
+    "user_id": "00000000-0000-0000-0000-000000000001",
     "email": "user@example.com",
-    "display_name": "Dmytro Deleur"
+    "display_name": "Alex Doe"
   },
   "account": {
-    "account_id": "9330ff95-2cc8-45c4-a7c7-89e6016f2eb1",
+    "account_id": "00000000-0000-0000-0000-000000000002",
     "tier": "free"
   },
   "access_token": "eyJhbGci..."
@@ -276,12 +276,12 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
 ```json
 {
   "user": {
-    "user_id": "64235d4b-ac08-4d4b-b504-07568f88aff1",
+    "user_id": "00000000-0000-0000-0000-000000000001",
     "email": "user@example.com",
     "external_user_id": "firebase|OAUTH_USER_ID_PLACEHOLDER"
   },
   "account": {
-    "account_id": "9330ff95-2cc8-45c4-a7c7-89e6016f2eb1",
+    "account_id": "00000000-0000-0000-0000-000000000002",
     "tier": "free",
     "role": "owner"
   }
@@ -473,7 +473,7 @@ response.set_cookie(
   "sub": "user_id",
   "iat": 1769890991,
   "exp": 1769894591,
-  "account_id": "9330ff95-2cc8-45c4-a7c7-89e6016f2eb1",
+  "account_id": "00000000-0000-0000-0000-000000000002",
   "external_user_id": "firebase|OAUTH_USER_ID_PLACEHOLDER",
   "role": "owner",
   "tier": "free",
@@ -488,7 +488,7 @@ response.set_cookie(
   "sub": "user_id",
   "iat": 1769890991,
   "exp": 1772482991,
-  "account_id": "9330ff95-2cc8-45c4-a7c7-89e6016f2eb1",
+  "account_id": "00000000-0000-0000-0000-000000000002",
   "type": "refresh"
 }
 ```

@@ -16,7 +16,7 @@ CAPABILITIES_TEXT = """
 I build a personal knowledge base about you over time — automatically from our conversations and from your emails (if connected). I use this context in every response.
 
 How to use:
-- Ask me to save something explicitly: "remember that my mortgage rate is 3.2%"
+- Ask me to save something explicitly: "remember that my library card expires in June"
 - Search what I know: "what do you know about my car?", "find everything about my apartment renovation"
 - I automatically pick up important facts from conversations — you don't need to instruct me to remember everything
 
@@ -26,7 +26,7 @@ Your facts are visible in Cabinet → Memory, where you can browse, search, filt
 
 *Web search, maps, and URL reading*
 - Real-time search: news, prices, weather, public events, documentation — anything requiring current information
-- Places and routes: "pharmacy near Plaza Mayor open now", "best sushi in Valencia city center", "distance from Valencia to Madrid by car" — results include clickable Google Maps links with directions, reviews, and hours
+- Places and routes: "pharmacy near Main Square open now", "best sushi in Springfield city center", "distance from Springfield to Riverton by car" — results include clickable Google Maps links with directions, reviews, and hours
 - Reading a URL: paste a link and ask me to summarise, extract data, or answer a specific question about its content
 
 ---
@@ -46,9 +46,9 @@ These three steps can chain in one conversation — search → read full email �
 *Calculations*
 I run exact computations in a Python sandbox — no rounding errors, no guessing.
 - Math and conversions: "what is 17% of €4,380?", "convert 180 cm to feet and inches"
-- Dates and time: "how many days until 15 August?", "what day of the week was I born if my birthday is 3 March 1990?", "time difference between Valencia and Tokyo right now"
+- Dates and time: "how many days until 15 August?", "what day of the week was I born if my birthday is 3 March 1990?", "time difference between Springfield and Tokyo right now"
 - Finance: "monthly payment on a €250,000 mortgage at 3.5% over 25 years", "compound interest on €10,000 at 4.5% over 10 years"
-- General: "calculate my BMI — 82 kg, 181 cm", "average of these numbers: 14, 27, 33, 8"
+- General: "calculate my BMI — 72 kg, 175 cm", "average of these numbers: 14, 27, 33, 8"
 
 ---
 

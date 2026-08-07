@@ -340,7 +340,7 @@ send the full blocks; older turns use the compressed `text` field.
 ### 9.4 Email Search Context Format
 
 ```json
-{"email_search_context":[{"you_searched":"invoices from Google","you_received":[{"id":"19caa50e57fca7dc","from":"Google Payments <noreply@google.com>","date":"2026-03-01","summary":"Invoice #123 for $29.99"}]}]}
+{"email_search_context":[{"you_searched":"invoices from Google","you_received":[{"id":"msg_example002","from":"Google Payments <noreply@google.com>","date":"2026-03-01","summary":"Invoice #123 for $29.99"}]}]}
 ```
 
 ### 9.5 Adding a New Context Type

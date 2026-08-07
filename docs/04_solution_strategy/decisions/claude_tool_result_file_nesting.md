@@ -21,7 +21,7 @@ the two results made Anthropic treat B's `tool_use` as unanswered →
 immediately after"`. Smart then FAILED and fell back to Quick (degraded).
 
 Trigger (all three): ≥2 `tool_use` in one Smart turn **and** a non-last tool returns
-binary `file_data` **and** provider = Claude. The son hits it routinely (upload a
+binary `file_data` **and** provider = Claude. This is hit routinely in normal use (upload a
 photo + a web question → `open_file` + `search_web` fan-out). Confirmed + reproduced
 deterministically 2026-07-12 (incident 2026-07-10).
 

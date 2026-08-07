@@ -116,7 +116,7 @@ SOURCES: List[Dict[str, str]] = [
     # Returned page chrome instead of items.
     {"url": "https://www.aljazeera.com/news/", "kind": "index"},
     {"url": "https://www.nature.com/news", "kind": "index"},
-    {"url": "https://www.valencia.es/cas/actualidad", "kind": "index"},
+    {"url": "https://www.reuters.com/world/", "kind": "index"},
     # Article page — fetch_url is also used for Round-3 verification.
     {"url": "https://www.theguardian.com/world", "kind": "index"},
 ]

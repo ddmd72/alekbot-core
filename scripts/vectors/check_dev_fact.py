@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Direct check for glove data in development_facts collection.
+Direct check for a single fact in the development_facts collection.
+
+Usage: OWNER_ID=<uuid> FACT_ID=<uuid> FACT_KEYWORD=<word> python scripts/vectors/check_dev_fact.py
 """
 import asyncio
 import sys
@@ -10,7 +12,7 @@ sys.path.append('src')
 from src.config.settings import load_settings
 
 async def main():
-    print("🔍 Direct check for glove data in development_facts...")
+    print("🔍 Direct check for fact data in development_facts...")
 
     # Load settings
     settings = load_settings()
@@ -22,39 +24,43 @@ async def main():
     # Check development facts collection directly
     dev_facts_col = db_client.collection('development_facts')
 
-    print("🔍 Querying development facts for glove data...")
+    print(f"🔍 Querying development facts for keyword {keyword!r}...")
 
-    # Get all facts for YOUR_USER_ID and search for glove data
-    docs = dev_facts_col.where("owner_id", "==", "YOUR_USER_ID").where("is_current", "==", True).stream()
+    owner_id = os.getenv("OWNER_ID") or "<owner-uuid>"
+    keyword = (os.getenv("FACT_KEYWORD") or "").lower()
 
-    found_glove_facts = []
+    # Get all facts for the owner and search for the keyword
+    docs = dev_facts_col.where("owner_id", "==", owner_id).where("is_current", "==", True).stream()
+
+    found_facts = []
     total_facts = 0
     async for doc in docs:
         total_facts += 1
         data = doc.to_dict()
         text = data.get('text', '')
-        if 'glove' in text.lower() or 'перчатки' in text.lower():
-            found_glove_facts.append({
+        if keyword and keyword in text.lower():
+            found_facts.append({
                 'id': doc.id,
                 'text': text,
                 'tags': data.get('tags', [])
             })
 
-    print(f"📊 Total facts for YOUR_USER_ID in development: {total_facts}")
+    print(f"📊 Total facts for owner in development: {total_facts}")
 
-    if found_glove_facts:
-        print(f"✅ Found {len(found_glove_facts)} glove facts in DEVELOPMENT:")
-        for fact in found_glove_facts:
+    if found_facts:
+        print(f"✅ Found {len(found_facts)} matching facts in DEVELOPMENT:")
+        for fact in found_facts:
             print(f"  ID: {fact['id']}")
             print(f"  Text: {fact['text']}")
             print(f"  Tags: {fact['tags']}")
             print()
     else:
-        print("❌ No glove facts found in DEVELOPMENT collection")
+        print("❌ No matching facts found in DEVELOPMENT collection")
 
     # Check the specific document ID from production
-    print("🔍 Checking specific document ID 'e58f31e6-ce42-4036-87e6-b11be4492b28' in development...")
-    doc = await dev_facts_col.document("e58f31e6-ce42-4036-87e6-b11be4492b28").get()
+    fact_id = os.getenv("FACT_ID") or "<fact-uuid>"
+    print(f"🔍 Checking specific document ID {fact_id!r} in development...")
+    doc = await dev_facts_col.document(fact_id).get()
     if doc.exists:
         data = doc.to_dict()
         print(f"✅ Found document: {data.get('text', '')}")

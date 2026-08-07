@@ -23,10 +23,10 @@ UPLOADS_DIR = Path("firestore_utils/uploads")
 DOWNLOADS_DIR = Path("firestore_utils/downloads")
 
 QUERIES = [
-    "Найди хороший ресторан в El Puig",
+    "Найди хороший ресторан в Northgate",
     (
-        "Find the exact OEM Mitsubishi part number for the fender-mounted side turn signal "
-        "repeater for a European 2005 Mitsubishi Colt CZ3 1.3, VIN XMCMJZ34A6F016692. "
+        "Find the exact OEM Skoda part number for the fender-mounted side turn signal "
+        "repeater for a European 2015 Skoda Fabia 1.0, VIN 00000000000000000. "
         "The previously suggested numbers AB-0000/AB-0001 and XY000000 appear incorrect. "
         "Search manufacturer parts catalogs, OEM databases, dealer EPC mirrors, and "
         "reliable parts sites. Need the exact OEM number, side applicability left/right, "

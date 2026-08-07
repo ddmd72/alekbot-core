@@ -41,11 +41,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 from src.utils.logger import logger
 
 
-# 3 broken fact IDs from user
+# Fact IDs to repair — pass as a comma-separated list:
+#   BROKEN_FACT_IDS=<uuid>,<uuid> python scripts/admin/fix_broken_vector_facts.py
 BROKEN_FACT_IDS = [
-    "7482d369-bd5c-4a9e-8159-8537718dea2a",
-    "05e68bc8-8352-4e1d-9b93-15fc88cd5ed9",
-    "5e1a615d-6b7a-42e1-873f-e1014ca353f8"
+    fid.strip() for fid in os.getenv("BROKEN_FACT_IDS", "").split(",") if fid.strip()
 ]
 
 COLLECTION_NAME = "development_domain_facts_v2"

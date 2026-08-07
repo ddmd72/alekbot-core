@@ -150,9 +150,9 @@ User: "Hi"
 
 
 ```
-User: "What's today's weather in Valencia?"
+
   ↓
-QuickResponseAgent: Turn 1 — LLM calls search_web_light("Valencia weather today")
+
   ↓
 
   ↓
@@ -244,12 +244,12 @@ QuickResponseAgent: Turn 1 — LLM calls search_web_light("Valencia weather toda
 
   ↓
 
-  → MemorySearchAgent returns: "Honda Civic 2019"
-Turn 2: LLM calls ask_web_search_agent("gas prices Valencia")
   
 
-    full_response="You have a Honda Civic 2019...",
-    history_summary="Q: car+gas. A: Civic 2019, €1.45/l. 🚗⛽"
+  
+
+    
+    
   )
   
 ```
@@ -287,7 +287,7 @@ Turn 2: LLM calls ask_web_search_agent("gas prices Valencia")
   ↓
 
   ↓
-Finds: "User owns a Honda Civic 2019" (score: 0.92)
+
   ↓
 
 ```
@@ -321,13 +321,13 @@ Finds: "User owns a Honda Civic 2019" (score: 0.92)
 
 **Example:**
 ```
-User: "What's the weather in Valencia today?"
-  ↓
-WebSearchAgent: Gemini Grounding search("Valencia weather")
+
   ↓
 
   ↓
-Returns: "Valencia: 22°C, sunny, light breeze"
+
+  ↓
+
 ```
 
 
@@ -417,21 +417,21 @@ Returns: "Valencia: 22°C, sunny, light breeze"
 
 └──────────────────────┘  └───────────────────────┘
     ↓                          ↓
-"Honda Civic 2019"       "€1.45/liter in Valencia"
+
     ↓──────────────┬────────────↓
                    ↓
            
                    ↓
            
                    ↓
-User: "You have a Honda Civic 2019. Current gas prices
-       in Valencia are around €1.45 per liter."
+
+       
 ```
 
 
 
 ```
-User: "I moved to Valencia last month"
+
     ↓
 
     ↓
@@ -446,7 +446,7 @@ User: "I moved to Valencia last month"
 
     ↓
 ConsolidationAgent:
-    Extracts: "User lives in Valencia" (high conf)
+    
     
     ↓
 

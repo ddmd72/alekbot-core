@@ -249,7 +249,7 @@ class TestSmartResponseAgentExecute:
     async def test_execute_with_agent_delegation(self, smart_agent, mock_llm_port, mock_coordinator):
         tool_calls = [
             ToolCall(name="search_memory", args={"query": "car model"}),
-            ToolCall(name="ask_web_search_agent", args={"query": "weather Valencia"})
+            ToolCall(name="ask_web_search_agent", args={"query": "weather Springfield"})
         ]
 
         mock_llm_port.generate_content = AsyncMock(side_effect=[

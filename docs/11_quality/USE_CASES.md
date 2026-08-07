@@ -134,8 +134,8 @@
 
 **Flow:**
 
-2. Turn 1: `search_memory("my car")` → `MemorySearchAgent` → "Honda Civic 2019"
-3. Turn 2: `ask_web_search_agent("gas price Valencia")` → "€1.45/L"
+
+
 
 
 
@@ -199,7 +199,7 @@
 
 **Flow:**
 
-2. Vector search finds the existing fact: "User lives in Valencia" (high similarity)
+
 
 
    

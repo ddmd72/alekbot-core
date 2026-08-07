@@ -90,7 +90,7 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
         role: "user"
         parts:
           0: {"text": "Сервер не ответил..."}
-          1: {"consolidation_text": "Save Mitsubishi Colt left mirror damage fact"}
+          1: {"consolidation_text": "Save Skoda Fabia 2015 tyre change fact"}
 
     The consolidation serializer (overflow_callback / $consolidate path) uses:
         [{"text": p.full_text or p.consolidation_text or p.text}
@@ -103,7 +103,7 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
         "role": "user",
         "parts": [
             {"text": "Сервер не ответил, повтори, пожалуйста, ещё раз"},
-            {"consolidation_text": "Save Mitsubishi Colt left mirror damage fact"},
+            {"consolidation_text": "Save Skoda Fabia 2015 tyre change fact"},
         ],
         "created_at": 1774481644.1386607,
     }
@@ -119,7 +119,7 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
     assert msg.parts[0].text == "Сервер не ответил, повтори, пожалуйста, ещё раз"
     assert msg.parts[0].consolidation_text is None
     assert msg.parts[1].text is None
-    assert msg.parts[1].consolidation_text == "Save Mitsubishi Colt left mirror damage fact"
+    assert msg.parts[1].consolidation_text == "Save Skoda Fabia 2015 tyre change fact"
 
     # Apply the consolidation serializer expression (identical to main.py:248 and conversation_handler.py:759)
     serialized_parts = [
@@ -130,4 +130,4 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
 
     assert len(serialized_parts) == 2
     assert serialized_parts[0] == {"text": "Сервер не ответил, повтори, пожалуйста, ещё раз"}
-    assert serialized_parts[1] == {"text": "Save Mitsubishi Colt left mirror damage fact"}
+    assert serialized_parts[1] == {"text": "Save Skoda Fabia 2015 tyre change fact"}

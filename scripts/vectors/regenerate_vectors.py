@@ -79,15 +79,15 @@ async def main():
     print(f"   Success rate: {fixed/len(docs_to_fix)*100:.1f}%")
 
     # Verification
-    print("\n🔍 Verification: checking glove document...")
-    glove_doc_id = "e58f31e6-ce42-4036-87e6-b11be4492b28"
-    doc = await dev_facts_col.document(glove_doc_id).get()
+    print("\n🔍 Verification: checking sample document...")
+    sample_doc_id = os.getenv("FACT_ID") or "<fact-uuid>"
+    doc = await dev_facts_col.document(sample_doc_id).get()
 
     if doc.exists:
         data = doc.to_dict()
         has_vector = 'vector' in data
         vector_length = len(data['vector']) if has_vector and data['vector'] else 0
-        print(f"   Glove document: vector={'✅ EXISTS' if has_vector and data['vector'] else '❌ MISSING'} (length: {vector_length})")
+        print(f"   Sample document: vector={'✅ EXISTS' if has_vector and data['vector'] else '❌ MISSING'} (length: {vector_length})")
 
 if __name__ == "__main__":
     asyncio.run(main())

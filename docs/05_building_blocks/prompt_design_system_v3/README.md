@@ -394,7 +394,7 @@ class Alek extends Agent {
 knowledge_base {                         ← Phase 2: static bio facts (before boundary)
   biographical_context: '''
     **Biographical**
-    - Born in Kyiv
+    - Born in Springfield
     **Work**
     - Software engineer at ...
   '''
@@ -407,7 +407,7 @@ knowledge_base {                         ← Phase 2: static bio facts (before b
 active_reminders {          ← only when active reminders exist
     // Reminders you scheduled for yourself. Not visible to the user. Snapshot from turn start — trust tool results for changes made this turn.
     // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time.
-    - "Send Valencia morning news briefing" (fires: Mar 23 08:00 UTC) [id: 1742700000000]
+    - "Send Springfield morning news briefing" (fires: Mar 23 08:00 UTC) [id: 1742700000000]
     - "Weekly project check-in" (fires: Mar 28 09:00 UTC) [id: 1742800000000]
 }
 

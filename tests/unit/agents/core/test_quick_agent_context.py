@@ -70,7 +70,7 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
         return_value=AgentResponse.success(
             task_id="t1",
             agent_id="memory_search_agent",
-            result="glove size: M",
+            result="shoe size: 42",
             confidence=1.0,
         )
     )
@@ -85,7 +85,7 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
     # Quick uses delegate_to_specialist with intent/query args
     tool_call = ToolCall(
         name="delegate_to_specialist",
-        args={"intent": "search_memory", "query": "glove size"}
+        args={"intent": "search_memory", "query": "shoe size"}
     )
 
     llm.generate_content = AsyncMock(side_effect=[
@@ -95,7 +95,7 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
             usage_metadata=UsageMetadata(total_tokens=5, prompt_tokens=2, completion_tokens=3)
         ),
         LLMResponse(
-            text="Glove size is M",
+            text="Shoe size is 42",
             tool_calls=[],
             usage_metadata=UsageMetadata(total_tokens=7, prompt_tokens=3, completion_tokens=4)
         )
@@ -105,18 +105,18 @@ async def test_quick_agent_single_turn_tool_flow(mock_deps):
         sender="user",
         recipient="test",
         intent=AgentIntent.QUERY,
-        payload={"text": "What is my glove size?"},
+        payload={"text": "What is my shoe size?"},
         context={"user_id": user_id, "session_id": "s1", "classification": {"is_simple": True}}
     )
 
     response = await agent.execute(msg)
 
     assert response.status == AgentStatus.SUCCESS
-    assert response.result.text == "Glove size is M"  # delegation loop returns final LLM text
+    assert response.result.text == "Shoe size is 42"  # delegation loop returns final LLM text
     assert llm.generate_content.call_count == 2  # turn 1 (tool call) + turn 2 (final answer)
     call_kwargs = coordinator.handle_delegation.call_args.kwargs
     assert call_kwargs["intent"] == "search_memory"
-    assert call_kwargs["query"] == "glove size"
+    assert call_kwargs["query"] == "shoe size"
     assert call_kwargs["context"]["user_id"] == user_id
     assert call_kwargs["context"]["session_id"] == "s1"
     assert call_kwargs["context"]["params"] == {}

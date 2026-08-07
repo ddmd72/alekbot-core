@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Direct test of vector search for glove data.
+Direct test of vector search for sample fact data.
 """
 import asyncio
 import sys
@@ -23,10 +23,10 @@ async def main():
 
     # Test queries
     queries = [
-        "glove size",
-        "размер перчаток",
-        "My glove size is 9 or 10",
-        "перчатки размер"
+        "sample fact",
+        "тестовий факт",
+        "A sample fact about a bicycle",
+        "тестовий факт"
     ]
 
     for query in queries:
@@ -45,11 +45,11 @@ async def main():
             vector_field="vector",
             query_vector=query_vector,
             distance_measure=DistanceMeasure.COSINE,
-            limit=10  # Get more results to see if glove data is there
+            limit=10  # Get more results to see if sample fact data is there
         )
 
         results = vector_query.stream()
-        found_glove = False
+        found_sample = False
         count = 0
 
         async for result in results:
@@ -57,17 +57,17 @@ async def main():
             data = result.to_dict()
             text = data.get('text', '')
 
-            # Check if this is the glove document
-            if 'glove size is 9 or 10' in text.lower() or 'размер перчаток' in text.lower():
-                found_glove = True
-                print(f"   ✅ FOUND GLOVE DATA (rank {count}): {text[:100]}...")
+            # Check if this is the sample document
+            if 'sample fact' in text.lower():
+                found_sample = True
+                print(f"   ✅ FOUND SAMPLE FACT (rank {count}): {text[:100]}...")
             elif count <= 3:  # Show first 3 results
                 print(f"   Result {count}: {text[:80]}...")
 
-        if not found_glove:
-            print("   ❌ Glove data NOT found in top 10 results")
+        if not found_sample:
+            print("   ❌ Sample fact NOT found in top 10 results")
         else:
-            print("   ✅ Glove data found!")
+            print("   ✅ Sample fact found!")
 
         print(f"   Total results checked: {count}")
 

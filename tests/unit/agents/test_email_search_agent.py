@@ -299,7 +299,7 @@ class TestCanHandleEmailId:
     async def test_returns_true_with_email_id(self, agent):
         msg = AgentMessage(
             intent=AgentIntent.QUERY,
-            payload={"intent": "get_email_details", "email_id": "19bd6ad70f3e911b"},
+            payload={"intent": "get_email_details", "email_id": "msg_example001"},
             sender="smart", recipient="email_search_agent", task_id="t",
             context={"user_id": "user123"},
         )
@@ -308,7 +308,7 @@ class TestCanHandleEmailId:
     async def test_returns_true_with_email_id_and_filename(self, agent):
         msg = AgentMessage(
             intent=AgentIntent.QUERY,
-            payload={"intent": "get_email_attachment", "email_id": "19bd6ad70f3e911b", "filename": "doc.pdf"},
+            payload={"intent": "get_email_attachment", "email_id": "msg_example001", "filename": "doc.pdf"},
             sender="smart", recipient="email_search_agent", task_id="t",
             context={"user_id": "user123"},
         )
@@ -330,7 +330,7 @@ class TestCanHandleEmailId:
 
 class TestGetEmailDetails:
 
-    def _msg(self, email_id: str = "19bd6ad70f3e911b") -> AgentMessage:
+    def _msg(self, email_id: str = "msg_example001") -> AgentMessage:
         return AgentMessage(
             intent=AgentIntent.QUERY,
             payload={"intent": "get_email_details", "email_id": email_id},
@@ -345,7 +345,7 @@ class TestGetEmailDetails:
 
         assert response.status == AgentStatus.SUCCESS
         mock_search_service.get_details.assert_awaited_once_with(
-            email_id="19bd6ad70f3e911b",
+            email_id="msg_example001",
             user_id="user123",
         )
 
@@ -387,8 +387,8 @@ class TestGetEmailAttachment:
 
     def _msg(
         self,
-        email_id: str = "19bd6ad70f3e911b",
-        filename: str = "cerfa-15646.pdf",
+        email_id: str = "msg_example001",
+        filename: str = "consent_form.pdf",
     ) -> AgentMessage:
         return AgentMessage(
             intent=AgentIntent.QUERY,
@@ -404,8 +404,8 @@ class TestGetEmailAttachment:
 
         assert response.status == AgentStatus.SUCCESS
         mock_search_service.get_attachment.assert_awaited_once_with(
-            email_id="19bd6ad70f3e911b",
-            filename="cerfa-15646.pdf",
+            email_id="msg_example001",
+            filename="consent_form.pdf",
             user_id="user123",
         )
 

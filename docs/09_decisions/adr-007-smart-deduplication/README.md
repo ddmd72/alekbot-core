@@ -27,7 +27,7 @@ with a different value. LLM-written facts are phrased very consistently, so high
 
 
   
-  - "HbA1c 5.1%" vs "HbA1c 5.1%, indicating no diabetes"
+  
 
 ---
 

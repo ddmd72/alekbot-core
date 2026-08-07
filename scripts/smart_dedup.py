@@ -39,8 +39,8 @@ Fact A: "Monthly rent was 900 EUR in June 2025"
 Fact B: "Monthly rent was approximately 900 EUR (Example City) in June 2025, after a 60 EUR increase"
 → {"keep": "B", "reason": "Includes location and rent change context"}
 
-Fact A: "The patient's HbA1c was 5.1%, indicating no diabetes"
-Fact B: "HbA1c was 5.1%"
+Fact A: "The car's tyre pressure was 2.4 bar, within the recommended range"
+Fact B: "Tyre pressure was 2.4 bar"
 → {"keep": "A", "reason": "Includes interpretation"}
 """
 

@@ -77,7 +77,7 @@ async def check_fact_vector(fact_id: str, collection_name: str):
 
 
 async def main():
-    fact_id = "bbb03e6c-649f-4cf1-b681-51156752ea20"
+    fact_id = os.getenv("FACT_ID") or "<fact-uuid>"
     collection = "development_domain_facts_v2"
     
     await check_fact_vector(fact_id, collection)

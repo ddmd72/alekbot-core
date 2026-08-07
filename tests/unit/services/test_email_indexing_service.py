@@ -132,7 +132,7 @@ def _make_classification(email_id: str, valuable: bool = True) -> EmailClassific
         email_id=email_id,
         valuable=valuable,
         category="travel" if valuable else None,
-        fact="User booked flight BCN-KBP" if valuable else None,
+        fact="User booked flight AAA-BBB" if valuable else None,
         tags=["flight", "ryanair"] if valuable else [],
     )
 

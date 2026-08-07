@@ -102,7 +102,7 @@ class TestWebSearchAgent:
         message = AgentMessage.create(
             sender="test", recipient="web_agent",
             intent=AgentIntent.QUERY,
-            payload={"query": "weather in Valencia"}
+            payload={"query": "weather in Springfield"}
         )
 
         response = await agent.execute(message)
@@ -117,7 +117,7 @@ class TestWebSearchAgent:
         assert sent_request.tools is None
         assert sent_request.system_instruction is not None
         assert "current_date_time" in sent_request.system_instruction
-        assert sent_request.messages[0].parts[0].text == "weather in Valencia"
+        assert sent_request.messages[0].parts[0].text == "weather in Springfield"
 
     @pytest.mark.asyncio
     async def test_build_for_agent_excludes_biographical(self, agent, mock_prompt_builder):
@@ -126,7 +126,7 @@ class TestWebSearchAgent:
         message = AgentMessage.create(
             sender="test", recipient="web_agent",
             intent=AgentIntent.QUERY,
-            payload={"query": "weather in Valencia"},
+            payload={"query": "weather in Springfield"},
         )
 
         await agent.execute(message)

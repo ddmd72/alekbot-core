@@ -1456,14 +1456,14 @@ class TestLegacyMethods:
         anchor1 = MagicMock()
         anchor1.text = "I am a software engineer"
         anchor2 = MagicMock()
-        anchor2.text = "I live in Valencia"
+        anchor2.text = "I live in Springfield"
         repo.get_active_facts = AsyncMock(return_value=[anchor1, anchor2])
 
         result = await agent._format_existing_anchors(_USER_ID)
 
         repo.get_active_facts.assert_called_once_with(_USER_ID, tags=["anchor"])
         assert '"I am a software engineer"' in result
-        assert '"I live in Valencia"' in result
+        assert '"I live in Springfield"' in result
         assert ",\n" in result
 
     async def test_format_existing_anchors_empty_list(self):

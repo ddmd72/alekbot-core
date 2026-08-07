@@ -251,15 +251,14 @@ must describe only why the cluster was flagged. The cognitive process handles th
 
 **Finding 4: Hard 40-word cap is required.**
 Without an explicit hard limit, the agent invokes co-location to justify leaving large
-compound facts intact (e.g. a 200-word income fact across 6 time periods). With
+compound facts intact (e.g. a 200-word compound fact spanning 6 time periods). With
 `"Hard limit: no fact may exceed 40 words... Co-location is not a valid justification"`,
 the agent correctly decomposed the same fact into 8 atomic entries.
 
 **Finding 5: Cross-cluster operations emerge naturally.**
 The agent performs MERGE, cross-fact SUPERSEDE, and decomposition on facts outside the
 anchor — not just the anchor itself. No extra prompt instructions needed. Round 2 in the
-final run touched 15+ facts across citizenship, persona, addresses, financial support,
-solo-mode context.
+final run touched 15+ facts across several unrelated domains.
 
 **Finding 6: Cross-round duplication is a dry-run artifact.**
 In dry-run mode, writes are intercepted and not persisted. Round N+1 does not see facts
