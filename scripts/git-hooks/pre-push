@@ -1,0 +1,60 @@
+#!/bin/bash
+# Pre-push hook: require confirmation before pushing to main
+#
+# This hook prevents accidental pushes and requires explicit confirmation
+# for pushes to the main branch.
+#
+# Override with: git push --no-verify
+# Or set env var: SKIP_PUSH_CHECK=1 git push origin main
+
+set -e
+
+# Color output
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Check env var for bypass (for CI/scripts only)
+if [ "$SKIP_PUSH_CHECK" = "1" ]; then
+    exit 0
+fi
+
+# Parse refs being pushed
+while read local_ref local_sha remote_ref remote_sha; do
+    BRANCH=$(echo "$remote_ref" | sed 's/refs\/heads\///')
+
+    # If pushing to main, require confirmation
+    if [ "$BRANCH" = "main" ]; then
+        echo ""
+        echo -e "${RED}═══════════════════════════════════════════════════════════${NC}"
+        echo -e "${RED}PUSHING TO MAIN BRANCH${NC}"
+        echo -e "${RED}═══════════════════════════════════════════════════════════${NC}"
+        echo ""
+
+        # Show what's being pushed
+        echo -e "${BLUE}Commits being pushed:${NC}"
+        git log --oneline "${remote_sha}..${local_sha}" 2>/dev/null || echo "  (new branch or fast-forward)"
+        echo ""
+
+        echo -e "${BLUE}Files changed:${NC}"
+        git diff --stat "${remote_sha}..${local_sha}" 2>/dev/null || echo "  (new branch or fast-forward)"
+        echo ""
+
+        echo -e "${YELLOW}Are you sure you want to push to main?${NC}"
+        read -p "Type 'yes' to confirm or press Ctrl-C to cancel: " CONFIRM
+
+        if [ "$CONFIRM" != "yes" ]; then
+            echo -e "${RED}✗ Push cancelled by user${NC}"
+            exit 1
+        fi
+
+        echo -e "${GREEN}✓ Push confirmed${NC}"
+        echo ""
+    else
+        echo -e "${GREEN}✓ Pushing to branch: $BRANCH${NC}"
+    fi
+done
+
+exit 0

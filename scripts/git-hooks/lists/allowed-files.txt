@@ -1,0 +1,13 @@
+# File paths where real company/bank names are allowed in generic examples
+# (docs, tests, design specs - not source code)
+
+docs/
+tests/
+CLAUDE.md
+README.md
+*.md
+conftest.py
+test_*.py
+*_test.py
+prompts_snapshot/
+scripts/prompt/

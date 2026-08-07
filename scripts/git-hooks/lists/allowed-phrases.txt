@@ -1,0 +1,24 @@
+# Phrases where company/bank names are allowed (generic examples in documentation)
+# Format: regex patterns that will be allowed even if they contain real company names
+
+^User works at Google
+^I work at Microsoft
+^works for Apple
+^works at Amazon
+Example Bank
+Example Company
+Generic Bank
+Generic Company
+"User works at Google"
+"works for Microsoft"
+Test account at
+Test subscription at
+Mock.*Google
+Mock.*Amazon
+Mock.*Stripe
+Stripe/Wise/Revolut
+Wise/Revolut/Marcus
+Design tone.*Google
+Design tone.*Microsoft
+hypothetical.*Google
+hypothetical.*Microsoft
