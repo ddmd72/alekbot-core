@@ -77,8 +77,25 @@ package is no longer "for Grok" as its comment claimed: it serves `OpenAIAdapter
   (luna $0.20/1M). Under-report is real but small relative to output spend.
 - `billing.py` needed no change — the rates were right, the counter was empty.
 
-## Follow-up
+## Verification (2026-08-11, post-deploy)
 
-Verify on the next deploy that `cache_creation_tokens > 0` appears on gpt-5.6-* rows in
-`prompt_content`. If it stays zero, the remaining suspects are caching not engaging at all
-(prefix < 1024 tokens, unstable `prompt_cache_key`) — not the extraction path.
+Confirmed in `prompt_content`, split on the deploy boundary:
+
+| period | gpt-5.6-* rows | rows with `cache_creation_tokens > 0` | Σ cache-write |
+|---|---|---|---|
+| before | 1988 | **0** | 0 |
+| after | 1 | **1** | 11 974 |
+
+The first post-fix Sol call: `prompt_tokens = 11977`, `cache_read = 0`,
+`cache_creation = 11974` — a cold prefix, so nearly the whole prompt was written to cache and
+nothing read. Priced through `calculate_cost("gpt-5.6-sol", …)`, the newly-visible write leg is
+**$0.0748 on that one call** ($0.1347 with it, $0.0599 as billed before) — the cache-write leg
+more than doubled the input-side cost of a single request.
+
+Incidental confirmation for the SDK pin: the same window's router call on `gpt-5.4-nano` recorded
+`cache_write = 0`. Since prod runs `openai==2.53.0`, where `cache_write_tokens` is a *required*
+field, that call succeeding proves OpenAI emits the field as `0` for pre-5.6 models rather than
+omitting it — which is why the 2.45.0 required-field change is safe across model families.
+
+One call is proof the extraction works, not a basis for estimating steady-state impact. Historical
+rows stay zero and cannot be repaired.
