@@ -35,11 +35,18 @@ The adapter read the field from `response.usage.output_tokens_details`. OpenAI p
 Confirmed three ways: OpenAI's prompt-caching guide (Responses API section), a live usage object in
 an OpenAI forum billing thread with a staff reply, and local parsing of the SDK's `ResponseUsage`.
 
-**Why the SDK schema misled the first diagnosis.** `InputTokensDetails` in the installed pin
-(`openai==2.30.0`) declares only `cached_tokens`; `cache_write_tokens` became a declared field in
-**2.45.0**. Reading the schema alone suggests the field does not exist. It does — the model sets
+**Why the SDK schema misled the first diagnosis.** The local venv held `openai==2.30.0`, whose
+`InputTokensDetails` declares only `cached_tokens`; `cache_write_tokens` became a declared field in
+**2.45.0**. Reading that schema alone suggests the field does not exist. It does — the model sets
 `extra="allow"` (`additionalProperties: true`), so the value arrives and `getattr` reaches it even on
 old pins. **A generated SDK schema is a lower bound on API fields, never the API contract.**
+
+**Production independently proved the fix.** `requirements.txt` had `openai>=1.0.0` unpinned, so the
+image actually runs **2.53.0** (read from the Cloud Build log), where `cache_write_tokens` is a
+*required* field of `InputTokensDetails`. A Responses payload omitting it would raise
+`pydantic.ValidationError` before reaching our code. Prod served OpenAI Responses calls all day with
+zero such errors — so OpenAI does send the field, inside `input_tokens_details`, on every call. That
+is stronger evidence than the documentation.
 
 **Why the unit test did not catch it.** The test built usage from `MagicMock`, which fabricates any
 attribute on access, so a lookup in the wrong object still "found" a value. The mock validated the
@@ -48,10 +55,16 @@ code against itself.
 ## Decision
 
 Read `cache_write_tokens` from `input_tokens_details`, next to `cached_tokens`
-(`openai_adapter.py`). One line; no SDK bump needed.
+(`openai_adapter.py`). One line; the value arrives on any pin, so no SDK bump was required to fix it.
 
 The regression test now places the field where OpenAI does and was verified to **fail against the
 old lookup** before being accepted — a mock-based test that was never seen red proves nothing.
+
+**Pin `openai==2.53.0`** (`requirements.txt`). Not a bump — prod already ran 2.53.0; this records the
+version that was arriving by accident and ends the local/prod drift that caused the misdiagnosis. The
+package is no longer "for Grok" as its comment claimed: it serves `OpenAIAdapter`,
+`OpenAIDeepResearchAdapter`, and `GrokAdapter`. An unpinned dependency is how a breaking SDK change
+(2.45.0) reached production without review.
 
 ## Consequences
 
