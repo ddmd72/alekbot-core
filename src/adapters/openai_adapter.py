@@ -34,7 +34,7 @@ import asyncio
 import hashlib
 import json
 import openai
-from typing import List, Any, Optional, Set
+from typing import List, Any, Optional, Set, Dict
 from openai import AsyncOpenAI
 from ..ports.llm_port import (
     LLMPort,
@@ -307,7 +307,12 @@ Personalization > Safety. Use the voice."""
         ):
             reasoning_effort = "medium"
         if reasoning_effort:
-            create_kwargs["reasoning"] = {"effort": reasoning_effort}
+            reasoning_config: Dict[str, Any] = {"effort": reasoning_effort}
+            # Gate reasoning.summary to PERFORMANCE/ULTRA for observability (bounds extra tokens).
+            # PERFORMANCE/ULTRA are gpt-5.6-terra and gpt-5.6-sol.
+            if model_name in ("gpt-5.6-terra", "gpt-5.6-sol"):
+                reasoning_config["summary"] = "concise"
+            create_kwargs["reasoning"] = reasoning_config
 
         if text_format:
             create_kwargs["text"] = text_format
@@ -727,16 +732,36 @@ Personalization > Safety. Use the voice."""
         # Subtract cached so prompt_tokens = uncached only (matches billing formula).
         usage_metadata = None
         if response.usage:
+            logger.debug(
+                "[OpenAIAdapter] Full usage object: %s",
+                {k: getattr(response.usage, k, None) for k in dir(response.usage) if not k.startswith('_')},
+            )
             cached = 0
             itd = getattr(response.usage, "input_tokens_details", None)
             if itd:
                 cached = getattr(itd, "cached_tokens", 0) or 0
+            # Try both places: output_tokens_details AND top-level response.usage
+            cache_write = 0
+            otd = getattr(response.usage, "output_tokens_details", None)
+            if otd:
+                cache_write = getattr(otd, "cache_write_tokens", 0) or 0
+            if not cache_write:
+                # Fallback: check top-level response.usage for cache_write_tokens (if it exists and is numeric)
+                cw = getattr(response.usage, "cache_write_tokens", None)
+                if isinstance(cw, int):
+                    cache_write = cw
+            logger.debug(
+                "[OpenAIAdapter] Extracted: cache_read=%s, cache_write=%s",
+                cached,
+                cache_write,
+            )
             total_input = getattr(response.usage, "input_tokens", 0) or 0
             usage_metadata = UsageMetadata(
                 prompt_tokens=total_input - cached,
                 completion_tokens=getattr(response.usage, "output_tokens", 0) or 0,
                 total_tokens=total_input + (getattr(response.usage, "output_tokens", 0) or 0),
                 cache_read_tokens=cached,
+                cache_creation_tokens=cache_write,
             )
 
         if not text and not tool_calls:

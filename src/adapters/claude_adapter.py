@@ -929,10 +929,13 @@ class ClaudeAdapter(LLMPort):
                 logger.warning(f"[ClaudeAdapter]   Part {part_idx}: skipping unsupported MIME type '{mime_type}' (Claude only accepts image/* and application/pdf)")
                 return None
             logger.debug(f"[ClaudeAdapter]   Part {part_idx}: {content_type} from history ({mime_type}, {len(file_data['base64'])} chars)")
-            return {
+            block = {
                 "type": content_type,
                 "source": {"type": "base64", "media_type": mime_type, "data": file_data["base64"]},
             }
+            if content_type == "document":
+                block["citations"] = {"enabled": True}
+            return block
         if "path" in file_data:
             # New file: read and encode to base64.
             try:
@@ -949,10 +952,13 @@ class ClaudeAdapter(LLMPort):
                     logger.warning(f"[ClaudeAdapter]   Part {part_idx}: skipping unsupported MIME type '{mime_type}' (Claude only accepts image/* and application/pdf)")
                     return None
                 logger.info(f"📎 [ClaudeAdapter]   Part {part_idx}: {content_type} encoded ({mime_type}, {len(base64_data)} chars)")
-                return {
+                block = {
                     "type": content_type,
                     "source": {"type": "base64", "media_type": mime_type, "data": base64_data},
                 }
+                if content_type == "document":
+                    block["citations"] = {"enabled": True}
+                return block
             except Exception as e:
                 logger.error(f"❌ [ClaudeAdapter]   Part {part_idx}: Failed to encode file: {e}")
                 return None

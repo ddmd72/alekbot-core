@@ -157,11 +157,15 @@ class GeminiAdapter(LLMPort):
                 # Map unified thinking level to Gemini ThinkingConfig.
                 # "low" → LOW (Flash-safe), "medium" → MEDIUM, "high" → HIGH (Pro-grade).
                 # thinking_budget deprecated in Gemini 3+; using thinking_level only.
-                types.ThinkingConfig(thinking_level={
-                    "low": types.ThinkingLevel.LOW,
-                    "medium": types.ThinkingLevel.MEDIUM,
-                    "high": types.ThinkingLevel.HIGH,
-                }.get(thinking, types.ThinkingLevel.LOW))
+                # include_thoughts=True surfaces thought text for observability (no extra cost).
+                types.ThinkingConfig(
+                    thinking_level={
+                        "low": types.ThinkingLevel.LOW,
+                        "medium": types.ThinkingLevel.MEDIUM,
+                        "high": types.ThinkingLevel.HIGH,
+                    }.get(thinking, types.ThinkingLevel.LOW),
+                    include_thoughts=True,
+                )
                 if thinking else None
             ),
         )
@@ -414,6 +418,14 @@ class GeminiAdapter(LLMPort):
             finish_reason,
             um_thoughts,
         )
+
+        # Extract thought text for observability (when include_thoughts=True).
+        thoughts = "".join([
+            p.thought for p in candidate.content.parts
+            if hasattr(p, "thought") and p.thought and isinstance(p.thought, str)
+        ])
+        if thoughts:
+            text = f"{text}\n\n[Thinking]\n{thoughts}" if text else thoughts
 
         tool_calls = []
         for part in candidate.content.parts:

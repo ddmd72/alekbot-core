@@ -108,7 +108,7 @@ class OpenAIDeepResearchAdapter(DeepResearchPort):
             model=resolved_model,
             input=query,
             background=True,
-            tools=[{"type": "web_search_preview"}],
+            tools=[{"type": "web_search"}],
             metadata={
                 "user_id": user_id,
                 "account_id": account_id,

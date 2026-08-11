@@ -160,8 +160,11 @@ async def main() -> None:
         user_id[:8], len(query), context.get("model", "?"),
     )
 
+    # Same timeout as ClaudeAdapter: read=120s protects against documented Anthropic
+    # mid-stream-stall bug (stream stalls without raising, defaults to 600s then).
     anthropic_client = anthropic.AsyncAnthropic(
-        api_key=os.environ["ANTHROPIC_API_KEY"]
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+        timeout=anthropic.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
     )
     task_queue = _build_task_queue()
 
