@@ -97,7 +97,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `CloudRunJobsAdapter`; OpenAI backend = webhook. Gemini backend removed 2026-05-29. Two-pass critic via
   `UserBotConfig.deep_research_second_pass`. Job logs: `make logs-job` / `make fetch-logs-job [K]` →
   `alek_debug_job.log`; single run: `make logs-execution EXECUTION=<name>`.
-- MapsSearch (SYNC, BALANCED, OpenAI `gpt-5.4-mini` default, intent `maps_query`, **`internal=True`**) — place
+- MapsSearch (SYNC, BALANCED, OpenAI `gpt-5.6-luna` default, intent `maps_query`, **`internal=True`**) — place
   search, routes, weather via Google Maps AI Grounding (MCP, `MapsToolsPort`). Not shown to LLMs;
   auto-triggered via `intent_fanout` when the orchestrator dispatches `search_web`, results merged
   under labeled sections. Latency-tuned: `thinking="low"` on every turn (all allowed providers reason
