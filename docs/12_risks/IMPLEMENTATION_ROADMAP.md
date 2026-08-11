@@ -386,6 +386,37 @@ mandatory before team/multi-user rollout.
 
 ---
 
+### TD-8: `anthropic` is unpinned — local runs the floor, prod runs 24 minors ahead [P2] — 🔲 OPEN
+
+- **Problem:** `requirements.txt` declares `anthropic>=0.97.0`. The local venv resolves to exactly
+  **0.97.0** (the floor); the deployed image installs **0.121.0** (read from the Cloud Build log of
+  revision `alek-bot-dev-00251`). Every deploy silently adopts whatever is newest on PyPI, so the
+  suite that gates a change and the runtime that serves it are 24 minor versions apart.
+- **Why it matters more here than for most deps:** `ClaudeAdapter` is the most heavily
+  version-gated adapter in the codebase — `output_config.format` for structured output,
+  `_THINKING_MODELS` / `_DYNAMIC_SEARCH_MODELS` capability gates, `_NO_SAMPLING_MODELS`,
+  `_ADAPTIVE_DEFAULT_ON_MODELS`, `_MODEL_FALLBACK`. That is precisely the surface an SDK release
+  reshapes (required fields, renamed params, changed defaults), and `make check` cannot see it:
+  the wire tests mock at the SDK boundary, so they assert against **0.97.0's** types while prod
+  answers on 0.121.0.
+- **Precedent, same defect class:** `openai` had the identical shape (`>=1.0.0`, local 2.30.0, prod
+  2.53.0). It cost a full misdiagnosis — the 2.30.0 schema was read as the API contract — and it
+  carried a genuine breaking change into production unreviewed (2.45.0 made `cache_write_tokens`
+  required in `InputTokensDetails`, `openai/openai-python#3480`). Pinned to `==2.53.0` on
+  2026-08-11; see `decisions/openai_cache_write_tokens_location.md`.
+- **Not yet audited:** nobody has read the 0.97.0 → 0.121.0 changelog. This TD is the audit, not a
+  claim that something is broken.
+- **Fix:** diff the changelog for breaking changes touching the gates above; upgrade the local venv
+  to whatever prod runs; `make test-unit` + the adapter wire/contract suites; then pin `anthropic==`
+  that version with a comment recording *why* the floor comment (`0.97.0+: output_config.effort +
+  model capabilities API`) is no longer the whole story.
+- **Wider scope, same root:** ~13 requirements are fully unpinned (`slack_bolt`,
+  `google-cloud-firestore`, `google-cloud-storage`, `google-cloud-logging`, `aiohttp`,
+  `markitdown[all]`, `pytest*`, …). `anthropic` is first because it is on the hot path of every
+  Claude request; the rest is a separate sweep, not part of this TD.
+
+---
+
 ## 🏢 Planned Milestones (Phase 3: Enterprise)
 
 - **Milestone 7**: User Onboarding & OAuth
