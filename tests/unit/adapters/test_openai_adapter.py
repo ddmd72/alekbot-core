@@ -983,3 +983,72 @@ async def test_no_timeout_does_not_forward_timeout_kwarg():
     await adapter.generate_content(request=_OPENAI_REQUEST)  # timeout=None
 
     assert "timeout" not in captured
+
+
+# ============================================================================
+# Usage metadata extraction (cache tokens, etc.)
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_usage_metadata_extracts_cache_write_tokens():
+    """cache_write_tokens from output_tokens_details must be extracted and priced at 1.25×.
+
+    Regression for GPT_5_6_MIGRATION_RFC §3.4: billing.py has cache_write: 1.25 multiplier
+    for gpt-5.6-* models but openai_adapter never read cache_write_tokens from the response.
+    Historical OpenAI cache-write cost was under-reported since 2026-07-30.
+    """
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    usage = MagicMock()
+    usage.input_tokens = 1000
+    usage.output_tokens = 500
+    usage.input_tokens_details = MagicMock(cached_tokens=100)
+    usage.output_tokens_details = MagicMock(cache_write_tokens=150)
+
+    response = _make_response(text="result", usage=usage)
+
+    async def mock_create(**kwargs):
+        return response
+
+    adapter.client.responses.create = mock_create
+
+    result = await adapter.generate_content(request=LLMRequest(
+        model_name="gpt-5.6-luna",
+        messages=[Message(role="user", parts=[MessagePart(text="test")])],
+    ))
+
+    # Verify cache tokens are extracted into UsageMetadata
+    assert result.usage_metadata.prompt_tokens == 900  # 1000 - 100 cached
+    assert result.usage_metadata.completion_tokens == 500
+    assert result.usage_metadata.cache_read_tokens == 100
+    assert result.usage_metadata.cache_creation_tokens == 150
+
+
+@pytest.mark.asyncio
+async def test_usage_metadata_handles_missing_details():
+    """When output_tokens_details or cache_write_tokens is absent, default to 0."""
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    # Usage without output_tokens_details
+    usage = MagicMock()
+    usage.input_tokens = 500
+    usage.output_tokens = 200
+    usage.input_tokens_details = None
+    usage.output_tokens_details = None
+
+    response = _make_response(text="result", usage=usage)
+
+    async def mock_create(**kwargs):
+        return response
+
+    adapter.client.responses.create = mock_create
+
+    result = await adapter.generate_content(request=LLMRequest(
+        model_name="gpt-5.4-nano",
+        messages=[Message(role="user", parts=[MessagePart(text="test")])],
+    ))
+
+    assert result.usage_metadata.prompt_tokens == 500
+    assert result.usage_metadata.completion_tokens == 200
+    assert result.usage_metadata.cache_read_tokens == 0
+    assert result.usage_metadata.cache_creation_tokens == 0

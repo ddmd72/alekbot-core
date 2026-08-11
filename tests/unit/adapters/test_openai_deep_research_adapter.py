@@ -132,7 +132,7 @@ async def test_create_interaction_sends_background_true():
 
 @pytest.mark.asyncio
 async def test_create_interaction_sends_web_search_preview_tool():
-    """web_search_preview tool must always be included for deep research requests."""
+    """web_search tool must always be included for deep research requests (not deprecated web_search_preview)."""
     adapter = _make_adapter()
     adapter._client.responses.create.return_value = _make_response()
 
@@ -145,8 +145,8 @@ async def test_create_interaction_sends_web_search_preview_tool():
 
     kwargs = adapter._client.responses.create.await_args.kwargs
     tools = kwargs.get("tools", [])
-    assert any(t.get("type") == "web_search_preview" for t in tools), (
-        f"web_search_preview missing from tools: {tools}"
+    assert any(t.get("type") == "web_search" for t in tools), (
+        f"web_search tool missing from tools: {tools}"
     )
 
 
