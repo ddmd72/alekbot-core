@@ -5,7 +5,13 @@ google-cloud-logging
 google-cloud-bigquery>=3.0.0  # queryable LLM prompt/response content store (TTL'd table)
 google-genai>=2.0.0,<3.0.0  # v2 cut at 2026-05-07; we only use the Models API (generate_content / embed_content / files), which is unaffected by the Interactions API breaking change. See decisions/gemini_deep_research_adapter_removal.md.
 anthropic>=0.97.0  # 0.97.0+: output_config.effort + model capabilities API; older versions lack proper effort/structured-outputs typing
-openai>=1.0.0  # xAI Grok (OpenAI-compatible API)
+# Serves three call sites, not just Grok: OpenAIAdapter + OpenAIDeepResearchAdapter (Responses API)
+# and GrokAdapter (Chat Completions, xAI's OpenAI-compatible endpoint). Pinned so CI matches local
+# and prod — it was `>=1.0.0`, so every image build silently adopted the newest release. That is how
+# 2.45.0 reached prod unreviewed: it made `cache_write_tokens` REQUIRED in Responses
+# `InputTokensDetails` (breaking, never reverted — openai/openai-python#3480). Harmless here (we only
+# read that model, and Grok's Chat Completions details stayed optional), but bumps must be deliberate.
+openai==2.53.0
 python-dotenv
 aiohttp
 beautifulsoup4  # HTML → plain text extraction for Gmail email bodies
