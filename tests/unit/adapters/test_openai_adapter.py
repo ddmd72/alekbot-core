@@ -991,19 +991,20 @@ async def test_no_timeout_does_not_forward_timeout_kwarg():
 
 @pytest.mark.asyncio
 async def test_usage_metadata_extracts_cache_write_tokens():
-    """cache_write_tokens from output_tokens_details must be extracted and priced at 1.25×.
+    """cache_write_tokens from input_tokens_details must be extracted and priced at 1.25×.
 
+    Per OpenAI Responses API docs: cache_write_tokens lives in input_tokens_details (not output).
     Regression for GPT_5_6_MIGRATION_RFC §3.4: billing.py has cache_write: 1.25 multiplier
-    for gpt-5.6-* models but openai_adapter never read cache_write_tokens from the response.
-    Historical OpenAI cache-write cost was under-reported since 2026-07-30.
+    for gpt-5.6-* models but openai_adapter was looking in wrong place (output_tokens_details).
     """
     adapter = OpenAIAdapter(api_key="test-key")
 
     usage = MagicMock()
     usage.input_tokens = 1000
     usage.output_tokens = 500
-    usage.input_tokens_details = MagicMock(cached_tokens=100)
-    usage.output_tokens_details = MagicMock(cache_write_tokens=150)
+    # cache_write_tokens is in input_tokens_details, along with cached_tokens
+    usage.input_tokens_details = MagicMock(cached_tokens=100, cache_write_tokens=150)
+    usage.output_tokens_details = MagicMock()
 
     response = _make_response(text="result", usage=usage)
 
