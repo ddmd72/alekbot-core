@@ -4,7 +4,17 @@ google-cloud-storage
 google-cloud-logging
 google-cloud-bigquery>=3.0.0  # queryable LLM prompt/response content store (TTL'd table)
 google-genai>=2.0.0,<3.0.0  # v2 cut at 2026-05-07; we only use the Models API (generate_content / embed_content / files), which is unaffected by the Interactions API breaking change. See decisions/gemini_deep_research_adapter_removal.md.
-anthropic>=0.97.0  # 0.97.0+: output_config.effort + model capabilities API; older versions lack proper effort/structured-outputs typing
+# Floor was 0.97.0 (first release with output_config.effort + the model capabilities API); pinned
+# 2026-08-11 because `>=` let local sit on that floor while every image build pulled the newest —
+# prod was 24 minors ahead on 0.121.0, so the suite gated one SDK and prod answered on another.
+# Matters here more than elsewhere: ClaudeAdapter is the most version-gated adapter we have
+# (output_config.format, _THINKING_MODELS, _NO_SAMPLING_MODELS, _ADAPTIVE_DEFAULT_ON_MODELS,
+# _MODEL_FALLBACK) and its wire tests mock at the SDK boundary, so drift is invisible to `make check`.
+# Audited 0.97.0 → 0.121.0 before pinning: Usage keeps cache_{creation,read}_input_tokens and the
+# same required fields (only adds optional output_tokens_details); Timeout, AsyncAnthropic,
+# types.Message, messages.stream, the four APIError classes and output_config/thinking/tools all
+# unchanged. Bumps are deliberate — re-run the adapter wire + contract suites.
+anthropic==0.121.0
 # Serves three call sites, not just Grok: OpenAIAdapter + OpenAIDeepResearchAdapter (Responses API)
 # and GrokAdapter (Chat Completions, xAI's OpenAI-compatible endpoint). Pinned so CI matches local
 # and prod — it was `>=1.0.0`, so every image build silently adopted the newest release. That is how

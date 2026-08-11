@@ -386,7 +386,7 @@ mandatory before team/multi-user rollout.
 
 ---
 
-### TD-8: `anthropic` is unpinned — local runs the floor, prod runs 24 minors ahead [P2] — 🔲 OPEN
+### TD-8: `anthropic` is unpinned — local runs the floor, prod runs 24 minors ahead [P2] — ✅ DONE (2026-08-11)
 
 - **Problem:** `requirements.txt` declares `anthropic>=0.97.0`. The local venv resolves to exactly
   **0.97.0** (the floor); the deployed image installs **0.121.0** (read from the Cloud Build log of
@@ -404,12 +404,21 @@ mandatory before team/multi-user rollout.
   carried a genuine breaking change into production unreviewed (2.45.0 made `cache_write_tokens`
   required in `InputTokensDetails`, `openai/openai-python#3480`). Pinned to `==2.53.0` on
   2026-08-11; see `decisions/openai_cache_write_tokens_location.md`.
-- **Not yet audited:** nobody has read the 0.97.0 → 0.121.0 changelog. This TD is the audit, not a
-  claim that something is broken.
-- **Fix:** diff the changelog for breaking changes touching the gates above; upgrade the local venv
-  to whatever prod runs; `make test-unit` + the adapter wire/contract suites; then pin `anthropic==`
-  that version with a comment recording *why* the floor comment (`0.97.0+: output_config.effort +
-  model capabilities API`) is no longer the whole story.
+- **Audit result (2026-08-11) — nothing was broken.** Unlike `openai`, the 0.97.0 → 0.121.0 range
+  carries no breaking change on any surface we touch. `Usage` keeps `cache_creation_input_tokens` /
+  `cache_read_input_tokens` and the same required fields (`input_tokens`, `output_tokens`), adding
+  only an optional `output_tokens_details`. `anthropic.Timeout`, `AsyncAnthropic`, `types.Message`,
+  `messages.stream`, the four `APIError` subclasses, and the `output_config` / `thinking` / `tools` /
+  `extra_headers` parameters are all unchanged. (`betas` is not a `messages.create` param in either
+  version — we pass beta flags via `extra_headers={"anthropic-beta": …}`, which still works.)
+- **Shipped:** local venv upgraded 0.97.0 → 0.121.0, `anthropic==0.121.0` pinned in
+  `requirements.txt` with the audit recorded inline. Green on 0.121.0: `make test-unit` 4543 passed,
+  `tests/unit/adapters/` + `tests/contracts/` 799 passed, `tests/integration/adapters/` 27 passed.
+  Zero prod behavior change — prod was already on 0.121.0; the pin records it and ends the drift.
+- **Worth noting for the next SDK pin:** the risk was never that 0.121.0 misbehaves — prod had been
+  running it. The risk was that **local could not observe what prod does**, so a regression would
+  surface in production rather than in `make check`. That is the argument for pinning, independent
+  of whether any given range happens to contain a breaking change.
 - **Wider scope, same root:** ~13 requirements are fully unpinned (`slack_bolt`,
   `google-cloud-firestore`, `google-cloud-storage`, `google-cloud-logging`, `aiohttp`,
   `markitdown[all]`, `pytest*`, …). `anthropic` is first because it is on the hot path of every
