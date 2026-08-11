@@ -1,6 +1,6 @@
 # RFC — Migrate OpenAI tiers to the GPT-5.6 family (Luna / Terra / Sol)
 
-- **Status:** Draft (prepared 2026-07-13, autonomous research session)
+- **Status:** Done — shipped 2026-07-30, superseded by `decisions/gpt_5_6_adoption.md` (prepared 2026-07-13, autonomous research session)
 - **Owner:** Dmytro
 - **Scope:** `OpenAIAdapter` tier map + reasoning/cache handling, `billing.py`, wire/contract tests, docs.
 - **Type:** Model-tier flip + adapter capability update (same class as
