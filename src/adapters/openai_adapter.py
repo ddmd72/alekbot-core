@@ -732,29 +732,15 @@ Personalization > Safety. Use the voice."""
         # Subtract cached so prompt_tokens = uncached only (matches billing formula).
         usage_metadata = None
         if response.usage:
-            logger.debug(
-                "[OpenAIAdapter] Full usage object: %s",
-                {k: getattr(response.usage, k, None) for k in dir(response.usage) if not k.startswith('_')},
-            )
             cached = 0
+            cache_write = 0
             itd = getattr(response.usage, "input_tokens_details", None)
             if itd:
                 cached = getattr(itd, "cached_tokens", 0) or 0
-            # Try both places: output_tokens_details AND top-level response.usage
-            cache_write = 0
-            otd = getattr(response.usage, "output_tokens_details", None)
-            if otd:
-                cache_write = getattr(otd, "cache_write_tokens", 0) or 0
-            if not cache_write:
-                # Fallback: check top-level response.usage for cache_write_tokens (if it exists and is numeric)
-                cw = getattr(response.usage, "cache_write_tokens", None)
-                if isinstance(cw, int):
-                    cache_write = cw
-            logger.debug(
-                "[OpenAIAdapter] Extracted: cache_read=%s, cache_write=%s",
-                cached,
-                cache_write,
-            )
+                # cache_write_tokens sits in input_tokens_details next to cached_tokens, NOT in
+                # output_tokens_details. It only became a declared field in openai SDK 2.45.0;
+                # on older pins it still arrives because InputTokensDetails allows extra fields.
+                cache_write = getattr(itd, "cache_write_tokens", 0) or 0
             total_input = getattr(response.usage, "input_tokens", 0) or 0
             usage_metadata = UsageMetadata(
                 prompt_tokens=total_input - cached,

@@ -169,6 +169,11 @@ cache-*write* tokens for 5.6 and that `_parse_response` extracts them — otherw
 nothing to bill and cache-write cost is silently under-reported. If not exposed, log the gap and keep
 `cache_write` for correctness once OpenAI adds the field.
 
+> **Caveat resolved 2026-08-11.** The field is exposed, in `usage.input_tokens_details` next to
+> `cached_tokens` — NOT in `output_tokens_details`, where the adapter first looked, which is why every
+> gpt-5.6 row landed with `cache_creation_tokens = 0`. Fixed; cache-write cost before that date is
+> under-reported. See `decisions/openai_cache_write_tokens_location.md`.
+
 ### 3.5 New 5.6 features we deliberately skip
 
 Programmatic tool calling (model writes JS to orchestrate tools — we own orchestration via
