@@ -46,6 +46,11 @@ class PromptContentRecord(BaseModel):
     # --- Content (the sensitive payload — never sent to the tracing backend) ---
     request_text: Optional[str] = None
     response_text: Optional[str] = None
+    # Reasoning summary when the provider returns one. Stored beside the answer, never
+    # merged into it — merging is what corrupted a delivered document on 2026-08-12
+    # (see decisions/gemini_thought_parts_split.md). Thinking is billed whether or not
+    # the summary is returned, so this column costs nothing but makes it queryable.
+    thought_text: Optional[str] = None
     tool_calls: Optional[str] = None  # JSON-serialized [{name, args}, ...]
 
     # --- Token / cost metadata ---
