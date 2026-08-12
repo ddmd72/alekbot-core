@@ -25,6 +25,36 @@ def verdict(ours, litellm, modelsdev, model="some-model", today=TODAY):
     return pc.resolve_verdict(model, ours, {LITE: litellm, MDEV: modelsdev}, today)
 
 
+# A synthetic model carrying an introductory rate with a dated reversion. The schedule and
+# hold-policy tests below use THIS rather than a real model on purpose: they cover the
+# mechanism, and binding them to a live price made a provider announcement break eight of
+# them at once — on 2026-08-12 Anthropic made Sonnet 5's introductory $2/$10 permanent and
+# cancelled the 2026-09-01 reversion these tests had encoded. A real price is a fact about
+# the world; the mechanism is ours, and only the mechanism belongs in a unit test.
+_PROMO = "promo-model"
+_PROMO_SCHEDULE = [
+    (date(2026, 1, 1), (2.0, 10.0)),   # introductory
+    (date(2026, 9, 1), (3.0, 15.0)),   # standard, from this date
+]
+
+
+@pytest.fixture
+def scheduled(monkeypatch):
+    """`_PROMO`, registered in the price schedule for the duration of one test."""
+    monkeypatch.setitem(pc.PRICE_SCHEDULE, _PROMO, _PROMO_SCHEDULE)
+    return _PROMO
+
+
+@pytest.fixture
+def held(scheduled, monkeypatch):
+    """`_PROMO`, additionally under the hold-the-final-price policy.
+
+    HOLD_FINAL_PRICE is a frozenset, so it is replaced wholesale rather than mutated.
+    """
+    monkeypatch.setattr(pc, "HOLD_FINAL_PRICE", frozenset({_PROMO}))
+    return scheduled
+
+
 class TestConsensus:
 
     def test_both_agree_with_ours_is_confirmed(self):
@@ -66,43 +96,49 @@ class TestConsensus:
 
 class TestSchedule:
 
-    def test_price_in_force_is_the_latest_arrived_entry(self):
-        assert pc.scheduled_price("claude-sonnet-5", date(2026, 7, 29)) == (2.0, 10.0)
+    def test_price_in_force_is_the_latest_arrived_entry(self, scheduled):
+        assert pc.scheduled_price(scheduled, date(2026, 7, 29)) == (2.0, 10.0)
 
-    def test_price_in_force_after_the_change(self):
-        assert pc.scheduled_price("claude-sonnet-5", date(2026, 9, 1)) == (3.0, 15.0)
+    def test_price_in_force_after_the_change(self, scheduled):
+        assert pc.scheduled_price(scheduled, date(2026, 9, 1)) == (3.0, 15.0)
 
     def test_unscheduled_model_has_no_scheduled_price(self):
         assert pc.scheduled_price("gpt-5.6-luna", TODAY) is None
 
-    def test_next_change_is_reported_while_future(self):
-        assert pc.next_scheduled_change("claude-sonnet-5", TODAY) == (
+    def test_next_change_is_reported_while_future(self, scheduled):
+        assert pc.next_scheduled_change(scheduled, TODAY) == (
             date(2026, 9, 1), (3.0, 15.0))
 
     def test_next_change_is_none_once_passed(self):
         assert pc.next_scheduled_change("claude-sonnet-5", date(2026, 9, 2)) is None
 
-    def test_upcoming_change_is_surfaced_on_the_verdict(self):
-        v = verdict((3.0, 15.0), (2.0, 10.0), (2.0, 10.0), model="claude-sonnet-5")
+    def test_upcoming_change_is_surfaced_on_the_verdict(self, scheduled):
+        v = verdict((3.0, 15.0), (2.0, 10.0), (2.0, 10.0), model=scheduled)
         assert v.upcoming == (date(2026, 9, 1), (3.0, 15.0))
 
 
 class TestHoldFinalPricePolicy:
-    """billing.py deliberately holds Sonnet 5's post-promo price so spend is never
-    under-reported. The audit must recognise that as intentional, not as drift."""
+    """A model under this policy holds its post-promo price in billing.py so spend is never
+    under-reported while an introductory rate runs. The audit must recognise that as
+    intentional, not as drift.
 
-    def test_holding_the_final_price_is_confirmed(self):
-        v = verdict((3.0, 15.0), (2.0, 10.0), (2.0, 10.0), model="claude-sonnet-5")
+    HOLD_FINAL_PRICE is empty in production since 2026-08-12 (Sonnet 5, its only member, had
+    its reversion cancelled). The mechanism stays — the next introductory rate wants it — so
+    these exercise it against the `held` fixture.
+    """
+
+    def test_holding_the_final_price_is_confirmed(self, held):
+        v = verdict((3.0, 15.0), (2.0, 10.0), (2.0, 10.0), model=held)
         assert v.status == pc.CONFIRMED
         assert not v.needs_review
 
-    def test_the_over_report_is_stated_not_hidden(self):
-        v = verdict((3.0, 15.0), (2.0, 10.0), (2.0, 10.0), model="claude-sonnet-5")
+    def test_the_over_report_is_stated_not_hidden(self, held):
+        v = verdict((3.0, 15.0), (2.0, 10.0), (2.0, 10.0), model=held)
         assert "1.50x high" in v.detail
 
-    def test_neither_scheduled_price_is_drift(self):
+    def test_neither_scheduled_price_is_drift(self, held):
         """Holding today's promo price instead of the final one violates the policy."""
-        v = verdict((2.0, 10.0), (2.0, 10.0), (2.0, 10.0), model="claude-sonnet-5")
+        v = verdict((2.0, 10.0), (2.0, 10.0), (2.0, 10.0), model=held)
         assert v.status == pc.SCHEDULE_DRIFT
         assert v.needs_review
 
@@ -112,9 +148,9 @@ class TestHoldFinalPricePolicy:
         assert v.status == pc.CONFIRMED
         assert "high until then" not in v.detail
 
-    def test_catalogs_contradicting_our_schedule_flags_the_schedule(self):
-        """If Anthropic changes the promo, the schedule — not billing.py — is what is stale."""
-        v = verdict((3.0, 15.0), (2.5, 12.0), (2.5, 12.0), model="claude-sonnet-5")
+    def test_catalogs_contradicting_our_schedule_flags_the_schedule(self, held):
+        """If the provider changes the promo, the schedule — not billing.py — is what is stale."""
+        v = verdict((3.0, 15.0), (2.5, 12.0), (2.5, 12.0), model=held)
         assert v.status == pc.SCHEDULE_STALE
         assert v.needs_review
 

@@ -50,10 +50,12 @@ change we verified at the provider" instead of asserting the schedule is at faul
   catalogs lag" from "our schedule is wrong" by checking whether consensus matches a *previous*
   scheduled price. Rejected as unnecessary machinery for a condition that resolves itself in
   days; the reworded `schedule_stale` states both readings and costs nothing.
-- **Track the pre-cut price deliberately (the `HOLD_FINAL_PRICE` treatment given to Sonnet 5's
-  promo).** That policy exists to never *under*-report while an introductory rate runs out. This
-  is the opposite case: a permanent cut with no expiry, where holding the old price only
-  inflates every report.
+- **Track the pre-cut price deliberately (the `HOLD_FINAL_PRICE` treatment then given to Sonnet
+  5's promo).** That policy exists to never *under*-report while an introductory rate runs out.
+  This is the opposite case: a permanent cut with no expiry, where holding the old price only
+  inflates every report. (Sonnet 5 has since left that policy — its introductory rate became
+  permanent on 2026-08-12, making it the same case as this one. `HOLD_FINAL_PRICE` is now empty
+  but retained for the next promo. See `claude_sonnet_5_intro_pricing_made_permanent.md`.)
 
 ## Consequences
 
