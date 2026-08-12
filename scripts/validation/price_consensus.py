@@ -25,10 +25,12 @@ Sources are LiteLLM's `model_prices_and_context_window.json` and models.dev's `a
 Both track provider list prices, which is what we are actually charged.
 
 INDEPENDENCE CAVEAT: both are community catalogs curated from provider pricing pages, so
-they share a failure mode — each carries the *currently posted* price with no expiry. That
-is exactly why both quote Claude Sonnet 5 at its introductory $2/$10 and neither knows the
-rate reverts on 2026-09-01. Hence PRICE_SCHEDULE: agreement answers "what does it cost
-today", not "what should our table encode".
+they share a failure mode — each carries the *currently posted* price with no expiry, and
+neither knows about an announced future change. Hence PRICE_SCHEDULE: agreement answers
+"what does it cost today", not "what should our table encode". The motivating case was
+Claude Sonnet 5's introductory $2/$10, which both catalogs quoted while a reversion to
+$3/$15 was scheduled for 2026-09-01 — that reversion was cancelled on 2026-08-12 (the rate
+is now permanent), but the failure mode it illustrates is unchanged.
 """
 from __future__ import annotations
 
@@ -78,12 +80,11 @@ class Verdict:
 # reports match the invoice.
 # ---------------------------------------------------------------------------
 PRICE_SCHEDULE: Dict[str, List[Tuple[date, Price]]] = {
-    # Introductory pricing, then standard.
-    # https://www.anthropic.com/news/claude-sonnet-5
-    "claude-sonnet-5": [
-        (date(2026, 1, 1), (2.00, 10.00)),
-        (date(2026, 9, 1), (3.00, 15.00)),
-    ],
+    # `claude-sonnet-5` was here with a (2026-09-01, $3/$15) reversion behind its $2/$10
+    # introductory rate. Anthropic made the introductory rate PERMANENT on 2026-08-12 and
+    # cancelled that reversion, so there is no future change left to override consensus with —
+    # both catalogs already quote $2/$10, which is now simply correct. Removed with the matching
+    # HOLD_FINAL_PRICE membership below.
     # OpenAI cut GPT-5.6 prices on 2026-07-30 (Luna -80%, Terra -20%, Sol unchanged), read off
     # developers.openai.com/api/docs/pricing. The catalogs still quoted the pre-cut numbers a day
     # later — without these entries the audit would report the corrected billing.py as
@@ -94,14 +95,18 @@ PRICE_SCHEDULE: Dict[str, List[Tuple[date, Price]]] = {
 }
 
 # Models where billing.py DELIBERATELY holds the final scheduled price rather than the one
-# in force today. Documented policy (see the comment on `claude-sonnet-5` in billing.py):
-# track the standard list price so cost is never UNDER-reported, accepting that spend reads
-# high while an introductory rate lasts, and that no edit is needed when it expires.
-#
-# Without this set, the audit would report the deliberate choice as `schedule_drift` and
-# invite someone to "fix" a decision that was made on purpose. The trade-off is stated in
+# in force today: track the standard list price so cost is never UNDER-reported, accepting
+# that spend reads high while an introductory rate lasts, and that no edit is needed when it
+# expires. Without this set, the audit would report the deliberate choice as `schedule_drift`
+# and invite someone to "fix" a decision that was made on purpose; the trade-off is stated in
 # the verdict instead, so the over-reporting stays visible.
-HOLD_FINAL_PRICE = frozenset({"claude-sonnet-5"})
+#
+# Empty since 2026-08-12: `claude-sonnet-5` was the only member, and its reversion was
+# cancelled when the introductory rate became permanent. The mechanism is kept — an
+# introductory rate with a dated reversion is a recurring pattern, and the next one wants it.
+# A member here MUST also have a PRICE_SCHEDULE entry: the verdict path indexes
+# PRICE_SCHEDULE[model] directly.
+HOLD_FINAL_PRICE: frozenset = frozenset()
 
 
 def scheduled_price(model: str, today: date) -> Optional[Price]:

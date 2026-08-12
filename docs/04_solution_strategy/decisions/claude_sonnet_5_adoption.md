@@ -11,6 +11,12 @@ Make **`claude-sonnet-5`** the default model for the Claude `PERFORMANCE` tier (
 `claude-sonnet-4-6`). Sonnet 5 is ~Opus-4.8 quality at Sonnet price (intro $2/$10 through
 2026-08-31, standard $3/$15), a substantial jump over 4.6.
 
+> **Pricing update 2026-08-12.** The introductory $2/$10 was made **permanent** and the
+> 2026-09-01 reversion to $3/$15 was cancelled, so the parenthetical above describes only what
+> was announced at adoption. `billing.py` now encodes $2/$10 and the deliberate
+> hold-the-standard-price policy is retired. See
+> `claude_sonnet_5_intro_pricing_made_permanent.md`.
+
 Rollout is guarded on three levers so a bad model day never becomes an outage:
 
 1. **Instant rollback flag** — `CLAUDE_PERFORMANCE_MODEL` env var overrides the tier→model map at

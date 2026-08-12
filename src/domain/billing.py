@@ -164,13 +164,17 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # --- Claude (Opus 4.8 for ULTRA tier from 2026-05-30; same pricing as 4.7) ---
     "claude-haiku-4-5-20251001":         {"input": 1.00,  "output": 5.00,  "cache_read": 0.10, "cache_write": 1.25},
     "claude-sonnet-4-6":                 {"input": 3.00,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
-    # Sonnet 5 (PERFORMANCE tier default from 2026-07): standard $3/$15 (same as 4.6). Intro
-    # pricing is $2/$10 through 2026-08-31 — we track standard list price (conservative; correct
-    # after the promo ends) so cost is never under-reported.
-    # Consequence, measured 2026-07-29: Sonnet spend reads 1.5x high until 2026-09-01 (July
-    # volume = $16.19 actual vs $24.28 reported). Deliberate; `make check-pricing` knows this
-    # policy via price_consensus.HOLD_FINAL_PRICE and will not report it as drift.
-    "claude-sonnet-5":                   {"input": 3.00,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
+    # Sonnet 5 (PERFORMANCE tier default from 2026-07): $2/$10. What was introductory pricing
+    # became PERMANENT on 2026-08-12 — Anthropic cancelled the $3/$15 reversion that was set for
+    # 2026-09-01. Verified against the live model overview, which now lists $2/$10 with no
+    # introductory footnote and no end date.
+    # This retires the deliberate hold-the-standard-price policy: from 2026-07 until this change
+    # we encoded $3/$15 so cost was never under-reported, which made Sonnet spend read 1.5x high
+    # (July: $16.19 actual vs $24.28 reported). With no reversion left to guard against, holding
+    # the higher price would over-report permanently. Historical Sonnet 5 cost before 2026-08-12
+    # is therefore inflated ~1.5x; BigQuery `prompt_content` tokens repriced at $2/$10 give the
+    # real figure. See decisions/claude_sonnet_5_intro_pricing_made_permanent.md.
+    "claude-sonnet-5":                   {"input": 2.00,  "output": 10.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-6":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-8":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
     # --- OpenAI GPT-5.6 family (Luna/Terra/Sol, GA 2026-07-09) — active tier defaults ---
