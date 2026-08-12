@@ -183,6 +183,12 @@ class LLMRequest(BaseModel):
 
 class LLMResponse(BaseModel):
     text: Optional[str] = None
+    # Reasoning summary, when the provider returns one (Gemini `include_thoughts`).
+    # Deliberately NOT part of `text`: it is not the answer, and concatenating it
+    # corrupts every consumer that parses or delivers `text`. Thinking is billed
+    # whether or not the summary comes back, so capturing it here is free — it feeds
+    # logs/telemetry, never the UI.
+    thought_text: Optional[str] = None
     tool_calls: List[ToolCall] = []
     raw_content: Any = None  # Provider-specific content object if needed for history
     usage_metadata: Optional[UsageMetadata] = None

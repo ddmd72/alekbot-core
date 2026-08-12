@@ -400,7 +400,16 @@ class GeminiAdapter(LLMPort):
                 finish_reason, finish_message, um_thoughts, safety,
             )
             return LLMResponse(text="")
-        text = "".join([p.text for p in candidate.content.parts if p.text])
+        # `include_thoughts=True` adds a part carrying the reasoning summary. `p.thought`
+        # is a bool FLAG — the reasoning itself lives in that part's `.text`, so joining
+        # `.text` across all parts silently puts the reasoning in front of the answer.
+        # That shipped 4244 bytes of "**My Approach to Crafting…**" atop a user-facing HTML
+        # file and broke json.loads at char 0 for every JSON agent (2026-08-12). Split the
+        # two: reasoning is kept (it is billed either way) but never on the answer path.
+        text = "".join([p.text for p in candidate.content.parts if p.text and not p.thought])
+        thought_text = "".join(
+            [p.text for p in candidate.content.parts if p.text and p.thought]
+        ) or None
         # Detect "stalled" responses: parts present but no text and no function calls.
         # This is the empty-Turn-2 failure mode we're hunting on flex tier.
         has_function_call = any(p.function_call for p in candidate.content.parts)
@@ -411,21 +420,14 @@ class GeminiAdapter(LLMPort):
                 len(candidate.content.parts), finish_reason, finish_message, um_thoughts,
             )
         logger.info(
-            "🔍 [GeminiAdapter] Parsed response: text_len=%s parts=%s "
+            "🔍 [GeminiAdapter] Parsed response: text_len=%s thought_len=%s parts=%s "
             "finish=%s thoughts=%s",
             len(text),
+            len(thought_text or ""),
             len(candidate.content.parts),
             finish_reason,
             um_thoughts,
         )
-
-        # Extract thought text for observability (when include_thoughts=True).
-        thoughts = "".join([
-            p.thought for p in candidate.content.parts
-            if hasattr(p, "thought") and p.thought and isinstance(p.thought, str)
-        ])
-        if thoughts:
-            text = f"{text}\n\n[Thinking]\n{thoughts}" if text else thoughts
 
         tool_calls = []
         for part in candidate.content.parts:
@@ -454,7 +456,10 @@ class GeminiAdapter(LLMPort):
 
         return LLMResponse(
             text=text,
+            thought_text=thought_text,
             tool_calls=tool_calls,
+            # Unfiltered on purpose: Gemini requires thought blocks to be resent
+            # exactly as received, so the model turn we replay must keep them.
             raw_content=candidate.content,
             usage_metadata=usage_metadata,
             grounding_metadata=grounding_metadata,
