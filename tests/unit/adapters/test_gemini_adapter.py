@@ -1,4 +1,5 @@
 import asyncio
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 import httpx
@@ -292,6 +293,148 @@ async def test_no_thinking_omits_thinking_config():
     )
 
     assert captured["config"].thinking_config is None
+
+
+# ============================================================================
+# Thought parts must never be mistaken for the answer.
+#
+# Regression 2026-08-12: `include_thoughts=True` made Gemini return an extra part
+# with `thought=True` whose `.text` is the reasoning. The extractor joined `.text`
+# across ALL parts, so the reasoning was prepended to the answer — it shipped 4244
+# bytes of "**My Approach to Crafting…**" at the top of a user-facing HTML file and
+# made `json.loads` fail at char 0 for every JSON-parsing Gemini agent.
+#
+# These build REAL google.genai Part objects on purpose: MagicMock fabricates any
+# attribute on access, so a mocked `part.thought` is truthy no matter what the code
+# under test does, and the test would pass against the broken extractor.
+# ============================================================================
+
+_THOUGHT_TEXT = "**Analysis**\nOkay, here's how I'm tackling this. First I will…"
+_ANSWER_TEXT = '{"valuable": true}'
+
+
+def _make_response_with_thought_part(answer=_ANSWER_TEXT, thought=_THOUGHT_TEXT):
+    """Gemini response shaped like a real include_thoughts=True reply.
+
+    Thought part comes FIRST, as the API returns it — that ordering is what put the
+    reasoning in front of the answer and broke parsing at char 0.
+    """
+    parts = []
+    if thought is not None:
+        parts.append(gemini_types.Part(text=thought, thought=True))
+    if answer is not None:
+        parts.append(gemini_types.Part(text=answer))
+
+    candidate = MagicMock()
+    candidate.content = gemini_types.Content(role="model", parts=parts)
+    candidate.grounding_metadata = None
+    candidate.finish_reason = gemini_types.FinishReason.STOP
+
+    usage = MagicMock()
+    usage.prompt_token_count = 10
+    usage.candidates_token_count = 5
+    usage.total_token_count = 15
+    usage.cached_content_token_count = 0
+    usage.thoughts_token_count = 99
+
+    response = MagicMock()
+    response.candidates = [candidate]
+    response.usage_metadata = usage
+    return response
+
+
+async def _parse_via_adapter(response):
+    adapter = GeminiAdapter(api_key="test-key")
+
+    async def mock_generate(model=None, contents=None, config=None):
+        return response
+
+    adapter.client = MagicMock()
+    adapter.client.aio.models.generate_content = mock_generate
+    return await adapter.generate_content(
+        request=LLMRequest(model_name="gemini-flash-latest", messages=_MESSAGES, thinking="medium")
+    )
+
+
+@pytest.mark.asyncio
+async def test_thought_part_excluded_from_text():
+    """text must be the answer alone — never the reasoning, never the two concatenated."""
+    result = await _parse_via_adapter(_make_response_with_thought_part())
+
+    assert result.text == _ANSWER_TEXT
+    assert "Analysis" not in (result.text or "")
+    assert "tackling this" not in (result.text or "")
+
+
+@pytest.mark.asyncio
+async def test_thought_only_response_yields_empty_text_not_reasoning():
+    """No answer part → text is empty. Reasoning must not be promoted into the answer slot.
+
+    This is the exact HTML-leak shape: the model spends its budget thinking and the
+    reasoning must not become the delivered document.
+    """
+    result = await _parse_via_adapter(_make_response_with_thought_part(answer=None))
+
+    assert not result.text
+
+
+@pytest.mark.asyncio
+async def test_answer_text_is_json_parseable_with_thought_present():
+    """The classify_batch failure: json.loads on text must succeed despite a thought part."""
+    result = await _parse_via_adapter(_make_response_with_thought_part())
+
+    assert json.loads(result.text) == {"valuable": True}
+
+
+@pytest.mark.asyncio
+async def test_thought_text_captured_separately():
+    """Reasoning is kept — it is already paid for — just not in `text`."""
+    result = await _parse_via_adapter(_make_response_with_thought_part())
+
+    assert result.thought_text == _THOUGHT_TEXT
+
+
+@pytest.mark.asyncio
+async def test_thought_text_is_none_when_no_thought_part():
+    result = await _parse_via_adapter(_make_response_with_thought_part(thought=None))
+
+    assert result.thought_text is None
+    assert result.text == _ANSWER_TEXT
+
+
+@pytest.mark.asyncio
+async def test_raw_content_keeps_thought_part_for_history():
+    """Thought blocks must be resent unmodified — Gemini requires it for reasoning continuity.
+
+    So raw_content (which becomes the model turn in the next request) keeps both parts;
+    only the caller-facing `text` is filtered.
+    """
+    result = await _parse_via_adapter(_make_response_with_thought_part())
+
+    assert len(result.raw_content.parts) == 2
+    assert any(p.thought for p in result.raw_content.parts)
+
+
+@pytest.mark.asyncio
+async def test_include_thoughts_enabled_so_reasoning_is_observable():
+    """Thinking is billed whether or not it is returned, so ask for the summary."""
+    adapter = GeminiAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_generate(model=None, contents=None, config=None):
+        captured["config"] = config
+        return _make_gemini_response()
+
+    adapter.client = MagicMock()
+    adapter.client.aio.models.generate_content = mock_generate
+
+    await adapter.generate_content(
+        request=LLMRequest(
+            model_name="gemini-flash-latest", messages=_MESSAGES, thinking="medium",
+        )
+    )
+
+    assert captured["config"].thinking_config.include_thoughts is True
 
 
 @pytest.mark.asyncio
