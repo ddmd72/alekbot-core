@@ -199,6 +199,14 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `ClaudeDeepResearchRunnerAgent` with native built-in tools) call `_debug_raw_turn(...)` (summary-only
   `logger.info`, no GCS). The legacy GCS prompt-dump (`PromptDebugLogger`, `DEBUG_PROMPTS_BUCKET`) was
   removed (TD-1, 2026-06-29) — BigQuery is the only content-capture path now.
+- **Provider blocks are 200s, not exceptions.** `LLMResponse.finish_reason` (domain `FinishReason`)
+  carries why generation stopped; a blocked reply arrives with `text=""` exactly like a stall.
+  Single-shot generation agents call `BaseAgent._call_llm_recitation_aware()` instead of `_call_llm`
+  — one retry with `RECITATION_RETRY_DIRECTIVE` folded into the last user message. **Not for
+  delegation loops** (the directive assumes that message is the whole assignment). Empty output is
+  reported via `describe_empty_output(finish_reason)`, never as a bare "returned nothing". Only
+  `GeminiAdapter` maps the reason today; other adapters return `None` → unchanged behavior. See
+  `decisions/gemini_finish_reason_surfaced.md`.
 - **CircuitBreaker** — in BaseAgent, protects against cascading failures.
 - **Transcript integrity — one delegation transcript = one provider.** `_call_llm` cross-provider-
   fails-over only when `request.messages` is NOT provider-locked (no `tool_call`/`tool_response` part,

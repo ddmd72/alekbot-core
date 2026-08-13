@@ -36,7 +36,12 @@ if TYPE_CHECKING:
     from ..domain.llm import LLMRequest, LLMResponse
     from ..ports.llm_port import LLMPort, AgentExecutionContext
 
-from ..domain.llm import USER_TURN_SYSTEM_ANCHOR
+from ..domain.llm import (
+    RECITATION_RETRY_DIRECTIVE,
+    USER_TURN_SYSTEM_ANCHOR,
+    FinishReason,
+    append_user_directive,
+)
 
 # ---------------------------------------------------------------------------
 # Per-execution token accounting.
@@ -1145,6 +1150,35 @@ class BaseAgent(ABC):
                 provider=primary_name,
             )
         return response
+
+    async def _call_llm_recitation_aware(
+        self,
+        request: "LLMRequest",
+        turn: int = 0,
+    ) -> "LLMResponse":
+        """``_call_llm`` plus one retry when the provider blocks the output as recitation.
+
+        A recitation block is not a model failure — the request asked for something the
+        filter reads as reproducing source material (e.g. "build a newspaper page from
+        this article copy"). It returns HTTP 200 with zero parts, so it needs handling
+        here rather than in the retry policy, which only sees exceptions.
+
+        Single-shot generation agents only. Do NOT use inside a delegation loop: the
+        directive is appended to the last user message, which assumes that message is
+        the whole assignment.
+        """
+        response = await self._call_llm(request, turn=turn)
+        if response.finish_reason is not FinishReason.RECITATION:
+            return response
+
+        logger.warning(
+            "🔁 [%s] Provider blocked output as recitation — retrying with a paraphrase "
+            "directive (turn=%s)", self.agent_id, turn,
+        )
+        return await self._call_llm(
+            append_user_directive(request, RECITATION_RETRY_DIRECTIVE),
+            turn=turn + 1,
+        )
 
     def _emit_llm_span(
         self,

@@ -29,7 +29,7 @@ from src.agents.pdf_generator_agent import (
     _strip_markdown_fences,
 )
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.llm import LLMResponse
+from src.domain.llm import RECITATION_RETRY_DIRECTIVE, FinishReason, LLMResponse
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import (
     AgentExecutionContext,
@@ -468,3 +468,57 @@ class TestExtractFilenameFromHtml:
         html = "<html><head><title>A: B: C</title></head></html>"
         base_filename, _ = _extract_filename_from_html(html)
         assert "__" not in base_filename
+
+
+# ============================================================================
+# Recitation retry
+#
+# Same provider block as HtmlPageGeneratorAgent (incident 2026-08-13): HTTP 200,
+# zero parts, finish_reason=RECITATION. Both single-shot generators share
+# BaseAgent._call_llm_recitation_aware, so both must honour it.
+# ============================================================================
+
+def _recitation_response() -> LLMResponse:
+    return LLMResponse(text="", tool_calls=[], finish_reason=FinishReason.RECITATION)
+
+
+class TestRecitationRetry:
+
+    async def test_blocked_output_is_retried_once(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [_recitation_response(), _html_response()]
+
+        await agent.execute(_make_message())
+
+        assert mock_llm.generate_content.call_count == 2
+
+    async def test_retry_succeeds_and_pdf_is_produced(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [_recitation_response(), _html_response()]
+
+        response = await agent.execute(_make_message())
+
+        assert response.status == AgentStatus.SUCCESS
+
+    async def test_retry_carries_the_paraphrase_directive(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [_recitation_response(), _html_response()]
+
+        await agent.execute(_make_message())
+
+        retry_text = _get_llm_request(mock_llm, 1).messages[-1].parts[-1].text
+        assert RECITATION_RETRY_DIRECTIVE in retry_text
+
+    async def test_second_block_returns_failure_naming_the_cause(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [
+            _recitation_response(), _recitation_response(),
+        ]
+
+        response = await agent.execute(_make_message())
+
+        assert response.status == AgentStatus.FAILED
+        assert "reproducing source material" in response.error
+
+    async def test_stall_is_not_retried(self, agent, mock_llm):
+        mock_llm.generate_content.return_value = LLMResponse(text="", tool_calls=[])
+
+        await agent.execute(_make_message())
+
+        assert mock_llm.generate_content.call_count == 1

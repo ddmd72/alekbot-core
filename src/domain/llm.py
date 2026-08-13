@@ -10,6 +10,7 @@ AutomaticFunctionCallingConfig, LLMRequest, LLMResponse: moved 2026-03-08 (TD-V2
 """
 
 import time
+from enum import Enum
 from typing import List, Any, Optional, Dict
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -181,8 +182,30 @@ class LLMRequest(BaseModel):
     timeout: Optional[int] = None
 
 
+class FinishReason(str, Enum):
+    """Why the provider stopped generating — normalized across providers.
+
+    Only the distinctions a caller can act on. Whatever a provider reports that does not
+    map here becomes OTHER; adapters still log the raw provider value.
+    """
+
+    STOP = "stop"
+    MAX_TOKENS = "max_tokens"
+    SAFETY = "safety"
+    # Blocked for reproducing source material too closely. Retryable: the same request
+    # phrased as "paraphrase, do not copy" usually passes.
+    RECITATION = "recitation"
+    OTHER = "other"
+
+
 class LLMResponse(BaseModel):
     text: Optional[str] = None
+    # Why generation stopped, when the provider reports it (None = not reported).
+    # A blocked response arrives with text="" exactly like a stalled one, so without
+    # this the caller cannot tell "the provider refused" from "the model produced
+    # nothing" — and reports the wrong thing to the user. See
+    # decisions/gemini_finish_reason_surfaced.md.
+    finish_reason: Optional[FinishReason] = None
     # Reasoning summary, when the provider returns one (Gemini `include_thoughts`).
     # Deliberately NOT part of `text`: it is not the answer, and concatenating it
     # corrupts every consumer that parses or delivers `text`. Thinking is billed
@@ -234,3 +257,63 @@ def build_tool_turn(response: "LLMResponse", tool_results: list) -> List[Message
             tool_parts.append(MessagePart(file_data=file_data))
     messages.append(Message(role="user", parts=tool_parts))
     return messages
+
+
+# Correction message for the one retry after a RECITATION block. Not a system prompt and
+# not a fallback for one — it is the same shape as the correction appended after invalid
+# structured output: the assignment stands, only the manner of writing is constrained.
+RECITATION_RETRY_DIRECTIVE = (
+    "Your previous attempt was blocked by the provider's recitation filter because the "
+    "output reproduced source material too closely. Produce the same deliverable again, "
+    "but write every sentence in your own words: keep all facts, figures, names, links "
+    "and the requested structure, and never copy phrasing verbatim from the material "
+    "above. Quote directly only where a quotation is explicitly required, and keep any "
+    "such quote under 25 words."
+)
+
+
+def describe_empty_output(finish_reason: Optional[FinishReason]) -> str:
+    """Why a generation came back empty, phrased for the user.
+
+    Every blocked response looks identical at the call site (`text == ""`), so without
+    this the user is told "the model produced nothing" when the truth is "the provider
+    refused, and here is what to change".
+    """
+    return {
+        FinishReason.RECITATION: (
+            "the provider blocked the output as reproducing source material too closely "
+            "— ask for an original summary instead of a rendering of the supplied text"
+        ),
+        FinishReason.SAFETY: "the provider's content filter blocked the output",
+        FinishReason.MAX_TOKENS: (
+            "the output hit the length limit before anything usable was produced"
+        ),
+    }.get(finish_reason, "the model returned nothing")
+
+
+def append_user_directive(request: "LLMRequest", directive: str) -> "LLMRequest":
+    """Return a copy of `request` with `directive` appended to its last user message.
+
+    Appends into the existing turn rather than adding a second user message: with no
+    model turn in between, two consecutive user messages are a malformed transcript on
+    providers that require alternating roles.
+    """
+    messages = list(request.messages)
+    idx = next(
+        (i for i in range(len(messages) - 1, -1, -1) if messages[i].role == "user"),
+        None,
+    )
+    if idx is None:
+        messages.append(Message(role="user", parts=[MessagePart(text=directive)]))
+        return request.model_copy(update={"messages": messages})
+
+    parts = list(messages[idx].parts)
+    tail = next((j for j in range(len(parts) - 1, -1, -1) if parts[j].text), None)
+    if tail is None:
+        parts.append(MessagePart(text=directive))
+    else:
+        parts[tail] = parts[tail].model_copy(
+            update={"text": f"{parts[tail].text}\n\n{directive}"}
+        )
+    messages[idx] = messages[idx].model_copy(update={"parts": parts})
+    return request.model_copy(update={"messages": messages})

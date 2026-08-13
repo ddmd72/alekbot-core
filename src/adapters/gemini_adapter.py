@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Any
+from typing import List, Any, Optional
 import httpx
 from google import genai
 from google.genai import types, errors as genai_errors
@@ -14,6 +14,7 @@ from ..ports.llm_port import (
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
 )
+from ..domain.llm import FinishReason
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
     LLMClientError,
@@ -24,6 +25,29 @@ from ..domain.exceptions import (
     LLMUnavailableError,
 )
 from ..utils.logger import logger
+
+# Gemini finish reasons → domain. Every blocking reason is mapped: a block returns zero
+# parts, which is indistinguishable from a stall unless the reason survives translation.
+# Unlisted values become OTHER — the raw value is still logged at the call site.
+_FINISH_REASONS = {
+    "STOP": FinishReason.STOP,
+    "MAX_TOKENS": FinishReason.MAX_TOKENS,
+    "SAFETY": FinishReason.SAFETY,
+    "IMAGE_SAFETY": FinishReason.SAFETY,
+    "PROHIBITED_CONTENT": FinishReason.SAFETY,
+    "IMAGE_PROHIBITED_CONTENT": FinishReason.SAFETY,
+    "BLOCKLIST": FinishReason.SAFETY,
+    "SPII": FinishReason.SAFETY,
+    "RECITATION": FinishReason.RECITATION,
+    "IMAGE_RECITATION": FinishReason.RECITATION,
+}
+
+
+def _map_finish_reason(raw) -> Optional[FinishReason]:
+    if raw is None:
+        return None
+    return _FINISH_REASONS.get(getattr(raw, "name", None) or str(raw), FinishReason.OTHER)
+
 
 class GeminiAdapter(LLMPort):
     """
@@ -383,7 +407,7 @@ class GeminiAdapter(LLMPort):
                 prompt_feedback,
                 finish_reason
             )
-            return LLMResponse(text="")
+            return LLMResponse(text="", finish_reason=_map_finish_reason(finish_reason))
 
         candidate = response.candidates[0]
         finish_reason = getattr(candidate, "finish_reason", None)
@@ -399,7 +423,7 @@ class GeminiAdapter(LLMPort):
                 "(finish_reason=%s finish_message=%s thoughts=%s safety=%s)",
                 finish_reason, finish_message, um_thoughts, safety,
             )
-            return LLMResponse(text="")
+            return LLMResponse(text="", finish_reason=_map_finish_reason(finish_reason))
         # `include_thoughts=True` adds a part carrying the reasoning summary. `p.thought`
         # is a bool FLAG — the reasoning itself lives in that part's `.text`, so joining
         # `.text` across all parts silently puts the reasoning in front of the answer.
@@ -457,6 +481,7 @@ class GeminiAdapter(LLMPort):
         return LLMResponse(
             text=text,
             thought_text=thought_text,
+            finish_reason=_map_finish_reason(finish_reason),
             tool_calls=tool_calls,
             # Unfiltered on purpose: Gemini requires thought blocks to be resent
             # exactly as received, so the model turn we replay must keep them.

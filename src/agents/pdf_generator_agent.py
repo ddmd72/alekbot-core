@@ -38,7 +38,7 @@ from typing import Optional
 from .base_agent import BaseAgent
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
-from ..domain.llm import Message, MessagePart
+from ..domain.llm import Message, MessagePart, describe_empty_output
 from ..infrastructure.agent_config import PDF_GENERATOR
 from ..ports.puppeteer_runner_port import PuppeteerRunnerError, PuppeteerRunnerPort
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
@@ -182,18 +182,19 @@ class PdfGeneratorAgent(BaseAgent):
             max_tokens=self.MAX_TOKENS,
             thinking=self.THINKING_EFFORT or None,
         )
-        response = await self._call_llm(request, turn=0)
+        response = await self._call_llm_recitation_aware(request)
 
         html_code = (response.text or "").strip()
         html_code = _strip_markdown_fences(html_code)
 
         if not html_code:
-            err = ValueError("LLM returned empty HTML")
+            reason = describe_empty_output(response.finish_reason)
+            err = ValueError(f"LLM returned empty HTML: {reason}")
             self._on_agent_error(err, "pdf_generation")
             return AgentResponse.failure(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
-                error="LLM returned empty HTML — no PDF produced",
+                error=f"No PDF produced — {reason}.",
             )
 
         try:

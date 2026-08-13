@@ -29,7 +29,7 @@ from src.agents.html_page_generator_agent import (
     _strip_markdown_fences,
 )
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.llm import LLMResponse
+from src.domain.llm import RECITATION_RETRY_DIRECTIVE, FinishReason, LLMResponse
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import (
     AgentExecutionContext,
@@ -461,3 +461,125 @@ async def test_raw_url_with_existing_query_uses_ampersand():
     assert "?w=" not in result
     assert "&w=150" in result
     assert "&h=150" in result
+
+
+# ============================================================================
+# Recitation retry
+#
+# Incident 2026-08-13: Gemini blocked a newspaper-page request with
+# finish_reason=RECITATION — HTTP 200, zero parts. The agent had no way to tell
+# that from a stall, gave up after one call, and told the user "LLM returned
+# empty HTML". The block is retryable: the same assignment with a paraphrase
+# directive usually passes.
+# ============================================================================
+
+def _recitation_response() -> LLMResponse:
+    return LLMResponse(text="", tool_calls=[], finish_reason=FinishReason.RECITATION)
+
+
+class TestRecitationRetry:
+
+    async def test_blocked_output_is_retried_once(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [_recitation_response(), _html_response()]
+
+        await agent.execute(_make_message())
+
+        assert mock_llm.generate_content.call_count == 2
+
+    async def test_retry_succeeds_and_page_is_delivered(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [_recitation_response(), _html_response()]
+
+        response = await agent.execute(_make_message())
+
+        assert response.status == AgentStatus.SUCCESS
+        assert len(response.delivery_items) == 1
+
+    async def test_retry_carries_the_paraphrase_directive(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [_recitation_response(), _html_response()]
+
+        await agent.execute(_make_message())
+
+        retry_text = _get_llm_request(mock_llm, 1).messages[-1].parts[-1].text
+        assert RECITATION_RETRY_DIRECTIVE in retry_text
+
+    async def test_retry_keeps_a_single_user_message(self, agent, mock_llm):
+        # Two consecutive user turns would be a malformed transcript.
+        mock_llm.generate_content.side_effect = [_recitation_response(), _html_response()]
+
+        await agent.execute(_make_message())
+
+        first = _get_llm_request(mock_llm, 0).messages
+        retry = _get_llm_request(mock_llm, 1).messages
+        assert len(retry) == len(first)
+
+    async def test_retry_keeps_the_original_assignment(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [_recitation_response(), _html_response()]
+
+        await agent.execute(_make_message())
+
+        assert _get_llm_request(mock_llm, 1).system_instruction == (
+            _get_llm_request(mock_llm, 0).system_instruction
+        )
+
+    async def test_second_block_gives_up_without_a_third_call(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [
+            _recitation_response(), _recitation_response(),
+        ]
+
+        await agent.execute(_make_message())
+
+        assert mock_llm.generate_content.call_count == 2
+
+    async def test_second_block_returns_failure(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [
+            _recitation_response(), _recitation_response(),
+        ]
+
+        response = await agent.execute(_make_message())
+
+        assert response.status == AgentStatus.FAILED
+
+    async def test_second_block_error_explains_the_block_not_a_stall(self, agent, mock_llm):
+        mock_llm.generate_content.side_effect = [
+            _recitation_response(), _recitation_response(),
+        ]
+
+        response = await agent.execute(_make_message())
+
+        assert "reproducing source material" in response.error
+
+    async def test_stall_is_not_retried(self, agent, mock_llm):
+        # No finish_reason → nothing to act on; the old single-call behaviour stands.
+        mock_llm.generate_content.return_value = LLMResponse(text="", tool_calls=[])
+
+        await agent.execute(_make_message())
+
+        assert mock_llm.generate_content.call_count == 1
+
+    async def test_safety_block_is_not_retried(self, agent, mock_llm):
+        # A content-filter block is not rephrasable by paraphrasing — do not burn a call.
+        mock_llm.generate_content.return_value = LLMResponse(
+            text="", tool_calls=[], finish_reason=FinishReason.SAFETY,
+        )
+
+        await agent.execute(_make_message())
+
+        assert mock_llm.generate_content.call_count == 1
+
+    async def test_safety_block_error_names_the_content_filter(self, agent, mock_llm):
+        mock_llm.generate_content.return_value = LLMResponse(
+            text="", tool_calls=[], finish_reason=FinishReason.SAFETY,
+        )
+
+        response = await agent.execute(_make_message())
+
+        assert "content filter" in response.error
+
+    async def test_successful_first_call_is_not_retried(self, agent, mock_llm):
+        mock_llm.generate_content.return_value = LLMResponse(
+            text=_FAKE_HTML, tool_calls=[], finish_reason=FinishReason.STOP,
+        )
+
+        await agent.execute(_make_message())
+
+        assert mock_llm.generate_content.call_count == 1
