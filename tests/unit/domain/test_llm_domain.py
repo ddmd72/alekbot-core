@@ -20,7 +20,10 @@ from src.domain.llm import (
     MessagePart,
     ToolCall,
     PROMPT_CACHE_BOUNDARY,
+    FinishReason,
+    append_user_directive,
     build_tool_turn,
+    describe_empty_output,
 )
 
 
@@ -188,3 +191,102 @@ class TestBackwardCompatImport:
         assert LLMResponseFromPort is LLMResponse
         assert CapFromPort is ProviderCapabilities
         assert BoundaryFromPort == PROMPT_CACHE_BOUNDARY
+
+
+# ============================================================================
+# Recitation handling — finish_reason, retry directive, empty-output wording
+#
+# Incident 2026-08-13: Gemini blocked a newspaper-page generation with
+# finish_reason=RECITATION and zero parts. The adapter dropped the reason, so the
+# agent reported "LLM returned empty HTML" — indistinguishable from a stall, and
+# useless to the user, who could have simply rephrased the request.
+# ============================================================================
+
+class TestFinishReason:
+
+    def test_defaults_to_none_when_provider_reports_nothing(self):
+        assert LLMResponse(text="hi").finish_reason is None
+
+    def test_carried_on_an_empty_response(self):
+        resp = LLMResponse(text="", finish_reason=FinishReason.RECITATION)
+        assert resp.finish_reason is FinishReason.RECITATION
+
+
+class TestDescribeEmptyOutput:
+
+    def test_recitation_tells_the_user_what_to_change(self):
+        text = describe_empty_output(FinishReason.RECITATION)
+        assert "reproducing source material" in text
+        assert "original summary" in text
+
+    def test_safety_is_distinct_from_recitation(self):
+        assert describe_empty_output(FinishReason.SAFETY) != describe_empty_output(
+            FinishReason.RECITATION
+        )
+
+    def test_max_tokens_mentions_the_length_limit(self):
+        assert "length limit" in describe_empty_output(FinishReason.MAX_TOKENS)
+
+    def test_unreported_reason_falls_back_to_generic_wording(self):
+        assert describe_empty_output(None) == "the model returned nothing"
+
+    def test_other_falls_back_to_generic_wording(self):
+        assert describe_empty_output(FinishReason.OTHER) == "the model returned nothing"
+
+
+class TestAppendUserDirective:
+
+    def _request(self, messages):
+        return LLMRequest(model_name="m", messages=messages)
+
+    def test_directive_appended_to_last_user_text_part(self):
+        req = self._request([Message(role="user", parts=[MessagePart(text="build it")])])
+
+        out = append_user_directive(req, "PARAPHRASE")
+
+        assert out.messages[0].parts[0].text == "build it\n\nPARAPHRASE"
+
+    def test_no_second_user_message_is_created(self):
+        # Two consecutive user messages are a malformed transcript on providers
+        # that require alternating roles — the directive must fold into the turn.
+        req = self._request([Message(role="user", parts=[MessagePart(text="build it")])])
+
+        out = append_user_directive(req, "PARAPHRASE")
+
+        assert len(out.messages) == 1
+
+    def test_original_request_is_not_mutated(self):
+        req = self._request([Message(role="user", parts=[MessagePart(text="build it")])])
+
+        append_user_directive(req, "PARAPHRASE")
+
+        assert req.messages[0].parts[0].text == "build it"
+
+    def test_targets_the_last_user_message_not_the_first(self):
+        req = self._request([
+            Message(role="user", parts=[MessagePart(text="first")]),
+            Message(role="model", parts=[MessagePart(text="reply")]),
+            Message(role="user", parts=[MessagePart(text="second")]),
+        ])
+
+        out = append_user_directive(req, "PARAPHRASE")
+
+        assert out.messages[0].parts[0].text == "first"
+        assert out.messages[2].parts[0].text == "second\n\nPARAPHRASE"
+
+    def test_user_message_without_text_parts_gets_a_new_part(self):
+        req = self._request([
+            Message(role="user", parts=[MessagePart(file_data={"path": "/tmp/x"})]),
+        ])
+
+        out = append_user_directive(req, "PARAPHRASE")
+
+        assert out.messages[0].parts[-1].text == "PARAPHRASE"
+
+    def test_request_without_user_message_gets_one(self):
+        req = self._request([Message(role="model", parts=[MessagePart(text="hi")])])
+
+        out = append_user_directive(req, "PARAPHRASE")
+
+        assert out.messages[-1].role == "user"
+        assert out.messages[-1].parts[0].text == "PARAPHRASE"

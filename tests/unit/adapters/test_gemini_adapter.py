@@ -13,6 +13,7 @@ from src.domain.exceptions import (
     LLMTimeoutError,
     LLMUnavailableError,
 )
+from src.domain.llm import FinishReason
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import (
     PromptCacheConfig,
@@ -618,3 +619,116 @@ async def test_4xx_non_429_translates_to_LLMClientError():
     with pytest.raises(LLMClientError) as exc_info:
         await adapter.generate_content(request=_GEMINI_REQUEST)
     assert exc_info.value.http_status == 400
+
+# ============================================================================
+# finish_reason translation
+#
+# Incident 2026-08-13: a newspaper-page request came back with
+# finish_reason=RECITATION and zero parts. The adapter returned a bare
+# LLMResponse(text=""), so "the provider refused" and "the model stalled" reached
+# the agent as the same value. Real gemini_types.FinishReason members are used —
+# the mapping reads `.name`, and a string stand-in would not prove it.
+# ============================================================================
+
+def _make_blocked_response(finish_reason):
+    """A blocked Gemini reply: candidate present, content/parts absent."""
+    candidate = MagicMock()
+    candidate.content = None
+    candidate.finish_reason = finish_reason
+    candidate.finish_message = None
+    candidate.safety_ratings = None
+    candidate.grounding_metadata = None
+
+    usage = MagicMock()
+    usage.prompt_token_count = 10
+    usage.candidates_token_count = 0
+    usage.total_token_count = 10
+    usage.cached_content_token_count = 0
+    usage.thoughts_token_count = 2665
+
+    response = MagicMock()
+    response.candidates = [candidate]
+    response.usage_metadata = usage
+    return response
+
+
+@pytest.mark.asyncio
+async def test_recitation_block_surfaces_finish_reason():
+    """The exact prod failure: RECITATION must survive translation to the domain."""
+    result = await _parse_via_adapter(
+        _make_blocked_response(gemini_types.FinishReason.RECITATION)
+    )
+
+    assert result.finish_reason is FinishReason.RECITATION
+
+
+@pytest.mark.asyncio
+async def test_recitation_block_still_yields_empty_text():
+    result = await _parse_via_adapter(
+        _make_blocked_response(gemini_types.FinishReason.RECITATION)
+    )
+
+    assert result.text == ""
+
+
+@pytest.mark.asyncio
+async def test_image_recitation_maps_to_recitation():
+    result = await _parse_via_adapter(
+        _make_blocked_response(gemini_types.FinishReason.IMAGE_RECITATION)
+    )
+
+    assert result.finish_reason is FinishReason.RECITATION
+
+
+@pytest.mark.asyncio
+async def test_prohibited_content_maps_to_safety_not_recitation():
+    result = await _parse_via_adapter(
+        _make_blocked_response(gemini_types.FinishReason.PROHIBITED_CONTENT)
+    )
+
+    assert result.finish_reason is FinishReason.SAFETY
+
+
+@pytest.mark.asyncio
+async def test_max_tokens_is_reported_distinctly():
+    result = await _parse_via_adapter(
+        _make_blocked_response(gemini_types.FinishReason.MAX_TOKENS)
+    )
+
+    assert result.finish_reason is FinishReason.MAX_TOKENS
+
+
+@pytest.mark.asyncio
+async def test_unmapped_finish_reason_becomes_other():
+    result = await _parse_via_adapter(
+        _make_blocked_response(gemini_types.FinishReason.LANGUAGE)
+    )
+
+    assert result.finish_reason is FinishReason.OTHER
+
+
+@pytest.mark.asyncio
+async def test_missing_finish_reason_stays_none():
+    result = await _parse_via_adapter(_make_blocked_response(None))
+
+    assert result.finish_reason is None
+
+
+@pytest.mark.asyncio
+async def test_successful_response_reports_stop():
+    """The normal path must carry the reason too — not only the blocked one."""
+    result = await _parse_via_adapter(_make_response_with_thought_part())
+
+    assert result.finish_reason is FinishReason.STOP
+
+
+@pytest.mark.asyncio
+async def test_no_candidates_reports_no_finish_reason():
+    response = MagicMock()
+    response.candidates = []
+    response.prompt_feedback = None
+    response.finish_reason = None
+
+    result = await _parse_via_adapter(response)
+
+    assert result.finish_reason is None
