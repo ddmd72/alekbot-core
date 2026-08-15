@@ -148,11 +148,17 @@ class AgentProviderStrategy:
             "fallback": "claude"
         },
         # HTML page generator: Gemini PERFORMANCE for max-quality single-pass page generation.
+        # grok-4.6 became the default 2026-08-15 on owner judgement of output quality,
+        # backed by a same-input measurement (scripts/html_page/ab_grok.py replaying the
+        # real briefing delegation): $0.1332 vs gemini-pro-latest's $0.1999 (0.67x) for
+        # 229s vs 120s. The extra latency is acceptable because create_html_page is an
+        # ASYNC intent — nobody waits on it. Fallback is gemini, the previous default
+        # and the only provider with a proven track record on these pages.
         "html_page": {
-            "default_provider": "gemini",
-            "allowed_providers": ["claude", "gemini", "openai"],
+            "default_provider": "grok",
+            "allowed_providers": ["grok", "gemini", "claude", "openai"],
             "required_capabilities": [],
-            "fallback": "claude"
+            "fallback": "gemini"
         },
     }
 

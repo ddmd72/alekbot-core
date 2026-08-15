@@ -66,6 +66,7 @@ class HtmlPageGeneratorAgent(BaseAgent):
     TEMPERATURE = HTML_PAGE_GENERATOR.temperature
     MAX_TOKENS = HTML_PAGE_GENERATOR.max_tokens
     THINKING_EFFORT = HTML_PAGE_GENERATOR.thinking_effort
+    REQUEST_TIMEOUT_S = HTML_PAGE_GENERATOR.request_timeout_s
 
     def __init__(
         self,
@@ -132,6 +133,7 @@ class HtmlPageGeneratorAgent(BaseAgent):
             temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
             thinking=self.THINKING_EFFORT or None,
+            timeout=self.REQUEST_TIMEOUT_S,
         )
         response = await self._call_llm_recitation_aware(request)
 

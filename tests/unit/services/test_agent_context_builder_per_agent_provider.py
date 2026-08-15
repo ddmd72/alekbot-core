@@ -489,3 +489,46 @@ def test_build_folds_mixed_case_provider(builder):
     context = builder.build(agent_type="smart", config=config)
     assert context.provider_name == "claude"
     assert context.provider.get_model_for_tier.return_value == "claude-sonnet-4-5"
+
+
+# ---------------------------------------------------------------------------
+# html_page default provider — grok since 2026-08-15
+#
+# Owner decision on output quality, backed by a same-input measurement
+# (scripts/html_page/ab_grok.py replaying the real briefing delegation):
+# grok-4.6 $0.1332 / 229s vs gemini-pro-latest $0.1999 / 120s. The latency is
+# acceptable because create_html_page is an ASYNC intent — nothing waits on it.
+# ---------------------------------------------------------------------------
+
+class TestHtmlPageProviderStrategy:
+    @staticmethod
+    def _strategy():
+        from src.services.agent_context_builder import AgentProviderStrategy
+        return AgentProviderStrategy.get_strategy("html_page")
+
+    def test_default_provider_is_grok(self):
+        assert self._strategy()["default_provider"] == "grok"
+
+    def test_fallback_is_gemini(self):
+        """The previous default, and the only provider with a track record on
+        these pages — a fallback nobody has exercised is not a fallback."""
+        assert self._strategy()["fallback"] == "gemini"
+
+    def test_fallback_differs_from_default(self):
+        s = self._strategy()
+        assert s["fallback"] != s["default_provider"]
+
+    def test_default_is_allowed(self):
+        """resolve_next_provider walks allowed_providers; a default missing from it
+        would be unreachable on rotation."""
+        s = self._strategy()
+        assert s["default_provider"] in s["allowed_providers"]
+
+    def test_fallback_is_allowed(self):
+        s = self._strategy()
+        assert s["fallback"] in s["allowed_providers"]
+
+    def test_previous_providers_retained(self):
+        """Switching the default must not narrow the rotation pool."""
+        allowed = self._strategy()["allowed_providers"]
+        assert {"claude", "gemini", "openai"} <= set(allowed)
