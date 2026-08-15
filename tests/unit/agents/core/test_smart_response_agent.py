@@ -1331,3 +1331,50 @@ class TestSmartProviderRotation:
         # second rotation lookup accumulates both already-failed providers
         second_call = smart_agent.resolver.next_provider_override.call_args_list[1]
         assert second_call.kwargs["attempted"] == {"gemini", "claude"}
+
+
+class TestTerminalToolResponseBuilding:
+    """The terminal-tool path (deliver_response) — live only on providers whose adapter
+    synthesizes it, so previously untested."""
+
+    def test_summary_read_from_response_summary_field(self, smart_agent):
+        """The terminal tool's parameters ARE _RESPONSE_SCHEMA, which calls this field
+        `response_summary`. Reading `history_summary` found nothing and silently paid an
+        extra Gemini call to regenerate a summary the model had already written."""
+        from src.infrastructure.delegation_engine import DelegationResult
+
+        result = DelegationResult(
+            text="",
+            total_tokens=10,
+            terminal_tool_args={
+                "full_response": "Пересунув нагадування на 15:20.",
+                "response_summary": "Reminder moved to 15:20.",
+                "link_list": [],
+            },
+        )
+
+        response, summary = smart_agent._build_smart_response(result)
+
+        assert response.text == "Пересунув нагадування на 15:20."
+        assert summary == "Reminder moved to 15:20."
+
+    def test_link_list_requires_complete_entries(self, smart_agent):
+        """Malformed link entries must be dropped, not passed through half-built."""
+        from src.infrastructure.delegation_engine import DelegationResult
+
+        result = DelegationResult(
+            text="",
+            total_tokens=10,
+            terminal_tool_args={
+                "full_response": "text",
+                "response_summary": "s",
+                "link_list": [
+                    {"anchor": "1", "title": "Ok", "url": "https://x.ai/"},
+                    {"anchor": "2", "title": "no url"},
+                ],
+            },
+        )
+
+        response, _ = smart_agent._build_smart_response(result)
+
+        assert [link["anchor"] for link in response.link_list] == ["1"]

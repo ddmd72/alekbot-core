@@ -15,7 +15,6 @@ from src.ports.llm_port import LLMRequest, Message, MessagePart
 from tests.contracts.adapter_contracts import FORCE_TOOL_USE_WITHOUT_TOOLS_OMITS_TOOL_CHOICE
 from tests.integration.adapters.conftest import (
     ClaudeCapturingStub,
-    OpenAILikeCapturingStub,
     OpenAIResponsesCapturingStub,
 )
 
@@ -43,13 +42,12 @@ async def test_claude_no_tools_contract():
 @pytest.mark.asyncio
 async def test_grok_no_tools_contract():
     """Grok: force_tool_use=True but no tools → tool_choice absent from SDK call."""
-    with patch("src.adapters.grok_adapter.socket.gethostbyname", return_value="0.0.0.0"):
-        adapter = GrokAdapter(api_key="test-key")
-    stub = OpenAILikeCapturingStub().install(adapter)
+    adapter = GrokAdapter(api_key="test-key")
+    stub = OpenAIResponsesCapturingStub().install(adapter)
 
     await adapter.generate_content(
         request=LLMRequest(
-            model_name="grok-4-1-fast-non-reasoning",
+            model_name="grok-4.6",
             messages=_MESSAGES,
             force_tool_use=True,
         )

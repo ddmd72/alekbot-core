@@ -4,6 +4,35 @@ All Cloud Scheduler jobs for Alek-Core. Managed via `cloudbuild-dev.yaml` using 
 
 Region: `us-central1`. Attempt deadline: `60s` for all `/worker` jobs.
 
+## Two deadlines, do not confuse them
+
+The Scheduler attempt deadline above bounds only the **fan-out** call — the tick that
+claims due work and enqueues Cloud Tasks. It returns in milliseconds and never runs an
+agent.
+
+The work itself runs under the **Cloud Tasks `dispatch_deadline`** of the task the tick
+enqueued, and that is a different number with a different failure mode. Left unset,
+Cloud Tasks applies **600s**. Any in-process budget above it is fiction: the dispatch is
+cut mid-run, the cut reads as a task failure, and the queue retries the entire run.
+
+Task types whose `NotificationSLA` can exceed 10 minutes must therefore pass
+`deadline_seconds` to `enqueue_worker_task`:
+
+| Task type | SLA ceiling | dispatch_deadline |
+|-----------|-------------|-------------------|
+| `execute_reminder` | 1500s (REMINDER × PERFORMANCE) | 1620s |
+| `daily_email_review` | 1500s (DAILY_DIGEST) | 1620s |
+| everything else | ≤ 600s | Cloud Tasks default |
+
+The value is derived, not hardcoded: `dispatch_deadline_s(kind)` in
+`src/infrastructure/notification_sla.py` takes the worst case across the kind's tier
+overrides and adds 2 minutes of handler headroom, clamped to the Cloud Tasks maximum of
+1800s (which is also this service's Cloud Run request timeout). Raising a budget in
+`NOTIFICATION_SLA` therefore raises its transport automatically.
+
+Both budgets were unreachable from the day they were written until 2026-08-15 — see
+`docs/04_solution_strategy/decisions/grok_revival_2026_08.md`.
+
 ---
 
 ## Jobs

@@ -81,50 +81,6 @@ def _gemini_text_response(text="OK"):
     return response
 
 
-def _openai_text_response(text="OK"):
-    message = MagicMock()
-    message.content = text
-    message.tool_calls = None
-
-    choice = MagicMock()
-    choice.message = message
-
-    usage = MagicMock()
-    usage.prompt_tokens = 10
-    usage.completion_tokens = 5
-    usage.total_tokens = 15
-
-    completion = MagicMock()
-    completion.choices = [choice]
-    completion.usage = usage
-    return completion
-
-
-def _openai_tool_response(name, args, tc_id="call_1"):
-    tc = MagicMock()
-    tc.id = tc_id
-    tc.function = MagicMock()
-    tc.function.name = name
-    tc.function.arguments = json.dumps(args)
-
-    message = MagicMock()
-    message.content = None
-    message.tool_calls = [tc]
-
-    choice = MagicMock()
-    choice.message = message
-
-    usage = MagicMock()
-    usage.prompt_tokens = 10
-    usage.completion_tokens = 5
-    usage.total_tokens = 15
-
-    completion = MagicMock()
-    completion.choices = [choice]
-    completion.usage = usage
-    return completion
-
-
 # ============================================================================
 # CapturingStub implementations — one per adapter SDK boundary
 # ============================================================================
@@ -239,32 +195,6 @@ class GeminiEmbeddingCapturingStub:
         return self
 
 
-class OpenAILikeCapturingStub:
-    """
-    Captures kwargs sent to client.chat.completions.create().
-    Works for GrokAdapter (Chat Completions API).
-    """
-
-    def __init__(self, sdk_response=None):
-        self.captured_kwargs: dict = {}
-        self._sdk_response = sdk_response or _openai_text_response()
-
-    def install(self, adapter) -> "OpenAILikeCapturingStub":
-        stub = self
-
-        async def mock_create(**kwargs):
-            stub.captured_kwargs.update(kwargs)
-            return stub._sdk_response
-
-        adapter.client = MagicMock()
-        adapter.client.chat.completions.create = mock_create
-        return self
-
-    @classmethod
-    def with_tool_response(cls, name, args, tc_id="call_1") -> "OpenAILikeCapturingStub":
-        return cls(sdk_response=_openai_tool_response(name, args, tc_id))
-
-
 # ---- OpenAI Responses API mock responses ----
 
 def _openai_responses_text_response(text="OK"):
@@ -315,7 +245,8 @@ def _openai_responses_tool_response(name, args, call_id="call_1"):
 class OpenAIResponsesCapturingStub:
     """
     Captures kwargs sent to client.responses.create() (Responses API).
-    For OpenAIAdapter which uses the Responses API, not Chat Completions.
+    Shared by OpenAIAdapter and GrokAdapter — both speak the Responses API
+    (Grok migrated off Chat Completions on 2026-08-14).
     """
 
     def __init__(self, sdk_response=None):

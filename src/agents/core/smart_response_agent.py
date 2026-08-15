@@ -542,7 +542,12 @@ class SmartResponseAgent(BaseAgent):
         if result.terminal_tool_args:
             args = result.terminal_tool_args
             user_text = args.get("full_response", "")
-            summary = args.get("history_summary")
+            # The terminal tool's parameters ARE _RESPONSE_SCHEMA, which names this
+            # field `response_summary` — the same name the text path reads via
+            # parse_llm_response. Reading `history_summary` here found nothing and
+            # silently triggered the HistorySummaryService fallback below, paying an
+            # extra Gemini call to regenerate a summary the model had already written.
+            summary = args.get("response_summary") or args.get("history_summary")
             rich_data = args.get("rich_content")
             rich = (
                 RichContent(

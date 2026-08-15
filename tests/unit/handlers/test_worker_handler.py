@@ -35,7 +35,7 @@ from src.domain.billing import BillingAccount, AccountUsageStats
 from src.domain.email import IndexingJob
 from src.domain.notification_kind import NotificationKind
 from src.domain.notify_result import NotifyResult
-from src.domain.user import UserProfile
+from src.domain.user import UserBotConfig, UserProfile
 from src.handlers.worker_handler import WorkerHandler
 from src.services.consolidation_service import ConsolidationService
 from src.services.email_indexing_service import EmailIndexingService
@@ -1054,6 +1054,10 @@ class TestHandleExecuteReminder:
         ns.notes_port.get_note.return_value = note
         profile = MagicMock()
         profile.account_id = "acc-x"
+        # Real UserBotConfig, not an auto-created MagicMock attribute: the handler now
+        # merges the user's complexity_settings_overrides to pick the SLA tier, and a
+        # MagicMock stands in for a populated override dict.
+        profile.config = UserBotConfig()
         ns.user_repo.get_user.return_value = profile
         ns.notification.notify.return_value = NotifyResult(
             delivered=True, agent_status=AgentStatus.SUCCESS,
@@ -1088,6 +1092,9 @@ class TestHandleExecuteReminder:
         ns.notes_port.get_note.return_value = note
         profile = MagicMock()
         profile.account_id = "acc-x"
+        # No overrides configured → the system defaults stand, so the expected tiers
+        # below are unchanged by the override merge.
+        profile.config = UserBotConfig()
         ns.user_repo.get_user.return_value = profile
         ns.notification.notify.return_value = NotifyResult(
             delivered=True, agent_status=AgentStatus.SUCCESS,
@@ -1097,6 +1104,49 @@ class TestHandleExecuteReminder:
 
         kw = ns.notification.notify.call_args.kwargs
         assert kw["tier"] == PerformanceTier[expected_tier_name]
+
+    async def test_user_override_wins_over_the_defaults_table(self):
+        """The 2026-08-15 regression.
+
+        This handler used to size the SLA budget from DEFAULT_COMPLEXITY_SETTINGS
+        while TaskExecutionResolver ran the work through the user's
+        complexity_settings_overrides. A user who mapped simple_analytics to
+        PERFORMANCE got BALANCED's 600s budget for a 1500s workload, and the daily
+        briefing was killed mid-turn on three consecutive runs.
+        """
+        from dataclasses import replace
+        from src.domain.agent import AgentStatus
+        from src.domain.complexity_settings import ComplexitySettings
+        from src.domain.notify_result import NotifyResult
+        from src.domain.task_complexity import TaskComplexity
+        from src.domain.user import PerformanceTier
+
+        worker, ns = _make_full_worker()
+        note = replace(
+            _make_reminder_note(), complexity=TaskComplexity.SIMPLE_ANALYTICS,
+        )
+        ns.notes_port.get_note.return_value = note
+        profile = MagicMock()
+        profile.account_id = "acc-x"
+        profile.config = UserBotConfig(
+            complexity_settings_overrides={
+                TaskComplexity.SIMPLE_ANALYTICS: ComplexitySettings(
+                    tier=PerformanceTier.PERFORMANCE,
+                    thinking_effort="medium",
+                    provider_override="grok",
+                )
+            }
+        )
+        ns.user_repo.get_user.return_value = profile
+        ns.notification.notify.return_value = NotifyResult(
+            delivered=True, agent_status=AgentStatus.SUCCESS,
+        )
+
+        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+
+        kw = ns.notification.notify.call_args.kwargs
+        # Not BALANCED, which the raw defaults table would have given.
+        assert kw["tier"] == PerformanceTier.PERFORMANCE
 
     async def test_tier_is_none_when_complexity_absent(self):
         """No complexity on note → tier=None → notify() falls back to
@@ -1163,11 +1213,15 @@ class TestHandleStartDailyEmailReview:
         assert status == 200
         assert result["started"] == 2
         assert ns.task_dispatch.enqueue_worker_task.call_count == 2
+        # deadline_seconds is mandatory here: DAILY_DIGEST's 1500s budget exceeds the
+        # Cloud Tasks default of 600s, which would truncate then retry the whole review.
         ns.task_dispatch.enqueue_worker_task.assert_any_call(
-            "daily_email_review", {"user_id": _USER_A, "account_id": _ACC_A}
+            "daily_email_review", {"user_id": _USER_A, "account_id": _ACC_A},
+            deadline_seconds=1620,
         )
         ns.task_dispatch.enqueue_worker_task.assert_any_call(
-            "daily_email_review", {"user_id": _USER_B, "account_id": _ACC_B}
+            "daily_email_review", {"user_id": _USER_B, "account_id": _ACC_B},
+            deadline_seconds=1620,
         )
 
     async def test_no_eligible_users_returns_200_started_zero(self):

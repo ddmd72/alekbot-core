@@ -563,11 +563,16 @@ async def main():
             user_repo=user_repo,
         ) if consolidation_queue else None
         _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
+        from src.domain.notification_kind import NotificationKind as _NotificationKind
+        from src.infrastructure.notification_sla import dispatch_deadline_s
         _reminders_service = RemindersService(
             notes_port=container.notes_adapter,
             user_repo=user_repo,
             task_dispatch=_task_dispatch_service,
             recurrence=container.recurrence_adapter,
+            # Derived from NOTIFICATION_SLA here, in the composition root, because
+            # services cannot import the infrastructure layer (REQ-ARCH-22).
+            dispatch_deadline_s=dispatch_deadline_s(_NotificationKind.REMINDER),
         ) if (container.notes_adapter and _task_dispatch_service) else None
         _email_embedding_repair_service = EmailEmbeddingRepairService(
             email_repo=indexed_email_repo,

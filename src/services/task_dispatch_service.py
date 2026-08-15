@@ -10,7 +10,7 @@ named methods without knowing the underlying queue implementation.
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ..ports.task_queue import TaskQueue
 
@@ -72,9 +72,11 @@ class TaskDispatchService:
         task_type: str,
         payload: Dict[str, Any],
         delay_seconds: int = 0,
+        deadline_seconds: Optional[int] = None,
     ) -> str:
         return await self._queue.enqueue_worker_task(
             task_type=task_type,
             payload=payload,
             delay_seconds=delay_seconds,
+            deadline_seconds=deadline_seconds,
         )

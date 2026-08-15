@@ -519,7 +519,7 @@ class PromptAssemblyService:
                         detail += f", last fired: {last_fired}"
                 line = f"    - {text}{timing_str}{detail} [id: {note_id}]"
                 note_lines.append(line)
-            header = "    // Reminders you set for yourself. Not visible to the user. Snapshot from turn start.\n    // Full execution context is stored internally. To update or delete — delegate with the id shown in brackets.\n    // 'repeats' is an RFC 5545 RRULE anchored on the fire time; delegate the new rule verbatim to change it.\n    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time."
+            header = "    // Reminders you set for yourself. Not visible to the user.\n    // STALE BY DESIGN: this is a snapshot taken when the request started and it is NOT\n    // refreshed between delegation turns. If a specialist reports that it created,\n    // updated or deleted a reminder, its result supersedes this block — trust the\n    // result and do not re-delegate the same change because the list still looks old.\n    // Full execution context is stored internally. To update or delete — delegate with the id shown in brackets.\n    // 'repeats' is an RFC 5545 RRULE anchored on the fire time; delegate the new rule verbatim to change it.\n    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time."
             dynamic_parts.append("active_reminders {\n" + header + "\n" + "\n".join(note_lines) + "\n}")
 
         if include_datetime:

@@ -27,6 +27,7 @@ This removes both defects #2 and #3 from the 2026-04-30 incident:
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Tuple
 
@@ -53,11 +54,23 @@ class RemindersService:
         user_repo: Any,
         task_dispatch: "TaskDispatchService",
         recurrence: RecurrencePort,
+        dispatch_deadline_s: Optional[int] = None,
     ) -> None:
+        """``dispatch_deadline_s`` is the Cloud Tasks deadline for the per-fire
+        ``execute_reminder`` task. It is INJECTED rather than computed here: the value
+        derives from ``NOTIFICATION_SLA`` in the infrastructure layer, which services
+        may not import (REQ-ARCH-22) — the composition root in ``main.py`` passes
+        ``dispatch_deadline_s(NotificationKind.REMINDER)``.
+
+        ``None`` falls back to the Cloud Tasks default of 600s, which is SHORTER than
+        the PERFORMANCE reminder budget (1500s) and will truncate-then-retry such a
+        fire. Only leave it unset in tests that do not care about the deadline.
+        """
         self._notes_port = notes_port
         self._user_repo = user_repo
         self._task_dispatch = task_dispatch
         self._recurrence = recurrence
+        self._dispatch_deadline_s = dispatch_deadline_s
 
     async def fire_due_reminders(
         self, now_utc: Optional[datetime] = None
@@ -74,10 +87,16 @@ class RemindersService:
           4. On failed claim (concurrent tick won), skip silently.
         """
         now = now_utc if now_utc is not None else datetime.now(timezone.utc)
+        # Timed since 2026-08-13: one tick took 81s against a 60s Scheduler deadline and
+        # left no trace — no span, no log, no exception. `now` is captured before the
+        # query, so the timestamp below says nothing about where the time went. This
+        # splits "Firestore stalled" from "the runtime froze somewhere else".
+        query_started = time.perf_counter()
         due_notes = await self._notes_port.list_due_reminders(as_of=now)
+        query_ms = (time.perf_counter() - query_started) * 1000
         logger.info(
-            "[Reminders] fire_due_reminders: %d due note(s) at %s",
-            len(due_notes), now.isoformat(),
+            "[Reminders] fire_due_reminders: %d due note(s) at %s (list_due_reminders %.0fms)",
+            len(due_notes), now.isoformat(), query_ms,
         )
 
         enqueued, claim_lost, skipped = 0, 0, 0
@@ -147,6 +166,10 @@ class RemindersService:
             # everything the worker needs to operate without re-querying
             # cron-side state. due_at is included for idempotency: the
             # worker checks last_delivered_due == due_at on retry.
+            # The deadline is mandatory here: a deep_reasoning fire runs at PERFORMANCE
+            # with a 1500s budget, and the Cloud Tasks default of 600s would cut it —
+            # then retry the whole thing, which is how one slow provider opened Smart's
+            # circuit breaker on 2026-08-15.
             await self._task_dispatch.enqueue_worker_task(
                 task_type="execute_reminder",
                 payload={
@@ -154,6 +177,7 @@ class RemindersService:
                     "user_id": note.user_id,
                     "due_at": note.due.isoformat(),
                 },
+                deadline_seconds=self._dispatch_deadline_s,
             )
             enqueued += 1
 

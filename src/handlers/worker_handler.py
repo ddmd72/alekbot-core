@@ -45,8 +45,9 @@ if TYPE_CHECKING:
     from ..ports.account_repository import AccountRepository
     from ..services.file_link_service import FileLinkService
 
-from ..domain.complexity_settings import DEFAULT_COMPLEXITY_SETTINGS
+from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain.notification_kind import NotificationKind
+from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
 from ..services.deep_research_delivery import (
     NotificationPort, deliver_deep_research,
@@ -583,15 +584,18 @@ class WorkerHandler:
         await self._agent_factory.ensure_agents_for_user(user_id)
 
         task_complexity = note.complexity.value if note.complexity else "simple_analytics"
-        # Resolve the PerformanceTier for the SLA budget. Single source of
-        # truth: the same DEFAULT_COMPLEXITY_SETTINGS table that
-        # TaskExecutionResolver uses to map complexity → execution context.
-        # ``tier=None`` means "use the kind's default budget" (handled by
-        # notify()); only the kinds with ``tier_overrides`` actually consume
-        # this argument.
+        # Resolve the PerformanceTier for the SLA budget through the SAME merge
+        # TaskExecutionResolver applies to pick the execution context — user
+        # ``complexity_settings_overrides`` on top of the system defaults. Reading the
+        # raw defaults table here (as this did until 2026-08-15) set the clock for one
+        # tier while the work ran at another: a user overriding simple_analytics to
+        # PERFORMANCE got 600s of budget for a 1500s workload, and the daily briefing
+        # was killed mid-turn three runs in a row.
+        # ``tier=None`` means "use the kind's default budget" (handled by notify());
+        # only the kinds with ``tier_overrides`` actually consume this argument.
         sla_tier = None
         if note.complexity is not None:
-            settings = DEFAULT_COMPLEXITY_SETTINGS.get(note.complexity)
+            settings = resolve_complexity_settings(note.complexity, user_profile.config)
             if settings is not None:
                 sla_tier = settings.tier
 
@@ -656,6 +660,7 @@ class WorkerHandler:
             await self._task_dispatch.enqueue_worker_task(
                 "daily_email_review",
                 {"user_id": user_id, "account_id": account_id},
+                deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
             )
             logger.info(f"[Worker] start_daily_email_review: enqueued for {user_id[:8]}")
 

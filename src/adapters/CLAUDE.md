@@ -82,7 +82,7 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
 
   **`response_mime_type="application/json"`** — forces model to return raw JSON (no markdown).
   Gemini: natively supported, but **cannot combine with function calling** (API error).
-  OpenAI/Grok: mapped to `response_format: {"type": "json_object"}`.
+  OpenAI/Grok: mapped to `text.format={"type":"json_object"}` (Responses API).
   Claude: **no equivalent in API — silently ignored**. Claude has no native json_object mode.
 
   **`response_schema`** — JSON Schema for the output. Describe **every** field: a provider with
@@ -94,8 +94,10 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   uses `response_mime_type` without `response_schema`.
   OpenAI: forwarded as `text.format={"type":"json_schema","strict":false}` — the schema IS sent
   and natively enforced (`OpenAIAdapter._to_openai_json_schema` lowercases Gemini-style uppercase
-  types; suppressed when `use_grounding` is set — Web Search + JSON mode → 400). Grok: still
-  `json_object` mode (schema not forwarded; structure from the OUTPUT_FORMAT token + examples).
+  types; suppressed when `use_grounding` is set — Web Search + JSON mode → 400). Grok: same
+  mechanism since 2026-08-14 — `text.format={"type":"json_schema","strict":false}` with
+  `GrokAdapter._to_json_schema` (a deliberate duplicate of the OpenAI helper; REQ-ARCH-23
+  forbids adapter→adapter imports), also suppressed under grounding.
   Claude: `response_schema` is forwarded natively via **`output_config.format`**
   (`{"type":"json_schema","schema":…}`) — the model emits schema-valid JSON as **text**, mirroring
   Gemini's `response_json_schema`. There is **no** synthesized `respond` tool. The schema is shaped
@@ -127,7 +129,7 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   **What agents should pass:**
   - JSON agents WITHOUT tools: `response_mime_type` + `response_schema` (both).
     Gemini uses both natively. OpenAI enforces `response_schema` via json_schema (strict:false);
-    Grok reacts via json_object. Claude: `response_mime_type` is silently ignored;
+    Grok enforces `response_schema` the same way. Claude: `response_mime_type` is silently ignored;
     `response_schema` is forwarded via `output_config.format` (see above).
   - JSON agents WITH tools: `response_schema` only (no `response_mime_type`).
     Gemini cannot combine mime_type + tools. Schema works with tools on all providers.

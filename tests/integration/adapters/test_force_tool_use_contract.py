@@ -20,7 +20,6 @@ from tests.contracts.adapter_contracts import FORCE_TOOL_USE_SENDS_CORRECT_MODE
 from tests.integration.adapters.conftest import (
     ClaudeCapturingStub,
     GeminiCapturingStub,
-    OpenAILikeCapturingStub,
     OpenAIResponsesCapturingStub,
 )
 
@@ -74,13 +73,12 @@ async def test_gemini_force_tool_use_contract():
 @pytest.mark.asyncio
 async def test_grok_force_tool_use_contract():
     """GrokAdapter must use tool_choice='required' when force_tool_use=True."""
-    with patch("src.adapters.grok_adapter.socket.gethostbyname", return_value="0.0.0.0"):
-        adapter = GrokAdapter(api_key="test-key")
-    stub = OpenAILikeCapturingStub().install(adapter)
+    adapter = GrokAdapter(api_key="test-key")
+    stub = OpenAIResponsesCapturingStub().install(adapter)
 
     await adapter.generate_content(
         request=LLMRequest(
-            model_name="grok-4-1-fast-non-reasoning",
+            model_name="grok-4.6",
             messages=_MESSAGES,
             tools=_TOOLS,
             force_tool_use=True,
