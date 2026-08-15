@@ -62,6 +62,20 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   mandatory; design enforced by `COGNITIVE_PROCESS_HTML_PAGE`. **Unsplash:** LLM writes
   `source.unsplash.com/WxH/?keywords` placeholders → `_resolve_unsplash_placeholders` swaps real photos
   via `UnsplashAdapter` (`ImageSearchPort`); needs `UNSPLASH_ACCESS_KEY`, graceful no-op when absent.
+  - **Default provider is `grok` (grok-4.6) since 2026-08-15**, fallback `gemini`. Owner judgement on
+    output quality, measured on the same input by `scripts/html_page/ab_grok.py`: $0.1332 / 229s vs
+    gemini-pro-latest's $0.1999 / 120s. The latency is affordable *because the intent is ASYNC* —
+    do not copy this trade-off to a synchronous agent.
+  - **`request_timeout_s=420`** bounds one call's TOTAL wall time (adapters wrap it in
+    `asyncio.wait_for`, so SDK retries are inside the bound). Without it a call overrunning the
+    provider's client ceiling is retried twice and three generations are paid for and discarded
+    before `timeout_ms` kills the agent anyway. See `decisions/html_page_grok_default.md`.
+  - **Recitation handling is Gemini-specific.** `_call_llm_recitation_aware` retries an empty-200
+    block; only `GeminiAdapter` maps `finish_reason`, so on Grok the retry never fires. Probed
+    2026-08-15: xAI refuses verbatim-reproduction with `status='completed'` and refusal **text**,
+    not an empty 200 — so there is nothing to retry. The residual gap is the opposite shape: a
+    refusal string is non-empty, so it passes the `if not html_code` guard and would be published
+    as the page.
 - FileManagement (SYNC, zero-LLM) — intents `open_file` (GCS download + text/vision conversion via
   `FileConversionService`/`FileStoragePort`) and `delete_file`. `context_schemas`: `file_ref` (from the
   `[File: name (size)]` label). Binary → temp file + metadata for vision.

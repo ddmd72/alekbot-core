@@ -399,6 +399,14 @@ class HtmlPageGeneratorAgentConfig:
     max_tokens: int = 64_000      # Full HTML+CSS+JS document can be large
     timeout_ms: int = 600_000     # Background async task — allow 10 min for generation
     thinking_effort: Optional[str] = "medium"
+    # Per-LLM-request timeout (seconds), passed as LLMRequest.timeout. Bounds TOTAL
+    # wall time including any SDK retries (adapters wrap the call in asyncio.wait_for),
+    # which is the point: without it a call that overruns the provider's client ceiling
+    # is retried twice more, and three generations are paid for and thrown away before
+    # timeout_ms kills the agent anyway. Measured 2026-08-15 on the real briefing
+    # payload: grok-4.6 took 229s, gemini-pro-latest 120s. 420s leaves ~1.8x headroom
+    # over the slower provider while staying below timeout_ms (600s).
+    request_timeout_s: int = 420
 
 
 HTML_PAGE_GENERATOR = HtmlPageGeneratorAgentConfig()

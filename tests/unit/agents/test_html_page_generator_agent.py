@@ -583,3 +583,38 @@ class TestRecitationRetry:
         await agent.execute(_make_message())
 
         assert mock_llm.generate_content.call_count == 1
+
+
+# ============================================================================
+# Per-request timeout
+#
+# Without LLMRequest.timeout the provider's own client ceiling governs, and a call
+# that overruns it is retried twice more by the SDK — three generations paid for
+# and discarded before timeout_ms kills the agent anyway. The adapters wrap the
+# call in asyncio.wait_for(request.timeout), so this bounds TOTAL wall time
+# including retries. Measured on the real briefing payload 2026-08-15:
+# grok-4.6 229s, gemini-pro-latest 120s, against a 420s budget.
+# ============================================================================
+
+class TestRequestTimeout:
+    @staticmethod
+    def _cfg():
+        from src.infrastructure.agent_config import HTML_PAGE_GENERATOR
+        return HTML_PAGE_GENERATOR
+
+    async def test_timeout_is_forwarded_on_the_llm_request(self, agent, mock_llm):
+        await agent.execute(_make_message())
+
+        request = mock_llm.generate_content.call_args.kwargs.get("request") or \
+            mock_llm.generate_content.call_args.args[0]
+        assert request.timeout == self._cfg().request_timeout_s
+
+    def test_budget_stays_under_the_agent_timeout(self):
+        """A per-call budget above timeout_ms would never fire — the agent would be
+        killed first and the bound would be decorative."""
+        cfg = self._cfg()
+        assert cfg.request_timeout_s * 1000 < cfg.timeout_ms
+
+    def test_budget_clears_the_slowest_measured_provider(self):
+        """grok-4.6 took 229s on the real briefing payload; leave real headroom."""
+        assert self._cfg().request_timeout_s >= 300

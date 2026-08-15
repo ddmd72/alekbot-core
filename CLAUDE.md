@@ -142,7 +142,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | DocPlanner | PERFORMANCE | `create_document` | JSON layout spec → DocGenerator |
 | DocGenerator | BALANCED | `generate_docx_code` (internal) | Node.js script → DOCX |
 | PdfGenerator | BALANCED | `create_pdf` | HTML+CSS → Puppeteer → PDF |
-| HtmlPageGenerator | PERFORMANCE | `create_html_page` | full HTML+CSS+JS; Unsplash placeholders |
+| HtmlPageGenerator | PERFORMANCE (**Grok**) | `create_html_page` | full HTML+CSS+JS; Unsplash placeholders |
 | FileManagement | zero-LLM | `open_file`, `delete_file` | |
 | Notes / Self-Reminders | PERFORMANCE (OpenAI) | `manage_self_reminders` | autonomous deferred firing |
 | Tasks | — | `manage_user_tasks` | MicrosoftToDo (GoogleTasks frozen) |
