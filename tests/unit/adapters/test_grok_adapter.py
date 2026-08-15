@@ -1120,7 +1120,9 @@ async def test_turn_anchor_and_personality_share_one_developer_item():
                 role="user",
                 parts=[MessagePart(text=USER_TURN_SYSTEM_ANCHOR + "\n\nhello")],
             )],
-            system_instruction="humor_engine { ALWAYS_ACTIVE }",
+            # Two sections minimum: the persona anchor is skipped below that, so a
+            # specialist prompt with one stray block is never told to apply a persona.
+            system_instruction="identity {\n a\n}\nhumor_engine {\n b\n}",
         ),
     )
 
@@ -1128,3 +1130,98 @@ async def test_turn_anchor_and_personality_share_one_developer_item():
     assert len(developer) == 1
     assert USER_TURN_SYSTEM_ANCHOR in developer[0]["content"]
     assert "PERSONALITY ANCHOR" in developer[0]["content"]
+
+
+# ============================================================================
+# Anchor extraction across a delegation loop
+#
+# BaseAgent prepends USER_TURN_SYSTEM_ANCHOR to the latest user message when an
+# execution starts. From delegation turn 2 the last message is a tool-result turn:
+# role "user", parts carrying tool_response and no text. Inspecting only
+# messages[-1] found nothing on every turn after the first, so the anchor stayed
+# buried mid-history in the weakest channel the API offers while the developer item
+# carried only the persona block. Confirmed in production 2026-08-15: turn 1 had it
+# at 90% of the prompt, turns 2-3 at 30% and 24%.
+# ============================================================================
+
+def _tool_result_turn(call_id="call-1"):
+    return Message(role="user", parts=[MessagePart(
+        tool_response={"name": "search_web", "content": "...", "tool_use_id": call_id},
+    )])
+
+
+def _anchored_user_turn(text="what is the weather"):
+    return Message(role="user", parts=[MessagePart(
+        text=f"{USER_TURN_SYSTEM_ANCHOR}\n\n{text}",
+    )])
+
+
+class TestAnchorExtractionAcrossTurns:
+    @staticmethod
+    async def _developer_items(messages, system_instruction=None):
+        adapter = GrokAdapter(api_key="test-key")
+        captured = {}
+        _install(adapter, captured=captured)
+        await adapter.generate_content(request=LLMRequest(
+            model_name="grok-4.6", messages=messages,
+            system_instruction=system_instruction,
+        ))
+        return captured, [i for i in captured["input"] if i.get("role") == "developer"]
+
+    async def test_lifted_when_the_anchor_is_the_last_message(self):
+        _, dev = await self._developer_items([_anchored_user_turn()])
+
+        assert len(dev) == 1
+        assert USER_TURN_SYSTEM_ANCHOR in dev[0]["content"]
+
+    async def test_lifted_when_tool_results_follow_it(self):
+        """The regression: turn 2+ of every delegation loop."""
+        messages = [
+            _anchored_user_turn(),
+            Message(role="model", parts=[MessagePart(text="calling a tool")]),
+            _tool_result_turn(),
+        ]
+
+        captured, dev = await self._developer_items(messages)
+
+        assert len(dev) == 1, "anchor was not lifted out of mid-history"
+        assert USER_TURN_SYSTEM_ANCHOR in dev[0]["content"]
+
+    async def test_anchor_is_removed_from_the_message_it_came_from(self):
+        messages = [
+            _anchored_user_turn("what is the weather"),
+            Message(role="model", parts=[MessagePart(text="x")]),
+            _tool_result_turn(),
+        ]
+
+        captured, _ = await self._developer_items(messages)
+
+        non_developer = [i for i in captured["input"] if i.get("role") != "developer"]
+        blob = json.dumps(non_developer, ensure_ascii=False)
+        assert "System anchors." not in blob, "anchor duplicated: lifted AND left behind"
+        assert "what is the weather" in blob, "the user's own text was dropped"
+
+    async def test_no_developer_item_without_an_anchor(self):
+        _, dev = await self._developer_items([
+            Message(role="user", parts=[MessagePart(text="plain message")]),
+        ])
+
+        assert dev == []
+
+    async def test_only_the_most_recent_anchor_is_lifted(self):
+        """Two anchored turns in history — take the latest, leave the older one be."""
+        messages = [
+            _anchored_user_turn("older question"),
+            Message(role="model", parts=[MessagePart(text="x")]),
+            _anchored_user_turn("newer question"),
+        ]
+
+        captured, dev = await self._developer_items(messages)
+
+        assert len(dev) == 1
+        blob = json.dumps(
+            [i for i in captured["input"] if i.get("role") != "developer"],
+            ensure_ascii=False,
+        )
+        assert blob.count("System anchors.") == 1
+        assert "newer question" in blob

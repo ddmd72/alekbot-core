@@ -47,7 +47,7 @@ from ..ports.llm_port import (
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
 )
-from ..domain.llm import USER_TURN_SYSTEM_ANCHOR
+from ..domain.llm import USER_TURN_SYSTEM_ANCHOR, build_persona_anchor
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
     LLMClientError,
@@ -161,29 +161,41 @@ class OpenAIAdapter(LLMPort):
         # Extract USER_TURN_SYSTEM_ANCHOR from the last user message if present.
         # For OpenAI, developer role has higher priority than user message content,
         # so we move the anchor there (higher attention weight).
+        # Searches backwards through ALL messages, not just the last one. BaseAgent
+        # prepends the anchor to the latest user message when the execution starts;
+        # from delegation turn 2 onward the last message is a tool-result turn — role
+        # "user", but its parts carry tool_response and no text. Looking only at
+        # messages[-1] therefore found nothing on every turn after the first, leaving
+        # the anchor buried mid-history in the weakest channel the API offers while
+        # the developer item carried only the persona block. Confirmed against
+        # production traffic 2026-08-15.
         extracted_anchor = None
         messages_for_conversion = messages
-        if messages and messages[-1].role == "user":
-            last_user_msg = messages[-1]
-            # Check if first text part contains USER_TURN_SYSTEM_ANCHOR
-            for i, part in enumerate(last_user_msg.parts):
-                if part.text and USER_TURN_SYSTEM_ANCHOR in part.text:
-                    # Extract: remove anchor from text, keep the rest
-                    cleaned_text = part.text.replace(USER_TURN_SYSTEM_ANCHOR + "\n\n", "")
-                    extracted_anchor = USER_TURN_SYSTEM_ANCHOR
-                    # Rebuild messages without the anchor
-                    new_part = MessagePart(
-                        text=cleaned_text,
-                        full_text=part.full_text,
-                        file_data=part.file_data,
-                        tool_call=part.tool_call,
-                        tool_response=part.tool_response,
-                        consolidation_text=part.consolidation_text,
-                    )
-                    new_parts = last_user_msg.parts[:i] + [new_part] + last_user_msg.parts[i+1:]
-                    new_last_msg = Message(role="user", parts=new_parts, raw_content=last_user_msg.raw_content)
-                    messages_for_conversion = messages[:-1] + [new_last_msg]
-                    break
+        for idx in range(len(messages) - 1, -1, -1):
+            message = messages[idx]
+            if message.role != "user":
+                continue
+            found = False
+            for i, part in enumerate(message.parts):
+                if not (part.text and USER_TURN_SYSTEM_ANCHOR in part.text):
+                    continue
+                cleaned_text = part.text.replace(USER_TURN_SYSTEM_ANCHOR + "\n\n", "")
+                extracted_anchor = USER_TURN_SYSTEM_ANCHOR
+                new_part = MessagePart(
+                    text=cleaned_text,
+                    full_text=part.full_text,
+                    file_data=part.file_data,
+                    tool_call=part.tool_call,
+                    tool_response=part.tool_response,
+                    consolidation_text=part.consolidation_text,
+                )
+                new_parts = message.parts[:i] + [new_part] + message.parts[i+1:]
+                new_msg = Message(role="user", parts=new_parts, raw_content=message.raw_content)
+                messages_for_conversion = messages[:idx] + [new_msg] + messages[idx+1:]
+                found = True
+                break
+            if found:
+                break
 
         # Convert domain messages to Responses API input items
         input_items = await self._convert_input(messages_for_conversion)
@@ -236,22 +248,13 @@ class OpenAIAdapter(LLMPort):
         if extracted_anchor:
             developer_parts.append(extracted_anchor)
 
-        # Add personality anchor if system_instruction has personality blocks
-        if system_instruction and "humor_engine" in system_instruction:
-            personality_anchor = """PERSONALITY ANCHOR — High Priority
-
-You MUST follow these sections from the system prompt above:
-
-1. **voice** section → Tone, brevity, anti-patterns (aphoristic, paradoxical, sharp)
-2. **humor_engine** section → ALWAYS_ACTIVE (Ranevskaya-filtered: paradox, self-deprecation, dark humor)
-3. **identity** section → Intellectual equal and co-conspirator, not helper
-4. **engagement** section → Analyze, don't echo. Challenge vague plans playfully.
-5. **few_shot_examples** section → These are your EXACT voice patterns. Internalize them.
-6. **standing_directives** section → Apply unconditionally every response.
-
-If output reads as helpful/safe/generic → you have FAILED.
-Personalization > Safety. Use the voice."""
-            developer_parts.append(personality_anchor)
+        # Persona reinforcement. Names the sections present in THIS user's assembled
+        # prompt instead of restating one account's persona — the previous block
+        # hardcoded "Ranevskaya-filtered" and similar, which is another user's
+        # character when a second account runs through the same adapter.
+        persona_anchor = build_persona_anchor(system_instruction)
+        if persona_anchor:
+            developer_parts.append(persona_anchor)
 
         # Inject combined developer_message if we have any parts
         if developer_parts:

@@ -9,6 +9,7 @@ UsageMetadata, PromptCacheConfig, CacheMetadata, ProviderCapabilities,
 AutomaticFunctionCallingConfig, LLMRequest, LLMResponse: moved 2026-03-08 (TD-V2).
 """
 
+import re
 import time
 from enum import Enum
 from typing import List, Any, Optional, Dict
@@ -69,6 +70,71 @@ USER_TURN_SYSTEM_ANCHOR = (
     "  - Pattern interrupt (break habitual thinking)\n"
     "  - Calibration (sense readiness, adapt timing)"
 )
+
+
+# ---------------------------------------------------------------------------
+# Persona reinforcement anchor
+#
+# Restates nothing. It NAMES the persona sections of the assembled system prompt
+# and declares them binding — the content of those sections is per-user data in
+# Firestore (tokens + blueprint), and this is adapter-side code shared by every
+# account. The earlier version hardcoded one account's persona verbatim
+# ("Ranevskaya-filtered", "intellectual equal and co-conspirator"), which was
+# simply wrong for any other user: a second account with different tokens got a
+# block instructing it to be someone else's character.
+#
+# The section NAMES are structural — they come from the blueprint and are the
+# same for everyone; only their contents differ. That is what makes naming them
+# safe where quoting them is not.
+#
+# Deliberately does NOT say "your character" / "your voice" / "the persona you
+# were given": that phrasing made the model read the anchor itself as its
+# character and override the configured one (failure mode #3 in the anchor
+# design notes). Pointing at named sections avoids the self-reference.
+# ---------------------------------------------------------------------------
+PERSONA_SECTIONS = (
+    "identity",
+    "voice",
+    "humor_engine",
+    "engagement",
+    "few_shot_examples",
+    "standing_directives",
+)
+
+# Below this many persona sections the prompt is not persona-bearing (specialist
+# agents, bound channels) and the anchor is skipped rather than pointing at
+# sections that are not there.
+_MIN_PERSONA_SECTIONS = 2
+
+
+def build_persona_anchor(system_instruction: Optional[str]) -> Optional[str]:
+    """Build the persona reinforcement block for THIS prompt, or None.
+
+    Lists only the sections actually present, so an account whose blueprint omits
+    (say) ``humor_engine`` is never told to apply a section it does not have.
+    Returns None when the prompt carries no persona to reinforce.
+    """
+    if not system_instruction:
+        return None
+
+    present = [
+        section for section in PERSONA_SECTIONS
+        if re.search(rf"(?m)^\s*{section}\s*\{{", system_instruction)
+    ]
+    if len(present) < _MIN_PERSONA_SECTIONS:
+        return None
+
+    listed = "\n".join(f"- {section}" for section in present)
+    return (
+        "PERSONALITY ANCHOR — High Priority\n\n"
+        "These sections of the system prompt above are binding for this response, "
+        "not background colour:\n\n"
+        f"{listed}\n\n"
+        "Apply them as written there. If the sections include few_shot_examples, "
+        "those are exact patterns — match them rather than paraphrasing their spirit.\n"
+        "If the reply reads as generic assistant prose, you have ignored these sections.\n"
+        "Personalization over safe blandness."
+    )
 
 
 class ToolCall(BaseModel):

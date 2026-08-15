@@ -216,3 +216,62 @@ Grok, Router sends both (→ `json_schema`) while Smart and Quick send schema + 
 **A comment corrected:** `MODEL_TIERS` claimed grok-4.3 has "no reasoning by default". It
 reasons by default (83 reasoning tokens on a bare probe), as does grok-4.6 (66). Only
 grok-4.3 can be told to stop.
+
+---
+
+# Addendum 2, 2026-08-15: the anchors were landing in the wrong place
+
+Inspecting the live developer message after the port surfaced two defects. Neither was
+introduced by the port; one was faithfully copied into Grok along with everything else.
+
+## The turn anchor was only lifted on the first turn
+
+`_extract_turn_anchor` (and OpenAIAdapter's inline equivalent, which it was modelled on)
+inspected **`messages[-1]` only**. `BaseAgent` prepends `USER_TURN_SYSTEM_ANCHOR` to the
+latest user message when an execution starts, so on turn 1 the last message is the
+anchored one and the lift works. From delegation turn 2 the last message is a tool-result
+turn — role `"user"`, but its parts carry `tool_response` and no text. The loop found
+nothing, returned the history untouched, and the anchor stayed buried mid-history in the
+weakest channel the API offers, while the developer item carried only the persona block.
+
+Measured on production traffic (briefing run 2026-08-15 09:45): the anchor sat at 90% of
+the prompt on turn 1, then 30% and 24% on turns 2-3 — i.e. behind the accumulated tool
+results. Since Smart is a delegation loop, most turns were affected.
+
+Both adapters now search backwards through the whole history for the most recent message
+carrying the anchor. Verified across all four adapters on a mid-history fixture:
+
+| provider | anchor lands in | left in the user message |
+|---|---|---|
+| Grok | `developer` item, index 0 | no |
+| OpenAI | `developer` item, index 0 | no |
+| Claude | first `user` message | yes — no developer role exists |
+| Gemini | user `contents` | yes — no developer role exists |
+
+That last column is the intended policy, not a gap: providers with a developer role get
+the anchors there, providers without it keep them in the user turn.
+
+## The persona block hardcoded one account's character
+
+The ported block named a specific persona verbatim — "Ranevskaya-filtered",
+"intellectual equal and co-conspirator", "aphoristic, paradoxical, sharp". Adapter code is
+shared by **every** account, so a second user of the same deployment (the owner's wife,
+their son) would receive a high-priority instruction to be someone else's character.
+
+Replaced by `build_persona_anchor()` in `domain/llm.py`, which **names the persona
+sections instead of quoting them**:
+
+- Section names (`identity`, `voice`, `humor_engine`, `engagement`, `few_shot_examples`,
+  `standing_directives`) come from the blueprint and are identical across accounts. Only
+  their contents — the Firestore tokens — differ. That asymmetry is what makes naming
+  them safe where restating them is not.
+- The list is built from the sections **actually present**, so an account whose blueprint
+  omits one is never pointed at it.
+- Skipped entirely below two sections, so specialist prompts do not get a persona anchor.
+- Still avoids "your character" / "your voice" phrasing — that self-reference previously
+  made the model adopt the anchor as its character and override the configured one
+  (failure mode #3 in the anchor design notes).
+
+Living in `domain/llm.py` rather than duplicated per adapter: it is a pure string
+function, both adapters already import from there, and REQ-ARCH-23 forbids the
+adapter-to-adapter import that sharing it otherwise needs.

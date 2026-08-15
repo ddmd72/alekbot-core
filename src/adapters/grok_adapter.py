@@ -29,7 +29,11 @@ import hashlib
 import json
 import openai
 from openai import AsyncOpenAI
-from ..domain.llm import PROMPT_CACHE_BOUNDARY, USER_TURN_SYSTEM_ANCHOR
+from ..domain.llm import (
+    PROMPT_CACHE_BOUNDARY,
+    USER_TURN_SYSTEM_ANCHOR,
+    build_persona_anchor,
+)
 from ..ports.llm_port import (
     LLMPort,
     LLMResponse,
@@ -119,24 +123,6 @@ class GrokAdapter(LLMPort):
     _EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high"}
     _EFFORT_NONE_MODELS = ("grok-4.3",)
 
-    # Reinforcement block for the `developer` channel, mirroring OpenAIAdapter. Gated on
-    # the same `humor_engine` marker: it names the personality sections of the assembled
-    # prompt and re-asserts them from the highest-priority role the API offers. Kept
-    # verbatim rather than paraphrased — it is the text that was validated on OpenAI
-    # (memory: solution_openai_personality_grounding, 2026-08-02).
-    _PERSONALITY_ANCHOR = """PERSONALITY ANCHOR — High Priority
-
-You MUST follow these sections from the system prompt above:
-
-1. **voice** section → Tone, brevity, anti-patterns (aphoristic, paradoxical, sharp)
-2. **humor_engine** section → ALWAYS_ACTIVE (Ranevskaya-filtered: paradox, self-deprecation, dark humor)
-3. **identity** section → Intellectual equal and co-conspirator, not helper
-4. **engagement** section → Analyze, don't echo. Challenge vague plans playfully.
-5. **few_shot_examples** section → These are your EXACT voice patterns. Internalize them.
-6. **standing_directives** section → Apply unconditionally every response.
-
-If output reads as helpful/safe/generic → you have FAILED.
-Personalization > Safety. Use the voice."""
 
     def __init__(self, api_key: str):
         """
@@ -222,8 +208,9 @@ Personalization > Safety. Use the voice."""
         developer_parts: List[str] = []
         if extracted_anchor:
             developer_parts.append(extracted_anchor)
-        if system_instruction and "humor_engine" in system_instruction:
-            developer_parts.append(self._PERSONALITY_ANCHOR)
+        persona_anchor = build_persona_anchor(system_instruction)
+        if persona_anchor:
+            developer_parts.append(persona_anchor)
         if developer_parts:
             input_items.insert(
                 0, {"role": "developer", "content": "\n\n".join(developer_parts)}
@@ -464,37 +451,50 @@ Personalization > Safety. Use the voice."""
     def _extract_turn_anchor(
         messages: List[Message],
     ) -> tuple[List[Message], Optional[str]]:
-        """Pull USER_TURN_SYSTEM_ANCHOR out of the last user message.
+        """Pull USER_TURN_SYSTEM_ANCHOR out of wherever it sits in the history.
 
         Returns (messages_without_anchor, anchor_text). The caller re-injects the
         anchor as a `developer` item, which outranks both `instructions` and `user`
         on xAI. Returns the input untouched when no anchor is present.
 
-        Extraction only. The caller combines this with `_PERSONALITY_ANCHOR` into a
+        **Searches backwards through ALL messages, not just the last one.**
+        `BaseAgent` prepends the anchor to the latest user message at the START of an
+        execution; from delegation turn 2 onward the last message is a tool-result
+        turn — role "user", but its parts carry `tool_response`, no text. Inspecting
+        only `messages[-1]` therefore found nothing on every turn after the first, and
+        the anchor stayed buried mid-history in the weakest channel the API offers
+        while the developer item carried only the persona block. Confirmed against
+        production traffic 2026-08-15: turn 1 had the anchor at 90% of the prompt
+        (last message), turns 2-3 at 30% and 24% (mid-history).
+
+        Extraction only. The caller combines this with the persona anchor into a
         single `developer` item — see `generate_content`.
         """
-        if not messages or messages[-1].role != "user":
-            return messages, None
-
-        last = messages[-1]
-        for i, part in enumerate(last.parts):
-            if not part.text or USER_TURN_SYSTEM_ANCHOR not in part.text:
+        for idx in range(len(messages) - 1, -1, -1):
+            message = messages[idx]
+            if message.role != "user":
                 continue
-            cleaned = part.text.replace(USER_TURN_SYSTEM_ANCHOR + "\n\n", "")
-            new_part = MessagePart(
-                text=cleaned,
-                full_text=part.full_text,
-                file_data=part.file_data,
-                tool_call=part.tool_call,
-                tool_response=part.tool_response,
-                consolidation_text=part.consolidation_text,
-            )
-            new_last = Message(
-                role="user",
-                parts=last.parts[:i] + [new_part] + last.parts[i + 1:],
-                raw_content=last.raw_content,
-            )
-            return messages[:-1] + [new_last], USER_TURN_SYSTEM_ANCHOR
+            for i, part in enumerate(message.parts):
+                if not part.text or USER_TURN_SYSTEM_ANCHOR not in part.text:
+                    continue
+                cleaned = part.text.replace(USER_TURN_SYSTEM_ANCHOR + "\n\n", "")
+                new_part = MessagePart(
+                    text=cleaned,
+                    full_text=part.full_text,
+                    file_data=part.file_data,
+                    tool_call=part.tool_call,
+                    tool_response=part.tool_response,
+                    consolidation_text=part.consolidation_text,
+                )
+                new_message = Message(
+                    role="user",
+                    parts=message.parts[:i] + [new_part] + message.parts[i + 1:],
+                    raw_content=message.raw_content,
+                )
+                return (
+                    messages[:idx] + [new_message] + messages[idx + 1:],
+                    USER_TURN_SYSTEM_ANCHOR,
+                )
 
         return messages, None
 
