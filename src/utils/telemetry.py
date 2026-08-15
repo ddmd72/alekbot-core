@@ -60,32 +60,43 @@ def _instrument_llm_sdks(logfire) -> None:
     One instrumentation failure (SDK absent, upstream API change) must not take
     the process down: tracing is diagnostic, never load-bearing.
 
-    **Known gap — Gemini content is NOT captured.** instrument_google_genai()
-    needs `opentelemetry-instrumentation-google-genai`, which requires
-    `opentelemetry-api~=1.43`, while logfire 4.34 pins `opentelemetry-sdk<1.42`.
-    The two cannot co-install, and the pinned OTel set here is deliberate (see
-    requirements.txt). The call is kept so it self-enables once upstream relaxes
-    the pin; until then it logs one line at startup and Gemini traffic (Router
-    triage, Compute) stays metadata-only in Logfire — still fully captured in
-    BigQuery. Anthropic and OpenAI (which covers Grok, and Smart's primary
-    model) are unaffected.
+    **Gemini goes through the VENDOR instrumentor, not logfire's wrapper.**
+    `logfire.instrument_google_genai()` installs a shim whose `SpanEventLogger.emit`
+    asserts `isinstance(record.body, dict)` — it still expects the old per-message
+    GenAI events (`gen_ai.choice`, `gen_ai.*.message`), while
+    opentelemetry-util-genai 1.0b0 emits ONE consolidated
+    `gen_ai.client.inference.operation.details`. The assert fails on every call.
+    `@handle_internal_errors` swallows it, so calls keep working — the symptom is
+    silently missing telemetry plus an internal-error line per call, not an outage.
+    Driving `GoogleGenAiSdkInstrumentor` directly skips that shim, and the standard
+    OTel GenAI attributes it writes (`gen_ai.input.messages` /
+    `gen_ai.output.messages`) are exactly what the Logfire LLM panels read.
+    Verified live 2026-08-15: full prompt and response land on the span.
+    See decisions/gemini_logfire_instrumentation.md.
     """
-    # google-genai captures message content only behind this OTel opt-in, and
-    # it is read at instrumentation time.
-    os.environ.setdefault("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true")
+    # NOT a boolean. Valid values are NO_CONTENT / SPAN_ONLY / EVENT_ONLY /
+    # SPAN_AND_EVENT; anything else (this said "true" until 2026-08-15) is rejected
+    # with a warning and falls back to NO_CONTENT — which is why the content was
+    # empty even once the packages could co-install. SPAN_ONLY over SPAN_AND_EVENT:
+    # both put identical content on the span, the event adds a log record with a
+    # null body. Read at instrumentation time, so it must be set before the loop.
+    os.environ.setdefault("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "SPAN_ONLY")
+
+    def _instrument_google_genai() -> None:
+        from opentelemetry.instrumentation.google_genai import GoogleGenAiSdkInstrumentor
+
+        GoogleGenAiSdkInstrumentor().instrument()
 
     # openai covers Grok too — GrokAdapter drives the same AsyncOpenAI client.
     for label, instrument in (
         ("anthropic", lambda: logfire.instrument_anthropic(version="latest")),
         ("openai", lambda: logfire.instrument_openai(version="latest")),
-        ("google_genai", lambda: logfire.instrument_google_genai()),
+        ("google_genai", _instrument_google_genai),
     ):
         try:
             instrument()
         except Exception as e:
-            # google_genai is the expected, documented failure — see docstring.
-            note = " (known dependency conflict, expected)" if label == "google_genai" else ""
-            print(f"⚠️ Logfire {label} instrumentation unavailable{note}: {e}")
+            print(f"⚠️ Logfire {label} instrumentation unavailable: {e}")
 
 
 def _init_logfire(service_name: str, also_cloud_trace: bool) -> bool:

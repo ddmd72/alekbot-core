@@ -107,7 +107,18 @@ class TestInstrumentLlmSdks:
         monkeypatch.setitem(sys.modules, "logfire", mod)
         return mod
 
-    def test_instruments_all_three_sdks_with_semconv(self, monkeypatch, fake_logfire):
+    @pytest.fixture
+    def fake_instrumentor(self, monkeypatch):
+        """Stand in for GoogleGenAiSdkInstrumentor, imported inside the function."""
+        instance = MagicMock()
+        module = MagicMock()
+        module.GoogleGenAiSdkInstrumentor.return_value = instance
+        monkeypatch.setitem(
+            sys.modules, "opentelemetry.instrumentation.google_genai", module
+        )
+        return instance
+
+    def test_instruments_all_three_sdks_with_semconv(self, monkeypatch, fake_logfire, fake_instrumentor):
         monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
 
         telem._instrument_llm_sdks(fake_logfire)
@@ -116,14 +127,22 @@ class TestInstrumentLlmSdks:
         # and conversation view read those, not our custom llm.* ones.
         fake_logfire.instrument_anthropic.assert_called_once_with(version="latest")
         fake_logfire.instrument_openai.assert_called_once_with(version="latest")
-        fake_logfire.instrument_google_genai.assert_called_once_with()
+        # Gemini deliberately does NOT go through logfire.instrument_google_genai():
+        # that shim asserts the old per-message event shape and fails on every call
+        # against opentelemetry-util-genai 1.0b0's consolidated event.
+        fake_logfire.instrument_google_genai.assert_not_called()
+        assert fake_instrumentor.instrument.call_count == 1
 
     def test_opts_google_genai_into_content_capture(self, monkeypatch, fake_logfire):
         monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
 
         telem._instrument_llm_sdks(fake_logfire)
 
-        assert os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] == "true"
+        # NOT a boolean: valid values are NO_CONTENT / SPAN_ONLY / EVENT_ONLY /
+        # SPAN_AND_EVENT. "true" (asserted here until 2026-08-15) is rejected by the
+        # instrumentation with a warning and falls back to NO_CONTENT — which is why
+        # Gemini content was empty even once the packages could co-install.
+        assert os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] == "SPAN_ONLY"
 
     def test_respects_explicit_genai_opt_out(self, monkeypatch, fake_logfire):
         monkeypatch.setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "false")
@@ -132,14 +151,14 @@ class TestInstrumentLlmSdks:
 
         assert os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] == "false"
 
-    def test_one_sdk_failure_does_not_block_the_others(self, monkeypatch, fake_logfire):
+    def test_one_sdk_failure_does_not_block_the_others(self, monkeypatch, fake_logfire, fake_instrumentor):
         fake_logfire.instrument_anthropic.side_effect = RuntimeError("anthropic sdk absent")
 
         telem._instrument_llm_sdks(fake_logfire)
 
         # Tracing is diagnostic, never load-bearing: the rest still gets wired.
         fake_logfire.instrument_openai.assert_called_once_with(version="latest")
-        fake_logfire.instrument_google_genai.assert_called_once_with()
+        assert fake_instrumentor.instrument.call_count == 1
 
 
 class TestInitLogfireContentGate:
@@ -182,3 +201,36 @@ class TestInitLogfireContentGate:
 
         assert result is False
         fake_logfire.instrument_anthropic.assert_not_called()
+
+
+class TestGoogleGenAiContentMode:
+    """The content mode is an enum the instrumentation validates, not a flag.
+
+    This is what actually kept Gemini content out of Logfire: the pin conflict was
+    the documented reason, but even after it cleared, `"true"` was rejected and the
+    instrumentation fell back to NO_CONTENT. A wrong-but-plausible value is worse
+    than a missing one — it looks configured.
+    """
+
+    VALID = {"NO_CONTENT", "SPAN_ONLY", "EVENT_ONLY", "SPAN_AND_EVENT"}
+
+    @pytest.fixture
+    def wired(self, monkeypatch):
+        logfire_mod = MagicMock()
+        monkeypatch.setitem(sys.modules, "logfire", logfire_mod)
+        module = MagicMock()
+        monkeypatch.setitem(
+            sys.modules, "opentelemetry.instrumentation.google_genai", module
+        )
+        monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
+        telem._instrument_llm_sdks(logfire_mod)
+        return os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"]
+
+    def test_default_is_a_value_the_instrumentation_accepts(self, wired):
+        assert wired in self.VALID
+
+    def test_default_actually_captures_content(self, wired):
+        assert wired != "NO_CONTENT"
+
+    def test_default_is_not_a_boolean_string(self, wired):
+        assert wired.lower() not in {"true", "false", "1", "0", "yes", "no"}
