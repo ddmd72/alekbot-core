@@ -157,6 +157,11 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # Re-run the audit after any Gemini generation bump; it compares the RESOLVED id.
     "gemini-flash-lite-latest":          {"input": 0.30,  "output": 2.50,  "cache_read": 0.25},
     "gemini-flash-latest":               {"input": 1.50,  "output": 7.50,  "cache_read": 0.25},
+    # Explicit generation, priced the same as the alias that currently resolves to it.
+    # Needed because `calculate_cost` returns 0.0 for an unknown model — SILENTLY. Pinning
+    # a tier to an explicit id without adding it here makes that traffic free on the books,
+    # the same defect class as the retired grok-4-1-fast-* ids (grok_revival_2026_08.md).
+    "gemini-3.5-flash-lite":             {"input": 0.30,  "output": 2.50,  "cache_read": 0.25},
     "gemini-pro-latest":                 {"input": 2.00,  "output": 12.00, "cache_read": 0.25},
     "gemini-3-flash-preview":            {"input": 0.50,  "output": 3.00,  "cache_read": 0.25},
     "deep-research-pro-preview-12-2025": {"input": 1.25,  "output": 10.00, "cache_read": 0.25},
