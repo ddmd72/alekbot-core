@@ -1,3 +1,5 @@
+import pytest
+
 from src.services.cost_calculator import calculate_cost
 
 
@@ -67,3 +69,44 @@ def test_retired_grok_ids_priced_far_below_what_actually_runs():
     assert retired == 0.70
     assert actually_served == 3.75
     assert actually_served > retired * 5
+
+
+# ============================================================================
+# Invariant: every tier-resolvable model must be priced
+#
+# calculate_cost returns 0.0 for an unknown model — SILENTLY. So a tier pointing
+# at an id absent from _PRICING_PER_MILLION_TOKENS does not fail, it bills that
+# traffic at zero. This has now happened twice: the retired grok-4-1-fast-* ids
+# (under-reported ~5x) and gemini-3.5-flash-lite when ECO was pinned off the
+# `-latest` alias (would have reported $0.00). One assertion closes both.
+# ============================================================================
+
+def _all_tier_models():
+    from src.adapters.claude_adapter import ClaudeAdapter
+    from src.adapters.gemini_adapter import GeminiAdapter
+    from src.adapters.grok_adapter import GrokAdapter
+    from src.adapters.openai_adapter import OpenAIAdapter
+
+    for adapter in (ClaudeAdapter, GeminiAdapter, GrokAdapter, OpenAIAdapter):
+        for tier, model in adapter.MODEL_TIERS.items():
+            yield adapter.__name__, tier, model
+
+
+@pytest.mark.parametrize(
+    "adapter_name,tier,model",
+    list(_all_tier_models()),
+    ids=lambda v: str(getattr(v, "value", v)),
+)
+def test_every_tier_model_has_a_price(adapter_name, tier, model):
+    from src.domain.billing import _PRICING_PER_MILLION_TOKENS
+
+    assert model in _PRICING_PER_MILLION_TOKENS, (
+        f"{adapter_name}.MODEL_TIERS[{tier}] = {model!r} is not in the pricing table. "
+        f"calculate_cost() would silently return 0.0 for every call it serves."
+    )
+
+
+def test_unknown_model_is_free_which_is_why_the_invariant_exists():
+    """Documents the trap the test above guards: no exception, no warning, just 0."""
+    assert calculate_cost("model-that-does-not-exist",
+                          prompt_tokens=1_000_000, completion_tokens=1_000_000) == 0.0

@@ -61,7 +61,15 @@ class GeminiAdapter(LLMPort):
     # Purpose: Decouple agent performance tier from concrete model names
     # ========================================================================
     MODEL_TIERS = {
-        PerformanceTier.ECO:         "gemini-flash-lite-latest",
+        # ECO is PINNED to an explicit generation, not the `-latest` alias. The router
+        # runs here, and a router is the one place where a silent model swap is worst:
+        # its triage calibration (ROUTER_COGNITIVE_PROCESS, retuned 2026-07-14 against
+        # over-escalation) is tuned to a specific model's judgement, and an alias moving
+        # under it would change task_complexity — hence Smart's tier and cost — with no
+        # deploy and no signal. Bump deliberately, re-running
+        # scripts/validation/ab_router_gemini_vs_openai.py. Price must be added to
+        # billing.py at the same time: calculate_cost returns 0.0 for an unknown id.
+        PerformanceTier.ECO:         "gemini-3.5-flash-lite",
         PerformanceTier.BALANCED:    "gemini-flash-latest",
         PerformanceTier.PERFORMANCE: "gemini-pro-latest",
         PerformanceTier.ULTRA:       "gemini-pro-latest",   # no Gemini Ultra available yet

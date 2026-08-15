@@ -47,7 +47,10 @@ def test_gemini_capabilities():
 def test_gemini_model_for_tier():
     adapter = GeminiAdapter(api_key="test-key")
 
-    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gemini-flash-lite-latest"
+    # ECO is pinned to an explicit generation, not the `-latest` alias: the router runs
+    # here and its triage calibration is tuned to a specific model's judgement, so an
+    # alias moving under it would change task_complexity — and Smart's tier — silently.
+    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gemini-3.5-flash-lite"
     assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gemini-flash-latest"
     assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gemini-pro-latest"
 
