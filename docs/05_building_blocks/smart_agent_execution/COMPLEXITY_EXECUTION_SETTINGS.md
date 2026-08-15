@@ -32,11 +32,11 @@ agent_tiers["smart"]           (UserBotConfig, per user)
 
 | Tier          | Claude                       | OpenAI            | Gemini                          | Grok                          |
 |---------------|------------------------------|-------------------|---------------------------------|-------------------------------|
-| `ECO`         | claude-haiku-4-5-20251001    | gpt-5.4-nano      | gemini-2.5-flash-lite-preview   | grok-4-1-fast                 |
-| `BALANCED`    | claude-haiku-4-5-20251001    | gpt-5.4-mini      | gemini-2.5-flash-preview-05-20  | grok-4-1-fast                 |
-| `PERFORMANCE` | claude-sonnet-4-6            | gpt-5.4           | gemini-2.5-pro-preview-06-05    | grok-4-1-fast                 |
-| `ULTRA`       | claude-opus-4-8              | gpt-5.5-pro       | gemini-pro-latest               | grok-4-1-fast-reasoning       |
-| `TIER1/2/3`   | claude-haiku-4-5-20251001    | gpt-5.4-nano      | gemini-2.5-flash-lite-preview   | grok-4-1-fast                 |
+| `ECO`         | claude-haiku-4-5-20251001    | gpt-5.4-nano      | gemini-2.5-flash-lite-preview   | grok-4.3                      |
+| `BALANCED`    | claude-haiku-4-5-20251001    | gpt-5.4-mini      | gemini-2.5-flash-preview-05-20  | grok-4.3                      |
+| `PERFORMANCE` | claude-sonnet-4-6            | gpt-5.4           | gemini-2.5-pro-preview-06-05    | grok-4.6                      |
+| `ULTRA`       | claude-opus-4-8              | gpt-5.5-pro       | gemini-pro-latest               | grok-4.6                      |
+| `TIER1/2/3`   | claude-haiku-4-5-20251001    | gpt-5.4-nano      | gemini-2.5-flash-lite-preview   | grok-4.3                      |
 
 > **TIER1/2/3** are reserved slots — default to ECO models. Override via
 > `complexity_settings_overrides` or `agent_tiers` when you need a custom model

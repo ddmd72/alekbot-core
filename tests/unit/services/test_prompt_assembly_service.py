@@ -289,3 +289,40 @@ async def test_standing_directives_validated_via_security_port():
     await _inject(service, directives=[{"text": "Always trace conditional logic."}])
     contexts = [c.kwargs.get("context", "") for c in service.security_port.validate.call_args_list]
     assert any("directives_user_" in ctx for ctx in contexts)
+
+
+@pytest.mark.asyncio
+async def test_active_reminders_warns_that_the_snapshot_is_stale():
+    """The block is built once per REQUEST, but DelegationEngine only swaps `messages`
+    between turns — so after a specialist updates a reminder the model still sees the
+    old list and can re-delegate the same change forever. The block must say so."""
+    service = _make_service()
+
+    result = await service._inject_runtime_context(
+        prompt=TEMPLATE,
+        biographical_facts=[],
+        conversation_history=[],
+        user_id="test_user",
+        agent_notes=[{"note_id": "1786748921043", "text": "Get ready for the visit"}],
+    )
+
+    assert "active_reminders {" in result
+    assert "STALE BY DESIGN" in result
+    assert "its result supersedes this block" in result
+    assert "1786748921043" in result
+
+
+@pytest.mark.asyncio
+async def test_active_reminders_block_absent_without_notes():
+    """No reminders → no empty wrapper block."""
+    service = _make_service()
+
+    result = await service._inject_runtime_context(
+        prompt=TEMPLATE,
+        biographical_facts=[],
+        conversation_history=[],
+        user_id="test_user",
+        agent_notes=[],
+    )
+
+    assert "active_reminders" not in result

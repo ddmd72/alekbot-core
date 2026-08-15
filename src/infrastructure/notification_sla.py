@@ -127,3 +127,31 @@ def resolve_timeout_ms(
     if tier is not None and tier in sla.tier_overrides:
         return sla.tier_overrides[tier]
     return sla.timeout_ms
+
+
+# Cloud Tasks caps dispatch_deadline at 1800s, and the deadline must also fit inside the
+# Cloud Run request timeout (1800s on this service).
+MAX_DISPATCH_DEADLINE_S = 1800
+
+# Room for the handler to load the note, run its idempotency check and return a status
+# after the agent budget is spent. Same 2-minute convention as the async-agent deadlines
+# in agent_manifest.py ("600s agent timeout + 2 min overhead").
+DISPATCH_DEADLINE_OVERHEAD_S = 120
+
+
+def dispatch_deadline_s(kind: NotificationKind) -> int:
+    """Cloud Tasks ``dispatch_deadline`` that can actually contain this kind's budget.
+
+    A worker task enqueued without an explicit deadline gets the Cloud Tasks default of
+    **600s**, which silently truncates every budget above it — the PERFORMANCE reminder
+    (1500s) and DAILY_DIGEST (1500s) were therefore unreachable from the day they were
+    written, and a truncated dispatch reads as a task failure, so Cloud Tasks retries the
+    whole run. Derived from the SLA table rather than hardcoded at the call sites so
+    raising a budget cannot silently outgrow its transport again.
+
+    Takes the WORST case across the kind's default and every tier override — the caller
+    enqueues before the tier is known.
+    """
+    sla = NOTIFICATION_SLA[kind]
+    ceiling_ms = max((sla.timeout_ms, *sla.tier_overrides.values()))
+    return min(ceiling_ms // 1000 + DISPATCH_DEADLINE_OVERHEAD_S, MAX_DISPATCH_DEADLINE_S)

@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, Optional
 
-from ..domain.complexity_settings import ComplexitySettings, DEFAULT_COMPLEXITY_SETTINGS
+from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain.task_complexity import TaskComplexity
 from ..domain.user import UserBotConfig, PerformanceTier
 from ..ports.llm_port import AgentExecutionContext
@@ -92,23 +92,9 @@ class TaskExecutionResolver:
             )
             return None
 
-        default_settings = DEFAULT_COMPLEXITY_SETTINGS.get(complexity)
-        if not default_settings:
+        settings = resolve_complexity_settings(complexity, config)
+        if not settings:
             return None
-
-        user_override = config.complexity_settings_overrides.get(complexity)
-
-        merged_tier = user_override.tier if user_override and user_override.tier else default_settings.tier
-        merged_thinking = user_override.thinking_effort if user_override and user_override.thinking_effort is not None else default_settings.thinking_effort
-        merged_remap = user_override.intent_remap if user_override and user_override.intent_remap else default_settings.intent_remap
-        merged_provider = user_override.provider_override if user_override and user_override.provider_override else default_settings.provider_override
-
-        settings = ComplexitySettings(
-            tier=merged_tier,
-            thinking_effort=merged_thinking,
-            intent_remap=merged_remap,
-            provider_override=merged_provider,
-        )
 
         execution_context = self.context_builder.resolve_for_task(
             agent_type=agent_type,
@@ -118,8 +104,8 @@ class TaskExecutionResolver:
 
         return ExecutionOverride(
             execution_context=execution_context,
-            thinking_effort=merged_thinking,
-            intent_remap=merged_remap or {},
+            thinking_effort=settings.thinking_effort,
+            intent_remap=settings.intent_remap or {},
         )
 
     def next_provider_override(

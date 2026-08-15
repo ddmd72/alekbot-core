@@ -306,8 +306,14 @@ class GcpTaskQueue(TaskQueue):
         task_type: str,
         payload: Dict[str, Any],
         delay_seconds: int = 0,
+        deadline_seconds: Optional[int] = None,
     ) -> str:
-        """Enqueue a generic worker task by task_type."""
+        """Enqueue a generic worker task by task_type.
+
+        ``deadline_seconds`` sets Cloud Tasks ``dispatch_deadline``. Left unset, Cloud
+        Tasks applies its 600s default — which until 2026-08-15 silently truncated every
+        worker task, including the ones whose NotificationSLA promised up to 1500s.
+        """
         try:
             task_payload = {"task_type": task_type, **payload}
 
@@ -324,6 +330,9 @@ class GcpTaskQueue(TaskQueue):
                 task["http_request"]["oidc_token"] = {
                     "service_account_email": self.service_account_email
                 }
+
+            if deadline_seconds is not None:
+                task["dispatch_deadline"] = duration_pb2.Duration(seconds=deadline_seconds)
 
             if delay_seconds > 0:
                 timestamp = timestamp_pb2.Timestamp()

@@ -148,6 +148,7 @@ class TestEnqueueWorkerTask:
             task_type="email_indexing",
             payload=payload,
             delay_seconds=10,
+            deadline_seconds=None,
         )
         assert result == "task-worker-001"
 

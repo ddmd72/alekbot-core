@@ -51,7 +51,7 @@ assert captured["tool_choice"] == "required"
 |---|---|
 | `ClaudeAdapter` | `adapter.client.messages.stream` — callable returning async context manager |
 | `GeminiAdapter` | `adapter.client.aio.models.generate_content` — async function |
-| `GrokAdapter` | `adapter.client.chat.completions.create` — async function |
+| `GrokAdapter` | `adapter.client.responses.create` — async function (Responses API since 2026-08-14) |
 | `OpenAIAdapter` | `adapter.client.responses.create` — async function |
 
 **Claude-specific detail:** `messages.stream()` returns an async context manager, not a

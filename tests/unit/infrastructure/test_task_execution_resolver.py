@@ -114,11 +114,15 @@ class TestMissingOrInvalidComplexity:
         # DEFAULT_COMPLEXITY_SETTINGS, resolve must return None instead of
         # crashing. Today every enum value has an entry; this test guards
         # against future enum additions that forget to update the table.
-        from src.infrastructure import task_execution_resolver as resolver_module
+        # Patched at its definition site: the table is read by
+        # domain.complexity_settings.resolve_complexity_settings, which the resolver
+        # delegates to. Patching a re-export on the resolver module would leave the
+        # real lookup untouched and make this test pass vacuously.
+        from src.domain import complexity_settings as settings_module
 
         # Patch with an empty dict — no complexity value will resolve.
         monkeypatch.setattr(
-            resolver_module, "DEFAULT_COMPLEXITY_SETTINGS", {}
+            settings_module, "DEFAULT_COMPLEXITY_SETTINGS", {}
         )
         result = resolver.resolve(
             context={"task_complexity": TaskComplexity.SMALL_TALK.value},

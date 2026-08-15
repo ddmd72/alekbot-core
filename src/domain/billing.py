@@ -203,7 +203,19 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "gpt-5":                             {"input": 1.25,  "output": 10.00, "cache_read": 0.10},
     "o4-mini-deep-research-2025-06-26":  {"input": 2.00,  "output": 8.00,  "cache_read": 0.10},
     "o3-deep-research-2025-06-26":       {"input": 10.00, "output": 40.00, "cache_read": 0.10},
-    # --- Grok ---
+    # --- Grok (xAI) ---
+    # Rates verified against the live rate card 2026-08-14. xAI caches automatically;
+    # cache_read is the cached-input price as a multiplier of input, per this table's
+    # convention: 4.6 = 0.50/2.00, 4.5 = 0.30/2.00, 4.3 = 0.20/1.25.
+    # NOT modelled: xAI doubles BOTH input and output once a prompt reaches 200k tokens.
+    # Long-context Grok requests are therefore under-costed by 2x. Acceptable while
+    # Grok is not a default provider; revisit if it starts carrying real traffic.
+    "grok-4.6":                          {"input": 2.00,  "output": 6.00,  "cache_read": 0.25},
+    "grok-4.5":                          {"input": 2.00,  "output": 6.00,  "cache_read": 0.15},
+    "grok-4.3":                          {"input": 1.25,  "output": 2.50,  "cache_read": 0.16},
+    # Retired IDs, retained for historical rows only — xAI now silently serves
+    # grok-4.3 for these, so anything billed at these rates before 2026-08-14 is
+    # under-reported ~5-6x. Do not route new traffic here.
     "grok-4-1-fast-non-reasoning":       {"input": 0.20,  "output": 0.50},
     "grok-4-1-fast-reasoning":           {"input": 0.20,  "output": 0.50},
 }

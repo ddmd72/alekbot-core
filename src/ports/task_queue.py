@@ -101,6 +101,7 @@ class TaskQueue(Protocol):
         task_type: str,
         payload: Dict[str, Any],
         delay_seconds: int = 0,
+        deadline_seconds: Optional[int] = None,
     ) -> str:
         """
         Enqueue a generic worker task by task_type.
@@ -109,6 +110,12 @@ class TaskQueue(Protocol):
         renew_task_subscriptions) that don't warrant a dedicated typed method.
         Worker receives payload with task_type injected automatically.
         delay_seconds: schedule this many seconds in the future.
+        deadline_seconds: Cloud Tasks dispatch_deadline override. Omitting it takes
+            the Cloud Tasks default of 600s, which SILENTLY caps any longer in-process
+            budget — task types whose NotificationSLA exceeds 10 minutes
+            (execute_reminder at PERFORMANCE, daily_email_review) must pass this or
+            their budget is fiction. Maximum accepted by Cloud Tasks is 1800s, and it
+            must also stay within the Cloud Run request timeout.
         Returns task name (Cloud Tasks task ID).
         """
         ...

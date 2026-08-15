@@ -22,6 +22,9 @@ test suite + the absence of fixtures for them):
   - notes_port.reschedule() (unconditional) — replaced by
     reschedule_if_due_at.
 """
+import asyncio
+import logging
+import re
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
@@ -412,3 +415,118 @@ class TestBuildReminderAlertSummary:
         assert "blockers" not in summary            # instruction body excluded
         assert _NOTE_ID not in summary              # no note_id
         assert len(summary) < len(build_reminder_alert(note))
+
+
+# ---------------------------------------------------------------------------
+# list_due_reminders timing
+#
+# 2026-08-13: a fire_due_reminders tick took 81s against Cloud Scheduler's 60s
+# attempt deadline (DEADLINE_EXCEEDED / 504) and left nothing behind — no span in
+# Logfire, no log line in the gap, no exception. Cloud Run itself answered 200 at
+# 80.97s, so the request completed; only the scheduler gave up. The pre-existing
+# log line could not localize the stall because `now` is captured BEFORE the query
+# and printed after it. Timing the query is what splits "Firestore stalled" from
+# "the runtime froze somewhere else".
+# ---------------------------------------------------------------------------
+
+class TestListDueRemindersTiming:
+
+    async def test_log_line_reports_the_query_duration(self, service, caplog):
+        with caplog.at_level(logging.INFO):
+            await service.fire_due_reminders()
+
+        line = next(r for r in caplog.records if "fire_due_reminders:" in r.getMessage())
+        assert "list_due_reminders" in line.getMessage()
+        assert "ms" in line.getMessage()
+
+    async def test_duration_reflects_a_slow_query(self, service, notes_port, caplog):
+        # The whole point: an 80s stall inside the port must be visible in the line.
+        async def slow_list(*_args, **_kwargs):
+            await asyncio.sleep(0.05)
+            return []
+
+        notes_port.list_due_reminders.side_effect = slow_list
+
+        with caplog.at_level(logging.INFO):
+            await service.fire_due_reminders()
+
+        line = next(r for r in caplog.records if "fire_due_reminders:" in r.getMessage())
+        measured = float(re.search(r"list_due_reminders (\d+)ms", line.getMessage()).group(1))
+        assert measured >= 50
+
+    async def test_fast_query_is_reported_as_such(self, service, caplog):
+        # The other branch of the fork: a fast query means the time went elsewhere.
+        with caplog.at_level(logging.INFO):
+            await service.fire_due_reminders()
+
+        line = next(r for r in caplog.records if "fire_due_reminders:" in r.getMessage())
+        measured = float(re.search(r"list_due_reminders (\d+)ms", line.getMessage()).group(1))
+        assert measured < 50
+
+    async def test_note_count_and_timestamp_still_reported(self, service, notes_port, caplog):
+        notes_port.list_due_reminders.return_value = [
+            _make_note(note_id="n1"), _make_note(note_id="n2"),
+        ]
+
+        with caplog.at_level(logging.INFO):
+            await service.fire_due_reminders(now_utc=_NOW)
+
+        msg = next(
+            r for r in caplog.records if "fire_due_reminders:" in r.getMessage()
+        ).getMessage()
+        assert "2 due note(s)" in msg
+        assert _NOW.isoformat() in msg
+
+
+# --------------------------------------------------------------------------- #
+# Cloud Tasks dispatch deadline                                                #
+#                                                                              #
+# Enqueued without one, the per-fire task gets the Cloud Tasks default of 600s.
+# A deep_reasoning fire runs at PERFORMANCE with a 1500s budget, so the dispatch
+# is cut mid-run and — because a cut dispatch reads as failure — retried whole.
+# Three such retries opened Smart's circuit breaker on 2026-08-15.
+# --------------------------------------------------------------------------- #
+
+class TestDispatchDeadline:
+    async def test_injected_deadline_is_forwarded_to_the_queue(
+        self, notes_port, user_repo, task_dispatch,
+    ):
+        service = RemindersService(
+            notes_port=notes_port,
+            user_repo=user_repo,
+            task_dispatch=task_dispatch,
+            recurrence=DateutilRecurrenceAdapter(),
+            dispatch_deadline_s=1620,
+        )
+        notes_port.list_due_reminders.return_value = [_make_note(recurrence="FREQ=DAILY")]
+        notes_port.reschedule_if_due_at.return_value = True
+
+        await service.fire_due_reminders(now_utc=_NOW)
+
+        enq_kwargs = task_dispatch.enqueue_worker_task.call_args.kwargs
+        assert enq_kwargs["deadline_seconds"] == 1620
+
+    async def test_composition_root_value_exceeds_the_cloud_tasks_default(self):
+        """The value main.py injects must actually beat the 600s it exists to fix.
+
+        Services may not import the infrastructure layer (REQ-ARCH-22), so the
+        derivation is asserted here against the same function the composition root
+        calls.
+        """
+        from src.domain.notification_kind import NotificationKind
+        from src.infrastructure.notification_sla import dispatch_deadline_s
+
+        assert dispatch_deadline_s(NotificationKind.REMINDER) > 600
+
+    async def test_unset_deadline_passes_none(
+        self, service, notes_port, task_dispatch,
+    ):
+        """Default construction sends None — the queue then applies the Cloud Tasks
+        default. Documented as test-only; the composition root always injects."""
+        notes_port.list_due_reminders.return_value = [_make_note(recurrence="FREQ=DAILY")]
+        notes_port.reschedule_if_due_at.return_value = True
+
+        await service.fire_due_reminders(now_utc=_NOW)
+
+        enq_kwargs = task_dispatch.enqueue_worker_task.call_args.kwargs
+        assert enq_kwargs["deadline_seconds"] is None
