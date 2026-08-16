@@ -1320,6 +1320,41 @@
             </div>
           </div>
 
+          <!-- Voice messages -->
+          <div class="card reveal" style="max-width: 520px; margin-top: 20px">
+            <div class="card-body">
+              <h3 id="settings-voice-title" style="font-size: 18px; font-weight: 600; margin-bottom: 6px">Voice messages</h3>
+              <p id="settings-voice-desc" style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px">
+                Languages you speak in voice messages. Pick as many as you like — switching mid-sentence is fine. Pick none to let Alek detect the language.
+              </p>
+
+              <div id="voice-lang-options" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px">
+                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer">
+                  <input type="checkbox" class="voice-lang" value="ru" style="width: 18px; height: 18px; cursor: pointer">
+                  <span style="font-size: 15px">🇷🇺 Russian</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer">
+                  <input type="checkbox" class="voice-lang" value="uk" style="width: 18px; height: 18px; cursor: pointer">
+                  <span style="font-size: 15px">🇺🇦 Ukrainian</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer">
+                  <input type="checkbox" class="voice-lang" value="en" style="width: 18px; height: 18px; cursor: pointer">
+                  <span style="font-size: 15px">🇬🇧 English</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer">
+                  <input type="checkbox" class="voice-lang" value="fr" style="width: 18px; height: 18px; cursor: pointer">
+                  <span style="font-size: 15px">🇫🇷 French</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer">
+                  <input type="checkbox" class="voice-lang" value="es" style="width: 18px; height: 18px; cursor: pointer">
+                  <span style="font-size: 15px">🇪🇸 Spanish</span>
+                </label>
+              </div>
+
+              <button id="settings-voice-save" onclick="saveVoiceLanguages()" class="btn btn-primary" style="padding: 10px 20px; font-size: 15px">Save</button>
+            </div>
+          </div>
+
           <!-- Deep Research -->
           <div class="card reveal" style="max-width: 520px; margin-top: 20px">
             <div class="card-body">
@@ -1453,6 +1488,10 @@
           "settings.rem.title": "Bot Reminders",
           "settings.rem.desc": "Scheduled actions the bot executes automatically.",
           "btn.save": "Save",
+          "settings.voice.title": "Voice messages",
+          "settings.voice.desc": "Languages you speak in voice messages. Pick as many as you like — switching mid-sentence is fine. Pick none to let Alek detect the language.",
+          "toast.voice_saved": "Voice languages saved",
+          "toast.voice_failed": "Failed to save voice languages",
           "toast.lang_saved": "Language saved",
           "toast.lang_failed": "Failed to save language",
           "toast.tz_saved": "Timezone saved",
@@ -1513,6 +1552,10 @@
           "settings.rem.title": "Нагадування бота",
           "settings.rem.desc": "Заплановані дії, які бот виконує автоматично.",
           "btn.save": "Зберегти",
+          "settings.voice.title": "Голосові повідомлення",
+          "settings.voice.desc": "Мови, якими ви говорите в голосових повідомленнях. Обирайте скільки завгодно — переходити з мови на мову всередині фрази можна. Не обирайте жодної, щоб Alek визначав мову сам.",
+          "toast.voice_saved": "Мови голосових збережено",
+          "toast.voice_failed": "Не вдалося зберегти мови голосових",
           "toast.lang_saved": "Мову збережено",
           "toast.lang_failed": "Не вдалося зберегти мову",
           "toast.tz_saved": "Часовий пояс збережено",
@@ -1573,6 +1616,10 @@
           "settings.rem.title": "Rappels du bot",
           "settings.rem.desc": "Actions planifi\u00e9es ex\u00e9cut\u00e9es automatiquement par le bot.",
           "btn.save": "Enregistrer",
+          "settings.voice.title": "Messages vocaux",
+          "settings.voice.desc": "Les langues que vous parlez dans les messages vocaux. Choisissez-en autant que vous voulez — changer de langue en pleine phrase ne pose pas de probl\u00e8me. N'en choisissez aucune pour laisser Alek d\u00e9tecter la langue.",
+          "toast.voice_saved": "Langues vocales enregistr\u00e9es",
+          "toast.voice_failed": "\u00c9chec de la sauvegarde",
           "toast.lang_saved": "Langue enregistr\u00e9e",
           "toast.lang_failed": "\u00c9chec de la sauvegarde",
           "toast.tz_saved": "Fuseau horaire enregistr\u00e9",
@@ -1633,6 +1680,10 @@
           "settings.rem.title": "Recordatorios del bot",
           "settings.rem.desc": "Acciones programadas que el bot ejecuta autom\u00e1ticamente.",
           "btn.save": "Guardar",
+          "settings.voice.title": "Mensajes de voz",
+          "settings.voice.desc": "Los idiomas que hablas en los mensajes de voz. Elige los que quieras — cambiar de idioma a mitad de frase no es problema. No elijas ninguno para que Alek detecte el idioma.",
+          "toast.voice_saved": "Idiomas de voz guardados",
+          "toast.voice_failed": "Error al guardar",
           "toast.lang_saved": "Idioma guardado",
           "toast.lang_failed": "Error al guardar",
           "toast.tz_saved": "Zona horaria guardada",
@@ -1679,6 +1730,9 @@
         "#settings-lang-ui-label":    "settings.lang.ui_label",
         "#settings-lang-bot-label":   "settings.lang.bot_label",
         "#settings-lang-save":        "btn.save",
+        "#settings-voice-title":      "settings.voice.title",
+        "#settings-voice-desc":       "settings.voice.desc",
+        "#settings-voice-save":       "btn.save",
         "#lang-mirror-btn":           "settings.lang.mirror",
         "#lang-fixed-btn":            "settings.lang.fixed",
         "#settings-dr-title":         "settings.dr.title",
@@ -1820,6 +1874,7 @@
           }
         } catch { /* silent */ }
         await loadLanguage();
+        await loadVoiceLanguages();
         await loadDeepResearch();
         await loadReminders();
       }
@@ -1907,6 +1962,43 @@
         const fixedBtn = document.getElementById("lang-fixed-btn");
         if (mirrorBtn) mirrorBtn.classList.toggle("active", mirror);
         if (fixedBtn) fixedBtn.classList.toggle("active", !mirror);
+      }
+
+      /* ── Voice message languages ──────────────────────── */
+      /* A checkbox per language, not a multi-select: any number may be spoken, and the
+         provider treats the list as *possible* languages with no stated precedence, so
+         there is no order for the user to arrange. */
+
+      async function loadVoiceLanguages() {
+        try {
+          const res = await fetch(`${API}/api/user/voice-languages`, { credentials: "include" });
+          if (!res.ok) return;
+          const data = await res.json();
+          const selected = new Set(data.voice_languages || []);
+          document.querySelectorAll(".voice-lang").forEach((cb) => {
+            cb.checked = selected.has(cb.value);
+          });
+        } catch { /* non-fatal */ }
+      }
+
+      async function saveVoiceLanguages() {
+        const codes = Array.from(document.querySelectorAll(".voice-lang:checked")).map((cb) => cb.value);
+        try {
+          const res = await fetch(`${API}/api/user/voice-languages`, {
+            method: "PUT",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ voice_languages: codes }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showToast(err.error || t("toast.voice_failed"), "error");
+            return;
+          }
+          showToast(t("toast.voice_saved"), "success");
+        } catch {
+          showToast(t("toast.voice_failed"), "error");
+        }
       }
 
       async function loadLanguage() {

@@ -53,7 +53,7 @@ async def main(user_id: str, languages: list[str] | None, show: bool) -> int:
 
     codes = normalize_voice_languages(languages or [])
     await doc_ref.update({"config.voice_languages": codes or None})
-    logger.info(f"✅ Set voice_languages = {codes or None} (first code is primary)")
+    logger.info(f"✅ Set voice_languages = {codes or None}")
     return 0
 
 
@@ -68,7 +68,7 @@ if __name__ == "__main__":
         "--languages",
         nargs="*",
         default=None,
-        help="ISO-639-1 codes, ordered — first is primary. Empty clears the setting.",
+        help="ISO-639-1 codes. Empty clears the setting (auto-detect).",
     )
     parser.add_argument("--show", action="store_true", help="print the current value and exit")
     args = parser.parse_args()
