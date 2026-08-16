@@ -214,16 +214,25 @@ class TelegramWebhookAdapter(PlatformPort):
 
             # 5. Translate attachments (ASYNC!)
             attachments = []
-            if message.photo or message.document:
+            if message.photo or message.document or message.voice or message.audio:
+                # `voice` is speech (hold-to-record); `audio` is an uploaded track — a file.
+                is_voice = False
                 # Telegram sends photos as array of sizes - take largest (last element)
                 if message.photo:
                     files = [message.photo[-1]]  # Largest photo
                     logger.info(f"📸 Photo received: {len(message.photo)} sizes, using largest file_id={files[0].file_id}")
+                elif message.voice:
+                    files = [message.voice]
+                    is_voice = True
+                    logger.info(f"🎙 Voice message received: {message.voice.duration}s")
+                elif message.audio:
+                    files = [message.audio]
+                    logger.info(f"🎵 Audio file received: {message.audio.file_name}")
                 else:
                     files = [message.document]
                     logger.info(f"📎 Document received: {message.document.file_name}")
 
-                attachments = await self._translate_platform_files(files)
+                attachments = await self._translate_platform_files(files, is_voice=is_voice)
                 logger.info(f"✅ File translation complete: {len(attachments)}/{len(files)} successful")
 
             # 6. Create MessageContext
@@ -250,7 +259,9 @@ class TelegramWebhookAdapter(PlatformPort):
         except Exception as e:
             logger.error(f"❌ Error processing Telegram message: {e}", exc_info=True)
 
-    async def _translate_platform_files(self, platform_files: list) -> List[FileAttachment]:
+    async def _translate_platform_files(
+        self, platform_files: list, is_voice: bool = False
+    ) -> List[FileAttachment]:
         """
         Translate Telegram files to FileAttachment DTOs.
 
@@ -262,7 +273,10 @@ class TelegramWebhookAdapter(PlatformPort):
             try:
                 # Get file metadata
                 file_id = getattr(file_obj, 'file_id', None)
-                file_name = getattr(file_obj, 'file_name', None) or 'unknown'
+                # Voice notes carry no file_name; the extension has to be right because
+                # the transcription API infers the container format from it.
+                default_name = 'voice.ogg' if is_voice else 'unknown'
+                file_name = getattr(file_obj, 'file_name', None) or default_name
                 
                 if not file_id:
                     logger.error(f"❌ File object missing file_id: {file_obj}")
@@ -304,7 +318,8 @@ class TelegramWebhookAdapter(PlatformPort):
                     url=file_url,
                     mime_type=mime_type,
                     filename=file_name,
-                    size_bytes=getattr(file_obj, 'file_size', None)
+                    size_bytes=getattr(file_obj, 'file_size', None),
+                    is_voice_message=is_voice,
                 )
 
             except Exception as e:

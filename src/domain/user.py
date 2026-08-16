@@ -235,6 +235,12 @@ class UserBotConfig(BaseModel):
     preferred_language: Optional[LanguageCode] = None
     agent_mirror: bool = True
 
+    # Languages the user may SPEAK in voice messages (ISO-639-1, ordered — first is primary).
+    # Deliberately not LanguageCode: that enum is the closed set of translated UI languages
+    # (uk/en/fr/es) and cannot express a language the bot speaks no UI in, e.g. "ru".
+    # None = let the provider auto-detect. Set via Cabinet UI.
+    voice_languages: Optional[List[str]] = None
+
     # Gmail auto-indexing schedule
     # gmail_auto_index: enable daily incremental indexing via Cloud Scheduler
     # gmail_auto_index_hour: local hour (0-23) in user's timezone when indexing fires

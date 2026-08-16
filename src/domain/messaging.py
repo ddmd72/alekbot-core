@@ -15,6 +15,9 @@ class FileAttachment:
     mime_type: str
     filename: str
     size_bytes: Optional[int] = None
+    # Speech, not a document: the platform recorded it as a voice message. Its transcript
+    # becomes the user's message text instead of file content, so it reaches history.
+    is_voice_message: bool = False
 
 
 @dataclass

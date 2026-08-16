@@ -493,7 +493,7 @@ See [Security Validation Building Block](../05_building_blocks/security_validati
 **Slack API:**
 
 - Official SDK: `slack_bolt`
-- Webhook-based (HTTP mode) or Socket Mode
+- Webhook-based (HTTP Events API)
 - Adapter: `SlackHTTPAdapter`, `SlackSocketAdapter`
 
 **Telegram API:**

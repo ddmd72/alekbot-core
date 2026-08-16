@@ -441,6 +441,46 @@ def create_user_cabinet_blueprint(
             logger.error(f"Error updating location: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
+    @bp.route("/api/user/voice-languages", methods=["GET"])
+    @auth_required
+    async def get_voice_languages():
+        """Return the languages the user may speak in voice messages (ISO-639-1)."""
+        try:
+            user = await user_repo.get_user(g.user_id)
+            codes = user.config.voice_languages if user else None
+            return jsonify({"voice_languages": codes or []}), 200
+        except Exception as e:
+            logger.error(f"Error fetching voice languages: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/voice-languages", methods=["PUT"])
+    @auth_required
+    async def set_voice_languages():
+        """Update spoken languages. Body: {"voice_languages": ["ru", "uk", "en"]}
+
+        Ordered — the first code is the primary language. Empty list clears the setting and
+        returns the recogniser to auto-detection. Membership is NOT validated against a
+        closed set: the provider decides which ISO-639-1 codes it supports, and this list
+        is deliberately wider than the bot's translated UI languages.
+        """
+        try:
+            from ..domain.language import normalize_voice_languages
+            body = await request.get_json(force=True) or {}
+            try:
+                codes = normalize_voice_languages(body.get("voice_languages", []))
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 400
+
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            user.config.voice_languages = codes or None
+            await user_repo.update_user(user)
+            return jsonify({"voice_languages": codes}), 200
+        except Exception as e:
+            logger.error(f"Error updating voice languages: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
     @bp.route("/api/user/language", methods=["GET"])
     @auth_required
     async def get_language():

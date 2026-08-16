@@ -103,11 +103,18 @@ class HTTPModeAdapter(SlackAdapter):
                 logger.warning(f"⚠️ Skipping file without URL: {f.get('name', 'unknown')}")
                 continue
 
+            # Slack names voice memos `audio_message.*` and marks them `slack_audio`.
+            # Both are Slack-generated; the mimetype is not a reliable marker (voice
+            # memos have been observed as both audio/mp4 and video/mp4).
+            name = f.get("name", "unknown")
+            is_voice = f.get("subtype") == "slack_audio" or name.startswith("audio_message.")
+
             attachments.append(FileAttachment(
                 url=url,
                 mime_type=f.get("mimetype", "application/octet-stream"),
-                filename=f.get("name", "unknown"),
-                size_bytes=f.get("size")
+                filename=name,
+                size_bytes=f.get("size"),
+                is_voice_message=is_voice,
             ))
         return attachments
 

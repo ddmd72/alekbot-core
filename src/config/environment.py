@@ -9,12 +9,6 @@ class Environment(Enum):
     TEST = "test"
 
 
-class SlackMode(Enum):
-    """Slack integration modes."""
-    HTTP = "http"
-    SOCKET = "socket"
-
-
 class EnvironmentConfig:
     """
     Central environment configuration manager.
@@ -25,7 +19,6 @@ class EnvironmentConfig:
 
     def __init__(self):
         self.env = self._detect_environment()
-        self.slack_mode = self._detect_slack_mode()
 
     def _detect_environment(self) -> Environment:
         """
@@ -39,21 +32,6 @@ class EnvironmentConfig:
         # Map string to enum
         env_map = {e.value: e for e in Environment}
         return env_map.get(env_str, Environment.DEVELOPMENT)
-
-    def _detect_slack_mode(self) -> SlackMode:
-        """
-        Detect Slack integration mode from SLACK_MODE variable.
-
-        Returns:
-            SlackMode enum value (default: socket for dev, http for prod)
-        """
-        # Default to socket for local development, http for production
-        default_mode = "socket" if self.env == Environment.DEVELOPMENT else "http"
-        mode_str = os.getenv("SLACK_MODE", default_mode).lower()
-        
-        # Map string to enum
-        mode_map = {m.value: m for m in SlackMode}
-        return mode_map.get(mode_str, SlackMode.SOCKET)
 
     @property
     def is_production(self) -> bool:
@@ -69,16 +47,6 @@ class EnvironmentConfig:
     def is_test(self) -> bool:
         """Check if running in test environment."""
         return self.env == Environment.TEST
-
-    @property
-    def is_http_mode(self) -> bool:
-        """Check if using HTTP Events API mode."""
-        return self.slack_mode == SlackMode.HTTP
-
-    @property
-    def is_socket_mode(self) -> bool:
-        """Check if using Socket Mode."""
-        return self.slack_mode == SlackMode.SOCKET
 
     @property
     def firestore_collection_prefix(self) -> str:
@@ -413,12 +381,11 @@ class EnvironmentConfig:
         parts = [self.env.value]
         if self.use_emulator:
             parts.append("emulator")
-        parts.append(f"slack:{self.slack_mode.value}")
         return f"{parts[0]} ({', '.join(parts[1:])})" if len(parts) > 1 else parts[0]
 
     def __repr__(self) -> str:
         """Detailed representation."""
-        return f"EnvironmentConfig(env={self.env.value}, slack_mode={self.slack_mode.value}, emulator={self.use_emulator})"
+        return f"EnvironmentConfig(env={self.env.value}, emulator={self.use_emulator})"
 
 
 def validate_telegram_config():

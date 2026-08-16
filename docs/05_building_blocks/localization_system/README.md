@@ -399,7 +399,6 @@ PromptBuilder.build_for_agent()
 | `src/locales/es.py` | Spanish phrases |
 | `src/services/language_preference_service.py` | `LanguagePreferenceService` |
 | `src/adapters/slack/response_channel.py` | `language` + `localization` injection |
-| `src/adapters/slack/socket_adapter.py` | `_resolve_language()` per request |
 | `src/adapters/slack/http_adapter.py` | Same |
 | `src/adapters/prompt_v3/firestore_agent_profile_repository.py` | `set_override_tokens()` |
 | `src/web/user_cabinet_app.py` | `GET/POST /api/user/language` |

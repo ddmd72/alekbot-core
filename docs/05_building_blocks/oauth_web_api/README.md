@@ -37,7 +37,7 @@ OAuth Web API provides HTTP endpoints for authenticating users via Google OAuth 
            ▼                  ▼                  ▼
     ┌──────────────┐   ┌──────────────────────────────┐
     │ OAuth Web API│   │   Slack/Telegram Adapters    │  ← Adapter Layer
-    │ (Quart/Flask)│   │   (Socket Mode / HTTP)        │
+    │ (Quart/Flask)│   │   (HTTP Events API)          │
     └──────┬───────┘   └──────────┬───────────────────┘
            │                      │
            ▼                      ▼

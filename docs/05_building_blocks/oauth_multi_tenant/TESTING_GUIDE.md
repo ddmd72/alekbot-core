@@ -34,10 +34,9 @@ export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 export OAUTH_REDIRECT_URI=http://localhost:5000/auth/callback
 export OAUTH_SESSION_SECRET=$(openssl rand -base64 32)
 
-# Slack (optional for testing)
-export SLACK_MODE=socket
+# Slack (optional for testing — HTTP Events API needs a public tunnel to /slack/events)
 export SLACK_BOT_TOKEN=xoxb-your-token
-export SLACK_APP_TOKEN=xapp-your-token
+export SLACK_SIGNING_SECRET=your-signing-secret
 ```
 
 ### 3. Run Migration (First Time Only)
@@ -86,7 +85,7 @@ Check logs:
 🔐 Initializing OAuth Web App...
 🌐 Starting OAuth Web App on http://0.0.0.0:5000
 ✅ OAuth Web App started on port 5000
-🚀 Starting Slack Adapter in Socket Mode...
+🏭 Creating Slack adapter: http
 ```
 
 ### Step 2: Open Browser

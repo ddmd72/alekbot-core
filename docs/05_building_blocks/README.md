@@ -26,7 +26,7 @@
 - OAuth Web API: [oauth_web_api/README.md](./oauth_web_api/README.md)
 - OAuth Multi-Tenant: [oauth_multi_tenant/README.md](./oauth_multi_tenant/README.md)
 - User Cabinet: [user_cabinet/README.md](./user_cabinet/README.md)
-- Slack Dual Mode: [slack_dual_mode/README.md](./slack_dual_mode/README.md)
+- Slack Integration: [slack_integration/README.md](./slack_integration/README.md)
 - Telegram Integration: [telegram_integration/README.md](./telegram_integration/README.md)
 - Rich Content Protocol: [rich_content_protocol/README.md](./rich_content_protocol/README.md)
 - File Conversion Service: [file_conversion/README.md](./file_conversion/README.md)

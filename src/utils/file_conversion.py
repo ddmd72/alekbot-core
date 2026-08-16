@@ -113,6 +113,20 @@ def download_alert(filename: str) -> str:
     )
 
 
+def transcription_alert(filename: str) -> str:
+    """System note for a voice message that arrived but could not be transcribed.
+
+    Public for the same reason as `download_alert`: voice messages are transcribed in
+    ConversationHandler, not in `convert_file_to_text`, because their transcript becomes
+    the user's turn rather than file content.
+    """
+    return (
+        f"[System: User sent a voice message ('{filename}') but it could not be transcribed, "
+        f"so its content is NOT available. Do not guess what was said. Tell the user the "
+        f"voice message could not be recognised and ask them to repeat it or write it out.]"
+    )
+
+
 def _conversion_alert(filename: str, mime_type: str = "") -> str:
     mime_suffix = f" ({mime_type})" if mime_type else ""
     return (

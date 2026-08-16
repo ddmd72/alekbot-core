@@ -48,7 +48,7 @@ Load only for specific tasks:
 
 - `docs/05_building_blocks/multi_agent_system/README.md` - Actor Model & ACP
 - `docs/05_building_blocks/sliding_window_consolidation/README.md` - Memory Pipeline
-- `docs/05_building_blocks/slack_dual_mode/README.md` - Platform Integration
+- `docs/05_building_blocks/slack_integration/README.md` - Platform Integration
 
 ### Operational Guides
 

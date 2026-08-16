@@ -10,29 +10,25 @@ Audio transcription is a system boundary (external speech recognition service).
 The port allows swapping implementations without changing ConversationHandler and
 file_conversion_service: just create a new adapter and wire it in main.py.
 
-## Current status: NOT IN USE
+## Current status: LIVE
 
-Audio files are detected (MIME audio/*), but audio_service=None everywhere →
-ConversationHandler sends an honest alert "transcription unavailable".
+`OpenAITranscriptionAdapter` is wired in main.py when OPENAI_API_KEY is set; without a
+key the port stays None and ConversationHandler sends an honest "transcription
+unavailable" alert.
 
-## Why it was disabled
+## Two callers, two meanings
 
-Tried SpeechRecognitionAdapter (markitdown → Google Web Speech API, free):
-- ~50 requests/day without a key
-- English only (UnknownValueError on Russian/Ukrainian)
-- Does not work on GCP Cloud Run (no blocks, but quality is zero)
+- **Voice messages** (Slack voice memo, Telegram voice note) are transcribed in
+  ConversationHandler, and the transcript becomes the user's own message text — down the
+  file path it would be a reference-only part that never reaches session history.
+- **Attached audio files** (an uploaded mp3) go through `convert_file_to_text`, and the
+  transcript is file content wrapped in `[File: …]`.
 
-## How to connect a proper implementation
+## History
 
-1. Create an adapter, e.g. WhisperAdapter (OpenAI) or GoogleCloudSpeechAdapter:
-   src/adapters/whisper_adapter.py → implements AudioTranscriptionPort
-
-2. Pass it in main.py:
-   audio_service = WhisperAdapter(api_key=config["OPENAI_API_KEY"])
-
-3. Pass to SlackAdapterFactory.create_adapter(..., audio_service=audio_service)
-   and TelegramWebhookAdapter(..., audio_service=audio_service)
-   — the DI chain is already ready, nothing else needs to change.
+An earlier SpeechRecognitionAdapter (markitdown → Google Web Speech API, free) was
+abandoned: ~50 requests/day without a key, English only (UnknownValueError on
+Russian/Ukrainian), and zero quality on Cloud Run.
 
 ## Supported formats (when adapter is present)
 
@@ -40,19 +36,28 @@ audio/mpeg (mp3), audio/wav (wav), audio/mp4 (m4a), audio/x-m4a (m4a alt), audio
 """
 
 from abc import ABC, abstractmethod
+from typing import Optional, Sequence
 
 
 class AudioTranscriptionPort(ABC):
     """Abstract port for audio-to-text transcription."""
 
     @abstractmethod
-    async def transcribe(self, local_path: str, mime_type: str) -> str:
+    async def transcribe(
+        self,
+        local_path: str,
+        mime_type: str,
+        languages: Optional[Sequence[str]] = None,
+    ) -> str:
         """
         Transcribe an audio file to plain text.
 
         Args:
             local_path: Absolute path to the audio file on disk.
             mime_type: MIME type of the audio file (e.g. "audio/mpeg").
+            languages: Languages the speaker may use, ISO-639-1, ordered (first is
+                primary). A multilingual household is the normal case, so this is a
+                list, not one code. None → let the provider auto-detect.
 
         Returns:
             Transcribed text content.

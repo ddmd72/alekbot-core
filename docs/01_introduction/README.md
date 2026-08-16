@@ -135,7 +135,7 @@ The system acts as an intelligent memory layer that:
 
 **FR-1: Multi-Platform Messaging**
 
-- Support Slack (Events API, Socket Mode) and Telegram (Webhook)
+- Support Slack (Events API) and Telegram (Webhook)
 - Platform-agnostic conversation handler
 - Markdown formatting per platform (Slack mrkdwn, Telegram MarkdownV2)
 
@@ -295,7 +295,7 @@ The system acts as an intelligent memory layer that:
 
 ✅ **Messaging Platforms:**
 
-- Slack (Events API, Socket Mode, Slack App manifest)
+- Slack (Events API, Slack App manifest)
 - Telegram (Bot API, Webhook)
 
 ✅ **Core Features:**

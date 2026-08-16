@@ -10,7 +10,6 @@ from typing import Optional
 from slack_bolt.async_app import AsyncApp
 
 from ..adapters.slack.base import SlackAdapter
-from ..adapters.slack.socket_adapter import SocketModeAdapter
 from ..adapters.slack.http_adapter import HTTPModeAdapter
 from ..adapters.slack.media_adapter import SlackMediaAdapter
 from ..adapters.gcs_media_adapter import GcsMediaAdapter
@@ -85,11 +84,9 @@ class SlackAdapterFactory:
             audio_service: Optional audio transcription service
 
         Returns:
-            SlackAdapter instance (either SocketModeAdapter or HTTPModeAdapter)
+            HTTPModeAdapter instance
         """
-        mode = env_config.slack_mode.value
-
-        logger.info(f"🏭 Creating Slack adapter: {mode}")
+        logger.info("🏭 Creating Slack adapter: http")
 
         # Create ConversationHandler here (composition root)
         media_adapter = SlackMediaAdapter(
@@ -129,59 +126,39 @@ class SlackAdapterFactory:
             alert_webhook=alert_webhook,
         )
 
-        if env_config.is_socket_mode:
-            socket_config = config.copy()
-            if config.get("DEV_SLACK_BOT_TOKEN"):
-                socket_config["SLACK_BOT_TOKEN"] = config["DEV_SLACK_BOT_TOKEN"]
-            if config.get("DEV_SLACK_APP_TOKEN"):
-                socket_config["SLACK_APP_TOKEN"] = config["DEV_SLACK_APP_TOKEN"]
+        if not db_client:
+            raise ValueError("db_client is required for HTTP mode (session persistence)")
 
-            return SocketModeAdapter(
-                app=app,
-                config=socket_config,
-                conversation_handler=conversation_handler,
-                iam_service=iam_service,
-                audio_service=audio_service,
-                language_service=language_service,
-                localization=localization,
-            )
+        # ADR-006: Use semantic collection name
+        dedup_store = FirestoreEventDedupStore(
+            db_client=db_client,
+            collection_prefix=env_config.event_dedup_collection
+        )
 
-        if env_config.is_http_mode:
-            if not db_client:
-                raise ValueError("db_client is required for HTTP mode (session persistence)")
+        queue_suffix = "dev" if env_config.is_development else "prod"
 
-            # ADR-006: Use semantic collection name
-            dedup_store = FirestoreEventDedupStore(
-                db_client=db_client,
-                collection_prefix=env_config.event_dedup_collection
-            )
+        service_url = config.get("CLOUD_RUN_SERVICE_URL")
+        if not service_url:
+            logger.warning("⚠️ CLOUD_RUN_SERVICE_URL not set, defaulting to http://localhost:8080")
+            service_url = "http://localhost:8080"
 
-            queue_suffix = "dev" if env_config.is_development else "prod"
+        task_service = GcpTaskQueue(
+            project_id=config["GOOGLE_CLOUD_PROJECT"],
+            location="europe-west1",
+            queue_name=f"alek-bot-tasks-{queue_suffix}",
+            service_url=service_url,
+            service_account_email=config.get("SERVICE_ACCOUNT_EMAIL")
+        )
 
-            service_url = config.get("CLOUD_RUN_SERVICE_URL")
-            if not service_url:
-                logger.warning("⚠️ CLOUD_RUN_SERVICE_URL not set, defaulting to http://localhost:8080")
-                service_url = "http://localhost:8080"
-
-            task_service = GcpTaskQueue(
-                project_id=config["GOOGLE_CLOUD_PROJECT"],
-                location="europe-west1",
-                queue_name=f"alek-bot-tasks-{queue_suffix}",
-                service_url=service_url,
-                service_account_email=config.get("SERVICE_ACCOUNT_EMAIL")
-            )
-
-            return HTTPModeAdapter(
-                app=app,
-                config=config,
-                task_service=task_service,
-                session_store=session_store,
-                conversation_handler=conversation_handler,
-                iam_service=iam_service,
-                dedup_store=dedup_store,
-                audio_service=audio_service,
-                language_service=language_service,
-                localization=localization,
-            )
-
-        raise ValueError(f"Unknown Slack mode: {mode}")
+        return HTTPModeAdapter(
+            app=app,
+            config=config,
+            task_service=task_service,
+            session_store=session_store,
+            conversation_handler=conversation_handler,
+            iam_service=iam_service,
+            dedup_store=dedup_store,
+            audio_service=audio_service,
+            language_service=language_service,
+            localization=localization,
+        )
