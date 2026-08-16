@@ -42,7 +42,8 @@ def normalize_voice_languages(raw: object) -> list[str]:
     (it has no "ru", and a multilingual household is the normal case). Only the shape is
     checked — which codes actually work is the provider's business.
 
-    Order is preserved: the first code is the primary language. Duplicates are dropped.
+    Order is preserved but carries no known meaning: the provider documents these as
+    *possible* languages of the audio and states no precedence. Duplicates are dropped.
 
     Raises:
         ValueError: input is not a list, or a code is not a two-letter ISO-639-1 code.

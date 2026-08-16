@@ -36,7 +36,9 @@ alert still fires.
 
 ## Spoken languages are a per-user setting
 
-`UserBotConfig.voice_languages` — ISO-639-1 codes, ordered (first is primary), a **list**.
+`UserBotConfig.voice_languages` — ISO-639-1 codes, a **list**. Order is preserved but carries
+no known meaning: the provider documents them as *possible* languages of the audio and states
+no precedence, which is why the Cabinet offers checkboxes rather than an ordered picker.
 Cabinet: `PUT /api/user/voice-languages`; shape validated by `normalize_voice_languages()` in
 `domain/language.py`.
 

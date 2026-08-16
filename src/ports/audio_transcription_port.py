@@ -55,9 +55,10 @@ class AudioTranscriptionPort(ABC):
         Args:
             local_path: Absolute path to the audio file on disk.
             mime_type: MIME type of the audio file (e.g. "audio/mpeg").
-            languages: Languages the speaker may use, ISO-639-1, ordered (first is
-                primary). A multilingual household is the normal case, so this is a
-                list, not one code. None → let the provider auto-detect.
+            languages: Languages the speaker may use, ISO-639-1. A multilingual
+                household is the normal case, so this is a list, not one code.
+                Order carries no known meaning — the provider treats them as
+                *possible* languages. None → let the provider auto-detect.
 
         Returns:
             Transcribed text content.

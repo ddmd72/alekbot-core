@@ -458,8 +458,9 @@ def create_user_cabinet_blueprint(
     async def set_voice_languages():
         """Update spoken languages. Body: {"voice_languages": ["ru", "uk", "en"]}
 
-        Ordered — the first code is the primary language. Empty list clears the setting and
-        returns the recogniser to auto-detection. Membership is NOT validated against a
+        Order is preserved but means nothing to the recogniser (the provider calls them
+        *possible* languages). Empty list clears the setting and returns it to
+        auto-detection. Membership is NOT validated against a
         closed set: the provider decides which ISO-639-1 codes it supports, and this list
         is deliberately wider than the bot's translated UI languages.
         """

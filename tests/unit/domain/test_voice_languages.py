@@ -14,7 +14,9 @@ from src.domain.language import LanguageCode, normalize_voice_languages
 
 class TestNormalizeVoiceLanguages:
 
-    def test_order_is_preserved_first_is_primary(self):
+    def test_order_is_preserved(self):
+        """Preserved, not ranked: the provider calls these *possible* languages and states
+        no precedence. We keep what was sent rather than sorting it."""
         assert normalize_voice_languages(["ru", "uk", "en"]) == ["ru", "uk", "en"]
 
     def test_accepts_a_language_the_ui_does_not_support(self):

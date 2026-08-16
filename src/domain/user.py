@@ -235,7 +235,8 @@ class UserBotConfig(BaseModel):
     preferred_language: Optional[LanguageCode] = None
     agent_mirror: bool = True
 
-    # Languages the user may SPEAK in voice messages (ISO-639-1, ordered — first is primary).
+    # Languages the user may SPEAK in voice messages (ISO-639-1). Order is preserved but
+    # means nothing to the recogniser — the provider calls them *possible* languages.
     # Deliberately not LanguageCode: that enum is the closed set of translated UI languages
     # (uk/en/fr/es) and cannot express a language the bot speaks no UI in, e.g. "ru".
     # None = let the provider auto-detect. Set via Cabinet UI.
