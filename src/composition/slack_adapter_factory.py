@@ -6,6 +6,7 @@ Lives in composition/ so it can legally import from handlers/, infrastructure/,
 services/, and adapters/. Creates ConversationHandler here and injects it as
 ConversationHandlerPort into the platform adapter.
 """
+import os
 from typing import Optional
 from slack_bolt.async_app import AsyncApp
 
@@ -104,7 +105,7 @@ class SlackAdapterFactory:
         # Channel history source for bound channel sessions (Slack API)
         channel_history_source = SlackChannelHistorySource(
             slack_client=app.client,
-            bot_user_id=config.get("SLACK_BOT_USER_ID", ""),
+            bot_user_id=os.getenv("SLACK_BOT_USER_ID", ""),
         )
 
         conversation_handler = ConversationHandler(
