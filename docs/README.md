@@ -36,7 +36,7 @@ Detailed specifications of implemented subsystems:
 - **[Sliding Window Consolidation](./05_building_blocks/sliding_window_consolidation/README.md)** — memory pipeline.
 - **[Prompt Design System](./05_building_blocks/prompt_design_system_v3/README.md)** — token-based assembly.
 - **[Security Validation](./05_building_blocks/security_validation/README.md)** — input defense layers.
-- **[Telegram Integration](./05_building_blocks/telegram_integration/README.md)** / **[Slack Dual Mode](./05_building_blocks/slack_dual_mode/README.md)** — channel adapters.
+- **[Telegram Integration](./05_building_blocks/telegram_integration/README.md)** / **[Slack Integration](./05_building_blocks/slack_integration/README.md)** — channel adapters.
 - **[Search Enrichment](./05_building_blocks/search_enrichment/README.md)** — multi-vector RRF search.
 - **[OAuth Multi-Tenant](./05_building_blocks/oauth_multi_tenant/README.md)** — identity & IAM.
 - **[Remote MCP Server](./05_building_blocks/remote_mcp_server/README.md)** — claude.ai connector.

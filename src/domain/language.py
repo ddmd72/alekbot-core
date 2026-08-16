@@ -34,6 +34,32 @@ class LanguageCode(str, Enum):
         return value in {m.value for m in cls}
 
 
+def normalize_voice_languages(raw: object) -> list[str]:
+    """Normalize spoken-language codes for voice transcription.
+
+    Deliberately NOT validated against LanguageCode: that enum is the closed set of
+    translated UI languages, while a speaker may use any language the recogniser knows
+    (it has no "ru", and a multilingual household is the normal case). Only the shape is
+    checked — which codes actually work is the provider's business.
+
+    Order is preserved: the first code is the primary language. Duplicates are dropped.
+
+    Raises:
+        ValueError: input is not a list, or a code is not a two-letter ISO-639-1 code.
+    """
+    if not isinstance(raw, list):
+        raise ValueError("voice_languages must be a list")
+
+    codes: list[str] = []
+    for item in raw:
+        code = str(item).strip().lower()
+        if not (len(code) == 2 and code.isalpha()):
+            raise ValueError(f"Invalid ISO-639-1 code: {item}")
+        if code not in codes:
+            codes.append(code)
+    return codes
+
+
 def resolve_lang_token_id(
     preferred_language: Optional[LanguageCode],
     agent_mirror: bool,

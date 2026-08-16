@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from ..services.file_conversion_service import FileConversionService
 from ..utils.file_conversion import (
     convert_file_to_text, download_alert, is_native_binary, make_history_stub,
+    transcription_alert,
 )
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
@@ -254,6 +255,16 @@ class ConversationHandler(ConversationHandlerPort):
 
         return self.global_config
 
+    async def _get_voice_languages(self, user_id: str) -> Optional[List[str]]:
+        """Languages this user may speak in a voice message. None → provider auto-detects."""
+        try:
+            user_profile = await self.agent_factory.user_repo.get_user(user_id)
+            if user_profile and user_profile.config:
+                return user_profile.config.voice_languages or None
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to load voice languages for {user_id}: {e}")
+        return None
+
     def _ui_string(self, context: MessageContext, message: UIMessage, **fmt: Any) -> str:
         """Localized fixed UI string for the message's effective UI language."""
         if self._localization:
@@ -475,6 +486,52 @@ class ConversationHandler(ConversationHandlerPort):
                     logger.debug("Status update task cancelled")
 
         try:
+            # Voice messages are speech, not documents. Transcribing here — before the file
+            # path — makes the transcript the user's own turn: down the file path it becomes a
+            # reference-only part that never reaches history, leaving consolidation nothing to
+            # read. Without an audio service the attachment stays a file and the existing
+            # "transcription unavailable" alert still fires.
+            voice_alerts: List[str] = []
+            if self.audio_service and any(a.is_voice_message for a in context.attachments):
+                voice_languages = await self._get_voice_languages(context.user_id)
+                spoken: List[str] = []
+                for attachment in [a for a in context.attachments if a.is_voice_message]:
+                    context.attachments.remove(attachment)
+                    label = attachment.filename or "voice message"
+                    local_path = await response_channel.download_file(
+                        attachment.url, attachment.mime_type
+                    ) if attachment.url else None
+                    if not local_path:
+                        logger.warning(f"⚠️ Failed to download voice message: {label}")
+                        voice_alerts.append(download_alert(label))
+                        continue
+                    temp_files.append(local_path)
+                    try:
+                        transcript = (await self.audio_service.transcribe(
+                            local_path, attachment.mime_type, languages=voice_languages
+                        )).strip()
+                    except Exception as e:
+                        logger.error(
+                            f"❌ Voice transcription failed for {label}: {type(e).__name__}: {e}",
+                            exc_info=True,
+                        )
+                        voice_alerts.append(transcription_alert(label))
+                        continue
+                    if transcript:
+                        spoken.append(transcript)
+                        logger.info(f"🎙 Voice transcribed: {label} → {len(transcript)} chars")
+                    else:
+                        logger.warning(f"⚠️ Empty transcription for {label}")
+                        voice_alerts.append(transcription_alert(label))
+                if spoken:
+                    joined = "\n\n".join(spoken)
+                    context.text = f"{context.text}\n\n{joined}" if context.text else joined
+                elif voice_alerts and not context.text:
+                    # Nothing audible survived, and the attachment has already left the file
+                    # path — so without this the turn reaches the Router with no text at all
+                    # and it returns CANNOT_HANDLE. The note has to BE the turn.
+                    context.text = voice_alerts.pop(0)
+
             # FALLBACK: If no text but has attachments → use localized file prompt
             if not context.text and context.attachments:
                 first_attachment = context.attachments[0]
@@ -499,6 +556,10 @@ class ConversationHandler(ConversationHandlerPort):
             
             if context.text:
                 message_parts.append(MessagePart(text=context.text))
+
+            # After the user's turn: an alert about a lost voice message reads as a note on
+            # what was just said, not as a message of its own.
+            message_parts.extend(MessagePart(text=alert) for alert in voice_alerts)
 
             if context.attachments:
                 current_status_type = StatusType.PROCESSING_FILE

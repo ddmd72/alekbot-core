@@ -255,6 +255,14 @@ conditional on `GCS_MEDIA_BUCKET`. **Bound channels:** ConversationHandler strip
 (the primary agent did not fail; one input did). Temp-file names are bounded by `safe_temp_suffix()`
 in **bytes** — NAME_MAX is 255 bytes and a Cyrillic character costs 2. See
 `docs/05_building_blocks/file_storage/README.md` §2.1.1.
+- **Voice messages never enter this pipeline.** A Slack voice memo / Telegram voice note
+  (`FileAttachment.is_voice_message`) is transcribed in ConversationHandler *before* the file path and
+  the transcript becomes `context.text` — the user's own turn. Through the pipeline it would be a
+  reference-only part, absent from history, so consolidation would get the synthetic "look at this
+  file" fallback instead. Model `gpt-transcribe`; spoken languages are a per-user setting
+  (`UserBotConfig.voice_languages`, ISO-639-1 list, NOT `LanguageCode` — that enum has no `ru`).
+  Slack's marker is the file name `audio_message.*`, never the mimetype (seen as both audio/mp4 and
+  video/mp4). See `decisions/voice_message_transcription.md`.
 
 **Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic; each channel (Slack
 C.../D..., Telegram chat_id) has its own session/history/consolidation stream (a DM is just channel D...).

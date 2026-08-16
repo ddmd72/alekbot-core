@@ -97,7 +97,7 @@ The system is composed of 11 core building blocks, each documented in detail:
 
 - **[Gmail Email Indexing](../../05_building_blocks/gmail_email_indexing/README.md)** — Passive inbox-as-memory pipeline (OAuth, indexing, classification, search)
 - **[Deep Research](../../10_rfcs/DEEP_RESEARCH_RFC.md)** — Provider-agnostic background research (Claude Cloud Run Job / OpenAI webhook)
-- **[Slack Dual Mode](../../05_building_blocks/slack_dual_mode/README.md)** — Socket Mode (dev) + HTTP Events API (prod)
+- **[Slack Integration](../../05_building_blocks/slack_integration/README.md)** — HTTP Events API (Socket Mode removed 2026-08-16)
 - **[Telegram Integration](../../05_building_blocks/telegram_integration/README.md)** — Webhook adapter
 - **[Rich Content Protocol](../../05_building_blocks/rich_content_protocol/README.md)** — Structured response rendering
 
@@ -214,8 +214,8 @@ Slack Event
 ### 8.3 Environment Detection
 
 ```
-APP_ENV=development + SLACK_MODE=http → Cloud Run Dev
-APP_ENV=production + SLACK_MODE=http → Cloud Run Prod
+APP_ENV=development → Cloud Run Dev
+APP_ENV=production → Cloud Run Prod
 Collections: development_domain_facts_v2 / domain_facts_v2
 ```
 

@@ -4,44 +4,27 @@ from src.composition.slack_adapter_factory import SlackAdapterFactory
 
 
 @pytest.mark.requirement("REQ-CORE-09")
-def test_factory_selects_socket_mode_with_dev_tokens():
-    """
-    Verify Socket Mode adapter selection and DEV token override.
+def test_factory_requires_db_client():
+    """Socket Mode was the only adapter that ran without persistence.
+
+    It was removed 2026-08-16 (local-only, unused — everything runs on Cloud Run), so the
+    factory no longer selects between modes: HTTP is the only path, and it cannot be built
+    without a session store.
     Covers: REQ-CORE-09 (Adapter Mode Selection)
     """
-    app = AsyncMock()
-    agent_factory = AsyncMock()
-    iam_service = AsyncMock()
-
-    env_config = MagicMock()
-    env_config.is_socket_mode = True
-    env_config.is_http_mode = False
-    env_config.slack_mode = MagicMock(value="socket")
-
-    config = {
-        "SLACK_BOT_TOKEN": "prod-bot",
-        "SLACK_APP_TOKEN": "prod-app",
-        "DEV_SLACK_BOT_TOKEN": "dev-bot",
-        "DEV_SLACK_APP_TOKEN": "dev-app",
-    }
-
-    with patch("src.composition.slack_adapter_factory.SocketModeAdapter") as mock_socket, \
-         patch("src.composition.slack_adapter_factory.ConversationHandler"):
-        SlackAdapterFactory.create_adapter(
-            app=app,
-            coordinator=AsyncMock(),
-            agent_factory=agent_factory,
-            iam_service=iam_service,
-            file_service=AsyncMock(),
-            session_store=AsyncMock(),
-            config=config,
-            env_config=env_config,
-            db_client=None
-        )
-
-        _, kwargs = mock_socket.call_args
-        assert kwargs["config"]["SLACK_BOT_TOKEN"] == "dev-bot"
-        assert kwargs["config"]["SLACK_APP_TOKEN"] == "dev-app"
+    with patch("src.composition.slack_adapter_factory.ConversationHandler"):
+        with pytest.raises(ValueError, match="db_client is required"):
+            SlackAdapterFactory.create_adapter(
+                app=AsyncMock(),
+                coordinator=AsyncMock(),
+                agent_factory=AsyncMock(),
+                iam_service=AsyncMock(),
+                file_service=AsyncMock(),
+                session_store=AsyncMock(),
+                config={"SLACK_BOT_TOKEN": "prod-bot"},
+                env_config=MagicMock(),
+                db_client=None,
+            )
 
 
 @pytest.mark.requirement("REQ-CORE-09")

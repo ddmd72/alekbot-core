@@ -92,6 +92,18 @@ Files are kept for 90 days. Supported: anything that can be converted to text (D
 
 ---
 
+*Voice messages*
+Record a voice message in Slack or Telegram instead of typing — I transcribe it and treat it as
+if you had written it. That means it works with everything else: memory, mail, tasks, documents,
+and it goes into long-term memory the same way typed messages do.
+
+You can set which languages you speak in the Cabinet — several at once, so switching languages
+mid-sentence is fine. If I cannot make out a recording I will say so rather than guess.
+
+An audio *file* you upload is different: that stays an attachment, and I read it as file content.
+
+---
+
 *Documents*
 I create formatted documents delivered directly in the chat.
 

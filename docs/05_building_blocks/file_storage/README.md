@@ -119,6 +119,21 @@ ConversationHandler
 LLM adapters encode file_data.path for current turn if present
 ```
 
+#### 2.1.0 What never enters this pipeline: voice messages
+
+A **voice message** (Slack voice memo, Telegram voice note — `FileAttachment.is_voice_message`)
+is transcribed in `ConversationHandler` *before* the flow above and never reaches
+`process_attachment`: the transcript becomes `context.text`, and the attachment is dropped.
+
+The reason is §2.5: file content is stored by reference, so it does not enter session history.
+A spoken turn routed through this pipeline would leave history holding the synthetic
+"no text + attachment" fallback, and consolidation would have nothing to read. Short-circuiting
+also avoids paying for transcription twice via the double fetch in §2.2.
+
+An audio **file** the user uploads is not a voice message and does follow this pipeline; its
+transcript is file content. See
+[`decisions/voice_message_transcription.md`](../../04_solution_strategy/decisions/voice_message_transcription.md).
+
 #### 2.1.1 A file that never arrives
 
 `download_file` returns `None` on any platform-side failure. The attachment slot then carries

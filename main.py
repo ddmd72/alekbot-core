@@ -14,7 +14,6 @@ from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQue
 from src.services.iam_service import IAMService
 from src.composition.user_agent_factory import UserAgentFactory
 from src.composition.slack_adapter_factory import SlackAdapterFactory
-from src.utils.server import run_dummy_server
 from src.utils.logger import logger
 from src.utils.telemetry import init_telemetry
 from src.adapters.firestore_repo import FirestoreFactRepository
@@ -155,9 +154,8 @@ async def main():
         for descriptor in ALL_DESCRIPTORS:
             agent_registry.register(descriptor)
 
-        # Task queue: only in HTTP mode where Cloud Tasks is available
         agent_task_queue = None
-        if env_config.is_http_mode and config.get("GOOGLE_CLOUD_PROJECT"):
+        if config.get("GOOGLE_CLOUD_PROJECT"):
             queue_suffix = "dev" if env_config.is_development else "prod"
             service_url = config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
             agent_task_queue = GcpTaskQueue(
@@ -350,7 +348,7 @@ async def main():
                 model_override=config.get("OPENAI_DEEP_RESEARCH_MODEL"),
             ))
             logger.info("🔬 Deep research adapter registered: provider=openai")
-        if config.get("ANTHROPIC_API_KEY") and config.get("GOOGLE_CLOUD_PROJECT") and env_config.is_http_mode:
+        if config.get("ANTHROPIC_API_KEY") and config.get("GOOGLE_CLOUD_PROJECT"):
             queue_suffix = "dev" if env_config.is_development else "prod"
             cloud_jobs_adapter = CloudRunJobsAdapter(
                 project=config["GOOGLE_CLOUD_PROJECT"],
@@ -625,12 +623,6 @@ async def main():
         sys.exit(1)
 
     try:
-        if env_config.is_socket_mode:
-            try:
-                run_dummy_server()
-            except Exception as e:
-                logger.error(f"❌ Failed to start dummy server: {e}")
-
         # HTML renderer (optional — lazy-starts Chromium on first widget request)
         html_renderer = None
         if config.get("ENABLE_HTML_RENDERER"):
@@ -640,14 +632,20 @@ async def main():
         else:
             logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
 
+        # Audio transcription (optional — voice messages stay an honest alert without it)
+        audio_service = None
+        if config.get("OPENAI_API_KEY"):
+            from src.adapters.openai_transcription_adapter import OpenAITranscriptionAdapter
+            audio_service = OpenAITranscriptionAdapter(
+                api_key=config["OPENAI_API_KEY"],
+                model=config.get("OPENAI_TRANSCRIPTION_MODEL"),
+            )
+        else:
+            logger.info("ℹ️ Audio transcription disabled (OPENAI_API_KEY not set)")
+
         logger.info("🔌 Initializing Slack Adapter...")
-        logger.debug(f"Socket mode: {env_config.is_socket_mode}")
-        logger.debug(f"HTTP mode: {env_config.is_http_mode}")
 
         bot_token = config["SLACK_BOT_TOKEN"]
-        if env_config.is_socket_mode and config.get("DEV_SLACK_BOT_TOKEN"):
-            logger.info("🛠 Using DEVELOPMENT Slack Bot Token")
-            bot_token = config["DEV_SLACK_BOT_TOKEN"]
 
         logger.debug(f"Bot token starts with: {bot_token[:10]}...")
 
@@ -667,7 +665,7 @@ async def main():
             db_client=db_client,
             consolidation_queue=consolidation_queue,
             consolidation_config=config.get("CONSOLIDATION"),
-            audio_service=None,
+            audio_service=audio_service,
             html_renderer=html_renderer,
             notification_service=notification_service,
             indexed_email_repo=container.indexed_email_repo,
@@ -765,6 +763,7 @@ async def main():
                             file_service=file_service,
                             consolidation_queue=consolidation_queue,
                             consolidation_config=config.get("CONSOLIDATION"),
+                            audio_service=audio_service,
                             html_renderer=html_renderer,
                             notification_service=notification_service,
                             indexed_email_repo=container.indexed_email_repo,

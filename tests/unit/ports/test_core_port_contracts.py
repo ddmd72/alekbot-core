@@ -129,7 +129,9 @@ class TestAudioTranscriptionPortContract:
     def test_transcribe_signature(self):
         sig = inspect.signature(AudioTranscriptionPort.transcribe)
         params = list(sig.parameters.keys())
-        assert params == ["self", "local_path", "mime_type"]
+        # `languages` added 2026-08-16: spoken languages are a per-user, per-call setting
+        # (a multilingual household is the normal case), so they cannot live on the adapter.
+        assert params == ["self", "local_path", "mime_type", "languages"]
         assert sig.return_annotation == str
 
 

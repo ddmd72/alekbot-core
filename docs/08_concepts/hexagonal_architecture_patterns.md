@@ -444,7 +444,7 @@ class SlackAdapterFactory:
     def create(self) -> SlackAdapter:
         handler = ConversationHandler(...)       # Concrete — legal in composition/
         auth = IAMService(...)                   # Concrete — legal in composition/
-        return SocketModeAdapter(
+        return HTTPModeAdapter(
             conversation_handler=handler,        # Injected as ConversationHandlerPort
             platform_auth=auth,                  # Injected as PlatformAuthPort
         )

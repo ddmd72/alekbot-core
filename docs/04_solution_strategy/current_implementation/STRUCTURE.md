@@ -72,13 +72,13 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                            #    pdf_generator/runner.js via stdin, captures PDF bytes from stdout
 │   ├── notification_channel_factory.py # 🆕 Wires Slack/Telegram adapters for UserNotificationService
 │   ├── openai_adapter.py  # 🆕 OpenAI Responses API LLMPort (gpt-5.4-nano/mini/full)
+│   ├── openai_transcription_adapter.py # AudioTranscriptionPort (gpt-transcribe)
 │   ├── openai_deep_research_adapter.py # 🆕 OpenAI Responses API DeepResearchPort (webhook delivery)
 │   ├── playwright_html_renderer.py # 🆕 HTML → PNG via headless Chromium (HtmlRendererPort)
 │   ├── slack/          # Slack integration subsystem
 │   │   ├── base.py
 │   │   ├── http_adapter.py
 │   │   ├── media_adapter.py # 🆕 SlackMediaAdapter — files_upload_v2
-│   │   ├── socket_adapter.py
 │   │   └── response_channel.py
 │   └── telegram/       # 🆕 Telegram integration subsystem
 │       ├── media_adapter.py  # TelegramMediaAdapter — send_photo / send_document
@@ -316,6 +316,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`firestore_session_store.py`**: Session persistence with **90-day TTL** and sliding window overflow logic.
 -   **`platform/`**: Platform adapter factory:
     -   `factory.py`: `PlatformAdapterFactory` — registry of `PlatformPort` implementations; `create(platform, **kwargs)`. The `PlatformPort` ABC lives in `ports/platform_port.py`.
+-   **`openai_transcription_adapter.py`**: `OpenAITranscriptionAdapter(AudioTranscriptionPort)` — speech-to-text via `/v1/audio/transcriptions`. Model `gpt-transcribe` (the only family accepting `languages`), env-overridable. Derives the filename extension from the mime type — the temp path's extension is a platform artifact (Telegram serves voice as `.oga`, which the API rejects by name).
 -   **`openai_adapter.py`**: 🆕 `OpenAIAdapter(LLMPort)` — OpenAI Responses API implementation. Native web search with agentic reasoning, function calling, JSON mode, vision. Tier mapping: ECO→gpt-5.4-nano, BALANCED→gpt-5.4-mini, PERFORMANCE→gpt-5.4.
 -   **`openai_deep_research_adapter.py`**: 🆕 `OpenAIDeepResearchAdapter(DeepResearchPort)` — Responses API with background mode. Webhook-based push delivery (no polling Cloud Tasks). Metadata (user_id, account_id, query) embedded at submit time and echoed back by OpenAI in the webhook payload. Tier mapping: ECO/BALANCED→o4-mini-deep-research, PERFORMANCE→o3-deep-research.
 -   **`node_puppeteer_runner.py`**: 🆕 `NodePuppeteerRunner(PuppeteerRunnerPort)` — pipes HTML to `pdf_generator/runner.js` via stdin, captures raw PDF bytes from stdout. Error cases: non-zero exit code, timeout, or empty stdout → `PuppeteerRunnerError`. Temp file cleanup guaranteed in `finally` block.
@@ -324,7 +325,6 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`slack/`**: Slack integration subsystem with dual-mode support:
     -   `base.py`: Abstract `SlackAdapter` base class
     -   `http_adapter.py`: HTTP Events API adapter for Cloud Run production
-    -   `socket_adapter.py`: Socket Mode adapter for local development
     -   `response_channel.py`: Implementation of `ResponseChannel` protocol for Slack
     -   `media_adapter.py`: 🆕 `SlackMediaAdapter(PlatformMediaPort)` — `files_upload_v2` for images and files
 -   **`telegram/`**: 🆕 Telegram integration subsystem:
@@ -340,7 +340,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`telegram_adapter_factory.py`**: 🆕 `TelegramAdapterFactory` — mirrors `SlackAdapterFactory`. Creates `TelegramMediaAdapter` → `RichContentService(html_renderer=html_renderer)` → `ConversationHandler` → `TelegramWebhookAdapter`. Receives shared `html_renderer` singleton from `main.py`.
 
 ### `config/` - Configuration Layer
--   **`environment.py`**: Centralized environment detection and configuration. Manages `APP_ENV` (development/production/test) and `SLACK_MODE` (http/socket). Provides Firestore collection prefixes for environment isolation.
+-   **`environment.py`**: Centralized environment detection and configuration. Manages `APP_ENV` (development/production/test). Provides Firestore collection prefixes for environment isolation.
 -   **`settings.py`**: Application settings and constants. Re-exports `SearchConfig` from `domain/settings.py` for backward compatibility.
 
 ### `domain/` - Domain Layer (Business Logic)
