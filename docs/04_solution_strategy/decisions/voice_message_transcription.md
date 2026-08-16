@@ -83,4 +83,5 @@ per call, so it cannot live on a singleton adapter.
 
 Per-user vocabulary biasing becomes necessary, a cheaper provider gains a language list, or
 voice volume grows enough that transcription cost stops being noise (it does not pass through
-`TokenLedger` — a known, accepted blind spot).
+`TokenLedger` by decision — see
+[`transcription_cost_not_billed.md`](transcription_cost_not_billed.md)).
