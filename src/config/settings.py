@@ -45,6 +45,12 @@ def load_settings():
     else:
         print(f"🟢 {env_config.env.value.upper()} MODE")
 
+    # Secrets and required configuration ONLY. Every key here that resolves empty is chased
+    # into Secret Manager on each boot (see the loop below), so an optional knob costs a
+    # pointless lookup and a warning every cold start. Optional overrides — model pins,
+    # rollback switches — are read with os.getenv() at their call site instead. A key read
+    # via config.get() but missing here silently resolves to None: that is how the
+    # deep-research model overrides were dead from the day they were written.
     settings = {
         "APP_ENV": env_config.env.value,
         "ENVIRONMENT_CONFIG": env_config,
@@ -57,7 +63,6 @@ def load_settings():
         "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
         "XAI_API_KEY": os.getenv("XAI_API_KEY"),  # xAI Grok (Session 2026-02-12)
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),  # OpenAI (Session 2026-03-03)
-        "OPENAI_TRANSCRIPTION_MODEL": os.getenv("OPENAI_TRANSCRIPTION_MODEL"),
         "OPENAI_DEEP_RESEARCH_WEBHOOK_URL": os.getenv("OPENAI_DEEP_RESEARCH_WEBHOOK_URL"),
         "OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET": os.getenv("OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET"),
         "GOOGLE_SEARCH_API_KEY": os.getenv("GOOGLE_SEARCH_API_KEY"),

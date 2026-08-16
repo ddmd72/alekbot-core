@@ -115,6 +115,13 @@ index` (full); `codegraph status` shows index health.
   revision (this leaked `localhost` into prod `OAUTH_REDIRECT_URI`). When a value differs between
   local and deploy, give the deploy side its own key (e.g. `SERVICE_URL_DEV`) — never reuse the
   dual-purpose local key. Deploy reads the **working tree, not git** — uncommitted changes still ship.
+- **`config.get()` vs `os.getenv()` — an env var read the wrong way is silently dead.** The `config`
+  dict from `load_settings()` lists its keys by hand; `config.get("ANYTHING_NOT_LISTED")` returns
+  `None` with no error, which is how `OPENAI_DEEP_RESEARCH_MODEL`, `CLAUDE_DEEP_RESEARCH_MODEL` and
+  `SLACK_BOT_USER_ID` were dead from the day they were written (fixed 2026-08-16). Rule: **secrets and
+  required configuration go in `load_settings()`; optional knobs — model pins, rollback switches — are
+  read with `os.getenv()` at their call site.** Registering an optional knob is not free either: every
+  empty key in that dict is chased into Secret Manager on each boot.
 
 ## What and Why
 

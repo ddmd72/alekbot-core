@@ -345,7 +345,7 @@ async def main():
             job_registry.register("openai", OpenAIDeepResearchAdapter(
                 api_key=config["OPENAI_API_KEY"],
                 webhook_url=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_URL"),
-                model_override=config.get("OPENAI_DEEP_RESEARCH_MODEL"),
+                model_override=os.getenv("OPENAI_DEEP_RESEARCH_MODEL"),
             ))
             logger.info("🔬 Deep research adapter registered: provider=openai")
         if config.get("ANTHROPIC_API_KEY") and config.get("GOOGLE_CLOUD_PROJECT"):
@@ -357,7 +357,7 @@ async def main():
             job_registry.register("claude", ClaudeDeepResearchAdapter(
                 job_runner=cloud_jobs_adapter,
                 job_name=f"alek-research-job-{queue_suffix}",
-                model_override=config.get("CLAUDE_DEEP_RESEARCH_MODEL"),
+                model_override=os.getenv("CLAUDE_DEEP_RESEARCH_MODEL"),
             ))
             logger.info("🔬 Deep research adapter registered: provider=claude (Cloud Run Job)")
 
@@ -638,7 +638,7 @@ async def main():
             from src.adapters.openai_transcription_adapter import OpenAITranscriptionAdapter
             audio_service = OpenAITranscriptionAdapter(
                 api_key=config["OPENAI_API_KEY"],
-                model=config.get("OPENAI_TRANSCRIPTION_MODEL"),
+                model=os.getenv("OPENAI_TRANSCRIPTION_MODEL"),
             )
         else:
             logger.info("ℹ️ Audio transcription disabled (OPENAI_API_KEY not set)")
