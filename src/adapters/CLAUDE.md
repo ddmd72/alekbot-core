@@ -115,11 +115,16 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   complex" — `rich_content` is therefore a discriminated `anyOf` (null | widget | table | file), not a
   flat bag of optional keys. See `docs/04_solution_strategy/decisions/claude_schema_respond_tool.md`.
 
-  > **Note — `deliver_response` is NOT this mechanism.** Smart passes
-  > `terminal_tool="deliver_response"` to the DelegationEngine, but that terminal-tool branch is
-  > vestigial (no adapter declares such a tool). Smart's structured output arrives via
-  > `output_config.format` → JSON-text (Claude) or native JSON (Gemini/OpenAI). See
-  > IMPLEMENTATION_ROADMAP.md TD-3.
+  > **Note — `deliver_response` IS this mechanism on Grok, and only there.** Smart passes
+  > `terminal_tool="deliver_response"` to the DelegationEngine. On Claude/Gemini/OpenAI the branch
+  > stays cold and structured output arrives via `output_config.format` → JSON-text (Claude) or
+  > native JSON (Gemini/OpenAI). On **Grok** constrained JSON and function calling compete, so
+  > `GrokAdapter` synthesizes `deliver_response` as a real function whose parameters are the
+  > response schema — the terminal-tool branch is then Smart's only reply path. The earlier
+  > "vestigial" note is retracted and TD-3 is closed as invalid: **do not delete this machinery.**
+  > A terminal tool may also arrive in the same batch as real work (`create_html_page` +
+  > `deliver_response`); the engine dispatches the siblings before returning — see
+  > `decisions/terminal_tool_co_emitted_calls.md`.
 
   **OUTPUT_FORMAT token** — prompt-level instruction in Firestore blueprint. The authoritative
   source of truth for output structure. All JSON agents must have one. `response_schema` and

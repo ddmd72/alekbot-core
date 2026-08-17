@@ -192,9 +192,26 @@ mandatory before team/multi-user rollout.
   floor gate (`gpt-5.5-pro` rejects `low`) when rotation lands ULTRA on OpenAI — see
   `05_building_blocks/openai_integration/README.md`.
 
-### TD-3: Dead `deliver_response` / `terminal_tool` machinery in delegation loop [P3] — 🔲 OPEN
+### TD-3: Dead `deliver_response` / `terminal_tool` machinery in delegation loop [P3] — ❌ CLOSED (invalidated 2026-08-17)
 
-- **Problem:** Smart passes `terminal_tool="deliver_response"` to `DelegationEngine`
+> **Do not implement the fix below — it would break Smart on Grok outright.** The premise
+> ("no adapter declares a `deliver_response` tool") stopped holding on 2026-08-15: constrained
+> JSON and function calling compete on xAI, so `GrokAdapter` synthesizes the response schema as
+> a real `deliver_response` function (`grok_adapter.py`, `TERMINAL_TOOL_NAME`) and Smart's answer
+> now arrives **only** through this branch. Deleting it would delete Smart's reply path.
+>
+> Closing this item cost a production defect first: because the branch was believed dead, it
+> returned before dispatching the turn's other tool calls. Grok co-emitted `create_html_page`
+> alongside `deliver_response` in the 2026-08-17 morning briefing; the newspaper was composed,
+> the sibling call was silently dropped, and no page was ever enqueued. Fixed by dispatching
+> co-emitted calls before returning — see
+> `decisions/terminal_tool_co_emitted_calls.md` and
+> `tests/unit/infrastructure/test_delegation_engine_terminal_siblings.py`.
+>
+> Standing lesson: "this branch is unreachable" is a statement about the *current* adapter set,
+> not about the engine. A new provider can revive it without touching the engine at all.
+
+- **Problem (as originally written — the premise is now false):** Smart passes `terminal_tool="deliver_response"` to `DelegationEngine`
   (`smart_response_agent.py:376`), but **no adapter declares a `deliver_response` tool**. On every
   provider the final structured answer arrives via `response_schema` instead: on Claude the
   synthesized `respond` tool is intercepted in the adapter and returned as JSON *text* with
