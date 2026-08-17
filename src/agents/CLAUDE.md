@@ -175,14 +175,25 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   — zero knowledge of routing, channels, or session format.
   API: `engine.execute(call_llm, base_request, context, max_turns, terminal_tool?, intent_remap?,
   intent_fanout?)`.
-  Smart: passes `terminal_tool="deliver_response"`, but this is **vestigial** — no adapter declares a
-  `deliver_response` tool, so the engine's terminal-tool branch never fires. Smart's structured output
-  arrives via `response_schema` instead: on Claude it is forwarded natively via `output_config.format`
-  (schema-valid JSON as *text*; no tool — the synthesized `respond` tool was removed 2026-07-02, see
-  [`src/adapters/CLAUDE.md`](../adapters/CLAUDE.md) → Agent Output Format Standards); Gemini/OpenAI return
-  native JSON. The loop therefore always ends via the *no-tool-calls → return text* branch, and
-  `_build_smart_response` parses `result.text` (the `terminal_tool_args` path is unreachable — see
-  IMPLEMENTATION_ROADMAP.md TD-3).
+  Smart: passes `terminal_tool="deliver_response"`. **This branch is live and provider-dependent —
+  it is NOT vestigial** (that claim was true until 2026-08-15 and is now retracted; TD-3 is closed
+  as invalid, do not "clean up" the machinery):
+  - **Grok** — constrained JSON and function calling compete on xAI, so `GrokAdapter` moves the
+    answer off the text channel and onto a synthesized `deliver_response` function whose parameters
+    ARE `_RESPONSE_SCHEMA`. The loop ends via the **terminal-tool** branch and
+    `_build_smart_response` reads `terminal_tool_args`. This is Smart's only reply path on Grok.
+  - **Claude / Gemini / OpenAI** — structured output arrives via `response_schema` (Claude:
+    `output_config.format` → schema-valid JSON as *text*, no tool — the synthesized `respond` tool
+    was removed 2026-07-02, see [`src/adapters/CLAUDE.md`](../adapters/CLAUDE.md) → Agent Output
+    Format Standards; Gemini/OpenAI: native JSON). The loop ends via *no-tool-calls → return text*
+    and `_build_smart_response` parses `result.text`.
+
+  **A terminal tool can arrive alongside real work in the same batch.** The model may dispatch an
+  async hop and answer in one breath (`create_html_page` + `deliver_response` — exactly what the
+  briefing protocol asks for). The engine dispatches every co-emitted non-terminal call, folds its
+  `delivery_items`/`history_context` into the result, and *then* returns the terminal answer; no
+  result is fed back, since the model has already written its reply. Returning before that dispatch
+  silently dropped the 2026-08-17 briefing page — see `decisions/terminal_tool_co_emitted_calls.md`.
   Quick: `intent_remap={}` (disabled), `intent_fanout` from descriptor.
   Bound agents: plain text response, no terminal tool, no remap, no fanout.
   `DelegationResult` carries: `text`, `terminal_tool_args`, `total_tokens`, `delivery_items`,

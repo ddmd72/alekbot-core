@@ -406,7 +406,9 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   [`src/adapters/CLAUDE.md`](src/adapters/CLAUDE.md) (loads when working in `adapters/`).
 - **Agent-orchestration patterns** — AgentDescriptor, Intent, specialist delegation (commissioning
   model, `query` vs `context`), DelegationEngine (multi-turn loop, context passthrough, `deliver_response`
-  vestigial note, intent fan-out), BaseAgent lifecycle hooks, `build_tool_turn`, LLM-content capture,
+  terminal tool — **live on Grok, cold elsewhere**; co-emitted siblings are dispatched before the
+  terminal return; TD-3 closed as invalid, do not delete it — intent fan-out),
+  BaseAgent lifecycle hooks, `build_tool_turn`, LLM-content capture,
   CircuitBreaker, transcript integrity, AgentConfig → moved to
   [`src/agents/CLAUDE.md`](src/agents/CLAUDE.md) → Orchestration Patterns (loads when working in `agents/`).
 - **SCD2 versioning** — FactEntity uses valid_from/valid_to/is_current.

@@ -243,6 +243,48 @@ class DelegationEngine:
                         "🔄 [DelegationEngine] Turn %s — terminal tool '%s' received",
                         turn + 1, terminal_tool,
                     )
+                    # The model may commit to work in the SAME turn it delivers its
+                    # answer, and that is a legitimate shape rather than a malformed
+                    # turn: GrokAdapter synthesizes the terminal tool as a REAL
+                    # function (constrained JSON and function calling compete on xAI
+                    # — see grok_adapter.py), so "dispatch the page generation AND
+                    # say one line in chat" arrives as two tool calls in one batch.
+                    # Returning here without dispatching them dropped the work
+                    # silently — the 2026-08-17 briefing composed a full newspaper,
+                    # called create_html_page next to deliver_response, and no page
+                    # was ever enqueued.
+                    #
+                    # These calls are fire-and-forget by construction: the model has
+                    # already written its answer, so no result is fed back to it.
+                    # We still dispatch them, because the model COMMITTED to them —
+                    # an async generation hop must reach its queue, and a
+                    # save_to_memory / delete_file must actually happen. Filtering
+                    # by name (not identity) also drops a duplicate terminal call
+                    # instead of dispatching it as an empty-intent delegation.
+                    siblings = [
+                        tc for tc in response.tool_calls if tc.name != terminal_tool
+                    ]
+                    if siblings:
+                        logger.info(
+                            "🔄 [DelegationEngine] Turn %s — dispatching %s co-emitted "
+                            "call(s) before returning: %s",
+                            turn + 1, len(siblings), [tc.name for tc in siblings],
+                        )
+                        sibling_results = await self._execute_tool_calls(
+                            tool_calls=siblings,
+                            context=context,
+                            intent_remap=remap,
+                            intent_fanout=fanout,
+                            calling_agent_id=calling_agent_id,
+                            max_retries=max_retries,
+                            retry_backoff=retry_backoff,
+                        )
+                        accumulated_structured = self._accumulate_tool_metadata(
+                            sibling_results,
+                            accumulated_contexts,
+                            all_delivery_items,
+                            accumulated_structured,
+                        )
                     return DelegationResult(
                         text="",
                         total_tokens=total_tokens,
@@ -284,13 +326,12 @@ class DelegationEngine:
             )
 
             # --- Accumulate metadata ---
-            for tr in tool_results:
-                if tr.structured_data and accumulated_structured is None:
-                    accumulated_structured = tr.structured_data
-                if tr.history_context:
-                    for key, value in tr.history_context.items():
-                        accumulated_contexts.setdefault(key, []).append(value)
-                all_delivery_items.extend(tr.delivery_items)
+            accumulated_structured = self._accumulate_tool_metadata(
+                tool_results,
+                accumulated_contexts,
+                all_delivery_items,
+                accumulated_structured,
+            )
 
             # --- Append model message + tool responses to history ---
             # Guard: tool_calls and tool_results must be 1:1. zip() would silently
@@ -325,6 +366,37 @@ class DelegationEngine:
             messages=history,
             failed=True,
         )
+
+    # ------------------------------------------------------------------ #
+    # Metadata accumulation                                               #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _accumulate_tool_metadata(
+        tool_results: List[ToolResult],
+        contexts: Dict[str, List[Any]],
+        delivery_items: List[DeliveryItem],
+        structured: Any,
+    ) -> Any:
+        """Fold tool-result metadata into the loop's accumulators.
+
+        ``contexts`` and ``delivery_items`` are mutated in place; ``structured``
+        is returned instead, because first-write-wins on a scalar cannot be
+        expressed by mutation.
+
+        Shared by the normal turn path and the terminal-tool path deliberately:
+        a co-emitted call's delivery_items and history_context must land in the
+        result exactly like any other turn's, and two copies of this fold would
+        drift the moment one gains a field.
+        """
+        for tr in tool_results:
+            if tr.structured_data and structured is None:
+                structured = tr.structured_data
+            if tr.history_context:
+                for key, value in tr.history_context.items():
+                    contexts.setdefault(key, []).append(value)
+            delivery_items.extend(tr.delivery_items)
+        return structured
 
     # ------------------------------------------------------------------ #
     # Tool execution — uniform parallel                                   #
