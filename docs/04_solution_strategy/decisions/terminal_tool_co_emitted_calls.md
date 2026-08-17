@@ -77,8 +77,12 @@ rather than dispatched as an empty-intent delegation.
 ## Not addressed here
 
 The same morning, Smart timed out on an interactive question (trace `01a00eb17f…`, 07:48–07:53).
-That was **not** this defect and not a budget defect: grok-4.6 went looking for breakwater geometry
-through `overpass-api.de` web searches instead of asking Maps for `compute_routes` (which the MCP
-client had advertised), burned the 300s `INTERACTIVE` ceiling across 4 turns, and the circuit
-breaker plus Quick fallback degraded as designed. Left alone by owner decision — a reasoning-quality
-observation about Smart-on-Grok, tracked with the provider evaluation, not a code fix.
+That was **not** this defect and not a budget defect. The cause turned out to be a standing
+directive misfiring, not a perception or latency failure — see
+`decisions/directive_applicability_gate.md`. The circuit breaker and the Quick fallback degraded as
+designed.
+
+An earlier revision of this section attributed the timeout to grok-4.6 "going looking for breakwater
+geometry instead of asking Maps for `compute_routes`". That description was accurate but its
+implication was wrong: it reads as though the model lacked a scale reference. It had one and had
+already read it correctly.
