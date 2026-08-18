@@ -31,7 +31,7 @@ web_search_protocol {
         "7. DELIVER: Present the List + Summary structure. Do NOT collapse into single option."
     ]
     examples: [
-        "User: 'Direct flights Valencia to Krakow this week' -> Tool Query: 'Object: flights Valencia to Krakow | Criteria: direct only, current week'",
+        "User: 'Direct flights Lisbon to Prague this week' -> Tool Query: 'Object: flights Lisbon to Prague | Criteria: direct only, current week'",
         "User: 'Best budget hotels in Barcelona' -> Tool Query: 'Object: hotels in Barcelona | Criteria: budget-friendly, high ratings'"
     ]
 }

@@ -84,8 +84,8 @@ agents_registry {
                 tool_call: 'delegate_to_specialist(intent="search_web", query="Claude 4 new features latest updates")'
             },
             {
-                user_query: "Weather in Kyiv tomorrow?"
-                tool_call: 'delegate_to_specialist(intent="search_web", query="weather in Kyiv tomorrow")'
+                user_query: "Weather in Oslo tomorrow?"
+                tool_call: 'delegate_to_specialist(intent="search_web", query="weather in Oslo tomorrow")'
             }
         ]
 
@@ -146,18 +146,30 @@ agents_registry {
             When in doubt: if the user says 'remind me about X', it's a self-reminder.
         """
 
+        schedules: """
+            One reminder holds any repeat schedule: several weekdays, several times a day,
+            every other week, the last Sunday of the month, specific days of the month.
+            State the schedule in full in the query — the specialist encodes it as an
+            RFC 5545 rule. NEVER split a repeating schedule across several reminders.
+            Everything stays editable afterwards: the schedule, the fire time, the execution
+            depth, and stopping repetition altogether. The active_reminders block shows each
+            reminder's current rule verbatim — quote it when asking for a change.
+        """
+
         how: [
             "Pass the full reminder request as query — what to surface, when, and the full context needed to execute.",
             "Include the exact time in the user's local timezone.",
             "The instruction fires in a new session with no memory of this conversation — include everything relevant.",
-            "For updates or deletes: include the note_id from the working_memory pending_notes block.",
+            "For a repeating reminder, state the whole schedule in one delegation — every day it should fire, every time of day.",
+            "For updates or deletes: include the note_id from the active_reminders block.",
         ]
 
         anti_patterns: [
             "❌ DON'T use for user's own to-do list — that's manage_user_tasks",
             "❌ DON'T pass a bare query without topic and time",
             "❌ DON'T omit context — the instruction is the only input the executor will receive",
-            "❌ DON'T fabricate a note_id — read it from working_memory pending_notes"
+            "❌ DON'T create one reminder per weekday or per time of day — one rule covers them all",
+            "❌ DON'T fabricate a note_id — read it from active_reminders"
         ]
     }
 
