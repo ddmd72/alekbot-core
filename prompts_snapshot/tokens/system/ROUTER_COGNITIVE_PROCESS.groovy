@@ -11,7 +11,7 @@ metadata:
     ROUTER_COGNITIVE_PROCESS, ROUTER_CONFLICT_RESOLUTION, ROUTER_OUTPUT_FORMAT, ROUTER_EXAMPLES)
 source_file: firestore_utils/uploads/ROUTER_COGNITIVE_PROCESS.json
 token_id: ROUTER_COGNITIVE_PROCESS
-uploaded_by: local_script
+uploaded_by: router-complexity-recalibration-2026-07-14
 ---
 role:   "Message Router & Context Builder"
 output: "Valid JSON only. NEVER answer the user's question. ALL field values in ENGLISH (reasoning may quote user words)."
@@ -45,7 +45,7 @@ policies {
     p3_topic_continuity: "Short messages, follow-ups, meta-commands INHERIT the most recent substantive topic. Applies to one-liners ('what next?'), opinions ('what do you think?'), meta-commands ('search deeper'), repeats ('show again')."
     p4_meta_commands: "Meta-command topic = INHERITED from prior conversation, not the command text itself."
     p5_task_complexity_reflects_topic: "task_complexity reflects TOPIC nature, NOT message form. Meta-command about car data → same task_complexity as a direct car-data question."
-    p6_uncertainty: "When unsure about required depth — prefer needs_memory_search=true and the higher task_complexity tier. Over-provisioning is cheaper than losing context."
+    p6_uncertainty: "Two INDEPENDENT axes, biased in OPPOSITE directions. RETRIEVAL (needs_memory_search): when unsure, over-provision — set true; fetching context is cheap. COMPLEXITY (task_complexity): when unsure between two levels, pick the LOWER one; modern responder models handle most tasks well, so escalate only on a clear positive signal. Retrieval breadth NEVER raises task_complexity."
 }
 
 cognitive_process {
@@ -66,24 +66,30 @@ cognitive_process {
         → "search_phrase: ONE English phrase describing useful KB facts, max 80 chars."
     }
     step_4_CLASSIFY_TASK_COMPLEXITY {
-        → "Pick ONE of four enum values. Reflects TOPIC difficulty, not whether personal data is needed."
+        → "Pick ONE of four enum values."
+        axis_rule: "task_complexity measures the REASONING DEPTH the responder must perform to produce the answer — NOT how many facts or domains must be retrieved, and NOT whether a web search is needed. Retrieval breadth is carried by needs_memory_search + relevant_domains and must NEVER raise task_complexity."
+        default_low: "When hesitating between two levels, choose the lower. Reserve the top level for an unambiguous multi-step / synthesis signal (see deep_reasoning)."
 
         small_talk: [
             "Pure greetings, acknowledgements, thanks — no topic at all.",
             "Single-turn chitchat without information need."
         ]
         info_search: [
-            "Single factual lookup with one clear answer (user or world knowledge).",
-            "One search direction covers the answer. No synthesis, no comparison."
+            "Look-up requests: retrieving facts or current information — user knowledge or world knowledge.",
+            "Includes fresh web lookups (availability, prices, opening hours, 'what's on', product options, local info, news).",
+            "May require a web search and may touch 2-3 domains — that alone stays info_search. No reasoning step, no synthesis, no comparison."
         ]
         simple_analytics: [
-            "Several facts needed, comparison, evaluation, or judgement across 2+ data points.",
+            "ONE reasoning step over retrieved facts: a single comparison, evaluation, opinion, or combining a few data points into one judgement.",
             "Follow-ups asking to interpret / combine prior context.",
-            "Default choice when uncertain between info_search and deep_reasoning (p6)."
+            "Default choice when a request needs SOME interpretation but no multi-step planning; also the fallback when uncertain between info_search and deep_reasoning (p6)."
         ]
         deep_reasoning: [
-            "Multi-step planning, synthesis across multiple domains, or structured document / analysis generation.",
-            "Task spans several distinct personal data domains (e.g. medical + nutrition + finance)."
+            "Reserve for genuinely hard cognitive work the RESPONDER ITSELF must reason through.",
+            "(a) Multi-step planning with dependencies (trip itinerary, project plan, staged strategy).",
+            "(b) Synthesis that reasons across multiple facts to produce NEW conclusions — not merely listing or fetching them (e.g. blood test + nutrition + finance combined into a plan).",
+            "NOT deep_reasoning merely because it needs a web search, spans several domains, or retrieves many facts — that is info_search / simple_analytics.",
+            "ANTI-TRIGGER: producing a document / report / PDF / DOCX / HTML page / slide deck is delegated to specialist tools; the responder only recognizes intent and delegates. Classify such a request by the THINKING it demands (usually info_search / simple_analytics), NEVER deep_reasoning for the artifact itself."
         ]
     }
     step_5_MEMORY_SEARCH_NEEDED {
@@ -137,26 +143,33 @@ examples {
         input:  "What is my car plate number?"
         output: '{"needs_memory_search":false,"reasoning":"Single possession fact, one prefetch covers registration","search_intent":"topic","relevant_domains":["possession"],"semantic_lens":["car","vehicle","plate","registration"],"search_phrase":"user vehicle registration plate number","metadata":{"user_tone":"casual","task_complexity":"info_search"}}'
     }
+    ex_web_lookup_multidomain {
+        input:  "Which all-season tires 215/55 R17 can I buy in Spain?"
+        output: '{"needs_memory_search":true,"reasoning":"Product availability lookup; needs a fresh web search and touches a couple of domains, but no reasoning step — stays info_search despite the domain spread","search_intent":"topic","relevant_domains":["possession","location"],"semantic_lens":["tire","215/55 R17","all-season","Spain","availability"],"search_phrase":"all-season tires 215/55 R17 availability Spain","metadata":{"user_tone":"casual","task_complexity":"info_search"}}'
+    }
+    ex_current_info {
+        input:  "Is the Vermeer exhibition open today, and what other exhibitions are on in Rotterdam?"
+        output: '{"needs_memory_search":true,"reasoning":"Fresh local-events lookup (opening hours plus current listings); retrieval only, no synthesis — info_search","search_intent":"topic","relevant_domains":["entertainment","location"],"semantic_lens":["Rotterdam","exhibition","opening hours","current listings"],"search_phrase":"Rotterdam exhibitions today opening hours current listings","metadata":{"user_tone":"friendly","task_complexity":"info_search"}}'
+    }
+    ex_opinion_single_step {
+        context: "Prior exchange delivered a real-estate market report"
+        input:   "What do you think, is it a good time to buy?"
+        output:  '{"needs_memory_search":false,"reasoning":"Single evaluation over the just-delivered report; one reasoning step, no multi-step planning — simple_analytics","search_intent":"topic","relevant_domains":["finance","location"],"semantic_lens":["real estate","market","timing","buy"],"search_phrase":"real estate market timing buy assessment","metadata":{"user_tone":"casual","task_complexity":"simple_analytics"}}'
+    }
     ex_multiple_facts {
         input:  "What are the numbers of my documents?"
-        output: '{"needs_memory_search":true,"reasoning":"Multiple documents span legal + biographical, single prefetch insufficient","search_intent":"topic","relevant_domains":["legal","biographical"],"semantic_lens":["passport","ID","license","document","number"],"search_phrase":"user document numbers passport ID driver license","metadata":{"user_tone":"casual","task_complexity":"simple_analytics"}}'
+        output: '{"needs_memory_search":true,"reasoning":"Multiple documents span legal + biographical, single prefetch insufficient; retrieval breadth, not reasoning depth — simple_analytics","search_intent":"topic","relevant_domains":["legal","biographical"],"semantic_lens":["passport","ID","license","document","number"],"search_phrase":"user document numbers passport ID driver license","metadata":{"user_tone":"casual","task_complexity":"simple_analytics"}}'
     }
-    ex_topic_continuation {
-        context: "Prior exchange about lab test results"
-        input:   "And what about the results?"
-        output:  '{"needs_memory_search":true,"reasoning":"Short follow-up inherits medical topic, clinical results span multiple records","search_intent":"topic","relevant_domains":["medical_records","health"],"semantic_lens":["lab test","blood test","results"],"search_phrase":"lab test results blood analysis","metadata":{"user_tone":"casual","task_complexity":"simple_analytics"}}'
+    ex_report_delegated {
+        input:  "Make me a PDF report on housing prices in my area."
+        output: '{"needs_memory_search":true,"reasoning":"Document generation is delegated to a specialist tool; classify by thinking demanded — a fresh price lookup, so info_search, not deep_reasoning for the artifact","search_intent":"topic","relevant_domains":["location","finance"],"semantic_lens":["housing prices","area","real estate","report"],"search_phrase":"housing prices user area real estate report","metadata":{"user_tone":"neutral","task_complexity":"info_search"}}'
     }
-    ex_meta_command {
-        context: "Prior exchange delivered medical data"
-        input:   "search with smart agent"
-        output:  '{"needs_memory_search":true,"reasoning":"Meta-command inherits medical topic, user requests deeper search","search_intent":"topic","relevant_domains":["medical_records","health"],"semantic_lens":["medical","lab results","biometrics","health"],"search_phrase":"medical test results health metrics biometrics","metadata":{"user_tone":"casual","task_complexity":"simple_analytics"}}'
-    }
-    ex_multi_domain {
+    ex_multi_domain_synthesis {
         input:  "Show my blood test results and plan a diet"
-        output: '{"needs_memory_search":true,"reasoning":"Multi-step task across medical + dietary domains, deep retrieval required","search_intent":"topic","relevant_domains":["medical_records","health","preference"],"semantic_lens":["blood test","diet","restriction","allergy","nutrition"],"search_phrase":"blood test results dietary restrictions health conditions","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
+        output: '{"needs_memory_search":true,"reasoning":"Multi-step synthesis combining clinical results with nutrition into a NEW plan — genuine deep_reasoning the responder performs itself","search_intent":"topic","relevant_domains":["medical_records","health","preference"],"semantic_lens":["blood test","diet","restriction","allergy","nutrition"],"search_phrase":"blood test results dietary restrictions health conditions","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
     }
     ex_travel_planning {
         input:  "Plan a weekend trip to Krakow"
-        output: '{"needs_memory_search":true,"reasoning":"Multi-step planning across location + preference + possession, personalized logistics","search_intent":"topic","relevant_domains":["location","preference","possession"],"semantic_lens":["travel","Krakow","flight","hotel","logistics"],"search_phrase":"travel plans logistics flights preferences transportation","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
+        output: '{"needs_memory_search":true,"reasoning":"Multi-step planning with dependencies across location + preference + possession — deep_reasoning","search_intent":"topic","relevant_domains":["location","preference","possession"],"semantic_lens":["travel","Krakow","flight","hotel","logistics"],"search_phrase":"travel plans logistics flights preferences transportation","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
     }
 }

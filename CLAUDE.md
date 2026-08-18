@@ -234,6 +234,21 @@ agent must output/match), terse, one rule each, no overlap — *convergence not 
 (invalidates lowest-priority tail if LLM left >15); injection independently bounded by
 `DEFAULT_DIRECTIVES_CACHE_LIMIT=15`. See `decisions/standing_directives.md` +
 `docs/10_rfcs/STANDING_DIRECTIVES_RFC.md`.
+- **What qualifies (2026-08-18): SUBJECT × SCOPE, decided at creation.** `Directive_Maintenance`
+  in the `CONSOLIDATION_TAXONOMY` token requires BOTH — the rule is about how the agent behaves, AND
+  it is in force across most requests. Passes SUBJECT but fails SCOPE → `PREFERENCE`, rewritten to
+  state its condition (retrieved by relevance instead of always injected). Routing by subject alone
+  is what filled the rulebook with situational rules; one of them ("never judge from surface-level
+  text parsing") misfired on a map question and burned a whole interactive budget.
+- **Stage 2b also REMOVES, not only rewrites.** Its removal branch used to sit *inside* the cap
+  section, so below 15 it never fired — baseline emitted 0 ops on a 14-record rulebook. It now has a
+  standing duty (DEMOTE / INVALIDATE / MERGE) on every pass, the convergence guard scoped to
+  *wording* only, the SCOPE test **by reference** to `Directive_Maintenance` (one definition, not
+  two), and a checklist forcing one `scope_ok`/`reminder_dup`/`unusable` line per record before any
+  operation. Demotion is necessarily two calls — `update_fact` never touches `domain`.
+- **Expect dispersion, not determinism.** Identical rulebook, prompts and model produced 0 and 6
+  demotions on two consecutive production runs. Do not read one pass as evidence that the rule
+  changed. See `decisions/directive_applicability_gate.md` § Variance.
 
 **Prompt Builder (Token System)** — assembly, not hardcoded prompts: verified Tokens (humor, voice,
 cognitive process…) + static Blueprints with `{{CLASS_NAME}}` slots; 4 priority levels

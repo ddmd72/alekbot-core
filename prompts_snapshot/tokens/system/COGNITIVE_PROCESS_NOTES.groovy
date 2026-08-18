@@ -105,7 +105,8 @@ uploaded_by: local_script
 
             Field mapping discipline: the orchestrator may use field names that look like yours
             but are not (e.g. 'replace_only', 'keep_schedule', 'operation'). Ignore those names.
-            Only YOUR schema matters: note_id, text, instruction, due, recurrence, complexity.
+            Only YOUR schema matters: note_id, text, instruction, due, recurrence,
+            clear_recurrence, complexity.
             Re-derive each field from the semantics of the query, not from the keys you see.
         """
     }
@@ -113,13 +114,48 @@ uploaded_by: local_script
     parameter_rules {
         due: "ISO-8601 datetime in the user's local timezone. See datetime_resolution for how to resolve."
         recurrence: """
-            Default: type='once' (one-time reminder). This is the default for ALL reminders.
-            Only use a repeating type when the user EXPLICITLY requests repetition
-            with words like 'every day', 'every Monday', 'weekly', 'each morning'.
-            'Tomorrow', 'next Friday', 'in 3 hours' — all of these are type='once'.
-            Repeating types: 'hourly' | 'daily' | 'weekly' | 'monthly'
-            interval: integer (default 1). 'Every 2 weeks' = type=weekly, interval=2.
-            When in doubt — use type='once'.
+            Default: omit it — a one-time reminder. This is the default for ALL reminders.
+            Only set a rule when the user EXPLICITLY requests repetition with words like
+            'every day', 'every Monday', 'weekly', 'each morning', 'twice a day'.
+            'Tomorrow', 'next Friday', 'in 3 hours' — all one-time, omit recurrence.
+
+            Format: an RFC 5545 RRULE string without DTSTART. 'due' is the anchor and the
+            first fire; the time of day comes from 'due' unless BYHOUR overrides it.
+
+            'due' MUST be the NEAREST future moment that matches the rule — never the next
+            full cycle. Work it out from 'now' before you call the tool:
+              Thursday, 'every Tuesday and Friday at 11:00'  → due = TOMORROW (Friday) 11:00,
+                                                               NOT next Tuesday.
+              30 July, 'the last day of every month'         → due = 31 JULY, NOT 31 August.
+            The only exception is an explicit later start ('starting in September',
+            'from next month') — then anchor on that start instead.
+              FREQ=DAILY                        — every day at the due time
+              FREQ=DAILY;INTERVAL=2             — every second day
+              FREQ=WEEKLY;BYDAY=TU,FR           — Tuesdays and Fridays
+              FREQ=WEEKLY;INTERVAL=2;BYDAY=MO   — every other Monday
+              FREQ=DAILY;BYHOUR=8,20;BYMINUTE=0 — twice a day, 08:00 and 20:00
+              FREQ=MONTHLY;BYDAY=-1SU           — the last Sunday of the month
+              FREQ=MONTHLY;BYMONTHDAY=1,15      — the 1st and the 15th
+              FREQ=MONTHLY;BYMONTHDAY=-1        — the last day of the month
+
+            ONE reminder carries the WHOLE schedule. Never create duplicates to cover
+            several weekdays or several times of day — that is what the rule expresses.
+            COUNT and UNTIL are rejected: a reminder ends by being deleted, not by expiring.
+            An invalid rule comes back as a tool error naming the reason — fix the rule and
+            retry. Never fall back to duplicates or to a schedule the user did not ask for.
+        """
+        clear_recurrence: """
+            update_self_reminder only. true turns a repeating reminder into a one-time one:
+            it fires once more at 'due' and is then deleted. Use it for 'stop repeating',
+            'just once more', 'make it a one-off'.
+            Passing recurrence and clear_recurrence together is an error — choose one.
+            To CHANGE a schedule, pass the new rule in recurrence; it replaces the old one.
+        """
+        reading_current_state: """
+            The active_reminders block carries every stored field: the rule verbatim
+            (shown as 'rrule:'), the execution complexity, and the last fire time.
+            Read it before any update — state the current schedule and change only what
+            the user asked for, instead of overwriting the rest.
         """
         update_partial: "Pass only fields that are changing. Omit everything else."
     }

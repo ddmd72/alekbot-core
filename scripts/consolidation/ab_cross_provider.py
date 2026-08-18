@@ -103,6 +103,13 @@ def build_providers(openai_model: str, claude_model: str):
         ("claude", c_tier, c_label, c_override),
         ("openai", o_tier, o_label, None),
         ("gemini", PerformanceTier.PERFORMANCE, "gemini-pro-latest (→3.1-pro)", None),
+        # Grok was absent from the 2026-07-15 evaluation because it was silently dead
+        # at the time (revived 2026-08-14, see decisions/grok_revival_2026_08.md), so
+        # decisions/consolidation_provider_model_eval.md has no grok row at all.
+        # Note it declares context_caching=False, so no caching proxy is applied — the
+        # cache_read column will read 0 from our side even though xAI returns non-zero
+        # cached_tokens on its own.
+        ("grok", PerformanceTier.PERFORMANCE, "grok-4.6", None),
     )
 
 
@@ -203,6 +210,8 @@ async def run_chat(
         "gpt-5.6-terra": (1.25, 10.00, 0.125, 0.0),
         "gpt-5.6-sol": (2.50, 20.00, 0.25, 0.0),
         "gemini-pro-latest": (2.00, 12.00, 0.50, 0.0),
+        # From src/domain/billing.py PRICE_SCHEDULE (the authority), not re-derived here.
+        "grok-4.6": (2.00, 6.00, 0.25, 0.0),
     }
     pin, pout, prd, pwr = _PRICE.get(agent.model_name, (0, 0, 0, 0))
     cost = (usage["prompt"] * pin + usage["completion"] * pout
@@ -245,7 +254,11 @@ def _print_run(label: str, model: str, reasoning: List[Dict], ops: List[Dict], e
 async def main(mode: str, limit: int, user_id: str, account_id: str, openai_model: str, only: str, claude_model: str) -> None:
     providers = build_providers(openai_model, claude_model)
     if only == "both":
-        providers = tuple(p for p in providers if p[0] != "gemini")  # both = claude+openai
+        providers = tuple(p for p in providers if p[0] in ("claude", "openai"))
+    elif "+" in only:
+        wanted = only.split("+")
+        providers = tuple(p for p in providers if p[0] in wanted)
+        providers = tuple(sorted(providers, key=lambda p: wanted.index(p[0])))
     else:
         providers = tuple(p for p in providers if p[0] == only)
     database_id = os.getenv("FIRESTORE_DATABASE", "us-production")
@@ -336,7 +349,8 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int, default=10, help="dedup: number of longest facts (default 10)")
     ap.add_argument("--openai-model", choices=["terra", "sol"], default="terra",
                     help="OpenAI leg: terra=PERFORMANCE (gpt-5.6-terra), sol=ULTRA (gpt-5.6-sol)")
-    ap.add_argument("--only", choices=["both", "claude", "openai", "gemini"], default="both",
+    ap.add_argument("--only", choices=["both", "claude", "openai", "gemini", "grok",
+                                       "claude+grok"], default="both",
                     help="Run only one provider leg (default both = claude+openai)")
     ap.add_argument("--claude-model", choices=["sonnet5", "opus", "fable"], default="sonnet5",
                     help="Claude leg: sonnet5 (PERFORMANCE), opus (ULTRA→opus-4-8), fable (claude-fable-5)")
