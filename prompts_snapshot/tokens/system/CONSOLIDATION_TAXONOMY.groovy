@@ -257,7 +257,9 @@ uploaded_by: local_script
 
             purpose: "This rulebook is injected VERBATIM into the orchestrator agent's system prompt on every request, as its binding standing_directives block. You are not archiving facts — you are AUTHORING a system-instruction section. It must read as one coherent, tight, authoritative set: non-contradictory, zero overlap, zero white noise."
 
-            classification: "User instructs or corrects HOW THE AGENT must behave, reason, or respond -> AGENT_DIRECTIVE. User's own habits, tastes, values, life principles -> PREFERENCE."
+            classification: "Two tests, both must pass for AGENT_DIRECTIVE. (1) SUBJECT — the user instructs or corrects HOW THE AGENT must behave, reason or respond; not the user's own habits, tastes, values or life principles. (2) SCOPE — the rule is in force across most requests, not only when a specific condition holds. Fails (1) -> PREFERENCE. Passes (1) but fails (2) -> PREFERENCE, rewritten to state the condition it applies under. A conditional instruction to the agent is a preference, not a directive: it reaches the agent by relevance on the requests where it applies."
+
+            reminders: "The orchestrator owns a reminder tool, and recurring tasks reach it through that separate channel carrying their own execution protocol. Never restate a reminder's protocol, steps or schedule as a fact — that is a duplicate. Record only that the routine exists, and only if that is not already known."
 
             syntax: [
                 "Write the rule itself in imperative second person, as an order to the agent: 'Never ...', 'Always ...', 'Before X, do Y'",

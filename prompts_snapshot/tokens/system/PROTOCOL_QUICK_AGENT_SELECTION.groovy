@@ -75,8 +75,8 @@ agents_registry {
                 tool_call: 'delegate_to_specialist(intent="search_web_light", query="weather in Paris next week detailed forecast")'
             },
             {
-                user_query: "What's happening in Valencia this weekend?"
-                tool_call: 'delegate_to_specialist(intent="search_web_light", query="events in Valencia this weekend")'
+                user_query: "What's happening in Porto this weekend?"
+                tool_call: 'delegate_to_specialist(intent="search_web_light", query="events in Porto this weekend")'
             }
         ]
 

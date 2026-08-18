@@ -105,6 +105,18 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   every pass) curates the `agent_directive` rulebook → `standing_directives` block; hard cap 15 via
   prompt + code backstop `_enforce_directive_cap`. See root `CLAUDE.md` → Standing Directives +
   `decisions/standing_directives.md`.
+  - **Three stages, one system prompt, different user messages** — Stage 1 (conversation → facts),
+    Stage 2a (fact-cluster review, *conditional*: skipped when Stage 1 wrote nothing), Stage 2b
+    (directive rulebook, *unconditional*). `_run_consolidation_loop` starts `history` from scratch
+    per stage, so Stage 2b cannot see Stage 1 — do not explain its behaviour by what ran before it.
+  - **Stage 2b removes as well as rewrites** (2026-08-18): DEMOTE to `PREFERENCE` / INVALIDATE /
+    MERGE on every pass, not only at the cap; the SCOPE criterion is referenced from
+    `Directive_Maintenance` in the shared system prompt rather than restated; a checklist forces one
+    line per record before any operation. Bench:
+    `scripts/consolidation/test_directive_review_dryrun.py` (`--prompt`, `--provider`, `--tier`,
+    `--stage1`, `--runs N` over identical input). **Run-to-run spread is large** — 0 vs 6 demotions
+    on identical production input; measure with `--runs 3`, never 1. See
+    `decisions/directive_applicability_gate.md`.
 - DeepResearch (async, provider-agnostic, intent `deep_research`) — `create_interaction()` returns
   ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
   `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+
