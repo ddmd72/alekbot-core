@@ -132,3 +132,22 @@ class TestUniqueness:
         await service.store(_FAKE_CONTENT, "report.pdf", "application/pdf", user_id=_USER)
         calls = mock_storage.store.call_args_list
         assert calls[0].kwargs.get("key") != calls[1].kwargs.get("key")
+
+
+# ============================================================================
+# ttl_seconds — mirrors the wrapped capability token's lifetime, so a caller
+# that shortens the link (ShortLinkService) can expire it in lockstep.
+# ============================================================================
+
+class TestTtlSeconds:
+
+    async def test_default_storage_class_ttl_is_30_days(self, service):
+        result = await service.store(_FAKE_CONTENT, "q1_report.pdf", "application/pdf", user_id=_USER)
+        assert result.ttl_seconds == 30 * 24 * 3600
+
+    async def test_email_review_storage_class_ttl_is_5_days(self, service):
+        result = await service.store(
+            b"<html></html>", "review.html", "text/html; charset=utf-8",
+            user_id=_USER, storage_class="email_review",
+        )
+        assert result.ttl_seconds == 5 * 24 * 3600

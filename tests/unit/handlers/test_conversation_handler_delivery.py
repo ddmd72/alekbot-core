@@ -95,6 +95,7 @@ def _make_handler(
     overflow_callback=None,
     localization=None,
     with_queue: bool = False,
+    short_link_service=None,
 ) -> ConversationHandler:
     session_store = MagicMock()
     session_store.append_messages_batch = AsyncMock()
@@ -125,6 +126,7 @@ def _make_handler(
         localization=localization,
         consolidation_queue=consolidation_queue,
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
+        short_link_service=short_link_service,
     )
 
 
@@ -388,6 +390,37 @@ class TestDeliverItem:
             url="https://gcs/x.pdf", label="My PDF", thread_id="T2"
         )
         channel.send_file.assert_not_awaited()  # no file_upload flag
+
+    async def test_document_shortened_when_short_link_service_configured(self):
+        dds = MagicMock()
+        from src.services.document_delivery_service import DeliveredDocument
+        dds.store = AsyncMock(return_value=DeliveredDocument(
+            link="https://gcs/x.pdf", key="docs/u/uuid-x.pdf", ttl_seconds=999,
+        ))
+        short_links = AsyncMock()
+        short_links.shorten = AsyncMock(return_value="https://dev.alekbot.app/s/abc1234567")
+        handler = _make_handler(MagicMock(), doc_delivery_service=dds, short_link_service=short_links)
+
+        channel = MagicMock()
+        channel.send_document_link = AsyncMock()
+        channel.send_file = AsyncMock()
+
+        content_b64 = base64.b64encode(b"PDF bytes").decode()
+        item = DeliveryItem(
+            type="document",
+            data={
+                "content_b64": content_b64,
+                "filename": "report.pdf",
+                "content_type": "application/pdf",
+                "label": "My PDF",
+            },
+        )
+        await handler._deliver_item(item, channel, thread_id="T2", user_id="user-1")
+
+        short_links.shorten.assert_awaited_once_with("https://gcs/x.pdf", ttl_seconds=999)
+        channel.send_document_link.assert_awaited_once_with(
+            url="https://dev.alekbot.app/s/abc1234567", label="My PDF", thread_id="T2"
+        )
 
     async def test_document_with_file_upload_sends_file_too(self):
         dds = MagicMock()

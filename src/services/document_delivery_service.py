@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from ..domain.file_access import DEFAULT_FILE_LINK_TTL, EMAIL_REVIEW_FILE_LINK_TTL
 from ..ports.media_storage_port import MediaStoragePort
 from ..utils.logger import logger
 
@@ -29,6 +30,14 @@ _PREFIX = {
     "email_review": "email_review",
 }
 
+# storage_class → link TTL. Mirrors FileLinkService's own prefix-based policy
+# (domain/file_access.py) — kept here too since store() already has
+# storage_class in hand, no need to re-derive it from the key.
+_TTL_SECONDS = {
+    "document": DEFAULT_FILE_LINK_TTL,
+    "email_review": EMAIL_REVIEW_FILE_LINK_TTL,
+}
+
 
 @dataclass(frozen=True)
 class DeliveredDocument:
@@ -37,9 +46,12 @@ class DeliveredDocument:
     link — user-facing capability link (`/f/<token>`), sent to the channel.
     key  — internal object key, written to conversation history so an agent can
            re-read the document later via open_file (server-side, no TTL).
+    ttl_seconds — lifetime of `link`'s underlying token; a caller wrapping
+           `link` behind a short alias should expire that alias in lockstep.
     """
     link: str
     key: str
+    ttl_seconds: int = DEFAULT_FILE_LINK_TTL
 
 
 class DocumentDeliveryService:
@@ -76,7 +88,8 @@ class DocumentDeliveryService:
         key = f"{prefix}/{user_id}/{uuid4()}-{filename}"
         await self._storage.store(data=content, key=key, content_type=content_type)
         link = self._links.build_link(key=key, user_id=user_id)
+        ttl_seconds = _TTL_SECONDS.get(storage_class, DEFAULT_FILE_LINK_TTL)
         logger.info(
             "DocumentDeliveryService: stored '%s' (class=%s) → %s", filename, storage_class, key
         )
-        return DeliveredDocument(link=link, key=key)
+        return DeliveredDocument(link=link, key=key, ttl_seconds=ttl_seconds)

@@ -136,6 +136,61 @@ async def test_single_pass_uploads_report_round():
 
 
 # ---------------------------------------------------------------------------
+# deliver_deep_research — short_link_service wraps the /f/<token> link
+# ---------------------------------------------------------------------------
+
+async def test_short_link_service_shortens_delivered_url():
+    task_queue = AsyncMock(spec=TaskQueue)
+    media_storage = AsyncMock(spec=MediaStoragePort)
+    media_storage.store.return_value = "deep_research/u1/ts-report.md"
+    notification = AsyncMock()
+    link_service = MagicMock()
+    link_service.build_link.return_value = "https://dev.alekbot.app/f/tok123"
+    short_link_service = AsyncMock()
+    short_link_service.shorten.return_value = "https://dev.alekbot.app/s/abc1234567"
+
+    await deliver_deep_research(
+        result_text="Final report",
+        user_id="u1",
+        account_id="a1",
+        query="topic",
+        task_queue=task_queue,
+        round1_text="",
+        media_storage=media_storage,
+        notification=notification,
+        link_service=link_service,
+        short_link_service=short_link_service,
+    )
+
+    short_link_service.shorten.assert_awaited_once()
+    assert short_link_service.shorten.call_args.args[0] == "https://dev.alekbot.app/f/tok123"
+    assert notification.notify_document_link.call_args.kwargs["url"] == "https://dev.alekbot.app/s/abc1234567"
+
+
+async def test_no_short_link_service_uses_raw_link():
+    task_queue = AsyncMock(spec=TaskQueue)
+    media_storage = AsyncMock(spec=MediaStoragePort)
+    media_storage.store.return_value = "deep_research/u1/ts-report.md"
+    notification = AsyncMock()
+    link_service = MagicMock()
+    link_service.build_link.return_value = "https://dev.alekbot.app/f/tok123"
+
+    await deliver_deep_research(
+        result_text="Final report",
+        user_id="u1",
+        account_id="a1",
+        query="topic",
+        task_queue=task_queue,
+        round1_text="",
+        media_storage=media_storage,
+        notification=notification,
+        link_service=link_service,
+    )
+
+    assert notification.notify_document_link.call_args.kwargs["url"] == "https://dev.alekbot.app/f/tok123"
+
+
+# ---------------------------------------------------------------------------
 # deliver_deep_research — two-pass: uploads round1 + round2
 # ---------------------------------------------------------------------------
 

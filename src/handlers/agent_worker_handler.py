@@ -32,6 +32,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from ..ports.media_storage_port import MediaStoragePort
     from ..services.file_link_service import FileLinkService
+    from ..services.short_link_service import ShortLinkService
 
 
 class AgentWorkerHandler:
@@ -56,6 +57,7 @@ class AgentWorkerHandler:
         task_queue: Optional[TaskDispatchService] = None,
         doc_delivery_service: Optional[DocumentDeliveryService] = None,
         link_service: Optional["FileLinkService"] = None,
+        short_link_service: Optional["ShortLinkService"] = None,
     ) -> None:
         self._coordinator = coordinator
         self._notification = notification_service
@@ -63,6 +65,7 @@ class AgentWorkerHandler:
         self._task_queue = task_queue
         self._doc_delivery_service = doc_delivery_service
         self._link_service = link_service
+        self._short_link_service = short_link_service
 
     async def handle_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -174,6 +177,7 @@ class AgentWorkerHandler:
             session_id=context.get("session_id", ""),
             media_storage=self._media_storage,
             link_service=self._link_service,
+            short_link_service=self._short_link_service,
             notification=self._notification,
             model=result.get("model", ""),
             total_tokens=result.get("total_tokens", 0),
@@ -239,9 +243,14 @@ class AgentWorkerHandler:
                     user_id=user_id,
                     storage_class=item.data.get("storage_class", "document"),
                 )
+                url = delivered.link
+                if self._short_link_service:
+                    url = await self._short_link_service.shorten(
+                        delivered.link, ttl_seconds=delivered.ttl_seconds
+                    )
                 await self._notification.notify_document_link(
                     user_id=user_id, account_id=account_id,
-                    url=delivered.link, label=label, key=delivered.key,
+                    url=url, label=label, key=delivered.key,
                     channel_id_override=origin_channel, platform_override=origin_platform,
                 )
                 if item.data.get("file_upload"):
