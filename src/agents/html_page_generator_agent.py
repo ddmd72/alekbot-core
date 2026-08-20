@@ -16,8 +16,11 @@ Delivery:
 
 Pipeline:
   1. System prompt — loaded from PromptBuilder (agent_type="html_page").
-  2. Single LLM call — model writes complete HTML+CSS+JS as raw text response.
-  3. Strip accidental markdown fences from response.
+  2. Single LLM call — model writes a visible design-brief declaration (CognitiveProcess
+     step_5b_declare — makes style-selection reasoning observable instead of relying on a
+     provider's hidden reasoning channel), then complete HTML+CSS+JS as raw text response.
+  3. Drop everything before the first <!DOCTYPE html> (the design-brief preamble), then
+     strip accidental markdown fences from the remainder.
   4. Resolve Unsplash placeholders: replace source.unsplash.com URLs with real photos.
   5. Extract filename and display name from <title> tag.
   6. Return DeliveryItem.
@@ -139,6 +142,7 @@ class HtmlPageGeneratorAgent(BaseAgent):
 
         html_code = (response.text or "").strip()
 
+        html_code = _extract_html_document(html_code)
         html_code = _strip_markdown_fences(html_code)
 
         if not html_code:
@@ -262,6 +266,24 @@ async def _resolve_unsplash_placeholders(html: str, image_search: ImageSearchPor
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_DOCTYPE_RE = re.compile(r"<!DOCTYPE\s+html", re.IGNORECASE)
+
+
+def _extract_html_document(text: str) -> str:
+    """Drop any preamble before the HTML document.
+
+    CognitiveProcess (step_5b_declare) has the model state its design brief as
+    visible text before the document, bounded by a ``---HTML---`` marker — this
+    is what makes the style-selection reasoning observable instead of silently
+    happening (or not) inside a provider's hidden reasoning channel. Cutting on
+    the first ``<!DOCTYPE html`` rather than the marker itself is deliberate:
+    it degrades gracefully if a provider paraphrases the marker, and is a no-op
+    when there is no preamble at all (existing single-call providers/tests).
+    """
+    match = _DOCTYPE_RE.search(text)
+    return text[match.start():] if match else text
+
 
 def _strip_markdown_fences(html_code: str) -> str:
     """Remove accidental ```html ... ``` or ``` ... ``` wrapping from LLM output."""
