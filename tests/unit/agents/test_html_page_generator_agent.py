@@ -9,11 +9,13 @@ Covers:
 - execute success: filename and display_name extracted from <title> tag
 - execute success: fallback filename "page" when <title> absent
 - execute success: markdown fences stripped from LLM HTML response
+- execute success: design-brief preamble before <!DOCTYPE html> stripped
 - execute: LLM returns empty string → failure
 - execute: empty query → failure
 - execute: prompt_builder failure → failure
 - LLM call: no tools, correct temperature/max_tokens/model_name
 - _strip_markdown_fences: various fence patterns
+- _extract_html_document: preamble before <!DOCTYPE html>, no preamble, fenced preamble
 - _extract_filename_from_html: title present, absent, special chars
 """
 
@@ -25,6 +27,7 @@ import pytest
 from src.agents.html_page_generator_agent import (
     HtmlPageGeneratorAgent,
     _extract_filename_from_html,
+    _extract_html_document,
     _resolve_unsplash_placeholders,
     _strip_markdown_fences,
 )
@@ -292,6 +295,27 @@ class TestMarkdownFenceStripping:
         decoded = base64.b64decode(html_b64).decode("utf-8")
         assert "```" not in decoded
 
+    async def test_design_brief_preamble_is_stripped(
+        self, mock_llm, mock_prompt_builder
+    ):
+        """CognitiveProcess step_5b_declare asks for a visible brief before the HTML —
+        the delivered page must contain only the document, never the brief."""
+        brief = "I classified this as a document/report. Benchmark: The Economist.\n---HTML---\n"
+        mock_llm.generate_content.return_value = _html_response(brief + _FAKE_HTML)
+        config = AgentConfig(agent_id="html_page_gen", agent_type="html_page")
+        agent = HtmlPageGeneratorAgent(
+            config=config,
+            execution_context=_make_execution_context(mock_llm),
+            prompt_builder=mock_prompt_builder,
+            user_id="user123",
+        )
+        response = await agent.execute(_make_message())
+        assert response.status == AgentStatus.SUCCESS
+        html_b64 = response.delivery_items[0].data["content_b64"]
+        decoded = base64.b64decode(html_b64).decode("utf-8")
+        assert decoded == _FAKE_HTML
+        assert "Economist" not in decoded
+
 
 # ============================================================================
 # execute — failure paths
@@ -395,6 +419,38 @@ class TestStripMarkdownFences:
         html = "<html><body>content</body></html>"
         result = _strip_markdown_fences(f"```html\n{html}\n```")
         assert "html>" in result
+
+
+# ============================================================================
+# _extract_html_document (unit)
+# ============================================================================
+
+class TestExtractHtmlDocument:
+
+    def test_no_preamble_unchanged(self):
+        html = "<!DOCTYPE html><html></html>"
+        assert _extract_html_document(html) == html
+
+    def test_strips_text_preamble(self):
+        html = "<!DOCTYPE html><html></html>"
+        brief = "Classification: document/report. Benchmark: Bloomberg.\n---HTML---\n"
+        assert _extract_html_document(brief + html) == html
+
+    def test_strips_preamble_before_fenced_html(self):
+        html = "<!DOCTYPE html><html></html>"
+        brief = "Benchmark: The Guardian.\n---HTML---\n```html\n"
+        result = _extract_html_document(brief + html + "\n```")
+        assert result.startswith("<!DOCTYPE html")
+        assert "Benchmark" not in result
+
+    def test_case_insensitive_doctype_match(self):
+        html = "<!doctype HTML><html></html>"
+        brief = "Some preamble text.\n"
+        assert _extract_html_document(brief + html) == html
+
+    def test_no_doctype_at_all_returns_original(self):
+        text = "the model returned prose with no document"
+        assert _extract_html_document(text) == text
 
 
 # ============================================================================
