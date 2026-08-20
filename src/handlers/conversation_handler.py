@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ..ports.file_service import FileService
     from ..ports.audio_transcription_port import AudioTranscriptionPort
     from ..services.file_conversion_service import FileConversionService
+    from ..services.short_link_service import ShortLinkService
 from ..utils.file_conversion import (
     convert_file_to_text, download_alert, is_native_binary, make_history_stub,
     transcription_alert,
@@ -106,6 +107,7 @@ class ConversationHandler(ConversationHandlerPort):
         channel_binding_service: Optional[ChannelBindingService] = None,
         channel_history_source: Optional[Any] = None,
         alert_webhook: Optional[Any] = None,
+        short_link_service: Optional["ShortLinkService"] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -125,6 +127,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._fallback_service = AgentFallbackService(coordinator, alert_webhook=alert_webhook)
         self._channel_binding = channel_binding_service
         self._channel_history = channel_history_source
+        self._short_link_service = short_link_service
 
     async def _deliver_rich_content(
         self,
@@ -224,8 +227,13 @@ class ConversationHandler(ConversationHandlerPort):
                     user_id=user_id,
                     storage_class=item.data.get("storage_class", "document"),
                 )
+                url = delivered.link
+                if self._short_link_service:
+                    url = await self._short_link_service.shorten(
+                        delivered.link, ttl_seconds=delivered.ttl_seconds
+                    )
                 await response_channel.send_document_link(
-                    url=delivered.link, label=label, thread_id=thread_id
+                    url=url, label=label, thread_id=thread_id
                 )
                 if item.data.get("file_upload"):
                     await response_channel.send_file(

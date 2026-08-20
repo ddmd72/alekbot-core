@@ -364,6 +364,43 @@ class TestDeliverDocumentResult:
         )
         notification.notify_file_bytes.assert_not_called()
 
+    async def test_document_item_shortened_when_short_link_service_configured(self):
+        """delivered.link is wrapped through ShortLinkService before notify_document_link,
+        with the link's own ttl_seconds — not touching _make_handler's shared helper/
+        signature so every other test in this file is unaffected."""
+        from src.services.document_delivery_service import DeliveredDocument
+
+        coordinator = MagicMock()
+        notification = AsyncMock()
+        notification.notify_document_link = AsyncMock()
+        doc_delivery = AsyncMock()
+        doc_delivery.store = AsyncMock(return_value=DeliveredDocument(
+            link="https://dev.alekbot.app/f/tok123", key="docs/u/uuid-doc.pdf", ttl_seconds=999,
+        ))
+        short_links = AsyncMock()
+        short_links.shorten = AsyncMock(return_value="https://dev.alekbot.app/s/abc1234567")
+
+        handler = AgentWorkerHandler(
+            coordinator=coordinator,
+            notification_service=notification,
+            doc_delivery_service=doc_delivery,
+            short_link_service=short_links,
+        )
+        content_b64 = base64.b64encode(b"%PDF-1.4").decode()
+        response = _success_response(delivery_items=[
+            DeliveryItem(type="document", data={
+                "content_b64": content_b64,
+                "filename": "report.pdf",
+                "content_type": "application/pdf",
+                "label": "Annual Report",
+            })
+        ])
+
+        await handler._deliver_document_result(response, _CONTEXT)
+
+        short_links.shorten.assert_awaited_once_with("https://dev.alekbot.app/f/tok123", ttl_seconds=999)
+        assert notification.notify_document_link.call_args.kwargs["url"] == "https://dev.alekbot.app/s/abc1234567"
+
     async def test_document_item_with_file_upload_flag_also_sends_bytes(self):
         handler, _, notification, doc_delivery = _make_handler()
         raw = b"%PDF-1.4 data"

@@ -66,6 +66,7 @@ class SlackAdapterFactory:
         file_conversion_service=None,
         channel_binding_service: Optional[ChannelBindingService] = None,
         alert_webhook=None,
+        short_link_service=None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -125,6 +126,7 @@ class SlackAdapterFactory:
             channel_binding_service=channel_binding_service,
             channel_history_source=channel_history_source,
             alert_webhook=alert_webhook,
+            short_link_service=short_link_service,
         )
 
         if not db_client:

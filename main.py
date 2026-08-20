@@ -388,6 +388,19 @@ async def main():
             if gcs_media_adapter else None
         )
 
+        # Short links: /s/<code> alias wrapping the /f/<token> capability link,
+        # so what lands in chat is short. Firestore-backed (repo layer only —
+        # ShortLinkService owns the code-generation/collision logic).
+        from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
+        from src.services.short_link_service import ShortLinkService
+        short_link_service = (
+            ShortLinkService(
+                repository=FirestoreShortLinkRepository(db_client=db_client, env_config=env_config),
+                base_url=config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080",
+            )
+            if gcs_media_adapter else None
+        )
+
         # Notification service — channel adapters (Slack, Telegram) registered later via set_* methods.
         notification_state_repo = FirestoreNotificationStateAdapter(
             db_client=db_client, env_config=env_config
@@ -424,6 +437,7 @@ async def main():
         agent_worker_handler._task_queue = agent_task_queue
         agent_worker_handler._doc_delivery_service = doc_delivery_service
         agent_worker_handler._link_service = file_link_service
+        agent_worker_handler._short_link_service = short_link_service
 
         # Anthropic client — created once, shared by ClaudeDeepResearchRunnerAgent instances.
         # The agent receives the client via constructor; does not import or instantiate the SDK.
@@ -675,6 +689,7 @@ async def main():
             file_conversion_service=container.file_conversion_service,
             channel_binding_service=channel_binding_service,
             alert_webhook=_alert_webhook,
+            short_link_service=short_link_service,
         )
         notification_channel_factory.register_factory(
             "slack",
@@ -730,7 +745,15 @@ async def main():
                         )
                     )
                     logger.info("✅ File access blueprint registered at /f/<token>")
-                
+
+                # /s/<code> short-link redirect, wraps /f/<token> for shorter chat links
+                if short_link_service:
+                    from src.web.short_link_app import create_short_link_blueprint
+                    main_app.register_blueprint(
+                        create_short_link_blueprint(short_links=short_link_service)
+                    )
+                    logger.info("✅ Short link blueprint registered at /s/<code>")
+
                 # ====================================================================
                 # PHASE 3: Telegram Integration (Optional)
                 # Initialize Telegram adapter if configured
@@ -772,6 +795,7 @@ async def main():
                             localization=_localization,
                             file_conversion_service=container.file_conversion_service,
                             alert_webhook=_alert_webhook,
+                            short_link_service=short_link_service,
                         )
                         def _make_telegram_channel(adapter, channel_id):
                             try:
