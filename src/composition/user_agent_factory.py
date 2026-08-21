@@ -761,8 +761,8 @@ class UserAgentFactory(AgentFactoryPort):
                 "[UserAgentFactory] No image_registry configured, skipping image_generation"
             )
             return None
-        execution_context = self.context_builder.build("image_generation", ctx.user_profile.config)
         try:
+            execution_context = self.context_builder.build("image_generation", ctx.user_profile.config)
             image_port, _ = self.context_builder.resolve_image_generation_context(
                 "image_generation", self.image_registry, ctx.user_profile.config
             )
