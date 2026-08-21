@@ -134,3 +134,81 @@ class TestExecute:
         result, status = await svc.execute({})
 
         assert status == 200
+
+    @pytest.mark.asyncio
+    async def test_empty_text_returns_retry_empty_without_notifying(self):
+        coordinator = MagicMock()
+        coordinator.route_message = AsyncMock(
+            return_value=AgentResponse.success(
+                task_id="t", agent_id="smart_response_agent_u",
+                result=SmartResponse(text="   ", structured_data=None, link_list=[]),
+            )
+        )
+        notification = MagicMock()
+        notification.notify_text = AsyncMock()
+        svc = SmartRetryService(task_dispatch=MagicMock(), coordinator=coordinator, notification=notification)
+
+        result, status = await svc.execute({
+            "user_id": "user-1", "account_id": "account-1", "session_id": "s",
+            "text": "q", "message_parts": [],
+        })
+
+        assert status == 200
+        assert result["status"] == "retry_empty"
+        notification.notify_text.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_none_text_does_not_crash_and_is_treated_as_empty(self):
+        """Regression: SmartResponse.text can be an explicit None — SmartResponse is
+        a plain dataclass with no runtime validation, and smart_response_agent.py
+        builds it from an args.get(...) default that only fires when the key is
+        absent, so an explicit JSON null reaches it unguarded. .strip() on None
+        must not crash execute(), and the retry must be dropped silently (not
+        deliver a garbled string) exactly like a genuinely empty answer."""
+        coordinator = MagicMock()
+        coordinator.route_message = AsyncMock(
+            return_value=AgentResponse.success(
+                task_id="t", agent_id="smart_response_agent_u",
+                result=SmartResponse(text=None, structured_data=None, link_list=[]),
+            )
+        )
+        notification = MagicMock()
+        notification.notify_text = AsyncMock()
+        svc = SmartRetryService(task_dispatch=MagicMock(), coordinator=coordinator, notification=notification)
+
+        result, status = await svc.execute({
+            "user_id": "user-1", "account_id": "account-1", "session_id": "s",
+            "text": "q", "message_parts": [],
+        })
+
+        assert status == 200
+        assert result["status"] == "retry_empty"
+        notification.notify_text.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_routes_to_smart_exactly_once_and_never_schedules(self):
+        """The single most important correctness property in this file: one retry
+        per timeout. execute() must call route_message exactly once and must never
+        itself call back into scheduling — a future regression that made execute()
+        re-schedule itself (directly or by retrying route_message in a loop) would
+        turn one Smart timeout into unbounded retries."""
+        coordinator = MagicMock()
+        coordinator.route_message = AsyncMock(
+            return_value=AgentResponse.success(
+                task_id="t", agent_id="smart_response_agent_u",
+                result=SmartResponse(text="ok", structured_data=None, link_list=[]),
+            )
+        )
+        task_dispatch = MagicMock()
+        task_dispatch.enqueue_worker_task = AsyncMock(return_value="task-1")
+        notification = MagicMock()
+        notification.notify_text = AsyncMock()
+        svc = SmartRetryService(task_dispatch=task_dispatch, coordinator=coordinator, notification=notification)
+
+        await svc.execute({
+            "user_id": "user-1", "account_id": "account-1", "session_id": "s",
+            "text": "q", "message_parts": [],
+        })
+
+        coordinator.route_message.assert_awaited_once()
+        task_dispatch.enqueue_worker_task.assert_not_called()
