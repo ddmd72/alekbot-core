@@ -36,6 +36,17 @@ class GrokImageAdapter(ImageGenerationPort):
         self._client = AsyncOpenAI(
             base_url="https://api.x.ai/v1",
             api_key=self.api_key,
+            # Explicit timeout/retries — the SDK defaults (600s, max_retries=2) would
+            # silently undermine ImageGenerationAgent.RETRY_POLICY = NO_RETRY_POLICY
+            # (set specifically to avoid double-billing xAI on retry, since a
+            # transient 5xx can arrive AFTER xAI has already rendered and billed for
+            # an image). max_retries=0 pushes retry policy fully up to the agent
+            # layer, where NO_RETRY_POLICY actually applies. 120.0s is a starting
+            # value, not a measured one — no latency data yet for
+            # grok-imagine-image-2.0 (RFC §10 open question #3); revisit after first
+            # live measurements, same caveat as agent_config.py's request_timeout_s.
+            timeout=120.0,
+            max_retries=0,
         )
 
     async def generate(
@@ -49,14 +60,16 @@ class GrokImageAdapter(ImageGenerationPort):
                 response_format="b64_json",
                 extra_body={"aspect_ratio": aspect_ratio},
             )
+            return [
+                GeneratedImage(data=base64.b64decode(item.b64_json), mime_type="image/png")
+                for item in response.data
+            ]
         except Exception as e:
+            # Decode is inside this try on purpose: the port contract promises []
+            # on any failure, including a malformed response (None data / None
+            # b64_json), not just an SDK-raised exception.
             logger.error("GrokImageAdapter.generate failed: %s: %s", type(e).__name__, e, exc_info=True)
             return []
-
-        return [
-            GeneratedImage(data=base64.b64decode(item.b64_json), mime_type="image/png")
-            for item in response.data
-        ]
 
     async def edit(
         self, prompt: str, reference_images: List[bytes], *, mime_type: str = "image/png"

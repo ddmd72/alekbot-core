@@ -25,6 +25,7 @@ from src.ports.image_generation_port import GeneratedImage, ImageGenerationPort
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.ports.prompt_builder_port import PromptBuilderPort
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
+from src.services.file_conversion_service import FileConversionService
 
 _QUERY = "a friendly red bicycle leaning against a brick wall, warm afternoon light"
 _CRAFTED_PROMPT = (
@@ -181,7 +182,7 @@ async def test_execute_generate_image_port_returns_empty_fails(agent, mock_image
 
 @pytest.fixture
 def mock_file_conversion():
-    fc = AsyncMock()
+    fc = AsyncMock(spec=FileConversionService)
     fc.resolve_bytes.return_value = b"original-photo-bytes"
     return fc
 
@@ -237,6 +238,25 @@ async def test_execute_edit_image_happy_path(agent_with_files, mock_image_port, 
     edit_kwargs = mock_image_port.edit.call_args.kwargs
     assert edit_kwargs["reference_images"] == [b"original-photo-bytes"]
     assert base64.b64decode(response.delivery_items[0].data["content_b64"]) == b"edited-bytes"
+
+
+async def test_execute_edit_image_derives_mime_type_from_image_ref(agent_with_files, mock_image_port):
+    """Fix 2 regression guard: mime_type must be derived from image_ref's extension
+    (mirrors FileManagementAgent._fetch's mimetypes.guess_type pattern), not hardcoded
+    to image/png — a JPEG reference must be sent to the port as image/jpeg."""
+    mock_image_port.edit.return_value = GeneratedImage(data=b"edited-bytes", mime_type="image/jpeg")
+    msg = _make_message(
+        "edit_image",
+        query="remove the person in the background",
+        context={"image_ref": "photo.jpg"},
+    )
+    msg.payload["image_ref"] = "photo.jpg"
+
+    response = await agent_with_files.execute(msg)
+
+    assert response.status == AgentStatus.SUCCESS
+    edit_kwargs = mock_image_port.edit.call_args.kwargs
+    assert edit_kwargs["mime_type"] == "image/jpeg"
 
 
 async def test_execute_edit_image_missing_image_ref_fails(agent_with_files):
