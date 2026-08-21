@@ -334,6 +334,80 @@ class TestSaveChannel:
 # Tests: notify_raw() — additional paths
 # ---------------------------------------------------------------------------
 
+class TestNotifyText:
+    """notify_text() delivers a complete, already-composed answer verbatim + persists to history."""
+
+    async def test_sends_text_verbatim(self, state_repo, channel_factory, response_channel):
+        """notify_text: send_long_text called with exact text (no agent reformatting)."""
+        session_store = MagicMock()
+        session_store.append_messages_batch = AsyncMock()
+        svc = UserNotificationService(
+            state_repo=state_repo,
+            channel_factory=channel_factory,
+            coordinator=MagicMock(),
+            notification_sla={},
+            session_store=session_store,
+        )
+
+        await svc.notify_text(
+            user_id=_USER_ID,
+            account_id=_ACCOUNT_ID,
+            text="Я тут крепко подумал — вот що нашёл.",
+            channel_id_override=_CHANNEL_ID,
+            platform_override=_PLATFORM,
+        )
+
+        response_channel.send_long_text.assert_awaited_once_with(
+            "Я тут крепко подумал — вот що нашёл."
+        )
+
+    async def test_persists_to_session_history(self, state_repo, channel_factory, response_channel):
+        """notify_text: appends user + model turns to session history."""
+        session_store = MagicMock()
+        session_store.append_messages_batch = AsyncMock()
+        svc = UserNotificationService(
+            state_repo=state_repo,
+            channel_factory=channel_factory,
+            coordinator=MagicMock(),
+            notification_sla={},
+            session_store=session_store,
+        )
+
+        await svc.notify_text(
+            user_id=_USER_ID,
+            account_id=_ACCOUNT_ID,
+            text="full answer text",
+            session_id="user-1:C0123456",
+            channel_id_override=_CHANNEL_ID,
+            platform_override=_PLATFORM,
+        )
+
+        session_store.append_messages_batch.assert_awaited_once()
+        kwargs = session_store.append_messages_batch.call_args.kwargs
+        assert kwargs["session_id"] == "user-1:C0123456"
+        assert kwargs["owner_id"] == _USER_ID
+        messages = kwargs["messages"]
+        assert messages[0].role == "user"
+        assert messages[1].role == "model"
+        assert messages[1].parts[0].text == "full answer text"
+
+    async def test_no_channel_skips_delivery(self, channel_factory):
+        """notify_text with no stored channel → nothing sent."""
+        state_repo = MagicMock()
+        state_repo.get_primary = AsyncMock(return_value=None)
+        state_repo.get = AsyncMock(return_value=None)
+        svc = UserNotificationService(
+            state_repo=state_repo,
+            channel_factory=channel_factory,
+            coordinator=MagicMock(),
+            notification_sla={},
+        )
+
+        await svc.notify_text(user_id=_USER_ID, account_id=_ACCOUNT_ID, text="hi")
+
+        channel_factory.create.assert_not_called()
+
+
 class TestNotifyRawExtended:
 
     async def test_state_repo_error_swallowed(self, service, state_repo, response_channel):
