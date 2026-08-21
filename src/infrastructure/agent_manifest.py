@@ -566,13 +566,15 @@ IMAGE_GENERATION = AgentDescriptor(
         },
     },
     internal=False,
-    # 180s agent timeout (ImageGenerationAgentConfig.timeout_ms) + 2 min overhead —
+    # 400s agent timeout (ImageGenerationAgentConfig.timeout_ms) + 2 min overhead —
     # same slack pattern as HTML_PAGE_GENERATOR etc. below. Without this margin the
     # agent's own timeout can never fire before Cloud Tasks kills the task
     # externally, which (a) skips the failure-notification path entirely and
     # (b) triggers a Cloud Tasks retry that re-runs (and re-bills) the xAI call.
-    # Conservative starting values — RFC §10 open question #3, unmeasured.
-    dispatch_deadline_s=300,
+    # Raised from 300s 2026-08-21 after a live generate() call exceeded the
+    # previous, smaller budget in production (RFC §10 open question #3 — still
+    # not a fully measured ceiling, but backed by a real data point now).
+    dispatch_deadline_s=520,
 )
 
 

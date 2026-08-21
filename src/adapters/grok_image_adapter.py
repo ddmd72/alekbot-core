@@ -52,11 +52,13 @@ class GrokImageAdapter(ImageGenerationPort):
             # (set specifically to avoid double-billing xAI on retry, since a
             # transient 5xx can arrive AFTER xAI has already rendered and billed for
             # an image). max_retries=0 pushes retry policy fully up to the agent
-            # layer, where NO_RETRY_POLICY actually applies. 120.0s is a starting
-            # value, not a measured one — no latency data yet for
-            # grok-imagine-image-2.0 (RFC §10 open question #3); revisit after first
-            # live measurements, same caveat as agent_config.py's request_timeout_s.
-            timeout=120.0,
+            # layer, where NO_RETRY_POLICY actually applies. 300.0s — raised from an
+            # initial 120.0s after a live generate() call measured >120s and hit
+            # that ceiling in production 2026-08-21 (openai.APITimeoutError). Still
+            # not a fully measured value — the true upper bound for
+            # grok-imagine-image-2.0 is unknown (RFC §10 open question #3) — but
+            # now backed by one real data point instead of a guess.
+            timeout=300.0,
             max_retries=0,
         )
 
