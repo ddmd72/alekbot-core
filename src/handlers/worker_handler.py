@@ -25,6 +25,8 @@ Supported task_types:
   - start_email_indexing          → fan-out: start incremental indexing for all Gmail users with auto_index enabled
   - start_daily_email_review      → fan-out: enqueue daily_email_review for all Gmail users with gmail_daily_review enabled
   - daily_email_review            → fetch last 24h emails, deliver structured payload to SmartAgent for analysis
+  - smart_timeout_retry      → one background retry of a Smart call that timed out
+                                synchronously; delegates entirely to SmartRetryService
   - repair_email_embeddings       → run one batch of EmailEmbeddingRepairService (re-embed indexed emails
                                      where embedding_pending=True after transient API failures)
 """
@@ -95,6 +97,7 @@ class WorkerHandler:
         billing_webhook: Any = None,  # SlackWebhookAdapter
         email_embedding_repair: Optional[EmailEmbeddingRepairService] = None,
         link_service: "Optional[FileLinkService]" = None,
+        smart_retry_service: Any = None,  # SmartRetryService (avoid services/ import here — Any per this file's own convention for cross-layer refs, e.g. `coordinator: Any`)
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -116,6 +119,7 @@ class WorkerHandler:
         self._account_repo = account_repo
         self._billing_webhook = billing_webhook
         self._email_embedding_repair = email_embedding_repair
+        self._smart_retry_service = smart_retry_service
 
     async def handle(self, payload: dict) -> Optional[Tuple[dict, int]]:
         """
@@ -161,6 +165,8 @@ class WorkerHandler:
             return await self._handle_daily_email_review(payload)
         elif task_type == "billing_daily_summary":
             return await self._handle_billing_daily_summary()
+        elif task_type == "smart_timeout_retry":
+            return await self._handle_smart_timeout_retry(payload)
         elif task_type == "repair_email_embeddings":
             return await self._handle_repair_email_embeddings()
         return None  # unknown task_type — caller handles fallback
@@ -730,6 +736,19 @@ class WorkerHandler:
             f"[Worker] daily_email_review: delivered {len(emails)} emails to Smart for {user_id[:8]}"
         )
         return {"status": "ok", "emails": len(emails)}, 200
+
+    # ------------------------------------------------------------------
+    # Smart timeout retry
+    # ------------------------------------------------------------------
+
+    async def _handle_smart_timeout_retry(self, payload: dict) -> Tuple[dict, int]:
+        """One background retry of a Smart execution that timed out synchronously.
+        All logic lives in SmartRetryService — see src/services/smart_retry_service.py.
+        """
+        if not self._smart_retry_service:
+            logger.warning("[Worker] smart_timeout_retry: smart_retry_service not configured")
+            return {"error": "smart_retry_service not configured"}, 200
+        return await self._smart_retry_service.execute(payload)
 
     # ------------------------------------------------------------------
     # Billing daily summary
