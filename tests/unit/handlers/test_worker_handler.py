@@ -1533,6 +1533,44 @@ class TestSmartTimeoutRetry:
 
         assert status == 200
 
+    @pytest.mark.asyncio
+    async def test_ensures_agents_for_user_before_delegating(self, worker_handler_factory):
+        """CRITICAL: agents are created lazily per-process via
+        UserAgentFactory.ensure_agents_for_user (TTL-swept after 1h), and
+        AgentCoordinator._try_lazy_load refuses to lazy-load eager=True agents
+        (Smart is eager). Without this call, a Cloud Run instance that hasn't
+        already served this user routes to f"smart_response_agent_{user_id}" and
+        fails with "No route found for recipient" — the retry silently does
+        nothing. Same precedent as agent_execution / deep_research_polling /
+        execute_reminder / daily_email_review, which all do this first."""
+        smart_retry_service = MagicMock()
+        smart_retry_service.execute = AsyncMock(return_value=({"status": "delivered"}, 200))
+        handler = worker_handler_factory(smart_retry_service=smart_retry_service)
+
+        await handler.handle({
+            "task_type": "smart_timeout_retry",
+            "user_id": "user-1", "account_id": "account-1", "session_id": "s",
+            "text": "q", "message_parts": [],
+        })
+
+        handler._agent_factory.ensure_agents_for_user.assert_awaited_once_with("user-1")
+
+    @pytest.mark.asyncio
+    async def test_missing_user_id_skips_ensure_agents_but_still_delegates(self, worker_handler_factory):
+        """No user_id to warm up — skip the call rather than passing an empty
+        string to ensure_agents_for_user (mirrors the agent_execution branch's
+        own `if user_id:` guard). SmartRetryService.execute() still runs and
+        handles the missing-fields case itself, always returning 200."""
+        smart_retry_service = MagicMock()
+        smart_retry_service.execute = AsyncMock(return_value=({"error": "missing required fields"}, 200))
+        handler = worker_handler_factory(smart_retry_service=smart_retry_service)
+
+        result, status = await handler.handle({"task_type": "smart_timeout_retry"})
+
+        assert status == 200
+        handler._agent_factory.ensure_agents_for_user.assert_not_awaited()
+        smart_retry_service.execute.assert_awaited_once_with({"task_type": "smart_timeout_retry"})
+
 
 # ---------------------------------------------------------------------------
 # _handle_repair_email_embeddings + dispatcher routing
