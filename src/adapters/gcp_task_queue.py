@@ -5,12 +5,13 @@ GCP Cloud Tasks Adapter
 Concrete TaskQueue implementation for Google Cloud Tasks.
 """
 import json
+import hashlib
 import datetime
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 
 from google.cloud import tasks_v2
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import NotFound, AlreadyExists
 from google.protobuf import timestamp_pb2, duration_pb2
 
 from ..ports.task_queue import TaskQueue
@@ -307,12 +308,21 @@ class GcpTaskQueue(TaskQueue):
         payload: Dict[str, Any],
         delay_seconds: int = 0,
         deadline_seconds: Optional[int] = None,
-    ) -> str:
+        dedup_key: Optional[str] = None,
+    ) -> Optional[str]:
         """Enqueue a generic worker task by task_type.
 
         ``deadline_seconds`` sets Cloud Tasks ``dispatch_deadline``. Left unset, Cloud
         Tasks applies its 600s default — which until 2026-08-15 silently truncated every
         worker task, including the ones whose NotificationSLA promised up to 1500s.
+
+        ``dedup_key`` — optional caller key for de-duplication (e.g. a session_id, so at
+        most one retry is in flight per session). The Cloud Tasks task name is derived
+        here as f"{task_type}-{sha256(dedup_key)[:32]}" — namespaced by task_type so
+        different task types never collide on the same key, and callers never need to
+        know Cloud Tasks' naming rules. Cloud Tasks rejects a second task with the same
+        name while the first is queued/running/recently completed (ALREADY_EXISTS) —
+        treated here as an expected, silent no-op: returns None, never raises.
         """
         try:
             task_payload = {"task_type": task_type, **payload}
@@ -325,6 +335,12 @@ class GcpTaskQueue(TaskQueue):
                     "body": json.dumps(task_payload, cls=_DomainEncoder).encode(),
                 }
             }
+
+            if dedup_key:
+                digest = hashlib.sha256(dedup_key.encode()).hexdigest()[:32]
+                task["name"] = self.client.task_path(
+                    self.project_id, self.location, self.queue_name, f"{task_type}-{digest}"
+                )
 
             if self.service_account_email:
                 task["http_request"]["oidc_token"] = {
@@ -341,9 +357,16 @@ class GcpTaskQueue(TaskQueue):
                 )
                 task["schedule_time"] = timestamp
 
-            response = self.client.create_task(
-                request={"parent": self.queue_path, "task": task}
-            )
+            try:
+                response = self.client.create_task(
+                    request={"parent": self.queue_path, "task": task}
+                )
+            except AlreadyExists:
+                logger.info(
+                    "📬 Worker task dedup: type=%s already scheduled (key=%s), skipping",
+                    task_type, dedup_key,
+                )
+                return None
 
             logger.info(f"📬 Enqueued worker task: type={task_type}, task={response.name}")
             return response.name
