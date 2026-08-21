@@ -65,7 +65,7 @@ class SlackAdapterFactory:
         localization: Optional[LocalizationService] = None,
         file_conversion_service=None,
         channel_binding_service: Optional[ChannelBindingService] = None,
-        alert_webhook=None,
+        fallback_service=None,
         short_link_service=None,
     ) -> SlackAdapter:
         """
@@ -125,7 +125,7 @@ class SlackAdapterFactory:
             file_conversion_service=file_conversion_service,
             channel_binding_service=channel_binding_service,
             channel_history_source=channel_history_source,
-            alert_webhook=alert_webhook,
+            fallback_service=fallback_service,
             short_link_service=short_link_service,
         )
 

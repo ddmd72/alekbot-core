@@ -53,7 +53,7 @@ class TelegramAdapterFactory:
         language_service: Optional[LanguageServicePort] = None,
         localization: Optional[LocalizationService] = None,
         file_conversion_service=None,
-        alert_webhook=None,
+        fallback_service=None,
         short_link_service=None,
     ) -> TelegramWebhookAdapter:
         """
@@ -101,7 +101,7 @@ class TelegramAdapterFactory:
             overflow_callback=process_user_batches_on_overflow,
             localization=localization,
             file_conversion_service=file_conversion_service,
-            alert_webhook=alert_webhook,
+            fallback_service=fallback_service,
             short_link_service=short_link_service,
         )
 
