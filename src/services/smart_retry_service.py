@@ -7,7 +7,8 @@ Two halves, one owner:
   execute()  — called from WorkerHandler on task_type="smart_timeout_retry".
                Runs Smart directly (bypassing Router) with a fresh budget, and
                delivers a follow-up on success. Silent drop on failure — always
-               returns 200 (see module docstring in worker_handler.py for why).
+               returns 200 (see execute()'s own docstring for why a failure here
+               must not propagate as a non-2xx).
 
 Splitting "when to retry" from "how to retry" across two unrelated layers, connected
 only by a task_type string, was the first draft's mistake — this file exists so both
@@ -91,6 +92,9 @@ class SmartRetryService:
         dedup_key=session_id caps this at one retry in flight per session — Cloud
         Tasks silently absorbs a second same-session enqueue while the first is
         still queued/running/recently completed (see TaskQueue.enqueue_worker_task).
+        Passed raw (unhashed) here — turning it into a valid Cloud Tasks task name
+        (hashing, length/charset rules) is the adapter's job (GcpTaskQueue), not
+        this service's; this layer only picks which identity the dedup applies to.
 
         Best-effort: any failure here (queue down, etc.) must never break the
         synchronous Quick fallback path this is called from.
@@ -121,12 +125,16 @@ class SmartRetryService:
                 context.user_id[:8], exc,
             )
 
-    async def execute(self, payload: Dict[str, Any]) -> Tuple[dict, int]:
+    async def execute(self, payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         """Run the one retry and deliver a follow-up on success.
 
-        Always returns 200 — the agent-tasks queue retries a non-2xx response up to
-        3 times (retry_config.max_attempts=3); a failure here is a silent drop, not
-        an error worth GCP retrying.
+        Always returns 200, and nothing in this method may raise past its own
+        boundary — the agent-tasks queue retries a non-2xx response up to 3 times
+        (retry_config.max_attempts=3), so an uncaught exception or a non-2xx here
+        would turn one Smart timeout into up to 4 Smart runs. Everything from the
+        required-fields guard onward (payload parsing, AgentMessage construction,
+        routing, delivery) is wrapped in a catch-all — a failure anywhere in that
+        chain is a silent drop, not an error worth GCP retrying.
         """
         user_id = payload.get("user_id")
         account_id = payload.get("account_id")
@@ -137,54 +145,76 @@ class SmartRetryService:
             )
             return {"error": "missing required fields"}, 200
 
-        thread_id = payload.get("thread_id")
-        text = payload.get("text", "")
-        raw_parts = payload.get("message_parts", [])
-        message_parts = [MessagePart(**p) for p in raw_parts]
-        message_parts.append(MessagePart(text=self._RETRY_NOTE))
-
-        message = AgentMessage.create(
-            sender="worker",
-            recipient=f"smart_response_agent_{user_id}",
-            intent=AgentIntent.QUERY,
-            payload={"text": text, "attachments": []},
-            context={
-                "user_id": user_id,
-                "account_id": account_id,
-                "session_id": session_id,
-                "thread_id": thread_id,
-                "current_message_parts": message_parts,
-            },
-        )
-
         try:
-            response = await self._coordinator.route_message(message)
+            thread_id = payload.get("thread_id")
+            text = payload.get("text", "")
+            raw_parts = payload.get("message_parts", [])
+            message_parts = [MessagePart(**p) for p in raw_parts]
+            message_parts.append(MessagePart(text=self._RETRY_NOTE))
+
+            message = AgentMessage.create(
+                sender="worker",
+                recipient=f"smart_response_agent_{user_id}",
+                intent=AgentIntent.QUERY,
+                payload={"text": text, "attachments": []},
+                context={
+                    "user_id": user_id,
+                    "account_id": account_id,
+                    "session_id": session_id,
+                    "thread_id": thread_id,
+                    "current_message_parts": message_parts,
+                },
+            )
+
+            try:
+                response = await self._coordinator.route_message(message)
+            except Exception as exc:
+                logger.warning(
+                    "[SmartRetryService] execute raised for user=%s: %s", user_id[:8], exc,
+                )
+                return {"status": "retry_raised"}, 200
+
+            if response.status != AgentStatus.SUCCESS:
+                logger.info(
+                    "[SmartRetryService] retry did not succeed (status=%s) for user=%s "
+                    "— dropping silently", response.status, user_id[:8],
+                )
+                return {"status": "retry_not_delivered"}, 200
+
+            result = response.result
+            # V1 scope: only .text is delivered here. link_list/structured_data on a
+            # SmartResponse result (citation anchors, rich content) are dropped by
+            # design — notify_text is plain-text-only. A retried answer that cites
+            # sources will show literal unresolved [N] anchors to the user. Wiring
+            # rich delivery through the retry path is out of scope for this task.
+            #
+            # `result.text` can be None even when `result` has a `text` attribute
+            # (SmartResponse is a plain dataclass with no runtime validation, and an
+            # explicit JSON `null` from the LLM response reaches it unguarded — see
+            # smart_response_agent.py). Treat a present-but-None text the same as a
+            # missing one: both fall through to the empty-response branch below.
+            if hasattr(result, "text"):
+                response_text = result.text or ""
+            else:
+                response_text = str(result or "")
+
+            if not response_text.strip():
+                logger.info(
+                    "[SmartRetryService] retry succeeded but produced empty text for user=%s",
+                    user_id[:8],
+                )
+                return {"status": "retry_empty"}, 200
+
+            await self._notification.notify_text(
+                user_id=user_id, account_id=account_id, text=response_text, session_id=session_id,
+            )
+            logger.info(
+                "[SmartRetryService] delivered follow-up for user=%s", user_id[:8],
+            )
+            return {"status": "delivered"}, 200
         except Exception as exc:
             logger.warning(
-                "[SmartRetryService] execute raised for user=%s: %s", user_id[:8], exc,
+                "[SmartRetryService] execute: unexpected error for user=%s: %s",
+                user_id[:8], exc,
             )
-            return {"status": "retry_raised"}, 200
-
-        if response.status != AgentStatus.SUCCESS:
-            logger.info(
-                "[SmartRetryService] retry did not succeed (status=%s) for user=%s "
-                "— dropping silently", response.status, user_id[:8],
-            )
-            return {"status": "retry_not_delivered"}, 200
-
-        result = response.result
-        response_text = result.text if hasattr(result, "text") else str(result or "")
-        if not response_text.strip():
-            logger.info(
-                "[SmartRetryService] retry succeeded but produced empty text for user=%s",
-                user_id[:8],
-            )
-            return {"status": "retry_empty"}, 200
-
-        await self._notification.notify_text(
-            user_id=user_id, account_id=account_id, text=response_text, session_id=session_id,
-        )
-        logger.info(
-            "[SmartRetryService] delivered follow-up for user=%s", user_id[:8],
-        )
-        return {"status": "delivered"}, 200
+            return {"status": "unexpected_error"}, 200
