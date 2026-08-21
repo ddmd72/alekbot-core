@@ -5,7 +5,8 @@ Covers:
 - can_handle: correct intents with required fields → True; wrong intent,
   empty query, edit_image without image_ref → False
 - execute generate_image: LLM call #1 crafts the prompt, port.generate() renders,
-  one DeliveryItem(type="document") with file_upload=True
+  one DeliveryItem(type="document") with file_upload=False (link-unfurl alone
+  renders the image; native upload would duplicate it)
 - execute generate_image: empty LLM output → failure
 - execute generate_image: empty query → failure
 - execute generate_image: prompt_builder failure → failure
@@ -131,7 +132,10 @@ async def test_execute_generate_image_happy_path(agent, mock_llm, mock_image_por
     assert len(response.delivery_items) == 1
     item = response.delivery_items[0]
     assert item.type == "document"
-    assert item.data["file_upload"] is True
+    # False: the document link already unfurls into an inline image (Slack/Telegram
+    # detect the image content-type) — a native upload would duplicate the same
+    # picture a second time in the channel. Confirmed live in production 2026-08-21.
+    assert item.data["file_upload"] is False
     assert item.data["content_type"] == "image/png"
     assert base64.b64decode(item.data["content_b64"]) == b"\x89PNGfakebytes"
 

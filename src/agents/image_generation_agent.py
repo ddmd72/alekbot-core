@@ -219,7 +219,13 @@ class ImageGenerationAgent(BaseAgent):
                         "filename": filename,
                         "content_type": image.mime_type,
                         "label": filename,
-                        "file_upload": True,
+                        # False on purpose: the document link already renders inline via
+                        # the channel's own link-unfurl (image content-type), so a native
+                        # file_upload here would just duplicate the same picture a second
+                        # time in the channel. Confirmed live in production 2026-08-21 —
+                        # unfurl alone is sufficient, and open_file re-read is driven by
+                        # the GCS-backed link, not by this flag.
+                        "file_upload": False,
                         "storage_class": message.context.get("storage_class", "document"),
                     },
                 ),
