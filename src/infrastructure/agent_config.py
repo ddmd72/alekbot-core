@@ -437,7 +437,14 @@ DOMAIN_RESEARCHER = DomainResearcherAgentConfig()
 class ImageGenerationAgentConfig:
     temperature: float = 0.7      # Prompt-crafting is translation, not creative writing
     max_tokens: int = 2_000       # Output is a single prompt string, not a document
-    timeout_ms: int = 90_000      # Background async task: text LLM call + image API call
+    # Hard wall-clock budget around the entire execute() call (prompt-builder read +
+    # LLM prompt-crafting call + image render + encoding). Matches
+    # AgentDescriptor.dispatch_deadline_s=180 (agent_manifest.py IMAGE_GENERATION) —
+    # gives the agent the full Cloud Tasks budget rather than cutting it short
+    # internally. Unmeasured starting value — no latency data yet for
+    # grok-imagine-image-2.0 (RFC §10 open question #3); revisit after first live
+    # measurements.
+    timeout_ms: int = 180_000
     thinking_effort: Optional[str] = None
     # Per-LLM-request timeout (seconds) for the prompt-crafting call, passed as
     # LLMRequest.timeout. Conservative starting value — no latency data yet for

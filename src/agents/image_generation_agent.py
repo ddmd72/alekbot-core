@@ -22,13 +22,14 @@ the reference image file — resolved via FileConversionService.resolve_bytes(),
 via the coordinator's generic file_ref auto-injection (RFC §3.4).
 """
 import base64
+import mimetypes
 import time
 from typing import List, Optional
 
 from .base_agent import BaseAgent
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse, DeliveryItem
-from ..domain.llm import Message, MessagePart
+from ..domain.llm import Message, MessagePart, describe_empty_output
 from ..infrastructure.agent_config import IMAGE_GENERATION
 from ..infrastructure.agent_manifest import Intent
 from ..ports.image_generation_port import ImageGenerationPort
@@ -106,21 +107,23 @@ class ImageGenerationAgent(BaseAgent):
                 error=f"Failed to build system prompt: {exc}",
             )
 
-        crafted_prompt = await self._craft_prompt(system_prompt, query)
+        prompt_response = await self._craft_prompt(system_prompt, query)
+        crafted_prompt = (prompt_response.text or "").strip()
         if not crafted_prompt:
-            err = ValueError("LLM returned empty prompt")
+            reason = describe_empty_output(prompt_response.finish_reason)
+            err = ValueError(f"LLM returned empty prompt: {reason}")
             self._on_agent_error(err, "prompt_crafting")
             return AgentResponse.failure(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
-                error="Could not craft an image prompt from the request.",
+                error=f"Could not craft an image prompt from the request — {reason}.",
             )
 
         if intent_name == Intent.EDIT_IMAGE:
             return await self._execute_edit(message, crafted_prompt)
         return await self._execute_generate(message, crafted_prompt)
 
-    async def _craft_prompt(self, system_prompt: str, query: str) -> str:
+    async def _craft_prompt(self, system_prompt: str, query: str):
         request = LLMRequest(
             model_name=self.model_name,
             system_instruction=system_prompt,
@@ -130,8 +133,7 @@ class ImageGenerationAgent(BaseAgent):
             thinking=self.THINKING_EFFORT or None,
             timeout=self.REQUEST_TIMEOUT_S,
         )
-        response = await self._call_llm(request)
-        return (response.text or "").strip()
+        return await self._call_llm(request)
 
     async def _execute_generate(self, message: AgentMessage, prompt: str) -> AgentResponse:
         start_time = time.time()
@@ -164,8 +166,13 @@ class ImageGenerationAgent(BaseAgent):
                 error=f"Could not read reference image '{image_ref}': {type(e).__name__}.",
             )
 
+        mime_type, _ = mimetypes.guess_type(image_ref)
+        mime_type = mime_type or "image/png"
+
         try:
-            image = await self._image_port.edit(prompt, reference_images=[reference_bytes])
+            image = await self._image_port.edit(
+                prompt, reference_images=[reference_bytes], mime_type=mime_type,
+            )
         except Exception as e:
             self._on_agent_error(e, "image_edit")
             return AgentResponse.failure(

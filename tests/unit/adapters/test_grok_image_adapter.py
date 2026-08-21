@@ -163,3 +163,13 @@ async def test_edit_preserves_custom_mime_type(adapter):
     filename, file_obj, content_type = image_tuple
     assert filename == "reference_image.webp"
     assert content_type == "image/webp"
+
+
+def test_client_disables_sdk_level_retries(adapter):
+    """
+    Fix 3 regression guard: the SDK client must be constructed with max_retries=0.
+    ImageGenerationAgent.RETRY_POLICY is NO_RETRY_POLICY specifically to avoid
+    double-billing xAI on retry — an SDK-level retry (default 2) would undermine
+    that policy one layer below it, invisibly.
+    """
+    assert adapter._client.max_retries == 0
