@@ -1,0 +1,5 @@
+{
+  "blueprint_id": "image_generation_agent_v1",
+  "outer_class": "ImageGenerationAgent extends Agent",
+  "class_order": ["cognitive_process"]
+}
