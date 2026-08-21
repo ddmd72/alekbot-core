@@ -73,10 +73,12 @@ class TaskDispatchService:
         payload: Dict[str, Any],
         delay_seconds: int = 0,
         deadline_seconds: Optional[int] = None,
-    ) -> str:
+        dedup_key: Optional[str] = None,
+    ) -> Optional[str]:
         return await self._queue.enqueue_worker_task(
             task_type=task_type,
             payload=payload,
             delay_seconds=delay_seconds,
             deadline_seconds=deadline_seconds,
+            dedup_key=dedup_key,
         )
