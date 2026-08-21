@@ -552,6 +552,9 @@ IMAGE_GENERATION = AgentDescriptor(
             "delivered directly to the user. "
             "Use when the user asks to draw, create, generate, design, or make "
             "an image, graphic, mockup, icon, or visual asset — not just photos. "
+            "Also use on your own initiative when a generated image would "
+            "genuinely improve your answer (illustrating an idea, concept, or "
+            "layout), even if the user did not explicitly ask for one. "
             'payload: {"query": "<what to depict, purpose, style if known>"}'
         ),
         Intent.EDIT_IMAGE: (
