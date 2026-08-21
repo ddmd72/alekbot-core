@@ -9,8 +9,11 @@ Coverage:
     - SUCCESS generate_docx_code   → _deliver_docx_result called
     - SUCCESS create_pdf           → _deliver_document_result called
     - SUCCESS create_html_page     → _deliver_document_result called
+    - SUCCESS generate_image       → _deliver_document_result called
+    - SUCCESS edit_image           → _deliver_document_result called
     - FAILED deep research         → _notify_failure called
     - FAILED create_document       → _notify_docx_failure called
+    - FAILED generate_image        → _notify_docx_failure called
     - FAILED generic intent        → returns failed, no notification
     - Exception + deep research    → _notify_failure + re-raise
     - Exception + generic          → re-raise, no notify
@@ -219,6 +222,51 @@ class TestHandleTask:
 
         doc_delivery.store.assert_called_once()
         notification.notify_document_link.assert_called_once()
+
+    async def test_success_generate_image_calls_deliver_document(self):
+        handler, coordinator, notification, doc_delivery = _make_handler()
+        content_b64 = base64.b64encode(b"\x89PNGfakebytes").decode()
+        item = DeliveryItem(type="document", data={
+            "content_b64": content_b64,
+            "filename": "image_123.png",
+            "content_type": "image/png",
+            "label": "image_123.png",
+            "file_upload": True,
+        })
+        coordinator.route_message.return_value = _success_response(delivery_items=[item])
+
+        await handler.handle_task(_payload(Intent.GENERATE_IMAGE))
+
+        doc_delivery.store.assert_called_once()
+        notification.notify_document_link.assert_called_once()
+
+    async def test_success_edit_image_calls_deliver_document(self):
+        handler, coordinator, notification, doc_delivery = _make_handler()
+        content_b64 = base64.b64encode(b"edited-bytes").decode()
+        item = DeliveryItem(type="document", data={
+            "content_b64": content_b64,
+            "filename": "image_456.png",
+            "content_type": "image/png",
+            "label": "image_456.png",
+            "file_upload": True,
+        })
+        coordinator.route_message.return_value = _success_response(delivery_items=[item])
+
+        await handler.handle_task(_payload(Intent.EDIT_IMAGE))
+
+        doc_delivery.store.assert_called_once()
+        notification.notify_document_link.assert_called_once()
+
+    async def test_failed_generate_image_calls_notify_docx_failure(self):
+        handler, coordinator, notification, _ = _make_handler()
+        coordinator.route_message.return_value = _failed_response("xAI render error")
+
+        result = await handler.handle_task(_payload(Intent.GENERATE_IMAGE))
+
+        assert result["status"] == "failed"
+        notification.notify.assert_called_once()
+        alert = notification.notify.call_args.kwargs["system_alert"]
+        assert "xAI render error" in alert
 
     async def test_failed_deep_research_calls_notify_failure(self):
         handler, coordinator, notification, _ = _make_handler()
