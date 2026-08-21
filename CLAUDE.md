@@ -157,6 +157,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | DeepResearch | — | `deep_research` | async; default Claude, Cloud Run Job |
 | MapsSearch | BALANCED (OpenAI) | `maps_query` (internal) | auto fan-out from `search_web` |
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
+| ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
 
 **Remote MCP Server** — alekbot as MCP *server* exposing memory search to claude.ai Custom Connectors
 (inverse of its Maps MCP *client*). One tool `get_user_context(query, …)` → `SearchEnrichmentService.enrich_context`

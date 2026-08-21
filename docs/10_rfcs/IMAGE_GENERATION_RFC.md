@@ -1,6 +1,6 @@
 # RFC: ImageGenerationAgent — Image Generation & Editing via grok-imagine-image-2.0
 
-**Status:** PROPOSED — pending owner review of §6 scope decisions
+**Status:** IMPLEMENTED
 **Date:** 2026-08-21
 **Owner:** AI Engineering
 **Milestone:** Specialist Agents — new capability
@@ -387,9 +387,9 @@ sign-off before implementation per CLAUDE.md's delta-declaration gate.
 | 3 | `edit_image` uses context key `image_ref`, **not** `file_ref` | Avoids the coordinator's generic text-only auto-injection (§3.4) misfiring on binary content |
 | 4 | Provider resolved via **two independent registries**, same resolved name | Reuses proven `DeepResearchPort`/`job_registry` pattern; §3.7 |
 | 5 | Video generation **out of scope**, deferred to its own future RFC | Different technique/latency/delivery shape — §3.9 |
-| 6 | **[NEEDS SIGN-OFF]** `edit_image` v1 supports a **single** reference image (`image_ref`), not xAI's max of 3 | Matches existing single-`file_ref` precedent (`CREATE_HTML_PAGE`) exactly, zero new plumbing. Multi-image compositing (styles/subjects from separate references) deferred until a real use case appears — extending to `image_ref_2`/`image_ref_3` or a list is additive, not a rewrite. |
-| 7 | **[NEEDS SIGN-OFF]** `n=1` (single image per request) in v1, not xAI's max of 10 | Keeps the delivery/UX simple (one image per turn). "Give me variations" becomes a follow-up delegation. Revisit if users ask for options routinely. |
-| 8 | **[NEEDS SIGN-OFF]** `allowed_providers: ["grok"]` only, no fallback | No second image-gen adapter exists yet (§3.9-adjacent — this is about images, not video). A `fallback` would need a second working adapter; adding one now would be speculative. |
+| 6 | **[APPROVED]** `edit_image` v1 supports a **single** reference image (`image_ref`), not xAI's max of 3 | Matches existing single-`file_ref` precedent (`CREATE_HTML_PAGE`) exactly, zero new plumbing. Multi-image compositing (styles/subjects from separate references) deferred until a real use case appears — extending to `image_ref_2`/`image_ref_3` or a list is additive, not a rewrite. |
+| 7 | **[APPROVED]** `n=1` (single image per request) in v1, not xAI's max of 10 | Keeps the delivery/UX simple (one image per turn). "Give me variations" becomes a follow-up delegation. Revisit if users ask for options routinely. |
+| 8 | **[APPROVED]** `allowed_providers: ["grok"]` only, no fallback | No second image-gen adapter exists yet (§3.9-adjacent — this is about images, not video). A `fallback` would need a second working adapter; adding one now would be speculative. |
 
 ---
 
