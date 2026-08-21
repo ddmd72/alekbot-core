@@ -96,6 +96,7 @@ def _make_handler(
     localization=None,
     with_queue: bool = False,
     short_link_service=None,
+    fallback_service=None,
 ) -> ConversationHandler:
     session_store = MagicMock()
     session_store.append_messages_batch = AsyncMock()
@@ -127,6 +128,7 @@ def _make_handler(
         consolidation_queue=consolidation_queue,
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
         short_link_service=short_link_service,
+        fallback_service=fallback_service,
     )
 
 
@@ -554,16 +556,12 @@ class TestHandleMessageEdgeCases:
             error="LLM provider error",
         )
         coord = _simple_coordinator(failed)
-        handler = _make_handler(coord)
+        fallback_service = MagicMock()
+        fallback_service.try_quick_fallback = AsyncMock(return_value=failed)
+        handler = _make_handler(coord, fallback_service=fallback_service)
         channel = _make_channel()
 
-        # Prevent fallback from kicking in (it's already handled by fallback service)
-        with patch(
-            "src.handlers.conversation_handler.AgentFallbackService.try_quick_fallback",
-            new_callable=AsyncMock,
-            return_value=failed,
-        ):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         channel.send_status.assert_awaited_with(StatusType.ERROR, thread_id=None)
         channel.send_chunked_message.assert_not_awaited()

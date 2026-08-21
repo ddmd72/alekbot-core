@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, call
 
 from src.handlers.conversation_handler import ConversationHandler
+from src.services.agent_fallback_service import AgentFallbackService
 from src.domain.messaging import MessageContext, SmartResponse
 from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.ui_messages import StatusType
@@ -58,10 +59,13 @@ def make_handler():
     coordinator = MagicMock()
     coordinator.route_message = AsyncMock()
 
+    fallback_service = AgentFallbackService(coordinator, alert_webhook=None, smart_retry=None)
+
     handler = ConversationHandler(
         coordinator=coordinator,
         agent_factory=agent_factory,
         file_service=MagicMock(),
+        fallback_service=fallback_service,
     )
     return handler, coordinator, session_store
 
@@ -190,13 +194,20 @@ class TestGracefulDegradationFallback:
         channel.send_chunked_message.assert_called_once()
 
     async def test_system_note_does_not_mention_technical_details(self):
-        """[System: ...] note instructs LLM not to expose error details."""
+        """[System: ...] note instructs LLM not to expose error details.
+
+        Uses make_agent_failed() (not timeout) — since AgentFallbackService split
+        into two notes (fast-lane for TIMEOUT, apology for other FAILED reasons),
+        "apologize without leaking technical details" is specifically the FAILED
+        branch's job. See test_agent_fallback_service.py's
+        test_timeout_injects_fast_lane_note_not_apology for the TIMEOUT branch.
+        """
         handler, coordinator, session_store = make_handler()
         channel = make_channel()
         context = make_context()
 
         coordinator.route_message.side_effect = [
-            make_agent_timeout(),
+            make_agent_failed(),
             make_agent_success("OK"),
         ]
 
