@@ -73,6 +73,9 @@ class Intent:
     DELETE_FILE         = "delete_file"
     # Domain research — interactive competency stack definition for agent construction
     DOMAIN_RESEARCH     = "domain_research"
+    # Image generation/editing via grok-imagine-image-2.0
+    GENERATE_IMAGE      = "generate_image"
+    EDIT_IMAGE          = "edit_image"
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +535,40 @@ DOMAIN_RESEARCHER = AgentDescriptor(
     }),
 )
 
+IMAGE_GENERATION = AgentDescriptor(
+    agent_id="image_generation_agent",
+    agent_type="image_generation",
+    eager=False,
+    capabilities={
+        Intent.GENERATE_IMAGE: ExecutionMode.ASYNC,
+        Intent.EDIT_IMAGE: ExecutionMode.ASYNC,
+    },
+    description="Generates and edits images via grok-imagine-image-2.0",
+    capability_descriptions={
+        Intent.GENERATE_IMAGE: (
+            "Creates a new image from a text description — illustrations, photos, "
+            "infographics, icons, mockups, or any visual. Async — result is "
+            "delivered directly to the user. "
+            "Use when the user asks to draw, create, generate, or make an image. "
+            'payload: {"query": "<what to depict, purpose, style if known>"}'
+        ),
+        Intent.EDIT_IMAGE: (
+            "Edits an existing image the user uploaded — remove/change/add an "
+            "element, change background, etc. Async — result is delivered "
+            "directly to the user. Pass the precise instruction as query, and "
+            "the filename from [File: name (size)] as context.image_ref. "
+            'Requires: context={"image_ref": "<filename>"}'
+        ),
+    },
+    context_schemas={
+        Intent.EDIT_IMAGE: {
+            "image_ref": "Filename from [File: name (size)] label — reference image to edit",
+        },
+    },
+    internal=False,
+    dispatch_deadline_s=180,  # conservative starting value — RFC §10 open question #3
+)
+
 
 ALL_DESCRIPTORS = [
     MEMORY_SEARCH,
@@ -549,4 +586,5 @@ ALL_DESCRIPTORS = [
     HELP,
     FILE_MANAGEMENT,
     DOMAIN_RESEARCHER,
+    IMAGE_GENERATION,
 ]
