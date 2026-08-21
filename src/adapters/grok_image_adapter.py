@@ -17,6 +17,7 @@ response before this ships broadly; if it differs, read it off the SDK response
 instead of hardcoding.
 """
 import base64
+import io
 from typing import List
 
 from openai import AsyncOpenAI
@@ -66,12 +67,16 @@ class GrokImageAdapter(ImageGenerationPort):
         # kwarg for >1 reference image is unconfirmed (RFC §10, open question #2)
         # but irrelevant here: v1 scope is a single reference image only
         # (RFC §6 decision #6).
-        import io
+        # Extract file extension from mime_type (e.g., "image/jpeg" -> "jpg")
+        ext = mime_type.split("/")[-1] if "/" in mime_type else "png"
+        # Map common mime_type subtype to extension (e.g., "jpeg" -> "jpg")
+        ext = "jpg" if ext == "jpeg" else ext
+        filename = f"reference_image.{ext}"
 
         response = await self._client.images.edit(
             model=_MODEL,
             prompt=prompt,
-            image=io.BytesIO(reference_images[0]),
+            image=(filename, io.BytesIO(reference_images[0]), mime_type),
             response_format="b64_json",
         )
         item = response.data[0]

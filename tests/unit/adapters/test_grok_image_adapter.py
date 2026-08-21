@@ -6,6 +6,7 @@ images.edit), capture kwargs, assert on them. Mirrors tests/unit/adapters/test_g
 but for the /v1/images/* surface, not /v1/responses.
 """
 import base64
+import io
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -107,7 +108,14 @@ async def test_edit_sends_correct_kwargs(adapter):
     assert captured["model"] == "grok-imagine-image-2.0"
     assert captured["prompt"] == "remove the background"
     assert captured["response_format"] == "b64_json"
-    assert "image" in captured  # exact field name verified live — see Step 6 below
+    # Verify image tuple contains filename, BytesIO, and mime_type
+    assert "image" in captured
+    image_tuple = captured["image"]
+    assert isinstance(image_tuple, tuple) and len(image_tuple) == 3
+    filename, file_obj, content_type = image_tuple
+    assert filename == "reference_image.png"
+    assert isinstance(file_obj, type(io.BytesIO()))
+    assert content_type == "image/png"
     assert result == GeneratedImage(data=_FAKE_PNG_BYTES, mime_type="image/png")
 
 
@@ -117,3 +125,41 @@ async def test_edit_raises_on_sdk_error(adapter):
 
     with pytest.raises(RuntimeError):
         await adapter.edit("remove the background", reference_images=[b"source-bytes"])
+
+
+@pytest.mark.asyncio
+async def test_edit_maps_jpeg_mime_type_to_jpg_extension(adapter):
+    """Verify that image/jpeg mime_type is correctly mapped to .jpg filename."""
+    captured = {}
+
+    async def mock_edit(**kwargs):
+        captured.update(kwargs)
+        return _images_response()
+
+    adapter._client.images.edit = AsyncMock(side_effect=mock_edit)
+
+    await adapter.edit("remove the background", reference_images=[b"source-bytes"], mime_type="image/jpeg")
+
+    image_tuple = captured["image"]
+    filename, file_obj, content_type = image_tuple
+    assert filename == "reference_image.jpg"
+    assert content_type == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def test_edit_preserves_custom_mime_type(adapter):
+    """Verify that custom mime_type is passed through to SDK."""
+    captured = {}
+
+    async def mock_edit(**kwargs):
+        captured.update(kwargs)
+        return _images_response()
+
+    adapter._client.images.edit = AsyncMock(side_effect=mock_edit)
+
+    await adapter.edit("remove the background", reference_images=[b"source-bytes"], mime_type="image/webp")
+
+    image_tuple = captured["image"]
+    filename, file_obj, content_type = image_tuple
+    assert filename == "reference_image.webp"
+    assert content_type == "image/webp"
