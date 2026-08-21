@@ -173,3 +173,119 @@ async def test_execute_generate_image_port_returns_empty_fails(agent, mock_image
 
     assert response.status == AgentStatus.FAILED
     assert response.delivery_items == []
+
+
+# ============================================================================
+# Fixtures for edit_image tests
+# ============================================================================
+
+@pytest.fixture
+def mock_file_conversion():
+    fc = AsyncMock()
+    fc.resolve_bytes.return_value = b"original-photo-bytes"
+    return fc
+
+
+@pytest.fixture
+def agent_with_files(mock_llm, mock_prompt_builder, mock_image_port, mock_file_conversion):
+    config = AgentConfig(
+        agent_id="image_generation_agent_user123",
+        agent_type="image_generation",
+    )
+    return ImageGenerationAgent(
+        config=config,
+        execution_context=_make_execution_context(mock_llm),
+        image_port=mock_image_port,
+        prompt_builder=mock_prompt_builder,
+        user_id="user123",
+        file_conversion=mock_file_conversion,
+    )
+
+
+# ============================================================================
+# can_handle — edit_image
+# ============================================================================
+
+async def test_can_handle_edit_image_with_image_ref(agent_with_files):
+    msg = _make_message(
+        "edit_image", query="remove the person in the background",
+        context={"image_ref": "photo.jpg"},
+    )
+    assert await agent_with_files.can_handle(msg) is True
+
+
+# ============================================================================
+# execute — edit_image
+# ============================================================================
+
+async def test_execute_edit_image_happy_path(agent_with_files, mock_image_port, mock_file_conversion):
+    mock_image_port.edit.return_value = GeneratedImage(data=b"edited-bytes", mime_type="image/png")
+    msg = _make_message(
+        "edit_image",
+        query="remove the person in the background",
+        context={"image_ref": "photo.jpg"},
+    )
+    # image_ref is spread into payload by the coordinator in production (context_schemas
+    # mechanism) — simulate that here since this test bypasses the coordinator.
+    msg.payload["image_ref"] = "photo.jpg"
+
+    response = await agent_with_files.execute(msg)
+
+    assert response.status == AgentStatus.SUCCESS
+    mock_file_conversion.resolve_bytes.assert_called_once_with("photo.jpg", "user123")
+    mock_image_port.edit.assert_called_once()
+    edit_kwargs = mock_image_port.edit.call_args.kwargs
+    assert edit_kwargs["reference_images"] == [b"original-photo-bytes"]
+    assert base64.b64decode(response.delivery_items[0].data["content_b64"]) == b"edited-bytes"
+
+
+async def test_execute_edit_image_missing_image_ref_fails(agent_with_files):
+    msg = _make_message("edit_image", query="remove the person")
+    # No image_ref in payload at all.
+
+    response = await agent_with_files.execute(msg)
+
+    assert response.status == AgentStatus.FAILED
+    assert "image_ref" in response.error
+
+
+async def test_execute_edit_image_never_reads_file_content(agent_with_files, mock_image_port):
+    """
+    Regression guard for RFC §3.4: edit_image must resolve image_ref itself via
+    FileConversionService.resolve_bytes(), NEVER via a payload["file_content"]
+    field (which is what AgentCoordinator._resolve_file_refs() would inject if
+    this intent had used the key "file_ref" instead of "image_ref" — and which
+    would be garbage/alert text for a binary image, not usable pixels).
+    """
+    mock_image_port.edit.return_value = GeneratedImage(data=b"edited-bytes", mime_type="image/png")
+    msg = _make_message("edit_image", query="remove the person", context={"image_ref": "photo.jpg"})
+    msg.payload["image_ref"] = "photo.jpg"
+    # Simulate what _resolve_file_refs would have injected had the key been "file_ref" —
+    # a text alert, not usable image bytes. The agent must not touch this field at all.
+    msg.payload["file_content"] = "[System: could not convert binary image to text]"
+
+    response = await agent_with_files.execute(msg)
+
+    assert response.status == AgentStatus.SUCCESS
+    edit_kwargs = mock_image_port.edit.call_args.kwargs
+    assert edit_kwargs["reference_images"] == [b"original-photo-bytes"]  # from resolve_bytes, not file_content
+
+
+async def test_execute_edit_image_resolve_bytes_failure(agent_with_files, mock_file_conversion):
+    mock_file_conversion.resolve_bytes.side_effect = FileNotFoundError("gone")
+    msg = _make_message("edit_image", query="remove the person", context={"image_ref": "photo.jpg"})
+    msg.payload["image_ref"] = "photo.jpg"
+
+    response = await agent_with_files.execute(msg)
+
+    assert response.status == AgentStatus.FAILED
+
+
+async def test_execute_edit_image_port_failure(agent_with_files, mock_image_port):
+    mock_image_port.edit.side_effect = RuntimeError("xAI edit failed")
+    msg = _make_message("edit_image", query="remove the person", context={"image_ref": "photo.jpg"})
+    msg.payload["image_ref"] = "photo.jpg"
+
+    response = await agent_with_files.execute(msg)
+
+    assert response.status == AgentStatus.FAILED
