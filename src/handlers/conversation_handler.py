@@ -46,6 +46,10 @@ from ..domain.session_mode import SessionMode
 # Content types that require external fetch + platform upload (not Block Kit)
 _MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file", "widget"})
 
+# TEMPORARY TEST HOOK (2026-08-21) — one-shot per user_id, see usage below. REMOVE after
+# verifying the two-phase timeout fallback on the live service.
+_TIMEOUT_TEST_FIRED: set = set()
+
 
 def strtobool(val: str) -> bool:
     """
@@ -669,6 +673,19 @@ class ConversationHandler(ConversationHandlerPort):
                         )
                 else:
                     # Standard flow — Router triage
+                    # TEMPORARY TEST HOOK (2026-08-21) — forces a Smart timeout on the
+                    # dev user's very next message only, to manually verify the
+                    # two-phase timeout fallback (Task 8 of
+                    # docs/superpowers/plans/2026-08-20-smart-timeout-two-phase-fallback.md)
+                    # on the live service. REMOVE after verification.
+                    _test_timeout_ms = None
+                    if (
+                        context.user_id == "f1d66955-cb00-4d2b-8044-4eeff781b7f4"
+                        and context.user_id not in _TIMEOUT_TEST_FIRED
+                    ):
+                        _TIMEOUT_TEST_FIRED.add(context.user_id)
+                        _test_timeout_ms = 2_000
+
                     message = AgentMessage.create(
                         sender="conversation_handler",
                         recipient=f"router_agent_{context.user_id}",
@@ -685,7 +702,7 @@ class ConversationHandler(ConversationHandlerPort):
                             ]
                         },
                         context=agent_context,
-                        timeout_ms=None
+                        timeout_ms=_test_timeout_ms
                     )
 
                     with start_span("conversation.agent_response"):
