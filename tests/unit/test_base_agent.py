@@ -310,6 +310,21 @@ class TestBaseAgent:
         assert agent.execute_calls == 1
 
     @pytest.mark.asyncio
+    async def test_timeout_sets_status_timeout_not_failed(self, config, message):
+        """A real asyncio.TimeoutError must produce AgentStatus.TIMEOUT, not FAILED —
+        AgentFallbackService.try_quick_fallback distinguishes on this to decide whether
+        a background Smart retry is worth scheduling."""
+        agent = MockAgent(config)
+        agent.execute_error = asyncio.TimeoutError("boom")
+
+        response = await agent.process(message)
+
+        assert response.status == AgentStatus.TIMEOUT
+        assert "timeout" in response.error.lower()
+        # No retry on timeout — single attempt.
+        assert agent.execute_calls == 1
+
+    @pytest.mark.asyncio
     async def test_can_handle_exception_returns_failure(self, config, message):
         """can_handle() raising an exception returns failure response."""
         agent = MockAgent(config)

@@ -573,6 +573,7 @@ class BaseAgent(ABC):
             else self.retry_policy
         )
         last_error: Optional[str] = None
+        is_timeout: bool = False
 
         async def _attempt() -> AgentResponse:
             logger.info(f"🔧 {self.agent_id} executing task {message.task_id[:8]}...")
@@ -620,6 +621,7 @@ class BaseAgent(ABC):
             # Structural budget mismatch — running again inside the same timeout
             # cannot help. Surfaced as failure, never retried.
             last_error = "Task execution timeout"
+            is_timeout = True
             logger.warning(
                 f"⏱️ {self.agent_id} timeout (no retry — budget mismatch, not transient failure)"
             )
@@ -636,10 +638,13 @@ class BaseAgent(ABC):
         self.circuit_breaker.record_failure(self.agent_id)
         await self._flush_billing()
 
+        error_message = f"Agent failed. Last error: {last_error}"
+        if is_timeout:
+            return AgentResponse.timeout(
+                task_id=message.task_id, agent_id=self.agent_id, error=error_message,
+            )
         return AgentResponse.failure(
-            task_id=message.task_id,
-            agent_id=self.agent_id,
-            error=f"Agent failed. Last error: {last_error}"
+            task_id=message.task_id, agent_id=self.agent_id, error=error_message,
         )
     
     async def _execute_with_timeout(self, message: AgentMessage) -> AgentResponse:
