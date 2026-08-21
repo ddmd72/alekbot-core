@@ -546,17 +546,20 @@ IMAGE_GENERATION = AgentDescriptor(
     description="Generates and edits images via grok-imagine-image-2.0",
     capability_descriptions={
         Intent.GENERATE_IMAGE: (
-            "Creates a new image from a text description — illustrations, photos, "
-            "infographics, icons, mockups, or any visual. Async — result is "
+            "Creates a new image from a text description — photos, illustrations, "
+            "infographics, ads and marketing visuals, game assets and icons, "
+            "UI/UX mockups, storyboards, or any other visual. Async — result is "
             "delivered directly to the user. "
-            "Use when the user asks to draw, create, generate, or make an image. "
+            "Use when the user asks to draw, create, generate, design, or make "
+            "an image, graphic, mockup, icon, or visual asset — not just photos. "
             'payload: {"query": "<what to depict, purpose, style if known>"}'
         ),
         Intent.EDIT_IMAGE: (
-            "Edits an existing image the user uploaded — remove/change/add an "
-            "element, change background, etc. Async — result is delivered "
-            "directly to the user. Pass the precise instruction as query, and "
-            "the filename from [File: name (size)] as context.image_ref. "
+            "Precisely edits an existing image the user uploaded — remove/change/add "
+            "an element, change or replace the background, restyle a region, or make "
+            "other targeted adjustments. Async — result is delivered directly to the "
+            "user. Pass the precise instruction as query, and the filename from "
+            "[File: name (size)] as context.image_ref. "
             'Requires: context={"image_ref": "<filename>"}'
         ),
     },
