@@ -377,8 +377,9 @@ Firestore token updates (manual):
 
 ## 6. Design Decisions
 
-Decisions reached during design discussion, with rationale — flagged items need explicit owner
-sign-off before implementation per CLAUDE.md's delta-declaration gate.
+Decisions reached during design discussion, with rationale. Items #6–#8 required explicit owner
+sign-off before implementation per CLAUDE.md's delta-declaration gate — all three are now
+`[APPROVED]`; nothing in this section is pending.
 
 | # | Decision | Rationale |
 |---|---|---|

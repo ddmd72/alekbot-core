@@ -29,7 +29,7 @@ from typing import List, Optional
 from .base_agent import BaseAgent
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse, DeliveryItem
-from ..domain.llm import Message, MessagePart, describe_empty_output
+from ..domain.llm import LLMResponse, Message, MessagePart, describe_empty_output
 from ..infrastructure.agent_config import IMAGE_GENERATION
 from ..infrastructure.agent_manifest import Intent
 from ..ports.image_generation_port import ImageGenerationPort
@@ -123,7 +123,7 @@ class ImageGenerationAgent(BaseAgent):
             return await self._execute_edit(message, crafted_prompt)
         return await self._execute_generate(message, crafted_prompt)
 
-    async def _craft_prompt(self, system_prompt: str, query: str):
+    async def _craft_prompt(self, system_prompt: str, query: str) -> LLMResponse:
         request = LLMRequest(
             model_name=self.model_name,
             system_instruction=system_prompt,
