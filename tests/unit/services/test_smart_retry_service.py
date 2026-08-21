@@ -17,8 +17,9 @@ class TestSchedule:
         task_dispatch.enqueue_worker_task = AsyncMock(return_value="task-1")
         svc = SmartRetryService(task_dispatch=task_dispatch, coordinator=MagicMock(), notification=MagicMock())
 
-        await svc.schedule(_ctx(), [])
+        result = await svc.schedule(_ctx(), [])
 
+        assert result is True  # fresh enqueue → a retry is genuinely in flight
         task_dispatch.enqueue_worker_task.assert_awaited_once()
         kwargs = task_dispatch.enqueue_worker_task.await_args.kwargs
         assert kwargs["task_type"] == SmartRetryService.TASK_TYPE
@@ -28,10 +29,29 @@ class TestSchedule:
         assert kwargs["payload"]["text"] == "hi"
 
     @pytest.mark.asyncio
+    async def test_includes_origin_channel_derived_from_session_id_and_passed_platform(self):
+        """origin_channel_id is derived from session_id (f"{user_id}:{channel_id}"),
+        NOT read off MessageContext.metadata — Slack's app_mention flow never
+        populates metadata["channel"], but session_id always carries the real
+        channel. origin_platform can't be derived this way (session_id doesn't
+        encode platform) — the caller passes it explicitly."""
+        task_dispatch = MagicMock()
+        task_dispatch.enqueue_worker_task = AsyncMock(return_value="task-1")
+        svc = SmartRetryService(task_dispatch=task_dispatch, coordinator=MagicMock(), notification=MagicMock())
+
+        await svc.schedule(_ctx(), [], origin_platform="slack")
+
+        kwargs = task_dispatch.enqueue_worker_task.await_args.kwargs
+        assert kwargs["payload"]["origin_channel_id"] == "C0123456"
+        assert kwargs["payload"]["origin_platform"] == "slack"
+
+    @pytest.mark.asyncio
     async def test_no_task_dispatch_configured_is_a_noop(self):
         svc = SmartRetryService(task_dispatch=None, coordinator=MagicMock(), notification=MagicMock())
 
-        await svc.schedule(_ctx(), [])  # must not raise
+        result = await svc.schedule(_ctx(), [])  # must not raise
+
+        assert result is False  # nothing was scheduled — caller must not promise a follow-up
 
     @pytest.mark.asyncio
     async def test_scheduling_failure_never_raises(self):
@@ -39,7 +59,22 @@ class TestSchedule:
         task_dispatch.enqueue_worker_task = AsyncMock(side_effect=RuntimeError("queue down"))
         svc = SmartRetryService(task_dispatch=task_dispatch, coordinator=MagicMock(), notification=MagicMock())
 
-        await svc.schedule(_ctx(), [])  # must not raise — best-effort
+        result = await svc.schedule(_ctx(), [])  # must not raise — best-effort
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_dedup_noop_returns_false(self):
+        """enqueue_worker_task returning None means Cloud Tasks deduped this against
+        an already in-flight retry for the same session — no NEW retry started, so
+        the caller must not tell the user a follow-up may arrive."""
+        task_dispatch = MagicMock()
+        task_dispatch.enqueue_worker_task = AsyncMock(return_value=None)
+        svc = SmartRetryService(task_dispatch=task_dispatch, coordinator=MagicMock(), notification=MagicMock())
+
+        result = await svc.schedule(_ctx(), [])
+
+        assert result is False
 
 
 class TestExecute:
@@ -67,6 +102,40 @@ class TestExecute:
         assert kwargs["user_id"] == "user-1"
         assert kwargs["text"] == "я тут крепко подумал — вот ответ"
         assert kwargs["session_id"] == "user-1:C0123456"
+
+    @pytest.mark.asyncio
+    async def test_delivers_to_origin_channel_not_primary(self):
+        """CRITICAL for per-channel session isolation: without channel_id_override
+        + platform_override, notify_text()'s _resolve_channel falls back to the
+        user's primary/last-active channel, which may not be the channel the
+        original timed-out request came from. origin_channel_id/origin_platform
+        (carried in the payload by schedule()) must reach notify_text AND the
+        retried AgentMessage's own context, so any further async delivery the
+        retry triggers (e.g. document generation) also targets the right channel."""
+        coordinator = MagicMock()
+        coordinator.route_message = AsyncMock(
+            return_value=AgentResponse.success(
+                task_id="t", agent_id="smart_response_agent_u",
+                result=SmartResponse(text="ok", structured_data=None, link_list=[]),
+            )
+        )
+        notification = MagicMock()
+        notification.notify_text = AsyncMock()
+        svc = SmartRetryService(task_dispatch=MagicMock(), coordinator=coordinator, notification=notification)
+
+        await svc.execute({
+            "user_id": "user-1", "account_id": "account-1", "session_id": "user-1:C0123456",
+            "text": "q", "message_parts": [],
+            "origin_channel_id": "C0123456", "origin_platform": "slack",
+        })
+
+        notify_kwargs = notification.notify_text.await_args.kwargs
+        assert notify_kwargs["channel_id_override"] == "C0123456"
+        assert notify_kwargs["platform_override"] == "slack"
+
+        sent_message = coordinator.route_message.await_args.args[0]
+        assert sent_message.context["origin_channel_id"] == "C0123456"
+        assert sent_message.context["origin_platform"] == "slack"
 
     @pytest.mark.asyncio
     async def test_dispatches_to_smart_directly_bypassing_router(self):

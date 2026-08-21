@@ -85,8 +85,11 @@ class SmartRetryService:
         self._notification = notification
 
     async def schedule(
-        self, context: MessageContext, message_parts: List[MessagePart],
-    ) -> None:
+        self,
+        context: MessageContext,
+        message_parts: List[MessagePart],
+        origin_platform: Optional[str] = None,
+    ) -> bool:
         """Fire-and-forget one background Smart retry after a timeout.
 
         dedup_key=session_id caps this at one retry in flight per session — Cloud
@@ -98,11 +101,38 @@ class SmartRetryService:
 
         Best-effort: any failure here (queue down, etc.) must never break the
         synchronous Quick fallback path this is called from.
+
+        origin_channel_id/origin_platform are carried in the payload so execute()
+        can deliver the follow-up to the SAME channel the original request came
+        from, instead of falling back to the user's primary/last-active channel
+        (per-channel session isolation — see MessageContext.session_id format
+        f"{user_id}:{channel_id}"). origin_channel_id is derived from context's
+        own session_id here (same split used by WorkerHandler's deep_research_polling
+        handler and deep_research_webhooks.py) rather than trusting
+        context.metadata.get("channel"), which is absent for Slack's app_mention
+        flow. origin_platform cannot be derived the same way (session_id doesn't
+        encode platform) — callers pass it explicitly, sourced the same way
+        ConversationHandler already sources it for the primary AgentMessage
+        (response_channel.platform), NOT context.metadata.get("platform"): that key
+        is only populated on the Slack "$command" path, not on the regular
+        message/app_mention path that Smart actually executes on — the path this
+        retry exists for.
+
+        Returns:
+            True  — a fresh Cloud Tasks enqueue happened; a retry is genuinely in
+                    flight, so Quick may honestly promise a follow-up may arrive.
+            False — nothing new was scheduled: task_dispatch not configured, Cloud
+                    Tasks deduped this against an already in-flight retry for the
+                    same session, or the enqueue attempt raised. Callers must not
+                    promise a follow-up in this case.
         """
         if self._task_dispatch is None:
-            return
+            return False
         try:
-            await self._task_dispatch.enqueue_worker_task(
+            origin_channel_id = (
+                context.session_id.split(":", 1)[1] if ":" in context.session_id else None
+            )
+            task_name = await self._task_dispatch.enqueue_worker_task(
                 task_type=self.TASK_TYPE,
                 payload={
                     "user_id": context.user_id,
@@ -111,19 +141,30 @@ class SmartRetryService:
                     "thread_id": context.thread_id,
                     "text": context.text or "",
                     "message_parts": [p.model_dump() for p in message_parts],
+                    "origin_channel_id": origin_channel_id,
+                    "origin_platform": origin_platform,
                 },
                 deadline_seconds=self._DEADLINE_S,
                 dedup_key=context.session_id,
             )
+            if task_name is None:
+                logger.info(
+                    "[SmartRetryService] Smart retry for user=%s deduped — already "
+                    "in flight for this session",
+                    context.user_id[:8],
+                )
+                return False
             logger.info(
                 "[SmartRetryService] Scheduled background Smart retry for user=%s",
                 context.user_id[:8],
             )
+            return True
         except Exception as exc:
             logger.warning(
                 "[SmartRetryService] Failed to schedule Smart retry for user=%s: %s",
                 context.user_id[:8], exc,
             )
+            return False
 
     async def execute(self, payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         """Run the one retry and deliver a follow-up on success.
@@ -152,6 +193,15 @@ class SmartRetryService:
             message_parts = [MessagePart(**p) for p in raw_parts]
             message_parts.append(MessagePart(text=self._RETRY_NOTE))
 
+            # Carried from schedule()'s payload so this retry (and anything IT
+            # delegates to asynchronously, e.g. document generation) targets the
+            # SAME channel the original timed-out request came from, not whatever
+            # the user's primary/last-active channel happens to be — same
+            # propagation convention as AgentWorkerHandler (origin_channel_id /
+            # origin_platform in context).
+            origin_channel_id = payload.get("origin_channel_id")
+            origin_platform = payload.get("origin_platform")
+
             message = AgentMessage.create(
                 sender="worker",
                 recipient=f"smart_response_agent_{user_id}",
@@ -163,6 +213,8 @@ class SmartRetryService:
                     "session_id": session_id,
                     "thread_id": thread_id,
                     "current_message_parts": message_parts,
+                    "origin_channel_id": origin_channel_id,
+                    "origin_platform": origin_platform,
                 },
             )
 
@@ -207,6 +259,7 @@ class SmartRetryService:
 
             await self._notification.notify_text(
                 user_id=user_id, account_id=account_id, text=response_text, session_id=session_id,
+                channel_id_override=origin_channel_id, platform_override=origin_platform,
             )
             logger.info(
                 "[SmartRetryService] delivered follow-up for user=%s", user_id[:8],

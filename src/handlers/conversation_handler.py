@@ -692,7 +692,8 @@ class ConversationHandler(ConversationHandlerPort):
                         response = await self.coordinator.route_message(message)
                         if self._fallback_service is not None:
                             response = await self._fallback_service.try_quick_fallback(
-                                response, context, message_parts
+                                response, context, message_parts,
+                                origin_platform=agent_context["origin_platform"],
                             )
 
             await stop_status_updates()

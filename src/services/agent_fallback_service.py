@@ -43,13 +43,18 @@ class SmartRetrySchedulerPort(Protocol):
     """Protocol for scheduling a background Smart retry. Implemented by SmartRetryService."""
 
     async def schedule(
-        self, context: MessageContext, message_parts: List[MessagePart],
-    ) -> None: ...
+        self,
+        context: MessageContext,
+        message_parts: List[MessagePart],
+        origin_platform: Optional[str] = None,
+    ) -> bool: ...
 
 
 class AgentFallbackService:
     """Graceful degradation chain: primary failure → QuickAgent → synthetic apology."""
 
+    # Used when smart_retry.schedule() actually put a retry in flight (returned True) —
+    # only then is it honest to let Quick tell the user a fuller answer may follow.
     _TIMEOUT_NOTE = (
         "[System: The primary assistant is still deep in extended reasoning on this "
         "exact request and has not finished within its time budget — this is not a "
@@ -58,6 +63,20 @@ class AgentFallbackService:
         "answer now; you may add that a fuller answer could follow shortly. Do NOT "
         "say you're sorry, and do NOT mention timeouts, errors, or technical details. Then "
         "answer the user's question as well as you can.]"
+    )
+
+    # Same fast-lane framing as _TIMEOUT_NOTE, minus the follow-up promise. Used when
+    # smart_retry.schedule() returned False (not configured, or Cloud Tasks deduped
+    # this against an already in-flight retry for the same session) — nothing is
+    # actually going to arrive later, so Quick must not set that expectation.
+    _TIMEOUT_NOTE_NO_FOLLOWUP = (
+        "[System: The primary assistant is still deep in extended reasoning on this "
+        "exact request and has not finished within its time budget — this is not a "
+        "failure. Open your reply by naturally telling the user, in your own voice, "
+        "that another part of you is still thinking it through and you'll give a fast "
+        "answer now. Do NOT say a fuller answer may follow, do NOT say you're sorry, "
+        "and do NOT mention timeouts, errors, or technical details. Then answer the "
+        "user's question as well as you can.]"
     )
 
     _FAILURE_NOTE = (
@@ -96,6 +115,7 @@ class AgentFallbackService:
         failed_response: AgentResponse,
         context: MessageContext,
         message_parts: List[MessagePart],
+        origin_platform: Optional[str] = None,
     ) -> AgentResponse:
         """
         Attempt QuickAgent fallback for a failed primary response.
@@ -103,9 +123,21 @@ class AgentFallbackService:
         Returns the original response unchanged if status is SUCCESS.
         On TIMEOUT: injects a "fast lane" system note (not an apology) into Quick's
         call, and calls smart_retry.schedule() for one background Smart retry with a
-        fresh budget. On other FAILED reasons: injects the apology note, no retry.
+        fresh budget. Which fast-lane note is used depends on schedule()'s return —
+        _TIMEOUT_NOTE (may promise a follow-up) if a retry was genuinely put in
+        flight, _TIMEOUT_NOTE_NO_FOLLOWUP (no such promise) if scheduling was a
+        no-op (not configured, or Cloud Tasks deduped it against one already in
+        flight for this session) — Quick must never promise a follow-up that isn't
+        actually coming. On other FAILED reasons: injects the apology note, no retry.
         If QuickAgent also fails: returns a synthetic SUCCESS with an apology so the
         caller always receives a displayable response.
+
+        origin_platform: passed through to smart_retry.schedule() so a delivered
+        retry answer lands on the SAME channel the original request came from.
+        Sourced by the caller from response_channel.platform (see
+        ConversationHandler) — NOT context.metadata.get("platform"), which is only
+        populated on Slack's "$command" path, not the regular message/app_mention
+        path a Smart timeout actually happens on.
         """
         if failed_response.status == AgentStatus.SUCCESS:
             return failed_response
@@ -130,10 +162,18 @@ class AgentFallbackService:
             except Exception as exc:
                 logger.warning("[AgentFallbackService] primary-failure alert failed: %s", exc)
 
+        retry_scheduled = False
         if is_timeout and self._smart_retry is not None:
-            await self._smart_retry.schedule(context, message_parts)
+            retry_scheduled = await self._smart_retry.schedule(
+                context, message_parts, origin_platform=origin_platform,
+            )
 
-        note_text = self._TIMEOUT_NOTE if is_timeout else self._FAILURE_NOTE
+        if not is_timeout:
+            note_text = self._FAILURE_NOTE
+        elif retry_scheduled:
+            note_text = self._TIMEOUT_NOTE
+        else:
+            note_text = self._TIMEOUT_NOTE_NO_FOLLOWUP
         system_note = MessagePart(text=note_text)
         fallback_message = AgentMessage.create(
             sender="agent_fallback_service",

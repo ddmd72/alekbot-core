@@ -407,6 +407,36 @@ class TestNotifyText:
 
         channel_factory.create.assert_not_called()
 
+    async def test_send_long_text_exception_swallowed(self, state_repo, channel_factory, response_channel):
+        """notify_text's only production call site (SmartRetryService.execute) must
+        never propagate an exception — same contract as its sibling delivery
+        methods (notify_raw/notify/notify_document_link/notify_file_bytes)."""
+        response_channel.send_long_text = AsyncMock(side_effect=RuntimeError("slack down"))
+        svc = UserNotificationService(
+            state_repo=state_repo,
+            channel_factory=channel_factory,
+            coordinator=MagicMock(),
+            notification_sla={},
+        )
+
+        await svc.notify_text(user_id=_USER_ID, account_id=_ACCOUNT_ID, text="hi")  # must not raise
+
+    async def test_history_append_exception_swallowed(self, state_repo, channel_factory, response_channel):
+        """A history-write failure after successful delivery must also be swallowed
+        — the user already got the answer; losing the history append is a
+        best-effort side effect, not grounds to raise out of a Cloud Tasks handler."""
+        session_store = MagicMock()
+        session_store.append_messages_batch = AsyncMock(side_effect=RuntimeError("firestore down"))
+        svc = UserNotificationService(
+            state_repo=state_repo,
+            channel_factory=channel_factory,
+            coordinator=MagicMock(),
+            notification_sla={},
+            session_store=session_store,
+        )
+
+        await svc.notify_text(user_id=_USER_ID, account_id=_ACCOUNT_ID, text="hi")  # must not raise
+
 
 class TestNotifyRawExtended:
 
