@@ -6,7 +6,6 @@ images.edit), capture kwargs, assert on them. Mirrors tests/unit/adapters/test_g
 but for the /v1/images/* surface, not /v1/responses.
 """
 import base64
-import io
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -94,75 +93,74 @@ async def test_generate_returns_empty_list_on_sdk_error(adapter):
 
 
 @pytest.mark.asyncio
-async def test_edit_sends_correct_kwargs(adapter):
+async def test_edit_sends_correct_json_body(adapter):
+    """
+    edit() must NOT use the SDK's images.edit() convenience method — that method
+    always sends multipart/form-data, which xAI's /v1/images/edits rejects with
+    HTTP 415 (confirmed live in production 2026-08-21). It must go through the
+    low-level AsyncOpenAI.post() escape hatch instead, which sends a plain JSON body.
+    """
     captured = {}
 
-    async def mock_edit(**kwargs):
+    async def mock_post(path, **kwargs):
+        captured["path"] = path
         captured.update(kwargs)
         return _images_response()
 
-    adapter._client.images.edit = AsyncMock(side_effect=mock_edit)
+    adapter._client.post = AsyncMock(side_effect=mock_post)
 
     result = await adapter.edit("remove the background", reference_images=[b"source-bytes"])
 
-    assert captured["model"] == "grok-imagine-image-2.0"
-    assert captured["prompt"] == "remove the background"
-    assert captured["response_format"] == "b64_json"
-    # Verify image tuple contains filename, BytesIO, and mime_type
-    assert "image" in captured
-    image_tuple = captured["image"]
-    assert isinstance(image_tuple, tuple) and len(image_tuple) == 3
-    filename, file_obj, content_type = image_tuple
-    assert filename == "reference_image.png"
-    assert isinstance(file_obj, type(io.BytesIO()))
-    assert content_type == "image/png"
+    assert captured["path"] == "/images/edits"
+    body = captured["body"]
+    assert body["model"] == "grok-imagine-image-2.0"
+    assert body["prompt"] == "remove the background"
+    assert body["response_format"] == "b64_json"
+    # xAI's JSON shape for a reference image: {"url": <data-uri>, "type": "image_url"}
+    assert body["image"]["type"] == "image_url"
+    expected_b64 = base64.b64encode(b"source-bytes").decode("ascii")
+    assert body["image"]["url"] == f"data:image/png;base64,{expected_b64}"
     assert result == GeneratedImage(data=_FAKE_PNG_BYTES, mime_type="image/png")
 
 
 @pytest.mark.asyncio
 async def test_edit_raises_on_sdk_error(adapter):
-    adapter._client.images.edit = AsyncMock(side_effect=RuntimeError("network blip"))
+    adapter._client.post = AsyncMock(side_effect=RuntimeError("network blip"))
 
     with pytest.raises(RuntimeError):
         await adapter.edit("remove the background", reference_images=[b"source-bytes"])
 
 
 @pytest.mark.asyncio
-async def test_edit_maps_jpeg_mime_type_to_jpg_extension(adapter):
-    """Verify that image/jpeg mime_type is correctly mapped to .jpg filename."""
+async def test_edit_uses_jpeg_mime_type_in_data_uri(adapter):
+    """Verify that image/jpeg mime_type is correctly embedded in the data URI."""
     captured = {}
 
-    async def mock_edit(**kwargs):
+    async def mock_post(path, **kwargs):
         captured.update(kwargs)
         return _images_response()
 
-    adapter._client.images.edit = AsyncMock(side_effect=mock_edit)
+    adapter._client.post = AsyncMock(side_effect=mock_post)
 
     await adapter.edit("remove the background", reference_images=[b"source-bytes"], mime_type="image/jpeg")
 
-    image_tuple = captured["image"]
-    filename, file_obj, content_type = image_tuple
-    assert filename == "reference_image.jpg"
-    assert content_type == "image/jpeg"
+    assert captured["body"]["image"]["url"].startswith("data:image/jpeg;base64,")
 
 
 @pytest.mark.asyncio
 async def test_edit_preserves_custom_mime_type(adapter):
-    """Verify that custom mime_type is passed through to SDK."""
+    """Verify that custom mime_type is passed through into the data URI."""
     captured = {}
 
-    async def mock_edit(**kwargs):
+    async def mock_post(path, **kwargs):
         captured.update(kwargs)
         return _images_response()
 
-    adapter._client.images.edit = AsyncMock(side_effect=mock_edit)
+    adapter._client.post = AsyncMock(side_effect=mock_post)
 
     await adapter.edit("remove the background", reference_images=[b"source-bytes"], mime_type="image/webp")
 
-    image_tuple = captured["image"]
-    filename, file_obj, content_type = image_tuple
-    assert filename == "reference_image.webp"
-    assert content_type == "image/webp"
+    assert captured["body"]["image"]["url"].startswith("data:image/webp;base64,")
 
 
 def test_client_disables_sdk_level_retries(adapter):
