@@ -15,12 +15,23 @@ mime_type is currently hardcoded to "image/png" — xAI's docs do not state the
 returned format explicitly (RFC §10, open question #1). Confirm against a live
 response before this ships broadly; if it differs, read it off the SDK response
 instead of hardcoding.
+
+edit() does NOT use the SDK's images.edit() convenience method. That method always
+sends multipart/form-data (the OpenAI API's own convention for file uploads) — xAI's
+/v1/images/edits rejects that outright (confirmed live in production 2026-08-21:
+HTTP 415, "Expected request with Content-Type: application/json") and its own docs
+state plainly that "The OpenAI SDK's images.edit() method is not supported." xAI
+wants a plain JSON body with the reference image as {"url": <data-uri-or-real-url>,
+"type": "image_url"}. We get there via AsyncOpenAI.post() — the SDK's own low-level
+escape hatch for non-standard-shaped endpoints (the same method images.edit()/
+images.generate() call internally under their typed wrappers), which sends JSON when
+called with body= and no files=, reusing the client's configured auth/timeout/base_url.
 """
 import base64
-import io
 from typing import List
 
 from openai import AsyncOpenAI
+from openai.types.images_response import ImagesResponse
 
 from ..ports.image_generation_port import GeneratedImage, ImageGenerationPort
 from ..utils.logger import logger
@@ -74,23 +85,22 @@ class GrokImageAdapter(ImageGenerationPort):
     async def edit(
         self, prompt: str, reference_images: List[bytes], *, mime_type: str = "image/png"
     ) -> GeneratedImage:
-        # NOTE: field name "image" for the reference image bytes matches the
-        # standard OpenAI images.edit() SDK signature. xAI's docs confirm the
-        # /v1/images/edits endpoint accepts base64 data — the exact SDK-level
-        # kwarg for >1 reference image is unconfirmed (RFC §10, open question #2)
-        # but irrelevant here: v1 scope is a single reference image only
-        # (RFC §6 decision #6).
-        # Extract file extension from mime_type (e.g., "image/jpeg" -> "jpg")
-        ext = mime_type.split("/")[-1] if "/" in mime_type else "png"
-        # Map common mime_type subtype to extension (e.g., "jpeg" -> "jpg")
-        ext = "jpg" if ext == "jpeg" else ext
-        filename = f"reference_image.{ext}"
+        # xAI's JSON shape for a reference image: {"url": <data-uri-or-real-url>,
+        # "type": "image_url"} — same wrapper for a base64 data URI as for a real
+        # public URL (confirmed against docs.x.ai/developers/model-capabilities/
+        # images/editing). Multi-image (up to 3, RFC §10 open question #2) is out
+        # of scope for v1 — single reference image only (RFC §6 decision #6).
+        data_uri = f"data:{mime_type};base64,{base64.b64encode(reference_images[0]).decode('ascii')}"
 
-        response = await self._client.images.edit(
-            model=_MODEL,
-            prompt=prompt,
-            image=(filename, io.BytesIO(reference_images[0]), mime_type),
-            response_format="b64_json",
+        response = await self._client.post(
+            "/images/edits",
+            cast_to=ImagesResponse,
+            body={
+                "model": _MODEL,
+                "prompt": prompt,
+                "image": {"url": data_uri, "type": "image_url"},
+                "response_format": "b64_json",
+            },
         )
         item = response.data[0]
         return GeneratedImage(data=base64.b64decode(item.b64_json), mime_type="image/png")
