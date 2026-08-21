@@ -172,7 +172,10 @@ agents_registry {
                illustrations, infographics, ads/marketing visuals, game assets
                or icons, UI/UX mockups, storyboards, or any other visual — or
                wants precise edits to an existing uploaded image (remove/change
-               an element, restyle a region, change the background, etc.)."
+               an element, restyle a region, change the background, etc.). Also
+               consider delegating on your own initiative — not only when
+               explicitly asked — when a generated image would genuinely
+               improve your answer (illustrating an idea, concept, or layout)."
         how: [
             "If the request is vague (no style/mood/subject detail), ask 1-2
              clarifying questions in chat before delegating.",
