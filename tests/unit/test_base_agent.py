@@ -182,7 +182,7 @@ class TestBaseAgent:
             response = await agent.process(message)
 
         assert agent.execute_calls == 1
-        assert response.status == AgentStatus.FAILED
+        assert response.status == AgentStatus.TIMEOUT
         assert "timeout" in response.error.lower()
 
     @pytest.mark.asyncio
@@ -304,7 +304,7 @@ class TestBaseAgent:
 
         response = await agent.process(message)
 
-        assert response.status == AgentStatus.FAILED
+        assert response.status == AgentStatus.TIMEOUT
         assert "timeout" in response.error.lower()
         # No retry on timeout — single attempt.
         assert agent.execute_calls == 1
