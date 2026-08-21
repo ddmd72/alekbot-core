@@ -7,6 +7,7 @@ from src.services.prompt_cache_strategy import PromptCacheStrategy
 from src.services.caching_llm_proxy import CachingLLMProxy
 from src.domain.user import UserBotConfig, PerformanceTier
 from src.ports.llm_port import LLMPort, ProviderCapabilities
+from src.ports.image_generation_port import GeneratedImage, ImageGenerationPort
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
@@ -278,3 +279,65 @@ def test_resolve_next_provider_exhausted_returns_none(builder):
         attempted={"claude", "openai", "gemini", "grok"},
     )
     assert ctx is None
+
+
+# ============================================================================
+# resolve_image_generation_context — image rendering axis provider resolution
+# ============================================================================
+
+
+class FakeImagePort(ImageGenerationPort):
+    def __init__(self, name: str):
+        self.name = name
+
+    async def generate(self, prompt, *, aspect_ratio="auto", n=1):
+        return [GeneratedImage(data=b"fake", mime_type="image/png")]
+
+    async def edit(self, prompt, reference_images, *, mime_type="image/png"):
+        return GeneratedImage(data=b"fake", mime_type="image/png")
+
+
+@pytest.fixture
+def image_registry():
+    reg = ProviderRegistry()
+    reg.register("grok", FakeImagePort("grok"))
+    return reg
+
+
+def test_resolve_image_generation_context_default_provider(builder, image_registry):
+    config = UserBotConfig()
+
+    port, provider_name = builder.resolve_image_generation_context(
+        "image_generation", image_registry, config
+    )
+
+    assert isinstance(port, FakeImagePort)
+    assert port.name == "grok"
+    assert provider_name == "grok"
+
+
+def test_resolve_image_generation_context_respects_per_agent_override(builder, image_registry):
+    reg = image_registry
+    reg.register("openai", FakeImagePort("openai"))
+    config = UserBotConfig(agent_providers={"image_generation": "openai"})
+
+    # "openai" is not yet in allowed_providers for image_generation — override
+    # must be ignored and fall back to the strategy default ("grok").
+    port, provider_name = builder.resolve_image_generation_context(
+        "image_generation", reg, config
+    )
+
+    assert provider_name == "grok"
+
+
+def test_resolve_image_generation_context_raises_when_provider_not_registered():
+    empty_registry = ProviderRegistry()
+    builder_local = AgentContextBuilder(
+        ProviderRegistry(), resilience_port=InMemoryProviderResilience()
+    )
+    config = UserBotConfig()
+
+    with pytest.raises(ValueError, match="not registered"):
+        builder_local.resolve_image_generation_context(
+            "image_generation", empty_registry, config
+        )
