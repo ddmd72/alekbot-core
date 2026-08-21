@@ -13,8 +13,8 @@ agents_registry {
         examples: [
             {
                 user_query: "What car do I have?"
-                context: "Bio mentions Toyota Corolla"
-                tool_call: 'delegate_to_specialist(intent="search_memory", query="Car details: Toyota Corolla model, year, plate, insurance, service history")'
+                context: "Bio mentions Mitsubishi Colt"
+                tool_call: 'delegate_to_specialist(intent="search_memory", query="Car details: Mitsubishi Colt model, year, plate, insurance, service history")'
                 note: "Known brand included — anchors recall across all car-related facts."
             },
             {
@@ -61,8 +61,8 @@ agents_registry {
                 tool_call: 'delegate_to_specialist(intent="search_web", query="Claude 4 new features latest updates")'
             },
             {
-                user_query: "Weather in Oslo tomorrow?"
-                tool_call: 'delegate_to_specialist(intent="search_web", query="weather in Oslo tomorrow")'
+                user_query: "Weather in Kyiv tomorrow?"
+                tool_call: 'delegate_to_specialist(intent="search_web", query="weather in Kyiv tomorrow")'
             }
         ]
 
@@ -123,30 +123,18 @@ agents_registry {
             When in doubt: if the user says 'remind me about X', it's a self-reminder.
         """
 
-        schedules: """
-            One reminder holds any repeat schedule: several weekdays, several times a day,
-            every other week, the last Sunday of the month, specific days of the month.
-            State the schedule in full in the query — the specialist encodes it as an
-            RFC 5545 rule. NEVER split a repeating schedule across several reminders.
-            Everything stays editable afterwards: the schedule, the fire time, the execution
-            depth, and stopping repetition altogether. The active_reminders block shows each
-            reminder's current rule verbatim — quote it when asking for a change.
-        """
-
         how: [
             "Pass the full reminder request as query — what to surface, when, and the full context needed to execute.",
             "Include the exact time in the user's local timezone.",
             "The instruction fires in a new session with no memory of this conversation — include everything relevant.",
-            "For a repeating reminder, state the whole schedule in one delegation — every day it should fire, every time of day.",
-            "For updates or deletes: include the note_id from the active_reminders block.",
+            "For updates or deletes: include the note_id from the working_memory pending_notes block.",
         ]
 
         anti_patterns: [
             "❌ DON'T use for user's own to-do list — that's manage_user_tasks",
             "❌ DON'T pass a bare query without topic and time",
             "❌ DON'T omit context — the instruction is the only input the executor will receive",
-            "❌ DON'T create one reminder per weekday or per time of day — one rule covers them all",
-            "❌ DON'T fabricate a note_id — read it from active_reminders"
+            "❌ DON'T fabricate a note_id — read it from working_memory pending_notes"
         ]
     }
 
@@ -180,8 +168,11 @@ agents_registry {
 
     image_generation_agent {
         intent: "generate_image" or "edit_image"
-        when: "User wants a new image created from a description, or an existing
-               uploaded image changed."
+        when: "User wants a new image created from a description — photos,
+               illustrations, infographics, ads/marketing visuals, game assets
+               or icons, UI/UX mockups, storyboards, or any other visual — or
+               wants precise edits to an existing uploaded image (remove/change
+               an element, restyle a region, change the background, etc.)."
         how: [
             "If the request is vague (no style/mood/subject detail), ask 1-2
              clarifying questions in chat before delegating.",
@@ -192,11 +183,27 @@ agents_registry {
             "For edit_image: pass the precise instruction (what to change) plus
              context={\"image_ref\": \"<filename>\"} from the file label."
         ]
+        examples: [
+            {
+                user_query: "Can you make an icon for my weather app?"
+                tool_call: 'delegate_to_specialist(intent="generate_image", query="A minimalist weather app icon — sun partially behind a cloud, flat design, rounded square background, soft blue and yellow palette")'
+            },
+            {
+                user_query: "I need a quick storyboard panel for a coffee ad — someone pouring coffee at sunrise on a balcony"
+                tool_call: 'delegate_to_specialist(intent="generate_image", query="Storyboard panel: a person pouring coffee at sunrise on a balcony, warm golden light, cinematic wide shot, soft morning atmosphere, for a coffee advertisement")'
+            },
+            {
+                user_query: "[uploads photo] remove the person in the background"
+                tool_call: 'delegate_to_specialist(intent="edit_image", query="remove the person standing in the background, keep everything else unchanged", context={"image_ref": "<filename from file label>"})'
+            }
+        ]
         anti_patterns: [
             "❌ DON'T try to write Aurora-specific prompt syntax yourself — pass
              the brief, the specialist translates it.",
             "❌ DON'T use edit_image without an uploaded reference image in the
-             conversation — use generate_image for a new image instead."
+             conversation — use generate_image for a new image instead.",
+            "❌ DON'T assume this only handles photos — it also covers
+             infographics, ads, game assets/icons, UI/UX mockups, and storyboards."
         ]
     }
 }
