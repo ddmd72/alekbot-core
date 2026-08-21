@@ -53,6 +53,7 @@ from ..infrastructure.agent_config import (
     PDF_GENERATOR as PDF_GENERATOR_CFG,
     HTML_PAGE_GENERATOR as HTML_PAGE_GENERATOR_CFG,
     DOMAIN_RESEARCHER as DOMAIN_RESEARCHER_CFG,
+    IMAGE_GENERATION as IMAGE_GENERATION_CFG,
 )
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
@@ -76,6 +77,7 @@ from ..agents.html_page_generator_agent import HtmlPageGeneratorAgent
 from ..agents.help_agent import HelpAgent
 from ..agents.file_management_agent import FileManagementAgent
 from ..agents.domain_researcher_agent import DomainResearcherAgent
+from ..agents.image_generation_agent import ImageGenerationAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
@@ -141,6 +143,7 @@ class UserAgentFactory(AgentFactoryPort):
         recurrence: Optional[RecurrencePort] = None,
         notification_service: Optional[object] = None,
         job_registry: Optional[ProviderRegistry] = None,
+        image_registry: Optional[ProviderRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
         anthropic_client: Optional[object] = None,
         file_conversion_service: Optional[object] = None,
@@ -176,6 +179,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.recurrence = recurrence
         self.notification_service = notification_service
         self.job_registry: Optional[ProviderRegistry] = job_registry
+        self.image_registry: Optional[ProviderRegistry] = image_registry
         self.task_queue = task_queue
         self.anthropic_client = anthropic_client
         self.file_conversion_service = file_conversion_service
@@ -749,6 +753,38 @@ class UserAgentFactory(AgentFactoryPort):
             user_timezone=ctx.user_profile.config.timezone,
         )
 
+    def _build_image_generation(
+        self, user_id: str, ctx: _UserContext,
+    ) -> Optional[ImageGenerationAgent]:
+        if not self.image_registry:
+            logger.info(
+                "[UserAgentFactory] No image_registry configured, skipping image_generation"
+            )
+            return None
+        execution_context = self.context_builder.build("image_generation", ctx.user_profile.config)
+        try:
+            image_port, _ = self.context_builder.resolve_image_generation_context(
+                "image_generation", self.image_registry, ctx.user_profile.config
+            )
+        except ValueError:
+            logger.warning(
+                "[UserAgentFactory] Image generation provider not registered, skipping"
+            )
+            return None
+        return ImageGenerationAgent(
+            config=AgentConfig(
+                agent_id=f"image_generation_agent_{user_id}",
+                agent_type="image_generation",
+                timeout_ms=IMAGE_GENERATION_CFG.timeout_ms,
+                capabilities=["generate_image", "edit_image"],
+            ),
+            execution_context=execution_context,
+            image_port=image_port,
+            prompt_builder=ctx.prompt_builder,
+            user_id=user_id,
+            file_conversion=self.file_conversion_service,
+        )
+
     # -- Dispatch table: agent_type → builder method + base agent_id ----
 
     _LAZY_BUILDERS: Dict[str, Callable] = {
@@ -760,6 +796,7 @@ class UserAgentFactory(AgentFactoryPort):
         "claude_deep_research_runner": _build_claude_runner,
         "file_management": _build_file_management,
         "domain_researcher": _build_domain_researcher,
+        "image_generation": _build_image_generation,
     }
 
     _LAZY_AGENT_IDS: Dict[str, str] = {
@@ -771,6 +808,7 @@ class UserAgentFactory(AgentFactoryPort):
         "claude_deep_research_runner": "claude_deep_research_runner",
         "file_management": "file_management_agent",
         "domain_researcher": "domain_researcher_agent",
+        "image_generation": "image_generation_agent",
     }
 
     # ------------------------------------------------------------------
