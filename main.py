@@ -361,6 +361,17 @@ async def main():
             ))
             logger.info("🔬 Deep research adapter registered: provider=claude (Cloud Run Job)")
 
+        # Image generation adapter — reuses the same XAI_API_KEY secret as GrokAdapter
+        # (LLMPort). Separate registry/adapter: ImageGenerationPort is a structurally
+        # different port (see docs/10_rfcs/IMAGE_GENERATION_RFC.md §3.6-3.7).
+        image_registry = ProviderRegistry()
+        if config.get("XAI_API_KEY"):
+            from src.adapters.grok_image_adapter import GrokImageAdapter
+            image_registry.register("grok", GrokImageAdapter(api_key=config["XAI_API_KEY"]))
+            logger.info("🎨 Image generation adapter registered: provider=grok")
+        else:
+            logger.info("ℹ️ Image generation not configured (XAI_API_KEY not set)")
+
         # GCS media adapter for HTML report uploads (optional — requires GCS_MEDIA_BUCKET).
         # service_account_email enables keyless V4 signed-URL minting via IAM signBlob
         # on Cloud Run (for the /f/<token> capability route).
@@ -456,6 +467,7 @@ async def main():
             account_repo=account_repo,
             **container.agent_services(),
             job_registry=job_registry,
+            image_registry=image_registry,
             task_queue=agent_task_queue,
             anthropic_client=anthropic_client,
             quota_service=quota_service,
