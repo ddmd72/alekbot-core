@@ -1,6 +1,17 @@
 import pytest
 
-from src.domain.user import PerformanceTier, UserBotConfig, LLMProvider, PromptPreferences
+from src.domain.user import (
+    PerformanceTier, UserBotConfig, LLMProvider, PromptPreferences, _DEFAULT_AGENT_TIERS,
+)
+from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
+
+# Agents that make no LLM call at all — a tier is meaningless for them, so they are
+# deliberately absent from _DEFAULT_AGENT_TIERS. Verified by grep: neither module
+# references _call_llm / self.llm / self._llm / LLMPort.
+_ZERO_LLM_AGENT_TYPES = {
+    "help",             # HelpAgent — static capabilities reference
+    "file_management",  # FileManagementAgent — GCS download/delete only
+}
 
 
 def test_performance_tier_enum_values():
@@ -48,6 +59,27 @@ def test_maps_search_defaults_to_balanced_tier():
 def test_user_bot_config_provider_defaults_intact():
     config = UserBotConfig()
     assert config.provider_preference is None
+
+
+def test_every_llm_agent_has_a_default_tier():
+    """
+    Regression guard: every LLM-calling specialist in agent_manifest.ALL_DESCRIPTORS must
+    have an entry in _DEFAULT_AGENT_TIERS, or get_tier_for_agent() silently falls through to
+    self.default_tier (ECO unless the user configured otherwise) — no error, no log line.
+    This exact gap shipped unnoticed for "compute", "tasks", and "image_generation" until
+    2026-08-23 (NEW_AGENT_PLAYBOOK.md's "Which PerformanceTier?" question never told
+    implementers to add the answer to this dict). See
+    docs/04_solution_strategy/decisions/agent_tier_default_enforcement.md.
+    """
+    manifest_agent_types = {descriptor.agent_type for descriptor in ALL_DESCRIPTORS}
+    llm_agent_types = manifest_agent_types - _ZERO_LLM_AGENT_TYPES
+
+    missing = llm_agent_types - _DEFAULT_AGENT_TIERS.keys()
+    assert not missing, (
+        f"Agent type(s) {missing} make LLM calls but have no _DEFAULT_AGENT_TIERS entry in "
+        "src/domain/user.py — their tier silently falls through to the user's default_tier. "
+        "Add an entry there, or to _ZERO_LLM_AGENT_TYPES here if genuinely zero-LLM."
+    )
 
 
 def test_prompt_preferences_defaults():
