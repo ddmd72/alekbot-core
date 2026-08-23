@@ -26,10 +26,16 @@ class ImageGenerationPort(ABC):
 
     @abstractmethod
     async def generate(
-        self, prompt: str, *, aspect_ratio: str = "auto", n: int = 1
+        self, prompt: str, *, aspect_ratio: str = "auto", n: int = 1,
+        resolution: str = "1k", quality: str = "medium",
     ) -> list[GeneratedImage]:
         """
         Generate image(s) from a text prompt.
+
+        resolution: "1k" | "2k" (xAI's only two valid values).
+        quality: "low" | "medium" (xAI's only two valid values; "medium" matches
+                 xAI's own stated default). Pricing is flat regardless of either
+                 (confirmed on docs.x.ai) — these control OUTPUT, not cost.
 
         Returns [] on failure (mirrors ImageSearchPort's contract) — callers
         must handle an empty list as "no image produced", not raise.

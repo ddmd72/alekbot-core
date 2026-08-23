@@ -50,7 +50,11 @@ async def test_generate_sends_correct_kwargs(adapter):
     assert captured["prompt"] == "a red bicycle"
     assert captured["n"] == 1
     assert captured["response_format"] == "b64_json"
-    assert captured["extra_body"] == {"aspect_ratio": "16:9"}
+    assert captured["extra_body"] == {
+        "aspect_ratio": "16:9",
+        "resolution": "1k",
+        "quality": "medium",
+    }
     assert result == [GeneratedImage(data=_FAKE_PNG_BYTES, mime_type="image/png")]
 
 
@@ -66,7 +70,43 @@ async def test_generate_default_aspect_ratio_is_auto(adapter):
 
     await adapter.generate("a red bicycle")
 
-    assert captured["extra_body"] == {"aspect_ratio": "auto"}
+    assert captured["extra_body"] == {
+        "aspect_ratio": "auto",
+        "resolution": "1k",
+        "quality": "medium",
+    }
+
+
+@pytest.mark.asyncio
+async def test_generate_sends_explicit_resolution_and_quality(adapter):
+    captured = {}
+
+    async def mock_generate(**kwargs):
+        captured.update(kwargs)
+        return _images_response()
+
+    adapter._client.images.generate = AsyncMock(side_effect=mock_generate)
+
+    await adapter.generate("a red bicycle", resolution="2k", quality="low")
+
+    assert captured["extra_body"]["resolution"] == "2k"
+    assert captured["extra_body"]["quality"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_generate_default_resolution_and_quality(adapter):
+    captured = {}
+
+    async def mock_generate(**kwargs):
+        captured.update(kwargs)
+        return _images_response()
+
+    adapter._client.images.generate = AsyncMock(side_effect=mock_generate)
+
+    await adapter.generate("a red bicycle")
+
+    assert captured["extra_body"]["resolution"] == "1k"
+    assert captured["extra_body"]["quality"] == "medium"
 
 
 @pytest.mark.asyncio
