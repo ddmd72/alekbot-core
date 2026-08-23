@@ -555,7 +555,10 @@ IMAGE_GENERATION = AgentDescriptor(
             "Also use on your own initiative when a generated image would "
             "genuinely improve your answer (illustrating an idea, concept, or "
             "layout), even if the user did not explicitly ask for one. "
-            'payload: {"query": "<what to depict, purpose, style if known>"}'
+            'payload: {"query": "<what to depict, purpose, style if known>"} '
+            "Also accepts optional context={\"resolution\": \"1k\"|\"2k\", \"quality\": "
+            "\"low\"|\"medium\"} — pass ONLY when the user explicitly stated a specific "
+            "size or quality; do not infer one from the request's subject matter."
         ),
         Intent.EDIT_IMAGE: (
             "Precisely edits an existing image the user uploaded — remove/change/add "
@@ -568,6 +571,16 @@ IMAGE_GENERATION = AgentDescriptor(
         ),
     },
     context_schemas={
+        Intent.GENERATE_IMAGE: {
+            "resolution": {
+                "type": "string",
+                "description": "Explicit resolution (1k/2k) — ONLY if the user stated one.",
+            },
+            "quality": {
+                "type": "string",
+                "description": "Explicit quality (low/medium) — ONLY if the user stated one.",
+            },
+        },
         Intent.EDIT_IMAGE: {
             "image_refs": {
                 "type": "array",

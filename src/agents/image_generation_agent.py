@@ -176,9 +176,19 @@ class ImageGenerationAgent(BaseAgent):
         )
         return await self._call_llm(request)
 
+    def _resolve_resolution(self, message: AgentMessage) -> str:
+        return message.context.get("resolution") or "1k"
+
+    def _resolve_quality(self, message: AgentMessage) -> str:
+        return message.context.get("quality") or "medium"
+
     async def _execute_generate(self, message: AgentMessage, prompt: str) -> AgentResponse:
         start_time = time.time()
-        images = await self._image_port.generate(prompt)
+        images = await self._image_port.generate(
+            prompt,
+            resolution=self._resolve_resolution(message),
+            quality=self._resolve_quality(message),
+        )
         return self._respond_with_images(message, images, start_time)
 
     async def _execute_edit(
