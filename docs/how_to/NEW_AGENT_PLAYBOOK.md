@@ -88,6 +88,24 @@ Add to `AgentProviderStrategy.STRATEGIES`:
 },
 ```
 
+**This entry controls provider resolution only — it does NOT set the tier.** Tier is a
+*separate* lookup (`UserBotConfig.get_tier_for_agent`) that silently falls through to the
+user's `default_tier` (ECO unless configured) if you skip the next step — no error, no log
+line. This exact gap shipped unnoticed for three agents (`compute`, `tasks`,
+`image_generation`) before being caught; see `_DEFAULT_AGENT_TIERS`'s own comment in
+`src/domain/user.py` and `decisions/agent_tier_default_enforcement.md`.
+
+Add to `_DEFAULT_AGENT_TIERS` in `src/domain/user.py`, using your Phase 0 tier answer:
+```python
+"foo": PerformanceTier.BALANCED,  # one line explaining why this tier, not a placeholder
+```
+Skip this only if the agent makes no LLM call at all (like `file_management`/`help`) — in
+that case, add its `agent_type` to `_ZERO_LLM_AGENT_TYPES` in
+`tests/unit/domain/test_user.py` instead, with a one-line reason. Either way,
+`test_every_llm_agent_has_a_default_tier` in that file must pass — it enumerates every
+`agent_type` in `agent_manifest.ALL_DESCRIPTORS` and fails on any that resolves through
+neither path.
+
 ### Step 4 — `src/agents/foo_agent.py`
 
 Use this exact structure. Do not deviate.

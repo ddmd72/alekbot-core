@@ -38,7 +38,6 @@ from ..utils.logging_context import set_log_context
 from ..domain.settings import ConsolidationSettings
 from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService
-from ..services.agent_fallback_service import AgentFallbackService
 from ..services.document_delivery_service import DocumentDeliveryService
 from ..services.channel_binding_service import ChannelBindingService
 from ..domain.channel_binding import ChannelBinding
@@ -106,8 +105,8 @@ class ConversationHandler(ConversationHandlerPort):
         file_conversion_service: Optional["FileConversionService"] = None,
         channel_binding_service: Optional[ChannelBindingService] = None,
         channel_history_source: Optional[Any] = None,
-        alert_webhook: Optional[Any] = None,
         short_link_service: Optional["ShortLinkService"] = None,
+        fallback_service: Optional[Any] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -124,7 +123,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._user_repo = user_repo
         self._overflow_callback = overflow_callback
         self._localization = localization
-        self._fallback_service = AgentFallbackService(coordinator, alert_webhook=alert_webhook)
+        self._fallback_service = fallback_service
         self._channel_binding = channel_binding_service
         self._channel_history = channel_history_source
         self._short_link_service = short_link_service
@@ -691,9 +690,11 @@ class ConversationHandler(ConversationHandlerPort):
 
                     with start_span("conversation.agent_response"):
                         response = await self.coordinator.route_message(message)
-                        response = await self._fallback_service.try_quick_fallback(
-                            response, context, message_parts
-                        )
+                        if self._fallback_service is not None:
+                            response = await self._fallback_service.try_quick_fallback(
+                                response, context, message_parts,
+                                origin_platform=agent_context["origin_platform"],
+                            )
 
             await stop_status_updates()
 

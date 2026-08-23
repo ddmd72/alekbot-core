@@ -427,3 +427,38 @@ class DomainResearcherAgentConfig:
 
 
 DOMAIN_RESEARCHER = DomainResearcherAgentConfig()
+
+
+# ---------------------------------------------------------------------------
+# ImageGenerationAgent (src/agents/image_generation_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ImageGenerationAgentConfig:
+    temperature: float = 0.7      # Prompt-crafting is translation, not creative writing
+    max_tokens: int = 2_000       # Output is a single prompt string, not a document
+    # Hard wall-clock budget around the entire execute() call (prompt-builder read +
+    # LLM prompt-crafting call + image render + encoding). Deliberately BELOW
+    # AgentDescriptor.dispatch_deadline_s=520 (agent_manifest.py IMAGE_GENERATION) —
+    # a 120s gap, same "agent timeout + 2 min overhead" slack every sibling async
+    # agent keeps (see HTML_PAGE_GENERATOR etc.). This lets the agent's own timeout
+    # fire and go through the normal failure-notification path (AgentWorkerHandler
+    # -> _notify_docx_failure) BEFORE Cloud Tasks kills the task externally —
+    # an external kill triggers a Cloud Tasks retry, re-running (and re-billing)
+    # the xAI call. Do NOT set this equal to dispatch_deadline_s.
+    # 400_000 = request_timeout_s (60s, prompt-crafting) + GrokImageAdapter's SDK
+    # timeout (300s, image render, raised 2026-08-21 after a real generate() call
+    # exceeded the previous 120s) + ~40s margin for encoding/GCS upload/network
+    # jitter. Still not a fully measured ceiling (RFC §10 open question #3), but
+    # sized from one real production timeout instead of a guess.
+    timeout_ms: int = 400_000
+    thinking_effort: Optional[str] = None
+    # Per-LLM-request timeout (seconds) for the prompt-crafting call, passed as
+    # LLMRequest.timeout. Conservative starting value — no latency data yet for
+    # grok-imagine-image-2.0 (RFC §10 open question #3). Do NOT copy
+    # HTML_PAGE_GENERATOR's 420s — that's sized for long text/HTML generation,
+    # not a short prompt-translation call. Revisit after first live measurements.
+    request_timeout_s: int = 60
+
+
+IMAGE_GENERATION = ImageGenerationAgentConfig()

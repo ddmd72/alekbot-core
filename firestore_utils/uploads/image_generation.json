@@ -1,0 +1,7 @@
+{
+  "agent_id": "image_generation",
+  "blueprint_id": "image_generation_agent_v1",
+  "tokens": {
+    "COGNITIVE_PROCESS_IMAGE_GEN": {"order": 10, "non_overridable": true}
+  }
+}

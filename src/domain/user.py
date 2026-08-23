@@ -118,7 +118,20 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "html_page": PerformanceTier.PERFORMANCE,        # Full HTML+CSS+JS page — max quality
     "notes": PerformanceTier.PERFORMANCE,              # Multi-turn with chain delegation to compute
     "domain_researcher": PerformanceTier.PERFORMANCE, # Deep analytical reasoning (OpenAI o3/o4)
+    "compute": PerformanceTier.ECO,      # Gemini code_execution sandbox — mechanical, not reasoning-bound
+    "tasks": PerformanceTier.BALANCED,   # Multi-turn CRUD over TasksProviderPort — real reasoning, not mechanical
+    # Single LLM call crafts the Aurora prompt (RFC decision #1: full LLM agent
+    # specifically because ECO-quality crafting degrades the technique clusters
+    # — text-heavy layouts, asset-set style-locking — the RFC identified as
+    # needing real reasoning). See decisions/agent_tier_default_enforcement.md.
+    "image_generation": PerformanceTier.PERFORMANCE,
 }
+# Every entry here was missing until 2026-08-23 for "compute"/"tasks"/"image_generation" —
+# each agent fell through silently to self.default_tier (ECO unless the user configured
+# otherwise) with no error, no log line, nothing. NEW_AGENT_PLAYBOOK.md's "Which
+# PerformanceTier?" question never told implementers to add the answer HERE. Every agent_type
+# in agent_manifest.ALL_DESCRIPTORS that makes an LLM call must have an entry — enforced by
+# tests/unit/domain/test_user.py::test_every_llm_agent_has_a_default_tier.
 
 
 class UserBotConfig(BaseModel):

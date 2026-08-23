@@ -149,6 +149,7 @@ class TestEnqueueWorkerTask:
             payload=payload,
             delay_seconds=10,
             deadline_seconds=None,
+            dedup_key=None,
         )
         assert result == "task-worker-001"
 

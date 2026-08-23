@@ -361,6 +361,17 @@ async def main():
             ))
             logger.info("🔬 Deep research adapter registered: provider=claude (Cloud Run Job)")
 
+        # Image generation adapter — reuses the same XAI_API_KEY secret as GrokAdapter
+        # (LLMPort). Separate registry/adapter: ImageGenerationPort is a structurally
+        # different port (see docs/10_rfcs/IMAGE_GENERATION_RFC.md §3.6-3.7).
+        image_registry = ProviderRegistry()
+        if config.get("XAI_API_KEY"):
+            from src.adapters.grok_image_adapter import GrokImageAdapter
+            image_registry.register("grok", GrokImageAdapter(api_key=config["XAI_API_KEY"]))
+            logger.info("🎨 Image generation adapter registered: provider=grok")
+        else:
+            logger.info("ℹ️ Image generation not configured (XAI_API_KEY not set)")
+
         # GCS media adapter for HTML report uploads (optional — requires GCS_MEDIA_BUCKET).
         # service_account_email enables keyless V4 signed-URL minting via IAM signBlob
         # on Cloud Run (for the /f/<token> capability route).
@@ -456,6 +467,7 @@ async def main():
             account_repo=account_repo,
             **container.agent_services(),
             job_registry=job_registry,
+            image_registry=image_registry,
             task_queue=agent_task_queue,
             anthropic_client=anthropic_client,
             quota_service=quota_service,
@@ -591,6 +603,26 @@ async def main():
             embedding=container.embedding_service,
         ) if (indexed_email_repo and container.embedding_service) else None
 
+        # Smart-timeout two-phase fallback: SmartRetryService owns the background retry
+        # capability end to end (schedule() called from AgentFallbackService on TIMEOUT,
+        # execute() called from WorkerHandler on task_type="smart_timeout_retry").
+        # AgentFallbackService is built once here (composition root) and injected into
+        # ConversationHandler — it no longer assembles its own fallback service from raw
+        # parts (that was a handlers/ layer doing composition/'s job).
+        from src.services.smart_retry_service import SmartRetryService
+        from src.services.agent_fallback_service import AgentFallbackService
+
+        _smart_retry_service = SmartRetryService(
+            task_dispatch=_task_dispatch_service,
+            coordinator=coordinator,
+            notification=notification_service,
+        )
+        _fallback_service = AgentFallbackService(
+            coordinator=coordinator,
+            alert_webhook=_alert_webhook,
+            smart_retry=_smart_retry_service,
+        )
+
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
         worker_handler = WorkerHandler(
             agent_worker_handler=agent_worker_handler,
@@ -602,6 +634,7 @@ async def main():
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
             task_dispatch=_task_dispatch_service,
+            smart_retry_service=_smart_retry_service,
             job_registry=job_registry,
             media_storage=gcs_media_adapter,
             task_setup=task_setup_service,
@@ -688,7 +721,7 @@ async def main():
             localization=_localization,
             file_conversion_service=container.file_conversion_service,
             channel_binding_service=channel_binding_service,
-            alert_webhook=_alert_webhook,
+            fallback_service=_fallback_service,
             short_link_service=short_link_service,
         )
         notification_channel_factory.register_factory(
@@ -794,7 +827,7 @@ async def main():
                             language_service=_language_service,
                             localization=_localization,
                             file_conversion_service=container.file_conversion_service,
-                            alert_webhook=_alert_webhook,
+                            fallback_service=_fallback_service,
                             short_link_service=short_link_service,
                         )
                         def _make_telegram_channel(adapter, channel_id):
