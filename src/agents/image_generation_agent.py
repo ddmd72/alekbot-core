@@ -31,7 +31,7 @@ import time
 from typing import List, Optional
 
 from .base_agent import BaseAgent
-from ..domain.billing import calculate_external_cost
+from ..domain.billing import IMAGE_EDIT_MODEL, IMAGE_GENERATE_MODEL, calculate_external_cost
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.llm import LLMResponse, Message, MessagePart, describe_empty_output
@@ -273,9 +273,9 @@ class ImageGenerationAgent(BaseAgent):
             if account_id:
                 intent_name = message.payload.get("intent")
                 service_key = (
-                    "grok-imagine-image-2.0-edit"
+                    IMAGE_EDIT_MODEL
                     if intent_name == Intent.EDIT_IMAGE
-                    else "grok-imagine-image-2.0"
+                    else IMAGE_GENERATE_MODEL
                 )
                 cost = calculate_external_cost(service_key)
                 await self._quota_service.record_usage(

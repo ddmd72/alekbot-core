@@ -266,13 +266,22 @@ def calculate_cost(
 #                                   docs.x.ai (VIDEO_GENERATION_RFC.md §2). Callers
 #                                   must pass duration_s; omitting it returns 0.0
 #                                   rather than silently pricing one second.
+# REQ-ARCH-12 requires provider-model-shaped string literals to live only in
+# adapters/config/ or a whitelisted file — this file is whitelisted (pricing
+# data). Exported as named constants so callers in agents/ reference the
+# constant instead of duplicating the literal (which would violate REQ-ARCH-12
+# in the calling file).
+IMAGE_GENERATE_MODEL = "grok-imagine-image-2.0"
+IMAGE_EDIT_MODEL = "grok-imagine-image-2.0-edit"
+VIDEO_GENERATE_MODEL = "grok-imagine-video-1.5"
+
 _EXTERNAL_COST_PER_UNIT: Dict[str, float] = {
-    "grok-imagine-image-2.0": 0.04,
-    "grok-imagine-image-2.0-edit": 0.08,
-    "grok-imagine-video-1.5": 0.08,
+    IMAGE_GENERATE_MODEL: 0.04,
+    IMAGE_EDIT_MODEL: 0.08,
+    VIDEO_GENERATE_MODEL: 0.08,
 }
 
-_PER_SECOND_SERVICES = {"grok-imagine-video-1.5"}
+_PER_SECOND_SERVICES = {VIDEO_GENERATE_MODEL}
 
 
 def calculate_external_cost(service: str, *, duration_s: Optional[float] = None) -> float:
