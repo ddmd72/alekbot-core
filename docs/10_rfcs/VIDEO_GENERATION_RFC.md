@@ -99,11 +99,15 @@ poll shape.
 ### 3.3 Full Flow — `generate_video`
 
 ```
-User (interactive): describes the video; Smart clarifies subject/motion/mood/duration
-if vague, same commissioning pattern as image generation
+User (interactive): describes the video; Smart clarifies subject/motion/mood if vague,
+same commissioning pattern as image generation. Duration/resolution are NOT something
+Smart proactively solicits — they only enter context if the user stated them unprompted
+(§3.11 decision #9)
   |
   v Smart -> delegate_to_specialist(intent="generate_video", query="<brief>",
-             context={"image_ref": "<optional starting-image filename>"})
+             context={"image_ref": "<optional starting-image filename>",
+                      "duration": "<optional, only if user stated one>",
+                      "resolution": "<optional, only if user stated one>"})
       |
       +-- VideoGenerationAgent.execute()   [SYNC — returns in seconds, like DeepResearchAgent]
       |     |
@@ -114,10 +118,9 @@ if vague, same commissioning pattern as image generation
       |     +-- Build system prompt via PromptBuilder (agent_type="video_generation")
       |     |
       |     +-- LLM call #1 (structured JSON output — Mode 1, NEW_AGENT_PLAYBOOK.md):
-      |     |     brief (+ image presence) -> {video_prompt, duration, resolution, aspect_ratio}.
-      |     |     Owner decided (2026-08-23) the LLM should INFER duration/resolution from the
-      |     |     brief rather than defaulting to fixed conservative values — unlike image
-      |     |     generation's freeform-text crafting output, this needs structured fields.
+      |     |     brief (+ image presence) -> {video_prompt, aspect_ratio}. Duration/resolution
+      |     |     are NOT inferred by this call — see §3.11, decision #9 (superseding the
+      |     |     original 2026-08-23 "LLM infers duration/resolution" call).
       |     |
       |     +-- VideoGenerationPort.create_video(prompt, user_id, account_id, session_id,
       |     |     image_data=..., duration=..., resolution=..., aspect_ratio=...) -> request_id
@@ -140,7 +143,8 @@ if vague, same commissioning pattern as image generation
 
 **Why not `ImageGenerationAgent`'s shape:** that agent's `execute()` blocks on the pixel-rendering
 call (`await self._image_port.generate(prompt)`) inside a single `ExecutionMode.ASYNC` Cloud Task,
-bounded by `dispatch_deadline_s` (720s and safely inside the Cloud Tasks hard ceiling of 1800s).
+bounded by `dispatch_deadline_s` (520s, per `agent_manifest.py:591` — safely inside the Cloud Tasks
+hard ceiling of 1800s).
 xAI's own docs describe video generation as taking "up to several minutes," varying with duration/
 resolution/prompt complexity — an unbounded-enough tail that blocking a single request on it is
 the wrong shape, exactly as image RFC §3.9 predicted.
@@ -235,6 +239,22 @@ coupling convention as image RFC §3.6) implements this. `get_status()` needs an
 URI (`data:{mime_type};base64,{...}`), same wire convention `GrokImageAdapter.edit()` already
 established for xAI's `image_url`-typed fields.
 
+**All three port methods (`create_video`, `edit_video`, `get_status`) go through
+`AsyncOpenAI.post(..., cast_to=dict)` — raw JSON — never the SDK's typed `.videos.create()` /
+`.videos.retrieve()` / `.videos.edit()`.** Verified directly against installed `openai==2.53.0`:
+those typed methods are hardcoded to **OpenAI's own Sora-2 shape**, not xAI's — `create()` forces
+`multipart/form-data` and Sora-only fields (`input_reference`, `seconds` as an enum of `{4,8,12}`,
+`size` as a `"720x1280"`-style string) with no `duration`/`resolution`/`aspect_ratio`/`image`
+fields at all; the response model's `status` is `Literal["queued","in_progress","completed",
+"failed"]` — missing xAI's own `"pending"`/`"done"`/`"expired"` values entirely — and it carries no
+`url` field (Sora content is fetched via a separate `download_content()` call, not inline). Live
+`docs.x.ai` confirms this independently: every code sample for `/v1/videos/*` uses xAI's own
+`xai_sdk`, plain `requests`, or curl — the OpenAI-compatible SDK is not mentioned anywhere for
+video. This is the same class of incompatibility already hit and fixed for `GrokImageAdapter.edit()`
+(HTTP 415 in production, `images.edit()` sends multipart when xAI wants JSON — see that file's
+docstring) — here it applies to all three operations, not just one, so the low-level `.post()`
+escape hatch is the adapter's only call path, not a special case for one method.
+
 **No retry, anywhere** — same rationale as image gen: `VideoGenerationAgent.RETRY_POLICY =
 NO_RETRY_POLICY`, adapter's `AsyncOpenAI(max_retries=0)`. A transient 5xx after xAI has already
 rendered (and billed for, per-second) a video must not trigger a second paid render. Polling
@@ -270,13 +290,19 @@ if this entry is skipped.
 ### 3.8 Structured Output — Crafting Call Differs From Image Generation's
 
 Image generation's crafting call returns **freeform text** (the prompt string only). Video's
-crafting call needs **structured fields** (`video_prompt`, `duration`, `resolution`,
-`aspect_ratio`) because the owner chose LLM-inferred duration/resolution over fixed defaults
-(§2.2 decision context). This is Mode 1 from `NEW_AGENT_PLAYBOOK.md` (single-pass JSON, no custom
-tools) — `response_schema` + `response_mime_type`, both enforced on the locked `grok` provider
-(Grok honors `response_schema` via `text.format={"type":"json_schema",...}` since 2026-08-14, per
-`src/adapters/CLAUDE.md`). This is a real divergence from `ImageGenerationAgent`'s pattern, called
-out explicitly per CLAUDE.md's delta-declaration gate rather than silently copied.
+crafting call still needs **structured fields** — `video_prompt`, `aspect_ratio` — because
+`aspect_ratio` (unlike duration/resolution, see §3.11) is still worth inferring from the brief and
+freeform text has no natural place to carry it. This is Mode 1 from `NEW_AGENT_PLAYBOOK.md`
+(single-pass JSON, no custom tools) — `response_schema` + `response_mime_type`, both enforced on
+the locked `grok` provider (Grok honors `response_schema` via
+`text.format={"type":"json_schema",...}` since 2026-08-14, per `src/adapters/CLAUDE.md`). This is
+a real divergence from `ImageGenerationAgent`'s pattern, called out explicitly per CLAUDE.md's
+delta-declaration gate rather than silently copied.
+
+**`duration` and `resolution` were originally part of this schema too** (owner decision
+2026-08-23) — **superseded same-day** after a cost-safeguard review: see §3.11 decision #9. They
+are no longer LLM outputs at all; the crafting call's job narrowed to "what to render," not "how
+long/how big."
 
 ### 3.9 `edit_video` — Reference Trap, Same As Image
 
@@ -301,6 +327,78 @@ capability exists to justify the array shape `image_refs` needed for images.
 | `handlers/worker_handler.py` (new method + `video_registry` param) | `ports.provider_registry.ProviderRegistry` | Mirrors existing `job_registry` param exactly |
 | `composition/*` | `GrokVideoAdapter` concrete class | Only place it's named, same as `GrokImageAdapter` |
 
+### 3.11 Cost Safeguards (added 2026-08-23, post cost-safeguard review — supersedes original decision #4)
+
+Video is an order-of-magnitude cost jump over anything else in the system ($0.08/sec confirmed;
+a naive 15s request ≈ $1.20 at minimum, more if resolution turns out to carry a premium after
+all). The original design (LLM freely infers duration/resolution from the brief's "vibe") put a
+real money decision behind LLM judgment with only a prompt instruction as a backstop — not
+acceptable. Three changes, decided together:
+
+**Decision #9 — Fixed default (5s / 480p), overridden only by an explicit orchestrator signal.**
+`VideoGenerationAgent` no longer asks the crafting LLM to infer duration/resolution (§3.8). It
+resolves `duration = context.get("duration") or DEFAULT_VIDEO_DURATION_S` (5) and
+`resolution = context.get("resolution") or DEFAULT_VIDEO_RESOLUTION` ("480p"). `context.duration`/
+`context.resolution` are new optional keys on **`generate_video`'s `context_schema` only** (§4) —
+`edit_video`'s port method (§3.5) takes no `duration`/`resolution` at all, since editing preserves
+the source video's existing length/resolution by definition, nothing to default or override.
+Populated by **Smart only when the user explicitly stated a specific length or quality** ("10 second video",
+"in 1080p") — never inferred from subject matter or implied mood. `PROTOCOL_SMART_AGENT_SELECTION`'s
+`generate_video`/`edit_video` section (§7) must say this explicitly: *"Only pass context.duration /
+context.resolution when the user literally specified a duration or resolution. Do not infer these
+from the brief — the specialist defaults to 5s/480p on its own."* This moves the cost-bearing
+decision out of LLM inference (crafting-call *or* orchestrator-call) into a deterministic default
+plus an explicit, attributable override.
+
+**Decision #10 — Hard cap on `duration`, 10s system default, per-user overridable.** Even an
+explicit user ask is clamped: `duration = min(resolved_duration, self.max_duration_s)`.
+`max_duration_s` follows the existing per-user-override convention exactly (`UserBotConfig.
+semantic_search_limit` / `.biographical_cache_limit`, `src/domain/user.py:219,228-229` — `Optional[
+int] = None` on `UserBotConfig`, resolved USER → ACCOUNT → SYSTEM by a new `ConfigurationService.
+get_max_video_duration()`, mirroring `get_semantic_search_limit()` at `configuration_service.py:
+260`). System default lives as a constant (`DEFAULT_MAX_VIDEO_DURATION_S = 10`), resolved once at
+agent-construction time in `UserAgentFactory._create_and_cache_agents()` and passed into
+`VideoGenerationAgent`'s constructor — same pattern as `history_recent_full_turns`, not
+re-resolved per request. New field: `UserBotConfig.max_video_duration_s: Optional[int] = None`.
+No Cabinet UI at v1 (matches the existing precedent for `semantic_search_limit` etc. — Firestore-
+only, no `/api/user/...` route); add one later if a non-owner user ever needs self-service access.
+**No equivalent cap on `resolution`**: xAI's own pricing page states "$0.080 per second" with no
+resolution differentiation (the $0.14/$0.25 tiered figures are third-party-only, already flagged
+unconfirmed in §10 #1) — resolution does not appear to be a cost lever, so it stays governed by
+decision #9 alone (default 480p unless explicitly requested), no separate ceiling.
+
+**Decision #11 — External-cost billing, for image generation too, not just video.** Confirmed by
+direct inspection: `ImageGenerationAgent` calls `self._image_port.generate()`/`.edit()` directly,
+never through `BaseAgent._call_llm()` — the only path that feeds `TokenLedger`
+(`base_agent.py:1126-1130`). `GrokImageAdapter` never touches a billing port. `daily_cost_limit`
+(`billing.py:107`) sums `TokenLedger.cost()` only — token-derived. **Result: every dollar of xAI
+image spend has been completely invisible to the account's own cost alert since the image agent
+shipped 2026-08-21; video would inherit the identical blind spot at $0.08/sec instead of
+$0.04-0.08/image.** Fix, both media types, same mechanism:
+- `QuotaService.record_usage` / `AccountRepository.increment_account_usage` already accept a
+  `cost: float` param independent of token count (`ports/quota_service.py:10`,
+  `ports/account_repository.py:26`) — it is simply never called with a non-ledger-derived value
+  today. Both agents already hold `self._quota_service` (set uniformly by `UserAgentFactory`,
+  `user_agent_factory.py:527`) — no new wiring needed to call it from the agent itself.
+- New `calculate_external_cost()` helper alongside `calculate_cost()` in `billing.py`, next to
+  `_PRICING_PER_MILLION_TOKENS` — a small pricing table for non-token services
+  (`grok-imagine-image-2.0`, `grok-imagine-video-1.5`), same "price can change under you, keep it
+  in one place" reasoning CLAUDE.md's Economics section already applies to LLM pricing.
+- **Video**: cost = `resolved_duration_s * 0.08` — deterministic, since duration is now always
+  either the default or a known, clamped override (decision #9/#10). Recorded where the actual
+  delivered duration is known: `deliver_video()` (§3.4 step 4), mirroring `deliver_deep_research()`'s
+  shape but adding one `record_usage()` call it doesn't have.
+- **Image — companion fix to already-shipped code, not new-component scope.** Recording a cost is
+  meaningless while the actual billed tier is unknown: `GrokImageAdapter.generate()`/`.edit()`
+  currently send no `size`/`quality` field at all (`grok_image_adapter.py:70-84,107-129`), so xAI's
+  server-side default — and therefore whether each call is billed $0.04 or $0.08 — is unconfirmed.
+  Fix: pin an explicit tier in the adapter call (proposed: 1K/low = $0.04, the cheaper of the two,
+  consistent with this RFC's general "don't pad toward expensive defaults" posture), then record
+  that fixed cost via `self._quota_service.record_usage(...)` in `_respond_with_images()`
+  (`image_generation_agent.py:235-282`). Touches `src/adapters/grok_image_adapter.py` and
+  `src/agents/image_generation_agent.py` — both already in production, so this ships as a small
+  patch alongside the video RFC, not as new files in §4/§5.
+
 ---
 
 ## 4. New Components
@@ -315,7 +413,10 @@ capability exists to justify the array shape `image_refs` needed for images.
 | `VideoGenerationAgentConfig` | `src/infrastructure/agent_config.py` | New `@dataclass` — temperature, timeouts (see §10). |
 | `deliver_video()` | `src/services/video_generation_delivery.py` | New. Structural sibling of `deliver_deep_research()`. |
 | Intent constants | `src/infrastructure/agent_manifest.py` | `GENERATE_VIDEO`, `EDIT_VIDEO`. |
-| `AgentDescriptor` | `src/infrastructure/agent_manifest.py` | `eager=False`, `ExecutionMode.SYNC` both intents, `context_schemas={EDIT_VIDEO: {"video_ref": ...}, GENERATE_VIDEO: {"image_ref": ... (optional)}}`. |
+| `AgentDescriptor` | `src/infrastructure/agent_manifest.py` | `eager=False`, `ExecutionMode.SYNC` both intents, `context_schemas={EDIT_VIDEO: {"video_ref": ...}, GENERATE_VIDEO: {"image_ref": ... (optional), "duration": ... (optional), "resolution": ... (optional)}}` — `duration`/`resolution` are `generate_video`-only (§3.11 decision #9; `edit_video`'s port signature takes neither), Smart-populated only on explicit user ask. |
+| `UserBotConfig.max_video_duration_s` | `src/domain/user.py` | New `Optional[int] = None` field, mirrors `semantic_search_limit` convention. §3.11 decision #10. |
+| `ConfigurationService.get_max_video_duration()` | `src/services/configuration_service.py` | New resolver, mirrors `get_semantic_search_limit()`. USER → ACCOUNT → SYSTEM (`DEFAULT_MAX_VIDEO_DURATION_S = 10`). §3.11 decision #10. |
+| `calculate_external_cost()` | `src/domain/billing.py` | New helper + pricing table for non-token services (image + video). §3.11 decision #11. |
 | `"video_generation"` strategy | `src/services/agent_context_builder.py` | Text-LLM axis (§3.6 Axis 1). |
 | `resolve_video_generation_context()` | `src/services/agent_context_builder.py` | New method, mirrors `resolve_image_generation_context()`. Video-port axis (§3.6 Axis 2). |
 | `video_registry` | `src/composition/user_agent_factory.py` + `src/handlers/worker_handler.py` | New constructor param on both, mirrors `image_registry`/`job_registry`. |
@@ -361,7 +462,20 @@ Prompt files:
   firestore_utils/uploads/video_generation.json
 
 Firestore token updates (manual):
-  PROTOCOL_SMART_AGENT_SELECTION   add generate_video/edit_video section
+  PROTOCOL_SMART_AGENT_SELECTION   add generate_video/edit_video section, incl. §3.11 decision #9
+                                    wording on when to pass context.duration/context.resolution
+
+Companion fix — cost safeguards (§3.11), touches already-shipped code, not new files:
+  src/domain/user.py                          + UserBotConfig.max_video_duration_s
+  src/services/configuration_service.py       + get_max_video_duration()
+  src/domain/billing.py                       + calculate_external_cost() + pricing table
+  src/agents/video_generation_agent.py        duration/resolution default+clamp logic (§3.11 #9/#10)
+  src/services/video_generation_delivery.py   + record_usage() call for video cost (§3.11 #11)
+  src/agents/image_generation_agent.py        + record_usage() call for image cost (§3.11 #11)
+  src/adapters/grok_image_adapter.py          pin explicit size/quality tier (§3.11 #11)
+  tests/unit/domain/test_user.py              max_video_duration_s coverage
+  tests/unit/services/test_configuration_service.py   get_max_video_duration() coverage
+  tests/unit/domain/test_billing.py           calculate_external_cost() coverage
 ```
 
 ---
@@ -373,11 +487,14 @@ Firestore token updates (manual):
 | 1 | `VideoGenerationAgent` is `ExecutionMode.SYNC`, not `ASYNC` | The slow part (waiting on xAI) lives entirely outside `execute()`; no remaining reason to pay for a dedicated Cloud Task dispatch — §3.4 |
 | 2 | Delivery = ACK + adapter-owned poll enqueue, own `video_generation_polling` task type | `DeepResearchPort`'s shape doesn't fit binary payloads; its polling handler is dead code anyway (verified by grep) — §3.4 |
 | 3 | v1 = `generate_video` + `edit_video` only; reference-to-video and extension deferred | Owner decision 2026-08-23, same minimal-then-extend pattern as image editing's original single-reference decision — §2.2 |
-| 4 | Duration/resolution/aspect_ratio **inferred by the LLM**, not fixed defaults | Owner decision 2026-08-23, accepting variable per-request cost for more natural UX — §2.2, §3.8 |
+| 4 | **[SUPERSEDED 2026-08-23, same day]** ~~Duration/resolution/aspect_ratio inferred by the LLM, not fixed defaults~~ | Reversed after cost-safeguard review — a real money decision behind bare LLM judgment with only a prompt instruction as backstop was not acceptable. Replaced by decisions #9-#11 — §3.11 |
 | 5 | Delivery = GCS link only, no native `file_upload` | Owner decision 2026-08-23: sidesteps Telegram's 50MB bot document cap and matches image generation's existing precedent — §3.4 |
 | 6 | `edit_video` uses context key `video_ref`, single reference (not an array) | Mirrors image RFC #3/#6's original single-reference decision; no known multi-video-edit xAI capability to justify more — §3.9 |
 | 7 | Tier `PERFORMANCE` set in `_DEFAULT_AGENT_TIERS` from day one | Closes the exact gap `decisions/agent_tier_default_enforcement.md` found for three prior agents — §3.7 |
 | 8 | `allowed_providers: ["grok"]` only, no fallback, on both axes | No second video-gen adapter exists; matches image RFC decision #8 |
+| 9 | Duration/resolution default to **5s / 480p**; changed only by an explicit orchestrator signal, never inferred from the brief's vibe | Owner decision 2026-08-23 (cost-safeguard review): moves the cost-bearing choice out of LLM judgment into a deterministic default + attributable override — §3.11 |
+| 10 | Hard cap on `duration`: **10s system default, per-user overridable** via `UserBotConfig.max_video_duration_s` | Owner decision 2026-08-23: bounds worst-case spend even on an explicit user ask; no equivalent `resolution` cap since xAI's confirmed pricing is duration-only — §3.11 |
+| 11 | External (non-token) cost billing added for **both** image and video generation, via `QuotaService.record_usage(cost=...)` | Owner decision 2026-08-23: image-gen spend has been invisible to `daily_cost_limit` since it shipped 2026-08-21; video would inherit the same blind spot at higher stakes — §3.11 |
 
 ---
 
@@ -402,13 +519,11 @@ motion_framework: [
 edit_mode_rule: "For edit_video tasks: stay surgical. Translate the instruction precisely —
                  do NOT add creative elaboration the user did not ask for."
 
-parameter_inference: "Infer duration (1-15s), resolution (480p/720p/1080p), and aspect_ratio
-                       from what the brief implies. Default to the shortest duration and
-                       lowest resolution that satisfies the request when the brief gives no
-                       signal either way — do not pad toward expensive defaults."
-
-output_format: "Return JSON: {video_prompt, duration, resolution, aspect_ratio}. video_prompt
-                is the ONLY field shown to xAI — everything it needs must be in that string."
+output_format: "Return JSON: {video_prompt, aspect_ratio}. video_prompt is the ONLY field shown
+                to xAI — everything it needs must be in that string. Duration and resolution
+                are NOT yours to decide — the orchestrator resolves them before this brief
+                reaches you (default 5s/480p unless the user explicitly asked for something
+                else). Do not infer or suggest a duration or resolution in video_prompt."
 ```
 
 Upload order (dev then prod, per playbook §Step 9 — **human-executed only**, never by AI):
@@ -424,11 +539,13 @@ python firestore_utils/upload.py development_domain_prompt_profiles_v3 video_gen
 
 | Metric | Value |
 |---|---|
-| Video generation | $0.08/sec confirmed at 480p; 720p/1080p figures unconfirmed against xAI directly (§10) |
+| Video generation | $0.08/sec confirmed, and per xAI's own pricing page not resolution-differentiated (§10, §3.11 #10) |
 | Video edit | Presumed same per-second-of-output billing — unconfirmed, no separate edit pricing found |
-| Example | A 6s/480p clip ≈ $0.48; a naive 15s/1080p clip could reach the ~$3.75+ range on unconfirmed pricing — an order of magnitude above a single image ($0.04-0.08) |
-| Extra LLM call per request | 1 short structured-output call (brief → prompt + params), cheap/fast |
-| Owner accepted variable cost | Duration/resolution are LLM-inferred (§2.2 decision #4), not fixed — cost varies per request by design |
+| Default request | 5s/480p (§3.11 #9) ≈ **$0.40** |
+| Worst case, system default | 10s hard cap (§3.11 #10) ≈ **$0.80** per request — down from an unbounded ~$1.20+ under the original LLM-inferred design (up to 15s, xAI's own max) |
+| Worst case, per-user override raised | Bounded only by whatever `UserBotConfig.max_video_duration_s` that specific user is granted — still an explicit, attributable ceiling, not open-ended inference |
+| Extra LLM call per request | 1 short structured-output call (brief → prompt + aspect_ratio only, §3.8), cheap/fast |
+| Cost now visible | Both image and video spend flow into `daily_cost_limit` for the first time (§3.11 #11) — previously $0 recorded regardless of actual xAI spend |
 
 ---
 
@@ -443,6 +560,14 @@ python firestore_utils/upload.py development_domain_prompt_profiles_v3 video_gen
 6. Prompt builder failure — `AgentResponse.failure()`, no silent fallback
 7. Malformed/invalid structured JSON from crafting call — failure response, no `create_video()` call with garbage params
 8. Port `create_video()`/`edit_video()` raises — failure response
+9. No `context.duration`/`context.resolution` given — `create_video()` called with 5s/480p defaults (§3.11 #9)
+10. `context.duration=8` explicitly given, under the cap — port called with 8s, not clamped
+11. `context.duration=14` explicitly given, over `max_duration_s` — port called with the clamped value, not 14 (§3.11 #10)
+12. Per-user `max_duration_s` override (e.g. 20) raises the effective ceiling — a `context.duration=14` request is NOT clamped when the user's own override exceeds it
+
+### Billing (`tests/unit/domain/test_billing.py`, `tests/unit/services/test_configuration_service.py`)
+13. `calculate_external_cost()` — video: `duration_s * 0.08`; image: fixed pinned-tier constant (§3.11 #11)
+14. `get_max_video_duration()` — USER → ACCOUNT → SYSTEM resolution, mirrors existing `get_semantic_search_limit()` test shape
 
 ### Adapter wire tests (`tests/unit/adapters/test_grok_video_adapter.py`)
 Mock at the `AsyncOpenAI` SDK boundary + the `httpx` download boundary, not the port. Cover:
@@ -476,7 +601,11 @@ New `ContractRule` for `VideoGenerationPort`.
 5. **`create_video()`/`edit_video()` signature growth if reference-to-video/extension are added
    later.** Both share the same request/poll shape (§2.2), so extension is additive — but confirm
    the exact reference-image/audio wire format against a live call before implementing, same as
-   image RFC's own resolved-later open question (#2 there) for multi-reference images.
+   image RFC's own resolved-later open question (#2 there) for multi-reference images. One concrete
+   gotcha already confirmed on `docs.x.ai`: the two reference arrays use **inconsistent indexing**
+   in the prompt-tag convention — `reference_images` are tagged `<IMAGE_1>`/`<IMAGE_2>`/`<IMAGE_3>`
+   (one-indexed), `reference_audios` are tagged `<AUDIO_0>`/`<AUDIO_1>`/`<AUDIO_2>` (zero-indexed).
+   Don't assume symmetric indexing when this gets built.
 
 ---
 
@@ -484,21 +613,35 @@ New `ContractRule` for `VideoGenerationPort`.
 
 1. `src/ports/video_generation_port.py` — port + `VideoPollResult`
 2. `src/ports/task_queue.py` + `src/adapters/gcp_task_queue.py` — `enqueue_video_generation_polling`
-3. `src/adapters/grok_video_adapter.py` — adapter + wire tests
-4. `src/infrastructure/agent_manifest.py` — Intents + `AgentDescriptor`
+3. `src/adapters/grok_video_adapter.py` — adapter + wire tests (all three methods via raw
+   `AsyncOpenAI.post()`, §3.5)
+4. `src/infrastructure/agent_manifest.py` — Intents + `AgentDescriptor` (context_schemas incl.
+   optional `duration`/`resolution`, §3.11 #9)
 5. `src/infrastructure/agent_config.py` — `VideoGenerationAgentConfig`
-6. `src/domain/user.py` — `_DEFAULT_AGENT_TIERS["video_generation"]` (do this now, not after the fact)
-7. `src/services/agent_context_builder.py` — strategy entry + `resolve_video_generation_context()`
-8. `src/services/video_generation_delivery.py` — `deliver_video()`
-9. `src/services/task_dispatch_service.py` — `enqueue_video_generation_polling` wrapper
-10. `src/agents/video_generation_agent.py` — agent + unit tests
-11. `src/handlers/worker_handler.py` — `video_registry` param + `_handle_video_generation_polling`
-12. `src/composition/user_agent_factory.py` + bootstrap — `video_registry` wiring
-13. `src/utils/capabilities.py` — user-facing capability entry
-14. Prompt tokens (§7) — human uploads dev, validate, then prod
-15. `PROTOCOL_SMART_AGENT_SELECTION` update — human upload
-16. `make test-unit` + `make test-e2e-all`
-17. Manual spot-check in Slack/Telegram — both intents, verify ACK arrives immediately and the
+6. `src/domain/user.py` — `_DEFAULT_AGENT_TIERS["video_generation"]` (do this now, not after the
+   fact) + `UserBotConfig.max_video_duration_s` (§3.11 #10)
+7. `src/services/configuration_service.py` — `get_max_video_duration()` (§3.11 #10)
+8. `src/domain/billing.py` — `calculate_external_cost()` + pricing table for image/video (§3.11 #11)
+9. `src/services/agent_context_builder.py` — strategy entry + `resolve_video_generation_context()`
+10. `src/services/video_generation_delivery.py` — `deliver_video()`, incl. `record_usage()` call
+    for video cost (§3.11 #11)
+11. `src/services/task_dispatch_service.py` — `enqueue_video_generation_polling` wrapper
+12. `src/agents/video_generation_agent.py` — agent incl. duration/resolution default+clamp logic
+    (§3.11 #9/#10) + unit tests
+13. `src/handlers/worker_handler.py` — `video_registry` param + `_handle_video_generation_polling`
+14. `src/composition/user_agent_factory.py` + bootstrap — `video_registry` wiring; resolve
+    `max_video_duration_s` once at agent-construction time and pass into `VideoGenerationAgent`
+    (§3.11 #10, same pattern as `history_recent_full_turns`)
+15. **Companion fix, already-shipped code:** `src/agents/image_generation_agent.py` +
+    `src/adapters/grok_image_adapter.py` — pin explicit size/quality tier + `record_usage()` call
+    for image cost (§3.11 #11)
+16. `src/utils/capabilities.py` — user-facing capability entry
+17. Prompt tokens (§7) — human uploads dev, validate, then prod
+18. `PROTOCOL_SMART_AGENT_SELECTION` update — human upload, incl. §3.11 #9 wording on when Smart
+    may pass `context.duration`/`context.resolution`
+19. `make test-unit` + `make test-e2e-all`
+20. Manual spot-check in Slack/Telegram — both intents, verify ACK arrives immediately and the
     finished video link arrives minutes later in the same channel, check
-    `_on_agent_start`/`_on_agent_success` logs plus the poll loop's own logging
-18. `make deploy`
+    `_on_agent_start`/`_on_agent_success` logs plus the poll loop's own logging; confirm an
+    unqualified "make me a video of X" actually renders at 5s/480p, not longer
+21. `make deploy`
