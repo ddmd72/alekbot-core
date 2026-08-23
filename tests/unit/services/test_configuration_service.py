@@ -589,3 +589,22 @@ class TestGetBioKeywords:
         from src.domain.settings import SearchConfig
         result = config_service.get_bio_keywords_query3(_cfg())
         assert result == SearchConfig().DEFAULT_BIO_KEYWORDS_QUERY3
+
+
+class TestGetMaxVideoDuration:
+    def test_user_override(self, config_service):
+        assert config_service.get_max_video_duration(_cfg(max_video_duration_s=20)) == 20
+
+    def test_account_default(self, config_service):
+        assert config_service.get_max_video_duration(
+            _cfg(), account_defaults=_cfg(max_video_duration_s=15)
+        ) == 15
+
+    def test_system_default(self, config_service):
+        from src.services.configuration_service import DEFAULT_MAX_VIDEO_DURATION_S
+        assert config_service.get_max_video_duration(_cfg()) == DEFAULT_MAX_VIDEO_DURATION_S
+
+    def test_user_override_takes_priority_over_account_default(self, config_service):
+        assert config_service.get_max_video_duration(
+            _cfg(max_video_duration_s=20), account_defaults=_cfg(max_video_duration_s=15)
+        ) == 20
