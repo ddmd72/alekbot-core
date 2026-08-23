@@ -68,7 +68,8 @@ class GrokImageAdapter(ImageGenerationPort):
         )
 
     async def generate(
-        self, prompt: str, *, aspect_ratio: str = "auto", n: int = 1
+        self, prompt: str, *, aspect_ratio: str = "auto", n: int = 1,
+        resolution: str = "1k", quality: str = "medium",
     ) -> List[GeneratedImage]:
         try:
             response = await self._client.images.generate(
@@ -76,7 +77,15 @@ class GrokImageAdapter(ImageGenerationPort):
                 prompt=prompt,
                 n=n,
                 response_format="b64_json",
-                extra_body={"aspect_ratio": aspect_ratio},
+                # resolution/quality previously unset entirely — output size/quality
+                # rested on xAI's own unstated server default. Explicit now, and
+                # settable per request by the agent (see
+                # docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.11 for the sibling video
+                # decision this mirrors — an explicit orchestrator signal, not LLM
+                # inference). Pricing is flat regardless of either value (confirmed
+                # on docs.x.ai/developers/pricing) — this is about determinism and
+                # user control, NOT cost tier selection.
+                extra_body={"aspect_ratio": aspect_ratio, "resolution": resolution, "quality": quality},
             )
             return [
                 GeneratedImage(data=base64.b64decode(item.b64_json), mime_type="image/png")
