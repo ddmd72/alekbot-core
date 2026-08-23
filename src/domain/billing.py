@@ -253,6 +253,51 @@ def calculate_cost(
     return round(cost, 6)
 
 
+# Non-token (flat-rate or per-second REST API) service pricing — companion to
+# _PRICING_PER_MILLION_TOKENS. Prices can change under you (see CLAUDE.md
+# Economics section) — this is the one place to update them.
+#   grok-imagine-image-2.0       — generate(), 1K/low tier pinned explicitly in
+#                                   GrokImageAdapter.generate() (confirmed billed
+#                                   tier, not a guess against an unstated default).
+#   grok-imagine-image-2.0-edit  — edit(), ~2x generation (input+output both
+#                                   billed per IMAGE_GENERATION_RFC.md §2) — a
+#                                   documented estimate, not a wire-confirmed rate.
+#   grok-imagine-video-1.5       — per SECOND of output, confirmed directly on
+#                                   docs.x.ai (VIDEO_GENERATION_RFC.md §2). Callers
+#                                   must pass duration_s; omitting it returns 0.0
+#                                   rather than silently pricing one second.
+_EXTERNAL_COST_PER_UNIT: Dict[str, float] = {
+    "grok-imagine-image-2.0": 0.04,
+    "grok-imagine-image-2.0-edit": 0.08,
+    "grok-imagine-video-1.5": 0.08,
+}
+
+_PER_SECOND_SERVICES = {"grok-imagine-video-1.5"}
+
+
+def calculate_external_cost(service: str, *, duration_s: Optional[float] = None) -> float:
+    """Calculate cost in USD for a non-token, flat-rate or per-second REST API call.
+
+    Args:
+        service: pricing-table key (see _EXTERNAL_COST_PER_UNIT).
+        duration_s: seconds of output — required for per-second-priced services,
+                    ignored for flat-rate ones.
+
+    Returns:
+        Cost in USD, rounded to 6 decimals. 0.0 for an unpriced service, or for a
+        per-second service called without duration_s — same fail-open contract as
+        calculate_cost() for an unknown model.
+    """
+    per_unit = _EXTERNAL_COST_PER_UNIT.get(service)
+    if per_unit is None:
+        return 0.0
+    if service in _PER_SECOND_SERVICES:
+        if duration_s is None:
+            return 0.0
+        return round(per_unit * duration_s, 6)
+    return round(per_unit, 6)
+
+
 @dataclass
 class ModelUsage:
     """Usage accumulated on ONE model within an execution."""

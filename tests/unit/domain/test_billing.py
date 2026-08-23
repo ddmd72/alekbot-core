@@ -9,7 +9,7 @@ total as if it were that day's.
 
 from datetime import date, datetime, timezone
 
-from src.domain.billing import AccountUsageStats
+from src.domain.billing import AccountUsageStats, calculate_external_cost
 
 
 def _dt(d: date) -> datetime:
@@ -69,3 +69,35 @@ class TestUsageForDate:
         # Brand-new account: daily_reset_at defaults to "now" (today), prev_daily_date None.
         u = AccountUsageStats(daily_reset_at=_dt(_TODAY))
         assert u.usage_for_date(_YESTERDAY) == (0, 0.0)
+
+
+class TestCalculateExternalCost:
+    """calculate_external_cost() prices non-token REST-API services (image/video
+    generation) — companion to calculate_cost() (LLM token pricing). See
+    docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.11 decision #11.
+    """
+
+    def test_video_cost_scales_with_duration(self):
+        assert calculate_external_cost("grok-imagine-video-1.5", duration_s=5) == 0.40
+        assert calculate_external_cost("grok-imagine-video-1.5", duration_s=10) == 0.80
+
+    def test_video_without_duration_returns_zero(self):
+        # duration_s is required for a per-second-priced service — omitting it
+        # must never silently bill $0.08 for "one second," it must bill nothing.
+        assert calculate_external_cost("grok-imagine-video-1.5") == 0.0
+
+    def test_image_generate_cost_is_flat(self):
+        assert calculate_external_cost("grok-imagine-image-2.0") == 0.04
+
+    def test_image_edit_cost_is_flat_and_higher_than_generate(self):
+        assert calculate_external_cost("grok-imagine-image-2.0-edit") == 0.08
+
+    def test_image_cost_ignores_duration_kwarg(self):
+        # duration_s is meaningless for a flat-rate service — passing it must not
+        # change the result (guards against a future refactor accidentally
+        # multiplying flat-rate services too).
+        assert calculate_external_cost("grok-imagine-image-2.0", duration_s=999) == 0.04
+
+    def test_unknown_service_returns_zero(self):
+        # Same fail-open contract as calculate_cost() for an unpriced model.
+        assert calculate_external_cost("unknown-service-xyz") == 0.0
