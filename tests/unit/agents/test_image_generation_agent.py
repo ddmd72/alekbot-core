@@ -180,6 +180,26 @@ async def test_execute_generate_image_port_returns_empty_fails(agent, mock_image
     assert response.delivery_items == []
 
 
+async def test_execute_generate_image_default_resolution_and_quality(agent, mock_image_port):
+    await agent.execute(_make_message("generate_image"))
+
+    call_kwargs = mock_image_port.generate.call_args.kwargs
+    assert call_kwargs["resolution"] == "1k"
+    assert call_kwargs["quality"] == "medium"
+
+
+async def test_execute_generate_image_explicit_resolution_is_honored(agent, mock_image_port):
+    await agent.execute(_make_message("generate_image", context={"resolution": "2k"}))
+
+    assert mock_image_port.generate.call_args.kwargs["resolution"] == "2k"
+
+
+async def test_execute_generate_image_explicit_quality_is_honored(agent, mock_image_port):
+    await agent.execute(_make_message("generate_image", context={"quality": "low"}))
+
+    assert mock_image_port.generate.call_args.kwargs["quality"] == "low"
+
+
 # ============================================================================
 # Fixtures for edit_image tests
 # ============================================================================
