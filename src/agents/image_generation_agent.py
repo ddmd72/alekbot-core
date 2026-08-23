@@ -17,10 +17,14 @@ general orchestrator's conversational phrasing won't reliably produce. See
 docs/10_rfcs/IMAGE_GENERATION_RFC.md §2.1.
 
 payload["query"] is the raw natural-language brief/instruction from the orchestrator.
-For edit_image, payload["image_ref"] (spread from context by the coordinator) names
-the reference image file — resolved via FileConversionService.resolve_bytes(), NOT
-via the coordinator's generic file_ref auto-injection (RFC §3.4).
+For edit_image, payload["image_refs"] (spread from context by the coordinator, a list
+of 1-3 filenames) names the reference image file(s) — resolved via
+FileConversionService.resolve_bytes(), NOT via the coordinator's generic file_ref
+auto-injection (RFC §3.4). When more than one reference is attached, the crafting
+LLM call is told the count so it can address them as <IMAGE_0>, <IMAGE_1>, <IMAGE_2>
+per xAI's convention — see docs/04_solution_strategy/decisions/image_edit_multi_reference.md.
 """
+import asyncio
 import base64
 import mimetypes
 import time
@@ -32,10 +36,12 @@ from ..domain.agent import AgentConfig, AgentMessage, AgentResponse, DeliveryIte
 from ..domain.llm import LLMResponse, Message, MessagePart, describe_empty_output
 from ..infrastructure.agent_config import IMAGE_GENERATION
 from ..infrastructure.agent_manifest import Intent
-from ..ports.image_generation_port import ImageGenerationPort
+from ..ports.image_generation_port import ImageGenerationPort, ReferenceImage
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
+
+_MAX_REFERENCE_IMAGES = 3
 
 
 class ImageGenerationAgent(BaseAgent):
@@ -43,9 +49,9 @@ class ImageGenerationAgent(BaseAgent):
     Specialist agent: crafts an Aurora-ready prompt, renders it, delivers the image.
 
     Accepts generate_image (payload["query"] = creative brief) and edit_image
-    (payload["query"] = edit instruction, payload["image_ref"] = reference filename).
-    Returns AgentResponse with one delivery_item on success: image "document"
-    (GCS link + native inline upload).
+    (payload["query"] = edit instruction, payload["image_refs"] = 1-3 reference
+    filenames). Returns AgentResponse with one delivery_item on success: image
+    "document" (GCS link + native inline upload).
     """
 
     # ASYNC image generation — no automatic retry (avoid double-billing xAI on retry).
@@ -92,6 +98,30 @@ class ImageGenerationAgent(BaseAgent):
         intent_name = message.payload.get("intent")
         self._on_agent_start(query)
 
+        image_refs = message.payload.get("image_refs") or []
+        if intent_name == Intent.EDIT_IMAGE:
+            # Validated before any LLM call — an invalid ref count should never
+            # pay for a prompt-crafting call it can't use.
+            if not image_refs:
+                return AgentResponse.failure(
+                    task_id=message.task_id,
+                    agent_id=self.agent_id,
+                    error=(
+                        "image_refs is required for edit_image. "
+                        "Look for [File: name (size)] in the conversation and pass "
+                        'the filename(s) as context={"image_refs": ["<filename1>", ...]}.'
+                    ),
+                )
+            if len(image_refs) > _MAX_REFERENCE_IMAGES:
+                return AgentResponse.failure(
+                    task_id=message.task_id,
+                    agent_id=self.agent_id,
+                    error=(
+                        f"edit_image supports at most {_MAX_REFERENCE_IMAGES} reference "
+                        f"images, got {len(image_refs)}."
+                    ),
+                )
+
         try:
             system_prompt = await self.prompt_builder.build_for_agent(
                 account_id=message.context.get("account_id"),
@@ -107,7 +137,18 @@ class ImageGenerationAgent(BaseAgent):
                 error=f"Failed to build system prompt: {exc}",
             )
 
-        prompt_response = await self._craft_prompt(system_prompt, query)
+        craft_query = query
+        if intent_name == Intent.EDIT_IMAGE and len(image_refs) > 1:
+            # Tells the crafting LLM how many references it has and the exact
+            # placeholder tokens to use — the *instruction* for what to do with
+            # them lives in the COGNITIVE_PROCESS_IMAGE_GEN prompt token, not here.
+            placeholders = ", ".join(f"<IMAGE_{i}>" for i in range(len(image_refs)))
+            craft_query = (
+                f"{query}\n\n[{len(image_refs)} reference images attached, "
+                f"in order: {placeholders}]"
+            )
+
+        prompt_response = await self._craft_prompt(system_prompt, craft_query)
         crafted_prompt = (prompt_response.text or "").strip()
         if not crafted_prompt:
             reason = describe_empty_output(prompt_response.finish_reason)
@@ -120,7 +161,7 @@ class ImageGenerationAgent(BaseAgent):
             )
 
         if intent_name == Intent.EDIT_IMAGE:
-            return await self._execute_edit(message, crafted_prompt)
+            return await self._execute_edit(message, crafted_prompt, image_refs)
         return await self._execute_generate(message, crafted_prompt)
 
     async def _craft_prompt(self, system_prompt: str, query: str) -> LLMResponse:
@@ -140,39 +181,47 @@ class ImageGenerationAgent(BaseAgent):
         images = await self._image_port.generate(prompt)
         return self._respond_with_images(message, images, start_time)
 
-    async def _execute_edit(self, message: AgentMessage, prompt: str) -> AgentResponse:
-        image_ref = message.payload.get("image_ref")
-        if not image_ref:
+    async def _execute_edit(
+        self, message: AgentMessage, prompt: str, image_refs: List[str],
+    ) -> AgentResponse:
+        user_id = message.context.get("user_id", "")
+        start_time = time.time()
+
+        # return_exceptions=True is required, not optional: the bare default lets
+        # sibling resolve_bytes() tasks run unawaited/uncancelled after the first
+        # exception. gather() preserves input order in its results regardless of
+        # completion order, so the <IMAGE_n> <-> results[n] correspondence below
+        # is safe as long as nothing reindexes after a partial failure — fail-fast
+        # on any exception guarantees that.
+        results = await asyncio.gather(
+            *[self._file_conversion.resolve_bytes(ref, user_id) for ref in image_refs],
+            return_exceptions=True,
+        )
+
+        failed = [
+            (ref, result)
+            for ref, result in zip(image_refs, results)
+            if isinstance(result, Exception)
+        ]
+        if failed:
+            failed_names = ", ".join(ref for ref, _ in failed)
+            self._on_agent_error(failed[0][1], f"resolve image_refs {failed_names}")
             return AgentResponse.failure(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
                 error=(
-                    "image_ref is required for edit_image. "
-                    "Look for [File: name (size)] in the conversation and pass "
-                    'the filename as context={"image_ref": "<filename>"}.'
+                    f"Could not read reference image(s) '{failed_names}': "
+                    f"{type(failed[0][1]).__name__}."
                 ),
             )
 
-        start_time = time.time()
-        try:
-            reference_bytes = await self._file_conversion.resolve_bytes(
-                image_ref, message.context.get("user_id", "")
-            )
-        except Exception as e:
-            self._on_agent_error(e, f"resolve image_ref {image_ref}")
-            return AgentResponse.failure(
-                task_id=message.task_id,
-                agent_id=self.agent_id,
-                error=f"Could not read reference image '{image_ref}': {type(e).__name__}.",
-            )
-
-        mime_type, _ = mimetypes.guess_type(image_ref)
-        mime_type = mime_type or "image/png"
+        reference_images = [
+            ReferenceImage(data=data, mime_type=mimetypes.guess_type(ref)[0] or "image/png")
+            for ref, data in zip(image_refs, results)
+        ]
 
         try:
-            image = await self._image_port.edit(
-                prompt, reference_images=[reference_bytes], mime_type=mime_type,
-            )
+            image = await self._image_port.edit(prompt, reference_images=reference_images)
         except Exception as e:
             self._on_agent_error(e, "image_edit")
             return AgentResponse.failure(

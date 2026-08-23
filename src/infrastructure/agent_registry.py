@@ -91,7 +91,11 @@ class AgentDescriptor:
     # Part A: What I offer
     capabilities: Dict[str, ExecutionMode] = field(default_factory=dict)
     capability_descriptions: Dict[str, str] = field(default_factory=dict)
-    context_schemas: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # A field value is normally a plain description string (shorthand for a
+    # string-typed param), but may instead be an already-JSON-schema-shaped
+    # dict (e.g. {"type": "array", "items": {...}, "description": "..."})
+    # for a non-string param — see _build_delegate_tool_declaration.
+    context_schemas: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     internal: bool = False
     description: str = ""
     requires_auth: bool = False

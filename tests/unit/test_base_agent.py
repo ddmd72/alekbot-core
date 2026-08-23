@@ -556,6 +556,26 @@ class TestBuildDelegateToolDeclaration:
         context_param = result["parameters"]["properties"]["context"]
         assert "properties" not in context_param
 
+    def test_context_schema_dict_field_passes_through_verbatim(self):
+        """A non-string field spec (e.g. an array param like edit_image's
+        image_refs) must pass through as-is, not get wrapped in a string-typed
+        {"type": "string", "description": ...} shape."""
+        array_spec = {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "1 to 3 reference image filenames",
+        }
+        intents = [
+            {
+                "name": "edit_image",
+                "description": "Edit image",
+                "context_schema": {"image_refs": array_spec},
+            }
+        ]
+        result = BaseAgent._build_delegate_tool_declaration(intents)
+        context_param = result["parameters"]["properties"]["context"]
+        assert context_param["properties"]["image_refs"] == array_spec
+
 
 class TestCallLlmNoLlm:
     """Tests for BaseAgent._call_llm when no LLM is configured."""

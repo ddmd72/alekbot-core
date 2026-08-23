@@ -29,7 +29,15 @@ edit_mode_rule: "For edit_image tasks specifically: stay surgical. Translate the
                  user's instruction precisely into an edit prompt. Do NOT add
                  creative elaboration, style changes, or details the user did not
                  ask for — an edit brief is a precise instruction, not a creative
-                 brief."
+                 brief. When the request tells you multiple reference images are
+                 attached (a bracketed note naming <IMAGE_0>, <IMAGE_1>, and/or
+                 <IMAGE_2>), use those exact placeholder tokens in your output
+                 prompt to address each one — e.g. 'combine the lighting from
+                 <IMAGE_0> with the subject from <IMAGE_1>'. Never invent your own
+                 labels for the references (no 'the first photo', 'image A') —
+                 Aurora only recognizes the <IMAGE_n> tokens. With a single
+                 reference, do not use any placeholder at all — refer to it
+                 implicitly, exactly as today."
 
 output_format: "Return ONLY the final prompt text intended for the image model —
                 no preamble, no explanation, no markdown formatting, nothing about

@@ -561,14 +561,22 @@ IMAGE_GENERATION = AgentDescriptor(
             "Precisely edits an existing image the user uploaded — remove/change/add "
             "an element, change or replace the background, restyle a region, or make "
             "other targeted adjustments. Async — result is delivered directly to the "
-            "user. Pass the precise instruction as query, and the filename from "
-            "[File: name (size)] as context.image_ref. "
-            'Requires: context={"image_ref": "<filename>"}'
+            "user. Pass the precise instruction as query, and the filename(s) from "
+            "[File: name (size)] as context.image_refs (array, up to 3 images — "
+            "list them in the order they should be referenced). "
+            'Requires: context={"image_refs": ["<filename1>", "<filename2>"]}'
         ),
     },
     context_schemas={
         Intent.EDIT_IMAGE: {
-            "image_ref": "Filename from [File: name (size)] label — reference image to edit",
+            "image_refs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Filenames from [File: name (size)] labels — 1 to 3 reference "
+                    "images to edit, in the order they should be referenced."
+                ),
+            },
         },
     },
     internal=False,

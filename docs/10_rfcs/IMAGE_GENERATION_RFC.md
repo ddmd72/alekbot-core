@@ -388,7 +388,7 @@ sign-off before implementation per CLAUDE.md's delta-declaration gate — all th
 | 3 | `edit_image` uses context key `image_ref`, **not** `file_ref` | Avoids the coordinator's generic text-only auto-injection (§3.4) misfiring on binary content |
 | 4 | Provider resolved via **two independent registries**, same resolved name | Reuses proven `DeepResearchPort`/`job_registry` pattern; §3.7 |
 | 5 | Video generation **out of scope**, deferred to its own future RFC | Different technique/latency/delivery shape — §3.9 |
-| 6 | **[APPROVED]** `edit_image` v1 supports a **single** reference image (`image_ref`), not xAI's max of 3 | Matches existing single-`file_ref` precedent (`CREATE_HTML_PAGE`) exactly, zero new plumbing. Multi-image compositing (styles/subjects from separate references) deferred until a real use case appears — extending to `image_ref_2`/`image_ref_3` or a list is additive, not a rewrite. |
+| 6 | **[SUPERSEDED 2026-08-23]** `edit_image` v1 supports a **single** reference image (`image_ref`), not xAI's max of 3 | Matches existing single-`file_ref` precedent (`CREATE_HTML_PAGE`) exactly, zero new plumbing. Multi-image compositing (styles/subjects from separate references) deferred until a real use case appears — extending to `image_ref_2`/`image_ref_3` or a list is additive, not a rewrite. Extended to 1-3 references via an `image_refs` array — see `decisions/image_edit_multi_reference.md`. |
 | 7 | **[APPROVED]** `n=1` (single image per request) in v1, not xAI's max of 10 | Keeps the delivery/UX simple (one image per turn). "Give me variations" becomes a follow-up delegation. Revisit if users ask for options routinely. |
 | 8 | **[APPROVED]** `allowed_providers: ["grok"]` only, no fallback | No second image-gen adapter exists yet (§3.9-adjacent — this is about images, not video). A `fallback` would need a second working adapter; adding one now would be speculative. |
 
@@ -464,9 +464,11 @@ New `ContractRule` for `ImageGenerationPort` — validated by both unit and inte
 
 1. **Exact output `mime_type`.** xAI docs didn't specify the image format returned (PNG assumed,
    unconfirmed) — confirm against a live call before hardcoding `content_type` in `DeliveryItem`.
-2. **`images.edit()` multi-reference parameter shape.** Docs confirm "up to 3 source images... via
-   URL or base64" but not confirmed to me exact request field name/structure for >1 image — moot
-   for v1 (single reference, decision #6) but relevant if/when extended.
+2. **[RESOLVED 2026-08-23]** ~~`images.edit()` multi-reference parameter shape.~~ Docs confirm "up
+   to 3 source images... via URL or base64" but not confirmed to me exact request field name/
+   structure for >1 image — moot for v1 (single reference, decision #6) but relevant if/when
+   extended. Resolved: 2-3 references use a separate `images` array field (not `image` as an array);
+   implemented, see `decisions/image_edit_multi_reference.md`.
 3. **Timeout values.** No latency data for `grok-imagine-image-2.0` yet. Propose conservative
    starting points (`request_timeout_s≈60`, `dispatch_deadline_s≈180`) to be tuned after first live
    measurements — do **not** copy `HTML_PAGE_GENERATOR`'s 720s uncritically; that number is sized
