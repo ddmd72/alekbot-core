@@ -530,6 +530,38 @@ class TestHandleMessageEdgeCases:
             user_id=_USER_ID, platform="slack", channel_id="D-dm"
         )
 
+    async def test_notification_task_tracked_and_discarded_after_completion(self):
+        """The fire-and-forget save_channel task holds a strong ref via
+        _background_tasks while pending, and is discarded once it completes —
+        guards against asyncio silently GC'ing an unreferenced Task mid-flight."""
+        release = asyncio.Event()
+
+        async def _slow_save_channel(**kwargs):
+            await release.wait()
+
+        notif = MagicMock()
+        notif.save_channel = AsyncMock(side_effect=_slow_save_channel)
+
+        coord = _simple_coordinator(
+            _make_success(SmartResponse(text="OK"))
+        )
+        handler = _make_handler(coord, notification_service=notif)
+        channel = _make_channel(channel_id="C-main")
+        ctx = _make_context(metadata={"channel_type": "channel"})
+
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
+            await handler.handle_message(ctx, channel)
+
+        await asyncio.sleep(0.05)
+        assert len(handler._background_tasks) == 1
+        task = next(iter(handler._background_tasks))
+        assert not task.done()
+
+        release.set()
+        await asyncio.sleep(0.05)
+        assert task.done()
+        assert handler._background_tasks == set()
+
     async def test_no_notification_service_no_crash(self):
         """_notification_service=None → no background task, no crash."""
         coord = _simple_coordinator(

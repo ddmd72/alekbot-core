@@ -127,6 +127,9 @@ class ConversationHandler(ConversationHandlerPort):
         self._channel_binding = channel_binding_service
         self._channel_history = channel_history_source
         self._short_link_service = short_link_service
+        # Strong refs for fire-and-forget tasks (e.g. notification-channel save below) —
+        # asyncio only holds a weak ref to a Task, so an untracked one can be GC'd mid-flight.
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def _deliver_rich_content(
         self,
@@ -425,13 +428,15 @@ class ConversationHandler(ConversationHandlerPort):
         # chat.postMessage accepts both D... and C... IDs.
         if mode.update_notification_channel and self._notification_service and hasattr(response_channel, "platform"):
             notif_channel_id = channel_id or getattr(response_channel, "channel_id", None)
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._notification_service.save_channel(
                     user_id=context.user_id,
                     platform=response_channel.platform,
                     channel_id=notif_channel_id,
                 )
             )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
         message_parts: List[MessagePart] = []
         temp_files = []
