@@ -31,6 +31,7 @@ import time
 from typing import List, Optional
 
 from .base_agent import BaseAgent
+from ..domain.billing import calculate_external_cost
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.llm import LLMResponse, Message, MessagePart, describe_empty_output
@@ -189,7 +190,7 @@ class ImageGenerationAgent(BaseAgent):
             resolution=self._resolve_resolution(message),
             quality=self._resolve_quality(message),
         )
-        return self._respond_with_images(message, images, start_time)
+        return await self._respond_with_images(message, images, start_time)
 
     async def _execute_edit(
         self, message: AgentMessage, prompt: str, image_refs: List[str],
@@ -240,9 +241,9 @@ class ImageGenerationAgent(BaseAgent):
                 error=f"Image edit failed: {type(e).__name__}.",
             )
 
-        return self._respond_with_images(message, [image], start_time)
+        return await self._respond_with_images(message, [image], start_time)
 
-    def _respond_with_images(
+    async def _respond_with_images(
         self, message: AgentMessage, images: List, start_time: float,
     ) -> AgentResponse:
         if not images:
@@ -258,6 +259,28 @@ class ImageGenerationAgent(BaseAgent):
         duration_ms = int((time.time() - start_time) * 1000)
         ext = "png" if "png" in image.mime_type else "jpg"
         filename = f"image_{int(time.time())}.{ext}"
+
+        # External-cost billing — see docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.11
+        # decision #11: this call previously did not exist at all, meaning xAI
+        # image spend was invisible to the account's daily_cost_limit alert.
+        # None-guarded because self._quota_service is None for every agent not
+        # constructed through UserAgentFactory (BaseAgent.__init__ default);
+        # awaited, not detached, per FirestoreQuotaService.record_usage's own
+        # docstring (a fire-and-forget task past the request boundary is starved
+        # by Cloud Run CPU throttling and lost on instance recycle).
+        if self._quota_service:
+            account_id = message.context.get("account_id", "")
+            if account_id:
+                intent_name = message.payload.get("intent")
+                service_key = (
+                    "grok-imagine-image-2.0-edit"
+                    if intent_name == Intent.EDIT_IMAGE
+                    else "grok-imagine-image-2.0"
+                )
+                cost = calculate_external_cost(service_key)
+                await self._quota_service.record_usage(
+                    account_id=account_id, model=service_key, tokens=0, cost=cost,
+                )
 
         self._on_agent_success(len(image.data), 0)
         logger.info(
