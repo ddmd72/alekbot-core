@@ -73,6 +73,9 @@ class Intent:
     DELETE_FILE         = "delete_file"
     # Domain research — interactive competency stack definition for agent construction
     DOMAIN_RESEARCH     = "domain_research"
+    # Image generation/editing via grok-imagine-image-2.0
+    GENERATE_IMAGE      = "generate_image"
+    EDIT_IMAGE          = "edit_image"
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +535,62 @@ DOMAIN_RESEARCHER = AgentDescriptor(
     }),
 )
 
+IMAGE_GENERATION = AgentDescriptor(
+    agent_id="image_generation_agent",
+    agent_type="image_generation",
+    eager=False,
+    capabilities={
+        Intent.GENERATE_IMAGE: ExecutionMode.ASYNC,
+        Intent.EDIT_IMAGE: ExecutionMode.ASYNC,
+    },
+    description="Generates and edits images via grok-imagine-image-2.0",
+    capability_descriptions={
+        Intent.GENERATE_IMAGE: (
+            "Creates a new image from a text description — photos, illustrations, "
+            "infographics, ads and marketing visuals, game assets and icons, "
+            "UI/UX mockups, storyboards, or any other visual. Async — result is "
+            "delivered directly to the user. "
+            "Use when the user asks to draw, create, generate, design, or make "
+            "an image, graphic, mockup, icon, or visual asset — not just photos. "
+            "Also use on your own initiative when a generated image would "
+            "genuinely improve your answer (illustrating an idea, concept, or "
+            "layout), even if the user did not explicitly ask for one. "
+            'payload: {"query": "<what to depict, purpose, style if known>"}'
+        ),
+        Intent.EDIT_IMAGE: (
+            "Precisely edits an existing image the user uploaded — remove/change/add "
+            "an element, change or replace the background, restyle a region, or make "
+            "other targeted adjustments. Async — result is delivered directly to the "
+            "user. Pass the precise instruction as query, and the filename(s) from "
+            "[File: name (size)] as context.image_refs (array, up to 3 images — "
+            "list them in the order they should be referenced). "
+            'Requires: context={"image_refs": ["<filename1>", "<filename2>"]}'
+        ),
+    },
+    context_schemas={
+        Intent.EDIT_IMAGE: {
+            "image_refs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Filenames from [File: name (size)] labels — 1 to 3 reference "
+                    "images to edit, in the order they should be referenced."
+                ),
+            },
+        },
+    },
+    internal=False,
+    # 400s agent timeout (ImageGenerationAgentConfig.timeout_ms) + 2 min overhead —
+    # same slack pattern as HTML_PAGE_GENERATOR etc. below. Without this margin the
+    # agent's own timeout can never fire before Cloud Tasks kills the task
+    # externally, which (a) skips the failure-notification path entirely and
+    # (b) triggers a Cloud Tasks retry that re-runs (and re-bills) the xAI call.
+    # Raised from 300s 2026-08-21 after a live generate() call exceeded the
+    # previous, smaller budget in production (RFC §10 open question #3 — still
+    # not a fully measured ceiling, but backed by a real data point now).
+    dispatch_deadline_s=520,
+)
+
 
 ALL_DESCRIPTORS = [
     MEMORY_SEARCH,
@@ -549,4 +608,5 @@ ALL_DESCRIPTORS = [
     HELP,
     FILE_MANAGEMENT,
     DOMAIN_RESEARCHER,
+    IMAGE_GENERATION,
 ]

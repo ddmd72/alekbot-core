@@ -100,6 +100,21 @@ class TestAgentProtocol:
         assert response.error == "Agent cannot handle this task type"
         assert response.suggestions == ["other_agent"]
 
+    def test_agent_response_timeout(self):
+        """Test creating a timeout AgentResponse."""
+        response = AgentResponse.timeout(
+            task_id="task123",
+            agent_id="agent1",
+            error="ran out of time"
+        )
+
+        assert response.task_id == "task123"
+        assert response.agent_id == "agent1"
+        assert response.status == AgentStatus.TIMEOUT
+        assert response.result is None
+        assert response.confidence == 0.0
+        assert response.error == "ran out of time"
+
     def test_agent_config_defaults(self):
         """Test AgentConfig defaults."""
         config = AgentConfig(

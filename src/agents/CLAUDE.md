@@ -130,6 +130,34 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   at model default otherwise) + same-turn tool calls run concurrently via `asyncio.gather`.
 - Compute (SYNC, ECO) — intents `compute_math`/`compute_datetime`/`compute_finance`/`compute`; runs
   Python in Gemini `code_execution` sandbox (`use_code_execution=True`). No external data — compute-only.
+- ImageGeneration (ASYNC, `internal=False`, intents `generate_image`/`edit_image`) — generates/edits
+  images via `grok-imagine-image-2.0` ("Aurora") through `ImageGenerationPort`. One LLM call crafts an
+  Aurora-ready prompt (photoreal / text-heavy-layout / asset-set technique clusters —
+  `COGNITIVE_PROCESS_IMAGE_GEN`, RFC §2.1), then `.generate()`/`.edit()` renders pixels; delivers
+  `DeliveryItem(type="document")` (GCS link + native inline upload) — same zero-new-plumbing mechanism
+  as `PdfGenerator`/`HtmlPageGenerator`. No fixed tier default yet (`_DEFAULT_AGENT_TIERS` has no
+  `image_generation` entry — falls back to the user's global `default_tier`, ECO unless configured).
+  - **Two independent provider axes, one resolved name.** Text-LLM step: standard
+    `AgentProviderStrategy`/`ProviderRegistry[LLMPort]` path (`agent_type="image_generation"`).
+    Pixel-rendering step: a separate `ProviderRegistry[ImageGenerationPort]` (`image_registry`, wired
+    in `main.py`), resolved via `AgentContextBuilder.resolve_image_generation_context()`. Both axes
+    read the same resolved provider name, so a future per-user override switches text-crafting and
+    pixel-rendering together. `allowed_providers: ["grok"]`, no fallback (RFC §6 decision #8) —
+    `GrokImageAdapter` is the only registered implementation today.
+  - **`edit_image` uses `context_schemas["image_refs"]` (array, 1-3 filenames), not `file_ref`** —
+    each resolved directly via `FileConversionService.resolve_bytes()` (concurrent, fail-fast via
+    `asyncio.gather(..., return_exceptions=True)`), bypassing `AgentCoordinator._resolve_file_refs()`'s
+    generic `file_ref` text-injection path (which would run image bytes through a markitdown text
+    converter and break). `image_refs` is the first array-typed `context_schemas` field in the
+    codebase — `_build_delegate_tool_declaration` accepts either a plain description string
+    (shorthand for a string param) or an already-JSON-schema-shaped dict. xAI's wire format
+    branches on count: 1 reference uses `image`, 2-3 use a separate `images` array field; the
+    crafting LLM call is told the count so it can address them as `<IMAGE_0>`/`<IMAGE_1>`/`<IMAGE_2>`
+    per xAI's convention. See `docs/10_rfcs/IMAGE_GENERATION_RFC.md` §3.4 and
+    `decisions/image_edit_multi_reference.md`.
+  - **No retry, anywhere.** `RETRY_POLICY = NO_RETRY_POLICY` on the agent and `max_retries=0` on the
+    adapter's `AsyncOpenAI` client — a transient 5xx after xAI has already rendered (and billed for)
+    an image must not trigger a second paid render.
 
 ## Orchestration Patterns
 

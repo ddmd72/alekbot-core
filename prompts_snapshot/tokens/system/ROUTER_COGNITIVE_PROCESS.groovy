@@ -45,7 +45,7 @@ policies {
     p3_topic_continuity: "Short messages, follow-ups, meta-commands INHERIT the most recent substantive topic. Applies to one-liners ('what next?'), opinions ('what do you think?'), meta-commands ('search deeper'), repeats ('show again')."
     p4_meta_commands: "Meta-command topic = INHERITED from prior conversation, not the command text itself."
     p5_task_complexity_reflects_topic: "task_complexity reflects TOPIC nature, NOT message form. Meta-command about car data → same task_complexity as a direct car-data question."
-    p6_uncertainty: "Two INDEPENDENT axes, biased in OPPOSITE directions. RETRIEVAL (needs_memory_search): when unsure, over-provision — set true; fetching context is cheap. COMPLEXITY (task_complexity): when unsure between two levels, pick the LOWER one; modern responder models handle most tasks well, so escalate only on a clear positive signal. Retrieval breadth NEVER raises task_complexity."
+    p6_uncertainty: "Two INDEPENDENT axes, both biased toward OVER-provisioning under uncertainty. RETRIEVAL (needs_memory_search): when unsure, set true; fetching context is cheap. COMPLEXITY (task_complexity): when unsure between two levels, pick the HIGHER one — a wrong escalation only costs a pricier model call, while a wrong under-classification risks the responder running out of its execution budget mid-task and failing outright, which costs more (retry + fallback + a late or missing answer) than the escalation it was meant to avoid. Retrieval breadth ALONE still never raises task_complexity — this bias applies only to genuine ambiguity about reasoning depth."
 }
 
 cognitive_process {
@@ -68,7 +68,7 @@ cognitive_process {
     step_4_CLASSIFY_TASK_COMPLEXITY {
         → "Pick ONE of four enum values."
         axis_rule: "task_complexity measures the REASONING DEPTH the responder must perform to produce the answer — NOT how many facts or domains must be retrieved, and NOT whether a web search is needed. Retrieval breadth is carried by needs_memory_search + relevant_domains and must NEVER raise task_complexity."
-        default_low: "When hesitating between two levels, choose the lower. Reserve the top level for an unambiguous multi-step / synthesis signal (see deep_reasoning)."
+        default_high: "When hesitating between two levels, choose the higher (see p6). Reserve the LOWER level for a clear signal that the task is pure retrieval or single-step — not for 'could go either way'."
 
         small_talk: [
             "Pure greetings, acknowledgements, thanks — no topic at all.",
@@ -82,13 +82,14 @@ cognitive_process {
         simple_analytics: [
             "ONE reasoning step over retrieved facts: a single comparison, evaluation, opinion, or combining a few data points into one judgement.",
             "Follow-ups asking to interpret / combine prior context.",
-            "Default choice when a request needs SOME interpretation but no multi-step planning; also the fallback when uncertain between info_search and deep_reasoning (p6)."
+            "Default choice when a request needs SOME interpretation but no multi-step planning."
         ]
         deep_reasoning: [
             "Reserve for genuinely hard cognitive work the RESPONDER ITSELF must reason through.",
             "(a) Multi-step planning with dependencies (trip itinerary, project plan, staged strategy).",
             "(b) Synthesis that reasons across multiple facts to produce NEW conclusions — not merely listing or fetching them (e.g. blood test + nutrition + finance combined into a plan).",
             "NOT deep_reasoning merely because it needs a web search, spans several domains, or retrieves many facts — that is info_search / simple_analytics.",
+            "BUT: verifying a claim across sources AND THEN reasoning from the verified fact to what it means for the requester (implications, risk, next steps) IS deep_reasoning — the second half is a NEW conclusion, not a lookup, even though the request reads as \"check/investigate X\".",
             "ANTI-TRIGGER: producing a document / report / PDF / DOCX / HTML page / slide deck is delegated to specialist tools; the responder only recognizes intent and delegates. Classify such a request by the THINKING it demands (usually info_search / simple_analytics), NEVER deep_reasoning for the artifact itself."
         ]
     }
@@ -171,5 +172,9 @@ examples {
     ex_travel_planning {
         input:  "Plan a weekend trip to Krakow"
         output: '{"needs_memory_search":true,"reasoning":"Multi-step planning with dependencies across location + preference + possession — deep_reasoning","search_intent":"topic","relevant_domains":["location","preference","possession"],"semantic_lens":["travel","Krakow","flight","hotel","logistics"],"search_phrase":"travel plans logistics flights preferences transportation","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
+    }
+    ex_verify_and_implications {
+        input:  "Investigate whether this court case against the new regulation is real, what stage it is at, and what it would mean for my residence status if it succeeds."
+        output: '{"needs_memory_search":true,"reasoning":"Reads as a lookup but requires verifying a claim across sources AND reasoning from the verified status to a NEW conclusion about the requester situation — deep_reasoning, not info_search","search_intent":"topic","relevant_domains":["legal","location"],"semantic_lens":["court case","regulation","legal challenge","residence status","implications"],"search_phrase":"court case regulation legal challenge status residence implications","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
     }
 }

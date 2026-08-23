@@ -43,7 +43,13 @@ while read local_ref local_sha remote_ref remote_sha; do
         echo ""
 
         echo -e "${YELLOW}Are you sure you want to push to main?${NC}"
-        read -p "Type 'yes' to confirm or press Ctrl-C to cancel: " CONFIRM
+        # Must read from the controlling terminal, not stdin — stdin here is git's
+        # ref-update pipe (already drained by the `while read` above), not the
+        # keyboard. Without `< /dev/tty`, this read hits EOF instantly, the script
+        # exits (set -e), and whatever the user types next lands on their real
+        # shell prompt instead — "yes" typed there runs the `yes` command, which
+        # floods the terminal with the letter y.
+        read -p "Type 'yes' to confirm or press Ctrl-C to cancel: " CONFIRM < /dev/tty
 
         if [ "$CONFIRM" != "yes" ]; then
             echo -e "${RED}✗ Push cancelled by user${NC}"

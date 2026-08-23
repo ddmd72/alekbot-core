@@ -52,6 +52,15 @@ I run exact computations in a Python sandbox — no rounding errors, no guessing
 
 ---
 
+*Images*
+I can create and edit images using a dedicated image-generation model.
+- Create: "draw me a cozy reading nook with warm lighting", "make an icon for a weather app"
+- Edit: attach a photo and ask, e.g. "remove the person in the background", "change the sky to sunset"
+
+Tell me what you want in your own words — I'll ask a couple of clarifying questions if needed (style, purpose, any text that must appear) before generating.
+
+---
+
 *Tasks* (requires Microsoft To Do or Google Tasks connection in Cabinet → Integrations)
 I manage your task list through natural conversation — create, search, update, complete, and delete tasks.
 

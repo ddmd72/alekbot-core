@@ -171,6 +171,64 @@ class UserNotificationService:
                 exc_info=True,
             )
 
+    async def notify_text(
+        self,
+        user_id: str,
+        account_id: str,
+        text: str,
+        session_id: Optional[str] = None,
+        channel_id_override: Optional[str] = None,
+        platform_override: Optional[str] = None,
+    ) -> None:
+        """
+        Deliver a complete, already-composed model answer to the user's channel
+        verbatim (no agent reformatting) AND persist it to session history.
+
+        Unlike notify_raw() (fire-and-forget confirmations with zero history side
+        effects, e.g. reminder CRUD), this is for a full model answer that future
+        turns and consolidation must be able to see — same history-append shape as
+        notify_document_link(). Uses fallback chain: override -> primary -> last active.
+        """
+        channel_info = await self._resolve_channel(
+            user_id, channel_id_override, platform_override,
+        )
+        if not channel_info:
+            logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping text delivery")
+            return
+
+        response_channel = self._channel_factory.create(
+            platform=channel_info.platform,
+            channel_id=channel_info.channel_id,
+        )
+        if not response_channel:
+            logger.warning(
+                f"[Notification] Cannot create channel for text delivery: platform={channel_info.platform}"
+            )
+            return
+
+        try:
+            await response_channel.send_long_text(text)
+            logger.info(
+                f"📬 [Notification] Text delivery to {channel_info.platform} "
+                f"channel={channel_info.channel_id} user={user_id[:8]}"
+            )
+            if self._session_store:
+                effective_session_id = session_id or f"{user_id}:{channel_info.channel_id}"
+                await self._session_store.append_messages_batch(
+                    session_id=effective_session_id,
+                    owner_id=user_id,
+                    messages=[
+                        Message(role="user", parts=[MessagePart(text="[System: delayed follow-up answer delivered]")]),
+                        Message(role="model", parts=[MessagePart(text=text, full_text=text)]),
+                    ],
+                )
+        except Exception as exc:
+            logger.error(
+                f"[Notification] Text delivery failed for {user_id[:8]} "
+                f"(platform={channel_info.platform}): {exc}",
+                exc_info=True,
+            )
+
     async def notify(
         self,
         user_id: str,

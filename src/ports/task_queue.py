@@ -102,7 +102,8 @@ class TaskQueue(Protocol):
         payload: Dict[str, Any],
         delay_seconds: int = 0,
         deadline_seconds: Optional[int] = None,
-    ) -> str:
+        dedup_key: Optional[str] = None,
+    ) -> Optional[str]:
         """
         Enqueue a generic worker task by task_type.
 
@@ -116,6 +117,11 @@ class TaskQueue(Protocol):
             (execute_reminder at PERFORMANCE, daily_email_review) must pass this or
             their budget is fiction. Maximum accepted by Cloud Tasks is 1800s, and it
             must also stay within the Cloud Run request timeout.
-        Returns task name (Cloud Tasks task ID).
+        dedup_key: when provided, de-duplicates this task against any other task of
+            the same task_type carrying the same key — Cloud Tasks (or whatever backend
+            implements this port) rejects a second enqueue while the first is
+            queued/running/recently completed. Callers never construct a task name
+            themselves. Returns None when the enqueue was a no-op due to such a duplicate.
+        Returns task name (Cloud Tasks task ID), or None on a de-duplicated no-op.
         """
         ...

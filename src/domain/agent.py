@@ -211,6 +211,28 @@ class AgentResponse:
             suggestions=suggestions
         )
 
+    @classmethod
+    def timeout(
+        cls,
+        task_id: str,
+        agent_id: str,
+        error: str,
+    ) -> "AgentResponse":
+        """Factory method for a response that failed specifically by timing out.
+
+        Distinct from failure() so callers (AgentFallbackService) can tell a
+        structural budget mismatch apart from a deterministic error — only the
+        former is worth a background retry with a fresh budget.
+        """
+        return cls(
+            task_id=task_id,
+            agent_id=agent_id,
+            status=AgentStatus.TIMEOUT,
+            result=None,
+            confidence=0.0,
+            error=error,
+        )
+
 
 @dataclass
 class AgentConfig:

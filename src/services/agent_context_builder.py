@@ -5,6 +5,7 @@ from typing import Dict, Optional, Any, Callable, TYPE_CHECKING
 from ..domain.user import UserBotConfig, PerformanceTier
 from ..ports.llm_port import LLMPort, AgentExecutionContext
 from ..ports.deep_research_port import DeepResearchPort
+from ..ports.image_generation_port import ImageGenerationPort
 from ..ports.prompt_cache_strategy_port import PromptCacheStrategyPort
 from ..ports.provider_resilience_port import ProviderResiliencePort
 from ..utils.logger import logger
@@ -159,6 +160,16 @@ class AgentProviderStrategy:
             "allowed_providers": ["grok", "gemini", "claude", "openai"],
             "required_capabilities": [],
             "fallback": "gemini"
+        },
+        # Image generation: text-LLM axis (prompt-crafting call) — see
+        # resolve_image_generation_context() below for the image-rendering axis,
+        # which uses the SAME resolved provider name against a separate registry.
+        # RFC §6 decision #8: grok-only, no fallback (no second image adapter yet).
+        "image_generation": {
+            "default_provider": "grok",
+            "allowed_providers": ["grok"],
+            "required_capabilities": [],
+            "fallback": None,
         },
     }
 
@@ -376,3 +387,24 @@ class AgentContextBuilder:
         job_port: DeepResearchPort = job_registry.get(provider_name)
         tier = config.get_tier_for_agent(agent_type)
         return job_port, tier, provider_name
+
+    def resolve_image_generation_context(
+        self,
+        agent_type: str,
+        image_registry: "ProviderRegistry",
+        config: UserBotConfig,
+    ) -> tuple[ImageGenerationPort, str]:
+        """
+        Resolve an ImageGenerationPort for the image-rendering axis.
+
+        Mirrors resolve_async_context() (DeepResearchPort) — reuses the same
+        3-level provider-name resolution as the text-LLM axis (same
+        agent_type strategy entry), but looks the name up in a separate,
+        dedicated registry. See docs/10_rfcs/IMAGE_GENERATION_RFC.md §3.7.
+
+        Returns:
+            (port, provider_name)
+        """
+        provider_name = self.resolve_provider_name(agent_type, config)
+        port: ImageGenerationPort = image_registry.get(provider_name)
+        return port, provider_name

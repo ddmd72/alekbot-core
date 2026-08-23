@@ -182,7 +182,7 @@ class TestBaseAgent:
             response = await agent.process(message)
 
         assert agent.execute_calls == 1
-        assert response.status == AgentStatus.FAILED
+        assert response.status == AgentStatus.TIMEOUT
         assert "timeout" in response.error.lower()
 
     @pytest.mark.asyncio
@@ -304,7 +304,22 @@ class TestBaseAgent:
 
         response = await agent.process(message)
 
-        assert response.status == AgentStatus.FAILED
+        assert response.status == AgentStatus.TIMEOUT
+        assert "timeout" in response.error.lower()
+        # No retry on timeout — single attempt.
+        assert agent.execute_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_timeout_sets_status_timeout_not_failed(self, config, message):
+        """A real asyncio.TimeoutError must produce AgentStatus.TIMEOUT, not FAILED —
+        AgentFallbackService.try_quick_fallback distinguishes on this to decide whether
+        a background Smart retry is worth scheduling."""
+        agent = MockAgent(config)
+        agent.execute_error = asyncio.TimeoutError("boom")
+
+        response = await agent.process(message)
+
+        assert response.status == AgentStatus.TIMEOUT
         assert "timeout" in response.error.lower()
         # No retry on timeout — single attempt.
         assert agent.execute_calls == 1
@@ -540,6 +555,26 @@ class TestBuildDelegateToolDeclaration:
         result = BaseAgent._build_delegate_tool_declaration(intents)
         context_param = result["parameters"]["properties"]["context"]
         assert "properties" not in context_param
+
+    def test_context_schema_dict_field_passes_through_verbatim(self):
+        """A non-string field spec (e.g. an array param like edit_image's
+        image_refs) must pass through as-is, not get wrapped in a string-typed
+        {"type": "string", "description": ...} shape."""
+        array_spec = {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "1 to 3 reference image filenames",
+        }
+        intents = [
+            {
+                "name": "edit_image",
+                "description": "Edit image",
+                "context_schema": {"image_refs": array_spec},
+            }
+        ]
+        result = BaseAgent._build_delegate_tool_declaration(intents)
+        context_param = result["parameters"]["properties"]["context"]
+        assert context_param["properties"]["image_refs"] == array_spec
 
 
 class TestCallLlmNoLlm:

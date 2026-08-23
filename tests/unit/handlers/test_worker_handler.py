@@ -131,6 +131,53 @@ def _make_worker(
 
 
 # ---------------------------------------------------------------------------
+# Pytest fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def worker_handler_factory():
+    """
+    Factory fixture for creating WorkerHandler instances with customizable services.
+    Allows passing optional services like smart_retry_service.
+    """
+    def _factory(
+        *,
+        smart_retry_service=None,
+        reminders_service=None,
+        notes_port=None,
+        email_review=None,
+        task_dispatch=None,
+        **kwargs
+    ) -> WorkerHandler:
+        """Build a WorkerHandler with specified services, other services mocked."""
+        email_indexing = MagicMock(spec=EmailIndexingService)
+        notification = AsyncMock()
+        agent_factory = MagicMock()
+        agent_factory.ensure_agents_for_user = AsyncMock()
+
+        worker = WorkerHandler(
+            agent_worker_handler=MagicMock(),
+            email_indexing_service=email_indexing,
+            notification_service=notification,
+            consolidation_service=MagicMock(),
+            coordinator=MagicMock(),
+            agent_factory=agent_factory,
+            indexed_email_repo=None,
+            user_repo=MagicMock(),
+            task_dispatch=task_dispatch,
+            job_registry=MagicMock(),
+            smart_retry_service=smart_retry_service,
+            reminders_service=reminders_service,
+            notes_port=notes_port,
+            email_review=email_review,
+            **kwargs,
+        )
+        return worker
+
+    return _factory
+
+
+# ---------------------------------------------------------------------------
 # _handle_email_indexing
 # ---------------------------------------------------------------------------
 
@@ -1446,6 +1493,83 @@ class TestHandleBillingDailySummary:
         assert result["reported"] == 1
         posted_text = ns.billing_webhook.post.call_args[0][0]
         assert "777" in posted_text
+
+
+# ---------------------------------------------------------------------------
+# _handle_smart_timeout_retry + dispatcher routing
+# ---------------------------------------------------------------------------
+
+class TestSmartTimeoutRetry:
+    """Smart timeout retry delegation — routes to SmartRetryService."""
+
+    @pytest.mark.asyncio
+    async def test_delegates_to_smart_retry_service(self, worker_handler_factory):
+        """Service called with full payload; returns its result."""
+        smart_retry_service = MagicMock()
+        smart_retry_service.execute = AsyncMock(return_value=({"status": "delivered"}, 200))
+        handler = worker_handler_factory(smart_retry_service=smart_retry_service)
+
+        result, status = await handler.handle({
+            "task_type": "smart_timeout_retry",
+            "user_id": "user-1", "account_id": "account-1", "session_id": "s",
+            "text": "q", "message_parts": [],
+        })
+
+        assert status == 200
+        smart_retry_service.execute.assert_awaited_once_with({
+            "task_type": "smart_timeout_retry",
+            "user_id": "user-1", "account_id": "account-1", "session_id": "s",
+            "text": "q", "message_parts": [],
+        })
+
+    @pytest.mark.asyncio
+    async def test_missing_service_returns_200_not_500(self, worker_handler_factory):
+        """Misconfiguration must not trigger the agent-tasks queue's 3x auto-retry
+        (retry_config.max_attempts=3) — same reasoning as SmartRetryService.execute()
+        always returning 200."""
+        handler = worker_handler_factory(smart_retry_service=None)
+
+        result, status = await handler.handle({"task_type": "smart_timeout_retry"})
+
+        assert status == 200
+
+    @pytest.mark.asyncio
+    async def test_ensures_agents_for_user_before_delegating(self, worker_handler_factory):
+        """CRITICAL: agents are created lazily per-process via
+        UserAgentFactory.ensure_agents_for_user (TTL-swept after 1h), and
+        AgentCoordinator._try_lazy_load refuses to lazy-load eager=True agents
+        (Smart is eager). Without this call, a Cloud Run instance that hasn't
+        already served this user routes to f"smart_response_agent_{user_id}" and
+        fails with "No route found for recipient" — the retry silently does
+        nothing. Same precedent as agent_execution / deep_research_polling /
+        execute_reminder / daily_email_review, which all do this first."""
+        smart_retry_service = MagicMock()
+        smart_retry_service.execute = AsyncMock(return_value=({"status": "delivered"}, 200))
+        handler = worker_handler_factory(smart_retry_service=smart_retry_service)
+
+        await handler.handle({
+            "task_type": "smart_timeout_retry",
+            "user_id": "user-1", "account_id": "account-1", "session_id": "s",
+            "text": "q", "message_parts": [],
+        })
+
+        handler._agent_factory.ensure_agents_for_user.assert_awaited_once_with("user-1")
+
+    @pytest.mark.asyncio
+    async def test_missing_user_id_skips_ensure_agents_but_still_delegates(self, worker_handler_factory):
+        """No user_id to warm up — skip the call rather than passing an empty
+        string to ensure_agents_for_user (mirrors the agent_execution branch's
+        own `if user_id:` guard). SmartRetryService.execute() still runs and
+        handles the missing-fields case itself, always returning 200."""
+        smart_retry_service = MagicMock()
+        smart_retry_service.execute = AsyncMock(return_value=({"error": "missing required fields"}, 200))
+        handler = worker_handler_factory(smart_retry_service=smart_retry_service)
+
+        result, status = await handler.handle({"task_type": "smart_timeout_retry"})
+
+        assert status == 200
+        handler._agent_factory.ensure_agents_for_user.assert_not_awaited()
+        smart_retry_service.execute.assert_awaited_once_with({"task_type": "smart_timeout_retry"})
 
 
 # ---------------------------------------------------------------------------

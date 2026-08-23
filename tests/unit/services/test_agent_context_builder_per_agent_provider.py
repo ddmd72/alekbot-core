@@ -403,6 +403,7 @@ _FACTORY_AGENT_TYPES = [
     "pdf_generator",
     "html_page",
     "domain_researcher",
+    "image_generation",
 ]
 
 

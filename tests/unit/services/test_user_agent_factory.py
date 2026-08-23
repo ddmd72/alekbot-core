@@ -5,6 +5,9 @@ from src.domain.user import UserProfile, UserBotConfig, PerformanceTier
 from src.services.agent_context_builder import AgentExecutionContext
 from src.ports.llm_port import ProviderCapabilities, LLMPort
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
+from src.composition.user_agent_factory import _UserContext
+from src.ports.image_generation_port import GeneratedImage, ImageGenerationPort
+from src.services.provider_registry import ProviderRegistry
 
 
 @pytest.fixture
@@ -92,3 +95,51 @@ def test_web_search_context_uses_web_search_agent_type(factory):
 
     assert result.agent_type == "web_search"
     factory.context_builder.build.assert_called_once_with("web_search", UserBotConfig())
+
+
+class FakeImagePort(ImageGenerationPort):
+    async def generate(self, prompt, *, aspect_ratio="auto", n=1):
+        return [GeneratedImage(data=b"fake", mime_type="image/png")]
+
+    async def edit(self, prompt, reference_images, *, mime_type="image/png"):
+        return GeneratedImage(data=b"fake", mime_type="image/png")
+
+
+def test_build_image_generation_returns_configured_agent(mock_dependencies):
+    mock_dependencies["context_builder"] = Mock()
+    mock_dependencies["context_builder"].resolve_image_generation_context = Mock(
+        return_value=(FakeImagePort(), "grok")
+    )
+    mock_dependencies["file_conversion_service"] = Mock()
+    image_registry = ProviderRegistry()
+    image_registry.register("grok", FakeImagePort())
+    factory_with_registry = UserAgentFactory(**mock_dependencies, image_registry=image_registry)
+
+    user_profile = Mock(spec=UserProfile)
+    user_profile.config = UserBotConfig()
+    ctx = _UserContext(user_profile=user_profile, prompt_builder=Mock())
+
+    agent = factory_with_registry._build_image_generation("user123", ctx)
+
+    assert agent is not None
+    assert agent.agent_id == "image_generation_agent_user123"
+    mock_dependencies["context_builder"].resolve_image_generation_context.assert_called_once_with(
+        "image_generation", image_registry, user_profile.config
+    )
+
+
+def test_build_image_generation_returns_none_without_registry(mock_dependencies):
+    factory_without_registry = UserAgentFactory(**mock_dependencies)  # no image_registry
+
+    user_profile = Mock(spec=UserProfile)
+    user_profile.config = UserBotConfig()
+    ctx = _UserContext(user_profile=user_profile, prompt_builder=Mock())
+
+    agent = factory_without_registry._build_image_generation("user123", ctx)
+
+    assert agent is None
+
+
+def test_image_generation_registered_in_lazy_dispatch_tables():
+    assert "image_generation" in UserAgentFactory._LAZY_BUILDERS
+    assert UserAgentFactory._LAZY_AGENT_IDS["image_generation"] == "image_generation_agent"
