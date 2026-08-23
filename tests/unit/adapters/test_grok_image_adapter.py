@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.adapters.grok_image_adapter import GrokImageAdapter
-from src.ports.image_generation_port import GeneratedImage
+from src.ports.image_generation_port import GeneratedImage, ReferenceImage
 
 _FAKE_PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00fake"
 _FAKE_B64 = base64.b64encode(_FAKE_PNG_BYTES).decode("ascii")
@@ -109,7 +109,8 @@ async def test_edit_sends_correct_json_body(adapter):
 
     adapter._client.post = AsyncMock(side_effect=mock_post)
 
-    result = await adapter.edit("remove the background", reference_images=[b"source-bytes"])
+    ref = ReferenceImage(data=b"source-bytes", mime_type="image/png")
+    result = await adapter.edit("remove the background", reference_images=[ref])
 
     assert captured["path"] == "/images/edits"
     body = captured["body"]
@@ -120,20 +121,22 @@ async def test_edit_sends_correct_json_body(adapter):
     assert body["image"]["type"] == "image_url"
     expected_b64 = base64.b64encode(b"source-bytes").decode("ascii")
     assert body["image"]["url"] == f"data:image/png;base64,{expected_b64}"
+    assert "images" not in body
     assert result == GeneratedImage(data=_FAKE_PNG_BYTES, mime_type="image/png")
 
 
 @pytest.mark.asyncio
 async def test_edit_raises_on_sdk_error(adapter):
     adapter._client.post = AsyncMock(side_effect=RuntimeError("network blip"))
+    ref = ReferenceImage(data=b"source-bytes", mime_type="image/png")
 
     with pytest.raises(RuntimeError):
-        await adapter.edit("remove the background", reference_images=[b"source-bytes"])
+        await adapter.edit("remove the background", reference_images=[ref])
 
 
 @pytest.mark.asyncio
 async def test_edit_uses_jpeg_mime_type_in_data_uri(adapter):
-    """Verify that image/jpeg mime_type is correctly embedded in the data URI."""
+    """Verify that a reference's own mime_type is correctly embedded in its data URI."""
     captured = {}
 
     async def mock_post(path, **kwargs):
@@ -141,15 +144,16 @@ async def test_edit_uses_jpeg_mime_type_in_data_uri(adapter):
         return _images_response()
 
     adapter._client.post = AsyncMock(side_effect=mock_post)
+    ref = ReferenceImage(data=b"source-bytes", mime_type="image/jpeg")
 
-    await adapter.edit("remove the background", reference_images=[b"source-bytes"], mime_type="image/jpeg")
+    await adapter.edit("remove the background", reference_images=[ref])
 
     assert captured["body"]["image"]["url"].startswith("data:image/jpeg;base64,")
 
 
 @pytest.mark.asyncio
 async def test_edit_preserves_custom_mime_type(adapter):
-    """Verify that custom mime_type is passed through into the data URI."""
+    """Verify a non-standard mime_type is passed through into the data URI unchanged."""
     captured = {}
 
     async def mock_post(path, **kwargs):
@@ -157,10 +161,51 @@ async def test_edit_preserves_custom_mime_type(adapter):
         return _images_response()
 
     adapter._client.post = AsyncMock(side_effect=mock_post)
+    ref = ReferenceImage(data=b"source-bytes", mime_type="image/webp")
 
-    await adapter.edit("remove the background", reference_images=[b"source-bytes"], mime_type="image/webp")
+    await adapter.edit("remove the background", reference_images=[ref])
 
     assert captured["body"]["image"]["url"].startswith("data:image/webp;base64,")
+
+
+@pytest.mark.asyncio
+async def test_edit_multi_reference_uses_images_array_field(adapter):
+    """2-3 references use a DIFFERENT, plural "images" array field — mutually
+    exclusive with the singular "image" field used for exactly 1 reference."""
+    captured = {}
+
+    async def mock_post(path, **kwargs):
+        captured.update(kwargs)
+        return _images_response()
+
+    adapter._client.post = AsyncMock(side_effect=mock_post)
+    refs = [
+        ReferenceImage(data=b"bytes-a", mime_type="image/jpeg"),
+        ReferenceImage(data=b"bytes-b", mime_type="image/png"),
+        ReferenceImage(data=b"bytes-c", mime_type="image/jpeg"),
+    ]
+
+    await adapter.edit("combine these", reference_images=refs)
+
+    body = captured["body"]
+    assert "image" not in body
+    assert len(body["images"]) == 3
+    assert body["images"][0]["url"] == (
+        f"data:image/jpeg;base64,{base64.b64encode(b'bytes-a').decode('ascii')}"
+    )
+    assert body["images"][1]["url"] == (
+        f"data:image/png;base64,{base64.b64encode(b'bytes-b').decode('ascii')}"
+    )
+    assert all(img["type"] == "image_url" for img in body["images"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [0, 4])
+async def test_edit_rejects_out_of_range_reference_count(adapter, count):
+    refs = [ReferenceImage(data=b"x", mime_type="image/png") for _ in range(count)]
+
+    with pytest.raises(ValueError, match="1-3"):
+        await adapter.edit("edit this", reference_images=refs)
 
 
 def test_client_disables_sdk_level_retries(adapter):

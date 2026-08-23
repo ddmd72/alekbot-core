@@ -769,12 +769,15 @@ class BaseAgent(ABC):
 
         context_properties: dict = {}
         for intent in available_intents:
-            for field_name, field_desc in intent.get("context_schema", {}).items():
+            for field_name, field_spec in intent.get("context_schema", {}).items():
                 if field_name not in context_properties:
-                    context_properties[field_name] = {
-                        "type": "string",
-                        "description": field_desc,
-                    }
+                    # Shorthand string -> plain string param; an already
+                    # JSON-schema-shaped dict (e.g. an array param) passes through
+                    # verbatim.
+                    context_properties[field_name] = (
+                        {"type": "string", "description": field_spec}
+                        if isinstance(field_spec, str) else field_spec
+                    )
 
         context_param: dict = {
             "type": "object",
