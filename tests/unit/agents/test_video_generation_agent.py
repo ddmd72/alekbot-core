@@ -260,6 +260,11 @@ async def test_execute_generate_video_with_image_ref_resolves_bytes(mock_llm, mo
     call_kwargs = mock_video_port.create_video.call_args.kwargs
     assert call_kwargs["image_data"] == b"source-image-bytes"
     assert call_kwargs["image_mime_type"] == "image/jpeg"
+    # Real bug, live-verified 2026-08-24: xAI squished the source photo to fit the
+    # crafting LLM's guessed aspect_ratio ("16:9" per _CRAFTED_JSON) instead of
+    # preserving the source image's own proportions. For image-to-video the crafted
+    # aspect_ratio must be discarded, not forwarded to the port.
+    assert call_kwargs["aspect_ratio"] is None
 
 
 # ============================================================================

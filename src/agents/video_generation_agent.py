@@ -201,6 +201,14 @@ class VideoGenerationAgent(BaseAgent):
                     error=f"Could not read reference image '{image_ref}': {type(e).__name__}.",
                 )
 
+        # For image-to-video, the source image's own proportions must govern the
+        # output — the crafting LLM never sees the image (text-only brief), so any
+        # aspect_ratio it picks is an unrelated guess. Live-verified 2026-08-24:
+        # sending it anyway made xAI squish/distort the source photo to fit that
+        # unrelated ratio instead of preserving it. Only forward aspect_ratio for
+        # pure text-to-video, where it's the only signal available.
+        effective_aspect_ratio = None if image_data is not None else aspect_ratio
+
         try:
             request_id = await self._video_port.create_video(
                 prompt,
@@ -210,7 +218,7 @@ class VideoGenerationAgent(BaseAgent):
                 image_mime_type=image_mime_type,
                 duration=duration,
                 resolution=resolution,
-                aspect_ratio=aspect_ratio,
+                aspect_ratio=effective_aspect_ratio,
                 session_id=message.context.get("session_id"),
                 origin_platform=message.context.get("origin_platform"),
             )
