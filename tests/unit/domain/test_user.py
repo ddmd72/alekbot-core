@@ -56,6 +56,11 @@ def test_maps_search_defaults_to_balanced_tier():
     assert UserBotConfig(agent_tiers=None).get_tier_for_agent("maps_search") == PerformanceTier.BALANCED
 
 
+def test_video_generation_has_performance_tier_by_default():
+    assert UserBotConfig(agent_tiers={}).get_tier_for_agent("video_generation") == PerformanceTier.PERFORMANCE
+    assert UserBotConfig(agent_tiers=None).get_tier_for_agent("video_generation") == PerformanceTier.PERFORMANCE
+
+
 def test_user_bot_config_provider_defaults_intact():
     config = UserBotConfig()
     assert config.provider_preference is None
