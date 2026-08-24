@@ -1,0 +1,7 @@
+{
+  "agent_id": "video_generation",
+  "blueprint_id": "video_generation_agent_v1",
+  "tokens": {
+    "COGNITIVE_PROCESS_VIDEO_GEN": {"order": 10, "non_overridable": true}
+  }
+}
