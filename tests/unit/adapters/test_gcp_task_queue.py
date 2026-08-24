@@ -177,6 +177,24 @@ class TestVideoGenerationPolling:
         assert body["task_type"] == "video_generation_polling"
         assert result == "t-1"
 
+    async def test_enqueue_video_generation_polling_carries_origin_platform(self, queue_and_client):
+        """Real bug, live-verified 2026-08-24: without origin_platform in the Cloud Task
+        payload, WorkerHandler can't pass platform_override to deliver_video(), and
+        UserNotificationService silently falls back to the primary/last-active channel
+        instead of the channel the request came from."""
+        queue, client = queue_and_client
+
+        await queue.enqueue_video_generation_polling(
+            request_id="req-plat",
+            user_id="user1",
+            account_id="acc1",
+            session_id="user1:C123",
+            origin_platform="slack",
+        )
+
+        body = json.loads(_task_from(client)["http_request"]["body"])
+        assert body["origin_platform"] == "slack"
+
     async def test_enqueue_video_generation_polling_no_delay_when_zero(self, queue_and_client):
         """Test that schedule_time is not set when delay_seconds=0."""
         queue, client = queue_and_client

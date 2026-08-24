@@ -276,6 +276,7 @@ class GcpTaskQueue(TaskQueue):
         account_id: str,
         session_id: str = "",
         duration_s: int = 5,
+        origin_platform: Optional[str] = None,
         attempt: int = 0,
         delay_seconds: int = 30,
     ) -> str:
@@ -288,6 +289,7 @@ class GcpTaskQueue(TaskQueue):
                 "account_id": account_id,
                 "session_id": session_id,
                 "duration_s": duration_s,
+                "origin_platform": origin_platform,
                 "attempt": attempt,
             }
 

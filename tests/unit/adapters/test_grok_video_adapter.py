@@ -85,8 +85,21 @@ async def test_create_video_enqueues_first_poll_tick(adapter, mock_task_queue):
 
     mock_task_queue.enqueue_video_generation_polling.assert_awaited_once_with(
         request_id="req-abc123", user_id="user1", account_id="acc1",
-        session_id="user1:C123", duration_s=5,
+        session_id="user1:C123", duration_s=5, origin_platform=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_create_video_forwards_origin_platform(adapter, mock_task_queue):
+    adapter._client.post = AsyncMock(return_value={"request_id": "req-abc123"})
+
+    await adapter.create_video(
+        "a sunset over mountains", "user1", "acc1",
+        duration=5, resolution="480p", aspect_ratio="16:9", session_id="user1:C123",
+        origin_platform="slack",
+    )
+
+    assert mock_task_queue.enqueue_video_generation_polling.call_args.kwargs["origin_platform"] == "slack"
 
 
 @pytest.mark.asyncio
@@ -111,7 +124,7 @@ async def test_create_video_uses_default_duration_when_none(adapter, mock_task_q
     # Assert that enqueue_video_generation_polling receives the default duration_s=5
     mock_task_queue.enqueue_video_generation_polling.assert_awaited_once_with(
         request_id="req-abc123", user_id="user1", account_id="acc1",
-        session_id="user1:C123", duration_s=5,
+        session_id="user1:C123", duration_s=5, origin_platform=None,
     )
 
 
@@ -145,6 +158,17 @@ async def test_edit_video_enqueues_first_poll_tick(adapter, mock_task_queue):
     await adapter.edit_video("change the sky", b"video-bytes", "user1", "acc1")
 
     mock_task_queue.enqueue_video_generation_polling.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_video_forwards_origin_platform(adapter, mock_task_queue):
+    adapter._client.post = AsyncMock(return_value={"request_id": "req-edit1"})
+
+    await adapter.edit_video(
+        "change the sky", b"video-bytes", "user1", "acc1", origin_platform="telegram",
+    )
+
+    assert mock_task_queue.enqueue_video_generation_polling.call_args.kwargs["origin_platform"] == "telegram"
 
 
 # ============================================================================

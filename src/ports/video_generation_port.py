@@ -26,12 +26,16 @@ class VideoGenerationPort(ABC):
         image_data: Optional[bytes] = None, image_mime_type: str = "image/png",
         duration: Optional[int] = None, resolution: Optional[str] = None,
         aspect_ratio: Optional[str] = None, session_id: Optional[str] = None,
+        origin_platform: Optional[str] = None,
     ) -> str:
         """
         Submit text-to-video or image-to-video (image_data present => image-to-video).
 
         Arranges delivery (enqueues the first poll tick) as a side effect, mirroring
         ClaudeDeepResearchAdapter.create_interaction() triggering its Cloud Run Job.
+        origin_platform is carried through to delivery so the finished video reaches
+        the same channel the request came from, not the user's primary/last-active
+        channel — see WorkerHandler._handle_video_generation_polling.
         Returns request_id.
         """
 
@@ -39,12 +43,13 @@ class VideoGenerationPort(ABC):
     async def edit_video(
         self, prompt: str, video_data: bytes, user_id: str, account_id: str, *,
         video_mime_type: str = "video/mp4", session_id: Optional[str] = None,
+        origin_platform: Optional[str] = None,
     ) -> str:
         """
         Submit a video edit — modifies an existing video via prompt, preserving the
         rest of the scene. No duration/resolution params: editing preserves the
         source video's existing length/resolution. Same delivery-arrangement
-        contract as create_video().
+        contract as create_video(), including origin_platform.
         """
 
     @abstractmethod

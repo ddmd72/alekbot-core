@@ -68,6 +68,7 @@ class GrokVideoAdapter(VideoGenerationPort):
         image_data: Optional[bytes] = None, image_mime_type: str = "image/png",
         duration: Optional[int] = None, resolution: Optional[str] = None,
         aspect_ratio: Optional[str] = None, session_id: Optional[str] = None,
+        origin_platform: Optional[str] = None,
     ) -> str:
         body = {"model": _MODEL, "prompt": prompt}
         if duration is not None:
@@ -89,6 +90,7 @@ class GrokVideoAdapter(VideoGenerationPort):
         await self._task_queue.enqueue_video_generation_polling(
             request_id=request_id, user_id=user_id, account_id=account_id,
             session_id=session_id or "", duration_s=duration if duration is not None else _DEFAULT_DURATION_S,
+            origin_platform=origin_platform,
         )
         logger.info("[GrokVideoAdapter] create_video submitted: request_id=%s", request_id[:16])
         return request_id
@@ -96,6 +98,7 @@ class GrokVideoAdapter(VideoGenerationPort):
     async def edit_video(
         self, prompt: str, video_data: bytes, user_id: str, account_id: str, *,
         video_mime_type: str = "video/mp4", session_id: Optional[str] = None,
+        origin_platform: Optional[str] = None,
     ) -> str:
         b64 = base64.b64encode(video_data).decode("ascii")
         body = {
@@ -111,7 +114,7 @@ class GrokVideoAdapter(VideoGenerationPort):
 
         await self._task_queue.enqueue_video_generation_polling(
             request_id=request_id, user_id=user_id, account_id=account_id,
-            session_id=session_id or "",
+            session_id=session_id or "", origin_platform=origin_platform,
         )
         logger.info("[GrokVideoAdapter] edit_video submitted: request_id=%s", request_id[:16])
         return request_id

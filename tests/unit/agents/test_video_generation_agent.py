@@ -142,6 +142,41 @@ async def test_can_handle_edit_video_with_video_ref(agent):
 
 
 # ============================================================================
+# execute — origin_platform forwarding (delivery-channel bug, live-verified 2026-08-24)
+# ============================================================================
+
+async def test_execute_generate_video_forwards_origin_platform(agent, mock_video_port):
+    msg = _make_message("generate_video", context={"origin_platform": "slack"})
+
+    await agent.execute(msg)
+
+    assert mock_video_port.create_video.call_args.kwargs["origin_platform"] == "slack"
+
+
+async def test_execute_edit_video_forwards_origin_platform(
+    mock_llm, mock_prompt_builder, mock_video_port,
+):
+    from src.services.file_conversion_service import FileConversionService
+    mock_file_conversion = AsyncMock(spec=FileConversionService)
+    mock_file_conversion.resolve_bytes.return_value = b"source-video-bytes"
+    agent = VideoGenerationAgent(
+        config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
+        execution_context=_make_execution_context(mock_llm),
+        video_port=mock_video_port,
+        prompt_builder=mock_prompt_builder,
+        user_id="user123",
+        file_conversion=mock_file_conversion,
+        max_duration_s=10,
+    )
+    msg = _make_message("edit_video", context={"origin_platform": "telegram"})
+    msg.payload["video_ref"] = "clip.mp4"
+
+    await agent.execute(msg)
+
+    assert mock_video_port.edit_video.call_args.kwargs["origin_platform"] == "telegram"
+
+
+# ============================================================================
 # execute — generate_video, default/clamp logic
 # ============================================================================
 

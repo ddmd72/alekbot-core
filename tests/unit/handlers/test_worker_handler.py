@@ -448,6 +448,7 @@ class TestHandleVideoGenerationPolling:
         ns.task_dispatch.enqueue_video_generation_polling.assert_awaited_once_with(
             request_id="req-abc", user_id="user1", account_id="acc1",
             session_id="user1:C123", attempt=1, delay_seconds=30, duration_s=5,
+            origin_platform=None,
         )
 
     async def test_pending_reenqueues_carries_forward_nondefault_duration_s(self):
@@ -463,6 +464,7 @@ class TestHandleVideoGenerationPolling:
         ns.task_dispatch.enqueue_video_generation_polling.assert_awaited_once_with(
             request_id="req-abc", user_id="user1", account_id="acc1",
             session_id="user1:C123", attempt=3, delay_seconds=30, duration_s=8,
+            origin_platform=None,
         )
 
     async def test_done_delivers_no_reenqueue(self):
@@ -481,6 +483,23 @@ class TestHandleVideoGenerationPolling:
         assert mock_deliver.call_args.kwargs["video_data"] == b"video-bytes"
         assert mock_deliver.call_args.kwargs["duration_s"] == 8
         ns.task_dispatch.enqueue_video_generation_polling.assert_not_awaited()
+
+    async def test_done_forwards_origin_platform_to_deliver_video(self):
+        """Real bug, live-verified 2026-08-24: UserNotificationService only honors
+        channel_id_override when platform_override is ALSO set — omitting it
+        silently delivers to the user's primary/last-active channel instead of
+        the channel the request came from."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="done", data=b"video-bytes")
+        )
+
+        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+            payload = {**_VIDEO_BASE_PAYLOAD, "origin_platform": "slack"}
+            result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert mock_deliver.call_args.kwargs["platform_override"] == "slack"
 
     async def test_done_without_duration_s_in_payload_falls_back_to_default(self):
         worker, ns = _make_worker()
@@ -507,6 +526,40 @@ class TestHandleVideoGenerationPolling:
         assert result["status"] == "failed"
         ns.notification.notify.assert_awaited_once()
         ns.task_dispatch.enqueue_video_generation_polling.assert_not_awaited()
+
+    async def test_failed_forwards_origin_platform_to_notify(self):
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="failed", error="moderation block")
+        )
+
+        payload = {**_VIDEO_BASE_PAYLOAD, "origin_platform": "telegram"}
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert ns.notification.notify.call_args.kwargs["platform_override"] == "telegram"
+
+    async def test_pending_reenqueue_forwards_origin_platform(self):
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(return_value=VideoPollResult(status="pending"))
+
+        payload = {**_VIDEO_BASE_PAYLOAD, "origin_platform": "slack"}
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert ns.task_dispatch.enqueue_video_generation_polling.call_args.kwargs["origin_platform"] == "slack"
+
+    async def test_timeout_forwards_origin_platform_to_notify(self):
+        worker, ns = _make_worker()
+
+        payload = {
+            **_VIDEO_BASE_PAYLOAD, "attempt": WorkerHandler._MAX_VIDEO_POLL_ATTEMPTS,
+            "origin_platform": "slack",
+        }
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert ns.notification.notify.call_args.kwargs["platform_override"] == "slack"
 
     async def test_expired_notifies_no_reenqueue(self):
         worker, ns = _make_worker()

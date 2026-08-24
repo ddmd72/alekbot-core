@@ -479,14 +479,22 @@ class WorkerHandler:
         forward on every "pending" tick, otherwise TaskDispatchService's own
         duration_s=5 default would silently reset it on each re-poll and the
         deliver_video() billing call would under-bill a longer video.
+
+        origin_platform is resolved the same way, for the same reason, but for a
+        different bug: UserNotificationService._resolve_channel() only honors
+        channel_id_override when platform_override is ALSO set (`if
+        channel_id_override and platform_override:`) — omitting platform_override
+        silently falls through to the user's primary/last-active channel instead
+        of the channel the request actually came from. Live-verified 2026-08-24.
         """
-        request_id  = payload.get("request_id", "")
-        user_id     = payload.get("user_id", "")
-        account_id  = payload.get("account_id", "")
-        session_id  = payload.get("session_id", "")
-        attempt     = payload.get("attempt", 0)
-        provider    = payload.get("provider", "grok")
-        duration_s  = payload.get("duration_s", DEFAULT_VIDEO_DURATION_S_FALLBACK)
+        request_id      = payload.get("request_id", "")
+        user_id         = payload.get("user_id", "")
+        account_id      = payload.get("account_id", "")
+        session_id      = payload.get("session_id", "")
+        attempt         = payload.get("attempt", 0)
+        provider        = payload.get("provider", "grok")
+        duration_s      = payload.get("duration_s", DEFAULT_VIDEO_DURATION_S_FALLBACK)
+        origin_platform = payload.get("origin_platform")
 
         origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
 
@@ -511,6 +519,7 @@ class WorkerHandler:
                 system_alert="Video generation timed out without producing a result.",
                 kind=NotificationKind.DEEP_RESEARCH,
                 channel_id_override=origin_channel_id,
+                platform_override=origin_platform,
             )
             return {"status": "timeout"}, 200
 
@@ -520,7 +529,7 @@ class WorkerHandler:
             await self._task_dispatch.enqueue_video_generation_polling(
                 request_id=request_id, user_id=user_id, account_id=account_id,
                 session_id=session_id, attempt=attempt + 1, delay_seconds=30,
-                duration_s=duration_s,
+                duration_s=duration_s, origin_platform=origin_platform,
             )
             logger.info(f"[VideoGeneration] Pending, attempt={attempt + 1}")
             return {"status": "polling", "attempt": attempt + 1}, 200
@@ -535,6 +544,7 @@ class WorkerHandler:
                 quota_service=self._quota_service,
                 link_service=self._link_service,
                 channel_id_override=origin_channel_id,
+                platform_override=origin_platform,
             )
             logger.info(f"[VideoGeneration] Delivered to user={user_id[:8]}")
             return {"status": "delivered"}, 200
@@ -548,6 +558,7 @@ class WorkerHandler:
             system_alert="Video generation did not complete — the AI provider returned an error.",
             kind=NotificationKind.DEEP_RESEARCH,
             channel_id_override=origin_channel_id,
+            platform_override=origin_platform,
         )
         return {"status": result.status}, 200
 

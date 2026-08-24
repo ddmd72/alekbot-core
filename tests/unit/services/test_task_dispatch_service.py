@@ -185,6 +185,7 @@ class TestEnqueueVideoGenerationPolling:
             account_id="acc1",
             session_id="user1:C123",
             duration_s=8,
+            origin_platform=None,
             attempt=1,
             delay_seconds=60,
         )
@@ -207,10 +208,25 @@ class TestEnqueueVideoGenerationPolling:
             account_id="acc2",
             session_id="user2:C456",
             duration_s=5,
+            origin_platform=None,
             attempt=0,
             delay_seconds=30,
         )
         assert result == "task-video-002"
+
+    async def test_forwards_explicit_origin_platform(self, service, queue):
+        """origin_platform must reach the underlying queue call verbatim when provided."""
+        queue.enqueue_video_generation_polling.return_value = "task-video-003"
+
+        await service.enqueue_video_generation_polling(
+            request_id="req-plat",
+            user_id="user3",
+            account_id="acc3",
+            session_id="user3:C789",
+            origin_platform="slack",
+        )
+
+        assert queue.enqueue_video_generation_polling.call_args.kwargs["origin_platform"] == "slack"
 
     async def test_defaults_applied(self, service, queue):
         """Test that all defaults are correctly applied when minimal args provided."""
