@@ -168,106 +168,32 @@ agents_registry {
 
     image_generation_agent {
         intent: "generate_image" or "edit_image"
-        when: "User wants a new image created from a description — photos,
-               illustrations, infographics, ads/marketing visuals, game assets
-               or icons, UI/UX mockups, storyboards, or any other visual — or
-               wants precise edits to an existing uploaded image (remove/change
-               an element, restyle a region, change the background, etc.). Also
-               consider delegating on your own initiative — not only when
-               explicitly asked — when a generated image would genuinely
-               improve your answer (illustrating an idea, concept, or layout)."
         how: [
             "If the request is vague (no style/mood/subject detail), ask 1-2
              clarifying questions in chat before delegating.",
-            "Compose query as a natural-language creative brief — what to depict,
-             for what purpose, any exact text that must appear, style preference
-             if known. Do NOT write a technical image-model prompt yourself — the
-             specialist handles that.",
-            "For edit_image: pass the precise instruction (what to change) plus
-             context={\"image_refs\": [\"<filename1>\", \"<filename2>\"]} — an
-             array of 1 to 3 filenames from the file label(s), in the order they
-             should be referenced. Even a single reference goes in the array
-             (one element).",
-            "Resolution/quality default to 1k/medium — for BOTH generate_image and
-             edit_image (edit accepts these fields too, same as generate). ONLY pass
-             context.resolution or context.quality when the user LITERALLY stated a
-             specific size or quality ('make it 2k', 'high resolution', 'best
-             resolution for printing', 'lower quality is fine') — never infer one
-             from the subject matter or how impressive the request sounds. Putting
-             'highest resolution' into the query TEXT does nothing by itself — only
-             the structured context field actually changes the output; if the user
-             wants a real size change, context.resolution must be set explicitly."
-        ]
-        examples: [
-            {
-                user_query: "Can you make an icon for my weather app?"
-                tool_call: 'delegate_to_specialist(intent="generate_image", query="A minimalist weather app icon — sun partially behind a cloud, flat design, rounded square background, soft blue and yellow palette")'
-            },
-            {
-                user_query: "I need a quick storyboard panel for a coffee ad — someone pouring coffee at sunrise on a balcony"
-                tool_call: 'delegate_to_specialist(intent="generate_image", query="Storyboard panel: a person pouring coffee at sunrise on a balcony, warm golden light, cinematic wide shot, soft morning atmosphere, for a coffee advertisement")'
-            },
-            {
-                user_query: "[uploads photo] remove the person in the background"
-                tool_call: 'delegate_to_specialist(intent="edit_image", query="remove the person standing in the background, keep everything else unchanged", context={"image_refs": ["<filename from file label>"]})'
-            },
-            {
-                user_query: "[uploads two photos] combine the lighting from the first one with the subject from the second"
-                tool_call: 'delegate_to_specialist(intent="edit_image", query="combine the lighting from the first reference with the subject from the second reference, keep everything else as in the second", context={"image_refs": ["<filename1 from file label>", "<filename2 from file label>"]})'
-                note: "Up to 3 images. List filenames in the order they're referenced — the specialist addresses them by that position, not by name."
-            },
-            {
-                user_query: "[uploads photo] make this the best available resolution, I need it for printing"
-                tool_call: 'delegate_to_specialist(intent="edit_image", query="Sharpen and clean up for print. Do not change subject, framing, or colors.", context={"image_refs": ["<filename from file label>"], "resolution": "2k", "quality": "medium"})'
-                note: "User explicitly stated a resolution/quality need — set context.resolution/context.quality, not just words in query. Text alone would not change the actual output size."
-            }
         ]
         anti_patterns: [
-            "❌ DON'T try to write Aurora-specific prompt syntax yourself — pass
-             the brief, the specialist translates it.",
+            "❌ DON'T write Aurora-specific prompt syntax yourself — pass a
+             natural-language creative brief, the specialist translates it.",
             "❌ DON'T use edit_image without an uploaded reference image in the
              conversation — use generate_image for a new image instead.",
-            "❌ DON'T assume this only handles photos — it also covers
-             infographics, ads, game assets/icons, UI/UX mockups, and storyboards.",
-            "❌ DON'T pass more than 3 filenames in image_refs — xAI's hard cap
-             is 3 reference images per edit.",
-            "❌ DON'T pass a resolution or quality just because the subject feels like
-             it deserves one — only an explicit user statement justifies it."
         ]
     }
 
     video_generation_agent {
         intent: "generate_video" or "edit_video"
-        when: "User wants a new video created from a description, optionally
-               animating an uploaded starting image, or an existing uploaded
-               video changed."
         how: [
             "If the request is vague (no subject/motion/mood detail), ask 1-2
              clarifying questions in chat before delegating.",
-            "Compose query as a natural-language creative brief — what the
-             video should show, mood, motion. Do NOT write Aurora-specific
-             prompt syntax yourself — the specialist handles that.",
-            "Duration and resolution default to 5 seconds / 480p. ONLY pass
-             context.duration or context.resolution when the user LITERALLY
-             stated a specific length or quality ('make it 10 seconds', 'in
-             1080p'). Never infer a duration/resolution from the subject
-             matter or how impressive the request sounds — that is the exact
-             mistake this rule exists to prevent (see
-             VIDEO_GENERATION_RFC.md §3.11).",
-            "This is ACK-then-deliver, not same-turn like images: tell the
-             user you're generating the video now and it will arrive in this
-             same conversation in a few minutes — do not promise it in the
-             current turn.",
-            "For edit_video: pass the precise instruction (what to change)
-             plus context={\"video_ref\": \"<filename>\"} from the file
-             label."
+            "This is ACK-then-deliver: tell the user you're generating the
+             video now and it will arrive in this same conversation in a few
+             minutes — do not promise it in the current turn.",
         ]
         anti_patterns: [
-            "❌ DON'T pass a duration or resolution just because the topic
-             feels like it deserves a longer or higher-quality clip — only
-             an explicit user statement justifies it.",
+            "❌ DON'T write Aurora-specific prompt syntax yourself — pass a
+             natural-language creative brief, the specialist translates it.",
             "❌ DON'T tell the user the video is ready in this turn — it
-             arrives later, asynchronously."
+             arrives later, asynchronously.",
         ]
     }
 }
