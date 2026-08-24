@@ -61,6 +61,15 @@ Tell me what you want in your own words — I'll ask a couple of clarifying ques
 
 ---
 
+*Video*
+I can create and edit short videos using a dedicated video-generation model.
+- Create: "make a video of a paper airplane gliding through a sunlit office", "animate this photo of my dog running"
+- Edit: attach a video and ask, e.g. "change the sky to a sunset", "make the lighting warmer"
+
+By default I make a short 5-second clip at standard quality — tell me explicitly if you want it longer or higher-resolution. Video takes a few minutes to render; I'll let you know it's on the way and send it to you here once it's ready.
+
+---
+
 *Tasks* (requires Microsoft To Do or Google Tasks connection in Cabinet → Integrations)
 I manage your task list through natural conversation — create, search, update, complete, and delete tasks.
 
