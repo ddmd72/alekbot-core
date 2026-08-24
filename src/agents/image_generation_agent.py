@@ -31,6 +31,7 @@ import time
 from typing import List, Optional
 
 from .base_agent import BaseAgent
+from ..domain.billing import IMAGE_EDIT_MODEL, IMAGE_GENERATE_MODEL, calculate_external_cost
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.llm import LLMResponse, Message, MessagePart, describe_empty_output
@@ -176,10 +177,28 @@ class ImageGenerationAgent(BaseAgent):
         )
         return await self._call_llm(request)
 
+    def _resolve_resolution(self, message: AgentMessage) -> str:
+        # AgentCoordinator spreads the LLM's delegate_to_specialist context={}
+        # argument into message.payload, NOT message.context (message.context
+        # holds coordinator-level fields — session_id, account_id, etc. — see
+        # AgentCoordinator._execute_async/_execute_sync's "params" handling).
+        # Same place image_refs is read from, for the same reason. Reading
+        # message.context here was a bug (shipped, then live-verified broken
+        # 2026-08-24: the orchestrator correctly requested resolution="2k" but
+        # the agent silently fell back to the "1k" default every time).
+        return message.payload.get("resolution") or "1k"
+
+    def _resolve_quality(self, message: AgentMessage) -> str:
+        return message.payload.get("quality") or "medium"
+
     async def _execute_generate(self, message: AgentMessage, prompt: str) -> AgentResponse:
         start_time = time.time()
-        images = await self._image_port.generate(prompt)
-        return self._respond_with_images(message, images, start_time)
+        images = await self._image_port.generate(
+            prompt,
+            resolution=self._resolve_resolution(message),
+            quality=self._resolve_quality(message),
+        )
+        return await self._respond_with_images(message, images, start_time)
 
     async def _execute_edit(
         self, message: AgentMessage, prompt: str, image_refs: List[str],
@@ -221,7 +240,12 @@ class ImageGenerationAgent(BaseAgent):
         ]
 
         try:
-            image = await self._image_port.edit(prompt, reference_images=reference_images)
+            image = await self._image_port.edit(
+                prompt,
+                reference_images=reference_images,
+                resolution=self._resolve_resolution(message),
+                quality=self._resolve_quality(message),
+            )
         except Exception as e:
             self._on_agent_error(e, "image_edit")
             return AgentResponse.failure(
@@ -230,9 +254,9 @@ class ImageGenerationAgent(BaseAgent):
                 error=f"Image edit failed: {type(e).__name__}.",
             )
 
-        return self._respond_with_images(message, [image], start_time)
+        return await self._respond_with_images(message, [image], start_time)
 
-    def _respond_with_images(
+    async def _respond_with_images(
         self, message: AgentMessage, images: List, start_time: float,
     ) -> AgentResponse:
         if not images:
@@ -248,6 +272,37 @@ class ImageGenerationAgent(BaseAgent):
         duration_ms = int((time.time() - start_time) * 1000)
         ext = "png" if "png" in image.mime_type else "jpg"
         filename = f"image_{int(time.time())}.{ext}"
+
+        # External-cost billing — see docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.11
+        # decision #11: this call previously did not exist at all, meaning xAI
+        # image spend was invisible to the account's daily_cost_limit alert.
+        # None-guarded because self._quota_service is None for every agent not
+        # constructed through UserAgentFactory (BaseAgent.__init__ default);
+        # awaited, not detached, per FirestoreQuotaService.record_usage's own
+        # docstring (a fire-and-forget task past the request boundary is starved
+        # by Cloud Run CPU throttling and lost on instance recycle).
+        # resolution/quality re-resolved from the same message the execute path
+        # already resolved them from (pure function of message.context, so this
+        # is guaranteed consistent with whatever was actually sent to the port)
+        # — the recorded cost must reflect the tier actually billed, not a
+        # hardcoded average (see domain/billing.py's tiered pricing table).
+        if self._quota_service:
+            account_id = message.context.get("account_id", "")
+            if account_id:
+                intent_name = message.payload.get("intent")
+                service_key = (
+                    IMAGE_EDIT_MODEL
+                    if intent_name == Intent.EDIT_IMAGE
+                    else IMAGE_GENERATE_MODEL
+                )
+                cost = calculate_external_cost(
+                    service_key,
+                    resolution=self._resolve_resolution(message),
+                    quality=self._resolve_quality(message),
+                )
+                await self._quota_service.record_usage(
+                    account_id=account_id, model=service_key, tokens=0, cost=cost,
+                )
 
         self._on_agent_success(len(image.data), 0)
         logger.info(

@@ -234,6 +234,15 @@ class UserBotConfig(BaseModel):
     # ========================================================================
     history_recent_full_turns: Optional[int] = None  # recent turns with full text (default: 5)
 
+    # ========================================================================
+    # Video Generation Cost Safeguard (2026-08-23)
+    # RFC: docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.11 decision #10
+    # Purpose: per-user hard cap on generate_video's duration parameter,
+    # overriding the system default (see DEFAULT_MAX_VIDEO_DURATION_S in
+    # configuration_service.py) for a specific user.
+    # ========================================================================
+    max_video_duration_s: Optional[int] = None  # video generation duration cap (default: 10)
+
     # Timezone (IANA name, e.g. "Europe/Kyiv", "America/New_York")
     # Set via Cabinet UI. Used for: datetime injection in prompts, reminder due resolution, next_due computation.
     timezone: str = "UTC"

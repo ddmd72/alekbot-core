@@ -68,7 +68,8 @@ class GrokImageAdapter(ImageGenerationPort):
         )
 
     async def generate(
-        self, prompt: str, *, aspect_ratio: str = "auto", n: int = 1
+        self, prompt: str, *, aspect_ratio: str = "auto", n: int = 1,
+        resolution: str = "1k", quality: str = "medium",
     ) -> List[GeneratedImage]:
         try:
             response = await self._client.images.generate(
@@ -76,7 +77,15 @@ class GrokImageAdapter(ImageGenerationPort):
                 prompt=prompt,
                 n=n,
                 response_format="b64_json",
-                extra_body={"aspect_ratio": aspect_ratio},
+                # resolution/quality previously unset entirely — output size/quality
+                # rested on xAI's own unstated server default. Explicit now, and
+                # settable per request by the agent (see
+                # docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.11 for the sibling video
+                # decision this mirrors — an explicit orchestrator signal, not LLM
+                # inference). Pricing IS tiered by this choice (live-verified
+                # 2026-08-24 — see domain/billing.py's _IMAGE_TIER_PRICING_USD) —
+                # an earlier "pricing is flat" belief was wrong.
+                extra_body={"aspect_ratio": aspect_ratio, "resolution": resolution, "quality": quality},
             )
             return [
                 GeneratedImage(data=base64.b64decode(item.b64_json), mime_type="image/png")
@@ -89,7 +98,10 @@ class GrokImageAdapter(ImageGenerationPort):
             logger.error("GrokImageAdapter.generate failed: %s: %s", type(e).__name__, e, exc_info=True)
             return []
 
-    async def edit(self, prompt: str, reference_images: List[ReferenceImage]) -> GeneratedImage:
+    async def edit(
+        self, prompt: str, reference_images: List[ReferenceImage], *,
+        resolution: str = "1k", quality: str = "medium",
+    ) -> GeneratedImage:
         # Defensive backstop — the agent validates first, but a port implementation
         # shouldn't blindly trust its caller at a system boundary.
         if not 1 <= len(reference_images) <= 3:
@@ -116,6 +128,12 @@ class GrokImageAdapter(ImageGenerationPort):
             "model": _MODEL,
             "prompt": prompt,
             "response_format": "b64_json",
+            # Confirmed live 2026-08-24 that /v1/images/edits accepts both fields
+            # (same schema as generate()) — an earlier RFC decision assumed edit
+            # had neither; that was wrong, corrected against the live REST API
+            # JSON schema embedded on docs.x.ai's own API reference page.
+            "resolution": resolution,
+            "quality": quality,
         }
         if len(images) == 1:
             body["image"] = images[0]

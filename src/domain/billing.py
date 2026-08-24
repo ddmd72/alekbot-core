@@ -253,6 +253,111 @@ def calculate_cost(
     return round(cost, 6)
 
 
+# Non-token (flat-rate or per-second REST API) service pricing — companion to
+# _PRICING_PER_MILLION_TOKENS. Prices can change under you (see CLAUDE.md
+# Economics section) — this is the one place to update them.
+#   grok-imagine-image-2.0       — generate()/edit(). NOT flat — tiered by
+#                                   (resolution, quality), live-verified against
+#                                   the real API 2026-08-24 (two direct calls to
+#                                   /v1/images/generations, compared against
+#                                   response.usage.cost_in_usd_ticks): (1k,low)=
+#                                   $0.04, (2k,low)=$0.06, (1k,medium)=$0.06,
+#                                   (2k,medium)=$0.08. `quality` is NOT in xAI's
+#                                   published REST schema for either endpoint —
+#                                   confirmed live-functional and price-affecting
+#                                   anyway; docs lag the real API on this vendor
+#                                   (same pattern as the Sora-shape trap in
+#                                   VIDEO_GENERATION_RFC.md). Earlier "$0.04 flat"
+#                                   belief (shipped in this same PR) was wrong —
+#                                   it read the pricing page's single headline
+#                                   number as the whole price, not the cheapest
+#                                   of four tiers.
+#   grok-imagine-image-2.0-edit  — edit(), same per-tier price as generate() for
+#                                   the requested (resolution, quality), PLUS a
+#                                   flat per-input-image surcharge (confirmed in
+#                                   xAI's own pricing catalog: pricePerInputImage
+#                                   = 100_000_000 ticks = $0.01). Applied once per
+#                                   edit call regardless of 1-3 reference images —
+#                                   a known simplification (per-image scaling for
+#                                   multi-reference edits is not modeled here).
+#   grok-imagine-video-1.5       — per SECOND of output, confirmed directly on
+#                                   docs.x.ai (VIDEO_GENERATION_RFC.md §2). Callers
+#                                   must pass duration_s; omitting it returns 0.0
+#                                   rather than silently pricing one second.
+# REQ-ARCH-12 requires provider-model-shaped string literals to live only in
+# adapters/config/ or a whitelisted file — this file is whitelisted (pricing
+# data). Exported as named constants so callers in agents/ reference the
+# constant instead of duplicating the literal (which would violate REQ-ARCH-12
+# in the calling file).
+IMAGE_GENERATE_MODEL = "grok-imagine-image-2.0"
+IMAGE_EDIT_MODEL = "grok-imagine-image-2.0-edit"
+VIDEO_GENERATE_MODEL = "grok-imagine-video-1.5"
+
+# (resolution, quality) -> USD per image. Live-verified 2026-08-24 — see comment
+# above. xAI's only valid values are resolution "1k"|"2k", quality "low"|"medium".
+_IMAGE_TIER_PRICING_USD: Dict[Tuple[str, str], float] = {
+    ("1k", "low"): 0.04,
+    ("2k", "low"): 0.06,
+    ("1k", "medium"): 0.06,
+    ("2k", "medium"): 0.08,
+}
+
+# Flat per-reference-image surcharge on edit(), confirmed via xAI's pricing
+# catalog (pricePerInputImage). Same simplification note as above.
+IMAGE_EDIT_INPUT_SURCHARGE_USD = 0.01
+
+_EXTERNAL_COST_PER_UNIT: Dict[str, float] = {
+    VIDEO_GENERATE_MODEL: 0.08,
+}
+
+_PER_SECOND_SERVICES = {VIDEO_GENERATE_MODEL}
+_IMAGE_SERVICES = {IMAGE_GENERATE_MODEL, IMAGE_EDIT_MODEL}
+
+
+def calculate_external_cost(
+    service: str,
+    *,
+    duration_s: Optional[float] = None,
+    resolution: Optional[str] = None,
+    quality: Optional[str] = None,
+) -> float:
+    """Calculate cost in USD for a non-token, flat-rate, tiered, or per-second REST API call.
+
+    Args:
+        service: pricing-table key (IMAGE_GENERATE_MODEL, IMAGE_EDIT_MODEL, or
+                 VIDEO_GENERATE_MODEL).
+        duration_s: seconds of output — required for per-second-priced services
+                    (video), ignored for image services.
+        resolution: "1k" | "2k" — only meaningful for image services. Defaults to
+                    "1k" when omitted, matching ImageGenerationAgent's own default.
+        quality: "low" | "medium" — only meaningful for image services. Defaults
+                 to "medium" when omitted, matching ImageGenerationAgent's own
+                 default.
+
+    Returns:
+        Cost in USD, rounded to 6 decimals. 0.0 for an unpriced service, an
+        unknown (resolution, quality) combination, or a per-second service
+        called without duration_s — same fail-open contract as calculate_cost()
+        for an unknown model.
+    """
+    if service in _IMAGE_SERVICES:
+        tier_price = _IMAGE_TIER_PRICING_USD.get((resolution or "1k", quality or "medium"))
+        if tier_price is None:
+            return 0.0
+        if service == IMAGE_EDIT_MODEL:
+            return round(tier_price + IMAGE_EDIT_INPUT_SURCHARGE_USD, 6)
+        return round(tier_price, 6)
+
+    per_unit = _EXTERNAL_COST_PER_UNIT.get(service)
+    if per_unit is None:
+        return 0.0
+    if service in _PER_SECOND_SERVICES:
+        if duration_s is None:
+            return 0.0
+        return round(per_unit * duration_s, 6)
+    return round(per_unit, 6)
+
+
 @dataclass
 class ModelUsage:
     """Usage accumulated on ONE model within an execution."""
