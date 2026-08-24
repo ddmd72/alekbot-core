@@ -404,6 +404,7 @@ _FACTORY_AGENT_TYPES = [
     "html_page",
     "domain_researcher",
     "image_generation",
+    "video_generation",
 ]
 
 
@@ -445,8 +446,7 @@ def test_strategies_has_no_orphans():
     # Agent types that are in STRATEGIES but not in UserAgentFactory.build():
     # - email_classifier: created in ServiceContainer (singleton, not per-user)
     # - deep_research: uses DeepResearchPort, not LLMPort; entry is for provider resolution
-    # - video_generation: uses VideoGenerationPort, not LLMPort; entry is for provider resolution
-    _NON_FACTORY_STRATEGIES = {"email_classifier", "deep_research", "video_generation"}
+    _NON_FACTORY_STRATEGIES = {"email_classifier", "deep_research"}
 
     all_strategies = set(AgentProviderStrategy.STRATEGIES.keys())
     factory_set = set(_FACTORY_AGENT_TYPES)
