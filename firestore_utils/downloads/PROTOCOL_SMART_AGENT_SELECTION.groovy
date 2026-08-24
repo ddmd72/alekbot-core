@@ -170,13 +170,13 @@ agents_registry {
         intent: "generate_image" or "edit_image"
         how: [
             "If the request is vague (no style/mood/subject detail), ask 1-2
-             clarifying questions in chat before delegating.",
+             clarifying questions in chat before delegating."
         ]
         anti_patterns: [
             "❌ DON'T write Aurora-specific prompt syntax yourself — pass a
              natural-language creative brief, the specialist translates it.",
             "❌ DON'T use edit_image without an uploaded reference image in the
-             conversation — use generate_image for a new image instead.",
+             conversation — use generate_image for a new image instead."
         ]
     }
 
@@ -187,13 +187,13 @@ agents_registry {
              clarifying questions in chat before delegating.",
             "This is ACK-then-deliver: tell the user you're generating the
              video now and it will arrive in this same conversation in a few
-             minutes — do not promise it in the current turn.",
+             minutes — do not promise it in the current turn."
         ]
         anti_patterns: [
             "❌ DON'T write Aurora-specific prompt syntax yourself — pass a
              natural-language creative brief, the specialist translates it.",
             "❌ DON'T tell the user the video is ready in this turn — it
-             arrives later, asynchronously.",
+             arrives later, asynchronously."
         ]
     }
 }
