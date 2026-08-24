@@ -29,6 +29,7 @@ Supported task_types:
                                 synchronously; delegates entirely to SmartRetryService
   - repair_email_embeddings       → run one batch of EmailEmbeddingRepairService (re-embed indexed emails
                                      where embedding_pending=True after transient API failures)
+  - video_generation_polling      → poll VideoGenerationPort job, deliver via deliver_video()
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from ..ports.indexed_email_repository import IndexedEmailRepository
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
+    from ..ports.video_generation_port import VideoPollResult
     from ..services.file_link_service import FileLinkService
 
 from ..domain.complexity_settings import resolve_complexity_settings
@@ -65,7 +67,11 @@ from ..services.reminders_service import (
 )
 from ..services.task_dispatch_service import TaskDispatchService
 from ..services.smart_retry_service import SmartRetryService
+from ..services.video_generation_delivery import deliver_video
 from ..utils.logger import logger
+
+
+DEFAULT_VIDEO_DURATION_S_FALLBACK = 5  # only used if a poll payload is somehow missing duration_s
 
 
 class WorkerHandler:
@@ -88,6 +94,8 @@ class WorkerHandler:
         user_repo: Any,  # UserRepository
         task_dispatch: Optional[TaskDispatchService] = None,
         job_registry: Optional[ProviderRegistry] = None,
+        video_registry: Optional[ProviderRegistry] = None,
+        quota_service: Optional[object] = None,
         media_storage: Optional[MediaStoragePort] = None,
         task_setup: "Optional[TaskSetupService]" = None,
         task_indexing: "Optional[TaskIndexingService]" = None,
@@ -110,6 +118,8 @@ class WorkerHandler:
         self._user_repo = user_repo
         self._task_dispatch = task_dispatch
         self._job_registry: Optional[ProviderRegistry] = job_registry
+        self._video_registry: Optional[ProviderRegistry] = video_registry
+        self._quota_service = quota_service
         self._media_storage = media_storage
         self._link_service = link_service
         self._task_setup = task_setup
@@ -146,6 +156,8 @@ class WorkerHandler:
             return await self._handle_sweep_consolidation()
         elif task_type == "deep_research_polling":
             return await self._handle_deep_research_polling(payload)
+        elif task_type == "video_generation_polling":
+            return await self._handle_video_generation_polling(payload)
         elif task_type == "setup_microsoft_todo":
             return await self._handle_setup_microsoft_todo(payload)
         elif task_type == "reindex_task_list":
@@ -447,6 +459,97 @@ class WorkerHandler:
             channel_id_override=origin_channel_id,
         )
         return {"status": "failed"}, 200
+
+    # ------------------------------------------------------------------
+    # Video generation polling (Grok)
+    # ------------------------------------------------------------------
+
+    _MAX_VIDEO_POLL_ATTEMPTS = 24  # ~24 x 30s = 12 min budget, RFC §10 open question #3 starting point
+
+    async def _handle_video_generation_polling(self, payload: dict) -> Tuple[dict, int]:
+        """
+        Poll video generation status. Re-enqueue if pending. On done: deliver via
+        deliver_video(). On failed/expired: notify the user directly, no silent
+        drop — matches _handle_deep_research_polling's shape, but this one is
+        actually reachable from a real kickoff site (GrokVideoAdapter, Task 1),
+        unlike its deep-research sibling. See VIDEO_GENERATION_RFC.md §3.4 step 4.
+
+        duration_s is resolved ONCE here (not re-read in the pending/done branches)
+        so it survives multiple poll cycles: the re-enqueue call below threads it
+        forward on every "pending" tick, otherwise TaskDispatchService's own
+        duration_s=5 default would silently reset it on each re-poll and the
+        deliver_video() billing call would under-bill a longer video.
+        """
+        request_id  = payload.get("request_id", "")
+        user_id     = payload.get("user_id", "")
+        account_id  = payload.get("account_id", "")
+        session_id  = payload.get("session_id", "")
+        attempt     = payload.get("attempt", 0)
+        provider    = payload.get("provider", "grok")
+        duration_s  = payload.get("duration_s", DEFAULT_VIDEO_DURATION_S_FALLBACK)
+
+        origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
+
+        video_port = None
+        if self._video_registry:
+            try:
+                video_port = self._video_registry.get(provider)
+            except ValueError:
+                logger.debug("No video generation port registered for provider %r", provider)
+        if not video_port or not self._task_dispatch:
+            logger.error(
+                f"[VideoGeneration] Missing dependencies in WorkerHandler "
+                f"(provider={provider!r}, available="
+                f"{self._video_registry.list_available() if self._video_registry else []})"
+            )
+            return {"error": "video_generation not configured"}, 500
+
+        if attempt >= self._MAX_VIDEO_POLL_ATTEMPTS:
+            logger.warning(f"[VideoGeneration] Polling timeout: request={request_id[:16]}")
+            await self._notification.notify(
+                user_id=user_id, account_id=account_id,
+                system_alert="Video generation timed out without producing a result.",
+                kind=NotificationKind.DEEP_RESEARCH,
+                channel_id_override=origin_channel_id,
+            )
+            return {"status": "timeout"}, 200
+
+        result: VideoPollResult = await video_port.get_status(request_id)
+
+        if result.status == "pending":
+            await self._task_dispatch.enqueue_video_generation_polling(
+                request_id=request_id, user_id=user_id, account_id=account_id,
+                session_id=session_id, attempt=attempt + 1, delay_seconds=30,
+                duration_s=duration_s,
+            )
+            logger.info(f"[VideoGeneration] Pending, attempt={attempt + 1}")
+            return {"status": "polling", "attempt": attempt + 1}, 200
+
+        if result.status == "done":
+            await deliver_video(
+                video_data=result.data,
+                user_id=user_id, account_id=account_id,
+                duration_s=duration_s,
+                media_storage=self._media_storage,
+                notification=self._notification,
+                quota_service=self._quota_service,
+                link_service=self._link_service,
+                channel_id_override=origin_channel_id,
+            )
+            logger.info(f"[VideoGeneration] Delivered to user={user_id[:8]}")
+            return {"status": "delivered"}, 200
+
+        # "failed" or "expired"
+        logger.error(
+            f"[VideoGeneration] {result.status}: request={request_id[:16]}, error={result.error}"
+        )
+        await self._notification.notify(
+            user_id=user_id, account_id=account_id,
+            system_alert="Video generation did not complete — the AI provider returned an error.",
+            kind=NotificationKind.DEEP_RESEARCH,
+            channel_id_override=origin_channel_id,
+        )
+        return {"status": result.status}, 200
 
     # ------------------------------------------------------------------
     # MS To Do task handlers
