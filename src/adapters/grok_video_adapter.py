@@ -78,7 +78,10 @@ class GrokVideoAdapter(VideoGenerationPort):
             body["aspect_ratio"] = aspect_ratio
         if image_data is not None:
             b64 = base64.b64encode(image_data).decode("ascii")
-            body["image"] = f"data:{image_mime_type};base64,{b64}"
+            # xAI's REST schema wants {"url": "<data-uri or public URL>", "file_id": null},
+            # not a bare string — confirmed 2026-08-24 against a live 422 ("expected a map")
+            # and against docs.x.ai/developers/rest-api-reference/inference/videos.
+            body["image"] = {"url": f"data:{image_mime_type};base64,{b64}"}
 
         response = await self._client.post("/videos/generations", cast_to=object, body=body)
         request_id = response["request_id"]
@@ -98,7 +101,9 @@ class GrokVideoAdapter(VideoGenerationPort):
         body = {
             "model": _MODEL,
             "prompt": prompt,
-            "video": f"data:{video_mime_type};base64,{b64}",
+            # Same {"url": ...} wrapping as create_video's "image" field — same xAI
+            # REST convention, confirmed against the same live 422 + docs page.
+            "video": {"url": f"data:{video_mime_type};base64,{b64}"},
         }
 
         response = await self._client.post("/videos/edits", cast_to=object, body=body)

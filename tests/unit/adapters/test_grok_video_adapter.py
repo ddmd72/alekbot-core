@@ -71,7 +71,7 @@ async def test_create_video_with_image_data_sends_data_uri(adapter):
 
     body = adapter._client.post.call_args.kwargs["body"]
     expected_b64 = base64.b64encode(b"source-bytes").decode("ascii")
-    assert body["image"] == f"data:image/jpeg;base64,{expected_b64}"
+    assert body["image"] == {"url": f"data:image/jpeg;base64,{expected_b64}"}
 
 
 @pytest.mark.asyncio
@@ -134,7 +134,7 @@ async def test_edit_video_sends_correct_json_body(adapter):
     assert body["model"] == "grok-imagine-video-1.5"
     assert body["prompt"] == "change the sky to sunset"
     expected_b64 = base64.b64encode(b"video-bytes").decode("ascii")
-    assert body["video"] == f"data:video/mp4;base64,{expected_b64}"
+    assert body["video"] == {"url": f"data:video/mp4;base64,{expected_b64}"}
     assert result == "req-edit1"
 
 
