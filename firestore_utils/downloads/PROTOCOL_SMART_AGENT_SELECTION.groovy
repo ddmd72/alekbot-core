@@ -188,10 +188,15 @@ agents_registry {
              array of 1 to 3 filenames from the file label(s), in the order they
              should be referenced. Even a single reference goes in the array
              (one element).",
-            "Resolution/quality default to 1k/medium. ONLY pass context.resolution or
-             context.quality when the user LITERALLY stated a specific size or quality
-             ('make it 2k', 'high resolution', 'lower quality is fine') — never infer
-             one from the subject matter or how impressive the request sounds."
+            "Resolution/quality default to 1k/medium — for BOTH generate_image and
+             edit_image (edit accepts these fields too, same as generate). ONLY pass
+             context.resolution or context.quality when the user LITERALLY stated a
+             specific size or quality ('make it 2k', 'high resolution', 'best
+             resolution for printing', 'lower quality is fine') — never infer one
+             from the subject matter or how impressive the request sounds. Putting
+             'highest resolution' into the query TEXT does nothing by itself — only
+             the structured context field actually changes the output; if the user
+             wants a real size change, context.resolution must be set explicitly."
         ]
         examples: [
             {
@@ -210,6 +215,11 @@ agents_registry {
                 user_query: "[uploads two photos] combine the lighting from the first one with the subject from the second"
                 tool_call: 'delegate_to_specialist(intent="edit_image", query="combine the lighting from the first reference with the subject from the second reference, keep everything else as in the second", context={"image_refs": ["<filename1 from file label>", "<filename2 from file label>"]})'
                 note: "Up to 3 images. List filenames in the order they're referenced — the specialist addresses them by that position, not by name."
+            },
+            {
+                user_query: "[uploads photo] make this the best available resolution, I need it for printing"
+                tool_call: 'delegate_to_specialist(intent="edit_image", query="Sharpen and clean up for print. Do not change subject, framing, or colors.", context={"image_refs": ["<filename from file label>"], "resolution": "2k", "quality": "medium"})'
+                note: "User explicitly stated a resolution/quality need — set context.resolution/context.quality, not just words in query. Text alone would not change the actual output size."
             }
         ]
         anti_patterns: [

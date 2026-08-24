@@ -86,17 +86,38 @@ class TestCalculateExternalCost:
         # must never silently bill $0.08 for "one second," it must bill nothing.
         assert calculate_external_cost("grok-imagine-video-1.5") == 0.0
 
-    def test_image_generate_cost_is_flat(self):
-        assert calculate_external_cost("grok-imagine-image-2.0") == 0.04
+    def test_image_generate_cost_defaults_to_1k_medium_tier(self):
+        # No resolution/quality passed -> defaults to "1k"/"medium", matching
+        # ImageGenerationAgent's own defaults. NOT flat $0.04 — that was this
+        # PR's own earlier (wrong) assumption, corrected 2026-08-24 after a live
+        # API probe showed quality genuinely changes the billed price.
+        assert calculate_external_cost("grok-imagine-image-2.0") == 0.06
 
-    def test_image_edit_cost_is_flat_and_higher_than_generate(self):
-        assert calculate_external_cost("grok-imagine-image-2.0-edit") == 0.08
+    def test_image_generate_cost_all_four_tiers(self):
+        # Live-verified against docs.x.ai's pricing catalog + a direct API probe
+        # (2 real calls, compared response.usage.cost_in_usd_ticks).
+        assert calculate_external_cost("grok-imagine-image-2.0", resolution="1k", quality="low") == 0.04
+        assert calculate_external_cost("grok-imagine-image-2.0", resolution="2k", quality="low") == 0.06
+        assert calculate_external_cost("grok-imagine-image-2.0", resolution="1k", quality="medium") == 0.06
+        assert calculate_external_cost("grok-imagine-image-2.0", resolution="2k", quality="medium") == 0.08
+
+    def test_image_generate_unknown_tier_returns_zero(self):
+        # Same fail-open contract as an unpriced model — an invalid combination
+        # must never silently fall back to a guessed price.
+        assert calculate_external_cost("grok-imagine-image-2.0", resolution="4k", quality="low") == 0.0
+
+    def test_image_edit_cost_adds_input_surcharge_to_tier_price(self):
+        # Default (1k/medium) tier $0.06 + $0.01 per-input-image surcharge = $0.07.
+        assert calculate_external_cost("grok-imagine-image-2.0-edit") == 0.07
+        assert calculate_external_cost(
+            "grok-imagine-image-2.0-edit", resolution="2k", quality="medium"
+        ) == 0.09
 
     def test_image_cost_ignores_duration_kwarg(self):
-        # duration_s is meaningless for a flat-rate service — passing it must not
+        # duration_s is meaningless for an image service — passing it must not
         # change the result (guards against a future refactor accidentally
-        # multiplying flat-rate services too).
-        assert calculate_external_cost("grok-imagine-image-2.0", duration_s=999) == 0.04
+        # multiplying image services too, the way per-second video pricing does).
+        assert calculate_external_cost("grok-imagine-image-2.0", duration_s=999) == 0.06
 
     def test_unknown_service_returns_zero(self):
         # Same fail-open contract as calculate_cost() for an unpriced model.

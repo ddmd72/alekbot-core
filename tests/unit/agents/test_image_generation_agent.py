@@ -201,12 +201,24 @@ async def test_execute_generate_image_explicit_quality_is_honored(agent, mock_im
 
 
 async def test_execute_generate_image_records_cost_via_quota_service(agent):
+    # Default resolution/quality (1k/medium) -> $0.06 tier, not a flat $0.04 —
+    # corrected 2026-08-24 after a live API probe proved quality changes price.
     agent._quota_service = AsyncMock()
 
     await agent.execute(_make_message("generate_image"))
 
     agent._quota_service.record_usage.assert_awaited_once_with(
-        account_id="acc1", model="grok-imagine-image-2.0", tokens=0, cost=0.04,
+        account_id="acc1", model="grok-imagine-image-2.0", tokens=0, cost=0.06,
+    )
+
+
+async def test_execute_generate_image_records_cost_for_explicit_tier(agent):
+    agent._quota_service = AsyncMock()
+
+    await agent.execute(_make_message("generate_image", context={"resolution": "2k", "quality": "low"}))
+
+    agent._quota_service.record_usage.assert_awaited_once_with(
+        account_id="acc1", model="grok-imagine-image-2.0", tokens=0, cost=0.06,
     )
 
 
@@ -459,8 +471,59 @@ async def test_execute_edit_image_records_higher_cost_than_generate(
 
     await agent_with_files.execute(msg)
 
+    # Default (1k/medium) tier $0.06 + $0.01 input-image surcharge = $0.07 — not
+    # a flat $0.08 estimate. Corrected 2026-08-24 after live-verifying xAI's
+    # actual pricing catalog (tiered by resolution/quality + a real surcharge).
     agent_with_files._quota_service.record_usage.assert_awaited_once_with(
-        account_id="acc1", model="grok-imagine-image-2.0-edit", tokens=0, cost=0.08,
+        account_id="acc1", model="grok-imagine-image-2.0-edit", tokens=0, cost=0.07,
+    )
+
+
+async def test_execute_edit_image_passes_resolution_and_quality_to_port(
+    agent_with_files, mock_image_port, mock_file_conversion,
+):
+    mock_image_port.edit.return_value = GeneratedImage(data=b"edited-bytes", mime_type="image/png")
+    msg = _make_message(
+        "edit_image", context={"image_refs": ["photo.png"], "resolution": "2k", "quality": "low"},
+    )
+    msg.payload["image_refs"] = ["photo.png"]
+
+    await agent_with_files.execute(msg)
+
+    edit_kwargs = mock_image_port.edit.call_args.kwargs
+    assert edit_kwargs["resolution"] == "2k"
+    assert edit_kwargs["quality"] == "low"
+
+
+async def test_execute_edit_image_default_resolution_and_quality_to_port(
+    agent_with_files, mock_image_port, mock_file_conversion,
+):
+    mock_image_port.edit.return_value = GeneratedImage(data=b"edited-bytes", mime_type="image/png")
+    msg = _make_message("edit_image", context={"image_refs": ["photo.png"]})
+    msg.payload["image_refs"] = ["photo.png"]
+
+    await agent_with_files.execute(msg)
+
+    edit_kwargs = mock_image_port.edit.call_args.kwargs
+    assert edit_kwargs["resolution"] == "1k"
+    assert edit_kwargs["quality"] == "medium"
+
+
+async def test_execute_edit_image_records_cost_for_explicit_tier(
+    agent_with_files, mock_image_port, mock_file_conversion,
+):
+    mock_image_port.edit.return_value = GeneratedImage(data=b"edited-bytes", mime_type="image/png")
+    agent_with_files._quota_service = AsyncMock()
+    msg = _make_message(
+        "edit_image", context={"image_refs": ["photo.png"], "resolution": "2k", "quality": "medium"},
+    )
+    msg.payload["image_refs"] = ["photo.png"]
+
+    await agent_with_files.execute(msg)
+
+    # (2k, medium) tier $0.08 + $0.01 input surcharge = $0.09.
+    agent_with_files._quota_service.record_usage.assert_awaited_once_with(
+        account_id="acc1", model="grok-imagine-image-2.0-edit", tokens=0, cost=0.09,
     )
 
 
