@@ -670,6 +670,7 @@ async def main():
             billing_webhook=_alert_webhook,
             email_embedding_repair=_email_embedding_repair_service,
             link_service=file_link_service,
+            short_link_service=short_link_service,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

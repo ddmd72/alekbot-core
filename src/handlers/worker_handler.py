@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from ..ports.account_repository import AccountRepository
     from ..ports.video_generation_port import VideoPollResult
     from ..services.file_link_service import FileLinkService
+    from ..services.short_link_service import ShortLinkService
 
 from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain.notification_kind import NotificationKind
@@ -107,6 +108,7 @@ class WorkerHandler:
         email_embedding_repair: Optional[EmailEmbeddingRepairService] = None,
         link_service: "Optional[FileLinkService]" = None,
         smart_retry_service: Optional[SmartRetryService] = None,
+        short_link_service: "Optional[ShortLinkService]" = None,
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -122,6 +124,7 @@ class WorkerHandler:
         self._quota_service = quota_service
         self._media_storage = media_storage
         self._link_service = link_service
+        self._short_link_service = short_link_service
         self._task_setup = task_setup
         self._task_indexing = task_indexing
         self._reminders_service = reminders_service
@@ -543,6 +546,7 @@ class WorkerHandler:
                 notification=self._notification,
                 quota_service=self._quota_service,
                 link_service=self._link_service,
+                short_link_service=self._short_link_service,
                 channel_id_override=origin_channel_id,
                 platform_override=origin_platform,
             )

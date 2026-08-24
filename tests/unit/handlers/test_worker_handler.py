@@ -113,6 +113,9 @@ def _make_worker(
     video_registry.get = MagicMock(return_value=video_port)
     video_registry.list_available = MagicMock(return_value=["grok"])
 
+    link_service = MagicMock()
+    short_link_service = AsyncMock()
+
     ns = MagicMock()
     ns.email_indexing = email_indexing
     ns.notification = notification
@@ -122,6 +125,8 @@ def _make_worker(
     ns.job_port = job_port
     ns.video_registry = video_registry
     ns.video_port = video_port
+    ns.link_service = link_service
+    ns.short_link_service = short_link_service
 
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
@@ -135,6 +140,8 @@ def _make_worker(
         task_dispatch=task_dispatch,
         job_registry=job_registry,
         video_registry=video_registry,
+        link_service=link_service,
+        short_link_service=short_link_service,
     )
     return worker, ns
 
@@ -500,6 +507,21 @@ class TestHandleVideoGenerationPolling:
 
         assert status == 200
         assert mock_deliver.call_args.kwargs["platform_override"] == "slack"
+
+    async def test_done_forwards_short_link_service_to_deliver_video(self):
+        """User-reported gap 2026-08-24: video links stayed long /f/<token> links —
+        deliver_video() never received short_link_service at all, unlike every other
+        delivery path (deep_research, images, PDF/HTML)."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="done", data=b"video-bytes")
+        )
+
+        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+            result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
+
+        assert status == 200
+        assert mock_deliver.call_args.kwargs["short_link_service"] is ns.short_link_service
 
     async def test_done_without_duration_s_in_payload_falls_back_to_default(self):
         worker, ns = _make_worker()

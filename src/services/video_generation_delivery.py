@@ -13,6 +13,7 @@ import datetime
 from typing import Optional
 
 from ..domain.billing import VIDEO_GENERATE_MODEL, calculate_external_cost
+from ..domain.file_access import DEFAULT_FILE_LINK_TTL
 from ..utils.logger import logger
 
 
@@ -25,6 +26,7 @@ async def deliver_video(
     notification,        # NotificationPort (deep_research_delivery.py's Protocol)
     quota_service=None,  # QuotaService, Optional — None-guarded, same contract as ImageGenerationAgent
     link_service=None,   # FileLinkService, Optional
+    short_link_service=None,  # ShortLinkService, Optional — wraps /f/<token> behind /s/<code>
     channel_id_override: Optional[str] = None,
     platform_override: Optional[str] = None,
 ) -> None:
@@ -32,7 +34,10 @@ async def deliver_video(
     Deliver a finished video:
       1. Upload bytes to GCS.
       2. Send a named link to the user via notify_document_link (same call deep
-         research already uses for its report links).
+         research already uses for its report links) — shortened via
+         short_link_service the same way deep_research_delivery.py's
+         _upload_round() already does; video_generation/ keys are never gated,
+         same DEFAULT_FILE_LINK_TTL as deep_research/.
       3. Record the actual delivered cost via QuotaService.record_usage() — this
          is where duration_s is finally KNOWN (resolved + clamped by
          VideoGenerationAgent, carried through the poll payload).
@@ -50,6 +55,8 @@ async def deliver_video(
     if link_service:
         try:
             url = link_service.build_link(key=key, user_id=user_id)
+            if short_link_service:
+                url = await short_link_service.shorten(url, ttl_seconds=DEFAULT_FILE_LINK_TTL)
         except Exception as exc:
             logger.error("[VideoGeneration] build_link failed, falling back to key: %s", exc, exc_info=True)
             url = key
