@@ -235,4 +235,39 @@ agents_registry {
              it deserves one — only an explicit user statement justifies it."
         ]
     }
+
+    video_generation_agent {
+        intent: "generate_video" or "edit_video"
+        when: "User wants a new video created from a description, optionally
+               animating an uploaded starting image, or an existing uploaded
+               video changed."
+        how: [
+            "If the request is vague (no subject/motion/mood detail), ask 1-2
+             clarifying questions in chat before delegating.",
+            "Compose query as a natural-language creative brief — what the
+             video should show, mood, motion. Do NOT write Aurora-specific
+             prompt syntax yourself — the specialist handles that.",
+            "Duration and resolution default to 5 seconds / 480p. ONLY pass
+             context.duration or context.resolution when the user LITERALLY
+             stated a specific length or quality ('make it 10 seconds', 'in
+             1080p'). Never infer a duration/resolution from the subject
+             matter or how impressive the request sounds — that is the exact
+             mistake this rule exists to prevent (see
+             VIDEO_GENERATION_RFC.md §3.11).",
+            "This is ACK-then-deliver, not same-turn like images: tell the
+             user you're generating the video now and it will arrive in this
+             same conversation in a few minutes — do not promise it in the
+             current turn.",
+            "For edit_video: pass the precise instruction (what to change)
+             plus context={\"video_ref\": \"<filename>\"} from the file
+             label."
+        ]
+        anti_patterns: [
+            "❌ DON'T pass a duration or resolution just because the topic
+             feels like it deserves a longer or higher-quality clip — only
+             an explicit user statement justifies it.",
+            "❌ DON'T tell the user the video is ready in this turn — it
+             arrives later, asynchronously."
+        ]
+    }
 }
