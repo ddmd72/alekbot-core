@@ -269,6 +269,63 @@ class GcpTaskQueue(TaskQueue):
             logger.error(f"❌ Failed to enqueue deep_research_polling task: {exc}", exc_info=True)
             raise
 
+    async def enqueue_video_generation_polling(
+        self,
+        request_id: str,
+        user_id: str,
+        account_id: str,
+        session_id: str = "",
+        duration_s: int = 5,
+        attempt: int = 0,
+        delay_seconds: int = 30,
+    ) -> str:
+        """Enqueue video_generation_polling Cloud Task with optional schedule delay."""
+        try:
+            payload = {
+                "task_type": "video_generation_polling",
+                "request_id": request_id,
+                "user_id": user_id,
+                "account_id": account_id,
+                "session_id": session_id,
+                "duration_s": duration_s,
+                "attempt": attempt,
+            }
+
+            task = {
+                "http_request": {
+                    "http_method": tasks_v2.HttpMethod.POST,
+                    "url": f"{self.service_url}/worker",
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps(payload, cls=_DomainEncoder).encode(),
+                }
+            }
+
+            if self.service_account_email:
+                task["http_request"]["oidc_token"] = {
+                    "service_account_email": self.service_account_email
+                }
+
+            if delay_seconds > 0:
+                timestamp = timestamp_pb2.Timestamp()
+                timestamp.FromDatetime(
+                    datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=delay_seconds)
+                )
+                task["schedule_time"] = timestamp
+
+            response = self.client.create_task(
+                request={"parent": self.queue_path, "task": task}
+            )
+
+            logger.info(
+                f"📬 [VideoGeneration] Enqueued polling task: "
+                f"request_id={request_id[:16]}, attempt={attempt}, delay={delay_seconds}s"
+            )
+            return response.name
+
+        except Exception as exc:
+            logger.error(f"❌ Failed to enqueue video_generation_polling task: {exc}", exc_info=True)
+            raise
+
     async def enqueue_email_indexing_task(self, job_id: str) -> str:
         """Enqueue one email indexing page via Cloud Tasks — each page gets its own HTTP request + full CPU."""
         try:
