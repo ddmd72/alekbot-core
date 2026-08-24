@@ -596,6 +596,44 @@ class TestHandleVideoGenerationPolling:
         ns.notification.notify.assert_awaited_once()
         ns.task_dispatch.enqueue_video_generation_polling.assert_not_awaited()
 
+    async def test_get_status_raises_reenqueues_instead_of_propagating(self):
+        """Fix 1: get_status() was unguarded — a CDN blip / expired URL / xAI 5xx
+        raised straight out, becoming an HTTP 500 that Cloud Tasks retries with the
+        SAME attempt value forever, bypassing _MAX_VIDEO_POLL_ATTEMPTS entirely. The
+        exception must instead be caught and re-enqueued with attempt+1 so the
+        existing timeout budget still applies."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(side_effect=RuntimeError("xAI 503"))
+
+        payload = {**_VIDEO_BASE_PAYLOAD, "attempt": 2, "duration_s": 8}
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert result == {"status": "retry", "attempt": 3}
+        ns.task_dispatch.enqueue_video_generation_polling.assert_awaited_once_with(
+            request_id="req-abc", user_id="user1", account_id="acc1",
+            session_id="user1:C123", attempt=3, delay_seconds=30, duration_s=8,
+            origin_platform=None,
+        )
+        ns.notification.notify.assert_not_awaited()
+
+    async def test_done_prefers_poll_result_duration_over_payload_duration(self):
+        """Fix 4: result.duration_s (what xAI actually reports on the finished
+        render) must win over the poll payload's submission-time estimate — critical
+        for edit_video, which has no duration param at submission time at all and
+        would otherwise bill on the wrong value."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="done", data=b"video-bytes", duration_s=12)
+        )
+
+        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+            payload = {**_VIDEO_BASE_PAYLOAD, "duration_s": 5}
+            result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert mock_deliver.call_args.kwargs["duration_s"] == 12
+
     async def test_max_attempts_times_out(self):
         worker, ns = _make_worker()
 

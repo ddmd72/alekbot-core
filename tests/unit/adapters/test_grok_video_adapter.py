@@ -144,7 +144,9 @@ async def test_edit_video_sends_correct_json_body(adapter):
     body = adapter._client.post.call_args.kwargs["body"]
     assert adapter._client.post.call_args.kwargs["path"] == "/videos/edits" \
         if "path" in adapter._client.post.call_args.kwargs else adapter._client.post.call_args.args[0] == "/videos/edits"
-    assert body["model"] == "grok-imagine-video-1.5"
+    # edit_video uses a DIFFERENT model id than create_video — see _EDIT_MODEL's
+    # comment in grok_video_adapter.py (live 400 + docs.x.ai REST reference).
+    assert body["model"] == "grok-imagine-video"
     assert body["prompt"] == "change the sky to sunset"
     expected_b64 = base64.b64encode(b"video-bytes").decode("ascii")
     assert body["video"] == {"url": f"data:video/mp4;base64,{expected_b64}"}
@@ -203,7 +205,54 @@ async def test_get_status_downloads_bytes_on_done(adapter):
     with patch("src.adapters.grok_video_adapter.httpx.AsyncClient", return_value=mock_http_client):
         result = await adapter.get_status("req-abc")
 
-    assert result == VideoPollResult(status="done", data=b"fake-video-bytes")
+    # duration_s is populated from the response's video.duration — the authoritative
+    # real duration (Fix 4b), needed because edit_video has no duration param at
+    # submission time and would otherwise bill on a wrong/default value.
+    assert result == VideoPollResult(status="done", data=b"fake-video-bytes", duration_s=5)
+
+
+@pytest.mark.asyncio
+async def test_get_status_done_without_duration_in_response_stays_none(adapter):
+    adapter._client.get = AsyncMock(return_value={
+        "status": "done",
+        "video": {"url": "https://vidgen.x.ai/output/video.mp4"},  # no "duration" key
+    })
+
+    mock_response = MagicMock()
+    mock_response.content = b"fake-video-bytes"
+    mock_response.raise_for_status = MagicMock()
+
+    mock_http_client = AsyncMock()
+    mock_http_client.get = AsyncMock(return_value=mock_response)
+    mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
+    mock_http_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.adapters.grok_video_adapter.httpx.AsyncClient", return_value=mock_http_client):
+        result = await adapter.get_status("req-abc")
+
+    assert result.duration_s is None
+
+
+@pytest.mark.asyncio
+async def test_get_status_download_failure_returns_failed_result(adapter):
+    """Fix 1a: a download failure (CDN blip, expired URL, xAI 5xx) must surface as a
+    clean 'failed' VideoPollResult, not propagate as a raw exception out of
+    get_status() — matches the module docstring's promise."""
+    adapter._client.get = AsyncMock(return_value={
+        "status": "done",
+        "video": {"url": "https://vidgen.x.ai/output/video.mp4", "duration": 5},
+    })
+
+    mock_http_client = AsyncMock()
+    mock_http_client.get = AsyncMock(side_effect=RuntimeError("connection reset"))
+    mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
+    mock_http_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.adapters.grok_video_adapter.httpx.AsyncClient", return_value=mock_http_client):
+        result = await adapter.get_status("req-abc")
+
+    assert result.status == "failed"
+    assert "connection reset" in result.error
 
 
 @pytest.mark.asyncio

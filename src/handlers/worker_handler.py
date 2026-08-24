@@ -526,7 +526,18 @@ class WorkerHandler:
             )
             return {"status": "timeout"}, 200
 
-        result: VideoPollResult = await video_port.get_status(request_id)
+        try:
+            result: VideoPollResult = await video_port.get_status(request_id)
+        except Exception as exc:
+            logger.warning(
+                f"[VideoGeneration] get_status failed, attempt={attempt}: {exc}"
+            )
+            await self._task_dispatch.enqueue_video_generation_polling(
+                request_id=request_id, user_id=user_id, account_id=account_id,
+                session_id=session_id, attempt=attempt + 1, delay_seconds=30,
+                duration_s=duration_s, origin_platform=origin_platform,
+            )
+            return {"status": "retry", "attempt": attempt + 1}, 200
 
         if result.status == "pending":
             await self._task_dispatch.enqueue_video_generation_polling(
@@ -538,10 +549,18 @@ class WorkerHandler:
             return {"status": "polling", "attempt": attempt + 1}, 200
 
         if result.status == "done":
+            # Prefer the duration xAI actually reports on the finished render
+            # (result.duration_s) over the poll payload's submission-time estimate —
+            # the payload's value is a guess for create_video and simply wrong for
+            # edit_video (which has no duration param at submission time at all).
+            # Fall back to the payload only when the poll response didn't include one.
+            effective_duration_s = (
+                result.duration_s if result.duration_s is not None else duration_s
+            )
             await deliver_video(
                 video_data=result.data,
                 user_id=user_id, account_id=account_id,
-                duration_s=duration_s,
+                duration_s=effective_duration_s,
                 media_storage=self._media_storage,
                 notification=self._notification,
                 quota_service=self._quota_service,
