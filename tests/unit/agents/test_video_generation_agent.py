@@ -268,6 +268,71 @@ async def test_execute_generate_video_with_image_ref_resolves_bytes(mock_llm, mo
 
 
 # ============================================================================
+# execute — crafting-call context markers (Fix 3: crafting LLM never told an
+# image is present, or that it's edit_video — RFC §3.3 "brief (+ image presence)
+# -> {video_prompt, aspect_ratio}")
+# ============================================================================
+
+def _crafted_query_text(mock_llm) -> str:
+    crafting_request = mock_llm.generate_content.call_args.kwargs["request"]
+    return crafting_request.messages[0].parts[0].text
+
+
+async def test_crafting_call_has_no_marker_on_plain_generate_video(agent, mock_llm):
+    await agent.execute(_make_message("generate_video"))
+
+    assert "[Note:" not in _crafted_query_text(mock_llm)
+
+
+async def test_crafting_call_includes_image_presence_marker_with_image_ref(
+    mock_llm, mock_prompt_builder, mock_video_port,
+):
+    mock_file_conversion = AsyncMock(spec=FileConversionService)
+    mock_file_conversion.resolve_bytes.return_value = b"source-image-bytes"
+    agent = VideoGenerationAgent(
+        config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
+        execution_context=_make_execution_context(mock_llm),
+        video_port=mock_video_port,
+        prompt_builder=mock_prompt_builder,
+        user_id="user123",
+        file_conversion=mock_file_conversion,
+        max_duration_s=10,
+    )
+
+    msg = _make_message("generate_video")
+    msg.payload["image_ref"] = "photo.jpg"
+    await agent.execute(msg)
+
+    text = _crafted_query_text(mock_llm)
+    assert "animating an attached starting image" in text
+    assert text.startswith(_QUERY)
+
+
+async def test_crafting_call_includes_edit_mode_marker_for_edit_video(
+    mock_llm, mock_prompt_builder, mock_video_port,
+):
+    mock_file_conversion = AsyncMock(spec=FileConversionService)
+    mock_file_conversion.resolve_bytes.return_value = b"source-video-bytes"
+    agent = VideoGenerationAgent(
+        config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
+        execution_context=_make_execution_context(mock_llm),
+        video_port=mock_video_port,
+        prompt_builder=mock_prompt_builder,
+        user_id="user123",
+        file_conversion=mock_file_conversion,
+        max_duration_s=10,
+    )
+
+    msg = _make_message("edit_video", query="make the sky sunset orange")
+    msg.payload["video_ref"] = "clip.mp4"
+    await agent.execute(msg)
+
+    text = _crafted_query_text(mock_llm)
+    assert "surgical edit_video request" in text
+    assert text.startswith("make the sky sunset orange")
+
+
+# ============================================================================
 # execute — failure paths
 # ============================================================================
 
@@ -369,6 +434,32 @@ async def test_execute_edit_video_resolve_bytes_failure(mock_llm, mock_prompt_bu
     response = await agent.execute(msg)
 
     assert response.status == AgentStatus.FAILED
+    mock_video_port.edit_video.assert_not_awaited()
+
+
+async def test_execute_edit_video_oversized_video_fails_without_calling_port(
+    mock_llm, mock_prompt_builder, mock_video_port,
+):
+    from src.agents.video_generation_agent import MAX_EDIT_VIDEO_BYTES
+
+    mock_file_conversion = AsyncMock(spec=FileConversionService)
+    mock_file_conversion.resolve_bytes.return_value = b"x" * (MAX_EDIT_VIDEO_BYTES + 1)
+    agent = VideoGenerationAgent(
+        config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
+        execution_context=_make_execution_context(mock_llm),
+        video_port=mock_video_port,
+        prompt_builder=mock_prompt_builder,
+        user_id="user123",
+        file_conversion=mock_file_conversion,
+        max_duration_s=10,
+    )
+
+    msg = _make_message("edit_video")
+    msg.payload["video_ref"] = "clip.mp4"
+    response = await agent.execute(msg)
+
+    assert response.status == AgentStatus.FAILED
+    assert "too large" in response.error.lower()
     mock_video_port.edit_video.assert_not_awaited()
 
 
