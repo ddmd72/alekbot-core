@@ -8,6 +8,7 @@ from src.services.caching_llm_proxy import CachingLLMProxy
 from src.domain.user import UserBotConfig, PerformanceTier
 from src.ports.llm_port import LLMPort, ProviderCapabilities
 from src.ports.image_generation_port import GeneratedImage, ImageGenerationPort
+from src.ports.video_generation_port import VideoGenerationPort, VideoPollResult
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
 
@@ -340,4 +341,77 @@ def test_resolve_image_generation_context_raises_when_provider_not_registered():
     with pytest.raises(ValueError, match="not registered"):
         builder_local.resolve_image_generation_context(
             "image_generation", empty_registry, config
+        )
+
+
+# ============================================================================
+# resolve_video_generation_context — video rendering axis provider resolution
+# ============================================================================
+
+
+class FakeVideoPort(VideoGenerationPort):
+    def __init__(self, name: str):
+        self.name = name
+
+    async def create_video(
+        self, prompt, user_id, account_id, *,
+        image_data=None, image_mime_type="image/png",
+        duration=None, resolution=None,
+        aspect_ratio=None, session_id=None,
+    ):
+        return "request-id-123"
+
+    async def edit_video(
+        self, prompt, video_data, user_id, account_id, *,
+        video_mime_type="video/mp4", session_id=None,
+    ):
+        return "request-id-456"
+
+    async def get_status(self, request_id: str):
+        return VideoPollResult(status="done", data=b"fake_video_data")
+
+
+@pytest.fixture
+def video_registry():
+    reg = ProviderRegistry()
+    reg.register("grok", FakeVideoPort("grok"))
+    return reg
+
+
+def test_resolve_video_generation_context_default_provider(builder, video_registry):
+    config = UserBotConfig()
+
+    port, provider_name = builder.resolve_video_generation_context(
+        "video_generation", video_registry, config
+    )
+
+    assert isinstance(port, FakeVideoPort)
+    assert port.name == "grok"
+    assert provider_name == "grok"
+
+
+def test_resolve_video_generation_context_respects_per_agent_override(builder, video_registry):
+    reg = video_registry
+    reg.register("openai", FakeVideoPort("openai"))
+    config = UserBotConfig(agent_providers={"video_generation": "openai"})
+
+    # "openai" is not yet in allowed_providers for video_generation — override
+    # must be ignored and fall back to the strategy default ("grok").
+    port, provider_name = builder.resolve_video_generation_context(
+        "video_generation", reg, config
+    )
+
+    assert provider_name == "grok"
+
+
+def test_resolve_video_generation_context_raises_when_provider_not_registered():
+    empty_registry = ProviderRegistry()
+    builder_local = AgentContextBuilder(
+        ProviderRegistry(), resilience_port=InMemoryProviderResilience()
+    )
+    config = UserBotConfig()
+
+    with pytest.raises(ValueError, match="not registered"):
+        builder_local.resolve_video_generation_context(
+            "video_generation", empty_registry, config
         )
