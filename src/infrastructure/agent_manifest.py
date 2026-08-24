@@ -76,6 +76,9 @@ class Intent:
     # Image generation/editing via grok-imagine-image-2.0
     GENERATE_IMAGE      = "generate_image"
     EDIT_IMAGE          = "edit_image"
+    # Video generation/editing via grok-imagine-video-1.5
+    GENERATE_VIDEO      = "generate_video"
+    EDIT_VIDEO          = "edit_video"
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +622,63 @@ IMAGE_GENERATION = AgentDescriptor(
 )
 
 
+VIDEO_GENERATION = AgentDescriptor(
+    agent_id="video_generation_agent",
+    agent_type="video_generation",
+    eager=False,
+    # SYNC, not ASYNC — unlike IMAGE_GENERATION. The slow part (waiting on xAI)
+    # lives entirely outside execute(); there's no remaining reason to pay for a
+    # dedicated Cloud Task dispatch. See VIDEO_GENERATION_RFC.md §3.4 decision #1.
+    capabilities={
+        Intent.GENERATE_VIDEO: ExecutionMode.SYNC,
+        Intent.EDIT_VIDEO: ExecutionMode.SYNC,
+    },
+    description="Generates and edits videos via grok-imagine-video-1.5",
+    capability_descriptions={
+        Intent.GENERATE_VIDEO: (
+            "Creates a new video from a text description, optionally animating an "
+            "uploaded starting image. Acknowledges immediately; the finished video "
+            "is delivered minutes later, directly to the user, in the same channel. "
+            "Defaults to a 5-second 480p clip unless the user explicitly asked for "
+            "a specific length or quality — do NOT pass a duration/resolution just "
+            "because the subject matter feels like it deserves one. "
+            'payload: {"query": "<what the video should show, mood, motion>"}, '
+            'context (optional): {"image_ref": "<filename, to animate an upload>", '
+            '"duration": <seconds, ONLY if the user explicitly stated one>, '
+            '"resolution": "<480p|720p|1080p, ONLY if the user explicitly stated one>"}'
+        ),
+        Intent.EDIT_VIDEO: (
+            "Modifies an existing uploaded video via a text instruction, preserving "
+            "the rest of the scene. Delivery is asynchronous, same as generate_video. "
+            'Requires: context={"video_ref": "<filename from [File: name (size)]>"}'
+        ),
+    },
+    context_schemas={
+        Intent.GENERATE_VIDEO: {
+            "image_ref": {
+                "type": "string",
+                "description": "Optional starting-image filename to animate.",
+            },
+            "duration": {
+                "type": "integer",
+                "description": "Explicit duration in seconds — ONLY if the user stated one.",
+            },
+            "resolution": {
+                "type": "string",
+                "description": "Explicit resolution (480p/720p/1080p) — ONLY if the user stated one.",
+            },
+        },
+        Intent.EDIT_VIDEO: {
+            "video_ref": {
+                "type": "string",
+                "description": "Filename from [File: name (size)] — the video to edit.",
+            },
+        },
+    },
+    internal=False,
+)
+
+
 ALL_DESCRIPTORS = [
     MEMORY_SEARCH,
     WEB_SEARCH,
@@ -636,4 +696,5 @@ ALL_DESCRIPTORS = [
     FILE_MANAGEMENT,
     DOMAIN_RESEARCHER,
     IMAGE_GENERATION,
+    VIDEO_GENERATION,
 ]

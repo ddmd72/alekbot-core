@@ -125,6 +125,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # — text-heavy layouts, asset-set style-locking — the RFC identified as
     # needing real reasoning). See decisions/agent_tier_default_enforcement.md.
     "image_generation": PerformanceTier.PERFORMANCE,
+    "video_generation": PerformanceTier.PERFORMANCE,  # motion-prompt quality — same reasoning as image_generation
 }
 # Every entry here was missing until 2026-08-23 for "compute"/"tasks"/"image_generation" —
 # each agent fell through silently to self.default_tier (ECO unless the user configured
