@@ -212,6 +212,7 @@ class VideoGenerationAgent(BaseAgent):
                 resolution=resolution,
                 aspect_ratio=aspect_ratio,
                 session_id=message.context.get("session_id"),
+                origin_platform=message.context.get("origin_platform"),
             )
         except Exception as e:
             self._on_agent_error(e, "create_video")
@@ -254,6 +255,7 @@ class VideoGenerationAgent(BaseAgent):
                 message.context.get("account_id", ""),
                 video_mime_type=video_mime_type,
                 session_id=message.context.get("session_id"),
+                origin_platform=message.context.get("origin_platform"),
             )
         except Exception as e:
             self._on_agent_error(e, "edit_video")

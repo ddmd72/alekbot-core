@@ -91,6 +91,7 @@ class TaskQueue(Protocol):
         account_id: str,
         session_id: str = "",
         duration_s: int = 5,
+        origin_platform: Optional[str] = None,
         attempt: int = 0,
         delay_seconds: int = 30,
     ) -> str:
@@ -100,6 +101,9 @@ class TaskQueue(Protocol):
         Worker receives payload with task_type="video_generation_polling".
         duration_s: video duration in seconds, carried in the payload for billing accuracy
                     in WorkerHandler's eventual billing call.
+        origin_platform: platform the request came from ("slack"/"telegram"), carried in the
+                    payload so delivery reaches that platform's channel — UserNotificationService's
+                    channel_id_override is silently ignored unless platform_override is ALSO set.
         attempt: retry counter for timeout guard.
         delay_seconds: schedule this many seconds in the future (Cloud Tasks schedule_time).
         First enqueue uses delay_seconds=30 (mirrors enqueue_deep_research_polling's
