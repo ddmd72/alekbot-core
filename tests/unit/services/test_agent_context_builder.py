@@ -357,13 +357,13 @@ class FakeVideoPort(VideoGenerationPort):
         self, prompt, user_id, account_id, *,
         image_data=None, image_mime_type="image/png",
         duration=None, resolution=None,
-        aspect_ratio=None, session_id=None,
+        aspect_ratio=None, session_id=None, origin_platform=None,
     ):
         return "request-id-123"
 
     async def edit_video(
         self, prompt, video_data, user_id, account_id, *,
-        video_mime_type="video/mp4", session_id=None,
+        video_mime_type="video/mp4", session_id=None, origin_platform=None,
     ):
         return "request-id-456"
 

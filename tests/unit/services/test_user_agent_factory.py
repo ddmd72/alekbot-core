@@ -149,11 +149,11 @@ def test_image_generation_registered_in_lazy_dispatch_tables():
 class FakeVideoPort(VideoGenerationPort):
     async def create_video(self, prompt, user_id, account_id, *, image_data=None,
                             image_mime_type="image/png", duration=None, resolution=None,
-                            aspect_ratio=None, session_id=None):
+                            aspect_ratio=None, session_id=None, origin_platform=None):
         return "fake_request_id"
 
     async def edit_video(self, prompt, video_data, user_id, account_id, *,
-                          video_mime_type="video/mp4", session_id=None):
+                          video_mime_type="video/mp4", session_id=None, origin_platform=None):
         return "fake_request_id"
 
     async def get_status(self, request_id):
