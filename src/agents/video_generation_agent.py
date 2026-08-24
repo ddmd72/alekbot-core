@@ -30,6 +30,12 @@ from .base_agent import BaseAgent
 DEFAULT_VIDEO_DURATION_S = 5
 DEFAULT_VIDEO_RESOLUTION = "480p"
 
+# edit_video runs SYNC inside the user's live request (60s client timeout, 1 vCPU
+# instance) and base64-inlines the whole video into a JSON POST body — a large
+# video risks OOM/timeout before it ever reaches xAI. 20MB of raw video (~27MB
+# after base64 inflation) is a reasonable starting cap for that path.
+MAX_EDIT_VIDEO_BYTES = 20 * 1024 * 1024
+
 
 class VideoGenerationAgent(BaseAgent):
     """Crafts an Aurora-video prompt, submits to xAI, returns an ACK."""
@@ -117,7 +123,25 @@ class VideoGenerationAgent(BaseAgent):
                 error=f"Failed to build system prompt: {exc}",
             )
 
-        craft_response = await self._craft_prompt(system_prompt, query)
+        # Tell the crafting LLM what it can't otherwise infer from a text-only brief:
+        # whether an image is attached (image-to-video vs text-to-video) and whether
+        # this is a surgical edit_video vs a creative generate_video — the *instruction*
+        # for what to do with that lives in the prompt token, not here. Mirrors
+        # ImageGenerationAgent's craft_query augmentation (execute(), reference-count
+        # signal before crafting).
+        craft_query = query
+        if intent_name == Intent.EDIT_VIDEO:
+            craft_query = (
+                f"{query}\n\n[Note: this is a surgical edit_video request — stay "
+                "precise, preserve everything not explicitly asked to change.]"
+            )
+        elif message.payload.get("image_ref"):
+            craft_query = (
+                f"{query}\n\n[Note: animating an attached starting image — describe "
+                "motion for this specific image, not a new scene.]"
+            )
+
+        craft_response = await self._craft_prompt(system_prompt, craft_query)
         crafted = self._parse_crafted_response(craft_response)
         if crafted is None:
             reason = describe_empty_output(craft_response.finish_reason)
@@ -254,6 +278,18 @@ class VideoGenerationAgent(BaseAgent):
                 agent_id=self.agent_id,
                 error=f"Could not read reference video '{video_ref}': {type(e).__name__}.",
             )
+
+        if len(video_data) > MAX_EDIT_VIDEO_BYTES:
+            self._on_agent_error(
+                ValueError(f"video too large: {len(video_data)} bytes"),
+                f"resolve video_ref {video_ref}",
+            )
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error="Video too large to edit — please use a smaller clip.",
+            )
+
         video_mime_type = mimetypes.guess_type(video_ref)[0] or "video/mp4"
 
         try:
