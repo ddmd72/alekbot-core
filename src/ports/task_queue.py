@@ -84,6 +84,30 @@ class TaskQueue(Protocol):
         """
         ...
 
+    async def enqueue_video_generation_polling(
+        self,
+        request_id: str,
+        user_id: str,
+        account_id: str,
+        session_id: str = "",
+        duration_s: int = 5,
+        attempt: int = 0,
+        delay_seconds: int = 30,
+    ) -> str:
+        """
+        Enqueue a video_generation_polling Cloud Task.
+
+        Worker receives payload with task_type="video_generation_polling".
+        duration_s: video duration in seconds, carried in the payload for billing accuracy
+                    in WorkerHandler's eventual billing call.
+        attempt: retry counter for timeout guard.
+        delay_seconds: schedule this many seconds in the future (Cloud Tasks schedule_time).
+        First enqueue uses delay_seconds=30 (mirrors enqueue_deep_research_polling's
+        own convention — no point polling immediately after kick-off).
+        session_id: original conversation session for delivery back to user's thread.
+        """
+        ...
+
 
     async def enqueue_email_indexing_task(self, job_id: str) -> str:
         """
