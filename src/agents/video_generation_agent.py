@@ -25,6 +25,7 @@ from ..ports.llm_port import AgentExecutionContext
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.video_generation_port import VideoGenerationPort
 from ..utils.logger import logger
+from ..utils.video_probe import probe_video_duration_s
 from .base_agent import BaseAgent
 
 DEFAULT_VIDEO_DURATION_S = 5
@@ -35,6 +36,14 @@ DEFAULT_VIDEO_RESOLUTION = "480p"
 # video risks OOM/timeout before it ever reaches xAI. 20MB of raw video (~27MB
 # after base64 inflation) is a reasonable starting cap for that path.
 MAX_EDIT_VIDEO_BYTES = 20 * 1024 * 1024
+
+# xAI's edit endpoint hard-rejects longer source videos — live-confirmed
+# 2026-08-24: "Video is too long. Maximum duration is 8.7 seconds." 8.0 is a
+# conservative ceiling (not 8.7) to leave margin for ffprobe's own measurement
+# imprecision. Also stated to Smart via EDIT_VIDEO's capability_description so
+# it can warn the user before even delegating — this check is the backstop for
+# when Smart doesn't, or the source is a user upload Smart never saw analyzed.
+MAX_EDIT_VIDEO_SOURCE_DURATION_S = 8.0
 
 
 class VideoGenerationAgent(BaseAgent):
@@ -289,6 +298,24 @@ class VideoGenerationAgent(BaseAgent):
                 agent_id=self.agent_id,
                 error="Video too large to edit — please use a smaller clip.",
             )
+
+        probed_duration_s = await probe_video_duration_s(video_data)
+        if probed_duration_s is not None and probed_duration_s > MAX_EDIT_VIDEO_SOURCE_DURATION_S:
+            self._on_agent_error(
+                ValueError(f"video too long: {probed_duration_s:.1f}s"),
+                f"resolve video_ref {video_ref}",
+            )
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=(
+                    f"This video is {probed_duration_s:.1f}s long — xAI only supports "
+                    "editing videos up to 8 seconds. Please use a shorter clip."
+                ),
+            )
+        # probed_duration_s is None (ffprobe unavailable/failed) — do NOT block;
+        # let xAI's own real-time check be the final word rather than rejecting a
+        # possibly-valid video on a measurement failure.
 
         video_mime_type = mimetypes.guess_type(video_ref)[0] or "video/mp4"
 

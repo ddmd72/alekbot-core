@@ -30,7 +30,7 @@ tests/unit/agents/test_image_generation_agent.py for resolution/quality/image_re
 The _make_message() context= kwarg below is reserved for genuine
 coordinator-level fields only (user_id, account_id, session_id).
 """
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -171,7 +171,11 @@ async def test_execute_edit_video_forwards_origin_platform(
     msg = _make_message("edit_video", context={"origin_platform": "telegram"})
     msg.payload["video_ref"] = "clip.mp4"
 
-    await agent.execute(msg)
+    with patch(
+        "src.agents.video_generation_agent.probe_video_duration_s",
+        new=AsyncMock(return_value=5.0),
+    ):
+        await agent.execute(msg)
 
     assert mock_video_port.edit_video.call_args.kwargs["origin_platform"] == "telegram"
 
@@ -396,7 +400,11 @@ async def test_execute_edit_video_happy_path(mock_llm, mock_prompt_builder, mock
 
     msg = _make_message("edit_video", query="make the sky sunset orange")
     msg.payload["video_ref"] = "clip.mp4"
-    response = await agent.execute(msg)
+    with patch(
+        "src.agents.video_generation_agent.probe_video_duration_s",
+        new=AsyncMock(return_value=5.0),
+    ):
+        response = await agent.execute(msg)
 
     assert response.status == AgentStatus.SUCCESS
     mock_file_conversion.resolve_bytes.assert_awaited_once_with("clip.mp4", "user123")
@@ -479,6 +487,72 @@ async def test_execute_edit_video_port_raises_fails(mock_llm, mock_prompt_builde
 
     msg = _make_message("edit_video")
     msg.payload["video_ref"] = "clip.mp4"
-    response = await agent.execute(msg)
+    with patch(
+        "src.agents.video_generation_agent.probe_video_duration_s",
+        new=AsyncMock(return_value=5.0),
+    ):
+        response = await agent.execute(msg)
 
     assert response.status == AgentStatus.FAILED
+
+
+async def test_execute_edit_video_source_too_long_fails_without_calling_port(
+    mock_llm, mock_prompt_builder, mock_video_port,
+):
+    """xAI hard-rejects edit_video source videos over ~8s (live-confirmed 2026-08-24:
+    'Maximum duration is 8.7 seconds') — probe and fail fast rather than wasting a
+    paid xAI call and a multi-second round trip."""
+    mock_file_conversion = AsyncMock(spec=FileConversionService)
+    mock_file_conversion.resolve_bytes.return_value = b"source-video-bytes"
+    agent = VideoGenerationAgent(
+        config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
+        execution_context=_make_execution_context(mock_llm),
+        video_port=mock_video_port,
+        prompt_builder=mock_prompt_builder,
+        user_id="user123",
+        file_conversion=mock_file_conversion,
+        max_duration_s=10,
+    )
+
+    msg = _make_message("edit_video")
+    msg.payload["video_ref"] = "clip.mp4"
+    with patch(
+        "src.agents.video_generation_agent.probe_video_duration_s",
+        new=AsyncMock(return_value=12.4),
+    ):
+        response = await agent.execute(msg)
+
+    assert response.status == AgentStatus.FAILED
+    assert "8 seconds" in response.error
+    assert "12.4" in response.error
+    mock_video_port.edit_video.assert_not_awaited()
+
+
+async def test_execute_edit_video_probe_failure_does_not_block(
+    mock_llm, mock_prompt_builder, mock_video_port,
+):
+    """probe_video_duration_s returning None (ffprobe unavailable/failed) must NOT
+    block the edit — xAI's own real-time check is the fallback authority."""
+    mock_video_port.edit_video.return_value = "req-edit2"
+    mock_file_conversion = AsyncMock(spec=FileConversionService)
+    mock_file_conversion.resolve_bytes.return_value = b"source-video-bytes"
+    agent = VideoGenerationAgent(
+        config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
+        execution_context=_make_execution_context(mock_llm),
+        video_port=mock_video_port,
+        prompt_builder=mock_prompt_builder,
+        user_id="user123",
+        file_conversion=mock_file_conversion,
+        max_duration_s=10,
+    )
+
+    msg = _make_message("edit_video")
+    msg.payload["video_ref"] = "clip.mp4"
+    with patch(
+        "src.agents.video_generation_agent.probe_video_duration_s",
+        new=AsyncMock(return_value=None),
+    ):
+        response = await agent.execute(msg)
+
+    assert response.status == AgentStatus.SUCCESS
+    mock_video_port.edit_video.assert_awaited_once()
