@@ -576,9 +576,16 @@ class WorkerHandler:
         logger.error(
             f"[VideoGeneration] {result.status}: request={request_id[:16]}, error={result.error}"
         )
+        # result.error carries xAI's actual rejection reason (e.g. "Video is too
+        # long. Maximum duration is 8.7 seconds.") — surface it verbatim instead of
+        # a generic apology, so the user (and the formatter agent relaying this)
+        # knows exactly what to fix, not just that something failed.
+        alert = "Video generation did not complete — the AI provider returned an error."
+        if result.error:
+            alert += f" Reason: {result.error}"
         await self._notification.notify(
             user_id=user_id, account_id=account_id,
-            system_alert="Video generation did not complete — the AI provider returned an error.",
+            system_alert=alert,
             kind=NotificationKind.DEEP_RESEARCH,
             channel_id_override=origin_channel_id,
             platform_override=origin_platform,

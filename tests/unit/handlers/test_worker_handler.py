@@ -549,6 +549,33 @@ class TestHandleVideoGenerationPolling:
         ns.notification.notify.assert_awaited_once()
         ns.task_dispatch.enqueue_video_generation_polling.assert_not_awaited()
 
+    async def test_failed_includes_provider_error_reason_in_alert(self):
+        """result.error carries xAI's actual rejection reason (e.g. duration cap) —
+        must be surfaced verbatim, not swallowed into a generic apology."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(
+                status="failed", error="Video is too long. Maximum duration is 8.7 seconds.",
+            )
+        )
+
+        result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
+
+        assert status == 200
+        alert = ns.notification.notify.call_args.kwargs["system_alert"]
+        assert "Video is too long. Maximum duration is 8.7 seconds." in alert
+
+    async def test_expired_with_no_error_text_uses_generic_alert_only(self):
+        # Guard against the "Reason:" suffix appearing for an empty error string.
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(return_value=VideoPollResult(status="expired", error=""))
+
+        result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
+
+        assert status == 200
+        alert = ns.notification.notify.call_args.kwargs["system_alert"]
+        assert "Reason:" not in alert
+
     async def test_failed_forwards_origin_platform_to_notify(self):
         worker, ns = _make_worker()
         ns.video_port.get_status = AsyncMock(

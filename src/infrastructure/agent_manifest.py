@@ -650,6 +650,10 @@ VIDEO_GENERATION = AgentDescriptor(
         Intent.EDIT_VIDEO: (
             "Modifies an existing uploaded video via a text instruction, preserving "
             "the rest of the scene. Delivery is asynchronous, same as generate_video. "
+            "Source video must be 8 seconds or shorter (xAI hard limit, confirmed "
+            "live 2026-08-24: 'Maximum duration is 8.7 seconds' — treat 8s as the "
+            "safe ceiling to tell the user, not 8.7). If the user's video is "
+            "longer, say so before delegating rather than attempting it. "
             'Requires: context={"video_ref": "<filename from [File: name (size)]>"}'
         ),
     },
