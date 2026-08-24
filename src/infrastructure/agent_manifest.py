@@ -567,7 +567,13 @@ IMAGE_GENERATION = AgentDescriptor(
             "user. Pass the precise instruction as query, and the filename(s) from "
             "[File: name (size)] as context.image_refs (array, up to 3 images — "
             "list them in the order they should be referenced). "
-            'Requires: context={"image_refs": ["<filename1>", "<filename2>"]}'
+            'Requires: context={"image_refs": ["<filename1>", "<filename2>"]} '
+            "Also accepts optional context={\"resolution\": \"1k\"|\"2k\", \"quality\": "
+            "\"low\"|\"medium\"} — pass ONLY when the user explicitly stated a specific "
+            "size or quality (e.g. 'upscale this', 'best resolution for printing'); do "
+            "not infer one from how the request sounds. Editing text describing size "
+            "('make it print quality') has NO effect on output pixels by itself — the "
+            "structured context field is the only thing that actually changes it."
         ),
     },
     context_schemas={
@@ -589,6 +595,14 @@ IMAGE_GENERATION = AgentDescriptor(
                     "Filenames from [File: name (size)] labels — 1 to 3 reference "
                     "images to edit, in the order they should be referenced."
                 ),
+            },
+            "resolution": {
+                "type": "string",
+                "description": "Explicit resolution (1k/2k) — ONLY if the user stated one.",
+            },
+            "quality": {
+                "type": "string",
+                "description": "Explicit quality (low/medium) — ONLY if the user stated one.",
             },
         },
     },

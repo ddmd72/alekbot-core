@@ -232,7 +232,12 @@ class ImageGenerationAgent(BaseAgent):
         ]
 
         try:
-            image = await self._image_port.edit(prompt, reference_images=reference_images)
+            image = await self._image_port.edit(
+                prompt,
+                reference_images=reference_images,
+                resolution=self._resolve_resolution(message),
+                quality=self._resolve_quality(message),
+            )
         except Exception as e:
             self._on_agent_error(e, "image_edit")
             return AgentResponse.failure(
@@ -268,6 +273,11 @@ class ImageGenerationAgent(BaseAgent):
         # awaited, not detached, per FirestoreQuotaService.record_usage's own
         # docstring (a fire-and-forget task past the request boundary is starved
         # by Cloud Run CPU throttling and lost on instance recycle).
+        # resolution/quality re-resolved from the same message the execute path
+        # already resolved them from (pure function of message.context, so this
+        # is guaranteed consistent with whatever was actually sent to the port)
+        # — the recorded cost must reflect the tier actually billed, not a
+        # hardcoded average (see domain/billing.py's tiered pricing table).
         if self._quota_service:
             account_id = message.context.get("account_id", "")
             if account_id:
@@ -277,7 +287,11 @@ class ImageGenerationAgent(BaseAgent):
                     if intent_name == Intent.EDIT_IMAGE
                     else IMAGE_GENERATE_MODEL
                 )
-                cost = calculate_external_cost(service_key)
+                cost = calculate_external_cost(
+                    service_key,
+                    resolution=self._resolve_resolution(message),
+                    quality=self._resolve_quality(message),
+                )
                 await self._quota_service.record_usage(
                     account_id=account_id, model=service_key, tokens=0, cost=cost,
                 )

@@ -162,7 +162,28 @@ async def test_edit_sends_correct_json_body(adapter):
     expected_b64 = base64.b64encode(b"source-bytes").decode("ascii")
     assert body["image"]["url"] == f"data:image/png;base64,{expected_b64}"
     assert "images" not in body
+    # Confirmed live 2026-08-24 (see class docstring in domain/billing.py) that
+    # /v1/images/edits accepts resolution/quality — sent with their defaults.
+    assert body["resolution"] == "1k"
+    assert body["quality"] == "medium"
     assert result == GeneratedImage(data=_FAKE_PNG_BYTES, mime_type="image/png")
+
+
+@pytest.mark.asyncio
+async def test_edit_sends_explicit_resolution_and_quality(adapter):
+    captured = {}
+
+    async def mock_post(path, **kwargs):
+        captured.update(kwargs)
+        return _images_response()
+
+    adapter._client.post = AsyncMock(side_effect=mock_post)
+    ref = ReferenceImage(data=b"source-bytes", mime_type="image/png")
+
+    await adapter.edit("remove the background", reference_images=[ref], resolution="2k", quality="low")
+
+    assert captured["body"]["resolution"] == "2k"
+    assert captured["body"]["quality"] == "low"
 
 
 @pytest.mark.asyncio
