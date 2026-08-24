@@ -13,6 +13,11 @@ from ..domain.billing import BillingAccount
 from ..utils.logger import logger
 
 
+# System default for VideoGenerationAgent's duration hard cap (seconds).
+# See docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.11 decision #10.
+DEFAULT_MAX_VIDEO_DURATION_S = 10
+
+
 class ConfigurationService:
     """
     Configuration inheritance service.
@@ -312,6 +317,43 @@ class ConfigurationService:
             f"🔍 Using SYSTEM semantic_search_limit={search_config.DEFAULT_SEMANTIC_SEARCH_LIMIT}"
         )
         return search_config.DEFAULT_SEMANTIC_SEARCH_LIMIT
+
+    def get_max_video_duration(
+        self,
+        user_config: UserBotConfig,
+        account_defaults: Optional[UserBotConfig] = None
+    ) -> int:
+        """
+        Resolve the video-generation duration hard cap with 3-level priority.
+
+        Priority (highest to lowest):
+        1. USER override (user_config.max_video_duration_s)
+        2. ACCOUNT default (account_defaults.max_video_duration_s)
+        3. SYSTEM default (DEFAULT_MAX_VIDEO_DURATION_S)
+
+        RFC: docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.11 decision #10
+
+        Args:
+            user_config: User's bot configuration
+            account_defaults: Account-level defaults (optional)
+
+        Returns:
+            Resolved max video duration in seconds.
+        """
+        if user_config.max_video_duration_s is not None:
+            logger.debug(
+                f"🎬 Using USER max_video_duration_s={user_config.max_video_duration_s}"
+            )
+            return user_config.max_video_duration_s
+
+        if account_defaults and account_defaults.max_video_duration_s is not None:
+            logger.debug(
+                f"🎬 Using ACCOUNT max_video_duration_s={account_defaults.max_video_duration_s}"
+            )
+            return account_defaults.max_video_duration_s
+
+        logger.debug(f"🎬 Using SYSTEM max_video_duration_s={DEFAULT_MAX_VIDEO_DURATION_S}")
+        return DEFAULT_MAX_VIDEO_DURATION_S
 
     def get_biographical_cache_limit(
         self,

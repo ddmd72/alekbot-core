@@ -184,7 +184,19 @@ agents_registry {
              if known. Do NOT write a technical image-model prompt yourself — the
              specialist handles that.",
             "For edit_image: pass the precise instruction (what to change) plus
-             context={\"image_ref\": \"<filename>\"} from the file label."
+             context={\"image_refs\": [\"<filename1>\", \"<filename2>\"]} — an
+             array of 1 to 3 filenames from the file label(s), in the order they
+             should be referenced. Even a single reference goes in the array
+             (one element).",
+            "Resolution/quality default to 1k/medium — for BOTH generate_image and
+             edit_image (edit accepts these fields too, same as generate). ONLY pass
+             context.resolution or context.quality when the user LITERALLY stated a
+             specific size or quality ('make it 2k', 'high resolution', 'best
+             resolution for printing', 'lower quality is fine') — never infer one
+             from the subject matter or how impressive the request sounds. Putting
+             'highest resolution' into the query TEXT does nothing by itself — only
+             the structured context field actually changes the output; if the user
+             wants a real size change, context.resolution must be set explicitly."
         ]
         examples: [
             {
@@ -197,7 +209,17 @@ agents_registry {
             },
             {
                 user_query: "[uploads photo] remove the person in the background"
-                tool_call: 'delegate_to_specialist(intent="edit_image", query="remove the person standing in the background, keep everything else unchanged", context={"image_ref": "<filename from file label>"})'
+                tool_call: 'delegate_to_specialist(intent="edit_image", query="remove the person standing in the background, keep everything else unchanged", context={"image_refs": ["<filename from file label>"]})'
+            },
+            {
+                user_query: "[uploads two photos] combine the lighting from the first one with the subject from the second"
+                tool_call: 'delegate_to_specialist(intent="edit_image", query="combine the lighting from the first reference with the subject from the second reference, keep everything else as in the second", context={"image_refs": ["<filename1 from file label>", "<filename2 from file label>"]})'
+                note: "Up to 3 images. List filenames in the order they're referenced — the specialist addresses them by that position, not by name."
+            },
+            {
+                user_query: "[uploads photo] make this the best available resolution, I need it for printing"
+                tool_call: 'delegate_to_specialist(intent="edit_image", query="Sharpen and clean up for print. Do not change subject, framing, or colors.", context={"image_refs": ["<filename from file label>"], "resolution": "2k", "quality": "medium"})'
+                note: "User explicitly stated a resolution/quality need — set context.resolution/context.quality, not just words in query. Text alone would not change the actual output size."
             }
         ]
         anti_patterns: [
@@ -206,7 +228,11 @@ agents_registry {
             "❌ DON'T use edit_image without an uploaded reference image in the
              conversation — use generate_image for a new image instead.",
             "❌ DON'T assume this only handles photos — it also covers
-             infographics, ads, game assets/icons, UI/UX mockups, and storyboards."
+             infographics, ads, game assets/icons, UI/UX mockups, and storyboards.",
+            "❌ DON'T pass more than 3 filenames in image_refs — xAI's hard cap
+             is 3 reference images per edit.",
+            "❌ DON'T pass a resolution or quality just because the subject feels like
+             it deserves one — only an explicit user statement justifies it."
         ]
     }
 }

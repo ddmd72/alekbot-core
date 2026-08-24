@@ -102,3 +102,13 @@ def test_user_bot_config_prompt_preferences_default():
 def test_prompt_preferences_custom_kernel():
     prefs = PromptPreferences(custom_kernel_id="custom_kernel_1")
     assert prefs.custom_kernel_id == "custom_kernel_1"
+
+
+def test_max_video_duration_s_defaults_to_none():
+    config = UserBotConfig()
+    assert config.max_video_duration_s is None
+
+
+def test_max_video_duration_s_accepts_override():
+    config = UserBotConfig(max_video_duration_s=20)
+    assert config.max_video_duration_s == 20
