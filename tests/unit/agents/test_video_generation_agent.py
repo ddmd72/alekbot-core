@@ -1,10 +1,9 @@
 """
 Unit tests for VideoGenerationAgent.
 
-Covers (generate_video only — edit_video tests are in Task 7's additions to
-this file):
-- can_handle: generate_video with query -> True; empty query, unknown intent,
-  edit_video (not yet supported in this task) -> False
+Covers:
+- can_handle: generate_video with query -> True; empty query, unknown intent -> False;
+  edit_video with video_ref -> True
 - execute generate_video: LLM call #1 crafts {video_prompt, aspect_ratio},
   port.create_video() called with resolved duration/resolution, ACK response
   (no delivery_items)
@@ -16,8 +15,12 @@ this file):
 - Prompt builder failure -> AgentResponse.failure(), no silent fallback
 - Malformed/empty structured JSON from crafting call -> failure, no create_video() call
 - Port create_video() raises -> failure response
+- execute edit_video: video_ref resolved via FileConversionService.resolve_bytes(),
+  port.edit_video() called (never receives duration/resolution), ACK response
+- edit_video missing video_ref -> failure before the (paid) crafting LLM call runs
+- edit_video resolve_bytes()/port.edit_video() failures -> failure response
 
-NOTE on context_schemas fields (duration/resolution/image_ref): these are
+NOTE on context_schemas fields (duration/resolution/image_ref/video_ref): these are
 delivered to the agent via AgentMessage.payload in production (AgentCoordinator
 spreads the LLM's context={} tool-call argument into payload, NOT into
 message.context — see AgentCoordinator._execute_sync/_execute_async's "params"
@@ -132,9 +135,10 @@ async def test_can_handle_unknown_intent(agent):
     assert await agent.can_handle(_make_message("some_other_intent")) is False
 
 
-async def test_can_handle_edit_video_not_yet_supported(agent):
-    # edit_video support lands in Task 7 — this task's can_handle must not accept it.
-    assert await agent.can_handle(_make_message("edit_video")) is False
+async def test_can_handle_edit_video_with_video_ref(agent):
+    msg = _make_message("edit_video")
+    msg.payload["video_ref"] = "clip.mp4"
+    assert await agent.can_handle(msg) is True
 
 
 # ============================================================================
@@ -263,5 +267,87 @@ async def test_execute_port_create_video_raises_fails(agent, mock_video_port):
     mock_video_port.create_video.side_effect = RuntimeError("xAI 503")
 
     response = await agent.execute(_make_message("generate_video"))
+
+    assert response.status == AgentStatus.FAILED
+
+
+# ============================================================================
+# execute — edit_video
+# ============================================================================
+
+async def test_execute_edit_video_happy_path(mock_llm, mock_prompt_builder, mock_video_port):
+    mock_video_port.edit_video.return_value = "req-edit1"
+    mock_file_conversion = AsyncMock(spec=FileConversionService)
+    mock_file_conversion.resolve_bytes.return_value = b"source-video-bytes"
+    agent = VideoGenerationAgent(
+        config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
+        execution_context=_make_execution_context(mock_llm),
+        video_port=mock_video_port,
+        prompt_builder=mock_prompt_builder,
+        user_id="user123",
+        file_conversion=mock_file_conversion,
+        max_duration_s=10,
+    )
+
+    msg = _make_message("edit_video", query="make the sky sunset orange")
+    msg.payload["video_ref"] = "clip.mp4"
+    response = await agent.execute(msg)
+
+    assert response.status == AgentStatus.SUCCESS
+    mock_file_conversion.resolve_bytes.assert_awaited_once_with("clip.mp4", "user123")
+    call_kwargs = mock_video_port.edit_video.call_args.kwargs
+    assert call_kwargs["video_mime_type"] == "video/mp4"
+    assert response.result == {"status": "started", "request_id": "req-edit1"}
+    # edit_video's port call must never receive duration/resolution — the port
+    # method has no such parameters (editing preserves the source's own length).
+    assert "duration" not in call_kwargs
+    assert "resolution" not in call_kwargs
+
+
+async def test_execute_edit_video_missing_video_ref_fails(agent):
+    response = await agent.execute(_make_message("edit_video"))
+
+    assert response.status == AgentStatus.FAILED
+    assert "video_ref" in response.error
+
+
+async def test_execute_edit_video_resolve_bytes_failure(mock_llm, mock_prompt_builder, mock_video_port):
+    mock_file_conversion = AsyncMock(spec=FileConversionService)
+    mock_file_conversion.resolve_bytes.side_effect = FileNotFoundError("no such file")
+    agent = VideoGenerationAgent(
+        config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
+        execution_context=_make_execution_context(mock_llm),
+        video_port=mock_video_port,
+        prompt_builder=mock_prompt_builder,
+        user_id="user123",
+        file_conversion=mock_file_conversion,
+        max_duration_s=10,
+    )
+
+    msg = _make_message("edit_video")
+    msg.payload["video_ref"] = "missing.mp4"
+    response = await agent.execute(msg)
+
+    assert response.status == AgentStatus.FAILED
+    mock_video_port.edit_video.assert_not_awaited()
+
+
+async def test_execute_edit_video_port_raises_fails(mock_llm, mock_prompt_builder, mock_video_port):
+    mock_video_port.edit_video.side_effect = RuntimeError("xAI 503")
+    mock_file_conversion = AsyncMock(spec=FileConversionService)
+    mock_file_conversion.resolve_bytes.return_value = b"source-video-bytes"
+    agent = VideoGenerationAgent(
+        config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
+        execution_context=_make_execution_context(mock_llm),
+        video_port=mock_video_port,
+        prompt_builder=mock_prompt_builder,
+        user_id="user123",
+        file_conversion=mock_file_conversion,
+        max_duration_s=10,
+    )
+
+    msg = _make_message("edit_video")
+    msg.payload["video_ref"] = "clip.mp4"
+    response = await agent.execute(msg)
 
     assert response.status == AgentStatus.FAILED

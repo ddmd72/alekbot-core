@@ -70,7 +70,7 @@ class VideoGenerationAgent(BaseAgent):
 
     async def can_handle(self, message: AgentMessage) -> bool:
         intent_name = message.payload.get("intent")
-        if intent_name != Intent.GENERATE_VIDEO:
+        if intent_name not in (Intent.GENERATE_VIDEO, Intent.EDIT_VIDEO):
             return False
         return bool(message.payload.get("query"))
 
@@ -85,6 +85,22 @@ class VideoGenerationAgent(BaseAgent):
             )
 
         self._on_agent_start(query)
+
+        intent_name = message.payload.get("intent")
+        if intent_name == Intent.EDIT_VIDEO:
+            # Validated before any LLM call — same "fail before the paid crafting
+            # call" pattern as ImageGenerationAgent's image_refs check. video_ref
+            # is a context_schemas-declared field — see _resolve_duration's comment
+            # below for why it's read from message.payload, not message.context.
+            if not message.payload.get("video_ref"):
+                return AgentResponse.failure(
+                    task_id=message.task_id,
+                    agent_id=self.agent_id,
+                    error=(
+                        "video_ref is required for edit_video. Look for [File: name (size)] "
+                        'in the conversation and pass the filename as context={"video_ref": "<filename>"}.'
+                    ),
+                )
 
         try:
             system_prompt = await self.prompt_builder.build_for_agent(
@@ -114,6 +130,8 @@ class VideoGenerationAgent(BaseAgent):
             )
 
         video_prompt, aspect_ratio = crafted
+        if intent_name == Intent.EDIT_VIDEO:
+            return await self._execute_edit(message, video_prompt)
         return await self._execute_generate(message, video_prompt, aspect_ratio)
 
     async def _craft_prompt(self, system_prompt: str, query: str) -> LLMResponse:
@@ -210,4 +228,46 @@ class VideoGenerationAgent(BaseAgent):
             result={"status": "started", "request_id": request_id},
             confidence=1.0,
             metadata={"duration_s": duration, "resolution": resolution, "model": self.model_name},
+        )
+
+    async def _execute_edit(self, message: AgentMessage, prompt: str) -> AgentResponse:
+        # context_schemas-declared field — see _resolve_duration's comment above.
+        video_ref = message.payload.get("video_ref")
+        # Genuine coordinator-level field (not context_schemas-declared) — stays
+        # on message.context, same as everywhere else in this file.
+        user_id = message.context.get("user_id", "")
+        try:
+            video_data = await self._file_conversion.resolve_bytes(video_ref, user_id)
+        except Exception as e:
+            self._on_agent_error(e, f"resolve video_ref {video_ref}")
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=f"Could not read reference video '{video_ref}': {type(e).__name__}.",
+            )
+        video_mime_type = mimetypes.guess_type(video_ref)[0] or "video/mp4"
+
+        try:
+            request_id = await self._video_port.edit_video(
+                prompt, video_data,
+                message.context.get("user_id", ""),
+                message.context.get("account_id", ""),
+                video_mime_type=video_mime_type,
+                session_id=message.context.get("session_id"),
+            )
+        except Exception as e:
+            self._on_agent_error(e, "edit_video")
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=f"Video edit failed to start: {type(e).__name__}.",
+            )
+
+        self._on_agent_success(len(prompt), 0)
+        return AgentResponse.success(
+            task_id=message.task_id,
+            agent_id=self.agent_id,
+            result={"status": "started", "request_id": request_id},
+            confidence=1.0,
+            metadata={"model": self.model_name},
         )
