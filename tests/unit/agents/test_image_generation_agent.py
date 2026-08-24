@@ -189,13 +189,22 @@ async def test_execute_generate_image_default_resolution_and_quality(agent, mock
 
 
 async def test_execute_generate_image_explicit_resolution_is_honored(agent, mock_image_port):
-    await agent.execute(_make_message("generate_image", context={"resolution": "2k"}))
+    # AgentCoordinator spreads the LLM's context={} argument into
+    # message.payload, not message.context — see _resolve_resolution's
+    # docstring. Same pattern already used for image_refs in this file.
+    msg = _make_message("generate_image")
+    msg.payload["resolution"] = "2k"
+
+    await agent.execute(msg)
 
     assert mock_image_port.generate.call_args.kwargs["resolution"] == "2k"
 
 
 async def test_execute_generate_image_explicit_quality_is_honored(agent, mock_image_port):
-    await agent.execute(_make_message("generate_image", context={"quality": "low"}))
+    msg = _make_message("generate_image")
+    msg.payload["quality"] = "low"
+
+    await agent.execute(msg)
 
     assert mock_image_port.generate.call_args.kwargs["quality"] == "low"
 
@@ -214,8 +223,11 @@ async def test_execute_generate_image_records_cost_via_quota_service(agent):
 
 async def test_execute_generate_image_records_cost_for_explicit_tier(agent):
     agent._quota_service = AsyncMock()
+    msg = _make_message("generate_image")
+    msg.payload["resolution"] = "2k"
+    msg.payload["quality"] = "low"
 
-    await agent.execute(_make_message("generate_image", context={"resolution": "2k", "quality": "low"}))
+    await agent.execute(msg)
 
     agent._quota_service.record_usage.assert_awaited_once_with(
         account_id="acc1", model="grok-imagine-image-2.0", tokens=0, cost=0.06,
@@ -483,10 +495,10 @@ async def test_execute_edit_image_passes_resolution_and_quality_to_port(
     agent_with_files, mock_image_port, mock_file_conversion,
 ):
     mock_image_port.edit.return_value = GeneratedImage(data=b"edited-bytes", mime_type="image/png")
-    msg = _make_message(
-        "edit_image", context={"image_refs": ["photo.png"], "resolution": "2k", "quality": "low"},
-    )
+    msg = _make_message("edit_image")
     msg.payload["image_refs"] = ["photo.png"]
+    msg.payload["resolution"] = "2k"
+    msg.payload["quality"] = "low"
 
     await agent_with_files.execute(msg)
 
@@ -514,10 +526,10 @@ async def test_execute_edit_image_records_cost_for_explicit_tier(
 ):
     mock_image_port.edit.return_value = GeneratedImage(data=b"edited-bytes", mime_type="image/png")
     agent_with_files._quota_service = AsyncMock()
-    msg = _make_message(
-        "edit_image", context={"image_refs": ["photo.png"], "resolution": "2k", "quality": "medium"},
-    )
+    msg = _make_message("edit_image")
     msg.payload["image_refs"] = ["photo.png"]
+    msg.payload["resolution"] = "2k"
+    msg.payload["quality"] = "medium"
 
     await agent_with_files.execute(msg)
 

@@ -178,10 +178,18 @@ class ImageGenerationAgent(BaseAgent):
         return await self._call_llm(request)
 
     def _resolve_resolution(self, message: AgentMessage) -> str:
-        return message.context.get("resolution") or "1k"
+        # AgentCoordinator spreads the LLM's delegate_to_specialist context={}
+        # argument into message.payload, NOT message.context (message.context
+        # holds coordinator-level fields — session_id, account_id, etc. — see
+        # AgentCoordinator._execute_async/_execute_sync's "params" handling).
+        # Same place image_refs is read from, for the same reason. Reading
+        # message.context here was a bug (shipped, then live-verified broken
+        # 2026-08-24: the orchestrator correctly requested resolution="2k" but
+        # the agent silently fell back to the "1k" default every time).
+        return message.payload.get("resolution") or "1k"
 
     def _resolve_quality(self, message: AgentMessage) -> str:
-        return message.context.get("quality") or "medium"
+        return message.payload.get("quality") or "medium"
 
     async def _execute_generate(self, message: AgentMessage, prompt: str) -> AgentResponse:
         start_time = time.time()
