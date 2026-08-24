@@ -372,6 +372,27 @@ async def main():
         else:
             logger.info("ℹ️ Image generation not configured (XAI_API_KEY not set)")
 
+        # Video generation adapter — reuses the same XAI_API_KEY secret as
+        # GrokImageAdapter/GrokAdapter. Separate registry/adapter: VideoGenerationPort
+        # is a structurally different port (see
+        # docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.5-3.6). Needs task_queue — the
+        # adapter enqueues the first poll tick as a side effect of submission.
+        # GrokVideoAdapter.__init__ type-hints task_queue: TaskQueue (Task 1) — the raw
+        # port, not the TaskDispatchService services/-layer wrapper (which also isn't
+        # constructed until much later in this function, after UserAgentFactory). Passing
+        # agent_task_queue (already constructed above, the actual TaskQueue implementation)
+        # both satisfies the adapter's real dependency and keeps adapters/ depending only
+        # on ports/, not services/.
+        video_registry = ProviderRegistry()
+        if config.get("XAI_API_KEY"):
+            from src.adapters.grok_video_adapter import GrokVideoAdapter
+            video_registry.register(
+                "grok", GrokVideoAdapter(api_key=config["XAI_API_KEY"], task_queue=agent_task_queue)
+            )
+            logger.info("🎬 Video generation adapter registered: provider=grok")
+        else:
+            logger.info("ℹ️ Video generation not configured (XAI_API_KEY not set)")
+
         # GCS media adapter for HTML report uploads (optional — requires GCS_MEDIA_BUCKET).
         # service_account_email enables keyless V4 signed-URL minting via IAM signBlob
         # on Cloud Run (for the /f/<token> capability route).
@@ -468,6 +489,7 @@ async def main():
             **container.agent_services(),
             job_registry=job_registry,
             image_registry=image_registry,
+            video_registry=video_registry,
             task_queue=agent_task_queue,
             anthropic_client=anthropic_client,
             quota_service=quota_service,
@@ -636,6 +658,8 @@ async def main():
             task_dispatch=_task_dispatch_service,
             smart_retry_service=_smart_retry_service,
             job_registry=job_registry,
+            video_registry=video_registry,
+            quota_service=quota_service,
             media_storage=gcs_media_adapter,
             task_setup=task_setup_service,
             task_indexing=container.task_indexing,
