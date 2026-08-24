@@ -15,6 +15,9 @@ class VideoPollResult:
     data: Optional[bytes] = None   # populated only when status == "done"
     mime_type: str = "video/mp4"   # unconfirmed against a live response — see RFC §10 #2
     error: str = ""                # populated on "failed"
+    duration_s: Optional[int] = None  # populated on "done" when xAI's response reports it —
+    # the authoritative real duration (vs. the poll payload's submission-time estimate,
+    # which is wrong for edit_video since that call has no duration param to begin with).
 
 
 class VideoGenerationPort(ABC):

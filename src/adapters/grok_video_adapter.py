@@ -28,8 +28,10 @@ against the URL xAI returns — that URL is a CDN link, NOT under api.x.ai's
 base_url/auth scope, so it cannot go through self._client.post()/.get(). There is
 no existing httpx.AsyncClient convention elsewhere in src/adapters/ (confirmed by
 grep) — this is a new, narrowly-scoped pattern: one GET, no pooling/retry needed
-since VideoGenerationAgent.RETRY_POLICY is NO_RETRY_POLICY and a failed download
-just surfaces as a "failed" poll result on the next WorkerHandler attempt.
+since VideoGenerationAgent.RETRY_POLICY is NO_RETRY_POLICY. A failed download (CDN
+blip, expired URL, xAI 5xx) is caught here and surfaces as a "failed" poll result —
+WorkerHandler._handle_video_generation_polling also wraps the whole get_status()
+call as a belt-and-suspenders backstop for any other unexpected exception.
 """
 import base64
 from typing import Optional
@@ -42,6 +44,14 @@ from ..ports.video_generation_port import VideoGenerationPort, VideoPollResult
 from ..utils.logger import logger
 
 _MODEL = "grok-imagine-video-1.5"
+# edit_video uses a DIFFERENT model id than create_video — evidenced live 2026-08-24:
+# a real edit_video call with _MODEL got a 400 "Video editing is not supported for
+# this model." docs.x.ai's REST reference example body for /v1/videos/edits uses
+# "grok-imagine-video" (no version suffix), while the /v1/videos/generations example
+# uses "grok-imagine-video-1.5". HYPOTHESIS, not confirmed against a live edit_video
+# call yet (docs.x.ai examples are informal, not a strict spec) — do not "fix" this
+# back to matching _MODEL without re-checking against a real xAI response first.
+_EDIT_MODEL = "grok-imagine-video"
 _DEFAULT_DURATION_S = 5
 
 
@@ -85,14 +95,19 @@ class GrokVideoAdapter(VideoGenerationPort):
             body["image"] = {"url": f"data:{image_mime_type};base64,{b64}"}
 
         response = await self._client.post("/videos/generations", cast_to=object, body=body)
-        request_id = response["request_id"]
+        request_id = response.get("request_id")
+        if not request_id:
+            raise RuntimeError(f"xAI response missing request_id: {response!r}")
 
+        # Logged BEFORE enqueue: xAI has already accepted (and will bill) the render
+        # at this point — if enqueue itself raises, the request_id must still survive
+        # in logs for manual recovery.
+        logger.info("[GrokVideoAdapter] create_video submitted: request_id=%s", request_id[:16])
         await self._task_queue.enqueue_video_generation_polling(
             request_id=request_id, user_id=user_id, account_id=account_id,
             session_id=session_id or "", duration_s=duration if duration is not None else _DEFAULT_DURATION_S,
             origin_platform=origin_platform,
         )
-        logger.info("[GrokVideoAdapter] create_video submitted: request_id=%s", request_id[:16])
         return request_id
 
     async def edit_video(
@@ -102,7 +117,7 @@ class GrokVideoAdapter(VideoGenerationPort):
     ) -> str:
         b64 = base64.b64encode(video_data).decode("ascii")
         body = {
-            "model": _MODEL,
+            "model": _EDIT_MODEL,
             "prompt": prompt,
             # Same {"url": ...} wrapping as create_video's "image" field — same xAI
             # REST convention, confirmed against the same live 422 + docs page.
@@ -110,13 +125,21 @@ class GrokVideoAdapter(VideoGenerationPort):
         }
 
         response = await self._client.post("/videos/edits", cast_to=object, body=body)
-        request_id = response["request_id"]
+        request_id = response.get("request_id")
+        if not request_id:
+            raise RuntimeError(f"xAI response missing request_id: {response!r}")
 
+        # Logged BEFORE enqueue — see create_video's comment for why.
+        logger.info("[GrokVideoAdapter] edit_video submitted: request_id=%s", request_id[:16])
+        # No duration_s passed: edit_video has no duration param (editing preserves
+        # the source's own length, which the adapter can't know without probing the
+        # file) — the port's own default applies here. The REAL duration is picked up
+        # from xAI's "done" response in get_status() below and used at delivery time,
+        # which is the actual fix for edit_video's billing accuracy.
         await self._task_queue.enqueue_video_generation_polling(
             request_id=request_id, user_id=user_id, account_id=account_id,
             session_id=session_id or "", origin_platform=origin_platform,
         )
-        logger.info("[GrokVideoAdapter] edit_video submitted: request_id=%s", request_id[:16])
         return request_id
 
     async def get_status(self, request_id: str) -> VideoPollResult:
@@ -126,12 +149,19 @@ class GrokVideoAdapter(VideoGenerationPort):
         if status == "done":
             video = response.get("video", {})
             url = video.get("url")
+            duration_s = video.get("duration")
             if not url:
                 return VideoPollResult(status="failed", error="xAI reported done with no video.url")
-            async with httpx.AsyncClient(timeout=60.0) as http:
-                download = await http.get(url)
-                download.raise_for_status()
-            return VideoPollResult(status="done", data=download.content)
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as http:
+                    download = await http.get(url)
+                    download.raise_for_status()
+            except Exception as exc:
+                # CDN blip, expired URL, or xAI 5xx on download — a clean "failed"
+                # poll result instead of raising out of get_status() (WorkerHandler
+                # also guards this call as a backstop, but this is the primary guard).
+                return VideoPollResult(status="failed", error=f"video download failed: {exc}")
+            return VideoPollResult(status="done", data=download.content, duration_s=duration_s)
 
         if status == "failed":
             error = response.get("error", {})
