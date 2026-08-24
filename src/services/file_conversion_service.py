@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 # Object-key prefixes of system-delivered documents (MediaStoragePort), as opposed
 # to user uploads (FileStoragePort, addressed by bare filename). All carry the owner
 # user_id as the second path segment: "{prefix}/{user_id}/...".
-_DELIVERED_PREFIXES = ("docs/", "email_review/", "deep_research/")
+_DELIVERED_PREFIXES = ("docs/", "email_review/", "deep_research/", "video_generation/")
 
 
 def _is_delivered_key(ref: str) -> bool:
