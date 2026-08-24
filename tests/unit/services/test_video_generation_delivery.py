@@ -89,3 +89,23 @@ async def test_gcs_upload_failure_aborts_before_notification(mock_media_storage,
     )
 
     mock_notification.notify_document_link.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_build_link_failure_falls_back_to_key(mock_media_storage, mock_notification, mock_link_service):
+    # link_service.build_link() raises; should fall back to key and complete delivery.
+    mock_link_service.build_link.side_effect = RuntimeError("Token service unavailable")
+
+    await deliver_video(
+        video_data=b"fake-mp4-bytes", user_id="user1", account_id="acc1",
+        duration_s=5, media_storage=mock_media_storage, notification=mock_notification,
+        link_service=mock_link_service,
+    )
+
+    # Notification should still be sent with key as fallback URL
+    mock_notification.notify_document_link.assert_awaited_once()
+    call_kwargs = mock_notification.notify_document_link.call_args.kwargs
+    assert call_kwargs["url"].startswith("video_generation/user1/")  # Falls back to key
+    assert call_kwargs["user_id"] == "user1"
+    assert call_kwargs["account_id"] == "acc1"
+    assert call_kwargs["label"] == "Your generated video"

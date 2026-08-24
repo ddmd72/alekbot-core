@@ -46,7 +46,13 @@ async def deliver_video(
         logger.error("[VideoGeneration] GCS upload failed: %s", exc, exc_info=True)
         return
 
-    url = link_service.build_link(key=key, user_id=user_id) if link_service else key
+    url = key
+    if link_service:
+        try:
+            url = link_service.build_link(key=key, user_id=user_id)
+        except Exception as exc:
+            logger.error("[VideoGeneration] build_link failed, falling back to key: %s", exc, exc_info=True)
+            url = key
 
     try:
         await notification.notify_document_link(
