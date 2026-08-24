@@ -12,7 +12,7 @@ See docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.4 step 4, §3.11 decision #11.
 import datetime
 from typing import Optional
 
-from ..domain.billing import calculate_external_cost
+from ..domain.billing import VIDEO_GENERATE_MODEL, calculate_external_cost
 from ..utils.logger import logger
 
 
@@ -66,9 +66,9 @@ async def deliver_video(
 
     if quota_service:
         try:
-            cost = calculate_external_cost("grok-imagine-video-1.5", duration_s=duration_s)
+            cost = calculate_external_cost(VIDEO_GENERATE_MODEL, duration_s=duration_s)
             await quota_service.record_usage(
-                account_id=account_id, model="grok-imagine-video-1.5", tokens=0, cost=cost,
+                account_id=account_id, model=VIDEO_GENERATE_MODEL, tokens=0, cost=cost,
             )
         except Exception as exc:
             logger.error("[VideoGeneration] record_usage failed: %s", exc, exc_info=True)
