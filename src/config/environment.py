@@ -194,6 +194,15 @@ class EnvironmentConfig:
         return f"{prefix}domain_email_facts_v1"
 
     @property
+    def companion_records_collection(self) -> str:
+        """
+        Companion memory records — one doc per record, session_id-scoped.
+        RFC: docs/10_rfcs/COMPANION_AGENTS_RFC.md §6.
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}companion_records"
+
+    @property
     def oauth_credentials_collection(self) -> str:
         """
         Get OAuth credentials collection.
