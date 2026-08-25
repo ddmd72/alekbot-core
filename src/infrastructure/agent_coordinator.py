@@ -16,6 +16,7 @@ from ..utils.telemetry import start_span
 from .agent_registry import AgentRegistry, AgentDescriptor, ExecutionMode
 from ..ports.task_queue import TaskQueue
 from ..ports.agent_factory_port import AgentFactoryPort
+from ..ports.alert_sink import AlertSinkPort
 
 if TYPE_CHECKING:
     from ..agents.base_agent import BaseAgent
@@ -33,12 +34,23 @@ class AgentCoordinator:
     - Provide agent discovery
     """
 
+    # Ceiling on a single delegation chain. Generous: the deepest legitimate path today
+    # is Smart → notes → compute. It exists to catch runaway chains of all-DISTINCT
+    # agents, which the cycle check by construction never trips.
+    MAX_DELEGATION_DEPTH = 8
+
+    # Context key carrying the chain of agents already entered in this delegation.
+    # Underscore-prefixed to mark it as infrastructure bookkeeping, not agent-visible
+    # data — it rides in AgentMessage.context and must never be rendered into a prompt.
+    CALL_CHAIN_KEY = "_call_chain"
+
     def __init__(
         self,
         registry: Optional[AgentRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
         file_ref_resolver: Optional[Any] = None,
         agent_factory: Optional[AgentFactoryPort] = None,
+        alert_sink: Optional[AlertSinkPort] = None,
     ):
         """
         Initialize coordinator.
@@ -54,12 +66,16 @@ class AgentCoordinator:
             agent_factory: Optional factory port for lazy agent instantiation.
                            When set, non-eager agents are created on first delegation
                            instead of at session start.
+            alert_sink: Optional ops sink for delegation-loop alerts. Without it a
+                        refused cycle is still refused, but only to the logs — and a
+                        loop is exactly the failure nobody notices in logs.
         """
         self.agents: Dict[str, BaseAgent] = {}
         self._registry = registry
         self._task_queue = task_queue
         self._file_ref_resolver = file_ref_resolver
         self._agent_factory = agent_factory
+        self._alert_sink = alert_sink
         logger.info("🎯 AgentCoordinator initialized")
 
     def set_agent_factory(self, factory: AgentFactoryPort) -> None:
@@ -331,6 +347,7 @@ class AgentCoordinator:
         query: str,
         context: Dict[str, Any],
         calling_agent_id: str = "unknown",
+        mode_override: Optional[ExecutionMode] = None,
     ) -> AgentResponse:
         """
         Handle a delegate_to_specialist call from SmartResponseAgent.
@@ -342,9 +359,12 @@ class AgentCoordinator:
         ``infrastructure/agent_manifest.py`` — each descriptor's ``capabilities``
         dict declares the intents that agent owns. ``agent_manifest.py`` is the
         single source of truth for which agent handles which intent; this method
-        hardcodes no mapping. Then routes by the descriptor's ExecutionMode:
+        hardcodes no mapping. Then routes by ``mode_override`` when the caller gave
+        one, otherwise by the descriptor's ExecutionMode:
         - SYNC  → _execute_sync (immediate, returns result)
         - ASYNC → _execute_async (enqueue Cloud Tasks, returns ack)
+
+        Every delegation passes the cycle guard first — see ``_refuse_if_looping``.
 
         Args:
             intent:           Intent name (e.g. "search_memory", "index_gmail")
@@ -352,6 +372,11 @@ class AgentCoordinator:
             context:          Must contain user_id. May contain extra params
                               under "params" key that are spread into AgentMessage.payload.
             calling_agent_id: For logging only.
+            mode_override:    Caller's choice of SYNC/ASYNC for THIS call, overriding
+                              the intent's declared mode. None (the default) keeps the
+                              manifest's value, so callers that pass nothing are
+                              unaffected. Exists because "answer me now" vs "get back
+                              to me" is a property of the request, not of the intent.
         """
         if self._registry is None:
             logger.error("handle_delegation called but no AgentRegistry configured")
@@ -371,10 +396,25 @@ class AgentCoordinator:
                 suggestions=[i["name"] for i in self._registry.get_available_intents()]
             )
 
-        mode = manifest.capabilities[intent]
+        chain: List[str] = list(context.get(self.CALL_CHAIN_KEY) or [])
+        refusal = await self._refuse_if_looping(manifest.agent_id, chain, calling_agent_id)
+        if refusal is not None:
+            return refusal
+        # New dict, never append in place: one caller fans a tool batch out through
+        # asyncio.gather, and a shared list would let siblings write each other's chain.
+        context = {**context, self.CALL_CHAIN_KEY: [*chain, manifest.agent_id]}
+
+        declared = manifest.capabilities[intent]
+        mode = mode_override or declared
+        # Flag the override only when it DIVERGES from the manifest. Observed on the
+        # first day live: the model sets `mode` on nearly every call even though the
+        # schema says to omit it, so marking every override would bury the one case
+        # that actually changes behaviour — which is also the one that can time out.
+        divergent = mode_override is not None and mode_override != declared
         logger.info(
-            f"Delegating intent='{intent}' to agent='{manifest.agent_id}' "
-            f"mode={mode} (from {calling_agent_id})"
+            f"Delegating intent='{intent}' to agent='{manifest.agent_id}' mode={mode}"
+            f"{f' (OVERRIDE, declared {declared.value})' if divergent else ''} "
+            f"depth={len(chain) + 1} (from {calling_agent_id})"
         )
 
         # Lazy agents: instantiate on first delegation
@@ -399,6 +439,41 @@ class AgentCoordinator:
                 return await self._execute_sync(manifest.agent_id, intent, query, context)
             else:
                 return await self._execute_async(manifest.agent_id, intent, query, context, manifest.dispatch_deadline_s)
+
+    async def _refuse_if_looping(
+        self, target_agent_id: str, chain: List[str], calling_agent_id: str,
+    ) -> Optional[AgentResponse]:
+        """Refuse a delegation that would loop or run away. None means proceed.
+
+        Two checks, because neither covers the other: the chain catches a true cycle and
+        can name it, while the depth cap catches a runaway of all-distinct agents that
+        by construction never repeats.
+        """
+        if target_agent_id in chain:
+            path = " → ".join([*chain, target_agent_id])
+            reason = f"Delegation cycle refused: {path}"
+        elif len(chain) >= self.MAX_DELEGATION_DEPTH:
+            path = " → ".join([*chain, target_agent_id])
+            reason = (
+                f"Delegation depth {len(chain)} exceeds "
+                f"{self.MAX_DELEGATION_DEPTH}: {path}"
+            )
+        else:
+            return None
+
+        logger.error("🔁 [Coordinator] %s (from %s)", reason, calling_agent_id)
+        if self._alert_sink is not None:
+            try:
+                await self._alert_sink.post(f"🔁 {reason}")
+            except Exception as exc:
+                # Alerting must never be the thing that breaks the refusal.
+                logger.warning("[Coordinator] Loop alert failed: %s", exc)
+
+        return AgentResponse.failure(
+            task_id="delegation",
+            agent_id="coordinator",
+            error=reason,
+        )
 
     async def _ensure_lazy_agent(
         self, agent_type: str, context: Dict[str, Any],

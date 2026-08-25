@@ -170,26 +170,28 @@ async def main():
         else:
             logger.info("📬 Agent task queue: disabled (socket mode or no GCP project)")
 
-        logger.info("🎯 Initializing Agent Coordinator...")
-        coordinator = AgentCoordinator(
-            registry=agent_registry,
-            task_queue=agent_task_queue,
-        )
-
-        logger.info("🔧 Initializing Agent Worker Handler...")
-        # notification_service and media_storage wired below after they are created
-        agent_worker_handler = AgentWorkerHandler(coordinator=coordinator)
-
-        # Ops alert sink — shared by AlertingLLMProxy (LLM 4xx alerts), the billing daily
-        # summary, and the daily budget alert in FirestoreQuotaService. Optional: wired
-        # only when BILLING_SLACK_WEBHOOK_URL is set. Built here (before the quota
-        # service) because that is the earliest consumer.
+        # Ops alert sink — shared by the AgentCoordinator (delegation-loop alerts),
+        # AlertingLLMProxy (LLM 4xx alerts), the billing daily summary, and the daily
+        # budget alert in FirestoreQuotaService. Optional: wired only when
+        # BILLING_SLACK_WEBHOOK_URL is set. Built here because the coordinator, just
+        # below, is the earliest consumer.
         _alert_webhook = None
         _alert_webhook_url = os.getenv("BILLING_SLACK_WEBHOOK_URL")
         if _alert_webhook_url:
             from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
             _alert_webhook = SlackWebhookAdapter(_alert_webhook_url)
             logger.info("✅ Ops Slack webhook configured (billing + LLM client-error alerts)")
+
+        logger.info("🎯 Initializing Agent Coordinator...")
+        coordinator = AgentCoordinator(
+            registry=agent_registry,
+            task_queue=agent_task_queue,
+            alert_sink=_alert_webhook,
+        )
+
+        logger.info("🔧 Initializing Agent Worker Handler...")
+        # notification_service and media_storage wired below after they are created
+        agent_worker_handler = AgentWorkerHandler(coordinator=coordinator)
 
         logger.info("💳 Initializing Billing Agent...")
         quota_service = FirestoreQuotaService(account_repo, alert_sink=_alert_webhook)
