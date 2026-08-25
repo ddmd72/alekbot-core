@@ -26,7 +26,7 @@ def _env_config_stub():
     return env
 
 
-def _record(session_id="user1:C1", account_id="acc1") -> CompanionRecord:
+def _record(session_id="slack:C1", account_id="acc1") -> CompanionRecord:
     return CompanionRecord(
         session_id=session_id,
         account_id=account_id,
@@ -45,7 +45,7 @@ async def test_find_nearest_always_filters_session_id():
     stub = FirestoreCapturingStub()
     repo = FirestoreCompanionMemoryRepository(stub.build_db(), _env_config_stub())
 
-    await repo.find_nearest(session_id="user1:C1", query_vector=[0.1] * 8, limit=5)
+    await repo.find_nearest(session_id="slack:C1", query_vector=[0.1] * 8, limit=5)
 
     assert len(stub.find_nearest_calls) == 1
     FIRESTORE_COMPANION_FIND_NEAREST_FILTERS_SESSION_ID.validate(
@@ -85,6 +85,6 @@ async def test_find_nearest_returns_companion_records():
     stub = FirestoreCapturingStub()
     repo = FirestoreCompanionMemoryRepository(stub.build_db(), _env_config_stub())
 
-    results = await repo.find_nearest(session_id="user1:C1", query_vector=[0.1] * 8, limit=5)
+    results = await repo.find_nearest(session_id="slack:C1", query_vector=[0.1] * 8, limit=5)
 
     assert results == []  # stub returns no docs by default; shape-only test

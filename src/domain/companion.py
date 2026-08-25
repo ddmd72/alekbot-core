@@ -20,6 +20,8 @@ class CompanionRecord(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
 
     # Identity — session_id is the operative retrieval key (RFC §2, §6).
+    # RFC §3: platform-qualified CHANNEL key (e.g. "slack:C123"), NOT Alek's
+    # "{user_id}:{channel_id}" — a companion session has no user in the key.
     session_id: str
     account_id: str            # billing anchor + tenancy, same convention as FactEntity
     created_by_user_id: str    # attribution

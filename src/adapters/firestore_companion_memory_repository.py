@@ -41,6 +41,11 @@ class FirestoreCompanionMemoryRepository(CompanionMemoryRepository):
                 data = record.model_dump()
                 if data.get("vector") is not None:
                     data["vector"] = Vector(data["vector"])
+                else:
+                    logger.warning(
+                        "⚠️ [CompanionMemory] record %s saved with no vector — unreachable via find_nearest",
+                        record.id,
+                    )
                 doc_ref = self.collection.document(record.id)
                 batch.set(doc_ref, data)
                 written += 1
@@ -73,6 +78,7 @@ class FirestoreCompanionMemoryRepository(CompanionMemoryRepository):
             vector = data.get("vector")
             if vector is not None and not isinstance(vector, list):
                 data["vector"] = list(vector)
+            data.setdefault("id", doc.id)
             try:
                 records.append(CompanionRecord(**data))
             except Exception as exc:

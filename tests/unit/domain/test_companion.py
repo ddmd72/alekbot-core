@@ -5,7 +5,7 @@ from src.domain.companion import CompanionRecord
 
 def test_minimal_construction_generates_id_and_created_at():
     record = CompanionRecord(
-        session_id="user1:C123",
+        session_id="slack:C123",
         account_id="acc1",
         created_by_user_id="user1",
         text="Recurring subjunctive error on hypothetical clauses",
@@ -27,7 +27,7 @@ def test_no_scd2_fields():
 def test_explicit_id_and_vector():
     record = CompanionRecord(
         id="explicit-id",
-        session_id="user1:C123",
+        session_id="slack:C123",
         account_id="acc1",
         created_by_user_id="user1",
         text="text",
