@@ -213,6 +213,25 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `params`. All context fields (`origin_channel_id`, `session_id`, etc.) propagate automatically
   to downstream tasks including async Cloud Task payloads. Agents pass `context=message.context`
   — zero knowledge of routing, channels, or session format.
+- **Cycle guard** (`AgentCoordinator._refuse_if_looping`, 2026-08-25) — `context["_call_chain"]`
+  accumulates the agent ids already entered; re-entering one is refused with the path named
+  (`tutor → smart → tutor`), and `MAX_DELEGATION_DEPTH=8` additionally caps runaway chains of
+  all-distinct agents, which a cycle check by construction never trips. Refusal also posts to the
+  ops `AlertSinkPort`: a specialist failure is wrapped as a tool result and the orchestrator still
+  returns SUCCESS, so without the alert a loop is invisible. **The chain rides in `context`, so it
+  survives the Cloud Task payload** — the async loop (`A →(async)→ B →(async)→ A`) is the case this
+  exists for, since every hop acks immediately and blocks nobody. An agent that rebuilds its own
+  context instead of forwarding `message.context` silently resets the chain (that was
+  `notes_agent`'s bug). Static complement: `AgentDescriptor.allowed_intents` restricts who may call
+  what by design; the chain catches what design missed.
+- **Per-call sync/async** — `handle_delegation(..., mode_override=ExecutionMode)` overrides the
+  intent's declared mode for one call; `None` keeps the manifest value, so callers that pass
+  nothing are unaffected. The LLM chooses via `mode: "now" | "later"` on `delegate_to_specialist`
+  (plain words, not SYNC/ASYNC — the model reasons about the wait, and an unknown word falls back
+  to the manifest rather than failing). **Fan-out ignores the override** — it merges parallel
+  results, and an async leg returns an ack with nothing to merge. There is deliberately no
+  "async-locked" flag for intents that are long by nature: forcing one sync hits the agent timeout
+  and fails loudly, which is the signal to add the flag if it ever happens.
   API: `engine.execute(call_llm, base_request, context, max_turns, terminal_tool?, intent_remap?,
   intent_fanout?)`.
   Smart: passes `terminal_tool="deliver_response"`. **This branch is live and provider-dependent —
