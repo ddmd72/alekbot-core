@@ -5,7 +5,7 @@
 **Owner:** Dmytro
 **Milestone:** A second agent family
 
-**Related:** `VOICE_COMPANION_RFC.md` (§4.5 "Lelik is not an agent" is reversed here, §6),
+**Related:** `VOICE_COMPANION_RFC.md` (§4.5 "Lelik is not an agent" is reversed here, §7),
 `PLATFORM_SESSION_ISOLATION_RFC.md` (per-channel sessions), `STANDING_DIRECTIVES_RFC.md`
 (a non-biographical fact domain as prior art)
 
@@ -26,6 +26,11 @@ Today that variation is expressible only as three ad-hoc flags that do not compo
 `notify(save_history=False)` (store nothing), and `ChannelBinding` being stateless (no session
 writes, no consolidation). The last one is the trap: it conflates **"do not consolidate"** with
 **"consolidate differently"**, and a tutor needs the second.
+
+Read as one axis instead of three flags, all of them are answers to the same question — *where
+does this content land: the user's long-term store, a session-scoped long-term store, the
+short-term session buffer only, or nowhere?* — decided ad hoc at three different call sites
+instead of once. §10.3 records this explicitly and defers unifying it.
 
 ## 2. Two memory subsystems, not one configurable pipeline
 
@@ -63,7 +68,8 @@ Note what this shrinks: with two subsystems, the "memory policy" a channel decla
 participant list of length one costs nothing today. Normally the rule is the opposite — let a
 future need break something, because the break is the signal. An identity model is the one
 known exception: retrofitting it does not break loudly, it silently demands a migration of
-everything already stored.
+everything already stored. §6 applies the same exception to the record *schema*, not only to the
+session key.
 
 ## 4. The binding is the policy
 
@@ -84,11 +90,13 @@ Nothing is lost: two channels are two sessions and two policies, and channels ar
 ## 5. What a policy declares
 
 **Write:** the extraction protocol; the destination it may write; the window threshold (100
-short drill turns are not 70 conversational ones).
+short drill turns are not 70 conversational ones); how a model turn is serialized into the batch
+(`consolidation_text`'s summary-vs-full choice, per channel rather than hardcoded).
 
 **Read:** whether the session may read the user's personal store at all, and which domains. The
 mechanism exists — `enrich_context(relevant_domains=…)` — but today the Router picks domains per
-request by classification. A companion declares them instead.
+request by classification. A companion declares them instead, as a small toggle-set rather than
+a fixed list (§6) — which mix is right is not yet known.
 
 The read side is a permission boundary, not a preference: with two separate stores, "may this
 session read the person's life" is a real edge. Default is no.
@@ -97,7 +105,70 @@ session read the person's life" is a real edge. Default is no.
 declare something else. The three ad-hoc flags are absorbed one at a time afterwards, each
 migration proving the axis fits — rather than a system-wide refactor that proves it in advance.
 
-## 6. Companions are ordinary agents
+See §6 for the concrete mechanism: schema, shared services, `ChannelBinding.companion_config`.
+
+## 6. Session-scoped memory: shared infrastructure across the family
+
+The tutor is the pilot; a group-chat moderator is already named as the next companion (§10.2,
+still out of scope as a *feature*). That makes the record schema and repository shared
+infrastructure to decide once, not a tutor-specific detail to generalize later — the same
+exception §3 already made for the session key applies to the record shape: it is the one thing
+that does not fail loudly when wrong, it demands a migration.
+
+**Shared — one implementation for the whole family:**
+
+- **`CompanionRecord`** (domain) — one document per record, not one document per session with an
+  array (vector `find_nearest` needs per-document granularity, so this is `FactEntity`'s per-row
+  shape, not `Session`'s one-doc-with-array shape): `id`, `session_id` (the operative retrieval
+  key — this *is* the identity model, §2), `account_id` + `created_by_user_id` (billing anchor +
+  attribution, carried the same way `SessionStore.append_messages_batch` already carries
+  `owner_id` alongside `session_id` without it being part of the key), `text`, `vector`, `tags`,
+  a `domain`/`type` field so a tutor's "recurring subjunctive error" and a moderator's
+  "volunteered to bring snacks" are different *values*, not different schemas. No SCD2 fields
+  (`lineage_id`/`valid_from`/`valid_to`) — session records accumulate, they do not supersede a
+  prior truth the way a biography does.
+- **`CompanionMemoryRepository`** (port) + Firestore adapter, one collection, filtered primarily
+  by `session_id`. `account_id` is an indexed field on every record from day one — cheap now,
+  expensive to backfill later — but a repository method that queries *by* `account_id` (cross-
+  channel rollups, billing analytics) is added only once a concrete caller needs it. The field is
+  schema, expensive to add after the fact; the method is behavior, cheap to add later.
+- **RRF fusion** — `SearchEnrichmentService._apply_rrf_ranking` already operates on nothing but
+  `fact_id`-shaped ranked lists, with no `FactEntity` or identity coupling in the algorithm
+  itself. Extract it to a standalone `domain/` function once; both Alek's enrichment and the
+  companion assembler below call the same code.
+- **Embedding** — `EmbeddingService`/`GeminiEmbeddingAdapter` reused unchanged; already a generic
+  `text -> vector` port with zero entity coupling.
+- **A context-assembler service**, structurally parallel to `SearchEnrichmentService` but built
+  over `CompanionMemoryRepository`: one implementation, because "cached summary + query-dependent
+  RRF over this session's history" is the same operation whether the content is grammar drills or
+  group decisions.
+- **A per-session cache document** (`session_id -> summary`) as the biography-cache analog —
+  without `BiographicalContextService`'s `AccountRepository` billing-config dependency, which is
+  Alek-specific and has no session equivalent.
+
+**Not shared — one per companion type:**
+
+- **The extractor.** What from a raw session batch is worth keeping is a judgment call specific
+  to the companion (tutor: errors and coverage; moderator: decisions and commitments) — the same
+  architectural slot `ConsolidationAgent` fills for Alek. One prompt/agent per companion type, all
+  writing through the one shared repository above.
+- **`ChannelBinding.companion_config`** — per-channel values (window threshold, batch size,
+  `text_mode: summary|full`, which read-context providers are enabled, §5) are configuration, not
+  code; they vary per channel, not per companion type.
+
+**Read side, concretely** — the toggle-set §5 defers to here:
+
+```
+include_biographical: bool
+session_domains: list[FactDomain]       # narrower slice than "all biographical", if needed
+include_standing_directives: bool
+include_own_records: bool               # this companion's own CompanionRecord history
+```
+
+Exact `FactDomain` values to expose are not decided here — verify against the current enum when
+the first companion's read config is written, not from this document.
+
+## 7. Companions are ordinary agents
 
 They inherit `BaseAgent`, declare intents in the manifest, and are reached through the registry
 like any specialist. This **reverses `VOICE_COMPANION_RFC.md` §4.5**, which made the voice
@@ -118,7 +189,10 @@ What is genuinely missing in the call layer, and must ship before the first comp
    downward). A companion that calls Alek, who can call the companion, makes cycles reachable —
    and a prompt is all it takes.
 
-## 7. Scope: conversational channels only
+Both shipped 2026-08-25: per-call `mode_override` on `handle_delegation`, and a `_call_chain`
+cycle guard with `MAX_DELEGATION_DEPTH=8` (`decisions/delegation_cycle_guard.md`).
+
+## 8. Scope: conversational channels only
 
 The axis governs the memory policy of a **conversation**. Email indexing is not an instance of
 it and must not be bent into one: its trigger is a scheduled job rather than a sliding window,
@@ -127,29 +201,36 @@ different domain. Email is a different *source*, not a different conversation po
 
 Stretching the axis to cover it would distort both.
 
-## 8. Plan
+## 9. Plan
 
 1. **Text language tutor.** Exercises exactly the new axis — progress instead of biography,
-   drills as noise — with no realtime code at all. If the model does not hold here it will not
-   hold on voice.
-2. **Call layer:** per-call sync/async, cycle guard.
+   drills as noise — with no realtime code at all. Ships the shared infrastructure from §6, not
+   a tutor-specific store: it is the first caller, not a special case. If the model does not hold
+   here it will not hold on voice.
+2. **Call layer:** per-call sync/async, cycle guard. Done (§7).
 3. **Absorb the ad-hoc flags** one at a time: `ChannelBinding` stateless first, since it is the
    one the tutor directly contradicts.
 4. **Realtime transport** — its own RFC, once the Twilio-vs-own-UI fork is decided. It is a
    transport that can front any agent, and it must not be allowed to define the family.
 
-## 9. Open questions
+## 10. Open questions
 
 1. **Group-session threshold and account attribution** — participants share one account, so
    billing has an anchor, but which member's counters a group turn increments is undecided.
 2. **Moderation** — a separate task, deliberately out of scope here. Technically unblocked (the
    bot receives every message with its sender), but a moderator reads people who are not
    account members, and what may be recorded about them is a consent question, not an
-   architectural one.
-3. **Where the tutor's records live** — its own collection, keyed by session. Whether they reuse
-   the `FactEntity` shape or need their own is settled when the tutor's extractor is written.
+   architectural one. Named in §6 only as the reason the memory infrastructure is built shared,
+   not as a feature being scoped now.
+3. **Unifying the three ad-hoc flags (§1) into one write-destination policy.** `consolidation_text`,
+   `notify(save_history=)`, `ChannelBinding` statelessness, and the companion destination (§6) are
+   four values of one concept — where a piece of content is written — expressed as three
+   different mechanisms at three call sites instead of one. Not building the unification now:
+   retrofitting three working paths onto a shared mechanism is a larger, riskier change than
+   shipping the tutor, and orthogonal to it. Revisit when something needs to *touch* one of the
+   three existing flags again — not merely when another companion ships.
 
-## 10. Rejected
+## 11. Rejected
 
 - **A parallel `CompanionAgent` base class.** Buys nothing — persona, tools, tier and provider
   are already per-agent configuration — and costs the whole ecosystem: billing scope, spans,
@@ -157,6 +238,12 @@ Stretching the axis to cover it would distort both.
 - **One configurable pipeline for both families.** Rejected once the identity models diverged
   (§2). Before that it looked like the elegant answer; it stopped being one the moment sessions
   could have several participants.
+- **Reusing `FactEntity`/`FactRepository` for companion records**, tagging `session_id` in via
+  metadata and filtering at query time. `FactRepository`'s methods hardcode `account_id`/`user_id`
+  as the resolution key and `RequestContext` assumes that shape; routing session identity through
+  the same schema and collection blends two identity models into one store — the exact failure
+  §2 already rejected at the pipeline level, only moved down into storage. §6 builds a separate
+  port instead, sharing only the identity-agnostic pieces (RRF, embedding).
 - **A hand-maintained policy × transport compatibility matrix.** It rots on the first new
   transport. Instead a policy declares the capability it needs and a transport declares what it
   provides, so incompatibility is computed. Concrete case: "write every turn to history" needs a
