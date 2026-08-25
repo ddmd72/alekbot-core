@@ -168,7 +168,7 @@ async def main():
             await agent_task_queue.create_queue_if_not_exists()
             logger.info(f"📬 Agent task queue initialized: agent-tasks-{queue_suffix}")
         else:
-            logger.info("📬 Agent task queue: disabled (socket mode or no GCP project)")
+            logger.info("📬 Agent task queue: disabled (no GCP project)")
 
         # Ops alert sink — shared by the AgentCoordinator (delegation-loop alerts),
         # AlertingLLMProxy (LLM 4xx alerts), the billing daily summary, and the daily
@@ -283,21 +283,10 @@ async def main():
                     batch_id = await consolidation_queue.enqueue_batch(batch)
                     logger.info(f"📦 [Overflow] Created batch {batch_id} for user {user_id[:8]}")
 
-                    # Trigger processing — via Cloud Tasks in HTTP mode (own request = full CPU),
-                    # fire-and-forget create_task in socket mode (no CPU throttling there)
-                    if agent_task_queue:
-                        await agent_task_queue.enqueue_consolidation_task(user_id=user_id)
-                        logger.info(f"📬 [Overflow] Consolidation task enqueued for user {user_id[:8]}")
-                    else:
-                        from src.handlers.consolidation_handler import process_user_batches_on_overflow
-                        asyncio.create_task(process_user_batches_on_overflow(
-                            user_id=user_id,
-                            coordinator=coordinator,
-                            agent_factory=factory,
-                            queue=consolidation_queue,
-                            indexed_email_repo=container.indexed_email_repo,
-                            user_repo=user_repo,
-                        ))
+                    # Trigger processing via Cloud Tasks — own request = full CPU, avoids the
+                    # Cloud Run throttling that hits any asyncio.create_task() background work.
+                    await agent_task_queue.enqueue_consolidation_task(user_id=user_id)
+                    logger.info(f"📬 [Overflow] Consolidation task enqueued for user {user_id[:8]}")
                 else:
                     logger.warning("⚠️ Consolidation queue not initialized, overflow batch lost!")
             except Exception as e:
