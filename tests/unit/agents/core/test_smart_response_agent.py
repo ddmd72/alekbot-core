@@ -296,7 +296,9 @@ class TestSmartResponseAgentParallelExecution:
         dispatched_count = 0
         max_in_flight = 0
 
-        async def mock_handle_delegation(intent, query, context, calling_agent_id=""):
+        async def mock_handle_delegation(
+            intent, query, context, calling_agent_id="", mode_override=None,
+        ):
             nonlocal dispatched_count, max_in_flight
             dispatched_count += 1
             max_in_flight = max(max_in_flight, dispatched_count)

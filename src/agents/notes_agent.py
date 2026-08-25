@@ -268,7 +268,7 @@ class NotesAgent(BaseAgent):
         self._on_agent_start(query[:60])
         start_time = time.time()
 
-        result = await self._run(query, user_id, account_id)
+        result = await self._run(query, user_id, account_id, message.context)
 
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -293,7 +293,13 @@ class NotesAgent(BaseAgent):
     # LLM call
     # ------------------------------------------------------------------
 
-    async def _run(self, query: str, user_id: str, account_id: str) -> Dict[str, Any]:
+    async def _run(
+        self,
+        query: str,
+        user_id: str,
+        account_id: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         if not self._prompt_builder:
             raise ValueError("NotesAgent requires prompt_builder")
         system_prompt = await self._prompt_builder.build_for_agent(
@@ -364,10 +370,18 @@ class NotesAgent(BaseAgent):
                     intent = args.get("intent", "")
                     delegate_query = args.get("query", "")
                     self._on_delegation(intent, delegate_query)
+                    # Forward the whole incoming context, not just the two ids: it
+                    # carries the delegation call chain (a cycle through notes would
+                    # otherwise be invisible to the coordinator's guard) as well as
+                    # session_id / origin_channel_id that async delivery routes on.
                     delegate_response = await self.coordinator.handle_delegation(
                         intent=intent,
                         query=delegate_query,
-                        context={"user_id": user_id, "account_id": account_id},
+                        context={
+                            **(context or {}),
+                            "user_id": user_id,
+                            "account_id": account_id,
+                        },
                         calling_agent_id=self.agent_id,
                     )
                     result_text = str(delegate_response.result) if delegate_response.result else "No result"

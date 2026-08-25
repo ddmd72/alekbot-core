@@ -813,6 +813,16 @@ class BaseAgent(ABC):
                         ),
                     },
                     "context": context_param,
+                    "mode": {
+                        "type": "string",
+                        "enum": ["now", "later"],
+                        "description": (
+                            "Optional. 'now' waits for the result; 'later' lets the "
+                            "specialist work in the background and deliver separately. "
+                            "Choose 'later' when the answer is not needed to continue "
+                            "this conversation. Omit to use the intent's normal mode."
+                        ),
+                    },
                 },
                 "required": ["intent", "query"],
             },
