@@ -203,6 +203,16 @@ class EnvironmentConfig:
         return f"{prefix}companion_records"
 
     @property
+    def companion_context_cache_collection(self) -> str:
+        """
+        Per-session cached context summary — the biography-cache analog
+        for companions (FirestoreRepo.user_context_collection is Alek's
+        equivalent). RFC: docs/10_rfcs/COMPANION_AGENTS_RFC.md §6.
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}companion_context_cache"
+
+    @property
     def oauth_credentials_collection(self) -> str:
         """
         Get OAuth credentials collection.
