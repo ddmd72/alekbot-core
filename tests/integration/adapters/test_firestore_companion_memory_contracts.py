@@ -88,3 +88,16 @@ async def test_find_nearest_returns_companion_records():
     results = await repo.find_nearest(session_id="slack:C1", query_vector=[0.1] * 8, limit=5)
 
     assert results == []  # stub returns no docs by default; shape-only test
+
+
+@pytest.mark.asyncio
+async def test_find_nearest_applies_distance_threshold():
+    """Without a floor, find_nearest returns `limit` docs regardless of similarity —
+    Phase A final-review follow-up, closed here now that the assembler (Task 4)
+    is a real caller."""
+    stub = FirestoreCapturingStub()
+    repo = FirestoreCompanionMemoryRepository(stub.build_db(), _env_config_stub())
+
+    await repo.find_nearest(session_id="slack:C1", query_vector=[0.1] * 8, limit=5)
+
+    assert stub.find_nearest_calls[0]["kwargs"]["distance_threshold"] == 0.4

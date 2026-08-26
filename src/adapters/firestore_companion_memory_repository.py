@@ -6,6 +6,7 @@ Structurally mirrors FirestoreIndexedEmailRepository (Vector() wrapping,
 500-doc batch chunking, RRF-ready find_nearest), not FirestoreFactRepository
 — see CompanionMemoryRepository port docstring / RFC §11.
 """
+import asyncio
 from typing import List
 
 from google.cloud.firestore import FieldFilter
@@ -16,6 +17,14 @@ from ..config.environment import EnvironmentConfig
 from ..domain.companion import CompanionRecord
 from ..ports.companion_memory_repository import CompanionMemoryRepository
 from ..utils.logger import logger
+
+# Mirrors FirestoreIndexedEmailRepository's _MAX_COSINE_DISTANCE / semaphore
+# (src/adapters/firestore_indexed_email_repo.py:35,26) — same rationale: without
+# a floor, find_nearest returns `limit` docs regardless of similarity, and
+# unbounded concurrent vector queries risk overloading Firestore once a real
+# caller (the context-assembler, below) fans out N queries per turn.
+_MAX_COSINE_DISTANCE = 0.4
+_COMPANION_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(10)
 
 
 class FirestoreCompanionMemoryRepository(CompanionMemoryRepository):
@@ -68,9 +77,11 @@ class FirestoreCompanionMemoryRepository(CompanionMemoryRepository):
                 query_vector=query_vector,
                 distance_measure=DistanceMeasure.COSINE,
                 limit=limit,
+                distance_threshold=_MAX_COSINE_DISTANCE,
             )
         )
-        docs = await query.get()
+        async with _COMPANION_FIND_NEAREST_SEMAPHORE:
+            docs = await query.get()
 
         records = []
         for doc in docs:
