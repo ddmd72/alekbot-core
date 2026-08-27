@@ -1,6 +1,8 @@
 """
 FirestoreCompanionMemoryRepository — Firestore implementation of
-CompanionMemoryRepository. One collection, session_id-scoped.
+CompanionMemoryRepository. One collection, scoped by session_id AND
+account_id (see CompanionMemoryRepository.find_nearest's docstring —
+session_id alone is not a sufficient tenancy guarantee).
 
 Structurally mirrors FirestoreIndexedEmailRepository (Vector() wrapping,
 500-doc batch chunking, RRF-ready find_nearest), not FirestoreFactRepository

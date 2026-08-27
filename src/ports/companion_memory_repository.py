@@ -1,6 +1,7 @@
 """
 CompanionMemoryRepository — port for the session-scoped companion memory
-store. One collection, filtered primarily by session_id.
+store. One collection, filtered by session_id AND account_id (the latter
+as a tenancy guard — see find_nearest's docstring below).
 
 RFC: docs/10_rfcs/COMPANION_AGENTS_RFC.md §6. Deliberately NOT FactRepository
 — see RFC §11 "Rejected: Reusing FactEntity/FactRepository for companion
