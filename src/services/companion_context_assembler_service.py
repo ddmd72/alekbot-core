@@ -149,24 +149,23 @@ class CompanionContextAssemblerService:
         introduced here).
 
         enrich_context resolves account_id implicitly from RequestContext (a contextvar),
-        not from an explicit parameter. When the caller supplies user_id, this wraps the
-        call in RequestContext so the fetch is scoped to the account this turn actually
-        belongs to; when user_id is None (no real caller has been wired up yet), this is
-        unchanged from before this fix — the call relies on whatever ambient context (if
-        any) is already set, exactly as it did previously."""
+        not from an explicit parameter — so this wraps the call in RequestContext(user_id,
+        account_id) to scope it to the account this turn actually belongs to. RFC §5 frames
+        this read path as a permission boundary ('default is no'): without a user_id there
+        is no way to scope the call correctly, so this fails CLOSED rather than falling back
+        to whatever RequestContext happens to be ambient — a fallback would risk reading a
+        different account's facts if some unrelated ambient context were live."""
+        if not user_id:
+            logger.warning(
+                "⚠️ [CompanionAssembler] biographical slice skipped: no user_id to scope the fetch"
+            )
+            return []
+
         phrase_1 = query_phrases[0] if len(query_phrases) >= 1 else ""
         phrase_2 = query_phrases[1] if len(query_phrases) >= 2 else ""
         domains = [d.value for d in session_domains] if session_domains else None
 
-        if user_id:
-            async with RequestContext(user_id=user_id, account_id=account_id):
-                enriched = await self._enrichment.enrich_context(
-                    keywords=[],
-                    search_phrase_1=phrase_1,
-                    search_phrase_2=phrase_2,
-                    relevant_domains=domains,
-                )
-        else:
+        async with RequestContext(user_id=user_id, account_id=account_id):
             enriched = await self._enrichment.enrich_context(
                 keywords=[],
                 search_phrase_1=phrase_1,
