@@ -6,6 +6,8 @@ no partial-field caller).
 """
 from typing import Optional
 
+from google.cloud import firestore
+
 from ..config.environment import EnvironmentConfig
 from ..ports.companion_cache_repository import CompanionCacheRepository
 from ..utils.logger import logger
@@ -28,5 +30,6 @@ class FirestoreCompanionCacheRepository(CompanionCacheRepository):
             "session_id": session_id,
             "account_id": account_id,
             "summary": summary,
+            "refreshed_at": firestore.SERVER_TIMESTAMP,
         })
         logger.info("🧑‍🏫 [CompanionCache] summary saved for session=%s", session_id)

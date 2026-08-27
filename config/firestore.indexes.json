@@ -507,6 +507,7 @@
     "queryScope": "COLLECTION",
     "fields": [
       { "fieldPath": "session_id", "order": "ASCENDING" },
+      { "fieldPath": "account_id", "order": "ASCENDING" },
       { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
     ]
   },
@@ -515,6 +516,7 @@
     "queryScope": "COLLECTION",
     "fields": [
       { "fieldPath": "session_id", "order": "ASCENDING" },
+      { "fieldPath": "account_id", "order": "ASCENDING" },
       { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
     ]
   }

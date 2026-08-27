@@ -26,8 +26,11 @@ class CompanionMemoryRepository(ABC):
     async def find_nearest(
         self,
         session_id: str,
+        account_id: str,
         query_vector: List[float],
         limit: int = 10,
     ) -> List[CompanionRecord]:
-        """Vector search scoped to one session. Must filter by session_id —
-        cross-session results are a memory-policy violation (RFC §4)."""
+        """Vector search scoped to one session AND one account. Must filter by
+        BOTH session_id and account_id — session_id alone is not a sufficient
+        tenancy guarantee (two accounts on the same platform are not provably
+        collision-free on channel-derived session keys)."""

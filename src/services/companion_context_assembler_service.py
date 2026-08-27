@@ -14,6 +14,7 @@ from typing import List, Optional
 from ..domain.companion import CompanionRecord
 from ..domain.companion_context import CompanionContext
 from ..domain.entities import FactDomain
+from ..domain.request_context import RequestContext
 from ..domain.rrf import apply_rrf_ranking
 from ..domain.settings import SearchConfig
 from ..ports.companion_cache_repository import CompanionCacheRepository
@@ -52,26 +53,53 @@ class CompanionContextAssemblerService:
         include_biographical: bool = False,
         session_domains: Optional[List[FactDomain]] = None,
         include_standing_directives: bool = False,
+        user_id: Optional[str] = None,
     ) -> CompanionContext:
-        summary = await self._cache_repo.get_summary(session_id)
+        async def _safe_summary():
+            try:
+                return await self._cache_repo.get_summary(session_id)
+            except Exception as exc:
+                logger.warning("⚠️ [CompanionAssembler] summary fetch failed: %s", exc)
+                return None
 
-        own_records: List[CompanionRecord] = []
-        if include_own_records and query_phrases:
-            own_records = await self._fetch_own_records(
-                session_id, query_phrases, own_records_limit
-            )
+        async def _safe_own_records():
+            if not (include_own_records and query_phrases):
+                return []
+            try:
+                return await self._fetch_own_records(
+                    session_id, account_id, query_phrases, own_records_limit
+                )
+            except Exception as exc:
+                logger.warning("⚠️ [CompanionAssembler] own-records fetch failed: %s", exc)
+                return []
 
-        biographical_facts = []
-        if include_biographical:
-            biographical_facts = await self._fetch_biographical(query_phrases, session_domains)
+        async def _safe_biographical():
+            if not include_biographical:
+                return []
+            try:
+                return await self._fetch_biographical(
+                    query_phrases, session_domains, account_id, user_id
+                )
+            except Exception as exc:
+                logger.warning("⚠️ [CompanionAssembler] biographical fetch failed: %s", exc)
+                return []
 
-        standing_directives = []
-        if include_standing_directives:
-            standing_directives = await self._fact_repo.get_active_facts_ordered(
-                account_id,
-                domain=FactDomain.AGENT_DIRECTIVE.value,
-                limit=SearchConfig().DEFAULT_DIRECTIVES_CACHE_LIMIT,
-            )
+        async def _safe_directives():
+            if not include_standing_directives:
+                return []
+            try:
+                return await self._fact_repo.get_active_facts_ordered(
+                    account_id,
+                    domain=FactDomain.AGENT_DIRECTIVE.value,
+                    limit=SearchConfig().DEFAULT_DIRECTIVES_CACHE_LIMIT,
+                )
+            except Exception as exc:
+                logger.warning("⚠️ [CompanionAssembler] standing-directives fetch failed: %s", exc)
+                return []
+
+        summary, own_records, biographical_facts, standing_directives = await asyncio.gather(
+            _safe_summary(), _safe_own_records(), _safe_biographical(), _safe_directives(),
+        )
 
         return CompanionContext(
             session_summary=summary,
@@ -81,7 +109,7 @@ class CompanionContextAssemblerService:
         )
 
     async def _fetch_own_records(
-        self, session_id: str, query_phrases: List[str], limit: int
+        self, session_id: str, account_id: str, query_phrases: List[str], limit: int
     ) -> List[CompanionRecord]:
         """Embed all phrases in one batch call, fan out find_nearest per phrase,
         RRF-merge. Concurrency is bounded inside FirestoreCompanionMemoryRepository
@@ -89,13 +117,16 @@ class CompanionContextAssemblerService:
         vectors = await self._embedding.get_embeddings_batch(query_phrases, "RETRIEVAL_QUERY")
 
         results = await asyncio.gather(
-            *(self._companion_repo.find_nearest(session_id, v, limit=limit) for v in vectors),
+            *(
+                self._companion_repo.find_nearest(session_id, account_id, v, limit=limit)
+                for v in vectors
+            ),
             return_exceptions=True,
         )
 
         valid_results = []
         for r in results:
-            if isinstance(r, Exception):
+            if isinstance(r, BaseException):
                 logger.warning("⚠️ [CompanionAssembler] own-records query failed: %s", r)
             else:
                 valid_results.append(r)
@@ -104,22 +135,42 @@ class CompanionContextAssemblerService:
         return merged[:limit]
 
     async def _fetch_biographical(
-        self, query_phrases: List[str], session_domains: Optional[List[FactDomain]]
+        self,
+        query_phrases: List[str],
+        session_domains: Optional[List[FactDomain]],
+        account_id: str,
+        user_id: Optional[str],
     ) -> List:
         """Reuses SearchEnrichmentPort.enrich_context unchanged (RFC §6: 'reused unchanged;
         already a generic text -> vector port with zero entity coupling' — same reasoning
         applied here to the enrichment port itself). Maps this service's variable-length
         query_phrases onto enrich_context's fixed phrase_1/phrase_2 slots; extra phrases
         beyond 2 are not used for this slice (existing enrich_context contract, not a gap
-        introduced here)."""
+        introduced here).
+
+        enrich_context resolves account_id implicitly from RequestContext (a contextvar),
+        not from an explicit parameter. When the caller supplies user_id, this wraps the
+        call in RequestContext so the fetch is scoped to the account this turn actually
+        belongs to; when user_id is None (no real caller has been wired up yet), this is
+        unchanged from before this fix — the call relies on whatever ambient context (if
+        any) is already set, exactly as it did previously."""
         phrase_1 = query_phrases[0] if len(query_phrases) >= 1 else ""
         phrase_2 = query_phrases[1] if len(query_phrases) >= 2 else ""
         domains = [d.value for d in session_domains] if session_domains else None
 
-        enriched = await self._enrichment.enrich_context(
-            keywords=[],
-            search_phrase_1=phrase_1,
-            search_phrase_2=phrase_2,
-            relevant_domains=domains,
-        )
+        if user_id:
+            async with RequestContext(user_id=user_id, account_id=account_id):
+                enriched = await self._enrichment.enrich_context(
+                    keywords=[],
+                    search_phrase_1=phrase_1,
+                    search_phrase_2=phrase_2,
+                    relevant_domains=domains,
+                )
+        else:
+            enriched = await self._enrichment.enrich_context(
+                keywords=[],
+                search_phrase_1=phrase_1,
+                search_phrase_2=phrase_2,
+                relevant_domains=domains,
+            )
         return enriched.facts

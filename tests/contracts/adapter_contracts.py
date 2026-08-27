@@ -312,6 +312,26 @@ FIRESTORE_COMPANION_FIND_NEAREST_FILTERS_SESSION_ID = ContractRule(
     },
 )
 
+FIRESTORE_COMPANION_FIND_NEAREST_FILTERS_ACCOUNT_ID = ContractRule(
+    name="FIRESTORE_COMPANION_FIND_NEAREST_FILTERS_ACCOUNT_ID",
+    description=(
+        "Every find_nearest query issued by FirestoreCompanionMemoryRepository "
+        "must ALSO carry an account_id== where-filter, alongside session_id==. "
+        "Defense in depth: session_id = f'{platform}:{channel_id}' is not "
+        "provably unique across two accounts on the same platform (e.g. two "
+        "Slack workspaces), so session_id alone is not a sufficient tenancy "
+        "guarantee. Input: captured call {where_filters: list[FieldFilter], "
+        "kwargs: dict}."
+    ),
+    validators={
+        "firestore_companion_memory": lambda call: _true(
+            _has_filter(call["where_filters"], "account_id", "=="),
+            "Firestore companion_memory find_nearest missing account_id== filter "
+            "(cross-account leak risk)",
+        ),
+    },
+)
+
 FIRESTORE_COMPANION_SAVE_BATCH_INCLUDES_ACCOUNT_ID = ContractRule(
     name="FIRESTORE_COMPANION_SAVE_BATCH_INCLUDES_ACCOUNT_ID",
     description=(
