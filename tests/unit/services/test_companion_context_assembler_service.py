@@ -233,3 +233,70 @@ class TestStandingDirectives:
             limit=SearchConfig().DEFAULT_DIRECTIVES_CACHE_LIMIT,
         )
         assert ctx.standing_directives == [directive]
+
+
+class TestRequestContextWiring:
+    async def test_wraps_enrich_context_in_request_context_when_user_id_given(
+        self, service, cache_repo, enrichment_port
+    ):
+        from src.domain.request_context import get_current_account_id, get_current_user_id
+
+        cache_repo.get_summary = AsyncMock(return_value=None)
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured["user_id"] = get_current_user_id()
+            captured["account_id"] = get_current_account_id()
+            return EnrichedContext(facts=[], total_sources=0, dedup_count=0, biographical_dedup_count=0)
+
+        enrichment_port.enrich_context = AsyncMock(side_effect=_capture)
+
+        await service.assemble_context(
+            session_id="slack:C1", account_id="acc1", query_phrases=["p1"],
+            include_own_records=False, include_biographical=True,
+            user_id="user-42",
+        )
+
+        assert captured["user_id"] == "user-42"
+        assert captured["account_id"] == "acc1"
+
+    async def test_no_request_context_when_user_id_omitted(
+        self, service, cache_repo, enrichment_port
+    ):
+        """Backward-compatible default: omitting user_id behaves exactly as before this fix."""
+        from src.domain.request_context import get_current_user_id
+
+        cache_repo.get_summary = AsyncMock(return_value=None)
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured["user_id"] = get_current_user_id()
+            return EnrichedContext(facts=[], total_sources=0, dedup_count=0, biographical_dedup_count=0)
+
+        enrichment_port.enrich_context = AsyncMock(side_effect=_capture)
+
+        await service.assemble_context(
+            session_id="slack:C1", account_id="acc1", query_phrases=["p1"],
+            include_own_records=False, include_biographical=True,
+        )
+
+        assert captured["user_id"] is None
+
+
+class TestPartialFailureAcrossFetches:
+    async def test_one_fetch_failing_does_not_lose_the_others(
+        self, service, cache_repo, embedding_service, companion_repo
+    ):
+        """The review's finding: an embedding failure must not sink the already-fetched
+        summary. With the parallel gather + per-branch try/except, summary still comes
+        back even though own-records raises."""
+        cache_repo.get_summary = AsyncMock(return_value="cached summary")
+        embedding_service.get_embeddings_batch = AsyncMock(side_effect=RuntimeError("embed down"))
+
+        ctx = await service.assemble_context(
+            session_id="slack:C1", account_id="acc1", query_phrases=["p1"],
+            include_own_records=True,
+        )
+
+        assert ctx.session_summary == "cached summary"
+        assert ctx.own_records == []

@@ -66,12 +66,14 @@ class FirestoreCompanionMemoryRepository(CompanionMemoryRepository):
     async def find_nearest(
         self,
         session_id: str,
+        account_id: str,
         query_vector: List[float],
         limit: int = 10,
     ) -> List[CompanionRecord]:
         query = (
             self.collection
             .where(filter=FieldFilter("session_id", "==", session_id))
+            .where(filter=FieldFilter("account_id", "==", account_id))
             .find_nearest(
                 vector_field="vector",
                 query_vector=query_vector,

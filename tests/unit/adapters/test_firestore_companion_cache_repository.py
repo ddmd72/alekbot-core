@@ -6,6 +6,7 @@ per ADAPTER_WIRE_TESTING.md.
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from google.cloud import firestore
 
 from src.adapters.firestore_companion_cache_repository import (
     FirestoreCompanionCacheRepository,
@@ -77,4 +78,5 @@ class TestSaveSummary:
             "session_id": "slack:C1",
             "account_id": "acc1",
             "summary": "New summary",
+            "refreshed_at": firestore.SERVER_TIMESTAMP,
         })
