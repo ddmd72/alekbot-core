@@ -172,6 +172,7 @@ class TestBiographical:
             query_phrases=["mixed up preterite", "asked about soap operas"],
             include_own_records=False, include_biographical=True,
             session_domains=[FactDomain.ENTERTAINMENT],
+            user_id="user-42",
         )
 
         enrichment_port.enrich_context.assert_called_once_with(
@@ -193,6 +194,7 @@ class TestBiographical:
         await service.assemble_context(
             session_id="slack:C1", account_id="acc1", query_phrases=["only one"],
             include_own_records=False, include_biographical=True,
+            user_id="user-42",
         )
 
         enrichment_port.enrich_context.assert_called_once_with(
@@ -260,27 +262,22 @@ class TestRequestContextWiring:
         assert captured["user_id"] == "user-42"
         assert captured["account_id"] == "acc1"
 
-    async def test_no_request_context_when_user_id_omitted(
+    async def test_biographical_fetch_fails_closed_when_user_id_omitted(
         self, service, cache_repo, enrichment_port
     ):
-        """Backward-compatible default: omitting user_id behaves exactly as before this fix."""
-        from src.domain.request_context import get_current_user_id
-
+        """Permission-boundary default (RFC §5: 'default is no'): without a user_id to scope
+        the fetch, the biographical slice is skipped entirely rather than falling back to
+        whatever RequestContext happens to be ambient — a fallback would risk reading a
+        different account's facts if some unrelated ambient context were live."""
         cache_repo.get_summary = AsyncMock(return_value=None)
-        captured = {}
 
-        async def _capture(**kwargs):
-            captured["user_id"] = get_current_user_id()
-            return EnrichedContext(facts=[], total_sources=0, dedup_count=0, biographical_dedup_count=0)
-
-        enrichment_port.enrich_context = AsyncMock(side_effect=_capture)
-
-        await service.assemble_context(
+        ctx = await service.assemble_context(
             session_id="slack:C1", account_id="acc1", query_phrases=["p1"],
             include_own_records=False, include_biographical=True,
         )
 
-        assert captured["user_id"] is None
+        enrichment_port.enrich_context.assert_not_called()
+        assert ctx.biographical_facts == []
 
 
 class TestPartialFailureAcrossFetches:
@@ -331,6 +328,7 @@ class TestPerFetchFailureIsolation:
         ctx = await service.assemble_context(
             session_id="slack:C1", account_id="acc1", query_phrases=["p1"],
             include_own_records=False, include_biographical=True,
+            user_id="user-42",
         )
 
         assert ctx.session_summary == "cached summary"
