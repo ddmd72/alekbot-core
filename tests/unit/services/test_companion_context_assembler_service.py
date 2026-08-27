@@ -300,3 +300,52 @@ class TestPartialFailureAcrossFetches:
 
         assert ctx.session_summary == "cached summary"
         assert ctx.own_records == []
+
+
+class TestPerFetchFailureIsolation:
+    """Each of the 4 fetches has its own try/except inside assemble_context's gather —
+    one failing must not prevent the other three from returning their real values."""
+
+    async def test_summary_fetch_failure_returns_none_others_unaffected(
+        self, service, cache_repo, companion_repo, embedding_service
+    ):
+        cache_repo.get_summary = AsyncMock(side_effect=RuntimeError("firestore down"))
+        embedding_service.get_embeddings_batch = AsyncMock(return_value=[[0.1, 0.2]])
+        rec = _record("a")
+        companion_repo.find_nearest = AsyncMock(return_value=[rec])
+
+        ctx = await service.assemble_context(
+            session_id="slack:C1", account_id="acc1", query_phrases=["p1"],
+            include_own_records=True,
+        )
+
+        assert ctx.session_summary is None
+        assert [r.id for r in ctx.own_records] == ["a"]
+
+    async def test_biographical_fetch_failure_returns_empty_list(
+        self, service, cache_repo, enrichment_port
+    ):
+        cache_repo.get_summary = AsyncMock(return_value="cached summary")
+        enrichment_port.enrich_context = AsyncMock(side_effect=RuntimeError("enrichment down"))
+
+        ctx = await service.assemble_context(
+            session_id="slack:C1", account_id="acc1", query_phrases=["p1"],
+            include_own_records=False, include_biographical=True,
+        )
+
+        assert ctx.session_summary == "cached summary"
+        assert ctx.biographical_facts == []
+
+    async def test_standing_directives_fetch_failure_returns_empty_list(
+        self, service, cache_repo, fact_repo
+    ):
+        cache_repo.get_summary = AsyncMock(return_value="cached summary")
+        fact_repo.get_active_facts_ordered = AsyncMock(side_effect=RuntimeError("facts down"))
+
+        ctx = await service.assemble_context(
+            session_id="slack:C1", account_id="acc1", query_phrases=[],
+            include_own_records=False, include_standing_directives=True,
+        )
+
+        assert ctx.session_summary == "cached summary"
+        assert ctx.standing_directives == []

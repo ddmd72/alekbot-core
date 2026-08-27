@@ -348,6 +348,22 @@ FIRESTORE_COMPANION_SAVE_BATCH_INCLUDES_ACCOUNT_ID = ContractRule(
     },
 )
 
+FIRESTORE_COMPANION_CACHE_SAVE_INCLUDES_ACCOUNT_ID = ContractRule(
+    name="FIRESTORE_COMPANION_CACHE_SAVE_INCLUDES_ACCOUNT_ID",
+    description=(
+        "FirestoreCompanionCacheRepository.save_summary must write a non-empty "
+        "account_id on every cache doc — same tenancy-attribution convention as "
+        "FIRESTORE_COMPANION_SAVE_BATCH_INCLUDES_ACCOUNT_ID. Input: captured call "
+        "{data: dict} (the written document body)."
+    ),
+    validators={
+        "firestore_companion_cache": lambda call: _true(
+            bool(call["data"].get("account_id")),
+            "Firestore companion_cache save_summary missing account_id",
+        ),
+    },
+)
+
 NODE_DOCX_SPEC_PASSED_VIA_STDIN = ContractRule(
     name="NODE_DOCX_SPEC_PASSED_VIA_STDIN",
     description=(
