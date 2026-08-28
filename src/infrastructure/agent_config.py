@@ -298,6 +298,23 @@ SMART = SmartAgentConfig()
 MEMORY_SEARCH = MemorySearchAgentConfig()
 WEB_SEARCH = WebSearchAgentConfig()
 CONSOLIDATION = ConsolidationAgentConfig()
+
+
+# ---------------------------------------------------------------------------
+# TutorExtractorAgent (src/agents/tutor_extractor_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TutorExtractorAgentConfig:
+    # Single-shot structured JSON call, no multi-turn tool loop — much shorter
+    # budget than ConsolidationAgent's 15-min 8-step loop.
+    timeout_ms: int = 300_000  # 5 min
+    max_tokens: int = 4096
+    temperature: float = 0.3
+
+
+TUTOR_EXTRACTOR = TutorExtractorAgentConfig()
+
 EMAIL_SEARCH = EmailSearchAgentConfig()
 EMAIL_CLASSIFICATION = EmailClassificationAgentConfig()
 DEEP_RESEARCH = DeepResearchAgentConfig()
