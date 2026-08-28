@@ -131,3 +131,93 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
     assert len(serialized_parts) == 2
     assert serialized_parts[0] == {"text": "У меня бекенд отвалился и не сохранило сохрани пожалуйста еще раз"}
     assert serialized_parts[1] == {"text": "Save Toyota Corolla left mirror damage fact"}
+
+
+@pytest.mark.asyncio
+async def test_threshold_resolver_overrides_max_history_and_batch_size():
+    """When threshold_resolver returns a tuple, overflow uses it instead of the constructor defaults."""
+    mock_db = MagicMock()
+    mock_doc = MagicMock()
+
+    # 3 existing messages; threshold_resolver will override max_history_length to 3, so
+    # appending 1 more (total 4) overflows even though the constructor default is 200.
+    existing_history = [
+        {"role": "user", "parts": [{"text": f"msg {i}"}]} for i in range(3)
+    ]
+    mock_doc.get = AsyncMock(return_value=MagicMock(
+        exists=True,
+        to_dict=lambda: {"owner_id": "user1", "history": existing_history, "created_at": 1000},
+    ))
+    mock_doc.set = AsyncMock()
+    mock_db.collection.return_value.document.return_value = mock_doc
+
+    mock_transaction = AsyncMock()
+    mock_transaction.get = AsyncMock(return_value=mock_doc.get.return_value)
+    mock_transaction.set = MagicMock()
+    mock_db.transaction.return_value = mock_transaction
+
+    callback_called = asyncio.Event()
+    captured = {}
+
+    async def mock_callback(user_id, session_id, messages):
+        captured["messages"] = messages
+        callback_called.set()
+
+    resolver = AsyncMock(return_value=(3, 1))  # max_history_length=3, batch_size=1
+
+    store = FirestoreSessionStore(
+        mock_db, max_history_length=200, batch_size=100,
+        overflow_callback=mock_callback, threshold_resolver=resolver,
+    )
+
+    with patch("google.cloud.firestore.async_transactional", lambda x: x):
+        await store.append_messages_batch("companion-session", [Message(role="user", parts=[MessagePart(text="new 1")])])
+
+    resolver.assert_called_once_with("companion-session")
+    await asyncio.wait_for(callback_called.wait(), timeout=1.0)
+    # batch_size=1 from the override, not the constructor default of 100
+    assert len(captured["messages"]) == 1
+    assert captured["messages"][0].parts[0].text == "msg 0"
+
+
+@pytest.mark.asyncio
+async def test_no_threshold_resolver_uses_constructor_defaults():
+    """threshold_resolver=None (default) behaves exactly as before — no override call, no behavior change."""
+    store = FirestoreSessionStore(MagicMock(), max_history_length=200, batch_size=100)
+    assert store.threshold_resolver is None
+
+
+@pytest.mark.asyncio
+async def test_threshold_resolver_returning_none_falls_back_to_defaults():
+    mock_db = MagicMock()
+    mock_doc = MagicMock()
+    # Only 2 existing messages — well under the constructor default of 5 — so no overflow
+    # regardless of what the (opted-out) resolver would have returned.
+    existing_history = [
+        {"role": "user", "parts": [{"text": f"msg {i}"}]} for i in range(2)
+    ]
+    mock_doc.get = AsyncMock(return_value=MagicMock(
+        exists=True,
+        to_dict=lambda: {"owner_id": "user1", "history": existing_history, "created_at": 1000},
+    ))
+    mock_doc.set = AsyncMock()
+    mock_db.collection.return_value.document.return_value = mock_doc
+
+    mock_transaction = AsyncMock()
+    mock_transaction.get = AsyncMock(return_value=mock_doc.get.return_value)
+    mock_transaction.set = MagicMock()
+    mock_db.transaction.return_value = mock_transaction
+
+    callback = AsyncMock()
+    resolver = AsyncMock(return_value=None)  # opts out for this session_id
+
+    store = FirestoreSessionStore(
+        mock_db, max_history_length=5, batch_size=3,
+        overflow_callback=callback, threshold_resolver=resolver,
+    )
+
+    with patch("google.cloud.firestore.async_transactional", lambda x: x):
+        await store.append_messages_batch("plain-session", [Message(role="user", parts=[MessagePart(text="new 1")])])
+
+    resolver.assert_called_once_with("plain-session")
+    callback.assert_not_called()  # 3 total messages, under max_history_length=5 default — no overflow

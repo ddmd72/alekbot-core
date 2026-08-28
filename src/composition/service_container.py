@@ -79,6 +79,7 @@ class ServiceContainer:
         env_config: EnvironmentConfig,
         account_repo: AccountRepository,
         overflow_callback: Optional[Callable] = None,
+        threshold_resolver: Optional[Callable] = None,
         alert_webhook: Optional[Any] = None,
     ) -> None:
         # ------------------------------------------------------------------
@@ -266,6 +267,7 @@ class ServiceContainer:
             max_history_length=consolidation_settings.threshold,
             batch_size=consolidation_settings.batch_size,
             overflow_callback=overflow_callback,
+            threshold_resolver=threshold_resolver,
         )
 
         # ------------------------------------------------------------------

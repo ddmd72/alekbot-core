@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Optional, List, Any, Dict, Callable, Awaitable
+from typing import Optional, List, Any, Dict, Callable, Awaitable, Tuple
 import datetime
 from datetime import datetime as dt_class, timedelta
 from google.cloud import firestore
@@ -24,12 +24,13 @@ class FirestoreSessionStore(SessionStore):
     """
 
     def __init__(
-        self, 
-        db_client: firestore.AsyncClient, 
+        self,
+        db_client: firestore.AsyncClient,
         collection_prefix: str = "",
         max_history_length: int = 200,
         batch_size: int = 100,
-        overflow_callback: Optional[Callable[[str, str, List[Message]], Awaitable[None]]] = None
+        overflow_callback: Optional[Callable[[str, str, List[Message]], Awaitable[None]]] = None,
+        threshold_resolver: Optional[Callable[[str], Awaitable[Optional[Tuple[int, int]]]]] = None,
     ):
         """
         Initialize session store.
@@ -37,9 +38,13 @@ class FirestoreSessionStore(SessionStore):
         Args:
             db_client: Firestore AsyncClient instance
             collection_prefix: Prefix for collection names (e.g., "dev_")
-            max_history_length: Maximum messages to keep in hot storage
-            batch_size: Number of messages to extract during overflow
+            max_history_length: Maximum messages to keep in hot storage (default when
+                threshold_resolver is None or opts out for a given session_id)
+            batch_size: Number of messages to extract during overflow (same default rule)
             overflow_callback: Optional async callback triggered on overflow
+            threshold_resolver: Optional async callable resolving (max_history_length,
+                batch_size) for one session_id — e.g. CompanionWindowResolver.resolve.
+                Returns None to use the constructor defaults for that session.
         """
         self.db = db_client
         # ADR-006: collection_name is now passed explicitly (e.g. development_sessions)
@@ -49,11 +54,12 @@ class FirestoreSessionStore(SessionStore):
         else:
              # Should be passed as full name in main.py
              self.collection_name = "sessions"
-             
+
         self.ttl_hours = 2160  # Sessions expire after 90 days of inactivity
         self.max_history_length = max_history_length
         self.batch_size = batch_size
         self.overflow_callback = overflow_callback
+        self.threshold_resolver = threshold_resolver
         self._pending_tasks: set = set()  # Track overflow tasks to prevent silent data loss
 
         logger.info(
@@ -170,6 +176,19 @@ class FirestoreSessionStore(SessionStore):
             # If owner_id is not provided, we'll try to get it from doc or fallback to session_id
             resolved_owner_id: Optional[str] = owner_id
 
+            # Resolve the effective overflow threshold BEFORE entering the transaction:
+            # a Firestore transaction retry must never re-invoke an external service call.
+            effective_max_history_length = self.max_history_length
+            effective_batch_size = self.batch_size
+            if self.threshold_resolver:
+                override = await self.threshold_resolver(session_id)
+                if override:
+                    effective_max_history_length, effective_batch_size = override
+                    logger.debug(
+                        "🎚️ Session %s... using threshold override (max=%d, batch=%d)",
+                        session_id[:8], effective_max_history_length, effective_batch_size,
+                    )
+
             @firestore.async_transactional
             async def _batch_append(transaction: firestore.AsyncTransaction) -> Optional[tuple[str, List[Message]]]:
                 doc = await doc_ref.get(transaction=transaction)
@@ -195,13 +214,13 @@ class FirestoreSessionStore(SessionStore):
                     history.extend(messages)
 
                     # OVERFLOW LOGIC: Extract all batches until within threshold
-                    while len(history) > self.max_history_length:
-                        batch = history[:self.batch_size]
-                        history = history[self.batch_size:]
+                    while len(history) > effective_max_history_length:
+                        batch = history[:effective_batch_size]
+                        history = history[effective_batch_size:]
                         extracted_batches.append(batch)
                         logger.info(
                             f"❄️ Overflow batch #{len(extracted_batches)} for {session_id[:8]}... "
-                            f"(extracted={len(batch)}, remaining={len(history)}, max={self.max_history_length})"
+                            f"(extracted={len(batch)}, remaining={len(history)}, max={effective_max_history_length})"
                         )
 
                     state = SessionState(
