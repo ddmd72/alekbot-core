@@ -342,6 +342,18 @@ class EnvironmentConfig:
         return f"{prefix}consolidation_queue"
 
     @property
+    def companion_extraction_queue_collection(self) -> str:
+        """
+        Companion extraction queue — session-scoped batches awaiting the
+        companion extractor (ConsolidationAgent-analog, RFC §6). Mirrors
+        consolidation_queue_collection but keyed by session_id, not user_id.
+        Dev: development_companion_extraction_queue
+        Prod: companion_extraction_queue
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}companion_extraction_queue"
+
+    @property
     def event_dedup_collection(self) -> str:
         """
         Get event deduplication collection (infrastructure).
