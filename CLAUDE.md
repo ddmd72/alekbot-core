@@ -174,7 +174,8 @@ valuable emails as `IndexedEmail` in `domain_email_facts_v1` (4-vector, mirrors 
 stale `running` jobs.
 - **`WorkerHandler`** dispatches `/worker` Cloud Tasks by `task_type`:
   `agent_execution`, `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`,
-  `consolidation`, `sweep_consolidation`, `deep_research_polling`, `fire_due_reminders`,
+  `consolidation`, `sweep_consolidation`, `companion_consolidation`, `sweep_companion_consolidation`,
+  `deep_research_polling`, `fire_due_reminders`,
   `execute_reminder`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
   `renew_all_task_subscriptions`, `start_daily_email_review`, `daily_email_review`,
   `billing_daily_summary`, `repair_email_embeddings`. Full reference: `docs/07_deployment/SCHEDULERS.md`.
