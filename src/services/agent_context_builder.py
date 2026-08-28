@@ -54,6 +54,14 @@ class AgentProviderStrategy:
             "required_capabilities": ["context_caching"],
             "fallback": "gemini"
         },
+        # Single LLM call (structured JSON, no multi-turn tool loop) — no
+        # context_caching requirement, unlike consolidation's 8-step loop.
+        "tutor_extractor": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "gemini", "openai"],
+            "required_capabilities": [],
+            "fallback": "gemini"
+        },
         "postprocessing": {
             "default_provider": "gemini",
             "allowed_providers": ["gemini"],   # locked: response_schema is Gemini-only
