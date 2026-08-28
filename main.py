@@ -481,14 +481,22 @@ async def main():
         from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
         from src.composition.companion_extractor_runner import CompanionExtractorRunner
         from src.services.companion_extraction_service import CompanionExtractionService
+        from src.services.prompt_builder import PromptBuilder
 
         companion_extraction_queue = FirestoreCompanionExtractionQueue(db_client=db_client, env_config=env_config)
         companion_memory_repo = FirestoreCompanionMemoryRepository(db_client=db_client, env_config=env_config)
         companion_cache_repo = FirestoreCompanionCacheRepository(db_client=db_client, env_config=env_config)
+        # repo=None is safe: TutorExtractorAgent always calls build_for_agent() with
+        # include_biographical=False, and PromptBuilder only touches self.repo when
+        # include_biographical=True (see PromptBuilder.build_for_agent). Same pattern
+        # as ServiceContainer's _email_prompt_builder for EmailClassificationAgent.
+        companion_prompt_builder = PromptBuilder(repo=None, assembly_service=container.assembly_service)
         companion_extractor_runner = CompanionExtractorRunner(
             context_builder=container.context_builder,
             user_repo=user_repo,
-            prompt_builder=container.assembly_service,
+            prompt_builder=companion_prompt_builder,
+            quota_service=quota_service,
+            prompt_content_store=container.prompt_content_store,
         )
         companion_extraction_service = CompanionExtractionService(
             queue=companion_extraction_queue,

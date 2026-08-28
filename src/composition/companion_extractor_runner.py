@@ -10,13 +10,14 @@ One companion type today ("tutor"). _EXTRACTORS maps companion_type ->
 (agent_type string, agent class); extend both together when a second
 companion type ships its own extractor (RFC §6).
 """
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..agents.tutor_extractor_agent import TutorExtractorAgent
 from ..domain.agent import AgentIntent, AgentConfig, AgentMessage, AgentStatus
 from ..domain.companion_extraction import EXTRACTION_TASK
 from ..infrastructure.agent_config import TUTOR_EXTRACTOR
 from ..ports.companion_extractor_port import CompanionExtractorPort
+from ..ports.prompt_builder_port import PromptBuilderPort
 
 _EXTRACTORS = {
     "tutor": ("tutor_extractor", TutorExtractorAgent),
@@ -25,10 +26,25 @@ _EXTRACTORS = {
 
 class CompanionExtractorRunner(CompanionExtractorPort):
 
-    def __init__(self, context_builder: Any, user_repo: Any, prompt_builder: Any) -> None:
+    def __init__(
+        self,
+        context_builder: Any,
+        user_repo: Any,
+        prompt_builder: PromptBuilderPort,
+        quota_service: Optional[Any] = None,
+        prompt_content_store: Optional[Any] = None,
+    ) -> None:
         self._context_builder = context_builder
         self._user_repo = user_repo
         self._prompt_builder = prompt_builder
+        # Mirror the two post-construction attributes UserAgentFactory sets on every
+        # agent it builds (see user_agent_factory.py::_create_and_cache_agents). This
+        # runner bypasses the factory by design (constructs the agent fresh per batch,
+        # not per-user-cached) so nothing else performs that wiring — without it,
+        # BaseAgent._flush_billing()/_call_llm() silently no-op (both default to None),
+        # making companion extraction's LLM usage invisible to billing + BigQuery.
+        self._quota_service = quota_service
+        self._prompt_content_store = prompt_content_store
 
     async def extract(
         self,
@@ -57,6 +73,11 @@ class CompanionExtractorRunner(CompanionExtractorPort):
             execution_context=execution_context,
             prompt_builder=self._prompt_builder,
         )
+        # See __init__ comment — mirror UserAgentFactory's post-construction wiring
+        # (BaseAgent defaults both to None) so this agent's LLM usage is billed and
+        # captured to BigQuery like every other agent's.
+        agent._quota_service = self._quota_service
+        agent._prompt_content_store = self._prompt_content_store
 
         message = AgentMessage.create(
             sender="companion_extractor_runner",
