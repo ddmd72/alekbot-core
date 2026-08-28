@@ -43,6 +43,9 @@ class TaskDispatchService:
     async def enqueue_consolidation_task(self, user_id: str) -> str:
         return await self._queue.enqueue_consolidation_task(user_id=user_id)
 
+    async def enqueue_companion_consolidation_task(self, session_id: str) -> str:
+        return await self._queue.enqueue_companion_consolidation_task(session_id=session_id)
+
     async def enqueue_deep_research_polling(
         self,
         interaction_id: str,

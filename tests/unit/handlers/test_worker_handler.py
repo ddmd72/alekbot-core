@@ -1633,3 +1633,53 @@ class TestHandleRepairEmailEmbeddings:
         assert status == 200
         assert result["repaired"] == 7
         repair_service.run.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# _handle_companion_consolidation / _handle_sweep_companion_consolidation
+# ---------------------------------------------------------------------------
+
+class TestHandleCompanionConsolidation:
+
+    async def test_handle_dispatches_companion_consolidation_task_type(self):
+        worker, ns = _make_full_worker()
+        worker._companion_extraction = AsyncMock()
+        worker._companion_extraction.process_session_batches.return_value = False
+        body, status = await worker.handle({"task_type": "companion_consolidation", "session_id": "slack:C1"})
+        assert status == 200
+        worker._companion_extraction.process_session_batches.assert_called_once_with(
+            session_id="slack:C1", max_batches=1,
+        )
+
+    async def test_handle_companion_consolidation_missing_session_id(self):
+        worker, ns = _make_full_worker()
+        worker._companion_extraction = AsyncMock()
+        body, status = await worker.handle({"task_type": "companion_consolidation"})
+        assert status == 400
+
+    async def test_handle_companion_consolidation_missing_service_returns_400(self):
+        worker, ns = _make_full_worker()
+        # worker._companion_extraction stays None (WorkerHandler's own default)
+        body, status = await worker.handle({"task_type": "companion_consolidation", "session_id": "slack:C1"})
+        assert status == 400
+
+    async def test_handle_companion_consolidation_reenqueues_when_has_more(self):
+        worker, ns = _make_full_worker()
+        worker._companion_extraction = AsyncMock()
+        worker._companion_extraction.process_session_batches.return_value = True
+        await worker.handle({"task_type": "companion_consolidation", "session_id": "slack:C1"})
+        ns.task_dispatch.enqueue_companion_consolidation_task.assert_called_once_with(session_id="slack:C1")
+
+    async def test_dispatch_via_handle_routes_to_sweep_companion_consolidation(self):
+        worker, ns = _make_full_worker()
+        worker._companion_extraction = AsyncMock()
+        worker._companion_extraction.find_stuck_sessions.return_value = ["slack:C1", "slack:C2"]
+        body, status = await worker.handle({"task_type": "sweep_companion_consolidation"})
+        assert status == 200
+        assert body["swept"] == 2
+        assert ns.task_dispatch.enqueue_companion_consolidation_task.call_count == 2
+
+    async def test_sweep_companion_consolidation_missing_service_returns_501(self):
+        worker, ns = _make_full_worker()
+        body, status = await worker.handle({"task_type": "sweep_companion_consolidation"})
+        assert status == 501
