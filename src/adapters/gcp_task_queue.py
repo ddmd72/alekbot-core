@@ -411,3 +411,40 @@ class GcpTaskQueue(TaskQueue):
         except Exception as e:
             logger.error(f"❌ Failed to enqueue consolidation task: {e}", exc_info=True)
             raise
+
+    async def enqueue_companion_consolidation_task(self, session_id: str) -> str:
+        """Enqueue companion extraction task via Cloud Tasks — own HTTP request + full CPU."""
+        try:
+            payload = {
+                "task_type": "companion_consolidation",
+                "session_id": session_id,
+            }
+
+            task = {
+                "http_request": {
+                    "http_method": tasks_v2.HttpMethod.POST,
+                    "url": f"{self.service_url}/worker",
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps(payload, cls=_DomainEncoder).encode()
+                },
+                # TutorExtractorAgentConfig.timeout_ms is 5 min (single LLM call, no
+                # multi-turn loop) — 600s gives Cloud Tasks headroom without
+                # ConsolidationAgent's 30-min ceiling.
+                "dispatch_deadline": duration_pb2.Duration(seconds=600),
+            }
+
+            if self.service_account_email:
+                task["http_request"]["oidc_token"] = {
+                    "service_account_email": self.service_account_email
+                }
+
+            response = self.client.create_task(
+                request={"parent": self.queue_path, "task": task}
+            )
+
+            logger.info(f"📦 Enqueued companion_consolidation task for session {session_id[:12]}: {response.name}")
+            return response.name
+
+        except Exception as e:
+            logger.error(f"❌ Failed to enqueue companion_consolidation task: {e}", exc_info=True)
+            raise
