@@ -44,6 +44,7 @@ from src.adapters.firestore_notification_state_adapter import FirestoreNotificat
 from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindingAdapter
 from src.adapters.notification_channel_factory import NotificationChannelFactory
 from src.services.channel_binding_service import ChannelBindingService
+from src.services.companion_window_resolver import CompanionWindowResolver
 from src.adapters.slack.media_adapter import SlackMediaAdapter
 from src.adapters.slack.response_channel import SlackResponseChannel
 from src.adapters.telegram.response_channel import TelegramResponseChannel
@@ -292,6 +293,15 @@ async def main():
             except Exception as e:
                 logger.error(f"❌ Error in overflow_callback: {e}", exc_info=True)
 
+        logger.info("🔗 Initializing Channel Binding Service...")
+        channel_binding_adapter = FirestoreChannelBindingAdapter(
+            db_client=db_client, env_config=env_config
+        )
+        channel_binding_service = ChannelBindingService(port=channel_binding_adapter)
+
+        logger.info("🧑‍🏫 Initializing Companion Window Resolver...")
+        companion_window_resolver = CompanionWindowResolver(channel_binding_service)
+
         # 1. Shared service container (LLM adapters, repositories, prompt infra, session store)
         logger.info("🏭 Initializing Service Container...")
         container = ServiceContainer(
@@ -300,6 +310,7 @@ async def main():
             env_config=env_config,
             account_repo=account_repo,
             overflow_callback=overflow_callback,
+            threshold_resolver=companion_window_resolver.resolve,
             alert_webhook=_alert_webhook,
         )
         file_service = FileUploadService(container.llm_port)
@@ -407,10 +418,6 @@ async def main():
         notification_state_repo = FirestoreNotificationStateAdapter(
             db_client=db_client, env_config=env_config
         )
-        channel_binding_adapter = FirestoreChannelBindingAdapter(
-            db_client=db_client, env_config=env_config
-        )
-        channel_binding_service = ChannelBindingService(port=channel_binding_adapter)
         notification_channel_factory = NotificationChannelFactory()  # adapters wired below
         notification_service = UserNotificationService(
             state_repo=notification_state_repo,
@@ -467,6 +474,29 @@ async def main():
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
         _language_service._ensure_agents = agent_factory.ensure_agents_for_user
         await agent_factory.start()
+
+        logger.info("🧑‍🏫 Initializing Companion Extraction pipeline...")
+        from src.adapters.firestore_companion_extraction_queue import FirestoreCompanionExtractionQueue
+        from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
+        from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
+        from src.composition.companion_extractor_runner import CompanionExtractorRunner
+        from src.services.companion_extraction_service import CompanionExtractionService
+
+        companion_extraction_queue = FirestoreCompanionExtractionQueue(db_client=db_client, env_config=env_config)
+        companion_memory_repo = FirestoreCompanionMemoryRepository(db_client=db_client, env_config=env_config)
+        companion_cache_repo = FirestoreCompanionCacheRepository(db_client=db_client, env_config=env_config)
+        companion_extractor_runner = CompanionExtractorRunner(
+            context_builder=container.context_builder,
+            user_repo=user_repo,
+            prompt_builder=container.assembly_service,
+        )
+        companion_extraction_service = CompanionExtractionService(
+            queue=companion_extraction_queue,
+            companion_repo=companion_memory_repo,
+            cache_repo=companion_cache_repo,
+            embedding_service=container.embedding_service,
+            extractor=companion_extractor_runner,
+        )
 
         # ====================================================================
         # Initialize OAuth + Cabinet Services (will be registered on Slack app)
@@ -637,6 +667,7 @@ async def main():
             billing_webhook=_alert_webhook,
             email_embedding_repair=_email_embedding_repair_service,
             link_service=file_link_service,
+            companion_extraction=companion_extraction_service,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
