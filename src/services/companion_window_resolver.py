@@ -15,15 +15,17 @@ Not yet reachable in production: bound channels are stateless today (no
 SessionStore writes at all) until Phase F flips SessionMode for
 companion_config-bearing bindings.
 """
-from typing import Optional, Tuple
+from typing import Optional, Tuple, TYPE_CHECKING
 
-from .channel_binding_service import ChannelBindingService
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from .channel_binding_service import ChannelBindingService
 
 
 class CompanionWindowResolver:
 
-    def __init__(self, channel_binding_service: ChannelBindingService) -> None:
+    def __init__(self, channel_binding_service: 'ChannelBindingService') -> None:
         self._bindings = channel_binding_service
 
     async def resolve(self, session_id: str) -> Optional[Tuple[int, int]]:
