@@ -35,7 +35,10 @@ _RESPONSE_SCHEMA = {
                 "required": ["text", "domain"],
                 "properties": {
                     "text": {"type": "string"},
-                    "domain": {"type": "string"},
+                    "domain": {
+                        "type": "string",
+                        "enum": ["grammar_error", "vocabulary_gap", "topic_covered", "progress_note"],
+                    },
                     "tags": {"type": "array", "items": {"type": "string"}},
                 },
             },
