@@ -288,19 +288,6 @@ class MapsSearchAgentConfig:
 
 
 # ---------------------------------------------------------------------------
-# Module-level instances — agents import and reference these at class-definition time
-# ---------------------------------------------------------------------------
-
-BASE = BaseAgentConfig()
-ROUTER = RouterAgentConfig()
-QUICK = QuickAgentConfig()
-SMART = SmartAgentConfig()
-MEMORY_SEARCH = MemorySearchAgentConfig()
-WEB_SEARCH = WebSearchAgentConfig()
-CONSOLIDATION = ConsolidationAgentConfig()
-
-
-# ---------------------------------------------------------------------------
 # TutorExtractorAgent (src/agents/tutor_extractor_agent.py)
 # ---------------------------------------------------------------------------
 
@@ -313,8 +300,18 @@ class TutorExtractorAgentConfig:
     temperature: float = 0.3
 
 
-TUTOR_EXTRACTOR = TutorExtractorAgentConfig()
+# ---------------------------------------------------------------------------
+# Module-level instances — agents import and reference these at class-definition time
+# ---------------------------------------------------------------------------
 
+BASE = BaseAgentConfig()
+ROUTER = RouterAgentConfig()
+QUICK = QuickAgentConfig()
+SMART = SmartAgentConfig()
+MEMORY_SEARCH = MemorySearchAgentConfig()
+WEB_SEARCH = WebSearchAgentConfig()
+CONSOLIDATION = ConsolidationAgentConfig()
+TUTOR_EXTRACTOR = TutorExtractorAgentConfig()
 EMAIL_SEARCH = EmailSearchAgentConfig()
 EMAIL_CLASSIFICATION = EmailClassificationAgentConfig()
 DEEP_RESEARCH = DeepResearchAgentConfig()
