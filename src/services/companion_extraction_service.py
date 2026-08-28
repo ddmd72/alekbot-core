@@ -122,6 +122,7 @@ class CompanionExtractionService:
         vectors = await self._embedding.get_embeddings_batch(texts)
         return [
             CompanionRecord(
+                id=f"{batch.batch_id}-{i}",  # Deterministic ID ensures retry idempotency: Firestore set() overwrites same doc, no duplicates on re-fetch.
                 session_id=batch.session_id,
                 account_id=batch.account_id,
                 created_by_user_id=batch.created_by_user_id,
@@ -130,5 +131,5 @@ class CompanionExtractionService:
                 tags=r.get("tags", []),
                 domain=r["domain"],
             )
-            for r, vector in zip(raw_records, vectors)
+            for i, (r, vector) in enumerate(zip(raw_records, vectors))
         ]

@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -107,6 +107,7 @@ async def test_extractor_failure_increments_attempts_and_stops(service, queue, e
     has_more = await service.process_session_batches(_SESSION_ID, max_batches=1)
 
     queue.increment_attempts.assert_called_once_with(batch.batch_id)
+    queue.update_batch_status.assert_any_call(batch.batch_id, BatchStatus.RETRY_PENDING, error="LLM error")
     queue.delete_batch.assert_not_called()
 
 
@@ -125,3 +126,43 @@ async def test_find_stuck_sessions_delegates_to_queue(service, queue):
     queue.get_stuck_session_ids.return_value = [_SESSION_ID]
     result = await service.find_stuck_sessions()
     assert result == [_SESSION_ID]
+
+
+async def test_has_more_true_when_batches_remain(service, queue, companion_repo, embedding_service, extractor):
+    batch1 = _make_batch("b1")
+    batch2 = _make_batch("b2")
+    queue.get_pending_batches.side_effect = [[batch1], [batch2]]
+
+    has_more = await service.process_session_batches(_SESSION_ID, max_batches=1)
+
+    assert has_more is True
+
+
+async def test_record_ids_deterministic_for_retry_idempotency(service, embedding_service):
+    """Verify record IDs are deterministic: same batch produces same IDs on retry.
+
+    Ensures Firestore set() overwrites same doc on re-fetch, preventing duplicates
+    if delete_batch fails and the batch is retried.
+    """
+    batch = _make_batch("batch-xyz")
+    raw_records = [
+        {"text": "Error A", "domain": "type_1", "tags": []},
+        {"text": "Error B", "domain": "type_2", "tags": ["tag1"]},
+    ]
+    embedding_service.get_embeddings_batch.return_value = [[0.1], [0.2]]
+
+    # First call
+    records1 = await service._build_records(batch, raw_records)
+    ids1 = [r.id for r in records1]
+
+    # Reset mock for second call
+    embedding_service.reset_mock()
+    embedding_service.get_embeddings_batch.return_value = [[0.1], [0.2]]
+
+    # Second call (simulating retry)
+    records2 = await service._build_records(batch, raw_records)
+    ids2 = [r.id for r in records2]
+
+    # IDs must be identical across both calls
+    assert ids1 == ids2
+    assert ids1 == ["batch-xyz-0", "batch-xyz-1"]
