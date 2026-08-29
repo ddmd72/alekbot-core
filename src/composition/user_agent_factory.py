@@ -15,7 +15,7 @@ import asyncio
 import os
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from ..adapters.mcp.mcp_client import MCPClient
 from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
@@ -54,6 +54,7 @@ from ..infrastructure.agent_config import (
     HTML_PAGE_GENERATOR as HTML_PAGE_GENERATOR_CFG,
     DOMAIN_RESEARCHER as DOMAIN_RESEARCHER_CFG,
     IMAGE_GENERATION as IMAGE_GENERATION_CFG,
+    TUTOR,
 )
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
@@ -78,6 +79,7 @@ from ..agents.help_agent import HelpAgent
 from ..agents.file_management_agent import FileManagementAgent
 from ..agents.domain_researcher_agent import DomainResearcherAgent
 from ..agents.image_generation_agent import ImageGenerationAgent
+from ..agents.tutor_agent import TutorAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
@@ -144,6 +146,7 @@ class UserAgentFactory(AgentFactoryPort):
         notification_service: Optional[object] = None,
         job_registry: Optional[ProviderRegistry] = None,
         image_registry: Optional[ProviderRegistry] = None,
+        companion_context_assembler: Optional[Any] = None,
         task_queue: Optional[TaskQueue] = None,
         anthropic_client: Optional[object] = None,
         file_conversion_service: Optional[object] = None,
@@ -180,6 +183,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.notification_service = notification_service
         self.job_registry: Optional[ProviderRegistry] = job_registry
         self.image_registry: Optional[ProviderRegistry] = image_registry
+        self.companion_context_assembler = companion_context_assembler
         self.task_queue = task_queue
         self.anthropic_client = anthropic_client
         self.file_conversion_service = file_conversion_service
@@ -753,6 +757,27 @@ class UserAgentFactory(AgentFactoryPort):
             user_timezone=ctx.user_profile.config.timezone,
         )
 
+    def _build_tutor(self, user_id: str, ctx: _UserContext) -> Optional[TutorAgent]:
+        if not self.companion_context_assembler:
+            logger.info(
+                "[UserAgentFactory] No companion_context_assembler configured, skipping tutor"
+            )
+            return None
+        execution_context = self.context_builder.build("tutor", ctx.user_profile.config)
+        return TutorAgent(
+            config=AgentConfig(
+                agent_id=f"tutor_agent_{user_id}",
+                agent_type="tutor",
+                timeout_ms=TUTOR.timeout_ms,
+                capabilities=["tutor_chat"],
+            ),
+            execution_context=execution_context,
+            prompt_builder=ctx.prompt_builder,
+            assembler=self.companion_context_assembler,
+            user_id=user_id,
+            user_timezone=ctx.user_profile.config.timezone,
+        )
+
     def _build_image_generation(
         self, user_id: str, ctx: _UserContext,
     ) -> Optional[ImageGenerationAgent]:
@@ -797,6 +822,7 @@ class UserAgentFactory(AgentFactoryPort):
         "file_management": _build_file_management,
         "domain_researcher": _build_domain_researcher,
         "image_generation": _build_image_generation,
+        "tutor": _build_tutor,
     }
 
     _LAZY_AGENT_IDS: Dict[str, str] = {
@@ -809,6 +835,7 @@ class UserAgentFactory(AgentFactoryPort):
         "file_management": "file_management_agent",
         "domain_researcher": "domain_researcher_agent",
         "image_generation": "image_generation_agent",
+        "tutor": "tutor_agent",
     }
 
     # ------------------------------------------------------------------
