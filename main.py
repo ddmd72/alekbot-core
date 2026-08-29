@@ -455,6 +455,33 @@ async def main():
             from anthropic import AsyncAnthropic
             anthropic_client = AsyncAnthropic(api_key=config["ANTHROPIC_API_KEY"])
 
+        logger.info("🧑‍🏫 Initializing Companion Context infrastructure...")
+        from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
+        from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
+        from src.services.search_enrichment_service import SearchEnrichmentService
+        from src.services.companion_context_assembler_service import CompanionContextAssemblerService
+        from src.domain.settings import SearchConfig
+
+        companion_memory_repo = FirestoreCompanionMemoryRepository(db_client=db_client, env_config=env_config)
+        companion_cache_repo = FirestoreCompanionCacheRepository(db_client=db_client, env_config=env_config)
+
+        _companion_search_config = SearchConfig()
+        _companion_enrichment = SearchEnrichmentService(
+            repository=container.repository,
+            embedding_service=container.embedding_service,
+            keyword_limit=_companion_search_config.DEFAULT_KEYWORD_LIMIT,
+            phrase_one_limit=_companion_search_config.DEFAULT_PHRASE_ONE_LIMIT,
+            phrase_two_limit=_companion_search_config.DEFAULT_PHRASE_TWO_LIMIT,
+            total_limit=10,
+        )
+        companion_context_assembler = CompanionContextAssemblerService(
+            companion_repo=companion_memory_repo,
+            cache_repo=companion_cache_repo,
+            embedding_service=container.embedding_service,
+            enrichment_port=_companion_enrichment,
+            fact_repo=container.repository,
+        )
+
         # 2. Initialize UserAgentFactory — receives ports only, no adapter instantiation
         logger.info("🏭 Initializing User Agent Factory...")
         agent_factory = UserAgentFactory(
@@ -469,6 +496,7 @@ async def main():
             task_queue=agent_task_queue,
             anthropic_client=anthropic_client,
             quota_service=quota_service,
+            companion_context_assembler=companion_context_assembler,
         )
         _agent_factory_ref[0] = agent_factory  # Wire deferred reference for overflow_callback
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
@@ -477,15 +505,13 @@ async def main():
 
         logger.info("🧑‍🏫 Initializing Companion Extraction pipeline...")
         from src.adapters.firestore_companion_extraction_queue import FirestoreCompanionExtractionQueue
-        from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
-        from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
         from src.composition.companion_extractor_runner import CompanionExtractorRunner
         from src.services.companion_extraction_service import CompanionExtractionService
         from src.services.prompt_builder import PromptBuilder
 
         companion_extraction_queue = FirestoreCompanionExtractionQueue(db_client=db_client, env_config=env_config)
-        companion_memory_repo = FirestoreCompanionMemoryRepository(db_client=db_client, env_config=env_config)
-        companion_cache_repo = FirestoreCompanionCacheRepository(db_client=db_client, env_config=env_config)
+        # companion_memory_repo/companion_cache_repo constructed earlier (before
+        # UserAgentFactory), reused here — see "Initializing Companion Context infrastructure" above.
         # repo=None is safe: TutorExtractorAgent always calls build_for_agent() with
         # include_biographical=False, and PromptBuilder only touches self.repo when
         # include_biographical=True (see PromptBuilder.build_for_agent). Same pattern
