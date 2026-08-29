@@ -7,7 +7,10 @@ Structural mirror of DomainResearcherAgent (src/agents/domain_researcher_agent.p
 the established template for a bound-channel conversational specialist: reads
 history from message.context["history"] (platform API, not SessionStore — bound
 channels are stateless today, see ConversationHandler._resolve_session_mode),
-uses DelegationEngine for its own tool-calling loop (search_memory, search_web).
+uses DelegationEngine for its own tool-calling loop (search_web only — search_memory was
+considered and explicitly declined: it reaches Alek's full personal biography, bypassing
+the include_biographical=False permission boundary the companion-context assembler
+otherwise enforces; see fix wave 2026-08-29).
 
 The one new piece: injects CompanionContextAssemblerService's read-side output
 (this session's own companion records + cached summary) as a static prompt block,
@@ -26,7 +29,7 @@ every minute.
 """
 import json
 import re
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.llm import Message, MessagePart
@@ -110,6 +113,7 @@ class TutorAgent(BaseAgent):
                 include_directives=False,
                 include_datetime=False,
                 extra_static_blocks=extra_static_blocks,
+                kb_preamble=True,
             )
         except Exception as exc:
             self._on_agent_error(exc, "prompt_builder")
@@ -196,7 +200,7 @@ class TutorAgent(BaseAgent):
 
     async def _build_companion_context_block(
         self, message: AgentMessage, query: str,
-    ) -> Optional[list]:
+    ) -> Optional[List[str]]:
         """Fetch this session's companion context and format it as a named static
         block for the prompt. Degrades to no block on any failure — companion
         context is enrichment, not a hard requirement for the tutor to respond."""
@@ -238,6 +242,12 @@ class TutorAgent(BaseAgent):
         if not companion_context.session_summary and not companion_context.own_records:
             return None
 
+        # DEFERRED (review 2026-08-29): own_records is query-dependent (changes every
+        # turn) but rides in this STATIC block alongside session_summary, ahead of the
+        # cache boundary — will hurt prompt-cache hit rate once Phase F starts writing
+        # real records. Zero live impact today (own_records is always empty pre-Phase-F).
+        # Fix means splitting it into query_specific_context; deliberately out of scope
+        # for this fix wave.
         payload = {
             "session_summary": companion_context.session_summary or "",
             "own_records": [r.text for r in companion_context.own_records],
