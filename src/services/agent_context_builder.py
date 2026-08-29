@@ -125,6 +125,13 @@ class AgentProviderStrategy:
             "required_capabilities": [],
             "fallback": "gemini"
         },
+        # Conversational tutoring — no reasoning-model requirement, general-purpose chat.
+        "tutor": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "gemini", "openai"],
+            "required_capabilities": ["native_tools"],
+            "fallback": "gemini"
+        },
         # Deep research uses DeepResearchPort (not LLMPort) — AgentContextBuilder.build() is
         # NOT called for this agent type. This entry exists solely for unified default/allowed
         # provider declaration. UserAgentFactory reads default_provider from here.
