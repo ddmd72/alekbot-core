@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -6,6 +6,7 @@ from src.agents.tutor_agent import TutorAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.companion_context import CompanionContext
 from src.domain.companion import CompanionRecord
+from src.infrastructure.agent_config import TUTOR
 from src.ports.llm_port import LLMPort
 from src.ports.prompt_builder_port import PromptBuilderPort
 
@@ -164,9 +165,10 @@ async def test_execute_reads_history_from_context_not_session_store(agent, mock_
     await agent.execute(_bound_message(history=history))
     request = mock_llm.generate_content.call_args.kwargs["request"]
     history_texts = [part.text for msg in request.messages for part in msg.parts if part.text]
-    # _inject_timestamps prepends a "[Mon DD, HH:MM TZ] " prefix to user turns
-    # (same as DomainResearcherAgent), so this checks substring containment,
-    # not exact equality.
+    # Substring containment, not exact equality: _inject_timestamps only stamps a
+    # "[Mon DD, HH:MM TZ] " prefix onto user turns that carry `created_at` (see
+    # BaseAgent._inject_timestamps), and this history entry has none — so no prefix
+    # is actually added here today. `in` keeps this test robust either way.
     assert any("Hola profe" in t for t in history_texts)
 
 
@@ -202,3 +204,58 @@ async def test_execute_llm_exception(agent, mock_llm):
 
 def test_get_alternative_agents_empty(agent):
     assert agent._get_alternative_agents() == []
+
+
+# ---------------------------------------------------------------------------
+# DelegationEngine branch (fix wave 2026-08-29, Required fix 4)
+#
+# Every test above leaves agent.coordinator unset (None, BaseAgent's default),
+# which routes execute() through the single-LLM-call fallback branch in
+# _converse(). In production, UserAgentFactory.create_agent_on_demand ALWAYS
+# sets agent.coordinator = self.coordinator, and search_web (the tutor's only
+# allowed intent — search_memory was dropped per fix 3) is always available as
+# a tool, so production always takes the DelegationEngine branch instead. These
+# two tests are the only coverage of that branch.
+# ---------------------------------------------------------------------------
+
+def _coordinator_with_search_web():
+    coordinator = MagicMock()
+    coordinator.get_available_intents_for.return_value = [
+        {"name": "search_web", "description": "Search the web.", "context_schema": {}},
+    ]
+    return coordinator
+
+
+async def test_execute_uses_delegation_engine_when_coordinator_available(agent):
+    coordinator = _coordinator_with_search_web()
+    agent.coordinator = coordinator
+
+    engine_result = MagicMock(failed=False, text="¡Vale! Delegated answer.", total_tokens=99)
+    mock_engine = MagicMock()
+    mock_engine.execute = AsyncMock(return_value=engine_result)
+
+    with patch("src.agents.tutor_agent.DelegationEngine", return_value=mock_engine) as mock_engine_cls:
+        response = await agent.execute(_bound_message())
+
+    mock_engine_cls.assert_called_once_with(coordinator)
+    mock_engine.execute.assert_awaited_once()
+    call_kwargs = mock_engine.execute.call_args.kwargs
+    assert call_kwargs["max_turns"] == TUTOR.max_delegation_turns
+    assert call_kwargs["calling_agent_id"] == agent.agent_id
+    assert response.status == AgentStatus.SUCCESS
+    assert response.result == "¡Vale! Delegated answer."
+
+
+async def test_execute_delegation_engine_max_turns_exhausted_fails(agent):
+    coordinator = _coordinator_with_search_web()
+    agent.coordinator = coordinator
+
+    engine_result = MagicMock(failed=True, text="", total_tokens=0)
+    mock_engine = MagicMock()
+    mock_engine.execute = AsyncMock(return_value=engine_result)
+
+    with patch("src.agents.tutor_agent.DelegationEngine", return_value=mock_engine):
+        response = await agent.execute(_bound_message())
+
+    assert response.status == AgentStatus.FAILED
+    assert response.error == "max_turns_exhausted"
