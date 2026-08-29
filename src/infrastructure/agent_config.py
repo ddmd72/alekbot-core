@@ -451,7 +451,12 @@ DOMAIN_RESEARCHER = DomainResearcherAgentConfig()
 class TutorAgentConfig:
     temperature: float = 0.7
     max_tokens: int = 4096
-    timeout_ms: int = 60_000
+    # 120 s: matches DomainResearcherAgentConfig.timeout_ms, the template this agent is
+    # based on (same max_delegation_turns=5 budget). 60s was too tight — WebSearchAgent's
+    # own timeout_ms (90_000, search_web is in allowed_intents) can outlive the tutor's
+    # entire execution budget, since BaseAgent._execute_with_timeout wraps the whole
+    # execute() call — DelegationEngine loop included — in this timeout.
+    timeout_ms: int = 120_000
     max_delegation_turns: int = 5  # matches DomainResearcher's multi-turn tool loop budget
 
 
