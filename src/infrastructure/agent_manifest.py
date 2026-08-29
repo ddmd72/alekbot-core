@@ -552,7 +552,6 @@ TUTOR = AgentDescriptor(
         ),
     },
     allowed_intents=frozenset({
-        Intent.SEARCH_MEMORY,
         Intent.SEARCH_WEB,
     }),
 )
