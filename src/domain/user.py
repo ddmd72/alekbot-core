@@ -121,6 +121,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "html_page": PerformanceTier.PERFORMANCE,        # Full HTML+CSS+JS page — max quality
     "notes": PerformanceTier.PERFORMANCE,              # Multi-turn with chain delegation to compute
     "domain_researcher": PerformanceTier.PERFORMANCE, # Deep analytical reasoning (OpenAI o3/o4)
+    "tutor": PerformanceTier.BALANCED,  # conversational chat, not deep reasoning — cost-appropriate default
     "compute": PerformanceTier.ECO,      # Gemini code_execution sandbox — mechanical, not reasoning-bound
     "tasks": PerformanceTier.BALANCED,   # Multi-turn CRUD over TasksProviderPort — real reasoning, not mechanical
     # Single LLM call crafts the Aurora prompt (RFC decision #1: full LLM agent

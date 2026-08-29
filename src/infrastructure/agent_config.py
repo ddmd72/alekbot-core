@@ -444,6 +444,21 @@ DOMAIN_RESEARCHER = DomainResearcherAgentConfig()
 
 
 # ---------------------------------------------------------------------------
+# TutorAgent (src/agents/tutor_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TutorAgentConfig:
+    temperature: float = 0.7
+    max_tokens: int = 4096
+    timeout_ms: int = 60_000
+    max_delegation_turns: int = 5  # matches DomainResearcher's multi-turn tool loop budget
+
+
+TUTOR = TutorAgentConfig()
+
+
+# ---------------------------------------------------------------------------
 # ImageGenerationAgent (src/agents/image_generation_agent.py)
 # ---------------------------------------------------------------------------
 
