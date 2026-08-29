@@ -113,12 +113,61 @@ async def test_execute_injects_companion_context_as_static_block(agent, mock_pro
     assert "subjunctive" in joined
 
 
-async def test_execute_reads_history_from_context_not_session_store(agent, mock_prompt_builder):
+async def test_execute_strips_delegation_timestamp_from_retrieval_query(agent, mock_assembler):
+    # AgentCoordinator.handle_delegation() prepends "[Mon DD, HH:MM UTC] " to every
+    # delegated query before it reaches a specialist (agent_coordinator.py:424-425).
+    # The retrieval phrase embedded for own-records RRF search must be the clean
+    # utterance, not that prefix — the timestamp is noise that changes every minute.
+    prefixed_query = "[Aug 29, 14:32 UTC] ¿Cómo se dice 'I would like'?"
+    await agent.execute(_bound_message(query=prefixed_query))
+    call_kwargs = mock_assembler.assemble_context.call_args.kwargs
+    assert call_kwargs["query_phrases"] == ["¿Cómo se dice 'I would like'?"]
+
+
+async def test_execute_skips_empty_companion_context_block(agent, mock_assembler, mock_prompt_builder):
+    mock_assembler.assemble_context.return_value = CompanionContext(
+        session_summary=None, own_records=[], biographical_facts=[], standing_directives=[],
+    )
+    response = await agent.execute(_bound_message())
+    assert response.status == AgentStatus.SUCCESS
+    call_kwargs = mock_prompt_builder.build_for_agent.call_args.kwargs
+    assert not (call_kwargs.get("extra_static_blocks") or [])
+
+
+async def test_execute_missing_origin_context_logs_warning_and_degrades(agent, caplog, mock_prompt_builder):
+    import logging
+
+    msg = _bound_message()
+    del msg.context["origin_platform"]
+    with caplog.at_level(logging.WARNING):
+        response = await agent.execute(msg)
+    assert response.status == AgentStatus.SUCCESS
+    call_kwargs = mock_prompt_builder.build_for_agent.call_args.kwargs
+    assert not (call_kwargs.get("extra_static_blocks") or [])
+    assert "companion context skipped" in " ".join(caplog.messages)
+
+
+async def test_execute_passes_include_directives_false(agent, mock_prompt_builder):
+    # RFC §5: the tutor's permission boundary should be explicit at the call
+    # site, not an implicit side-effect of include_biographical=False.
+    await agent.execute(_bound_message())
+    call_kwargs = mock_prompt_builder.build_for_agent.call_args.kwargs
+    assert call_kwargs["include_directives"] is False
+
+
+async def test_execute_reads_history_from_context_not_session_store(agent, mock_llm):
+    # No SessionStore dependency exists on this agent at all — the constructor
+    # never receives or stores one (see the `agent` fixture). This test verifies
+    # the substantive behavior: history from message.context["history"] actually
+    # reaches the LLM request, not just that some call happened.
     history = [{"role": "user", "parts": [{"text": "Hola profe"}]}]
     await agent.execute(_bound_message(history=history))
-    # No SessionStore dependency exists on this agent at all — constructor test below
-    # covers that; this test just confirms history flows into the LLM request.
-    assert mock_prompt_builder.build_for_agent.called
+    request = mock_llm.generate_content.call_args.kwargs["request"]
+    history_texts = [part.text for msg in request.messages for part in msg.parts if part.text]
+    # _inject_timestamps prepends a "[Mon DD, HH:MM TZ] " prefix to user turns
+    # (same as DomainResearcherAgent), so this checks substring containment,
+    # not exact equality.
+    assert any("Hola profe" in t for t in history_texts)
 
 
 async def test_execute_assembler_failure_degrades_gracefully(agent, mock_assembler, mock_prompt_builder):
