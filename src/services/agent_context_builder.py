@@ -54,6 +54,14 @@ class AgentProviderStrategy:
             "required_capabilities": ["context_caching"],
             "fallback": "gemini"
         },
+        # Single LLM call (structured JSON, no multi-turn tool loop) — no
+        # context_caching requirement, unlike consolidation's 8-step loop.
+        "tutor_extractor": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "gemini", "openai"],
+            "required_capabilities": [],
+            "fallback": "gemini"
+        },
         "postprocessing": {
             "default_provider": "gemini",
             "allowed_providers": ["gemini"],   # locked: response_schema is Gemini-only
@@ -115,6 +123,13 @@ class AgentProviderStrategy:
             "default_provider": "openai",
             "allowed_providers": ["openai", "claude", "gemini"],
             "required_capabilities": [],
+            "fallback": "gemini"
+        },
+        # Conversational tutoring — no reasoning-model requirement, general-purpose chat.
+        "tutor": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "gemini", "openai"],
+            "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },
         # Deep research uses DeepResearchPort (not LLMPort) — AgentContextBuilder.build() is

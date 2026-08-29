@@ -403,6 +403,7 @@ _FACTORY_AGENT_TYPES = [
     "pdf_generator",
     "html_page",
     "domain_researcher",
+    "tutor",
     "image_generation",
 ]
 
@@ -445,7 +446,10 @@ def test_strategies_has_no_orphans():
     # Agent types that are in STRATEGIES but not in UserAgentFactory.build():
     # - email_classifier: created in ServiceContainer (singleton, not per-user)
     # - deep_research: uses DeepResearchPort, not LLMPort; entry is for provider resolution
-    _NON_FACTORY_STRATEGIES = {"email_classifier", "deep_research"}
+    # - tutor_extractor: built on-demand by CompanionExtractorRunner (composition/), not
+    #   UserAgentFactory — companion extraction batches are session-scoped and ephemeral, not a
+    #   per-user eager instance.
+    _NON_FACTORY_STRATEGIES = {"email_classifier", "deep_research", "tutor_extractor"}
 
     all_strategies = set(AgentProviderStrategy.STRATEGIES.keys())
     factory_set = set(_FACTORY_AGENT_TYPES)

@@ -12,6 +12,10 @@ Supported task_types:
   - consolidation            → process one batch, re-enqueue if more
   - sweep_consolidation      → fan-out cron: re-trigger consolidation for every user with
                                 stuck batches (recovers data stalled by e.g. billing errors)
+  - companion_consolidation       → process one companion extraction batch, re-enqueue if more
+                                     remain (session-keyed analog of consolidation)
+  - sweep_companion_consolidation → fan-out cron: re-trigger companion extraction for every
+                                     session with stuck batches
   - deep_research_polling    → poll Gemini job, deliver via notification service
   - fire_due_reminders       → cron tick: claim each due note (atomic precondition on `due`)
                                 and enqueue per-fire `execute_reminder` Cloud Tasks
@@ -46,6 +50,7 @@ if TYPE_CHECKING:
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
     from ..services.file_link_service import FileLinkService
+    from ..services.companion_extraction_service import CompanionExtractionService
 
 from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain.notification_kind import NotificationKind
@@ -99,6 +104,7 @@ class WorkerHandler:
         email_embedding_repair: Optional[EmailEmbeddingRepairService] = None,
         link_service: "Optional[FileLinkService]" = None,
         smart_retry_service: Optional[SmartRetryService] = None,
+        companion_extraction: "Optional[CompanionExtractionService]" = None,
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -121,6 +127,7 @@ class WorkerHandler:
         self._billing_webhook = billing_webhook
         self._email_embedding_repair = email_embedding_repair
         self._smart_retry_service = smart_retry_service
+        self._companion_extraction = companion_extraction
 
     async def handle(self, payload: dict) -> Optional[Tuple[dict, int]]:
         """
@@ -144,6 +151,10 @@ class WorkerHandler:
             return await self._handle_consolidation(payload)
         elif task_type == "sweep_consolidation":
             return await self._handle_sweep_consolidation()
+        elif task_type == "companion_consolidation":
+            return await self._handle_companion_consolidation(payload)
+        elif task_type == "sweep_companion_consolidation":
+            return await self._handle_sweep_companion_consolidation()
         elif task_type == "deep_research_polling":
             return await self._handle_deep_research_polling(payload)
         elif task_type == "setup_microsoft_todo":
@@ -314,6 +325,46 @@ class WorkerHandler:
 
         logger.info(f"[Worker] sweep_consolidation complete: swept={len(user_ids)}")
         return {"swept": len(user_ids)}, 200
+
+    # ------------------------------------------------------------------
+    # Companion extraction (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §6)
+    # ------------------------------------------------------------------
+
+    async def _handle_companion_consolidation(self, payload: dict) -> Tuple[dict, int]:
+        """
+        Process one companion extraction batch. Re-enqueues if more remain.
+        Mirrors _handle_consolidation, session-keyed instead of user-keyed.
+        """
+        session_id = payload.get("session_id")
+        if not session_id or self._companion_extraction is None:
+            return {"error": "missing session_id or companion_extraction service not ready"}, 400
+
+        has_more = await self._companion_extraction.process_session_batches(
+            session_id=session_id, max_batches=1,
+        )
+        if has_more and self._task_dispatch:
+            await self._task_dispatch.enqueue_companion_consolidation_task(session_id=session_id)
+            logger.info(f"📬 [Worker] Re-enqueued next companion_consolidation task for session {session_id[:12]}")
+        return {"status": "ok"}, 200
+
+    async def _handle_sweep_companion_consolidation(self) -> Tuple[dict, int]:
+        """
+        Fan-out cron: re-trigger extraction for every session with stuck batches.
+        Mirrors _handle_sweep_consolidation. Not yet wired to a Cloud Scheduler job
+        (that is deploy-time infra, out of this plan's scope — same as how
+        sweep_consolidation's scheduler job is provisioned by hand).
+        """
+        if self._companion_extraction is None or self._task_dispatch is None:
+            logger.warning("[Worker] sweep_companion_consolidation: services not configured")
+            return {"error": "services not configured"}, 501
+
+        session_ids = await self._companion_extraction.find_stuck_sessions()
+        for session_id in session_ids:
+            await self._task_dispatch.enqueue_companion_consolidation_task(session_id=session_id)
+            logger.info(f"[Worker] sweep_companion_consolidation: enqueued for {session_id[:12]}")
+
+        logger.info(f"[Worker] sweep_companion_consolidation complete: swept={len(session_ids)}")
+        return {"swept": len(session_ids)}, 200
 
     # ------------------------------------------------------------------
     # Deep Research polling (Gemini)

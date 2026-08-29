@@ -501,5 +501,23 @@
       { "fieldPath": "status", "order": "ASCENDING" },
       { "fieldPath": "updated_at", "order": "ASCENDING" }
     ]
+  },
+  {
+    "collectionGroup": "development_companion_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "session_id", "order": "ASCENDING" },
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "companion_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "session_id", "order": "ASCENDING" },
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
   }
 ]

@@ -74,6 +74,9 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # Multi-turn cache markers in the Claude adapter (cache_last_message +
     # sliding rolling window) further offset cost on later turns.
     "consolidation": PerformanceTier.PERFORMANCE,
+    # Same judgment-call quality bar as consolidation (extraction is a
+    # deliberate "what's worth remembering" decision, not mechanical work).
+    "tutor_extractor": PerformanceTier.PERFORMANCE,
     # Stays BALANCED for the agent as a whole — this tier serves the `search_web` intent,
     # which is genuine multi-angle research. Measured 2026-07-29 on real user queries
     # (scripts/websearch/ab_user_queries.py): ECO/nano was 3.7x cheaper but returned 6.0
@@ -118,6 +121,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "html_page": PerformanceTier.PERFORMANCE,        # Full HTML+CSS+JS page — max quality
     "notes": PerformanceTier.PERFORMANCE,              # Multi-turn with chain delegation to compute
     "domain_researcher": PerformanceTier.PERFORMANCE, # Deep analytical reasoning (OpenAI o3/o4)
+    "tutor": PerformanceTier.BALANCED,  # conversational chat, not deep reasoning — cost-appropriate default
     "compute": PerformanceTier.ECO,      # Gemini code_execution sandbox — mechanical, not reasoning-bound
     "tasks": PerformanceTier.BALANCED,   # Multi-turn CRUD over TasksProviderPort — real reasoning, not mechanical
     # Single LLM call crafts the Aurora prompt (RFC decision #1: full LLM agent

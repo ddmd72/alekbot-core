@@ -19,13 +19,16 @@ tree found exactly 2 hits (the fixed site, plus `main.py:291`, see below) and ze
 against the ~11 already-correctly-tracked sites — including two scatter-gather patterns that
 assign to a list before `asyncio.gather`.
 
-**Known gap — not closed by this change:** `main.py:291` (a nested, untracked `create_task` inside
-the socket-mode consolidation-overflow fallback) also trips RUF006, but `make check` only runs
-`ruff check src/` (documented CLAUDE.md convention), so `main.py` is outside the CI-enforced lint
-scope. This is a real, separate, higher-consequence finding (the task can outlive the tracked outer
-task that spawns it, so a SIGTERM shutdown drain gives false confidence — see
-`docs/12_risks/IMPLEMENTATION_ROADMAP.md` / backlog) — left open, not silently absorbed into "the
-class of bug is now closed."
+**Known gap, closed 2026-08-25:** `main.py:291` (a nested, untracked `create_task` inside the
+consolidation-overflow fallback for when `agent_task_queue` was `None`) also tripped RUF006, but
+`make check` only runs `ruff check src/` (documented CLAUDE.md convention), so `main.py` was
+outside the CI-enforced lint scope. The branch dated back to a pre-2026-08-16 `is_http_mode` check
+that gated the task queue on Socket Mode vs HTTP mode; once Socket Mode was removed entirely, the
+queue is created for any `GOOGLE_CLOUD_PROJECT` (`main.py:158`), which is always set in Cloud Run —
+so the fallback was unreachable in production. Owner decision: delete the branch outright rather
+than fix its task tracking ("мы локально не дебажим") — `overflow_callback` now awaits
+`agent_task_queue.enqueue_consolidation_task()` unconditionally inside the `consolidation_queue`
+branch. `ruff check --select RUF006 src/ main.py` now finds zero hits.
 
 **Rejected alternatives:**
 - *Hand-rolled architecture test (AST/regex grep for bare `create_task(`)* — reinvents what a

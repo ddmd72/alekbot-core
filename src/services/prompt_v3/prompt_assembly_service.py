@@ -454,13 +454,15 @@ class PromptAssemblyService:
 
         if kb_parts:
             kb_block = "knowledge_base {\n" + "\n\n".join(kb_parts) + "\n}"
+            extra = ("\n\n" + "\n\n".join(extra_static_blocks)) if extra_static_blocks else ""
             if kb_preamble:
                 # Preamble: context first, instructions last → better recency for cognitive_process
-                extra = ("\n\n" + "\n\n".join(extra_static_blocks)) if extra_static_blocks else ""
                 prompt = kb_block + extra + "\n\n" + prompt
             else:
-                # Postamble: default — knowledge_base appended after blueprint
-                prompt = prompt + "\n\n" + kb_block
+                # Postamble: default — knowledge_base (+ any extra_static_blocks) appended
+                # after blueprint. extra_static_blocks used to be silently dropped here —
+                # the kb_preamble=True branch above was the only one that appended them.
+                prompt = prompt + "\n\n" + kb_block + extra
         elif extra_static_blocks and kb_preamble:
             prompt = "\n\n".join(extra_static_blocks) + "\n\n" + prompt
 

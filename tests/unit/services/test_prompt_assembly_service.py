@@ -221,6 +221,34 @@ async def test_extra_static_blocks_placed_after_kb_before_blueprint():
 
 
 @pytest.mark.asyncio
+async def test_extra_static_blocks_survive_kb_preamble_false_with_kb_parts():
+    """Regression (2026-08-29 whole-branch review, tutor-agent fix wave): the postamble
+    branch (kb_preamble=False, reached whenever kb_parts is non-empty) used to append only
+    knowledge_base {} and silently drop any caller-supplied extra_static_blocks — the exact
+    trap TutorAgent's companion_context block fell into before it started passing
+    kb_preamble=True. Assert the postamble branch now appends them too."""
+    service = _make_service()
+    result = await service._inject_runtime_context(
+        prompt=TEMPLATE,
+        biographical_facts=[],
+        conversation_history=[],
+        user_id="test_user",
+        user_location="Valencia, Spain",
+        kb_preamble=False,
+        extra_static_blocks=["companion_context {\ntest\n}"],
+    )
+    boundary_pos = result.index(PROMPT_CACHE_BOUNDARY)
+    static_part = result[:boundary_pos]
+    assert "companion_context" in static_part
+    assert "knowledge_base" in static_part
+    # Postamble order: blueprint template, then knowledge_base, then extra_static_blocks.
+    template_pos = static_part.index("class Alek")
+    kb_pos = static_part.index("knowledge_base")
+    companion_pos = static_part.index("companion_context")
+    assert template_pos < kb_pos < companion_pos
+
+
+@pytest.mark.asyncio
 async def test_extra_static_blocks_without_kb():
     """extra_static_blocks with kb_preamble=True and no bio facts: block still placed before blueprint."""
     service = _make_service()
