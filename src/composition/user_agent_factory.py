@@ -54,7 +54,7 @@ from ..infrastructure.agent_config import (
     HTML_PAGE_GENERATOR as HTML_PAGE_GENERATOR_CFG,
     DOMAIN_RESEARCHER as DOMAIN_RESEARCHER_CFG,
     IMAGE_GENERATION as IMAGE_GENERATION_CFG,
-    TUTOR,
+    TUTOR as TUTOR_CFG,
 )
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
@@ -768,7 +768,7 @@ class UserAgentFactory(AgentFactoryPort):
             config=AgentConfig(
                 agent_id=f"tutor_agent_{user_id}",
                 agent_type="tutor",
-                timeout_ms=TUTOR.timeout_ms,
+                timeout_ms=TUTOR_CFG.timeout_ms,
                 capabilities=["tutor_chat"],
             ),
             execution_context=execution_context,
