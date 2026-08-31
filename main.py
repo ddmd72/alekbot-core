@@ -237,62 +237,6 @@ async def main():
             env_config=env_config
         )
 
-        # Create overflow callback for session store.
-        # agent_factory is created AFTER ServiceContainer (it depends on session_store from it),
-        # so we use a mutable holder to safely reference it from the closure.
-        from src.domain.consolidation import ConsolidationBatch
-        from src.ports.llm_port import Message
-
-        _agent_factory_ref: list = [None]  # [0] set after agent_factory is created
-
-        async def overflow_callback(user_id: str, session_id: str, messages: list[Message]):
-            """
-            Triggered when hot storage exceeds threshold.
-            Creates a batch and immediately triggers processing.
-            """
-            factory = _agent_factory_ref[0]
-            if factory is None:
-                logger.error("❌ [Overflow] overflow_callback fired before agent_factory initialized — batch lost!")
-                return
-
-            try:
-                # 1. Serialize messages for consolidation.
-                # Model parts: use summary (p.text), NOT full_text — full_text contains
-                # verbose responses + web_search_context JSON that pollute consolidation.
-                # User parts: consolidation_text (explicit fact save) or user text.
-                serialized = []
-                for msg in messages:
-                    if msg.role == "model":
-                        parts = [{"text": p.text} for p in msg.parts if p.text]
-                    else:
-                        parts = [{"text": p.consolidation_text or p.text} for p in msg.parts if p.consolidation_text or p.text]
-                    serialized.append({
-                        "role": msg.role,
-                        "parts": parts,
-                        "created_at": msg.created_at,
-                    })
-
-                # 2. Create a lightweight batch
-                batch = ConsolidationBatch(
-                    user_id=user_id,
-                    session_id=session_id,
-                    messages=serialized
-                )
-
-                # 3. Enqueue and trigger processing
-                if consolidation_queue:
-                    batch_id = await consolidation_queue.enqueue_batch(batch)
-                    logger.info(f"📦 [Overflow] Created batch {batch_id} for user {user_id[:8]}")
-
-                    # Trigger processing via Cloud Tasks — own request = full CPU, avoids the
-                    # Cloud Run throttling that hits any asyncio.create_task() background work.
-                    await agent_task_queue.enqueue_consolidation_task(user_id=user_id)
-                    logger.info(f"📬 [Overflow] Consolidation task enqueued for user {user_id[:8]}")
-                else:
-                    logger.warning("⚠️ Consolidation queue not initialized, overflow batch lost!")
-            except Exception as e:
-                logger.error(f"❌ Error in overflow_callback: {e}", exc_info=True)
-
         logger.info("🔗 Initializing Channel Binding Service...")
         channel_binding_adapter = FirestoreChannelBindingAdapter(
             db_client=db_client, env_config=env_config
@@ -301,6 +245,27 @@ async def main():
 
         logger.info("🧑‍🏫 Initializing Companion Window Resolver...")
         companion_window_resolver = CompanionWindowResolver(channel_binding_service)
+
+        # Overflow routing — when a session's sliding window overflows, the batch goes
+        # either to Alek's consolidation pipeline or to a companion's extraction pipeline,
+        # decided by the channel binding (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §9).
+        # Built here, not with the rest of the companion pipeline further below, because
+        # ServiceContainer's session store needs overflow_callback at construction time.
+        # companion_extraction_queue is constructed here for the same reason and reused
+        # by the companion extraction pipeline below.
+        logger.info("🌊 Initializing Overflow Routing Service...")
+        from src.adapters.firestore_companion_extraction_queue import FirestoreCompanionExtractionQueue
+        from src.services.overflow_routing_service import OverflowRoutingService
+
+        companion_extraction_queue = FirestoreCompanionExtractionQueue(db_client=db_client, env_config=env_config)
+        overflow_routing_service = OverflowRoutingService(
+            channel_binding_service=channel_binding_service,
+            user_repo=user_repo,
+            consolidation_queue=consolidation_queue,
+            companion_extraction_queue=companion_extraction_queue,
+            task_queue=agent_task_queue,
+        )
+        overflow_callback = overflow_routing_service.route_overflow
 
         # 1. Shared service container (LLM adapters, repositories, prompt infra, session store)
         logger.info("🏭 Initializing Service Container...")
@@ -498,20 +463,19 @@ async def main():
             quota_service=quota_service,
             companion_context_assembler=companion_context_assembler,
         )
-        _agent_factory_ref[0] = agent_factory  # Wire deferred reference for overflow_callback
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
         _language_service._ensure_agents = agent_factory.ensure_agents_for_user
         await agent_factory.start()
 
         logger.info("🧑‍🏫 Initializing Companion Extraction pipeline...")
-        from src.adapters.firestore_companion_extraction_queue import FirestoreCompanionExtractionQueue
         from src.composition.companion_extractor_runner import CompanionExtractorRunner
         from src.services.companion_extraction_service import CompanionExtractionService
         from src.services.prompt_builder import PromptBuilder
 
-        companion_extraction_queue = FirestoreCompanionExtractionQueue(db_client=db_client, env_config=env_config)
         # companion_memory_repo/companion_cache_repo constructed earlier (before
         # UserAgentFactory), reused here — see "Initializing Companion Context infrastructure" above.
+        # companion_extraction_queue constructed earlier too (before ServiceContainer) — see
+        # "Initializing Overflow Routing Service" above.
         # repo=None is safe: TutorExtractorAgent always calls build_for_agent() with
         # include_biographical=False, and PromptBuilder only touches self.repo when
         # include_biographical=True (see PromptBuilder.build_for_agent). Same pattern
