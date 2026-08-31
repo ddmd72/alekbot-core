@@ -158,6 +158,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | MapsSearch | BALANCED (OpenAI) | `maps_query` (internal) | auto fan-out from `search_web` |
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
 | ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
+| Tutor | BALANCED (OpenAI `gpt-5.6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
 
 **Remote MCP Server** — alekbot as MCP *server* exposing memory search to claude.ai Custom Connectors
 (inverse of its Maps MCP *client*). One tool `get_user_context(query, …)` → `SearchEnrichmentService.enrich_context`

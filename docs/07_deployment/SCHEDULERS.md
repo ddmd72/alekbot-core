@@ -214,14 +214,17 @@ by `session_id` instead of `user_id`. Driven by `TutorExtractorAgent` (RFC §6, 
 
 `sweep_companion_consolidation` mirrors `sweep_consolidation`: it re-triggers extraction for every
 session with a batch stuck in the queue (`WorkerHandler._handle_sweep_companion_consolidation()` →
-`CompanionExtractionService.find_stuck_sessions()`). **No Cloud Scheduler job exists for it yet** —
-unlike `sweep_consolidation`, which has the hourly job above. Provisioning that job is deploy-time
-infra deliberately deferred to Phase F of the RFC; the handler is wired and callable manually
-(`POST /worker {"task_type": "sweep_companion_consolidation"}`) in the meantime.
+`CompanionExtractionService.find_stuck_sessions()`). **No Cloud Scheduler job exists for it yet.**
+Phases A-F (RFC's whole plan, including the write-path wiring that makes companion batches actually
+get created) shipped 2026-08-31 — provisioning the scheduler job was not part of that scope and
+remains open, undated infra work. Until it exists, a companion batch that exhausts its 3 retry
+attempts (`BatchStatus.FAILED`) has no automatic recovery path — only the manual trigger below.
+The handler is wired and callable manually (`POST /worker {"task_type": "sweep_companion_consolidation"}`)
+in the meantime.
 
 | Field | Value |
 |-------|-------|
-| **Job name** | none provisioned yet (Phase F) |
+| **Job name** | none provisioned yet |
 | **Payload** | `{"task_type": "companion_consolidation", "session_id": "..."}` / `{"task_type": "sweep_companion_consolidation"}` |
 | **Handler** | `WorkerHandler._handle_companion_consolidation()` / `_handle_sweep_companion_consolidation()` |
 | **Env** | dev + prod (handler only; no scheduled trigger) |
