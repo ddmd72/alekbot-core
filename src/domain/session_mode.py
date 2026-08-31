@@ -28,6 +28,12 @@ class SessionMode:
     write_consolidation: bool = True
     update_notification_channel: bool = True
 
+    # Session-id to persist under when write_session=True and it differs from the
+    # caller's ambient session_id (e.g. a companion channel's "platform:channel_id"
+    # key, distinct from Alek's own "user_id:channel_id"). None = use the ambient
+    # session_id unchanged — every existing call site is unaffected by this field.
+    write_session_id: Optional[str] = None
+
     # Response delivery: True = thread-aware chunked, False = top-level flat
     use_threads: bool = True
 
