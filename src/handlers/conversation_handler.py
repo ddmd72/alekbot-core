@@ -387,8 +387,20 @@ class ConversationHandler(ConversationHandlerPort):
             # On error, pass through original text (fail open to avoid breaking user experience)
             return response_text
 
-    def _resolve_session_mode(self, channel_id: Optional[str], binding: Optional[ChannelBinding]) -> SessionMode:
+    def _resolve_session_mode(
+        self, channel_id: Optional[str], binding: Optional[ChannelBinding], platform: str,
+    ) -> SessionMode:
         """Resolve processing mode based on channel binding."""
+        if binding and binding.companion_config:
+            return SessionMode(
+                history_source="platform",
+                route_intent=binding.intent,
+                write_session=True,
+                write_session_id=f"{platform}:{channel_id}",
+                write_consolidation=False,
+                update_notification_channel=False,
+                use_threads=False,
+            )
         if binding:
             return SessionMode(
                 history_source="platform",
@@ -416,7 +428,8 @@ class ConversationHandler(ConversationHandlerPort):
         binding = None
         if self._channel_binding and channel_id:
             binding = await self._channel_binding.get(channel_id)
-        mode = self._resolve_session_mode(channel_id, binding)
+        platform = getattr(response_channel, "platform", "slack")
+        mode = self._resolve_session_mode(channel_id, binding, platform)
         if mode.is_bound:
             logger.info(
                 "🔗 [BoundChannel] channel=%s → intent=%s",
@@ -868,7 +881,7 @@ class ConversationHandler(ConversationHandlerPort):
             if mode.write_session:
                 await self._save_history_with_retry(
                     session_store=session_store,
-                    session_id=context.session_id,
+                    session_id=mode.write_session_id or context.session_id,
                     user_parts=clean_message_parts,
                     history_text=history_text,
                     response_text=response_text,
