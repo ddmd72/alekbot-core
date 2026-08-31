@@ -102,6 +102,29 @@ class TestGet:
             include_own_records=False,
         )
 
+    async def test_deserializes_partial_companion_config_with_defaults(self, adapter, col_mock):
+        """A partial/hand-written Firestore doc (only the two required fields)
+        must not raise KeyError — every other CompanionConfig field falls back
+        to its dataclass default (Important #2, final whole-branch review)."""
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_doc_snapshot({
+            "channel_id": "C123",
+            "agent_type": "tutor",
+            "intent": "tutor_chat",
+            "created_by": "user1",
+            "companion_config": {
+                "window_threshold": 50,
+                "batch_size": 30,
+            },
+        }))
+        col_mock.document.return_value = doc_ref
+
+        result = await adapter.get("C123")
+        assert result.companion_config == CompanionConfig(
+            window_threshold=50,
+            batch_size=30,
+        )
+
 
 class TestDelete:
     async def test_deletes_document(self, adapter, col_mock):

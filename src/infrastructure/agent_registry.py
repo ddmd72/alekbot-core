@@ -19,6 +19,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from ..domain.companion_config import CompanionConfig
 from ..utils.logger import logger
 
 
@@ -99,6 +100,11 @@ class AgentDescriptor:
     internal: bool = False
     description: str = ""
     requires_auth: bool = False
+    # Companion-type default: None = not a companion type, ordinary bound agent
+    # (unchanged behavior). Set = attach this default CompanionConfig to the
+    # ChannelBinding when a channel binds to this agent via `$agent <type>`
+    # (see ConversationHandler._handle_agent_command).
+    companion_default_config: Optional["CompanionConfig"] = None
 
     # Part B: What I need (orchestrators only)
     allowed_intents: Optional[frozenset] = None

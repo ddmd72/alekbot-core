@@ -82,6 +82,13 @@ class CompanionExtractionService:
                         await self._companion_repo.save_batch(records)
                     summary = result.get("summary", "")
                     if summary:
+                        # Full replace, not accumulation: this OVERWRITES the cached summary
+                        # with this batch's summary only. The extractor is never given the
+                        # prior cached summary, so the cache reflects the most recent batch,
+                        # not the whole session — a rolling ~window_threshold-turn view, not
+                        # a cumulative biography (Important #5, final whole-branch review
+                        # 2026-08-31; true cumulative summarization is a real feature change,
+                        # deliberately out of scope here).
                         await self._cache_repo.save_summary(batch.session_id, batch.account_id, summary)
 
                     await self._queue.delete_batch(batch.batch_id)
@@ -118,7 +125,28 @@ class CompanionExtractionService:
     async def _build_records(self, batch, raw_records: list) -> List[CompanionRecord]:
         if not raw_records:
             return []
-        texts = [r["text"] for r in raw_records]
+        # _RESPONSE_SCHEMA (TutorExtractorAgent) enforces "records"/"summary" at the
+        # top level only — individual record shape ("text"/"domain") is LLM-produced,
+        # not schema-guaranteed. A per-record .get() guard turns one malformed record
+        # into a skipped-and-logged record instead of a KeyError that burns a whole
+        # batch retry attempt (Minor #13, final whole-branch review 2026-08-31).
+        valid_records = []
+        for r in raw_records:
+            text = r.get("text")
+            domain = r.get("domain")
+            if not text or not domain:
+                logger.warning(
+                    "⚠️ [CompanionExtraction] Skipping malformed record in batch %s "
+                    "(missing text/domain): %r",
+                    batch.batch_id, r,
+                )
+                continue
+            valid_records.append(r)
+
+        if not valid_records:
+            return []
+
+        texts = [r["text"] for r in valid_records]
         vectors = await self._embedding.get_embeddings_batch(texts)
         return [
             CompanionRecord(
@@ -131,5 +159,5 @@ class CompanionExtractionService:
                 tags=r.get("tags", []),
                 domain=r["domain"],
             )
-            for i, (r, vector) in enumerate(zip(raw_records, vectors))
+            for i, (r, vector) in enumerate(zip(valid_records, vectors))
         ]

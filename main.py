@@ -248,7 +248,8 @@ async def main():
 
         # Overflow routing — when a session's sliding window overflows, the batch goes
         # either to Alek's consolidation pipeline or to a companion's extraction pipeline,
-        # decided by the channel binding (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §9).
+        # decided by the channel binding (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §9 item 3:
+        # "Absorb the ad-hoc flags one at a time: ChannelBinding stateless first").
         # Built here, not with the rest of the companion pipeline further below, because
         # ServiceContainer's session store needs overflow_callback at construction time.
         # companion_extraction_queue is constructed here for the same reason and reused

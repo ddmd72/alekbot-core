@@ -105,6 +105,26 @@ async def test_binding_with_companion_config_routes_to_companion(
     channel_binding_service.get.assert_called_once_with("C1")
 
 
+async def test_profile_with_none_account_id_falls_back_to_user_id(
+    service, channel_binding_service, user_repo, companion_extraction_queue,
+):
+    """A UserProfile can exist with account_id still None (Optional[str] = None).
+    CompanionExtractionBatch.account_id is a required str — before Important #3's
+    fix this hit a pydantic ValidationError, silently dropping the batch."""
+    profile = MagicMock()
+    profile.account_id = None
+    user_repo.get_user = AsyncMock(return_value=profile)
+    channel_binding_service.get.return_value = ChannelBinding(
+        channel_id="C1", agent_type="tutor", intent="tutor_chat", created_by="user-1",
+        companion_config=CompanionConfig(window_threshold=100, batch_size=50),
+    )
+    await service.route_overflow("user-1", _SESSION_ID_COMPANION, _make_messages())
+
+    companion_extraction_queue.enqueue_batch.assert_called_once()
+    batch = companion_extraction_queue.enqueue_batch.call_args[0][0]
+    assert batch.account_id == "user-1"
+
+
 async def test_companion_text_mode_is_consumed(service, channel_binding_service, companion_extraction_queue):
     from src.domain.companion_config import CompanionTextMode
     channel_binding_service.get.return_value = ChannelBinding(
@@ -129,3 +149,20 @@ async def test_missing_consolidation_queue_logs_and_does_not_raise(channel_bindi
 async def test_exception_is_caught_and_logged_not_raised(service, channel_binding_service):
     channel_binding_service.get.side_effect = Exception("Firestore down")
     await service.route_overflow("user-1", _SESSION_ID_ALEK, _make_messages())  # must not raise
+
+
+async def test_binding_lookup_failure_falls_open_to_alek_routing(
+    service, channel_binding_service, consolidation_queue, companion_extraction_queue,
+):
+    """A binding-lookup failure must NOT drop the batch — it falls through to
+    Alek's consolidation pipeline (the safe default), matching
+    CompanionWindowResolver.resolve's identical lookup (Minor #8, final
+    whole-branch review 2026-08-31). Before this fix the single outer
+    try/except swallowed the whole route_overflow call, silently losing an
+    Alek batch on a transient Firestore blip."""
+    channel_binding_service.get.side_effect = Exception("Firestore down")
+
+    await service.route_overflow("user-1", _SESSION_ID_ALEK, _make_messages())
+
+    consolidation_queue.enqueue_batch.assert_called_once()
+    companion_extraction_queue.enqueue_batch.assert_not_called()

@@ -7,8 +7,12 @@ History is fetched from the platform API (Slack conversations.history).
 
 `companion_config` (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §5) opts a bound
 channel into session-scoped companion memory instead of the stateless default —
-None means "today's default policy" (RFC §5). Not yet consumed by SessionMode
-resolution; that wiring is a later phase (see the RFC's plan §9).
+None means "today's default policy" (RFC §5). Consumed by
+ConversationHandler._resolve_session_mode (Phase F): a non-None companion_config
+flips SessionMode to stateful, session-store-backed history under a companion-
+shaped session_id, instead of the stateless platform-history default. `$agent
+<type>` auto-attaches AgentDescriptor.companion_default_config for companion-type
+agents (tutor); every other bound-agent type leaves this None, unchanged.
 """
 
 from dataclasses import dataclass
