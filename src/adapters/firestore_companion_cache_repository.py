@@ -3,6 +3,14 @@ FirestoreCompanionCacheRepository — Firestore implementation of
 CompanionCacheRepository. One doc per session_id, full-replace writes
 (no merge=True — the assembler always reads the whole doc back, there is
 no partial-field caller).
+
+Each save_summary() call OVERWRITES the doc with the calling batch's summary
+only — this is NOT a cumulative aggregate the way Alek's biographical context
+cache is (that cache is rebuilt from the full fact set; this one only ever
+sees the extractor's most recent output). `get_summary` therefore returns
+"what the last processed batch said", i.e. a rolling ~window-sized view of
+the session, not the session's whole history (Important #5, final
+whole-branch review 2026-08-31).
 """
 from typing import Optional
 

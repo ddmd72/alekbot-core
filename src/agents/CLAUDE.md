@@ -158,6 +158,31 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   - **No retry, anywhere.** `RETRY_POLICY = NO_RETRY_POLICY` on the agent and `max_retries=0` on the
     adapter's `AsyncOpenAI` client — a transient 5xx after xAI has already rendered (and billed for)
     an image must not trigger a second paid render.
+- Tutor (SYNC, BALANCED, OpenAI `gpt-5.6-luna` default, intent `tutor_chat`, **`internal=True`**) —
+  the pilot companion agent (`docs/10_rfcs/COMPANION_AGENTS_RFC.md`, Phases A-F): bound-channel-only,
+  never reachable from normal conversation — a channel must be explicitly bound via `$agent tutor`.
+  Structural mirror of DomainResearcherAgent: reads history from `message.context["history"]`
+  (platform API), uses `DelegationEngine` for its own tool loop with `search_web` as the **only**
+  allowed intent (`search_memory` was considered and declined — it would reach Alek's full personal
+  biography, bypassing the `include_biographical=False` permission boundary the companion-context
+  assembler otherwise enforces). Injects `CompanionContextAssemblerService`'s read-side output (this
+  session's own `CompanionRecord`s + cached summary) as a static `companion_context {}` prompt block
+  via the same `extra_static_blocks` mechanism SmartResponseAgent uses for email-triage payloads.
+  **Provider:** default OpenAI (BALANCED → `gpt-5.6-luna`) since 2026-08-31 — owner judgement that
+  Claude Haiku 4.5 (BALANCED's Claude default) felt too weak for live tutoring conversation
+  (`agent_context_builder.py` STRATEGIES["tutor"]).
+  **Write path:** `$agent tutor` auto-attaches `AgentDescriptor.companion_default_config`
+  (`CompanionConfig(window_threshold=50, batch_size=30)`, mirrors Alek's own production
+  consolidation threshold/batch) to the `ChannelBinding` — without this no `ChannelBinding` ever
+  carried a non-None `companion_config` and the whole companion pipeline was unreachable (Critical
+  #1, final whole-branch review 2026-08-31). See `decisions/companion_write_path.md`.
+  - **TutorExtractorAgent** — the tutor's extractor, same architectural slot `ConsolidationAgent`
+    fills for Alek. NOT manifest-registered (never reached via `delegate_to_specialist`, same shape
+    as ConsolidationAgent) — constructed fresh per batch by
+    `composition/companion_extractor_runner.py` (services/ cannot import agents/ directly,
+    REQ-ARCH-22). Single LLM call, structured JSON out (`{"records": [...], "summary": str}`) — no
+    multi-turn tool loop, no dedup-before-write. **Default Claude, PERFORMANCE tier** — "same
+    judgment-call quality bar as consolidation" (`domain/user.py::_DEFAULT_AGENT_TIERS["tutor_extractor"]`).
 
 ## Orchestration Patterns
 
