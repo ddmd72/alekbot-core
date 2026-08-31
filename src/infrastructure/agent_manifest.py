@@ -29,6 +29,7 @@ To add a new specialist agent:
     3. Wire the agent class in user_agent_factory.py.
 """
 
+from ..domain.companion_config import CompanionConfig
 from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
 
 
@@ -554,6 +555,15 @@ TUTOR = AgentDescriptor(
     allowed_intents=frozenset({
         Intent.SEARCH_WEB,
     }),
+    # Auto-attach a default companion policy when a channel binds to `tutor` via
+    # `$agent tutor` (Critical #1, final whole-branch review 2026-08-31 — without
+    # this, ChannelBinding.companion_config was never set anywhere and the entire
+    # companion memory pipeline was unreachable). window_threshold/batch_size mirror
+    # Alek's own live-production consolidation threshold/batch (settings.py:129-130)
+    # — a proven live magnitude, not an arbitrary new pair. Every other field stays
+    # at CompanionConfig's own dataclass defaults (SUMMARY text_mode, no biographical
+    # read, no standing directives, own records only).
+    companion_default_config=CompanionConfig(window_threshold=50, batch_size=30),
 )
 
 IMAGE_GENERATION = AgentDescriptor(

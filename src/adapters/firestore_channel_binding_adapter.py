@@ -54,14 +54,18 @@ class FirestoreChannelBindingAdapter(ChannelBindingPort):
     def _deserialize_companion_config(data: Optional[dict]) -> Optional[CompanionConfig]:
         if data is None:
             return None
+        # window_threshold/batch_size have no dataclass default — genuinely required,
+        # stay strict. Every other field has a CompanionConfig default, so a partial/
+        # hand-written Firestore doc falls back instead of raising KeyError outside
+        # handle_message's try/except (Important #2, final whole-branch review 2026-08-31).
         return CompanionConfig(
             window_threshold=data["window_threshold"],
             batch_size=data["batch_size"],
-            text_mode=CompanionTextMode(data["text_mode"]),
-            include_biographical=data["include_biographical"],
-            session_domains=[FactDomain(d) for d in data["session_domains"]],
-            include_standing_directives=data["include_standing_directives"],
-            include_own_records=data["include_own_records"],
+            text_mode=CompanionTextMode(data.get("text_mode", CompanionTextMode.SUMMARY.value)),
+            include_biographical=data.get("include_biographical", False),
+            session_domains=[FactDomain(d) for d in data.get("session_domains", [])],
+            include_standing_directives=data.get("include_standing_directives", False),
+            include_own_records=data.get("include_own_records", True),
         )
 
     @staticmethod

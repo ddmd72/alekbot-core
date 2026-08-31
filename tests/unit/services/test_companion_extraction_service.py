@@ -138,6 +138,36 @@ async def test_has_more_true_when_batches_remain(service, queue, companion_repo,
     assert has_more is True
 
 
+async def test_build_records_skips_malformed_record_without_raising(service, embedding_service):
+    """A record missing 'text' or 'domain' (LLM output is schema-enforced only
+    at the top-level records/summary keys, not per-record) is skipped and
+    logged instead of raising KeyError and burning the whole batch's retry
+    attempt (Minor #13, final whole-branch review 2026-08-31)."""
+    batch = _make_batch("batch-partial")
+    raw_records = [
+        {"text": "Good record", "domain": "grammar_error", "tags": []},
+        {"domain": "grammar_error"},  # missing text
+        {"text": "Missing domain"},  # missing domain
+    ]
+    embedding_service.get_embeddings_batch.return_value = [[0.1]]
+
+    records = await service._build_records(batch, raw_records)
+
+    assert len(records) == 1
+    assert records[0].text == "Good record"
+    embedding_service.get_embeddings_batch.assert_called_once_with(["Good record"])
+
+
+async def test_build_records_returns_empty_when_all_records_malformed(service, embedding_service):
+    batch = _make_batch("batch-all-bad")
+    raw_records = [{"tags": []}, {"text": ""}]
+
+    records = await service._build_records(batch, raw_records)
+
+    assert records == []
+    embedding_service.get_embeddings_batch.assert_not_called()
+
+
 async def test_record_ids_deterministic_for_retry_idempotency(service, embedding_service):
     """Verify record IDs are deterministic: same batch produces same IDs on retry.
 

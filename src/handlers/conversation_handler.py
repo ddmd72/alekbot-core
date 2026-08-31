@@ -877,7 +877,9 @@ class ConversationHandler(ConversationHandlerPort):
                     item, response_channel, thread_id_for_reply, user_id=context.user_id
                 )
 
-            # Save to History — skip for bound channels (platform API is the session store)
+            # Save to History — skipped for most bound channels (platform API is the
+            # session store); a companion-type binding (companion_config set) flips
+            # write_session=True and writes under mode.write_session_id instead.
             if mode.write_session:
                 await self._save_history_with_retry(
                     session_store=session_store,
@@ -1204,6 +1206,7 @@ class ConversationHandler(ConversationHandlerPort):
             agent_type=agent_type,
             intent=intent,
             created_by=context.user_id,
+            companion_config=descriptor.companion_default_config,
         )
         await self._channel_binding.bind(binding)
         await response_channel.send_message(
