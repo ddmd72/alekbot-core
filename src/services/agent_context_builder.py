@@ -126,9 +126,11 @@ class AgentProviderStrategy:
             "fallback": "gemini"
         },
         # Conversational tutoring — no reasoning-model requirement, general-purpose chat.
+        # Default OpenAI (BALANCED -> gpt-5.6-luna) since 2026-08-31 — owner judgement that
+        # Claude Haiku 4.5 (BALANCED default) felt too weak for live tutoring conversation.
         "tutor": {
-            "default_provider": "claude",
-            "allowed_providers": ["claude", "gemini", "openai"],
+            "default_provider": "openai",
+            "allowed_providers": ["openai", "claude", "gemini"],
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },
