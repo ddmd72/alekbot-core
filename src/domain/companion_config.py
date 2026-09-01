@@ -38,3 +38,14 @@ class CompanionConfig:
     session_domains: List[FactDomain] = field(default_factory=list)
     include_standing_directives: bool = False
     include_own_records: bool = True
+
+    # Recent model turns kept at full text before BaseAgent._apply_history_tier falls
+    # back to response_summary. Per-channel, not baked into the companion agent's
+    # constructor: one TutorAgent instance is a per-user singleton shared across every
+    # channel that user binds it to, so this has to be resolved per message from the
+    # CURRENT channel's binding, not fixed at agent construction time. Unlike
+    # window_threshold/batch_size, this value is not env-tuned for Alek (a single
+    # domain constant, SearchConfig.DEFAULT_HISTORY_RECENT_FULL_TURNS), so a stable
+    # default is safe here — still fully overridable per companion type
+    # (AgentDescriptor.companion_default_config) and per channel binding.
+    history_recent_full_turns: int = 5

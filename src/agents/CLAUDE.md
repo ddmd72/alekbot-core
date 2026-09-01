@@ -185,11 +185,18 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   helper factored out of `SmartResponseAgent`). Summary compression is in-band when the model
   emits `response_summary`, else async fallback via `HistorySummaryService`
   (fire-and-forget `asyncio.create_task`, mirrors Quick's own-configured-service guard). History
-  reconstruction uses the same `_apply_history_tier(max_full_turns=history_recent_full_turns)`
-  tiering as Smart/Quick, with the identical resolved value threaded through
-  `UserAgentFactory._UserContext.history_recent_full_turns` (not just the same call shape — the
-  actual per-user config value). Blueprint `tutor_agent_v1.json` needs `output_format` in
-  `class_order` for `OUTPUT_FORMAT_TUTOR` to render.
+  reconstruction uses the same `_apply_history_tier(max_full_turns=...)` tiering as Smart/Quick,
+  but the depth itself is **per-channel-binding, not per-user**: `CompanionConfig.
+  history_recent_full_turns` (default 5, matching Smart's own value) is resolved by
+  `ConversationHandler._resolve_session_mode` from the CURRENT channel's binding and threaded via
+  `SessionMode.history_recent_full_turns` → `message.context["history_recent_full_turns"]` — read
+  fresh on every `TutorAgent._converse` call, not fixed at construction. This is deliberate: one
+  `TutorAgent` instance is a per-user singleton shared across every channel that user binds it to,
+  so two channels can carry two different depths (an earlier version threaded Alek's own per-user
+  config value through `UserAgentFactory._UserContext` instead — that coupled Tutor's depth to
+  Alek's Smart/Quick setting and couldn't vary per channel; superseded 2026-09-02, see
+  `decisions/companion_history_recent_full_turns_per_channel.md`). Blueprint `tutor_agent_v1.json`
+  needs `output_format` in `class_order` for `OUTPUT_FORMAT_TUTOR` to render.
   - **TutorExtractorAgent** — the tutor's extractor, same architectural slot `ConsolidationAgent`
     fills for Alek. NOT manifest-registered (never reached via `delegate_to_specialist`, same shape
     as ConsolidationAgent) — constructed fresh per batch by

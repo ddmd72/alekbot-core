@@ -126,6 +126,25 @@ class TestGet:
         )
 
 
+    async def test_deserializes_custom_history_recent_full_turns(self, adapter, col_mock):
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_doc_snapshot({
+            "channel_id": "C123",
+            "agent_type": "tutor",
+            "intent": "tutor_chat",
+            "created_by": "user1",
+            "companion_config": {
+                "window_threshold": 50,
+                "batch_size": 30,
+                "history_recent_full_turns": 8,
+            },
+        }))
+        col_mock.document.return_value = doc_ref
+
+        result = await adapter.get("C123")
+        assert result.companion_config.history_recent_full_turns == 8
+
+
 class TestDelete:
     async def test_deletes_document(self, adapter, col_mock):
         doc_ref = MagicMock()
@@ -192,5 +211,23 @@ class TestSave:
                 "session_domains": ["education", "skill"],
                 "include_standing_directives": True,
                 "include_own_records": False,
+                "history_recent_full_turns": 5,
             },
         })
+
+    async def test_writes_custom_history_recent_full_turns(self, adapter, col_mock):
+        doc_ref = MagicMock()
+        doc_ref.set = AsyncMock()
+        col_mock.document.return_value = doc_ref
+
+        binding = ChannelBinding(
+            channel_id="C123", agent_type="tutor", intent="tutor_chat",
+            created_by="user1",
+            companion_config=CompanionConfig(
+                window_threshold=50, batch_size=30, history_recent_full_turns=8,
+            ),
+        )
+        await adapter.save(binding)
+
+        written = doc_ref.set.call_args[0][0]
+        assert written["companion_config"]["history_recent_full_turns"] == 8

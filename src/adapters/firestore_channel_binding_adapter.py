@@ -66,6 +66,7 @@ class FirestoreChannelBindingAdapter(ChannelBindingPort):
             session_domains=[FactDomain(d) for d in data.get("session_domains", [])],
             include_standing_directives=data.get("include_standing_directives", False),
             include_own_records=data.get("include_own_records", True),
+            history_recent_full_turns=data.get("history_recent_full_turns", 5),
         )
 
     @staticmethod
@@ -80,4 +81,5 @@ class FirestoreChannelBindingAdapter(ChannelBindingPort):
             "session_domains": [d.value for d in config.session_domains],
             "include_standing_directives": config.include_standing_directives,
             "include_own_records": config.include_own_records,
+            "history_recent_full_turns": config.history_recent_full_turns,
         }
