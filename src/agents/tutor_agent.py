@@ -308,7 +308,7 @@ class TutorAgent(BaseAgent):
         payload = {
             "session_summary": companion_context.session_summary or "",
             "own_records": [
-                f"[{r.created_at.date().isoformat()}] {r.text}"
+                f"[{r.created_at.strftime('%Y-%m-%d %H:%M UTC')}] {r.text}"
                 for r in companion_context.own_records
             ],
         }

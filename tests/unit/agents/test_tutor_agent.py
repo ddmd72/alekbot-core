@@ -395,7 +395,10 @@ async def test_execute_no_service_configured_no_crash(agent, mock_llm):
     assert "response_summary_task" not in response.metadata
 
 
-async def test_own_records_rendered_with_iso_date_prefix(agent, mock_assembler, mock_prompt_builder):
+async def test_own_records_rendered_with_iso_datetime_prefix(agent, mock_assembler, mock_prompt_builder):
+    # Date-only was ambiguous when multiple records land on the same day (the
+    # common case once a session has been active a while) — no way to tell
+    # which came first. Time (UTC, minute precision) disambiguates order.
     from datetime import datetime, timezone
     mock_assembler.assemble_context.return_value = CompanionContext(
         session_summary="Covered subjunctive.",
@@ -411,4 +414,29 @@ async def test_own_records_rendered_with_iso_date_prefix(agent, mock_assembler, 
     await agent.execute(_bound_message())
     call_kwargs = mock_prompt_builder.build_for_agent.call_args.kwargs
     joined = "\n".join(call_kwargs.get("extra_static_blocks") or [])
-    assert "[2026-08-15] Confuses subjunctive after 'ojalá'" in joined
+    assert "[2026-08-15 10:00 UTC] Confuses subjunctive after 'ojalá'" in joined
+
+
+async def test_own_records_same_day_distinguishable_by_time(agent, mock_assembler, mock_prompt_builder):
+    from datetime import datetime, timezone
+    mock_assembler.assemble_context.return_value = CompanionContext(
+        session_summary="",
+        own_records=[
+            CompanionRecord(
+                session_id="slack:C1", account_id="acc-1", created_by_user_id="user-1",
+                text="First correction today", domain="grammar_error",
+                created_at=datetime(2026, 8, 15, 9, 0, 0, tzinfo=timezone.utc),
+            ),
+            CompanionRecord(
+                session_id="slack:C1", account_id="acc-1", created_by_user_id="user-1",
+                text="Second correction today", domain="grammar_error",
+                created_at=datetime(2026, 8, 15, 14, 30, 0, tzinfo=timezone.utc),
+            ),
+        ],
+        biographical_facts=[], standing_directives=[],
+    )
+    await agent.execute(_bound_message())
+    call_kwargs = mock_prompt_builder.build_for_agent.call_args.kwargs
+    joined = "\n".join(call_kwargs.get("extra_static_blocks") or [])
+    assert "[2026-08-15 09:00 UTC] First correction today" in joined
+    assert "[2026-08-15 14:30 UTC] Second correction today" in joined
