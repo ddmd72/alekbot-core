@@ -18,7 +18,6 @@ from ..domain.agent import AgentMessage, AgentIntent, AgentStatus, DeliveryItem
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
 from ..infrastructure.agent_coordinator import AgentCoordinator
-from ..infrastructure.agent_config import ENABLE_HISTORY_OPTIMIZATION
 from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..services.localization_service import LocalizationService
 
@@ -791,7 +790,7 @@ class ConversationHandler(ConversationHandlerPort):
 
             # Resolve history_summary after Slack delivery (task was running concurrently)
             # SESSION_2026-02-18: Async postprocessing — summary generates while Slack delivers
-            if ENABLE_HISTORY_OPTIMIZATION and response.metadata:
+            if response.metadata:
                 summary_task = response.metadata.get("response_summary_task")
                 if summary_task:
                     try:

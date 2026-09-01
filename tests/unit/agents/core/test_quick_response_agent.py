@@ -11,7 +11,7 @@ Tests cover:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from dataclasses import dataclass
 
 from src.agents.core.quick_response_agent import QuickResponseAgent, create_quick_response_agent
@@ -661,13 +661,11 @@ class TestHistorySummaryFallback:
             text="Just plain text, no JSON envelope."
         )
 
-        with patch("src.agents.core.quick_response_agent.ENABLE_HISTORY_OPTIMIZATION", True):
-            response = await agent.execute(create_query_message("Hello"))
+        response = await agent.execute(create_query_message("Hello"))
 
         assert response.status == AgentStatus.SUCCESS
         assert "response_summary_task" in response.metadata, (
-            "response_summary_task must be in metadata when LLM returns plain text "
-            "and ENABLE_HISTORY_OPTIMIZATION=True"
+            "response_summary_task must be in metadata when LLM returns plain text"
         )
         # Await the task so the test runner completes it cleanly
         await response.metadata["response_summary_task"]
@@ -687,8 +685,7 @@ class TestHistorySummaryFallback:
             text='{"full_response": "The answer.", "response_summary": "compact", "rich_content": null}'
         )
 
-        with patch("src.agents.core.quick_response_agent.ENABLE_HISTORY_OPTIMIZATION", True):
-            response = await agent.execute(create_query_message("Hello"))
+        response = await agent.execute(create_query_message("Hello"))
 
         assert response.status == AgentStatus.SUCCESS
         assert "response_summary_task" not in response.metadata, (
@@ -718,8 +715,7 @@ class TestHistorySummaryFallback:
         )
         mock_llm_port.generate_content.return_value = MockLLMResponse(text="Plain text.")
 
-        with patch("src.agents.core.quick_response_agent.ENABLE_HISTORY_OPTIMIZATION", True):
-            response = await agent.execute(create_query_message("Hello"))
+        response = await agent.execute(create_query_message("Hello"))
 
         assert response.status == AgentStatus.SUCCESS
         assert "response_summary_task" not in response.metadata

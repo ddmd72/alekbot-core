@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 from ..base_agent import BaseAgent
-from ...infrastructure.agent_config import SMART, ENABLE_HISTORY_OPTIMIZATION
+from ...infrastructure.agent_config import SMART
 from ...infrastructure.agent_manifest import SMART_RESPONSE
 from ...infrastructure.delegation_engine import DelegationEngine, DelegationResult
 from ...domain.agent import (
@@ -486,7 +486,7 @@ class SmartResponseAgent(BaseAgent):
             # Launched as background task — does NOT block user response delivery.
             # conversation_handler awaits the task after sending to Slack.
             summary_task = None
-            if not history_summary and ENABLE_HISTORY_OPTIMIZATION and smart_response.text:
+            if not history_summary and smart_response.text:
                 summary_task = asyncio.create_task(
                     self._generate_history_summary(smart_response.text)
                 )

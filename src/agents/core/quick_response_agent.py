@@ -24,7 +24,7 @@ import re
 import asyncio
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 from ..base_agent import BaseAgent
-from ...infrastructure.agent_config import QUICK, ENABLE_HISTORY_OPTIMIZATION
+from ...infrastructure.agent_config import QUICK
 from ...infrastructure.agent_manifest import QUICK_RESPONSE
 from ...infrastructure.delegation_engine import DelegationEngine
 from ...domain.agent import (
@@ -269,7 +269,7 @@ class QuickResponseAgent(BaseAgent):
 
             # Post-processing: fire-and-forget history summary (plain-text path).
             summary_task = None
-            if not history_summary and ENABLE_HISTORY_OPTIMIZATION and smart_response.text and self.history_summary_service:
+            if not history_summary and smart_response.text and self.history_summary_service:
                 summary_task = asyncio.create_task(
                     self.history_summary_service.summarize_model_response(smart_response.text)
                 )

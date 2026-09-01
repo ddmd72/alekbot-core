@@ -36,10 +36,6 @@ from ..domain.user import PerformanceTier
 # (agents must not read env vars directly). Now agents import these
 # module-level constants instead of calling os.getenv() at runtime.
 # ========================================================================
-ENABLE_HISTORY_OPTIMIZATION: bool = os.getenv(
-    "ENABLE_HISTORY_OPTIMIZATION", "false"
-).lower() in ("true", "1", "yes")
-
 ENABLE_GROUNDING_ATTRIBUTION: bool = os.getenv(
     "ENABLE_GROUNDING_ATTRIBUTION", "false"
 ).lower() == "true"
