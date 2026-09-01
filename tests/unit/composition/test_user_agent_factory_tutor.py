@@ -47,3 +47,19 @@ def test_build_tutor_agent_id_includes_user_id():
 def test_lazy_dispatch_tables_include_tutor():
     assert "tutor" in UserAgentFactory._LAZY_BUILDERS
     assert UserAgentFactory._LAZY_AGENT_IDS["tutor"] == "tutor_agent"
+
+
+def test_build_tutor_wires_history_summary_service():
+    assembler = MagicMock()
+    summary_service = MagicMock()
+    fake_self = _make_factory_self(assembler=assembler)
+    ctx = _make_ctx()
+    ctx.history_summary_service = summary_service
+    agent = UserAgentFactory._build_tutor(fake_self, "user-1", ctx)
+    assert agent.history_summary_service is summary_service
+
+
+def test_build_tutor_history_summary_service_defaults_none():
+    fake_self = _make_factory_self(assembler=MagicMock())
+    agent = UserAgentFactory._build_tutor(fake_self, "user-1", _make_ctx())
+    assert agent.history_summary_service is None
