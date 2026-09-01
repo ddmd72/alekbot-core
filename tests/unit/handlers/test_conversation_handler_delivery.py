@@ -636,7 +636,7 @@ class TestHandleMessageEdgeCases:
     # --- Lines 549-564: History summary resolution ---
 
     async def test_history_uses_async_summary_task_when_available(self):
-        """ENABLE_HISTORY_OPTIMIZATION=True + summary_task → history_text=summary."""
+        """summary_task available → history_text=summary."""
         summary = asyncio.Future()
         summary.set_result("short summary")
 
@@ -647,10 +647,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with (
-            patch("src.handlers.conversation_handler.ENABLE_HISTORY_OPTIMIZATION", True),
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(_make_context(), channel)
 
         # History was saved — check append_messages_batch was called
@@ -658,7 +655,7 @@ class TestHandleMessageEdgeCases:
         session_store.append_messages_batch.assert_awaited_once()
 
     async def test_history_uses_precomputed_summary_from_metadata(self):
-        """ENABLE_HISTORY_OPTIMIZATION=True + response_summary in metadata (no task)."""
+        """response_summary in metadata (no task) → history_text=precomputed."""
         response = _make_success(SmartResponse(text="full response"))
         response.metadata["response_summary"] = "precomputed"
 
@@ -666,10 +663,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with (
-            patch("src.handlers.conversation_handler.ENABLE_HISTORY_OPTIMIZATION", True),
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(_make_context(), channel)
 
         session_store = handler.agent_factory.get_session_store()
@@ -692,10 +686,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with (
-            patch("src.handlers.conversation_handler.ENABLE_HISTORY_OPTIMIZATION", True),
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(_make_context(), channel)
 
         # Should not raise; history saved with full text
@@ -716,7 +707,6 @@ class TestHandleMessageEdgeCases:
         channel = _make_channel()
 
         with (
-            patch("src.handlers.conversation_handler.ENABLE_HISTORY_OPTIMIZATION", True),
             patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
             patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()),
         ):
@@ -738,10 +728,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with (
-            patch("src.handlers.conversation_handler.ENABLE_HISTORY_OPTIMIZATION", True),
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(_make_context(), channel)
 
         session_store = handler.agent_factory.get_session_store()

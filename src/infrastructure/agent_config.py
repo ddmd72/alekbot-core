@@ -36,10 +36,6 @@ from ..domain.user import PerformanceTier
 # (agents must not read env vars directly). Now agents import these
 # module-level constants instead of calling os.getenv() at runtime.
 # ========================================================================
-
-    
-
-
 ENABLE_GROUNDING_ATTRIBUTION: bool = os.getenv(
     "ENABLE_GROUNDING_ATTRIBUTION", "false"
 ).lower() == "true"
