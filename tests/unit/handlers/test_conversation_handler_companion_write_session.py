@@ -33,6 +33,7 @@ _AMBIENT_SESSION_ID = "user-1:C1"
 def _make_handler():
     session_store = MagicMock()
     session_store.append_messages_batch = AsyncMock()
+    session_store.load_session = AsyncMock(return_value=MagicMock(history=[]))
 
     agent_factory = MagicMock()
     agent_factory.ensure_agents_for_user = AsyncMock()

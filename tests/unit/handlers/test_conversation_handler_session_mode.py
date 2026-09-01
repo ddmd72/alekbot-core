@@ -60,7 +60,7 @@ class TestResolveSessionMode:
         assert mode.route_intent == "tutor_chat"
         assert mode.write_session is True
         assert mode.write_session_id == "slack:C1"
-        assert mode.history_source == "platform"  # unchanged — tutor still reads via context["history"]
+        assert mode.history_source == "session_store"  # Phase G: companion reads from SessionStore
         assert mode.write_consolidation is False
         assert mode.update_notification_channel is False
         assert mode.use_threads is False
