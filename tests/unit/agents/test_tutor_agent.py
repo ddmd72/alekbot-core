@@ -391,3 +391,22 @@ async def test_execute_no_service_configured_no_crash(agent, mock_llm):
     response = await agent.execute(_bound_message())
     assert response.status == AgentStatus.SUCCESS
     assert "response_summary_task" not in response.metadata
+
+
+async def test_own_records_rendered_with_iso_date_prefix(agent, mock_assembler, mock_prompt_builder):
+    from datetime import datetime, timezone
+    mock_assembler.assemble_context.return_value = CompanionContext(
+        session_summary="Covered subjunctive.",
+        own_records=[
+            CompanionRecord(
+                session_id="slack:C1", account_id="acc-1", created_by_user_id="user-1",
+                text="Confuses subjunctive after 'ojalá'", domain="grammar_error",
+                created_at=datetime(2026, 8, 15, 10, 0, 0, tzinfo=timezone.utc),
+            ),
+        ],
+        biographical_facts=[], standing_directives=[],
+    )
+    await agent.execute(_bound_message())
+    call_kwargs = mock_prompt_builder.build_for_agent.call_args.kwargs
+    joined = "\n".join(call_kwargs.get("extra_static_blocks") or [])
+    assert "[2026-08-15] Confuses subjunctive after 'ojalá'" in joined

@@ -300,7 +300,10 @@ class TutorAgent(BaseAgent):
         # for this fix wave.
         payload = {
             "session_summary": companion_context.session_summary or "",
-            "own_records": [r.text for r in companion_context.own_records],
+            "own_records": [
+                f"[{r.created_at.date().isoformat()}] {r.text}"
+                for r in companion_context.own_records
+            ],
         }
         return [
             "companion_context {\n"
