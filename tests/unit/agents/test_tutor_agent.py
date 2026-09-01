@@ -259,3 +259,24 @@ async def test_execute_delegation_engine_max_turns_exhausted_fails(agent):
 
     assert response.status == AgentStatus.FAILED
     assert response.error == "max_turns_exhausted"
+
+
+async def test_execute_preserves_full_text_for_recent_turns(agent, mock_llm):
+    # 6 model turns in history: the oldest (turn 0) is beyond history_recent_full_turns=5,
+    # so it must fall back to its (summary) text; the 5 most recent must use full_text.
+    history = []
+    for i in range(6):
+        history.append({"role": "user", "parts": [{"text": f"question {i}"}]})
+        history.append({
+            "role": "model",
+            "parts": [{"text": f"summary {i}", "full_text": f"the full detailed answer {i}"}],
+        })
+    await agent.execute(_bound_message(history=history))
+    request = mock_llm.generate_content.call_args.kwargs["request"]
+    texts = [part.text for msg in request.messages for part in msg.parts if part.text]
+    joined = " ".join(texts)
+    # Oldest model turn (0) is beyond the 5-recent-turn window → summary text, not full.
+    assert "summary 0" in joined
+    assert "the full detailed answer 0" not in joined
+    # Most recent model turn (5) is within the window → full text, not summary.
+    assert "the full detailed answer 5" in joined
