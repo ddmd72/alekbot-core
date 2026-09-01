@@ -25,6 +25,12 @@ class CompanionConfig:
     """Per-channel companion memory policy (RFC §5-§6)."""
     window_threshold: int
     batch_size: int
+    # SUMMARY is live for Tutor as of Phase G (2026-09-01): Tutor now emits a real
+    # ≤300-char response_summary, so the extractor actually receives compressed text
+    # instead of text==full_text. Dormant since Phase C (this default predates Phase G
+    # by design, RFC §5) — was a no-op until Tutor had a summary to serialize. Keep
+    # SUMMARY; do not flip to FULL, that would undermine the compression this phase
+    # exists to deliver.
     text_mode: CompanionTextMode = CompanionTextMode.SUMMARY
 
     # Read side — permission boundary, default is no (RFC §5).
