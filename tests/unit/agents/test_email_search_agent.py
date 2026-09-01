@@ -3,6 +3,7 @@ Unit tests for EmailSearchAgent.
 """
 
 import json
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -455,3 +456,46 @@ class TestGetEmailAttachment:
 
         mock_search_service.get_details.assert_awaited_once()
         mock_search_service.get_attachment.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _parse_date — date_to must include the whole day (regression: 2026-08-31
+# incident where "date_to": "2026-08-31" excluded every email actually
+# received on the 31st because email_date <= 2026-08-31T00:00:00 only keeps
+# the instant at midnight, not the day itself).
+# ---------------------------------------------------------------------------
+
+class TestParseDate:
+
+    def test_date_from_stays_at_midnight(self, agent):
+        assert agent._parse_date("2026-08-31") == datetime(2026, 8, 31, 0, 0, 0)
+
+    def test_date_to_end_of_day_covers_whole_day(self, agent):
+        result = agent._parse_date("2026-08-31", end_of_day=True)
+        assert result == datetime(2026, 8, 31, 23, 59, 59, 999999)
+        # An email received any time on the 31st must satisfy <= result.
+        assert datetime(2026, 8, 31, 23, 0, 0) <= result
+
+    def test_invalid_date_returns_none(self, agent):
+        assert agent._parse_date("not-a-date") is None
+        assert agent._parse_date("not-a-date", end_of_day=True) is None
+
+    def test_none_value_returns_none(self, agent):
+        assert agent._parse_date(None) is None
+        assert agent._parse_date(None, end_of_day=True) is None
+
+
+class TestSearchEmailsDateRange:
+
+    async def test_date_to_passed_to_vector_search_covers_whole_day(
+        self, agent, mock_llm, mock_search_service
+    ):
+        keys = dict(VALID_KEYS, date_from="2026-08-31", date_to="2026-08-31")
+        mock_llm.generate_content.return_value = LLMResponse(text=json.dumps(keys), tool_calls=[])
+
+        msg = _make_message(query="all emails received on August 31, 2026")
+        await agent.execute(msg)
+
+        call = mock_search_service.vector_search.call_args
+        assert call.kwargs["date_from"] == datetime(2026, 8, 31, 0, 0, 0)
+        assert call.kwargs["date_to"] == datetime(2026, 8, 31, 23, 59, 59, 999999)
