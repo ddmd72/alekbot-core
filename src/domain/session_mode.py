@@ -18,8 +18,9 @@ class SessionMode:
     Bound, no companion_config (most bound agents today): direct delegation,
     platform API history, no persistence.
     Bound, WITH companion_config (companion-type agents, e.g. tutor): direct
-    delegation, platform API history for reads, but SessionStore IS written
-    (write_session=True) under a companion-shaped write_session_id — see
+    delegation, history read FROM SessionStore (history_source="session_store")
+    under write_session_id, and also written there (write_session=True) under
+    the same companion-shaped write_session_id — see
     ConversationHandler._resolve_session_mode.
     """
     # History source: "session_store" (Firestore) or "platform" (Slack/Telegram API)
