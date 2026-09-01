@@ -342,3 +342,52 @@ async def test_execute_passes_terminal_tool_to_engine(agent):
 
     call_kwargs = mock_engine.execute.call_args.kwargs
     assert call_kwargs["terminal_tool"] == "deliver_response"
+
+
+# ---------------------------------------------------------------------------
+# Phase G Task 5: async HistorySummaryService fallback when the LLM omits
+# response_summary from the structured-output contract (Task 4).
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_creates_async_summary_task_when_summary_missing(agent, mock_llm):
+    summary_service = AsyncMock()
+    summary_service.summarize_model_response = AsyncMock(return_value="Async summary.")
+    agent.history_summary_service = summary_service
+
+    mock_llm.generate_content.return_value = MagicMock(
+        text='{"full_response": "Vale.", "response_summary": ""}',
+        usage_metadata=MagicMock(total_tokens=5), tool_calls=[],
+    )
+    response = await agent.execute(_bound_message())
+
+    assert response.status == AgentStatus.SUCCESS
+    assert "response_summary_task" in response.metadata
+    result = await response.metadata["response_summary_task"]
+    assert result == "Async summary."
+    summary_service.summarize_model_response.assert_called_once_with("Vale.")
+
+
+async def test_execute_no_async_task_when_sync_summary_present(agent, mock_llm):
+    summary_service = AsyncMock()
+    agent.history_summary_service = summary_service
+
+    mock_llm.generate_content.return_value = MagicMock(
+        text='{"full_response": "Vale.", "response_summary": "Already have one."}',
+        usage_metadata=MagicMock(total_tokens=5), tool_calls=[],
+    )
+    response = await agent.execute(_bound_message())
+
+    assert "response_summary_task" not in response.metadata
+    summary_service.summarize_model_response.assert_not_called()
+
+
+async def test_execute_no_service_configured_no_crash(agent, mock_llm):
+    # agent fixture never sets history_summary_service — defaults to None.
+    mock_llm.generate_content.return_value = MagicMock(
+        text='{"full_response": "Vale.", "response_summary": ""}',
+        usage_metadata=MagicMock(total_tokens=5), tool_calls=[],
+    )
+    response = await agent.execute(_bound_message())
+    assert response.status == AgentStatus.SUCCESS
+    assert "response_summary_task" not in response.metadata

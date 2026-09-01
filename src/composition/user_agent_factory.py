@@ -103,6 +103,7 @@ class _UserContext:
     """Per-user shared context cached for lazy agent creation."""
     user_profile: UserProfile
     prompt_builder: UserPromptBuilder
+    history_summary_service: Optional["HistorySummaryService"] = None
 
 
 class UserAgentFactory(AgentFactoryPort):
@@ -532,7 +533,10 @@ class UserAgentFactory(AgentFactoryPort):
 
         cached = {
             "last_used": time.time(),
-            "_user_context": _UserContext(user_profile=user_profile, prompt_builder=prompt_builder),
+            "_user_context": _UserContext(
+                user_profile=user_profile, prompt_builder=prompt_builder,
+                history_summary_service=history_summary_service,
+            ),
             "_lazy_agent_ids": [],  # tracks lazy agents for eviction
             "search_enrichment": search_enrichment_service,
             "router_agent": router_agent,
@@ -776,6 +780,7 @@ class UserAgentFactory(AgentFactoryPort):
             assembler=self.companion_context_assembler,
             user_id=user_id,
             user_timezone=ctx.user_profile.config.timezone,
+            history_summary_service=ctx.history_summary_service,
         )
 
     def _build_image_generation(

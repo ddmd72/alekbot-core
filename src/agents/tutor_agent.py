@@ -27,6 +27,7 @@ delegation timestamp prefix (``handle_delegation`` prepends
 so the embedded vector is the user's actual utterance, not noise that changes
 every minute.
 """
+import asyncio
 import json
 import re
 from typing import TYPE_CHECKING, List, Optional
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from ..services.companion_context_assembler_service import (
         CompanionContextAssemblerService,
     )
+    from ..services.history_summary_service import HistorySummaryService
 
 
 # AgentCoordinator.handle_delegation() prepends this exact format to every
@@ -86,6 +88,7 @@ class TutorAgent(BaseAgent):
         user_id: Optional[str] = None,
         user_timezone: str = "UTC",
         history_recent_full_turns: int = 5,
+        history_summary_service: Optional["HistorySummaryService"] = None,
     ) -> None:
         super().__init__(config)
         self._llm = execution_context.provider
@@ -95,6 +98,7 @@ class TutorAgent(BaseAgent):
         self.user_id = user_id
         self._user_timezone = user_timezone
         self.history_recent_full_turns = history_recent_full_turns
+        self.history_summary_service = history_summary_service
 
     async def can_handle(self, message: AgentMessage) -> bool:
         if message.intent != AgentIntent.QUERY:
@@ -209,11 +213,17 @@ class TutorAgent(BaseAgent):
             )
             full_response = full_response or "No response from model."
 
+            summary_task = None
+            if self.history_summary_service and not response_summary and full_response:
+                summary_task = asyncio.create_task(self._generate_history_summary(full_response))
+
             self._on_agent_success(len(full_response), token_count, output_text=full_response)
 
             metadata = {}
             if response_summary:
                 metadata["response_summary"] = response_summary
+            if summary_task:
+                metadata["response_summary_task"] = summary_task
 
             return AgentResponse.success(
                 task_id=message.task_id,
@@ -228,6 +238,15 @@ class TutorAgent(BaseAgent):
                 agent_id=self.agent_id,
                 error=str(e),
             )
+
+    async def _generate_history_summary(self, response_text: str) -> Optional[str]:
+        """Post-processing step: generate a compact history summary via HistorySummaryService.
+
+        Returns None if the service is not configured or the call fails — caller uses full text.
+        """
+        if not self.history_summary_service:
+            return None
+        return await self.history_summary_service.summarize_model_response(response_text)
 
     async def _build_companion_context_block(
         self, message: AgentMessage, query: str,
