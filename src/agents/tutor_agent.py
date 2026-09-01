@@ -33,12 +33,14 @@ from typing import TYPE_CHECKING, List, Optional
 
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.llm import Message, MessagePart
+from ..domain.messaging import SmartResponse
 from ..infrastructure.agent_config import TUTOR
 from ..infrastructure.agent_manifest import TUTOR as TUTOR_DESCRIPTOR
 from ..infrastructure.delegation_engine import DelegationEngine
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
 from .base_agent import BaseAgent
+from ..utils.llm_response_parser import extract_structured_response
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -65,6 +67,15 @@ class TutorAgent(BaseAgent):
     _descriptor = TUTOR_DESCRIPTOR
 
     TEMPERATURE = TUTOR.temperature
+
+    _RESPONSE_SCHEMA = {
+        "type": "object",
+        "required": ["full_response", "response_summary"],
+        "properties": {
+            "full_response":    {"type": "string"},
+            "response_summary": {"type": "string"},
+        },
+    }
 
     def __init__(
         self,
@@ -165,6 +176,7 @@ class TutorAgent(BaseAgent):
                 tools=tools,
                 temperature=self.TEMPERATURE,
                 max_tokens=TUTOR.max_tokens,
+                response_schema=self._RESPONSE_SCHEMA,
             )
 
             if tools and self.coordinator:
@@ -175,6 +187,7 @@ class TutorAgent(BaseAgent):
                     context=message.context,
                     max_turns=TUTOR.max_delegation_turns,
                     calling_agent_id=self.agent_id,
+                    terminal_tool="deliver_response",
                 )
                 if result.failed:
                     return AgentResponse.failure(
@@ -182,19 +195,31 @@ class TutorAgent(BaseAgent):
                         agent_id=self.agent_id,
                         error="max_turns_exhausted",
                     )
-                result_text = result.text or "No response from model."
+                terminal_tool_args = result.terminal_tool_args
+                raw_text = result.text
                 token_count = result.total_tokens
             else:
                 response = await self._call_llm(base_request)
-                result_text = response.text or "No response from model."
+                terminal_tool_args = None
+                raw_text = response.text or ""
                 token_count = response.usage_metadata.total_tokens if response.usage_metadata else 0
 
-            self._on_agent_success(len(result_text), token_count, output_text=result_text)
+            full_response, response_summary, _rich, _links = extract_structured_response(
+                terminal_tool_args, raw_text
+            )
+            full_response = full_response or "No response from model."
+
+            self._on_agent_success(len(full_response), token_count, output_text=full_response)
+
+            metadata = {}
+            if response_summary:
+                metadata["response_summary"] = response_summary
 
             return AgentResponse.success(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
-                result=result_text,
+                result=SmartResponse(text=full_response, structured_data=None, link_list=[]),
+                metadata=metadata,
             )
         except Exception as e:
             self._on_agent_error(e)

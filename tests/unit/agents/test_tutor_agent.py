@@ -91,7 +91,7 @@ async def test_can_handle_empty_query():
 async def test_execute_happy_path(agent, mock_prompt_builder, mock_assembler):
     response = await agent.execute(_bound_message())
     assert response.status == AgentStatus.SUCCESS
-    assert "subjunctive" in response.result.lower()
+    assert "subjunctive" in response.result.text.lower()
 
 
 async def test_execute_calls_assembler_with_platform_qualified_session_id(agent, mock_assembler):
@@ -230,7 +230,9 @@ async def test_execute_uses_delegation_engine_when_coordinator_available(agent):
     coordinator = _coordinator_with_search_web()
     agent.coordinator = coordinator
 
-    engine_result = MagicMock(failed=False, text="¡Vale! Delegated answer.", total_tokens=99)
+    engine_result = MagicMock(
+        failed=False, terminal_tool_args=None, text="¡Vale! Delegated answer.", total_tokens=99
+    )
     mock_engine = MagicMock()
     mock_engine.execute = AsyncMock(return_value=engine_result)
 
@@ -243,7 +245,7 @@ async def test_execute_uses_delegation_engine_when_coordinator_available(agent):
     assert call_kwargs["max_turns"] == TUTOR.max_delegation_turns
     assert call_kwargs["calling_agent_id"] == agent.agent_id
     assert response.status == AgentStatus.SUCCESS
-    assert response.result == "¡Vale! Delegated answer."
+    assert response.result.text == "¡Vale! Delegated answer."
 
 
 async def test_execute_delegation_engine_max_turns_exhausted_fails(agent):
@@ -284,3 +286,59 @@ async def test_execute_preserves_full_text_for_recent_turns(agent, mock_llm):
     assert "the full detailed answer 0" not in joined
     # Newest model turn (6) is within the window → full text, not summary.
     assert "the full detailed answer 6" in joined
+
+
+# ---------------------------------------------------------------------------
+# Structured-output contract (Phase G Task 4): TutorAgent now returns
+# SmartResponse via extract_structured_response, mirroring SmartResponseAgent.
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_returns_smart_response_with_full_response_field(agent, mock_llm):
+    mock_llm.generate_content.return_value = MagicMock(
+        text='{"full_response": "Vale, sigamos.", "response_summary": "Discussed subjunctive."}',
+        usage_metadata=MagicMock(total_tokens=10), tool_calls=[],
+    )
+    response = await agent.execute(_bound_message())
+    assert response.status == AgentStatus.SUCCESS
+    assert response.result.text == "Vale, sigamos."
+    assert response.metadata["response_summary"] == "Discussed subjunctive."
+
+
+async def test_execute_grok_terminal_tool_args_extracted(agent):
+    coordinator = _coordinator_with_search_web()
+    agent.coordinator = coordinator
+
+    engine_result = MagicMock(
+        failed=False,
+        terminal_tool_args={
+            "full_response": "Grok answer.",
+            "response_summary": "Grok summary.",
+        },
+        text="",
+        total_tokens=55,
+    )
+    mock_engine = MagicMock()
+    mock_engine.execute = AsyncMock(return_value=engine_result)
+
+    with patch("src.agents.tutor_agent.DelegationEngine", return_value=mock_engine):
+        response = await agent.execute(_bound_message())
+
+    assert response.status == AgentStatus.SUCCESS
+    assert response.result.text == "Grok answer."
+    assert response.metadata["response_summary"] == "Grok summary."
+
+
+async def test_execute_passes_terminal_tool_to_engine(agent):
+    coordinator = _coordinator_with_search_web()
+    agent.coordinator = coordinator
+
+    engine_result = MagicMock(failed=False, terminal_tool_args=None, text="Answer.", total_tokens=1)
+    mock_engine = MagicMock()
+    mock_engine.execute = AsyncMock(return_value=engine_result)
+
+    with patch("src.agents.tutor_agent.DelegationEngine", return_value=mock_engine):
+        await agent.execute(_bound_message())
+
+    call_kwargs = mock_engine.execute.call_args.kwargs
+    assert call_kwargs["terminal_tool"] == "deliver_response"
