@@ -468,7 +468,7 @@ class ConfigurationService:
         Priority (highest to lowest):
         1. USER override (user_config.history_recent_full_turns)
         2. ACCOUNT default (account_defaults.history_recent_full_turns)
-        3. SYSTEM default (SearchConfig.DEFAULT_HISTORY_RECENT_FULL_TURNS = 5)
+        3. SYSTEM default (SearchConfig.DEFAULT_HISTORY_RECENT_FULL_TURNS = 2)
 
         Controls how many recent model turns use full_text instead of summary.
         Older turns beyond this window use the compressed text field.

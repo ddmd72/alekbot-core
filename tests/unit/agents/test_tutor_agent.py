@@ -303,6 +303,8 @@ async def test_execute_returns_smart_response_with_full_response_field(agent, mo
     assert response.status == AgentStatus.SUCCESS
     assert response.result.text == "Vale, sigamos."
     assert response.metadata["response_summary"] == "Discussed subjunctive."
+    request = mock_llm.generate_content.call_args.kwargs["request"]
+    assert request.response_schema == agent._RESPONSE_SCHEMA
 
 
 async def test_execute_grok_terminal_tool_args_extracted(agent):

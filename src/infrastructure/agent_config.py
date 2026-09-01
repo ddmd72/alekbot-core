@@ -446,7 +446,11 @@ DOMAIN_RESEARCHER = DomainResearcherAgentConfig()
 @dataclass
 class TutorAgentConfig:
     temperature: float = 0.7
-    max_tokens: int = 4096
+    # 32768: same order of magnitude as DomainResearcherAgentConfig (32_000), this agent's
+    # own structural template. Phase G gave Tutor a JSON-schema output contract
+    # (full_response/response_summary) — truncation mid-response delivers malformed/raw
+    # JSON to the student, a worse failure mode than a merely-cut-off sentence.
+    max_tokens: int = 32_768
     # 120 s: matches DomainResearcherAgentConfig.timeout_ms, the template this agent is
     # based on (same max_delegation_turns=5 budget). 60s was too tight — WebSearchAgent's
     # own timeout_ms (90_000, search_web is in allowed_intents) can outlive the tutor's
