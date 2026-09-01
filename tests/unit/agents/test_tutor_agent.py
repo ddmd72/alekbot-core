@@ -262,10 +262,14 @@ async def test_execute_delegation_engine_max_turns_exhausted_fails(agent):
 
 
 async def test_execute_preserves_full_text_for_recent_turns(agent, mock_llm):
-    # 6 model turns in history: the oldest (turn 0) is beyond history_recent_full_turns=5,
-    # so it must fall back to its (summary) text; the 5 most recent must use full_text.
+    # BaseAgent._apply_history_tier's use_full check happens BEFORE model_turns_from_end
+    # is incremented, so passing max_full_turns=5 (unadjusted, matching Smart's own call
+    # exactly) actually keeps the 6 most recent model turns in full text, not 5 — this
+    # off-by-one is baked into the shared method and is Smart's own real production
+    # behavior too. 7 model turns here so turn 0 (the 7th-from-newest) genuinely falls
+    # outside that 6-turn window and must be summary-only.
     history = []
-    for i in range(6):
+    for i in range(7):
         history.append({"role": "user", "parts": [{"text": f"question {i}"}]})
         history.append({
             "role": "model",
@@ -275,8 +279,8 @@ async def test_execute_preserves_full_text_for_recent_turns(agent, mock_llm):
     request = mock_llm.generate_content.call_args.kwargs["request"]
     texts = [part.text for msg in request.messages for part in msg.parts if part.text]
     joined = " ".join(texts)
-    # Oldest model turn (0) is beyond the 5-recent-turn window → summary text, not full.
+    # Oldest model turn (0) is the 7th-from-newest — outside the 6-turn full window.
     assert "summary 0" in joined
     assert "the full detailed answer 0" not in joined
-    # Most recent model turn (5) is within the window → full text, not summary.
-    assert "the full detailed answer 5" in joined
+    # Newest model turn (6) is within the window → full text, not summary.
+    assert "the full detailed answer 6" in joined

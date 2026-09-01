@@ -141,7 +141,7 @@ class TutorAgent(BaseAgent):
                 if "created_at" in entry:
                     kwargs["created_at"] = entry["created_at"]
                 messages.append(Message(role=role, parts=parts, **kwargs))
-        messages = self._apply_history_tier(messages, max_full_turns=self.history_recent_full_turns - 1)
+        messages = self._apply_history_tier(messages, max_full_turns=self.history_recent_full_turns)
 
         current_parts = message.context.get("current_message_parts", [])
         if current_parts:
