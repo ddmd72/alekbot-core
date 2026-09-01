@@ -57,7 +57,7 @@ def agent(mock_llm, mock_prompt_builder, mock_assembler):
     )
 
 
-def _bound_message(query="¿Cómo se dice 'I would like'?", history=None):
+def _bound_message(query="¿Cómo se dice 'I would like'?", history=None, **extra_context):
     return AgentMessage(
         task_id="t1", sender="coordinator", recipient="tutor_agent_test",
         intent=AgentIntent.QUERY,
@@ -66,6 +66,7 @@ def _bound_message(query="¿Cómo se dice 'I would like'?", history=None):
             "account_id": "acc-1", "user_id": "user-1",
             "origin_channel_id": "C1", "origin_platform": "slack",
             "history": history or [],
+            **extra_context,
         },
     )
 
@@ -286,6 +287,30 @@ async def test_execute_preserves_full_text_for_recent_turns(agent, mock_llm):
     assert "the full detailed answer 0" not in joined
     # Newest model turn (6) is within the window → full text, not summary.
     assert "the full detailed answer 6" in joined
+
+
+async def test_execute_honors_per_channel_history_recent_full_turns_override(agent, mock_llm):
+    # A channel binding with a narrower depth than the 5-turn default must actually
+    # change tiering — proves the value is read fresh from message.context on every
+    # call, not fixed once at agent construction (this agent instance is a per-user
+    # singleton shared across every channel one user binds it to). 3 model turns: at
+    # the default (5 → 6 effective) all 3 would stay full; override=0 (→ 1 effective)
+    # keeps only the newest full and pushes the other 2 to summary — a result the
+    # default could never produce, so this genuinely proves the override landed.
+    history = []
+    for i in range(3):
+        history.append({"role": "user", "parts": [{"text": f"question {i}"}]})
+        history.append({
+            "role": "model",
+            "parts": [{"text": f"summary {i}", "full_text": f"the full detailed answer {i}"}],
+        })
+    await agent.execute(_bound_message(history=history, history_recent_full_turns=0))
+    request = mock_llm.generate_content.call_args.kwargs["request"]
+    texts = [part.text for msg in request.messages for part in msg.parts if part.text]
+    joined = " ".join(texts)
+    assert "the full detailed answer 0" not in joined
+    assert "the full detailed answer 1" not in joined
+    assert "the full detailed answer 2" in joined
 
 
 # ---------------------------------------------------------------------------

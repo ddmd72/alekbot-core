@@ -74,3 +74,22 @@ class TestResolveSessionMode:
         )
         mode = handler._resolve_session_mode("C2", binding, "telegram")
         assert mode.write_session_id == "telegram:C2"
+
+    def test_history_recent_full_turns_resolved_from_this_channels_binding(self):
+        # Per-channel, not per-user: two different bindings can carry different
+        # depths, and _resolve_session_mode must read the CURRENT one's value.
+        handler = _make_handler()
+        binding = ChannelBinding(
+            channel_id="C1", agent_type="tutor", intent="tutor_chat",
+            created_by="user-1",
+            companion_config=CompanionConfig(
+                window_threshold=100, batch_size=50, history_recent_full_turns=8,
+            ),
+        )
+        mode = handler._resolve_session_mode("C1", binding, "slack")
+        assert mode.history_recent_full_turns == 8
+
+    def test_history_recent_full_turns_none_when_unbound(self):
+        handler = _make_handler()
+        mode = handler._resolve_session_mode("C1", None, "slack")
+        assert mode.history_recent_full_turns is None

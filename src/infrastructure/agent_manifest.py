@@ -562,8 +562,13 @@ TUTOR = AgentDescriptor(
     # Alek's own live-production consolidation threshold/batch (settings.py:129-130)
     # — a proven live magnitude, not an arbitrary new pair. Every other field stays
     # at CompanionConfig's own dataclass defaults (SUMMARY text_mode, no biographical
-    # read, no standing directives, own records only).
-    companion_default_config=CompanionConfig(window_threshold=50, batch_size=30),
+    # read, no standing directives, own records only). history_recent_full_turns=5
+    # stated explicitly (matches the domain default already) — this is Tutor's own
+    # per-type tuning, not an incidental fallback; a future companion type states its
+    # own value here too, and any individual channel can still override it.
+    companion_default_config=CompanionConfig(
+        window_threshold=50, batch_size=30, history_recent_full_turns=5,
+    ),
 )
 
 IMAGE_GENERATION = AgentDescriptor(

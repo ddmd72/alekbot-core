@@ -399,6 +399,7 @@ class ConversationHandler(ConversationHandlerPort):
                 write_consolidation=False,
                 update_notification_channel=False,
                 use_threads=False,
+                history_recent_full_turns=binding.companion_config.history_recent_full_turns,
             )
         if binding:
             return SessionMode(
@@ -680,6 +681,8 @@ class ConversationHandler(ConversationHandlerPort):
                 }
                 if history_messages:
                     agent_context["history"] = [m.model_dump() for m in history_messages]
+                if mode.history_recent_full_turns is not None:
+                    agent_context["history_recent_full_turns"] = mode.history_recent_full_turns
 
                 if mode.is_bound:
                     # Direct delegation — bypass Router

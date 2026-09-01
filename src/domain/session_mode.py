@@ -43,6 +43,14 @@ class SessionMode:
     # Response delivery: True = thread-aware chunked, False = top-level flat
     use_threads: bool = True
 
+    # Recent full-text turn depth for companion history tiering, resolved from
+    # binding.companion_config.history_recent_full_turns. Lives here (not on the
+    # companion agent's constructor) because one agent instance is a per-user
+    # singleton shared across every channel that user binds it to — the depth has to
+    # be resolved per message, from the CURRENT channel's binding, same as
+    # write_session_id. None when unbound / no companion_config.
+    history_recent_full_turns: Optional[int] = None
+
     @property
     def is_bound(self) -> bool:
         """Convenience: True if this is a bound channel session."""

@@ -63,18 +63,3 @@ def test_build_tutor_history_summary_service_defaults_none():
     fake_self = _make_factory_self(assembler=MagicMock())
     agent = UserAgentFactory._build_tutor(fake_self, "user-1", _make_ctx())
     assert agent.history_summary_service is None
-
-
-def test_build_tutor_wires_history_recent_full_turns():
-    assembler = MagicMock()
-    fake_self = _make_factory_self(assembler=assembler)
-    ctx = _make_ctx()
-    ctx.history_recent_full_turns = 2
-    agent = UserAgentFactory._build_tutor(fake_self, "user-1", ctx)
-    assert agent.history_recent_full_turns == 2
-
-
-def test_build_tutor_history_recent_full_turns_defaults_five():
-    fake_self = _make_factory_self(assembler=MagicMock())
-    agent = UserAgentFactory._build_tutor(fake_self, "user-1", _make_ctx())
-    assert agent.history_recent_full_turns == 5

@@ -91,7 +91,6 @@ class TutorAgent(BaseAgent):
         assembler: Optional["CompanionContextAssemblerService"] = None,
         user_id: Optional[str] = None,
         user_timezone: str = "UTC",
-        history_recent_full_turns: int = 5,
         history_summary_service: Optional["HistorySummaryService"] = None,
     ) -> None:
         super().__init__(config)
@@ -101,7 +100,6 @@ class TutorAgent(BaseAgent):
         self._assembler = assembler
         self.user_id = user_id
         self._user_timezone = user_timezone
-        self.history_recent_full_turns = history_recent_full_turns
         self.history_summary_service = history_summary_service
 
     async def can_handle(self, message: AgentMessage) -> bool:
@@ -162,7 +160,13 @@ class TutorAgent(BaseAgent):
                 if "created_at" in entry:
                     kwargs["created_at"] = entry["created_at"]
                 messages.append(Message(role=role, parts=parts, **kwargs))
-        messages = self._apply_history_tier(messages, max_full_turns=self.history_recent_full_turns)
+        # Resolved per-channel by ConversationHandler._resolve_session_mode (from the
+        # CURRENT channel's binding.companion_config), not a constructor default —
+        # this agent instance is a per-user singleton shared across every channel one
+        # user binds it to, so a fixed self.* value would be wrong the moment two
+        # channels want different depths.
+        max_full_turns = message.context.get("history_recent_full_turns", 5)
+        messages = self._apply_history_tier(messages, max_full_turns=max_full_turns)
 
         current_parts = message.context.get("current_message_parts", [])
         if current_parts:
