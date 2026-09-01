@@ -318,7 +318,7 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
       "role": "model",
       "parts": [
         {
-          "text": "Hi! 👋",              // summary (≤300 chars) when ENABLE_HISTORY_OPTIMIZATION=true; full text otherwise
+          
           
         }
       ],
@@ -338,7 +338,7 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 
 
 
-- **Dual-field model response:** `text` = compressed summary (when `ENABLE_HISTORY_OPTIMIZATION=true`) or full text (when false). `full_text` = complete response, always stored. On history load, SmartAgent applies tiered logic: last `history_recent_full_turns` model messages use `full_text`, older ones use `text`. Backward compatible — old records without `full_text` fall back to `text`.
+
 
 
 

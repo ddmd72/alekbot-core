@@ -4,9 +4,13 @@ the pilot companion). Bound-channel-only, internal=True, not reachable from norm
 conversation — a channel must be explicitly bound via "$agent tutor".
 
 Structural mirror of DomainResearcherAgent (src/agents/domain_researcher_agent.py),
-the established template for a bound-channel conversational specialist: reads
-history from message.context["history"] (platform API, not SessionStore — bound
-channels are stateless today, see ConversationHandler._resolve_session_mode),
+the established template for a bound-channel conversational specialist: both read
+history from message.context["history"], but as of Phase G the SOURCE differs by
+binding type. Companion bindings (companion_config set, e.g. Tutor) resolve to
+history_source="session_store" in ConversationHandler._resolve_session_mode, so
+message.context["history"] is populated from SessionStore; other bound agents
+(e.g. DomainResearcherAgent, no companion_config) still resolve to
+history_source="platform" and read the platform API directly.
 uses DelegationEngine for its own tool-calling loop (search_web only — search_memory was
 considered and explicitly declined: it reaches Alek's full personal biography, bypassing
 the include_biographical=False permission boundary the companion-context assembler
@@ -17,9 +21,9 @@ The one new piece: injects CompanionContextAssemblerService's read-side output
 the same extra_static_blocks mechanism SmartResponseAgent already uses for
 email_for_triage. Read toggles are the RFC §5 default-closed permission set:
 include_biographical=False, include_standing_directives=False, no user_id passed —
-own_records only. own_records will be empty until Phase F wires the write side
-(overflow_callback branching by companion_config); reading now is zero-risk and
-avoids a second "wire it later" stub, matching Phase A-D's own precedent.
+own_records only. own_records is populated live since Phase F wired the write side
+(OverflowRoutingService branching by companion_config) — see the DEFERRED note near
+_build_companion_context_block for the prompt-cache trade-off this now carries.
 
 The retrieval phrase fed to the assembler is cleaned of AgentCoordinator's
 delegation timestamp prefix (``handle_delegation`` prepends
@@ -140,8 +144,10 @@ class TutorAgent(BaseAgent):
                 error=f"PromptBuilder failed: {exc}",
             )
 
-        # Build conversation history from bound channel context (platform API,
-        # not SessionStore — mirrors DomainResearcherAgent exactly).
+        # Build conversation history from bound channel context. As of Phase G this
+        # is populated from SessionStore for companion bindings (ConversationHandler's
+        # history_source="session_store" branch) — DomainResearcherAgent
+        # (history_source="platform") is the one still reading the platform API directly.
         history_data = message.context.get("history", [])
         messages = []
         for entry in history_data:
@@ -294,10 +300,11 @@ class TutorAgent(BaseAgent):
 
         # DEFERRED (review 2026-08-29): own_records is query-dependent (changes every
         # turn) but rides in this STATIC block alongside session_summary, ahead of the
-        # cache boundary — will hurt prompt-cache hit rate once Phase F starts writing
-        # real records. Zero live impact today (own_records is always empty pre-Phase-F).
-        # Fix means splitting it into query_specific_context; deliberately out of scope
-        # for this fix wave.
+        # cache boundary. Phase F shipped the write side, so this is no longer a
+        # theoretical concern: own_records is live and will hurt Anthropic prompt-cache
+        # hit rate as real records accumulate. Known, accepted trade-off — not fixed in
+        # this pass. Fix means splitting it into query_specific_context; deliberately
+        # out of scope for this fix wave.
         payload = {
             "session_summary": companion_context.session_summary or "",
             "own_records": [

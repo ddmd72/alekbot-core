@@ -11,9 +11,10 @@ ChannelBindingService; an unbound (or bound-without-companion_config)
 channel returns None, so FirestoreSessionStore falls back to its
 constructor defaults (Task 8).
 
-Not yet reachable in production: bound channels are stateless today (no
-SessionStore writes at all) until Phase F flips SessionMode for
-companion_config-bearing bindings.
+Live in production since Phase F/G: ConversationHandler._resolve_session_mode
+returns write_session=True (history_source="session_store") for
+companion_config-bearing bindings, so this resolver's threshold/batch_size
+override is exercised on every companion write, not just a future path.
 """
 from typing import Optional, Tuple, TYPE_CHECKING
 

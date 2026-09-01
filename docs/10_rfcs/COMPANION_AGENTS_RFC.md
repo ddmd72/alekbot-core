@@ -1,6 +1,6 @@
 # RFC: Companion agents and session-scoped memory
 
-**Status:** Implemented (Phases A-F, 2026-08-31) — text language tutor shipped as the pilot companion
+**Status:** Implemented (Phases A-G, 2026-09-01) — text language tutor shipped as the pilot companion
 **Date:** 2026-08-17
 **Owner:** Dmytro
 **Milestone:** A second agent family
