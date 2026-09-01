@@ -214,7 +214,7 @@ Scenarios for working with long-term memory — facts, consolidation, search.
 
 **Actor:** System
 **Trigger:** `SmartResponseAgent` finishes processing a request
-**Status:** Implemented (feature flag `ENABLE_HISTORY_OPTIMIZATION`) | **Priority:** P1
+**Status:** Implemented (unconditional, no feature flag) | **Priority:** P1
 
 **Flow:**
 1. `SmartResponseAgent` calls `deliver_response(full_response, history_summary)`

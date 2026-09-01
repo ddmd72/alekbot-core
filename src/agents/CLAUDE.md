@@ -159,10 +159,13 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     adapter's `AsyncOpenAI` client — a transient 5xx after xAI has already rendered (and billed for)
     an image must not trigger a second paid render.
 - Tutor (SYNC, BALANCED, OpenAI `gpt-5.6-luna` default, intent `tutor_chat`, **`internal=True`**) —
-  the pilot companion agent (`docs/10_rfcs/COMPANION_AGENTS_RFC.md`, Phases A-F): bound-channel-only,
+  the pilot companion agent (`docs/10_rfcs/COMPANION_AGENTS_RFC.md`, Phases A-G): bound-channel-only,
   never reachable from normal conversation — a channel must be explicitly bound via `$agent tutor`.
-  Structural mirror of DomainResearcherAgent: reads history from `message.context["history"]`
-  (platform API), uses `DelegationEngine` for its own tool loop with `search_web` as the **only**
+  Structural mirror of DomainResearcherAgent: reads history from `message.context["history"]`, but
+  as of Phase G the SOURCE differs by binding — companion bindings (Tutor) resolve to
+  `history_source="session_store"` in `ConversationHandler._resolve_session_mode`, so history comes
+  from **SessionStore**; DomainResearcherAgent (no `companion_config`) still resolves to
+  `history_source="platform"`. uses `DelegationEngine` for its own tool loop with `search_web` as the **only**
   allowed intent (`search_memory` was considered and declined — it would reach Alek's full personal
   biography, bypassing the `include_biographical=False` permission boundary the companion-context
   assembler otherwise enforces). Injects `CompanionContextAssemblerService`'s read-side output (this
@@ -176,6 +179,17 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   consolidation threshold/batch) to the `ChannelBinding` — without this no `ChannelBinding` ever
   carried a non-None `companion_config` and the whole companion pipeline was unreachable (Critical
   #1, final whole-branch review 2026-08-31). See `decisions/companion_write_path.md`.
+  **Phase G — structured output + Smart-parity history:** JSON-schema reply (`_RESPONSE_SCHEMA`:
+  `full_response`/`response_summary`) via `response_schema` on Claude/Gemini/OpenAI, same
+  `deliver_response` terminal-tool path as Smart on Grok (`extract_structured_response`, shared
+  helper factored out of `SmartResponseAgent`). Summary compression is in-band when the model
+  emits `response_summary`, else async fallback via `HistorySummaryService`
+  (fire-and-forget `asyncio.create_task`, mirrors Quick's own-configured-service guard). History
+  reconstruction uses the same `_apply_history_tier(max_full_turns=history_recent_full_turns)`
+  tiering as Smart/Quick, with the identical resolved value threaded through
+  `UserAgentFactory._UserContext.history_recent_full_turns` (not just the same call shape — the
+  actual per-user config value). Blueprint `tutor_agent_v1.json` needs `output_format` in
+  `class_order` for `OUTPUT_FORMAT_TUTOR` to render.
   - **TutorExtractorAgent** — the tutor's extractor, same architectural slot `ConsolidationAgent`
     fills for Alek. NOT manifest-registered (never reached via `delegate_to_specialist`, same shape
     as ConsolidationAgent) — constructed fresh per batch by
@@ -183,6 +197,9 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     REQ-ARCH-22). Single LLM call, structured JSON out (`{"records": [...], "summary": str}`) — no
     multi-turn tool loop, no dedup-before-write. **Default Claude, PERFORMANCE tier** — "same
     judgment-call quality bar as consolidation" (`domain/user.py::_DEFAULT_AGENT_TIERS["tutor_extractor"]`).
+    `CompanionConfig.text_mode` defaults to `SUMMARY` — since Phase G it receives Tutor's real
+    ≤300-char `response_summary`, not `full_response` (dormant pre-Phase-G, when Tutor produced no
+    summary and `text == full_text`).
 
 ## Orchestration Patterns
 
