@@ -74,6 +74,7 @@ class TutorAgent(BaseAgent):
         assembler: Optional["CompanionContextAssemblerService"] = None,
         user_id: Optional[str] = None,
         user_timezone: str = "UTC",
+        history_recent_full_turns: int = 5,
     ) -> None:
         super().__init__(config)
         self._llm = execution_context.provider
@@ -82,6 +83,7 @@ class TutorAgent(BaseAgent):
         self._assembler = assembler
         self.user_id = user_id
         self._user_timezone = user_timezone
+        self.history_recent_full_turns = history_recent_full_turns
 
     async def can_handle(self, message: AgentMessage) -> bool:
         if message.intent != AgentIntent.QUERY:
@@ -130,12 +132,16 @@ class TutorAgent(BaseAgent):
         for entry in history_data:
             role = entry.get("role", "user")
             parts_data = entry.get("parts", [])
-            parts = [MessagePart(text=p.get("text", "")) for p in parts_data if p.get("text")]
+            parts = [
+                MessagePart(text=p.get("text", ""), full_text=p.get("full_text"))
+                for p in parts_data if p.get("text")
+            ]
             if parts:
                 kwargs = {}
                 if "created_at" in entry:
                     kwargs["created_at"] = entry["created_at"]
                 messages.append(Message(role=role, parts=parts, **kwargs))
+        messages = self._apply_history_tier(messages, max_full_turns=self.history_recent_full_turns - 1)
 
         current_parts = message.context.get("current_message_parts", [])
         if current_parts:
