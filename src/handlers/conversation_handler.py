@@ -393,7 +393,7 @@ class ConversationHandler(ConversationHandlerPort):
         """Resolve processing mode based on channel binding."""
         if binding and binding.companion_config:
             return SessionMode(
-                history_source="platform",
+                history_source="session_store",
                 route_intent=binding.intent,
                 write_session=True,
                 write_session_id=f"{platform}:{channel_id}",
@@ -458,11 +458,13 @@ class ConversationHandler(ConversationHandlerPort):
         # Fetch platform history BEFORE sending status message.
         # Status message goes to the channel and becomes raw[0] in Slack API response.
         # If fetched after, exclude_last drops status instead of current user message.
-        platform_history = []
+        # (Only applies to the platform source — a Firestore read has no such artifact,
+        # so the session_store branch is fetched later, once session_store is available.)
+        history_messages = []
         if mode.history_source == "platform" and self._channel_history:
             fetch_channel = channel_id or context.metadata.get("channel", "")
             if fetch_channel:
-                platform_history = await self._channel_history.fetch(
+                history_messages = await self._channel_history.fetch(
                     channel_id=fetch_channel, limit=30,
                 )
 
@@ -656,6 +658,10 @@ class ConversationHandler(ConversationHandlerPort):
                 await self.agent_factory.ensure_agents_for_user(context.user_id)
                 session_store = self.agent_factory.get_session_store()
 
+                if mode.history_source == "session_store" and mode.write_session_id:
+                    session_state = await session_store.load_session(mode.write_session_id)
+                    history_messages = session_state.history
+
                 # Bound channels: strip binary path so adapters don't inline file content.
                 # Agent accesses files via open_file delegation instead.
                 if mode.is_bound:
@@ -673,8 +679,8 @@ class ConversationHandler(ConversationHandlerPort):
                     "origin_channel_id": channel_id,
                     "origin_platform": getattr(response_channel, "platform", "slack"),
                 }
-                if platform_history:
-                    agent_context["history"] = [m.model_dump() for m in platform_history]
+                if history_messages:
+                    agent_context["history"] = [m.model_dump() for m in history_messages]
 
                 if mode.is_bound:
                     # Direct delegation — bypass Router
