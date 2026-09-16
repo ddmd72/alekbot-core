@@ -220,7 +220,7 @@ ConversationHandler
   ├─ await response_channel.send(text)   ← user sees this immediately
   │
   └─ summary = await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
-       └─ history_text = summary if ENABLE_HISTORY_OPTIMIZATION else full_text
+       └─ history_text = summary (unconditional)
 ```
 
 **Key invariants:**
@@ -231,7 +231,7 @@ ConversationHandler
 - The `response_summary` key is the single standard across both agents: SmartAgent postprocessing output, QuickAgent JSON field, and `parse_llm_response` parser key are all named `response_summary`.
 - `HistorySummaryService` is injected into `SmartResponseAgent` via constructor. Designed to be reused by other agents (e.g., `QuickResponseAgent`) without code duplication.
 
-**Environment flag:** `ENABLE_HISTORY_OPTIMIZATION=true` (default: `false`). When disabled, full response text is always stored — safe fallback for debugging. Read once at import time via `agent_config.ENABLE_HISTORY_OPTIMIZATION` — agents never call `os.getenv()` directly.
+**Unconditional:** summary-based history compression is not gated by a feature flag — the `ENABLE_HISTORY_OPTIMIZATION` env var was removed (dead code cleanup, 2026-09-01); summary is always stored as `text`, full response always stored as `full_text`.
 
 ---
 

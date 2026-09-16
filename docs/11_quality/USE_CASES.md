@@ -214,7 +214,7 @@
 
 
 
-**Status:** Implemented (feature flag `ENABLE_HISTORY_OPTIMIZATION`) | **Priority:** P1
+
 
 **Flow:**
 

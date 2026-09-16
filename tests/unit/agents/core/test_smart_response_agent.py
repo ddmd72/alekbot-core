@@ -1001,36 +1001,30 @@ class TestLoadHistorySuccess:
 
 
 # =========================================================================
-# ENABLE_HISTORY_OPTIMIZATION — summary_task creation (lines 249, 263)
+# History summary — summary_task creation (lines 249, 263)
 # =========================================================================
 
 class TestHistoryOptimizationSummaryTask:
 
-    async def test_summary_task_created_when_optimization_enabled(
+    async def test_summary_task_created_when_no_history_summary(
         self, smart_agent, mock_llm_port
     ):
-        """With ENABLE_HISTORY_OPTIMIZATION=True and no history_summary,
-        execute() creates summary_task and adds it to metadata."""
-        import src.agents.core.smart_response_agent as sra_module
-        original = sra_module.ENABLE_HISTORY_OPTIMIZATION
-        sra_module.ENABLE_HISTORY_OPTIMIZATION = True
+        """With no history_summary in the response, execute() creates summary_task
+        and adds it to metadata (unconditional — the old feature-flag gate was removed)."""
+        mock_llm_port.generate_content = AsyncMock(
+            return_value=build_llm_response("Plain text answer.", [])
+        )
+        response = await smart_agent.execute(create_query_message("plain query"))
+        assert response.status == AgentStatus.SUCCESS
+        # summary_task should be set in metadata now that it's unconditional
+        assert "response_summary_task" in response.metadata
+        # cancel the task to avoid dangling asyncio warnings
+        task = response.metadata["response_summary_task"]
+        task.cancel()
         try:
-            mock_llm_port.generate_content = AsyncMock(
-                return_value=build_llm_response("Plain text answer.", [])
-            )
-            response = await smart_agent.execute(create_query_message("plain query"))
-            assert response.status == AgentStatus.SUCCESS
-            # summary_task should be set in metadata when optimization is on
-            assert "response_summary_task" in response.metadata
-            # cancel the task to avoid dangling asyncio warnings
-            task = response.metadata["response_summary_task"]
-            task.cancel()
-            try:
-                await task
-            except (Exception, asyncio.CancelledError):
-                pass
-        finally:
-            sra_module.ENABLE_HISTORY_OPTIMIZATION = original
+            await task
+        except (Exception, asyncio.CancelledError):
+            pass
 
 
 # =========================================================================

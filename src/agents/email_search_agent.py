@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..agents.base_agent import BaseAgent
@@ -240,7 +240,7 @@ class EmailSearchAgent(BaseAgent):
         alternative_query = keys.get("alternative_query") or query
         tags: List[str] = keys.get("tags") or []
         date_from = self._parse_date(keys.get("date_from"))
-        date_to = self._parse_date(keys.get("date_to"))
+        date_to = self._parse_date(keys.get("date_to"), end_of_day=True)
 
         logger.info(
             f"📬 EmailSearchAgent: primary='{primary_query[:50]}' "
@@ -290,15 +290,25 @@ class EmailSearchAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_date(value: object) -> Optional[datetime]:
-        """Parse a YYYY-MM-DD string from the LLM output into a datetime. Returns None on any error."""
+    def _parse_date(value: object, *, end_of_day: bool = False) -> Optional[datetime]:
+        """
+        Parse a YYYY-MM-DD string from the LLM output into a datetime. Returns None on any error.
+
+        strptime lands on 00:00:00 — the *start* of that day. date_to is used as an
+        inclusive upper bound (email_date <= date_to), so passing it through unchanged
+        would exclude every email on the LLM's own end date. end_of_day=True shifts it
+        to 23:59:59.999999 so the whole day is included.
+        """
         if not value or not isinstance(value, str):
             return None
         try:
-            return datetime.strptime(value, "%Y-%m-%d")
+            parsed = datetime.strptime(value, "%Y-%m-%d")
         except ValueError:
             logger.warning(f"📬 EmailSearchAgent: could not parse date '{value}', ignoring")
             return None
+        if end_of_day:
+            parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
+        return parsed
 
     @staticmethod
     def _build_email_history_context(result: Any, query: str) -> Optional[Dict[str, Any]]:
