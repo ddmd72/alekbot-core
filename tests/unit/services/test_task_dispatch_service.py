@@ -157,3 +157,87 @@ class TestEnqueueWorkerTask:
         await service.enqueue_worker_task(task_type="t", payload={})
         _, kwargs = queue.enqueue_worker_task.call_args
         assert kwargs["delay_seconds"] == 0
+
+
+# ---------------------------------------------------------------------------
+# enqueue_video_generation_polling
+# ---------------------------------------------------------------------------
+
+class TestEnqueueVideoGenerationPolling:
+
+    async def test_delegates_all_params_with_explicit_duration_s(self, service, queue):
+        """Test delegation when duration_s is explicitly provided."""
+        queue.enqueue_video_generation_polling.return_value = "task-video-001"
+
+        result = await service.enqueue_video_generation_polling(
+            request_id="req-abc",
+            user_id="user1",
+            account_id="acc1",
+            session_id="user1:C123",
+            duration_s=8,
+            attempt=1,
+            delay_seconds=60,
+        )
+
+        queue.enqueue_video_generation_polling.assert_called_once_with(
+            request_id="req-abc",
+            user_id="user1",
+            account_id="acc1",
+            session_id="user1:C123",
+            duration_s=8,
+            origin_platform=None,
+            attempt=1,
+            delay_seconds=60,
+        )
+        assert result == "task-video-001"
+
+    async def test_uses_default_duration_s_when_omitted(self, service, queue):
+        """Test that default duration_s=5 is used and forwarded when not provided."""
+        queue.enqueue_video_generation_polling.return_value = "task-video-002"
+
+        result = await service.enqueue_video_generation_polling(
+            request_id="req-xyz",
+            user_id="user2",
+            account_id="acc2",
+            session_id="user2:C456",
+        )
+
+        queue.enqueue_video_generation_polling.assert_called_once_with(
+            request_id="req-xyz",
+            user_id="user2",
+            account_id="acc2",
+            session_id="user2:C456",
+            duration_s=5,
+            origin_platform=None,
+            attempt=0,
+            delay_seconds=30,
+        )
+        assert result == "task-video-002"
+
+    async def test_forwards_explicit_origin_platform(self, service, queue):
+        """origin_platform must reach the underlying queue call verbatim when provided."""
+        queue.enqueue_video_generation_polling.return_value = "task-video-003"
+
+        await service.enqueue_video_generation_polling(
+            request_id="req-plat",
+            user_id="user3",
+            account_id="acc3",
+            session_id="user3:C789",
+            origin_platform="slack",
+        )
+
+        assert queue.enqueue_video_generation_polling.call_args.kwargs["origin_platform"] == "slack"
+
+    async def test_defaults_applied(self, service, queue):
+        """Test that all defaults are correctly applied when minimal args provided."""
+        queue.enqueue_video_generation_polling.return_value = "task-video-003"
+
+        await service.enqueue_video_generation_polling(
+            request_id="r", user_id="u", account_id="a"
+        )
+
+        _, kwargs = queue.enqueue_video_generation_polling.call_args
+        assert kwargs["duration_s"] == 5
+        assert kwargs["attempt"] == 0
+        assert kwargs["delay_seconds"] == 30
+        assert kwargs["session_id"] == ""

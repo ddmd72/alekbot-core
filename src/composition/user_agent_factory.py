@@ -54,6 +54,7 @@ from ..infrastructure.agent_config import (
     HTML_PAGE_GENERATOR as HTML_PAGE_GENERATOR_CFG,
     DOMAIN_RESEARCHER as DOMAIN_RESEARCHER_CFG,
     IMAGE_GENERATION as IMAGE_GENERATION_CFG,
+    VIDEO_GENERATION as VIDEO_GENERATION_CFG,
 )
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
@@ -78,6 +79,7 @@ from ..agents.help_agent import HelpAgent
 from ..agents.file_management_agent import FileManagementAgent
 from ..agents.domain_researcher_agent import DomainResearcherAgent
 from ..agents.image_generation_agent import ImageGenerationAgent
+from ..agents.video_generation_agent import VideoGenerationAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
@@ -144,6 +146,7 @@ class UserAgentFactory(AgentFactoryPort):
         notification_service: Optional[object] = None,
         job_registry: Optional[ProviderRegistry] = None,
         image_registry: Optional[ProviderRegistry] = None,
+        video_registry: Optional[ProviderRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
         anthropic_client: Optional[object] = None,
         file_conversion_service: Optional[object] = None,
@@ -180,6 +183,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.notification_service = notification_service
         self.job_registry: Optional[ProviderRegistry] = job_registry
         self.image_registry: Optional[ProviderRegistry] = image_registry
+        self.video_registry: Optional[ProviderRegistry] = video_registry
         self.task_queue = task_queue
         self.anthropic_client = anthropic_client
         self.file_conversion_service = file_conversion_service
@@ -785,6 +789,51 @@ class UserAgentFactory(AgentFactoryPort):
             file_conversion=self.file_conversion_service,
         )
 
+    def _build_video_generation(
+        self, user_id: str, ctx: _UserContext,
+    ) -> Optional[VideoGenerationAgent]:
+        if not self.video_registry:
+            logger.info(
+                "[UserAgentFactory] No video_registry configured, skipping video_generation"
+            )
+            return None
+        try:
+            execution_context = self.context_builder.build("video_generation", ctx.user_profile.config)
+            video_port, _ = self.context_builder.resolve_video_generation_context(
+                "video_generation", self.video_registry, ctx.user_profile.config
+            )
+        except ValueError:
+            logger.warning(
+                "[UserAgentFactory] Video generation provider not registered, skipping"
+            )
+            return None
+
+        # RFC §3.11 decision #10 — resolved ONCE at agent-construction time, not
+        # re-resolved per request, same pattern as history_recent_full_turns.
+        # USER-level only (no account_defaults) — matches _build_image_generation's
+        # own config resolution above, which never touches self.config_service either.
+        # Account-level override would need a new field on _UserContext (currently only
+        # user_profile/prompt_builder) — real plumbing, not a one-line change, and out
+        # of scope until an actual account-level need appears.
+        max_duration_s = self.config_service.get_max_video_duration(
+            user_config=ctx.user_profile.config,
+        )
+
+        return VideoGenerationAgent(
+            config=AgentConfig(
+                agent_id=f"video_generation_agent_{user_id}",
+                agent_type="video_generation",
+                timeout_ms=VIDEO_GENERATION_CFG.timeout_ms,
+                capabilities=["generate_video", "edit_video"],
+            ),
+            execution_context=execution_context,
+            video_port=video_port,
+            prompt_builder=ctx.prompt_builder,
+            user_id=user_id,
+            file_conversion=self.file_conversion_service,
+            max_duration_s=max_duration_s,
+        )
+
     # -- Dispatch table: agent_type → builder method + base agent_id ----
 
     _LAZY_BUILDERS: Dict[str, Callable] = {
@@ -797,6 +846,7 @@ class UserAgentFactory(AgentFactoryPort):
         "file_management": _build_file_management,
         "domain_researcher": _build_domain_researcher,
         "image_generation": _build_image_generation,
+        "video_generation": _build_video_generation,
     }
 
     _LAZY_AGENT_IDS: Dict[str, str] = {
@@ -809,6 +859,7 @@ class UserAgentFactory(AgentFactoryPort):
         "file_management": "file_management_agent",
         "domain_researcher": "domain_researcher_agent",
         "image_generation": "image_generation_agent",
+        "video_generation": "video_generation_agent",
     }
 
     # ------------------------------------------------------------------

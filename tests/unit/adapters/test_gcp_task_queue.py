@@ -124,3 +124,87 @@ class TestDedupKey:
 
         body = json.loads(_task_from(client)["http_request"]["body"])
         assert body == {"task_type": "smart_timeout_retry", "user_id": "u1"}
+
+
+# ---------------------------------------------------------------------------
+# enqueue_video_generation_polling
+# ---------------------------------------------------------------------------
+
+class TestVideoGenerationPolling:
+
+    async def test_enqueue_video_generation_polling_creates_task(self, queue_and_client):
+        """Test basic enqueue with explicit duration_s."""
+        queue, client = queue_and_client
+
+        result = await queue.enqueue_video_generation_polling(
+            request_id="req-abc",
+            user_id="user1",
+            account_id="acc1",
+            session_id="user1:C123",
+            duration_s=8,
+            attempt=0,
+            delay_seconds=30,
+        )
+
+        client.create_task.assert_called_once()
+        call_kwargs = client.create_task.call_args.kwargs
+        task = call_kwargs["request"]["task"]
+        assert "schedule_time" in task  # delay_seconds > 0
+        body = json.loads(task["http_request"]["body"])
+        assert body["task_type"] == "video_generation_polling"
+        assert body["request_id"] == "req-abc"
+        assert body["user_id"] == "user1"
+        assert body["account_id"] == "acc1"
+        assert body["session_id"] == "user1:C123"
+        assert body["duration_s"] == 8
+        assert body["attempt"] == 0
+        assert result == "t-1"
+
+    async def test_enqueue_video_generation_polling_uses_default_duration_s(self, queue_and_client):
+        """Test that duration_s defaults to 5 when not provided."""
+        queue, client = queue_and_client
+
+        result = await queue.enqueue_video_generation_polling(
+            request_id="req-xyz",
+            user_id="user2",
+            account_id="acc2",
+            session_id="user2:C456",
+        )
+
+        body = json.loads(_task_from(client)["http_request"]["body"])
+        assert body["duration_s"] == 5
+        assert body["attempt"] == 0
+        assert body["task_type"] == "video_generation_polling"
+        assert result == "t-1"
+
+    async def test_enqueue_video_generation_polling_carries_origin_platform(self, queue_and_client):
+        """Real bug, live-verified 2026-08-24: without origin_platform in the Cloud Task
+        payload, WorkerHandler can't pass platform_override to deliver_video(), and
+        UserNotificationService silently falls back to the primary/last-active channel
+        instead of the channel the request came from."""
+        queue, client = queue_and_client
+
+        await queue.enqueue_video_generation_polling(
+            request_id="req-plat",
+            user_id="user1",
+            account_id="acc1",
+            session_id="user1:C123",
+            origin_platform="slack",
+        )
+
+        body = json.loads(_task_from(client)["http_request"]["body"])
+        assert body["origin_platform"] == "slack"
+
+    async def test_enqueue_video_generation_polling_no_delay_when_zero(self, queue_and_client):
+        """Test that schedule_time is not set when delay_seconds=0."""
+        queue, client = queue_and_client
+
+        await queue.enqueue_video_generation_polling(
+            request_id="req-123",
+            user_id="user3",
+            account_id="acc3",
+            delay_seconds=0,
+        )
+
+        task = _task_from(client)
+        assert "schedule_time" not in task
