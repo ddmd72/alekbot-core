@@ -59,6 +59,15 @@ class TaskQueue(Protocol):
         """
         ...
 
+    async def enqueue_companion_consolidation_task(self, session_id: str) -> str:
+        """
+        Enqueue a companion extraction task for a session.
+
+        Returns task name (Cloud Tasks task ID).
+        Worker receives payload with task_type="companion_consolidation".
+        """
+        ...
+
     async def enqueue_deep_research_polling(
         self,
         interaction_id: str,

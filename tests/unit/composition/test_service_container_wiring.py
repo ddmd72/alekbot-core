@@ -163,3 +163,27 @@ class TestPromptCaptureFlag:
             GOOGLE_CLOUD_PROJECT="proj",
         )
         assert isinstance(c.prompt_content_store, BigQueryPromptContentAdapter)
+
+
+class TestThresholdResolverWiring:
+    """Companion window override (Task 7's CompanionWindowResolver) reaches
+    FirestoreSessionStore through ServiceContainer's optional constructor param."""
+
+    def test_threshold_resolver_forwarded_to_session_store(self, monkeypatch, fake_config):
+        monkeypatch.setenv("APP_ENV", "test")
+        env_config = EnvironmentConfig()
+        db_client = MagicMock(name="firestore_db_client")
+        account_repo = AsyncMock(spec=AccountRepository)
+        resolver = AsyncMock()
+
+        container = ServiceContainer(
+            config=fake_config, db_client=db_client, env_config=env_config,
+            account_repo=account_repo, threshold_resolver=resolver,
+        )
+
+        assert container.session_store.threshold_resolver is resolver
+
+    def test_no_threshold_resolver_defaults_to_none(self, container):
+        """The `container` fixture builds without threshold_resolver= — must default to None,
+        matching FirestoreSessionStore's own default (today's unchanged behavior)."""
+        assert container.session_store.threshold_resolver is None

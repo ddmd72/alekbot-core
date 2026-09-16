@@ -36,10 +36,6 @@ from ..domain.user import PerformanceTier
 # (agents must not read env vars directly). Now agents import these
 # module-level constants instead of calling os.getenv() at runtime.
 # ========================================================================
-ENABLE_HISTORY_OPTIMIZATION: bool = os.getenv(
-    "ENABLE_HISTORY_OPTIMIZATION", "false"
-).lower() in ("true", "1", "yes")
-
 ENABLE_GROUNDING_ATTRIBUTION: bool = os.getenv(
     "ENABLE_GROUNDING_ATTRIBUTION", "false"
 ).lower() == "true"
@@ -288,6 +284,19 @@ class MapsSearchAgentConfig:
 
 
 # ---------------------------------------------------------------------------
+# TutorExtractorAgent (src/agents/tutor_extractor_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TutorExtractorAgentConfig:
+    # Single-shot structured JSON call, no multi-turn tool loop — much shorter
+    # budget than ConsolidationAgent's 15-min 8-step loop.
+    timeout_ms: int = 300_000  # 5 min
+    max_tokens: int = 4096
+    temperature: float = 0.3
+
+
+# ---------------------------------------------------------------------------
 # Module-level instances — agents import and reference these at class-definition time
 # ---------------------------------------------------------------------------
 
@@ -298,6 +307,7 @@ SMART = SmartAgentConfig()
 MEMORY_SEARCH = MemorySearchAgentConfig()
 WEB_SEARCH = WebSearchAgentConfig()
 CONSOLIDATION = ConsolidationAgentConfig()
+TUTOR_EXTRACTOR = TutorExtractorAgentConfig()
 EMAIL_SEARCH = EmailSearchAgentConfig()
 EMAIL_CLASSIFICATION = EmailClassificationAgentConfig()
 DEEP_RESEARCH = DeepResearchAgentConfig()
@@ -427,6 +437,30 @@ class DomainResearcherAgentConfig:
 
 
 DOMAIN_RESEARCHER = DomainResearcherAgentConfig()
+
+
+# ---------------------------------------------------------------------------
+# TutorAgent (src/agents/tutor_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TutorAgentConfig:
+    temperature: float = 0.7
+    # 32768: same order of magnitude as DomainResearcherAgentConfig (32_000), this agent's
+    # own structural template. Phase G gave Tutor a JSON-schema output contract
+    # (full_response/response_summary) — truncation mid-response delivers malformed/raw
+    # JSON to the student, a worse failure mode than a merely-cut-off sentence.
+    max_tokens: int = 32_768
+    # 120 s: matches DomainResearcherAgentConfig.timeout_ms, the template this agent is
+    # based on (same max_delegation_turns=5 budget). 60s was too tight — WebSearchAgent's
+    # own timeout_ms (90_000, search_web is in allowed_intents) can outlive the tutor's
+    # entire execution budget, since BaseAgent._execute_with_timeout wraps the whole
+    # execute() call — DelegationEngine loop included — in this timeout.
+    timeout_ms: int = 120_000
+    max_delegation_turns: int = 5  # matches DomainResearcher's multi-turn tool loop budget
+
+
+TUTOR = TutorAgentConfig()
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ import asyncio
 import os
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from ..adapters.mcp.mcp_client import MCPClient
 from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
@@ -55,6 +55,7 @@ from ..infrastructure.agent_config import (
     DOMAIN_RESEARCHER as DOMAIN_RESEARCHER_CFG,
     IMAGE_GENERATION as IMAGE_GENERATION_CFG,
     VIDEO_GENERATION as VIDEO_GENERATION_CFG,
+    TUTOR as TUTOR_CFG,
 )
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
@@ -80,6 +81,7 @@ from ..agents.file_management_agent import FileManagementAgent
 from ..agents.domain_researcher_agent import DomainResearcherAgent
 from ..agents.image_generation_agent import ImageGenerationAgent
 from ..agents.video_generation_agent import VideoGenerationAgent
+from ..agents.tutor_agent import TutorAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
@@ -103,6 +105,7 @@ class _UserContext:
     """Per-user shared context cached for lazy agent creation."""
     user_profile: UserProfile
     prompt_builder: UserPromptBuilder
+    history_summary_service: Optional[HistorySummaryService] = None
 
 
 class UserAgentFactory(AgentFactoryPort):
@@ -147,6 +150,7 @@ class UserAgentFactory(AgentFactoryPort):
         job_registry: Optional[ProviderRegistry] = None,
         image_registry: Optional[ProviderRegistry] = None,
         video_registry: Optional[ProviderRegistry] = None,
+        companion_context_assembler: Optional[Any] = None,
         task_queue: Optional[TaskQueue] = None,
         anthropic_client: Optional[object] = None,
         file_conversion_service: Optional[object] = None,
@@ -184,6 +188,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.job_registry: Optional[ProviderRegistry] = job_registry
         self.image_registry: Optional[ProviderRegistry] = image_registry
         self.video_registry: Optional[ProviderRegistry] = video_registry
+        self.companion_context_assembler = companion_context_assembler
         self.task_queue = task_queue
         self.anthropic_client = anthropic_client
         self.file_conversion_service = file_conversion_service
@@ -532,7 +537,10 @@ class UserAgentFactory(AgentFactoryPort):
 
         cached = {
             "last_used": time.time(),
-            "_user_context": _UserContext(user_profile=user_profile, prompt_builder=prompt_builder),
+            "_user_context": _UserContext(
+                user_profile=user_profile, prompt_builder=prompt_builder,
+                history_summary_service=history_summary_service,
+            ),
             "_lazy_agent_ids": [],  # tracks lazy agents for eviction
             "search_enrichment": search_enrichment_service,
             "router_agent": router_agent,
@@ -757,6 +765,28 @@ class UserAgentFactory(AgentFactoryPort):
             user_timezone=ctx.user_profile.config.timezone,
         )
 
+    def _build_tutor(self, user_id: str, ctx: _UserContext) -> Optional[TutorAgent]:
+        if not self.companion_context_assembler:
+            logger.info(
+                "[UserAgentFactory] No companion_context_assembler configured, skipping tutor"
+            )
+            return None
+        execution_context = self.context_builder.build("tutor", ctx.user_profile.config)
+        return TutorAgent(
+            config=AgentConfig(
+                agent_id=f"tutor_agent_{user_id}",
+                agent_type="tutor",
+                timeout_ms=TUTOR_CFG.timeout_ms,
+                capabilities=["tutor_chat"],
+            ),
+            execution_context=execution_context,
+            prompt_builder=ctx.prompt_builder,
+            assembler=self.companion_context_assembler,
+            user_id=user_id,
+            user_timezone=ctx.user_profile.config.timezone,
+            history_summary_service=ctx.history_summary_service,
+        )
+
     def _build_image_generation(
         self, user_id: str, ctx: _UserContext,
     ) -> Optional[ImageGenerationAgent]:
@@ -847,6 +877,7 @@ class UserAgentFactory(AgentFactoryPort):
         "domain_researcher": _build_domain_researcher,
         "image_generation": _build_image_generation,
         "video_generation": _build_video_generation,
+        "tutor": _build_tutor,
     }
 
     _LAZY_AGENT_IDS: Dict[str, str] = {
@@ -860,6 +891,7 @@ class UserAgentFactory(AgentFactoryPort):
         "domain_researcher": "domain_researcher_agent",
         "image_generation": "image_generation_agent",
         "video_generation": "video_generation_agent",
+        "tutor": "tutor_agent",
     }
 
     # ------------------------------------------------------------------

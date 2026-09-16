@@ -293,6 +293,77 @@ FIRESTORE_EMAIL_SAVE_BATCH_COMPOSITE_DOC_ID = ContractRule(
     },
 )
 
+FIRESTORE_COMPANION_FIND_NEAREST_FILTERS_SESSION_ID = ContractRule(
+    name="FIRESTORE_COMPANION_FIND_NEAREST_FILTERS_SESSION_ID",
+    description=(
+        "Every find_nearest query issued by FirestoreCompanionMemoryRepository "
+        "must carry a session_id== where-filter. Missing it risks a companion "
+        "surfacing another session's records — a memory-policy violation "
+        "(COMPANION_AGENTS_RFC.md §4: 'a session cannot have two memory "
+        "policies', which presumes it cannot read another session's either). "
+        "Input: captured call {where_filters: list[FieldFilter], kwargs: dict}."
+    ),
+    validators={
+        "firestore_companion_memory": lambda call: _true(
+            _has_filter(call["where_filters"], "session_id", "=="),
+            "Firestore companion_memory find_nearest missing session_id== filter "
+            "(cross-session leak risk)",
+        ),
+    },
+)
+
+FIRESTORE_COMPANION_FIND_NEAREST_FILTERS_ACCOUNT_ID = ContractRule(
+    name="FIRESTORE_COMPANION_FIND_NEAREST_FILTERS_ACCOUNT_ID",
+    description=(
+        "Every find_nearest query issued by FirestoreCompanionMemoryRepository "
+        "must ALSO carry an account_id== where-filter, alongside session_id==. "
+        "Defense in depth: session_id = f'{platform}:{channel_id}' is not "
+        "provably unique across two accounts on the same platform (e.g. two "
+        "Slack workspaces), so session_id alone is not a sufficient tenancy "
+        "guarantee. Input: captured call {where_filters: list[FieldFilter], "
+        "kwargs: dict}."
+    ),
+    validators={
+        "firestore_companion_memory": lambda call: _true(
+            _has_filter(call["where_filters"], "account_id", "=="),
+            "Firestore companion_memory find_nearest missing account_id== filter "
+            "(cross-account leak risk)",
+        ),
+    },
+)
+
+FIRESTORE_COMPANION_SAVE_BATCH_INCLUDES_ACCOUNT_ID = ContractRule(
+    name="FIRESTORE_COMPANION_SAVE_BATCH_INCLUDES_ACCOUNT_ID",
+    description=(
+        "FirestoreCompanionMemoryRepository.save_batch must write a non-empty "
+        "account_id on every record. RFC §6: 'account_id is an indexed field "
+        "on every record from day one — cheap now, expensive to backfill "
+        "later.' Input: captured call {data: dict} (the written document body)."
+    ),
+    validators={
+        "firestore_companion_memory": lambda call: _true(
+            bool(call["data"].get("account_id")),
+            "Firestore companion_memory batch.set missing account_id",
+        ),
+    },
+)
+
+FIRESTORE_COMPANION_CACHE_SAVE_INCLUDES_ACCOUNT_ID = ContractRule(
+    name="FIRESTORE_COMPANION_CACHE_SAVE_INCLUDES_ACCOUNT_ID",
+    description=(
+        "FirestoreCompanionCacheRepository.save_summary must write a non-empty "
+        "account_id on every cache doc — same tenancy-attribution convention as "
+        "FIRESTORE_COMPANION_SAVE_BATCH_INCLUDES_ACCOUNT_ID. Input: captured call "
+        "{data: dict} (the written document body)."
+    ),
+    validators={
+        "firestore_companion_cache": lambda call: _true(
+            bool(call["data"].get("account_id")),
+            "Firestore companion_cache save_summary missing account_id",
+        ),
+    },
+)
+
 NODE_DOCX_SPEC_PASSED_VIA_STDIN = ContractRule(
     name="NODE_DOCX_SPEC_PASSED_VIA_STDIN",
     description=(

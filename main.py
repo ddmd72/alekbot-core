@@ -44,6 +44,7 @@ from src.adapters.firestore_notification_state_adapter import FirestoreNotificat
 from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindingAdapter
 from src.adapters.notification_channel_factory import NotificationChannelFactory
 from src.services.channel_binding_service import ChannelBindingService
+from src.services.companion_window_resolver import CompanionWindowResolver
 from src.adapters.slack.media_adapter import SlackMediaAdapter
 from src.adapters.slack.response_channel import SlackResponseChannel
 from src.adapters.telegram.response_channel import TelegramResponseChannel
@@ -236,61 +237,36 @@ async def main():
             env_config=env_config
         )
 
-        # Create overflow callback for session store.
-        # agent_factory is created AFTER ServiceContainer (it depends on session_store from it),
-        # so we use a mutable holder to safely reference it from the closure.
-        from src.domain.consolidation import ConsolidationBatch
-        from src.ports.llm_port import Message
+        logger.info("🔗 Initializing Channel Binding Service...")
+        channel_binding_adapter = FirestoreChannelBindingAdapter(
+            db_client=db_client, env_config=env_config
+        )
+        channel_binding_service = ChannelBindingService(port=channel_binding_adapter)
 
-        _agent_factory_ref: list = [None]  # [0] set after agent_factory is created
+        logger.info("🧑‍🏫 Initializing Companion Window Resolver...")
+        companion_window_resolver = CompanionWindowResolver(channel_binding_service)
 
-        async def overflow_callback(user_id: str, session_id: str, messages: list[Message]):
-            """
-            Triggered when hot storage exceeds threshold.
-            Creates a batch and immediately triggers processing.
-            """
-            factory = _agent_factory_ref[0]
-            if factory is None:
-                logger.error("❌ [Overflow] overflow_callback fired before agent_factory initialized — batch lost!")
-                return
+        # Overflow routing — when a session's sliding window overflows, the batch goes
+        # either to Alek's consolidation pipeline or to a companion's extraction pipeline,
+        # decided by the channel binding (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §9 item 3:
+        # "Absorb the ad-hoc flags one at a time: ChannelBinding stateless first").
+        # Built here, not with the rest of the companion pipeline further below, because
+        # ServiceContainer's session store needs overflow_callback at construction time.
+        # companion_extraction_queue is constructed here for the same reason and reused
+        # by the companion extraction pipeline below.
+        logger.info("🌊 Initializing Overflow Routing Service...")
+        from src.adapters.firestore_companion_extraction_queue import FirestoreCompanionExtractionQueue
+        from src.services.overflow_routing_service import OverflowRoutingService
 
-            try:
-                # 1. Serialize messages for consolidation.
-                # Model parts: use summary (p.text), NOT full_text — full_text contains
-                # verbose responses + web_search_context JSON that pollute consolidation.
-                # User parts: consolidation_text (explicit fact save) or user text.
-                serialized = []
-                for msg in messages:
-                    if msg.role == "model":
-                        parts = [{"text": p.text} for p in msg.parts if p.text]
-                    else:
-                        parts = [{"text": p.consolidation_text or p.text} for p in msg.parts if p.consolidation_text or p.text]
-                    serialized.append({
-                        "role": msg.role,
-                        "parts": parts,
-                        "created_at": msg.created_at,
-                    })
-
-                # 2. Create a lightweight batch
-                batch = ConsolidationBatch(
-                    user_id=user_id,
-                    session_id=session_id,
-                    messages=serialized
-                )
-
-                # 3. Enqueue and trigger processing
-                if consolidation_queue:
-                    batch_id = await consolidation_queue.enqueue_batch(batch)
-                    logger.info(f"📦 [Overflow] Created batch {batch_id} for user {user_id[:8]}")
-
-                    # Trigger processing via Cloud Tasks — own request = full CPU, avoids the
-                    # Cloud Run throttling that hits any asyncio.create_task() background work.
-                    await agent_task_queue.enqueue_consolidation_task(user_id=user_id)
-                    logger.info(f"📬 [Overflow] Consolidation task enqueued for user {user_id[:8]}")
-                else:
-                    logger.warning("⚠️ Consolidation queue not initialized, overflow batch lost!")
-            except Exception as e:
-                logger.error(f"❌ Error in overflow_callback: {e}", exc_info=True)
+        companion_extraction_queue = FirestoreCompanionExtractionQueue(db_client=db_client, env_config=env_config)
+        overflow_routing_service = OverflowRoutingService(
+            channel_binding_service=channel_binding_service,
+            user_repo=user_repo,
+            consolidation_queue=consolidation_queue,
+            companion_extraction_queue=companion_extraction_queue,
+            task_queue=agent_task_queue,
+        )
+        overflow_callback = overflow_routing_service.route_overflow
 
         # 1. Shared service container (LLM adapters, repositories, prompt infra, session store)
         logger.info("🏭 Initializing Service Container...")
@@ -300,6 +276,7 @@ async def main():
             env_config=env_config,
             account_repo=account_repo,
             overflow_callback=overflow_callback,
+            threshold_resolver=companion_window_resolver.resolve,
             alert_webhook=_alert_webhook,
         )
         file_service = FileUploadService(container.llm_port)
@@ -428,10 +405,6 @@ async def main():
         notification_state_repo = FirestoreNotificationStateAdapter(
             db_client=db_client, env_config=env_config
         )
-        channel_binding_adapter = FirestoreChannelBindingAdapter(
-            db_client=db_client, env_config=env_config
-        )
-        channel_binding_service = ChannelBindingService(port=channel_binding_adapter)
         notification_channel_factory = NotificationChannelFactory()  # adapters wired below
         notification_service = UserNotificationService(
             state_repo=notification_state_repo,
@@ -469,6 +442,33 @@ async def main():
             from anthropic import AsyncAnthropic
             anthropic_client = AsyncAnthropic(api_key=config["ANTHROPIC_API_KEY"])
 
+        logger.info("🧑‍🏫 Initializing Companion Context infrastructure...")
+        from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
+        from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
+        from src.services.search_enrichment_service import SearchEnrichmentService
+        from src.services.companion_context_assembler_service import CompanionContextAssemblerService
+        from src.domain.settings import SearchConfig
+
+        companion_memory_repo = FirestoreCompanionMemoryRepository(db_client=db_client, env_config=env_config)
+        companion_cache_repo = FirestoreCompanionCacheRepository(db_client=db_client, env_config=env_config)
+
+        _companion_search_config = SearchConfig()
+        _companion_enrichment = SearchEnrichmentService(
+            repository=container.repository,
+            embedding_service=container.embedding_service,
+            keyword_limit=_companion_search_config.DEFAULT_KEYWORD_LIMIT,
+            phrase_one_limit=_companion_search_config.DEFAULT_PHRASE_ONE_LIMIT,
+            phrase_two_limit=_companion_search_config.DEFAULT_PHRASE_TWO_LIMIT,
+            total_limit=10,
+        )
+        companion_context_assembler = CompanionContextAssemblerService(
+            companion_repo=companion_memory_repo,
+            cache_repo=companion_cache_repo,
+            embedding_service=container.embedding_service,
+            enrichment_port=_companion_enrichment,
+            fact_repo=container.repository,
+        )
+
         # 2. Initialize UserAgentFactory — receives ports only, no adapter instantiation
         logger.info("🏭 Initializing User Agent Factory...")
         agent_factory = UserAgentFactory(
@@ -484,11 +484,40 @@ async def main():
             task_queue=agent_task_queue,
             anthropic_client=anthropic_client,
             quota_service=quota_service,
+            companion_context_assembler=companion_context_assembler,
         )
-        _agent_factory_ref[0] = agent_factory  # Wire deferred reference for overflow_callback
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
         _language_service._ensure_agents = agent_factory.ensure_agents_for_user
         await agent_factory.start()
+
+        logger.info("🧑‍🏫 Initializing Companion Extraction pipeline...")
+        from src.composition.companion_extractor_runner import CompanionExtractorRunner
+        from src.services.companion_extraction_service import CompanionExtractionService
+        from src.services.prompt_builder import PromptBuilder
+
+        # companion_memory_repo/companion_cache_repo constructed earlier (before
+        # UserAgentFactory), reused here — see "Initializing Companion Context infrastructure" above.
+        # companion_extraction_queue constructed earlier too (before ServiceContainer) — see
+        # "Initializing Overflow Routing Service" above.
+        # repo=None is safe: TutorExtractorAgent always calls build_for_agent() with
+        # include_biographical=False, and PromptBuilder only touches self.repo when
+        # include_biographical=True (see PromptBuilder.build_for_agent). Same pattern
+        # as ServiceContainer's _email_prompt_builder for EmailClassificationAgent.
+        companion_prompt_builder = PromptBuilder(repo=None, assembly_service=container.assembly_service)
+        companion_extractor_runner = CompanionExtractorRunner(
+            context_builder=container.context_builder,
+            user_repo=user_repo,
+            prompt_builder=companion_prompt_builder,
+            quota_service=quota_service,
+            prompt_content_store=container.prompt_content_store,
+        )
+        companion_extraction_service = CompanionExtractionService(
+            queue=companion_extraction_queue,
+            companion_repo=companion_memory_repo,
+            cache_repo=companion_cache_repo,
+            embedding_service=container.embedding_service,
+            extractor=companion_extractor_runner,
+        )
 
         # ====================================================================
         # Initialize OAuth + Cabinet Services (will be registered on Slack app)
@@ -662,6 +691,7 @@ async def main():
             email_embedding_repair=_email_embedding_repair_service,
             link_service=file_link_service,
             short_link_service=short_link_service,
+            companion_extraction=companion_extraction_service,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

@@ -158,6 +158,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | MapsSearch | BALANCED (OpenAI) | `maps_query` (internal) | auto fan-out from `search_web` |
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
 | ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
+| Tutor | BALANCED (OpenAI `gpt-5.6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
 
 **Remote MCP Server** — alekbot as MCP *server* exposing memory search to claude.ai Custom Connectors
 (inverse of its Maps MCP *client*). One tool `get_user_context(query, …)` → `SearchEnrichmentService.enrich_context`
@@ -174,7 +175,8 @@ valuable emails as `IndexedEmail` in `domain_email_facts_v1` (4-vector, mirrors 
 stale `running` jobs.
 - **`WorkerHandler`** dispatches `/worker` Cloud Tasks by `task_type`:
   `agent_execution`, `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`,
-  `consolidation`, `sweep_consolidation`, `deep_research_polling`, `fire_due_reminders`,
+  `consolidation`, `sweep_consolidation`, `companion_consolidation`, `sweep_companion_consolidation`,
+  `deep_research_polling`, `fire_due_reminders`,
   `execute_reminder`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
   `renew_all_task_subscriptions`, `start_daily_email_review`, `daily_email_review`,
   `billing_daily_summary`, `repair_email_embeddings`. Full reference: `docs/07_deployment/SCHEDULERS.md`.

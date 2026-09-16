@@ -1,6 +1,6 @@
 # RFC: Companion agents and session-scoped memory
 
-**Status:** Proposed — text language tutor first
+**Status:** Implemented (Phases A-G, 2026-09-01) — text language tutor shipped as the pilot companion
 **Date:** 2026-08-17
 **Owner:** Dmytro
 **Milestone:** A second agent family
@@ -144,7 +144,12 @@ that does not fail loudly when wrong, it demands a migration.
   group decisions.
 - **A per-session cache document** (`session_id -> summary`) as the biography-cache analog —
   without `BiographicalContextService`'s `AccountRepository` billing-config dependency, which is
-  Alek-specific and has no session equivalent.
+  Alek-specific and has no session equivalent. **As shipped (Phase D), the analogy stops at the
+  cache-document shape** — the write is a full replace of the last batch's summary, not a
+  cumulative rebuild the way the biographical cache aggregates the whole fact set. The extractor
+  is never handed the prior summary, so the cache reflects only the most recent batch (Important
+  #5, final whole-branch review 2026-08-31). Feeding the prior summary back into the extractor
+  prompt would close this gap; not done here.
 
 **Not shared — one per companion type:**
 

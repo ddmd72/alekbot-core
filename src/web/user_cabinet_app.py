@@ -903,8 +903,11 @@ def create_user_cabinet_blueprint(
                     account_id=g.account_id,
                     backfill_until=backfill_until,
                 )
-                await task_queue.enqueue_email_indexing_task(job.job_id)
+                # Persist before enqueuing — Cloud Tasks can dispatch to /worker
+                # faster than the reverse order commits, so the worker's
+                # load_job_for_execution() 404s on "not found".
                 await email_job_repo.create_job(job)
+                await task_queue.enqueue_email_indexing_task(job.job_id)
                 logger.info(
                     f"📧 Cabinet async indexing enqueued: user={g.user_id[:8]} "
                     f"mode={mode} job={job.job_id[:8]}"

@@ -352,60 +352,13 @@ class SearchEnrichmentService(SearchEnrichmentPort):
     ) -> List[EnrichedFact]:
         """
         Apply Reciprocal Rank Fusion to merge multi-query results.
-        
-        Session 2026-02-07: Multi-Vector Semantic Search
-        Algorithm: RRF_score(fact) = Σ 1/(k + rank_i)
-        
-        Industry standard used by: Elasticsearch, Pinecone, Weaviate
-        Paper: "Reciprocal Rank Fusion outperforms Condorcet" (Cormack et al., 2009)
-        
-        Args:
-            query_results: List of result lists from each query
-            k: RRF constant (default 60, Elasticsearch standard)
-        
-        Returns:
-            Facts sorted by RRF score (descending)
-        
-        Example:
-            Fact appears in 3 queries at ranks [1, 3, 1]:
-            RRF = 1/(60+1) + 1/(60+3) + 1/(60+1) = 0.0487
+
+        Delegates to domain/rrf.py — the generic, entity-agnostic implementation
+        shared with the companion memory context-assembler
+        (docs/10_rfcs/COMPANION_AGENTS_RFC.md §6).
         """
-        from collections import defaultdict
-        
-        # Step 1: Group facts by ID with their ranks
-        fact_appearances = defaultdict(list)  # fact_id → [(query_idx, rank, fact), ...]
-        
-        for query_idx, results in enumerate(query_results):
-            for rank, fact in enumerate(results, start=1):
-                fact_appearances[fact.fact_id].append((query_idx, rank, fact))
-        
-        # Step 2: Calculate RRF score for each fact
-        scored_facts = []
-        
-        for fact_id, appearances in fact_appearances.items():
-            # RRF formula: sum of 1/(k + rank) across all queries
-            rrf_score = sum(1.0 / (k + rank) for _, rank, _ in appearances)
-            
-            # Take fact from first appearance
-            fact = appearances[0][2]
-            
-            # Store metadata for debugging
-            scored_facts.append({
-                "fact": fact,
-                "rrf_score": rrf_score,
-                "appearance_count": len(appearances),
-                "ranks": [rank for _, rank, _ in appearances]
-            })
-        
-        # Step 3: Sort by RRF score (descending)
-        scored_facts.sort(key=lambda x: x["rrf_score"], reverse=True)
-        
-        logger.debug(
-            f"🔍 [RRF] Ranked {len(scored_facts)} unique facts from {len(query_results)} queries"
-        )
-        
-        # Return just the facts (metadata discarded)
-        return [item["fact"] for item in scored_facts]
+        from ..domain.rrf import apply_rrf_ranking
+        return apply_rrf_ranking(query_results, key_fn=lambda f: f.fact_id, k=k)
 
     async def _search_by_domain(
         self,

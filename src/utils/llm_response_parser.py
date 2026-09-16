@@ -180,3 +180,36 @@ def parse_llm_response(raw_text: str) -> Tuple[Optional[str], Optional[str], Opt
     ]
 
     return user_text, history_summary, rich_content, link_list
+
+
+def extract_structured_response(
+    terminal_tool_args: Optional[dict], text: str,
+) -> Tuple[Optional[str], Optional[str], Optional[RichContent], list]:
+    """
+    Extract (user_text, history_summary, rich_content, link_list) from a delegation
+    result, handling both response paths: a provider's synthesized terminal tool
+    (terminal_tool_args — e.g. Grok's deliver_response, whose parameters ARE the
+    response schema) and schema-enforced JSON text (every other provider). Never
+    raises — falls through to parse_llm_response(text) when terminal_tool_args is
+    falsy, which is itself tolerant of malformed/missing JSON.
+    """
+    if terminal_tool_args:
+        args = terminal_tool_args
+        user_text = args.get("full_response", "")
+        summary = args.get("response_summary") or args.get("history_summary")
+        rich_data = args.get("rich_content")
+        rich_content = (
+            RichContent(
+                content_type=rich_data.get("type", "unknown"),
+                data=rich_data.get("data", {}),
+                fallback_text=rich_data.get("fallback", ""),
+            )
+            if isinstance(rich_data, dict) else None
+        )
+        raw_links = args.get("link_list") or []
+        link_list = [
+            item for item in raw_links
+            if isinstance(item, dict) and "anchor" in item and "title" in item and "url" in item
+        ]
+        return user_text, summary, rich_content, link_list
+    return parse_llm_response(text)

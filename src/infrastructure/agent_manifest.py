@@ -29,6 +29,7 @@ To add a new specialist agent:
     3. Wire the agent class in user_agent_factory.py.
 """
 
+from ..domain.companion_config import CompanionConfig
 from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
 
 
@@ -73,6 +74,8 @@ class Intent:
     DELETE_FILE         = "delete_file"
     # Domain research — interactive competency stack definition for agent construction
     DOMAIN_RESEARCH     = "domain_research"
+    # Text language tutor — companion agent, bound-channel only (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §7/§9)
+    TUTOR_CHAT          = "tutor_chat"
     # Image generation/editing via grok-imagine-image-2.0
     GENERATE_IMAGE      = "generate_image"
     EDIT_IMAGE          = "edit_image"
@@ -538,6 +541,39 @@ DOMAIN_RESEARCHER = AgentDescriptor(
     }),
 )
 
+TUTOR = AgentDescriptor(
+    agent_id="tutor_agent",
+    agent_type="tutor",
+    eager=False,
+    internal=True,  # bound channel only — not exposed to orchestrators (RFC §7)
+    capabilities={Intent.TUTOR_CHAT: ExecutionMode.SYNC},
+    description="Text language tutor companion — bound-channel conversational agent",
+    capability_descriptions={
+        Intent.TUTOR_CHAT: (
+            "Interactive language-tutoring conversation. Designed for bound channel use "
+            "with conversation history from the platform. Not reachable from normal "
+            "conversation — a channel must be explicitly bound via $agent tutor."
+        ),
+    },
+    allowed_intents=frozenset({
+        Intent.SEARCH_WEB,
+    }),
+    # Auto-attach a default companion policy when a channel binds to `tutor` via
+    # `$agent tutor` (Critical #1, final whole-branch review 2026-08-31 — without
+    # this, ChannelBinding.companion_config was never set anywhere and the entire
+    # companion memory pipeline was unreachable). window_threshold/batch_size mirror
+    # Alek's own live-production consolidation threshold/batch (settings.py:129-130)
+    # — a proven live magnitude, not an arbitrary new pair. Every other field stays
+    # at CompanionConfig's own dataclass defaults (SUMMARY text_mode, no biographical
+    # read, no standing directives, own records only). history_recent_full_turns=5
+    # stated explicitly (matches the domain default already) — this is Tutor's own
+    # per-type tuning, not an incidental fallback; a future companion type states its
+    # own value here too, and any individual channel can still override it.
+    companion_default_config=CompanionConfig(
+        window_threshold=50, batch_size=30, history_recent_full_turns=5,
+    ),
+)
+
 IMAGE_GENERATION = AgentDescriptor(
     agent_id="image_generation_agent",
     agent_type="image_generation",
@@ -699,6 +735,7 @@ ALL_DESCRIPTORS = [
     HELP,
     FILE_MANAGEMENT,
     DOMAIN_RESEARCHER,
+    TUTOR,
     IMAGE_GENERATION,
     VIDEO_GENERATION,
 ]

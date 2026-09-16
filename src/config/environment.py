@@ -194,6 +194,25 @@ class EnvironmentConfig:
         return f"{prefix}domain_email_facts_v1"
 
     @property
+    def companion_records_collection(self) -> str:
+        """
+        Companion memory records — one doc per record, session_id-scoped.
+        RFC: docs/10_rfcs/COMPANION_AGENTS_RFC.md §6.
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}companion_records"
+
+    @property
+    def companion_context_cache_collection(self) -> str:
+        """
+        Per-session cached context summary — the biography-cache analog
+        for companions (FirestoreRepo.user_context_collection is Alek's
+        equivalent). RFC: docs/10_rfcs/COMPANION_AGENTS_RFC.md §6.
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}companion_context_cache"
+
+    @property
     def oauth_credentials_collection(self) -> str:
         """
         Get OAuth credentials collection.
@@ -321,6 +340,18 @@ class EnvironmentConfig:
         """
         prefix = self.firestore_collection_prefix
         return f"{prefix}consolidation_queue"
+
+    @property
+    def companion_extraction_queue_collection(self) -> str:
+        """
+        Companion extraction queue — session-scoped batches awaiting the
+        companion extractor (ConsolidationAgent-analog, RFC §6). Mirrors
+        consolidation_queue_collection but keyed by session_id, not user_id.
+        Dev: development_companion_extraction_queue
+        Prod: companion_extraction_queue
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}companion_extraction_queue"
 
     @property
     def event_dedup_collection(self) -> str:

@@ -18,7 +18,6 @@ from ..domain.agent import AgentMessage, AgentIntent, AgentStatus, DeliveryItem
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
 from ..infrastructure.agent_coordinator import AgentCoordinator
-from ..infrastructure.agent_config import ENABLE_HISTORY_OPTIMIZATION
 from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..services.localization_service import LocalizationService
 
@@ -387,8 +386,21 @@ class ConversationHandler(ConversationHandlerPort):
             # On error, pass through original text (fail open to avoid breaking user experience)
             return response_text
 
-    def _resolve_session_mode(self, channel_id: Optional[str], binding: Optional[ChannelBinding]) -> SessionMode:
+    def _resolve_session_mode(
+        self, channel_id: Optional[str], binding: Optional[ChannelBinding], platform: str,
+    ) -> SessionMode:
         """Resolve processing mode based on channel binding."""
+        if binding and binding.companion_config:
+            return SessionMode(
+                history_source="session_store",
+                route_intent=binding.intent,
+                write_session=True,
+                write_session_id=f"{platform}:{channel_id}",
+                write_consolidation=False,
+                update_notification_channel=False,
+                use_threads=False,
+                history_recent_full_turns=binding.companion_config.history_recent_full_turns,
+            )
         if binding:
             return SessionMode(
                 history_source="platform",
@@ -416,7 +428,8 @@ class ConversationHandler(ConversationHandlerPort):
         binding = None
         if self._channel_binding and channel_id:
             binding = await self._channel_binding.get(channel_id)
-        mode = self._resolve_session_mode(channel_id, binding)
+        platform = getattr(response_channel, "platform", "slack")
+        mode = self._resolve_session_mode(channel_id, binding, platform)
         if mode.is_bound:
             logger.info(
                 "🔗 [BoundChannel] channel=%s → intent=%s",
@@ -445,11 +458,13 @@ class ConversationHandler(ConversationHandlerPort):
         # Fetch platform history BEFORE sending status message.
         # Status message goes to the channel and becomes raw[0] in Slack API response.
         # If fetched after, exclude_last drops status instead of current user message.
-        platform_history = []
+        # (Only applies to the platform source — a Firestore read has no such artifact,
+        # so the session_store branch is fetched later, once session_store is available.)
+        history_messages = []
         if mode.history_source == "platform" and self._channel_history:
             fetch_channel = channel_id or context.metadata.get("channel", "")
             if fetch_channel:
-                platform_history = await self._channel_history.fetch(
+                history_messages = await self._channel_history.fetch(
                     channel_id=fetch_channel, limit=30,
                 )
 
@@ -643,6 +658,10 @@ class ConversationHandler(ConversationHandlerPort):
                 await self.agent_factory.ensure_agents_for_user(context.user_id)
                 session_store = self.agent_factory.get_session_store()
 
+                if mode.history_source == "session_store" and mode.write_session_id:
+                    session_state = await session_store.load_session(mode.write_session_id)
+                    history_messages = session_state.history
+
                 # Bound channels: strip binary path so adapters don't inline file content.
                 # Agent accesses files via open_file delegation instead.
                 if mode.is_bound:
@@ -660,8 +679,10 @@ class ConversationHandler(ConversationHandlerPort):
                     "origin_channel_id": channel_id,
                     "origin_platform": getattr(response_channel, "platform", "slack"),
                 }
-                if platform_history:
-                    agent_context["history"] = [m.model_dump() for m in platform_history]
+                if history_messages:
+                    agent_context["history"] = [m.model_dump() for m in history_messages]
+                if mode.history_recent_full_turns is not None:
+                    agent_context["history_recent_full_turns"] = mode.history_recent_full_turns
 
                 if mode.is_bound:
                     # Direct delegation — bypass Router
@@ -772,7 +793,7 @@ class ConversationHandler(ConversationHandlerPort):
 
             # Resolve history_summary after Slack delivery (task was running concurrently)
             # SESSION_2026-02-18: Async postprocessing — summary generates while Slack delivers
-            if ENABLE_HISTORY_OPTIMIZATION and response.metadata:
+            if response.metadata:
                 summary_task = response.metadata.get("response_summary_task")
                 if summary_task:
                     try:
@@ -864,11 +885,13 @@ class ConversationHandler(ConversationHandlerPort):
                     item, response_channel, thread_id_for_reply, user_id=context.user_id
                 )
 
-            # Save to History — skip for bound channels (platform API is the session store)
+            # Save to History — skipped for most bound channels (platform API is the
+            # session store); a companion-type binding (companion_config set) flips
+            # write_session=True and writes under mode.write_session_id instead.
             if mode.write_session:
                 await self._save_history_with_retry(
                     session_store=session_store,
-                    session_id=context.session_id,
+                    session_id=mode.write_session_id or context.session_id,
                     user_parts=clean_message_parts,
                     history_text=history_text,
                     response_text=response_text,
@@ -1191,6 +1214,7 @@ class ConversationHandler(ConversationHandlerPort):
             agent_type=agent_type,
             intent=intent,
             created_by=context.user_id,
+            companion_config=descriptor.companion_default_config,
         )
         await self._channel_binding.bind(binding)
         await response_channel.send_message(

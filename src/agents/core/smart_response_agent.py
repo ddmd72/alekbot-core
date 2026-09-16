@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 from ..base_agent import BaseAgent
-from ...infrastructure.agent_config import SMART, ENABLE_HISTORY_OPTIMIZATION
+from ...infrastructure.agent_config import SMART
 from ...infrastructure.agent_manifest import SMART_RESPONSE
 from ...infrastructure.delegation_engine import DelegationEngine, DelegationResult
 from ...domain.agent import (
@@ -24,7 +24,7 @@ from ...domain.agent import (
     AgentIntent,
     RoutingMetadata,
 )
-from ...domain.messaging import SmartResponse, RichContent
+from ...domain.messaging import SmartResponse
 from ...domain.exceptions import TranscriptLockedError
 from ...ports.llm_port import (
     LLMResponse,
@@ -37,7 +37,7 @@ from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_port import AgentExecutionContext
 from ...infrastructure.task_execution_resolver import ExecutionOverride
 from ...utils.logger import logger
-from ...utils.llm_response_parser import parse_llm_response
+from ...utils.llm_response_parser import extract_structured_response
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
@@ -486,7 +486,7 @@ class SmartResponseAgent(BaseAgent):
             # Launched as background task — does NOT block user response delivery.
             # conversation_handler awaits the task after sending to Slack.
             summary_task = None
-            if not history_summary and ENABLE_HISTORY_OPTIMIZATION and smart_response.text:
+            if not history_summary and smart_response.text:
                 summary_task = asyncio.create_task(
                     self._generate_history_summary(smart_response.text)
                 )
@@ -535,37 +535,14 @@ class SmartResponseAgent(BaseAgent):
     ) -> tuple[SmartResponse, Optional[str]]:
         """Convert DelegationResult into SmartResponse + optional history_summary.
 
-        Two paths:
-        - terminal_tool_args present → extract structured fields from deliver_response
-        - text present → parse JSON via parse_llm_response (fallback path)
+        Extraction itself (terminal_tool_args vs schema-enforced text) lives in
+        extract_structured_response — shared with TutorAgent. What stays local to
+        Smart is the structured_data fallback below, specific to Smart's own
+        delivery-item side channel.
         """
-        if result.terminal_tool_args:
-            args = result.terminal_tool_args
-            user_text = args.get("full_response", "")
-            # The terminal tool's parameters ARE _RESPONSE_SCHEMA, which names this
-            # field `response_summary` — the same name the text path reads via
-            # parse_llm_response. Reading `history_summary` here found nothing and
-            # silently triggered the HistorySummaryService fallback below, paying an
-            # extra Gemini call to regenerate a summary the model had already written.
-            summary = args.get("response_summary") or args.get("history_summary")
-            rich_data = args.get("rich_content")
-            rich = (
-                RichContent(
-                    content_type=rich_data.get("type", "unknown"),
-                    data=rich_data.get("data", {}),
-                    fallback_text=rich_data.get("fallback", ""),
-                )
-                if isinstance(rich_data, dict) else None
-            )
-            tool_links = [
-                item for item in (args.get("link_list") or [])
-                if isinstance(item, dict) and "anchor" in item and "title" in item and "url" in item
-            ]
-            final_rich = rich if rich else result.structured_data
-            return SmartResponse(text=user_text, structured_data=final_rich, link_list=tool_links), summary
-
-        # Fallback: LLM returned text without terminal tool
-        user_text, summary, rich, link_list = parse_llm_response(result.text)
+        user_text, summary, rich, link_list = extract_structured_response(
+            result.terminal_tool_args, result.text
+        )
         final_rich = rich if rich else result.structured_data
         return SmartResponse(text=user_text or "", structured_data=final_rich, link_list=link_list), summary
 

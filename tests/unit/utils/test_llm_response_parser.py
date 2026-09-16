@@ -28,13 +28,23 @@ Coverage:
     - valid JSON → returns dict
     - broken JSON repairable → returns dict
     - unrepairable JSON → returns None
+
+  extract_structured_response()
+    - terminal_tool_args path: full_response + response_summary extracted
+    - terminal_tool_args path: history_summary key fallback
+    - terminal_tool_args path: rich_content dict builds RichContent
+    - terminal_tool_args path: malformed link_list entries filtered
+    - falsy terminal_tool_args (None) falls through to text parsing
+    - falsy terminal_tool_args ({}) falls through to text parsing
 """
 import json
 import pytest
 
+from src.domain.messaging import RichContent
 from src.utils.llm_response_parser import (
     _load_json,
     _repair_unescaped_quotes,
+    extract_structured_response,
     parse_llm_response,
 )
 
@@ -221,3 +231,63 @@ class TestLoadJson:
     def test_empty_object_returned(self):
         result = _load_json("{}")
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# extract_structured_response()
+# ---------------------------------------------------------------------------
+
+class TestExtractStructuredResponseTerminalToolPath:
+
+    def test_terminal_tool_args_extracts_full_response_and_summary(self):
+        args = {"full_response": "Here is your answer.", "response_summary": "Summary."}
+        text, summary, rich, links = extract_structured_response(args, "")
+        assert text == "Here is your answer."
+        assert summary == "Summary."
+        assert rich is None
+        assert links == []
+
+    def test_terminal_tool_args_history_summary_key_fallback(self):
+        # Legacy field name some callers used before response_summary was standardized.
+        args = {"full_response": "Answer.", "history_summary": "Legacy summary."}
+        text, summary, rich, links = extract_structured_response(args, "")
+        assert summary == "Legacy summary."
+
+    def test_terminal_tool_args_with_rich_content_builds_rich_content_object(self):
+        args = {
+            "full_response": "Answer.",
+            "rich_content": {"type": "table", "data": {"rows": []}, "fallback": "plain"},
+        }
+        text, summary, rich, links = extract_structured_response(args, "")
+        assert isinstance(rich, RichContent)
+        assert rich.content_type == "table"
+        assert rich.fallback_text == "plain"
+
+    def test_terminal_tool_args_filters_malformed_link_list_entries(self):
+        args = {
+            "full_response": "Answer.",
+            "link_list": [
+                {"anchor": "1", "title": "Place", "url": "https://x.example.com"},
+                {"anchor": "2"},  # missing title/url — must be filtered out
+            ],
+        }
+        text, summary, rich, links = extract_structured_response(args, "")
+        assert links == [{"anchor": "1", "title": "Place", "url": "https://x.example.com"}]
+
+
+class TestExtractStructuredResponseTextFallback:
+
+    def test_falsy_terminal_tool_args_falls_through_to_text_parsing(self):
+        text, summary, rich, links = extract_structured_response(
+            None, '{"full_response": "From text.", "response_summary": "Sum."}'
+        )
+        assert text == "From text."
+        assert summary == "Sum."
+
+    def test_empty_dict_terminal_tool_args_falls_through_to_text_parsing(self):
+        # {} is falsy in Python — must take the same fallback path as None.
+        text, summary, rich, links = extract_structured_response(
+            {}, "Plain text, no JSON envelope."
+        )
+        assert text == "Plain text, no JSON envelope."
+        assert summary is None

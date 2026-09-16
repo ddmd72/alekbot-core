@@ -66,7 +66,7 @@ return SessionState(session_id=session_id)
 
 ---
 
-### Task 1.3 — `overflow_callback` captures `agent_factory` before it is created
+### Task 1.3 — `overflow_callback` captures `agent_factory` before it is created — ✅ RESOLVED 2026-08-31 (commit `e666e38`)
 
 **File:** `main.py:203-316`
 
@@ -108,6 +108,15 @@ session_store = FirestoreSessionStore(
 ```
 
 **Verification:** Run with overflow (reduce `max_history_length` to 5), confirm consolidation is triggered.
+
+**Resolution actually shipped (commit `e666e38`, 2026-08-31):** neither option A nor B above —
+the hazard was removed structurally instead of reordered. `overflow_callback` is now
+`OverflowRoutingService.route_overflow` (`src/services/overflow_routing_service.py`), a real class
+constructed from `channel_binding_service`, `user_repo`, `consolidation_queue`,
+`companion_extraction_queue`, `task_queue` — none of which is `agent_factory`, so there is nothing
+to capture-before-creation. This also deleted the `_agent_factory_ref` mutable-holder indirection
+that had been the interim workaround for this exact bug (it checked `factory is None` but never
+actually used `factory`). See `docs/04_solution_strategy/decisions/companion_write_path.md`.
 
 ---
 
