@@ -37,6 +37,7 @@ from src.domain.notification_kind import NotificationKind
 from src.domain.notify_result import NotifyResult
 from src.domain.user import UserBotConfig, UserProfile
 from src.handlers.worker_handler import WorkerHandler
+from src.ports.video_generation_port import VideoPollResult
 from src.services.consolidation_service import ConsolidationService
 from src.services.email_indexing_service import EmailIndexingService
 from src.services.email_review_service import EmailReviewService
@@ -107,6 +108,14 @@ def _make_worker(
     job_registry.get = MagicMock(return_value=job_port)
     job_registry.list_available = MagicMock(return_value=["gemini"])
 
+    video_registry = MagicMock()
+    video_port = AsyncMock()
+    video_registry.get = MagicMock(return_value=video_port)
+    video_registry.list_available = MagicMock(return_value=["grok"])
+
+    link_service = MagicMock()
+    short_link_service = AsyncMock()
+
     ns = MagicMock()
     ns.email_indexing = email_indexing
     ns.notification = notification
@@ -114,6 +123,10 @@ def _make_worker(
     ns.agent_factory = agent_factory
     ns.job_registry = job_registry
     ns.job_port = job_port
+    ns.video_registry = video_registry
+    ns.video_port = video_port
+    ns.link_service = link_service
+    ns.short_link_service = short_link_service
 
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
@@ -126,6 +139,9 @@ def _make_worker(
         user_repo=MagicMock(),
         task_dispatch=task_dispatch,
         job_registry=job_registry,
+        video_registry=video_registry,
+        link_service=link_service,
+        short_link_service=short_link_service,
     )
     return worker, ns
 
@@ -399,6 +415,274 @@ class TestHandleDeepResearchPolling:
             await worker._handle_deep_research_polling(_BASE_PAYLOAD)
 
         assert ns.agent_factory.ensure_agents_for_user.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# _handle_video_generation_polling
+# ---------------------------------------------------------------------------
+
+_VIDEO_BASE_PAYLOAD = {
+    "task_type": "video_generation_polling",
+    "request_id": "req-abc",
+    "user_id": "user1",
+    "account_id": "acc1",
+    "session_id": "user1:C123",
+    "attempt": 0,
+}
+
+
+class TestHandleVideoGenerationPolling:
+
+    async def test_missing_video_port_returns_500(self):
+        worker, ns = _make_worker()
+        ns.video_registry.get.side_effect = ValueError("provider not found")
+
+        result, status = await worker._handle_video_generation_polling(_VIDEO_BASE_PAYLOAD)
+
+        assert status == 500
+
+    async def test_pending_reenqueues_with_duration_s(self):
+        """CONTROLLER RULING fix #2: duration_s must be resolved once at the top of
+        the method and threaded into the re-enqueue call so it survives multiple
+        poll cycles instead of resetting to the fallback default on each re-poll."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(return_value=VideoPollResult(status="pending"))
+
+        result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
+
+        assert status == 200
+        assert result["status"] == "polling"
+        ns.task_dispatch.enqueue_video_generation_polling.assert_awaited_once_with(
+            request_id="req-abc", user_id="user1", account_id="acc1",
+            session_id="user1:C123", attempt=1, delay_seconds=30, duration_s=5,
+            origin_platform=None,
+        )
+
+    async def test_pending_reenqueues_carries_forward_nondefault_duration_s(self):
+        """A video submitted with duration=8 must keep duration_s=8 across re-polls,
+        not just on the first payload."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(return_value=VideoPollResult(status="pending"))
+
+        payload = {**_VIDEO_BASE_PAYLOAD, "attempt": 2, "duration_s": 8}
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        ns.task_dispatch.enqueue_video_generation_polling.assert_awaited_once_with(
+            request_id="req-abc", user_id="user1", account_id="acc1",
+            session_id="user1:C123", attempt=3, delay_seconds=30, duration_s=8,
+            origin_platform=None,
+        )
+
+    async def test_done_delivers_no_reenqueue(self):
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="done", data=b"video-bytes")
+        )
+
+        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+            payload = {**_VIDEO_BASE_PAYLOAD, "attempt": 3, "duration_s": 8}
+            result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert result["status"] == "delivered"
+        mock_deliver.assert_awaited_once()
+        assert mock_deliver.call_args.kwargs["video_data"] == b"video-bytes"
+        assert mock_deliver.call_args.kwargs["duration_s"] == 8
+        ns.task_dispatch.enqueue_video_generation_polling.assert_not_awaited()
+
+    async def test_done_forwards_origin_platform_to_deliver_video(self):
+        """Real bug, live-verified 2026-08-24: UserNotificationService only honors
+        channel_id_override when platform_override is ALSO set — omitting it
+        silently delivers to the user's primary/last-active channel instead of
+        the channel the request came from."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="done", data=b"video-bytes")
+        )
+
+        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+            payload = {**_VIDEO_BASE_PAYLOAD, "origin_platform": "slack"}
+            result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert mock_deliver.call_args.kwargs["platform_override"] == "slack"
+
+    async def test_done_forwards_short_link_service_to_deliver_video(self):
+        """User-reported gap 2026-08-24: video links stayed long /f/<token> links —
+        deliver_video() never received short_link_service at all, unlike every other
+        delivery path (deep_research, images, PDF/HTML)."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="done", data=b"video-bytes")
+        )
+
+        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+            result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
+
+        assert status == 200
+        assert mock_deliver.call_args.kwargs["short_link_service"] is ns.short_link_service
+
+    async def test_done_without_duration_s_in_payload_falls_back_to_default(self):
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="done", data=b"video-bytes")
+        )
+
+        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+            result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
+
+        assert status == 200
+        assert mock_deliver.call_args.kwargs["duration_s"] == 5
+
+    async def test_failed_notifies_no_reenqueue(self):
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="failed", error="moderation block")
+        )
+
+        payload = {**_VIDEO_BASE_PAYLOAD, "attempt": 1}
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert result["status"] == "failed"
+        ns.notification.notify.assert_awaited_once()
+        ns.task_dispatch.enqueue_video_generation_polling.assert_not_awaited()
+
+    async def test_failed_includes_provider_error_reason_in_alert(self):
+        """result.error carries xAI's actual rejection reason (e.g. duration cap) —
+        must be surfaced verbatim, not swallowed into a generic apology."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(
+                status="failed", error="Video is too long. Maximum duration is 8.7 seconds.",
+            )
+        )
+
+        result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
+
+        assert status == 200
+        alert = ns.notification.notify.call_args.kwargs["system_alert"]
+        assert "Video is too long. Maximum duration is 8.7 seconds." in alert
+
+    async def test_expired_with_no_error_text_uses_generic_alert_only(self):
+        # Guard against the "Reason:" suffix appearing for an empty error string.
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(return_value=VideoPollResult(status="expired", error=""))
+
+        result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
+
+        assert status == 200
+        alert = ns.notification.notify.call_args.kwargs["system_alert"]
+        assert "Reason:" not in alert
+
+    async def test_failed_forwards_origin_platform_to_notify(self):
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="failed", error="moderation block")
+        )
+
+        payload = {**_VIDEO_BASE_PAYLOAD, "origin_platform": "telegram"}
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert ns.notification.notify.call_args.kwargs["platform_override"] == "telegram"
+
+    async def test_pending_reenqueue_forwards_origin_platform(self):
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(return_value=VideoPollResult(status="pending"))
+
+        payload = {**_VIDEO_BASE_PAYLOAD, "origin_platform": "slack"}
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert ns.task_dispatch.enqueue_video_generation_polling.call_args.kwargs["origin_platform"] == "slack"
+
+    async def test_timeout_forwards_origin_platform_to_notify(self):
+        worker, ns = _make_worker()
+
+        payload = {
+            **_VIDEO_BASE_PAYLOAD, "attempt": WorkerHandler._MAX_VIDEO_POLL_ATTEMPTS,
+            "origin_platform": "slack",
+        }
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert ns.notification.notify.call_args.kwargs["platform_override"] == "slack"
+
+    async def test_expired_notifies_no_reenqueue(self):
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="expired", error="")
+        )
+
+        result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
+
+        assert status == 200
+        assert result["status"] == "expired"
+        ns.notification.notify.assert_awaited_once()
+        ns.task_dispatch.enqueue_video_generation_polling.assert_not_awaited()
+
+    async def test_get_status_raises_reenqueues_instead_of_propagating(self):
+        """Fix 1: get_status() was unguarded — a CDN blip / expired URL / xAI 5xx
+        raised straight out, becoming an HTTP 500 that Cloud Tasks retries with the
+        SAME attempt value forever, bypassing _MAX_VIDEO_POLL_ATTEMPTS entirely. The
+        exception must instead be caught and re-enqueued with attempt+1 so the
+        existing timeout budget still applies."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(side_effect=RuntimeError("xAI 503"))
+
+        payload = {**_VIDEO_BASE_PAYLOAD, "attempt": 2, "duration_s": 8}
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert result == {"status": "retry", "attempt": 3}
+        ns.task_dispatch.enqueue_video_generation_polling.assert_awaited_once_with(
+            request_id="req-abc", user_id="user1", account_id="acc1",
+            session_id="user1:C123", attempt=3, delay_seconds=30, duration_s=8,
+            origin_platform=None,
+        )
+        ns.notification.notify.assert_not_awaited()
+
+    async def test_done_prefers_poll_result_duration_over_payload_duration(self):
+        """Fix 4: result.duration_s (what xAI actually reports on the finished
+        render) must win over the poll payload's submission-time estimate — critical
+        for edit_video, which has no duration param at submission time at all and
+        would otherwise bill on the wrong value."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(
+            return_value=VideoPollResult(status="done", data=b"video-bytes", duration_s=12)
+        )
+
+        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+            payload = {**_VIDEO_BASE_PAYLOAD, "duration_s": 5}
+            result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert mock_deliver.call_args.kwargs["duration_s"] == 12
+
+    async def test_max_attempts_times_out(self):
+        worker, ns = _make_worker()
+
+        payload = {**_VIDEO_BASE_PAYLOAD, "attempt": WorkerHandler._MAX_VIDEO_POLL_ATTEMPTS}
+        result, status = await worker.handle(payload)
+
+        assert status == 200
+        assert result["status"] == "timeout"
+        ns.notification.notify.assert_awaited_once()
+        ns.video_port.get_status.assert_not_awaited()
+
+    async def test_dispatcher_routes_video_generation_polling_task_type(self):
+        """Guards against forgetting to register the dispatch case."""
+        worker, ns = _make_worker()
+        ns.video_port.get_status = AsyncMock(return_value=VideoPollResult(status="pending"))
+
+        result = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
+
+        assert result is not None
+        body, status = result
+        assert status == 200
+        assert body["status"] == "polling"
 
 
 # ---------------------------------------------------------------------------

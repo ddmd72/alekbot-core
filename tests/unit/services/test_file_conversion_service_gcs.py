@@ -313,6 +313,19 @@ class TestDeliveredDocumentDispatch:
         assert out == b"md"
         mock_media.fetch.assert_called_once()
 
+    async def test_video_generation_key_uses_media_storage(self, service_with_media, mock_storage, mock_media):
+        """Fix for a live-confirmed bug (2026-08-24): video_generation/ keys, written by
+        deliver_video()/notify_document_link(), were routed to the bare-filename path
+        (FileStoragePort) instead of MediaStoragePort — 'now edit that video' failed with
+        NotFound on every follow-on edit_video."""
+        mock_media.fetch = AsyncMock(return_value=b"video bytes")
+        out = await service_with_media.resolve_bytes(
+            "video_generation/user1/20260824T120000Z.mp4", "user1"
+        )
+        assert out == b"video bytes"
+        mock_media.fetch.assert_called_once_with("video_generation/user1/20260824T120000Z.mp4")
+        mock_storage.download.assert_not_called()
+
     async def test_ownership_mismatch_raises_permission_error(self, service_with_media, mock_media):
         mock_media.fetch = AsyncMock(return_value=b"secret")
         with pytest.raises(PermissionError):

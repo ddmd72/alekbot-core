@@ -67,6 +67,28 @@ class TaskDispatchService:
             session_id=session_id,
         )
 
+    async def enqueue_video_generation_polling(
+        self,
+        request_id: str,
+        user_id: str,
+        account_id: str,
+        session_id: str = "",
+        duration_s: int = 5,
+        origin_platform: Optional[str] = None,
+        attempt: int = 0,
+        delay_seconds: int = 30,
+    ) -> str:
+        return await self._queue.enqueue_video_generation_polling(
+            request_id=request_id,
+            user_id=user_id,
+            account_id=account_id,
+            session_id=session_id,
+            duration_s=duration_s,
+            origin_platform=origin_platform,
+            attempt=attempt,
+            delay_seconds=delay_seconds,
+        )
+
     async def enqueue_worker_task(
         self,
         task_type: str,

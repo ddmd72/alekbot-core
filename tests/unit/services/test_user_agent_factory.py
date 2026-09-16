@@ -7,6 +7,7 @@ from src.ports.llm_port import ProviderCapabilities, LLMPort
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.composition.user_agent_factory import _UserContext
 from src.ports.image_generation_port import GeneratedImage, ImageGenerationPort
+from src.ports.video_generation_port import VideoGenerationPort, VideoPollResult
 from src.services.provider_registry import ProviderRegistry
 
 
@@ -143,3 +144,87 @@ def test_build_image_generation_returns_none_without_registry(mock_dependencies)
 def test_image_generation_registered_in_lazy_dispatch_tables():
     assert "image_generation" in UserAgentFactory._LAZY_BUILDERS
     assert UserAgentFactory._LAZY_AGENT_IDS["image_generation"] == "image_generation_agent"
+
+
+class FakeVideoPort(VideoGenerationPort):
+    async def create_video(self, prompt, user_id, account_id, *, image_data=None,
+                            image_mime_type="image/png", duration=None, resolution=None,
+                            aspect_ratio=None, session_id=None, origin_platform=None):
+        return "fake_request_id"
+
+    async def edit_video(self, prompt, video_data, user_id, account_id, *,
+                          video_mime_type="video/mp4", session_id=None, origin_platform=None):
+        return "fake_request_id"
+
+    async def get_status(self, request_id):
+        return VideoPollResult(status="pending")
+
+
+def test_build_video_generation_returns_configured_agent(mock_dependencies):
+    mock_dependencies["context_builder"] = Mock()
+    mock_dependencies["context_builder"].resolve_video_generation_context = Mock(
+        return_value=(FakeVideoPort(), "grok")
+    )
+    mock_dependencies["config_service"] = Mock()
+    mock_dependencies["config_service"].get_max_video_duration = Mock(return_value=10)
+    mock_dependencies["file_conversion_service"] = Mock()
+    video_registry = ProviderRegistry()
+    video_registry.register("grok", FakeVideoPort())
+    factory_with_registry = UserAgentFactory(**mock_dependencies, video_registry=video_registry)
+
+    user_profile = Mock(spec=UserProfile)
+    user_profile.config = UserBotConfig()
+    ctx = _UserContext(user_profile=user_profile, prompt_builder=Mock())
+
+    agent = factory_with_registry._build_video_generation("user123", ctx)
+
+    assert agent is not None
+    assert agent.agent_id == "video_generation_agent_user123"
+    mock_dependencies["context_builder"].resolve_video_generation_context.assert_called_once_with(
+        "video_generation", video_registry, user_profile.config
+    )
+
+
+def test_build_video_generation_returns_none_without_registry(mock_dependencies):
+    factory_without_registry = UserAgentFactory(**mock_dependencies)  # no video_registry
+
+    user_profile = Mock(spec=UserProfile)
+    user_profile.config = UserBotConfig()
+    ctx = _UserContext(user_profile=user_profile, prompt_builder=Mock())
+
+    agent = factory_without_registry._build_video_generation("user123", ctx)
+
+    assert agent is None
+
+
+def test_build_video_generation_resolves_max_duration_from_config_service(mock_dependencies):
+    """The lazy builder must call ConfigurationService.get_max_video_duration() and pass
+    its result as max_duration_s, not hardcode the agent's own default (10) — otherwise a
+    per-user override (UserBotConfig.max_video_duration_s) would silently do nothing."""
+    mock_dependencies["context_builder"] = Mock()
+    mock_dependencies["context_builder"].resolve_video_generation_context = Mock(
+        return_value=(FakeVideoPort(), "grok")
+    )
+    mock_dependencies["config_service"] = Mock()
+    mock_dependencies["config_service"].get_max_video_duration = Mock(return_value=25)
+    mock_dependencies["file_conversion_service"] = Mock()
+    video_registry = ProviderRegistry()
+    video_registry.register("grok", FakeVideoPort())
+    factory_with_registry = UserAgentFactory(**mock_dependencies, video_registry=video_registry)
+
+    user_profile = Mock(spec=UserProfile)
+    user_profile.config = UserBotConfig(max_video_duration_s=25)
+    ctx = _UserContext(user_profile=user_profile, prompt_builder=Mock())
+
+    agent = factory_with_registry._build_video_generation("user123", ctx)
+
+    assert agent is not None
+    assert agent._max_duration_s == 25
+    mock_dependencies["config_service"].get_max_video_duration.assert_called_once_with(
+        user_config=user_profile.config,
+    )
+
+
+def test_video_generation_registered_in_lazy_dispatch_tables():
+    assert "video_generation" in UserAgentFactory._LAZY_BUILDERS
+    assert UserAgentFactory._LAZY_AGENT_IDS["video_generation"] == "video_generation_agent"

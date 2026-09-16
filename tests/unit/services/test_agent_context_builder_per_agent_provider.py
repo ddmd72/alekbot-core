@@ -404,6 +404,7 @@ _FACTORY_AGENT_TYPES = [
     "html_page",
     "domain_researcher",
     "image_generation",
+    "video_generation",
 ]
 
 

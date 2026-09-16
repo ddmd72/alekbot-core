@@ -6,6 +6,7 @@ from ..domain.user import UserBotConfig, PerformanceTier
 from ..ports.llm_port import LLMPort, AgentExecutionContext
 from ..ports.deep_research_port import DeepResearchPort
 from ..ports.image_generation_port import ImageGenerationPort
+from ..ports.video_generation_port import VideoGenerationPort
 from ..ports.prompt_cache_strategy_port import PromptCacheStrategyPort
 from ..ports.provider_resilience_port import ProviderResiliencePort
 from ..utils.logger import logger
@@ -166,6 +167,15 @@ class AgentProviderStrategy:
         # which uses the SAME resolved provider name against a separate registry.
         # RFC §6 decision #8: grok-only, no fallback (no second image adapter yet).
         "image_generation": {
+            "default_provider": "grok",
+            "allowed_providers": ["grok"],
+            "required_capabilities": [],
+            "fallback": None,
+        },
+        # Video generation: text-LLM axis — see resolve_video_generation_context()
+        # below for the video-rendering axis, which uses the SAME resolved provider
+        # name against a separate registry. grok-only, no fallback.
+        "video_generation": {
             "default_provider": "grok",
             "allowed_providers": ["grok"],
             "required_capabilities": [],
@@ -407,4 +417,25 @@ class AgentContextBuilder:
         """
         provider_name = self.resolve_provider_name(agent_type, config)
         port: ImageGenerationPort = image_registry.get(provider_name)
+        return port, provider_name
+
+    def resolve_video_generation_context(
+        self,
+        agent_type: str,
+        video_registry: "ProviderRegistry",
+        config: UserBotConfig,
+    ) -> tuple[VideoGenerationPort, str]:
+        """
+        Resolve a VideoGenerationPort for the video-rendering axis.
+
+        Mirrors resolve_image_generation_context() exactly — same 3-level
+        provider-name resolution as the text-LLM axis (same agent_type strategy
+        entry), looked up in a separate, dedicated registry. See
+        docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.6.
+
+        Returns:
+            (port, provider_name)
+        """
+        provider_name = self.resolve_provider_name(agent_type, config)
+        port: VideoGenerationPort = video_registry.get(provider_name)
         return port, provider_name

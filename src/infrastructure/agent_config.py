@@ -462,3 +462,26 @@ class ImageGenerationAgentConfig:
 
 
 IMAGE_GENERATION = ImageGenerationAgentConfig()
+
+
+# ---------------------------------------------------------------------------
+# VideoGenerationAgent (src/agents/video_generation_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class VideoGenerationAgentConfig:
+    temperature: float = 0.7      # Prompt-crafting is translation, not creative writing
+    max_tokens: int = 500         # Output is {video_prompt, aspect_ratio} JSON, not a document
+    # Hard wall-clock budget around the entire execute() call (prompt-builder read +
+    # LLM crafting call + xAI submit-only POST). Unlike ImageGenerationAgentConfig,
+    # this does NOT need to cover a full render — VideoGenerationAgent is
+    # ExecutionMode.SYNC and returns an ACK in seconds; the multi-minute wait lives
+    # entirely in WorkerHandler's polling loop, outside this budget. Sized as
+    # request_timeout_s (60s crafting call) + GrokVideoAdapter's submit timeout
+    # (60s) + margin — conservative, no live latency data yet
+    # (VIDEO_GENERATION_RFC.md §10 open question #3).
+    timeout_ms: int = 150_000
+    request_timeout_s: int = 60
+
+
+VIDEO_GENERATION = VideoGenerationAgentConfig()

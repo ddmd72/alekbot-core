@@ -1,0 +1,5 @@
+{
+  "blueprint_id": "video_generation_agent_v1",
+  "outer_class": "VideoGenerationAgent extends Agent",
+  "class_order": ["cognitive_process"]
+}
