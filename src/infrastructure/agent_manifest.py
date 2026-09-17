@@ -561,16 +561,25 @@ TUTOR = AgentDescriptor(
     # Auto-attach a default companion policy when a channel binds to `tutor` via
     # `$agent tutor` (Critical #1, final whole-branch review 2026-08-31 — without
     # this, ChannelBinding.companion_config was never set anywhere and the entire
-    # companion memory pipeline was unreachable). window_threshold/batch_size mirror
-    # Alek's own live-production consolidation threshold/batch (settings.py:129-130)
-    # — a proven live magnitude, not an arbitrary new pair. Every other field stays
-    # at CompanionConfig's own dataclass defaults (SUMMARY text_mode, no biographical
-    # read, no standing directives, own records only). history_recent_full_turns=5
-    # stated explicitly (matches the domain default already) — this is Tutor's own
+    # companion memory pipeline was unreachable). window_threshold/batch_size were
+    # originally copied from Alek's own consolidation numbers (50/30) but tutor
+    # sessions don't share Alek's usage pattern: there is no time/idle-based sweep
+    # for companion extraction (sweep_companion_consolidation has no Cloud Scheduler
+    # job — docs/07_deployment/SCHEDULERS.md — extraction fires purely on
+    # window_threshold overflow), so a threshold sized for Alek's slow drip-feed risks
+    # a whole tutoring session ending with nothing extracted. Retuned 2026-09-17 to
+    # 20/10 — reliably crosses within one active practice session (observed ~20-40
+    # raw messages/session), batch_size kept at half the threshold so an overflow
+    # extracts a meaningful chunk while leaving residual context in the live window
+    # (batch_size must stay < window_threshold, else every overflow empties it
+    # entirely). Verified against real usage: extraction cost is dominated by fixed
+    # prompt overhead, not batch size (~$0.01/call at either magnitude), so this is a
+    # reliability tuning, not a cost one. history_recent_full_turns=5 stated
+    # explicitly (matches the domain default already) — this is Tutor's own
     # per-type tuning, not an incidental fallback; a future companion type states its
     # own value here too, and any individual channel can still override it.
     companion_default_config=CompanionConfig(
-        window_threshold=50, batch_size=30, history_recent_full_turns=5,
+        window_threshold=20, batch_size=10, history_recent_full_turns=5,
     ),
 )
 

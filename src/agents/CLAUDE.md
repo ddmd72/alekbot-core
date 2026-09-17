@@ -175,8 +175,10 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   Claude Haiku 4.5 (BALANCED's Claude default) felt too weak for live tutoring conversation
   (`agent_context_builder.py` STRATEGIES["tutor"]).
   **Write path:** `$agent tutor` auto-attaches `AgentDescriptor.companion_default_config`
-  (`CompanionConfig(window_threshold=50, batch_size=30)`, mirrors Alek's own production
-  consolidation threshold/batch) to the `ChannelBinding` — without this no `ChannelBinding` ever
+  (`CompanionConfig(window_threshold=20, batch_size=10)`, retuned 2026-09-17 — companion
+  extraction has no time/idle sweep, only `window_threshold` overflow, so the threshold is sized
+  to reliably cross within one active tutoring session rather than mirroring Alek's own
+  slow-drip consolidation cadence) to the `ChannelBinding` — without this no `ChannelBinding` ever
   carried a non-None `companion_config` and the whole companion pipeline was unreachable (Critical
   #1, final whole-branch review 2026-08-31). See `decisions/companion_write_path.md`.
   **Phase G — structured output + Smart-parity history:** JSON-schema reply (`_RESPONSE_SCHEMA`:
