@@ -82,7 +82,7 @@ class TestHandleAgentCommandBind:
         bound = channel_binding.bind.call_args[0][0]
         assert bound.channel_id == _CHANNEL_ID
         assert bound.agent_type == "tutor"
-        assert bound.companion_config == CompanionConfig(window_threshold=50, batch_size=30)
+        assert bound.companion_config == CompanionConfig(window_threshold=20, batch_size=10)
 
     async def test_binding_to_non_companion_type_leaves_companion_config_none(self):
         handler, channel_binding = _make_handler()
