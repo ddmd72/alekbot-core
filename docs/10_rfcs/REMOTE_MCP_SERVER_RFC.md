@@ -123,19 +123,41 @@ User pastes `https://dev.alekbot.app/mcp` into claude.ai → claude.ai sends `PO
     "type": "object",
     "required": ["query"],
     "properties": {
-      "query":              {"type": "string"},
-      "alternate_phrasing": {"type": "string"},
-      "keywords":           {"type": "array", "items": {"type": "string"}}
+      "query":              {"type": "string", "description": "…"},
+      "alternate_phrasing": {"type": "string", "default": "", "description": "…"},
+      "keywords":           {"type": "array", "items": {"type": "string"}, "default": [], "description": "…"}
     }
   }
 }
 ```
 
-**Description is load-bearing** (it's the only lever on claude.ai's tool-use decisions):
+> **Revised 2026-09-18.** The schema above is what the server emits *today*. Until that
+> date the handler used `Optional[str] = None` / `Optional[List[str]] = None`, which
+> FastMCP renders as `anyOf: [T, null]` with no per-parameter `description` — so this
+> section documented a schema the code never produced. Clients collapsed the union to an
+> untyped value and guessed at the argument shape, which is what made the *first* call from
+> a freshly connected client unreliable. Full rationale and the invariants that now hold:
+> [`decisions/mcp_tool_schema_liberal_input.md`](../04_solution_strategy/decisions/mcp_tool_schema_liberal_input.md).
 
-> ALWAYS call this tool before answering any question from the user. Retrieves the user's personal biographical facts, preferences, ongoing projects, opinions, and historical context from their exocortex (alekbot). Without this context you will miss critical information the user expects you to know. Pass the user's question as `query`; optionally add `alternate_phrasing` with synonyms for better recall and `keywords` with 2-5 topical tags. **All records are stored in English. Always formulate `query` and `keywords` in English for optimal retrieval. Use `alternate_phrasing` for the original language if the user's question was not in English.** Skip only for pure math/code questions with zero personal dimension.
+**Schema invariants** (enforced by `tests/unit/composition/test_mcp_setup.py`): no `anyOf`
+or `"null"`; every property carries a `description`; optionality is expressed as
+`default: "" / []`; and **no validation constraint is advertised** — FastMCP validates the
+schema with pydantic, so an advertised `maxItems`/`pattern`/`additionalProperties: false`
+would convert a recoverable input into a failed tool call.
 
-The English-priming sentence is load-bearing too — our embedding space is English-aligned, and claude.ai's first call used a three-phrase Russian string in `query` which degrades recall.
+**Input is accepted liberally, emitted strictly.** `BeforeValidator` hooks running
+`normalize_phrase` / `normalize_keywords` (`src/domain/mcp.py`) absorb explicit nulls,
+delimited strings, JSON-encoded arrays, casing/whitespace, embedded spaces and excess tags
+before validation, and do not appear in the emitted schema.
+
+**Description is load-bearing** (it's the only lever on claude.ai's tool-use decisions),
+but is no longer an absolute imperative — the previous `ALWAYS call this tool before
+answering any question` competed with the user's own client-side preferences, and the
+observed effect was a model oscillating between over-calling and improvising arguments.
+The current text states when to call, when to skip, what each vector does, and that an
+empty result is a valid answer rather than an error.
+
+The English-priming sentence is load-bearing too — our embedding space is English-aligned, and claude.ai's first call used a three-phrase Russian string in `query` which degrades recall. Server-side translation of a non-English `query` was considered and **deferred**: it would add an LLM call to a path whose entire value is that it bypasses the agent stack. Per-parameter descriptions are the cheaper lever; revisit only if telemetry shows clients still sending non-English `query` values.
 
 ## 6. Architecture
 

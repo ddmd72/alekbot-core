@@ -107,7 +107,8 @@ to make the metadata URLs match the actual routes. See
 
 ### 3.2 Tool definition
 
-One tool: `get_user_context`.
+One tool: `get_user_context`. Schema as actually emitted in `tools/list` (descriptions
+abbreviated here — full text in `composition/mcp_setup.py`):
 
 ```json
 {
@@ -117,18 +118,56 @@ One tool: `get_user_context`.
     "type": "object",
     "required": ["query"],
     "properties": {
-      "query":              { "type": "string" },
-      "alternate_phrasing": { "type": "string" },
-      "keywords":           { "type": "array", "items": { "type": "string" } }
+      "query":              { "type": "string", "description": "The user's information need, restated in English …" },
+      "alternate_phrasing": { "type": "string", "default": "",  "description": "A distinct rephrasing of `query` …" },
+      "keywords":           { "type": "array", "items": { "type": "string" }, "default": [],
+                              "description": "2-5 single-word topical tags, lowercase English …" }
     }
   }
 }
 ```
 
-Description (full text in `composition/mcp_setup.py::_TOOL_DESCRIPTION`): instructs Claude
-to always call it before answering, formulate `query`/`keywords` in English (since records
-are stored in an English-aligned embedding space), and reserve `alternate_phrasing` for the
-user's original language.
+**Two invariants hold this schema, both enforced by
+`tests/unit/composition/test_mcp_setup.py`:**
+
+1. **No `anyOf`, no `"null"`, no `title`-without-`description`.** Optional parameters are
+   expressed as `default: "" / []`, never `Optional[T]` — `Optional` emits
+   `anyOf: [T, null]`, clients collapse that union to an untyped value, and then guess the
+   argument shape. Per-parameter `description` is what a client actually reads when
+   constructing arguments; prose in the tool description is not a reliable substitute.
+2. **No validation constraints are advertised** (`minLength`, `maxLength`, `maxItems`,
+   `pattern`, `additionalProperties: false`). FastMCP validates the input schema with
+   pydantic, so an advertised constraint turns a recoverable input into a failed tool call
+   — an `isError` result the model must recover from, costing a full extra round-trip.
+   Bounds live in the descriptions as guidance and are enforced by normalization instead.
+
+**Input is accepted liberally.** `pydantic.BeforeValidator` hooks run
+`normalize_phrase` / `normalize_keywords` (`src/domain/mcp.py`, pure functions) before
+validation. They do not appear in the emitted schema, so the advertised contract stays
+strict while every plausible client output is absorbed:
+
+| Client sends | Server uses |
+|---|---|
+| `keywords: null` / omitted | `[]` (vector disabled) |
+| `keywords: "mcp, schema"` | `["mcp", "schema"]` |
+| `keywords: "[\"MCP\", \" Schema \"]"` | `["mcp", "schema"]` |
+| `keywords: ["mcp schema"]` | `["mcp", "schema"]` |
+| more than 5 tags | first 5, rest dropped silently |
+| an unknown extra argument | ignored |
+| `query` with surrounding whitespace | trimmed |
+
+**Error contract.** `isError` is reserved for genuine failures: authentication, a search
+backend fault, or a call carrying no search terms at all (the one input the server cannot
+resolve on its own, and therefore the only branch allowed to instruct the model). **Zero
+results is a success**, rendered as `No records matched.` — never a hint to rephrase and
+retry, because such a hint costs a round-trip and the server has no better phrasing to
+offer than the caller already produced.
+
+Description (full text in `composition/mcp_setup.py::_TOOL_DESCRIPTION`): states when to
+call and when to skip, and asks for `query`/`keywords` in English (records live in an
+English-aligned embedding space) with `alternate_phrasing` reserved for the user's original
+language. It deliberately avoids an absolute imperative — see
+[`decisions/mcp_tool_schema_liberal_input.md`](../../04_solution_strategy/decisions/mcp_tool_schema_liberal_input.md).
 
 ---
 
@@ -480,7 +519,7 @@ to force a refresh.
 
 ## 11. Testing
 
-94 unit tests across 4 layers:
+Unit tests across 6 layers:
 
 | File | Layer | Coverage |
 |------|-------|----------|
@@ -488,6 +527,8 @@ to force a refresh.
 | `tests/unit/services/test_mcp_authorization_service.py` | Service | DCR host allowlist, consent JWT, PKCE, code mint + finalize, refresh rotation, access JWT verify |
 | `tests/unit/composition/test_mcp_sdk_oauth_provider.py` | SDK shim | Type translation, delegation, error mapping |
 | `tests/unit/web/test_mcp_consent_app.py` | Consent blueprint | GET with/without cookie, POST approve/deny, bad JWT |
+| `tests/unit/composition/test_mcp_setup.py` | Tool contract | Emitted `inputSchema` invariants (§3.2), liberal coercion through the real pydantic stack, error contract, result rendering |
+| `tests/unit/domain/test_mcp_tool_input.py` | Domain | `normalize_phrase` / `normalize_keywords` coercion table |
 
 Run with:
 
@@ -495,6 +536,8 @@ Run with:
 ./venv/bin/python -m pytest tests/unit/services/test_mcp_authorization_service.py \
     tests/unit/ports/test_mcp_client_repository_port.py \
     tests/unit/composition/test_mcp_sdk_oauth_provider.py \
+    tests/unit/composition/test_mcp_setup.py \
+    tests/unit/domain/test_mcp_tool_input.py \
     tests/unit/web/test_mcp_consent_app.py -v
 ```
 
