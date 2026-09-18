@@ -583,9 +583,10 @@ It handles the full OAuth flow including browser-based consent and lets you call
 | `404 /mcp` on POST | Starlette Mount not matching exact `/mcp` without trailing slash | Replace Mount with plain ASGI dispatcher (already fixed — see § 6) |
 | `404 /.well-known/oauth-protected-resource/mcp` | Mount under `/mcp` prefixed the RFC 9728 path incorrectly | Move issuer to server root, use dispatcher (already fixed — see RFC § 6.3) |
 | `invalid_redirect_uri` on DCR | Client supplied a callback host not in the allowlist | Check `_ALLOWED_REDIRECT_HOSTS` in `composition/mcp_setup.py` |
-| Tool returns `"(authentication error — no user context available)"` | `request.user` is None — BearerAuthBackend didn't attach the token | Check `provider.load_access_token` returns a non-None `AlekAccessToken` |
+| Tool call fails with `Authentication failed: no user context on this request.` | `request.user` is None — BearerAuthBackend didn't attach the token | Check `provider.load_access_token` returns a non-None `AlekAccessToken` |
 | Tool returns empty/wrong facts | `RequestContext` not set → repo queries wrong account | Verify the `with RequestContext(...)` wraps `enrich_context` |
-| claude.ai passes everything as CSV in `query` field | Tool description not explicit enough about splitting into three fields | Strengthen description wording |
+| Client's **first** call sends malformed arguments | Emitted schema lost a type (`anyOf` union) or a parameter has no `description` | Both are asserted by `tests/unit/composition/test_mcp_setup.py` — run it. If green, the client is serving a **cached** `tools/list`: remove and re-add the connector (§ 10.3) |
+| A tool call fails validation instead of being interpreted | A constraint reached the emitted schema, or a new argument shape has no `BeforeValidator` coverage | Extend `normalize_keywords`/`normalize_phrase` in `domain/mcp.py` — never add the constraint to the schema (see § 3.2) |
 
 ---
 
