@@ -9,12 +9,90 @@ Three entities correspond to the three Firestore collections:
 - MCPClient: DCR-registered OAuth client (claude.ai registers itself)
 - MCPAuthCode: one-shot authorization code issued after user consent
 - MCPRefreshToken: long-lived refresh token, rotated on every use
+
+Plus the argument normalizers for the `get_user_context` tool — pure
+functions so the coercion rules are testable without the SDK.
 """
 
+import json
+import re
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
+
+
+# Maximum topical tags fed to the keyword retrieval vector. Excess tags
+# are dropped silently rather than rejected — see normalize_keywords.
+KEYWORDS_MAX = 5
+
+# Separators a model might use inside a single keyword string.
+_KEYWORD_SEPARATORS = re.compile(r"[,;/|\s]+")
+
+# Punctuation left over when a model hand-rolls a list into a string,
+# e.g. '["mcp"' -> 'mcp'.
+_KEYWORD_STRIP_CHARS = "\"'[]{}()"
+
+
+def normalize_phrase(value: Any) -> str:
+    """
+    Coerce a free-text tool argument into a trimmed string.
+
+    `None` becomes `""` (which disables the corresponding retrieval
+    vector) rather than raising: a client that collapses an optional
+    parameter to an explicit null must not cost a round-trip.
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        value = str(value)
+    return value.strip()
+
+
+def normalize_keywords(value: Any) -> List[str]:
+    """
+    Coerce whatever a client sent into at most KEYWORDS_MAX lowercase,
+    whitespace-free topical tags.
+
+    Accepts: None, a list, a JSON-encoded list, a delimited string, a
+    bare string, or any scalar. Every branch returns a valid list —
+    there is deliberately no rejection path, because a schema violation
+    surfaces to the calling model as a failed tool call and buys nothing
+    that silent coercion doesn't.
+
+    Excess tags beyond KEYWORDS_MAX are dropped, duplicates removed,
+    order preserved.
+    """
+    items = _as_item_list(value)
+
+    tags: List[str] = []
+    seen = set()
+    for item in items:
+        text = item if isinstance(item, str) else str(item)
+        for token in _KEYWORD_SEPARATORS.split(text.strip().lower()):
+            token = token.strip(_KEYWORD_STRIP_CHARS)
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            tags.append(token)
+            if len(tags) == KEYWORDS_MAX:
+                return tags
+    return tags
+
+
+def _as_item_list(value: Any) -> List[Any]:
+    """Unwrap a keywords argument into a flat list of candidate items."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return [value]
+        return parsed if isinstance(parsed, list) else [parsed]
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
 
 
 class MCPClient(BaseModel):

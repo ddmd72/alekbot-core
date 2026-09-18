@@ -167,6 +167,17 @@ rotation) via the `mcp` SDK; endpoints at server root routed by a plain ASGI dis
 (NOT Starlette `Mount`). SDK shim `composition/mcp_sdk_oauth_provider.py` in `composition/` (REQ-ARCH-01).
 **MVP, dev-only, experimental.** Code under `src/{domain/mcp.py,ports/mcp_client_repository.py,adapters/firestore_mcp_client_repository.py,services/mcp_authorization_service.py,composition/mcp_*.py,web/mcp_consent_app.py}`.
 See `docs/05_building_blocks/remote_mcp_server/` + `docs/10_rfcs/REMOTE_MCP_SERVER_RFC.md`.
+- **Tool schema: accept liberally, advertise strictly** (fixed 2026-09-18). FastMCP derives the wire
+  schema from type hints, so `Optional[T]` emits `anyOf:[T,null]` — clients collapse the union and
+  guess the argument shape. Optionality goes through `default: ""/[]`; **every param needs its own
+  `description`** (prose in the tool description is not read at argument-construction time). And
+  FastMCP validates with **pydantic**, so **any advertised constraint** (`maxItems`, `pattern`,
+  `additionalProperties:false`) turns a recoverable input into an `isError` the model must recover
+  from = an extra round-trip. Constraints are stated in descriptions and enforced by
+  `normalize_keywords`/`normalize_phrase` (`domain/mcp.py`) via `BeforeValidator`, which stays out of
+  the emitted schema. Zero results is a **success** (`No records matched.`), never a retry hint. See
+  `decisions/mcp_tool_schema_liberal_input.md`. **claude.ai caches `tools/list` at registration —
+  a schema change needs the connector removed and re-added.**
 
 **Gmail Email Indexing** — passive inbox-as-memory: OAuth connect (`/auth/connect-gmail`) → paginated
 Cloud Tasks → `EmailIndexingService` → `GmailProviderAdapter` → `EmailClassificationAgent` triage →
