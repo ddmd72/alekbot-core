@@ -162,6 +162,14 @@ class TestVideoLandingPage:
         assert "Share" in html
         assert f"/f/{token}/raw" in html
 
+    async def test_video_page_has_video_preview(self, tokens, media, session_service):
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="video_generation/u1/ts.mp4", user_id="u1")
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}")
+        html = (await resp.get_data()).decode()
+        assert f'<video controls playsinline src="/f/{token}/raw">' in html
+
     async def test_non_video_key_still_redirects(self, tokens, media, session_service):
         app = _app(tokens, media, session_service)
         token = tokens.mint(key="deep_research/u1/report.html", user_id="u1")
@@ -214,3 +222,37 @@ class TestRawRoute:
         assert resp.status_code == 302
         assert "/auth/login" in resp.headers["Location"]
         media.fetch.assert_not_called()
+
+    async def test_range_request_returns_206_partial_content(self, tokens, media, session_service):
+        media.fetch = AsyncMock(return_value=b"0123456789")
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="video_generation/u1/ts.mp4", user_id="u1")
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}/raw", headers={"Range": "bytes=2-5"})
+        assert resp.status_code == 206
+        assert await resp.get_data() == b"2345"
+        assert resp.headers["Content-Range"] == "bytes 2-5/10"
+        assert resp.headers["Content-Length"] == "4"
+        assert resp.headers["Accept-Ranges"] == "bytes"
+
+    async def test_range_request_open_ended_returns_rest_of_file(
+        self, tokens, media, session_service
+    ):
+        media.fetch = AsyncMock(return_value=b"0123456789")
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="video_generation/u1/ts.mp4", user_id="u1")
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}/raw", headers={"Range": "bytes=7-"})
+        assert resp.status_code == 206
+        assert await resp.get_data() == b"789"
+        assert resp.headers["Content-Range"] == "bytes 7-9/10"
+
+    async def test_no_range_header_returns_full_200(self, tokens, media, session_service):
+        media.fetch = AsyncMock(return_value=b"0123456789")
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="video_generation/u1/ts.mp4", user_id="u1")
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}/raw")
+        assert resp.status_code == 200
+        assert await resp.get_data() == b"0123456789"
+        assert resp.headers["Accept-Ranges"] == "bytes"
