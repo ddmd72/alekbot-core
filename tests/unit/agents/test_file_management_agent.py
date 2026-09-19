@@ -157,6 +157,80 @@ class TestFetchBinary:
 
 
 # ---------------------------------------------------------------------------
+# open_file — video (resend as native file attachment)
+# ---------------------------------------------------------------------------
+
+class TestFetchVideo:
+
+    def _video_message(self, file_ref="video_generation/user1/ts.mp4", **extra_context):
+        msg = MagicMock(spec=AgentMessage)
+        msg.task_id = "task1"
+        msg.intent = AgentIntent.QUERY
+        msg.payload = {"intent": Intent.OPEN_FILE, "file_ref": file_ref}
+        msg.context = {"user_id": "user1", "account_id": "acct1", **extra_context}
+        return msg
+
+    async def test_resends_video_as_file(self, mock_conversion, mock_storage):
+        notification = AsyncMock()
+        agent = FileManagementAgent(
+            config=_make_config(),
+            conversion_service=mock_conversion,
+            storage=mock_storage,
+            notification=notification,
+        )
+        mock_conversion.resolve_bytes = AsyncMock(return_value=b"x" * 1000)
+        msg = self._video_message(origin_channel_id="C123", origin_platform="slack")
+
+        response = await agent.execute(msg)
+
+        assert response.status == AgentStatus.SUCCESS
+        notification.notify_file_bytes.assert_awaited_once()
+        kwargs = notification.notify_file_bytes.call_args.kwargs
+        assert kwargs["user_id"] == "user1"
+        assert kwargs["account_id"] == "acct1"
+        assert kwargs["file_bytes"] == b"x" * 1000
+        assert kwargs["channel_id_override"] == "C123"
+        assert kwargs["platform_override"] == "slack"
+        mock_conversion.resolve_bytes.assert_called_once_with(
+            "video_generation/user1/ts.mp4", "user1"
+        )
+
+    async def test_oversized_video_skips_upload(self, mock_conversion, mock_storage):
+        notification = AsyncMock()
+        agent = FileManagementAgent(
+            config=_make_config(),
+            conversion_service=mock_conversion,
+            storage=mock_storage,
+            notification=notification,
+        )
+        mock_conversion.resolve_bytes = AsyncMock(
+            return_value=b"x" * (FileManagementAgent.MAX_VIDEO_ATTACH_BYTES + 1)
+        )
+        msg = self._video_message()
+
+        response = await agent.execute(msg)
+
+        assert response.status == AgentStatus.SUCCESS
+        assert "too large" in response.result.lower()
+        notification.notify_file_bytes.assert_not_awaited()
+
+    async def test_no_notification_configured_fails(self, mock_conversion, mock_storage):
+        agent = FileManagementAgent(
+            config=_make_config(),
+            conversion_service=mock_conversion,
+            storage=mock_storage,
+            notification=None,
+        )
+        mock_conversion.resolve_bytes = AsyncMock(return_value=b"small")
+        msg = self._video_message()
+
+        response = await agent.execute(msg)
+
+        assert response.status == AgentStatus.FAILED
+        assert "not configured" in response.error.lower()
+
+
+# ---------------------------------------------------------------------------
 # open_file — errors
 # ---------------------------------------------------------------------------
 
