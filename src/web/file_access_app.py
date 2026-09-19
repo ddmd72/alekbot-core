@@ -121,11 +121,32 @@ def create_file_access_blueprint(
             return Response("File temporarily unavailable.", status=503)
 
         filename = access.key.rsplit("/", 1)[-1]
-        return Response(
-            data,
-            mimetype="video/mp4",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
+        total = len(data)
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Accept-Ranges": "bytes",
+        }
+
+        # WebKit's <video> pipeline (Safari/iOS) probes with a Range request
+        # before it will play anything, even a small buffered-whole file — no
+        # Range support means the video silently never plays.
+        range_header = request.headers.get("Range", "")
+        if range_header.startswith("bytes="):
+            start_s, _, end_s = range_header[len("bytes="):].partition("-")
+            try:
+                start = int(start_s) if start_s else 0
+                end = int(end_s) if end_s else total - 1
+            except ValueError:
+                start, end = 0, total - 1
+            end = min(end, total - 1)
+            if 0 <= start <= end:
+                chunk = data[start : end + 1]
+                headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+                headers["Content-Length"] = str(len(chunk))
+                return Response(chunk, status=206, mimetype="video/mp4", headers=headers)
+
+        headers["Content-Length"] = str(total)
+        return Response(data, mimetype="video/mp4", headers=headers)
 
     return bp
 
@@ -155,6 +176,8 @@ def _video_landing_page(token: str, key: str) -> str:
          min-height: 100vh; padding: 24px; box-sizing: border-box; }}
   .card {{ max-width: 360px; width: 100%; text-align: center; }}
   h1 {{ font-size: 17px; font-weight: 600; margin: 0 0 20px; }}
+  video {{ width: 100%; max-height: 70vh; border-radius: 12px; background: #000;
+          margin-bottom: 20px; display: block; }}
   .row {{ display: flex; gap: 12px; }}
   button, a.btn {{ flex: 1; padding: 14px 20px; border-radius: 10px; border: none;
         font-size: 15px; font-weight: 600; cursor: pointer; text-decoration: none;
@@ -167,6 +190,7 @@ def _video_landing_page(token: str, key: str) -> str:
 <body>
 <div class="card">
   <h1>Your video is ready</h1>
+  <video controls playsinline src="{raw_url}"></video>
   <div class="row">
     <a class="btn secondary" href="{raw_url}" download="{filename}">Download</a>
     <button class="primary" id="shareBtn" onclick="shareVideo()">Share</button>
