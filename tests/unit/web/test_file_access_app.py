@@ -138,3 +138,79 @@ class TestSigningFailure:
         async with app.test_client() as client:
             resp = await client.get(f"/f/{token}")
         assert resp.status_code == 503
+
+
+class TestVideoLandingPage:
+    """video_generation/ keys render a Download+Share page instead of redirecting."""
+
+    async def test_video_key_returns_html_page_not_redirect(self, tokens, media, session_service):
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="video_generation/u1/ts.mp4", user_id="u1")
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}")
+        assert resp.status_code == 200
+        assert resp.content_type.startswith("text/html")
+        media.generate_signed_url.assert_not_called()
+
+    async def test_video_page_has_download_and_share(self, tokens, media, session_service):
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="video_generation/u1/ts.mp4", user_id="u1")
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}")
+        html = (await resp.get_data()).decode()
+        assert "Download" in html
+        assert "Share" in html
+        assert f"/f/{token}/raw" in html
+
+    async def test_non_video_key_still_redirects(self, tokens, media, session_service):
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="deep_research/u1/report.html", user_id="u1")
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}")
+        assert resp.status_code == 302
+
+
+class TestRawRoute:
+    """/f/<token>/raw — same-origin byte stream backing the video page's buttons."""
+
+    @pytest.fixture
+    def media(self):
+        m = MagicMock()
+        m.fetch = AsyncMock(return_value=b"fake-mp4-bytes")
+        return m
+
+    async def test_returns_bytes_with_attachment_disposition(self, tokens, media, session_service):
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="video_generation/u1/ts.mp4", user_id="u1")
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}/raw")
+        assert resp.status_code == 200
+        assert await resp.get_data() == b"fake-mp4-bytes"
+        assert "attachment" in resp.headers["Content-Disposition"]
+        assert "ts.mp4" in resp.headers["Content-Disposition"]
+        media.fetch.assert_awaited_once_with("video_generation/u1/ts.mp4")
+
+    async def test_expired_token_401(self, tokens, media, session_service):
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="video_generation/u1/ts.mp4", user_id="u1", ttl_seconds=-1)
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}/raw")
+        assert resp.status_code == 401
+        media.fetch.assert_not_called()
+
+    async def test_fetch_failure_returns_503(self, tokens, media, session_service):
+        media.fetch = AsyncMock(side_effect=RuntimeError("gcs down"))
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="video_generation/u1/ts.mp4", user_id="u1")
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}/raw")
+        assert resp.status_code == 503
+
+    async def test_gated_without_cookie_redirects_to_login(self, tokens, media, session_service):
+        app = _app(tokens, media, session_service)
+        token = tokens.mint(key="email_review/r.html", user_id="u1", gated=True)
+        async with app.test_client() as client:
+            resp = await client.get(f"/f/{token}/raw")
+        assert resp.status_code == 302
+        assert "/auth/login" in resp.headers["Location"]
+        media.fetch.assert_not_called()

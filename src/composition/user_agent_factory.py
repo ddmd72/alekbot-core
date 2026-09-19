@@ -748,6 +748,7 @@ class UserAgentFactory(AgentFactoryPort):
             ),
             conversion_service=self.file_conversion_service,
             storage=self.file_storage,
+            notification=self.notification_service,
         )
 
     def _build_domain_researcher(self, user_id: str, ctx: _UserContext) -> DomainResearcherAgent:

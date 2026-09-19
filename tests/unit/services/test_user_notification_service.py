@@ -645,6 +645,24 @@ class TestNotifyDocumentLink:
         assert "https://doc.url" not in note  # URL must not leak into agent history
         assert "fetch_url" not in note
 
+    async def test_history_note_video_key_points_to_open_file_as_attachment(
+        self, state_repo, channel_factory, response_channel
+    ):
+        # Video can't be "read" — the note must tell the agent open_file resends
+        # it as a file attachment, not text content.
+        response_channel.send_document_link = AsyncMock()
+        svc, session_store = self._svc(state_repo, channel_factory, with_session_store=True)
+        await svc.notify_document_link(
+            _USER_ID, _ACCOUNT_ID, "https://doc.url", "Your generated video",
+            key="video_generation/u1/ts.mp4",
+        )
+        note = session_store.append_messages_batch.call_args.kwargs["messages"][-1].parts[0].text
+        assert "open_file" in note
+        assert "video_generation/u1/ts.mp4" in note
+        assert "attachment" in note
+        assert "read the full content" not in note
+        assert "https://doc.url" not in note
+
     async def test_history_note_falls_back_to_url_without_key(
         self, state_repo, channel_factory, response_channel
     ):

@@ -464,7 +464,16 @@ class UserNotificationService:
                 f"channel={channel_info.channel_id} user={user_id[:8]} label={label}"
             )
             if self._session_store:
-                if key:
+                if key and key.startswith("video_generation/"):
+                    # Video can't be "read" as text — open_file resends it as a
+                    # native file attachment instead (FileManagementAgent._fetch_video).
+                    history_note = (
+                        f"[Video delivered to user: {label}.\n"
+                        f'If the user asks to resend/forward this video, call the '
+                        f'open_file intent with context={{"file_ref": "{key}"}} — it '
+                        f'will be delivered to them as a file attachment, not text.]'
+                    )
+                elif key:
                     # Internal key → agent re-reads server-side via open_file (no
                     # external fetch, not bound to the user link's TTL).
                     history_note = (
