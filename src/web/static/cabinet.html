@@ -2164,6 +2164,12 @@
               .classList.remove("hidden");
           }
 
+          // Apply the user's UI language now — previously this only ran when
+          // the Settings tab was opened (loadSettings() -> loadLanguage()),
+          // so the whole Cabinet (incl. these toasts) defaulted to English
+          // until then.
+          await loadLanguage();
+
           const qs = new URLSearchParams(window.location.search);
           if (qs.get("joined") === "true")
             showToast(t("toast.team_joined"), "success");
