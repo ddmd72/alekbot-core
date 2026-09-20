@@ -51,10 +51,20 @@ def session_update_event() -> dict:
     # identical schema for both providers — xAI's realtime endpoint is OpenAI-Realtime-API-
     # compatible (confirmed live 2026-09-20). This is the field to watch in session.updated
     # for a silent reversion away from audio/pcmu.
+    #
+    # NOTE: an earlier version of this used the pre-GA flat "modalities": [...] field — the
+    # same shape Task 1's script had to correct (missing_required_parameter session.type).
+    # That bug shipped here anyway (not backported from Task 1's finding) and caused a real,
+    # silent live-call failure 2026-09-20: OpenAI rejects that shape with an `error` event,
+    # which this script didn't print (see the `error` branch below, added for exactly this).
+    # Current GA schema, confirmed live: session.type="realtime" (required), output_modalities
+    # is "audio" or "text" (not both at once), audio config is a sibling field, not nested
+    # under output_modalities.
     return {
         "type": "session.update",
         "session": {
-            "modalities": ["audio", "text"],
+            "type": "realtime",
+            "output_modalities": ["audio"],
             "audio": {
                 "input": {"format": {"type": "audio/pcmu"}},
                 "output": {"format": {"type": "audio/pcmu"}},
@@ -105,6 +115,11 @@ async def handle_twilio_stream(twilio_ws):
                 elif event["type"] == "session.updated":
                     # log the ECHOED format back — this is the pcm16-reversion check
                     print(f"[{PROVIDER}] session.updated audio config: {event['session'].get('audio')}")
+                elif event["type"] == "error":
+                    # added after a real silent-failure incident 2026-09-20: a rejected
+                    # session.update (or any other provider-side error) previously vanished
+                    # with no print at all, indistinguishable from "nothing happening".
+                    print(f"[{PROVIDER}] ERROR event: {event.get('error', event)}")
 
         await asyncio.gather(twilio_to_provider(), provider_to_twilio())
 
