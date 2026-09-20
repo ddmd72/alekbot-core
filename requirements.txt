@@ -79,3 +79,7 @@ ruff==0.15.15
 
 # Telegram SDK
 python-telegram-bot==21.0
+
+# Realtime API WebSocket client — used by scripts/voice/test_late_function_call_output_poc.py
+# (Voice Companion RFC Phase 0 spike); not yet a runtime dependency of src/.
+websockets==15.0.1
