@@ -24,6 +24,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from src.config.settings import load_settings
@@ -83,6 +84,11 @@ async def handle_twilio_stream(twilio_ws):
         stream_sid = None
         response_active = False  # tracked for the barge-in test below — avoids a spurious
         # response.cancel (and its error) on every utterance when nothing is playing yet
+        speech_started_ts = None  # RFC Phase 0.3 latency spike: timestamp of the most recent
+        # input_audio_buffer.speech_started, cleared as soon as its first audio delta is measured.
+        # Captured unconditionally (not gated on response_active) — the latency metric cares about
+        # every utterance, not just the ones that interrupt a playing response.
+        latencies_ms = []  # one entry per measured utterance — printed as a p50/p95 summary on stop
 
         async def twilio_to_provider():
             nonlocal stream_sid
@@ -98,10 +104,15 @@ async def handle_twilio_stream(twilio_ws):
                     }))
                 elif msg["event"] == "stop":
                     print(f"[{PROVIDER}] stream stopped")
+                    if latencies_ms:
+                        sorted_lat = sorted(latencies_ms)
+                        p50 = sorted_lat[len(sorted_lat) // 2]
+                        p95 = sorted_lat[int(len(sorted_lat) * 0.95)]
+                        print(f"[latency summary] n={len(sorted_lat)} p50={p50:.0f}ms p95={p95:.0f}ms")
                     break
 
         async def provider_to_twilio():
-            nonlocal response_active
+            nonlocal response_active, speech_started_ts
             async for raw in provider_ws:
                 event = json.loads(raw)
                 # "response.output_audio.delta" is the current GA name (was "response.audio.delta"
@@ -115,11 +126,24 @@ async def handle_twilio_stream(twilio_ws):
                             "streamSid": stream_sid,
                             "media": {"payload": payload},
                         }))
+                    # RFC Phase 0.3 latency spike: only the FIRST delta after a fresh
+                    # speech_started marks the reply's start — clear the pending timestamp
+                    # immediately so a later delta in the same turn (or an unprompted
+                    # follow-up with no pending timestamp at all) neither double-counts nor crashes.
+                    if speech_started_ts is not None:
+                        elapsed_ms = (time.monotonic() - speech_started_ts) * 1000
+                        latencies_ms.append(elapsed_ms)
+                        print(f"[latency] {elapsed_ms:.0f}ms")
+                        speech_started_ts = None
                 elif event["type"] == "response.created":
                     response_active = True
                 elif event["type"] == "response.done":
                     response_active = False
                 elif event["type"] == "input_audio_buffer.speech_started":
+                    # RFC Phase 0.3 latency spike: captured unconditionally, regardless of
+                    # response_active — the latency metric cares about every utterance, not
+                    # only the ones that interrupt a playing response.
+                    speech_started_ts = time.monotonic()
                     # Minimal barge-in, added live 2026-09-20 to test whether it's worth
                     # pursuing further: on server VAD detecting the caller talking over the
                     # model, tell Twilio to drop whatever's still buffered for playback and
