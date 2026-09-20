@@ -16,6 +16,7 @@ from src.config.settings import load_settings
 import websockets
 
 PROVIDER = os.getenv("PROVIDER", "openai")  # "openai" | "xai"
+CONFIG = None  # set once in run_poc() before the server starts — see note there
 
 
 def provider_ws_url_and_headers(config: dict) -> tuple[str, dict]:
@@ -48,8 +49,7 @@ def session_update_event() -> dict:
 
 
 async def handle_twilio_stream(twilio_ws):
-    config = load_settings()
-    provider_url, headers = provider_ws_url_and_headers(config)
+    provider_url, headers = provider_ws_url_and_headers(CONFIG)
     # NOTE: installed websockets==15.0.1 renamed connect()'s `extra_headers` kwarg to
     # `additional_headers` (same rename Task 1's POC already hit — confirmed via
     # inspect.signature(websockets.connect) before writing this).
@@ -95,6 +95,17 @@ async def handle_twilio_stream(twilio_ws):
 
 
 async def run_poc():
+    global CONFIG
+    # Load once, up front, and fail fast — before the "listening" banner prints. Loading inside
+    # handle_twilio_stream() per-connection would let the banner look like a green light while a
+    # missing/bad OPENAI_API_KEY/XAI_API_KEY only surfaces after the owner has started ngrok,
+    # built the TwiML Bin, pointed the number at it, and dialed in.
+    try:
+        CONFIG = load_settings()
+    except Exception as exc:
+        print(f"FATAL: load_settings() failed before startup — fix this before wiring up ngrok/Twilio: {exc}")
+        sys.exit(1)
+
     print(f"Relay listening on ws://0.0.0.0:8765 — provider={PROVIDER}")
     print("Expose with: ngrok http 8765 --scheme=http (Twilio needs wss:// via ngrok's https URL)")
     # NOTE: the brief's original `from websockets.server import serve as ws_serve` resolves to
