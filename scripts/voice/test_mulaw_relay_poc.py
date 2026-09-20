@@ -84,10 +84,12 @@ async def handle_twilio_stream(twilio_ws):
         stream_sid = None
         response_active = False  # tracked for the barge-in test below — avoids a spurious
         # response.cancel (and its error) on every utterance when nothing is playing yet
-        speech_started_ts = None  # RFC Phase 0.3 latency spike: timestamp of the most recent
-        # input_audio_buffer.speech_started, cleared as soon as its first audio delta is measured.
-        # Captured unconditionally (not gated on response_active) — the latency metric cares about
-        # every utterance, not just the ones that interrupt a playing response.
+        speech_stopped_ts = None  # RFC Phase 0.3 latency spike: timestamp of the most recent
+        # input_audio_buffer.speech_stopped (end of the caller's utterance), cleared as soon as
+        # its first audio delta is measured. This is deliberately keyed off speech_stopped, not
+        # speech_started — speech_started fires when the caller BEGINS talking, which would
+        # inflate the measured gap by however long the utterance took (noise, not signal). The
+        # metric this spike wants is "how long do I wait after I stop talking".
         latencies_ms = []  # one entry per measured utterance — printed as a p50/p95 summary on stop
 
         async def twilio_to_provider():
@@ -112,7 +114,7 @@ async def handle_twilio_stream(twilio_ws):
                     break
 
         async def provider_to_twilio():
-            nonlocal response_active, speech_started_ts
+            nonlocal response_active, speech_stopped_ts
             async for raw in provider_ws:
                 event = json.loads(raw)
                 # "response.output_audio.delta" is the current GA name (was "response.audio.delta"
@@ -127,23 +129,19 @@ async def handle_twilio_stream(twilio_ws):
                             "media": {"payload": payload},
                         }))
                     # RFC Phase 0.3 latency spike: only the FIRST delta after a fresh
-                    # speech_started marks the reply's start — clear the pending timestamp
+                    # speech_stopped marks the reply's start — clear the pending timestamp
                     # immediately so a later delta in the same turn (or an unprompted
                     # follow-up with no pending timestamp at all) neither double-counts nor crashes.
-                    if speech_started_ts is not None:
-                        elapsed_ms = (time.monotonic() - speech_started_ts) * 1000
+                    if speech_stopped_ts is not None:
+                        elapsed_ms = (time.monotonic() - speech_stopped_ts) * 1000
                         latencies_ms.append(elapsed_ms)
                         print(f"[latency] {elapsed_ms:.0f}ms")
-                        speech_started_ts = None
+                        speech_stopped_ts = None
                 elif event["type"] == "response.created":
                     response_active = True
                 elif event["type"] == "response.done":
                     response_active = False
                 elif event["type"] == "input_audio_buffer.speech_started":
-                    # RFC Phase 0.3 latency spike: captured unconditionally, regardless of
-                    # response_active — the latency metric cares about every utterance, not
-                    # only the ones that interrupt a playing response.
-                    speech_started_ts = time.monotonic()
                     # Minimal barge-in, added live 2026-09-20 to test whether it's worth
                     # pursuing further: on server VAD detecting the caller talking over the
                     # model, tell Twilio to drop whatever's still buffered for playback and
@@ -156,6 +154,11 @@ async def handle_twilio_stream(twilio_ws):
                             await twilio_ws.send(json.dumps({"event": "clear", "streamSid": stream_sid}))
                         await provider_ws.send(json.dumps({"type": "response.cancel"}))
                         response_active = False
+                elif event["type"] == "input_audio_buffer.speech_stopped":
+                    # RFC Phase 0.3 latency spike: end of the caller's utterance — the clock
+                    # starts here, not on speech_started, so the measured gap is purely
+                    # "wait after I stopped talking" and doesn't include how long I was talking.
+                    speech_stopped_ts = time.monotonic()
                 elif event["type"] == "session.updated":
                     # log the ECHOED format back — this is the pcm16-reversion check
                     print(f"[{PROVIDER}] session.updated audio config: {event['session'].get('audio')}")
