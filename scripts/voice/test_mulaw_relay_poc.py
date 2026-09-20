@@ -2,8 +2,13 @@
 """
 POC: two-way μ-law audio relay between a Twilio Media Stream and a realtime
 provider (OpenAI or xAI, selected by PROVIDER env var). No resampling —
-both sides speak audio/x-mulaw 8kHz. Run, then point a Twilio number's
-Voice webhook at this process's /twiml endpoint via an ngrok tunnel.
+both sides speak audio/x-mulaw 8kHz. Run, expose via ngrok, then point a
+Twilio number's Voice webhook directly at the ngrok URL (any path, plain
+HTTP webhook — not a TwiML Bin). Live discovery 2026-09-20: TwiML Bins are
+US1-only and return 401 for numbers routed via IE1/AU1, so this process
+serves its own static TwiML for plain HTTP requests (Twilio's webhook
+fetch) and hands real WebSocket upgrades (the Media Stream itself) to the
+relay handler — one port, one ngrok tunnel, no Bin involved.
 """
 import asyncio
 import json
@@ -94,6 +99,25 @@ async def handle_twilio_stream(twilio_ws):
         await asyncio.gather(twilio_to_provider(), provider_to_twilio())
 
 
+def process_request(connection, request):
+    """Serve static TwiML for a plain HTTP request (Twilio's Voice webhook fetch);
+    return None for a real WebSocket upgrade (the Media Stream itself) so the
+    normal handshake proceeds into handle_twilio_stream(). This replaces the
+    TwiML-Bin approach, which 401s for numbers routed via IE1/AU1 (US1-only)."""
+    if request.headers.get("Upgrade", "").lower() == "websocket":
+        return None
+    host = request.headers.get("Host", "localhost:8765")
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<Response><Connect><Stream url="wss://{host}/" /></Connect></Response>'
+    )
+    body = twiml.encode("utf-8")
+    headers = websockets.Headers()
+    headers["Content-Type"] = "text/xml"
+    headers["Content-Length"] = str(len(body))
+    return websockets.Response(200, "OK", headers, body)
+
+
 async def run_poc():
     global CONFIG
     # Load once, up front, and fail fast — before the "listening" banner prints. Loading inside
@@ -107,7 +131,9 @@ async def run_poc():
         sys.exit(1)
 
     print(f"Relay listening on ws://0.0.0.0:8765 — provider={PROVIDER}")
-    print("Expose with: ngrok http 8765 --scheme=http (Twilio needs wss:// via ngrok's https URL)")
+    print("Expose with: ngrok http 8765")
+    print("Point the Twilio number's Voice webhook directly at the ngrok https:// URL")
+    print("(any path, HTTP POST) — no TwiML Bin needed, this process serves its own TwiML.")
     # NOTE: the brief's original `from websockets.server import serve as ws_serve` resolves to
     # `websockets.legacy.server.serve` on the pinned websockets==15.0.1 — that module is
     # deprecated and emits a DeprecationWarning per call (confirmed via
@@ -115,7 +141,7 @@ async def run_poc():
     # `websockets.serve` (top-level) is the current asyncio-based implementation; its handler
     # signature (single ServerConnection arg, no path) matches handle_twilio_stream() as written,
     # so no other change was needed.
-    async with websockets.serve(handle_twilio_stream, "0.0.0.0", 8765):
+    async with websockets.serve(handle_twilio_stream, "0.0.0.0", 8765, process_request=process_request):
         await asyncio.Future()  # run forever
 
 
