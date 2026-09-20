@@ -178,7 +178,8 @@ async def run_poc():
     print(f"Relay listening on ws://0.0.0.0:8765 — provider={PROVIDER}")
     print("Expose with: ngrok http 8765")
     print("Point the Twilio number's Voice webhook directly at the ngrok https:// URL")
-    print("(any path, HTTP POST) — no TwiML Bin needed, this process serves its own TwiML.")
+    print("(any path, HTTP GET — websockets' parser only accepts GET) — no TwiML Bin needed,")
+    print("this process serves its own TwiML.")
     # NOTE: the brief's original `from websockets.server import serve as ws_serve` resolves to
     # `websockets.legacy.server.serve` on the pinned websockets==15.0.1 — that module is
     # deprecated and emits a DeprecationWarning per call (confirmed via
