@@ -9,6 +9,16 @@ US1-only and return 401 for numbers routed via IE1/AU1, so this process
 serves its own static TwiML for plain HTTP requests (Twilio's webhook
 fetch) and hands real WebSocket upgrades (the Media Stream itself) to the
 relay handler — one port, one ngrok tunnel, no Bin involved.
+
+IMPORTANT — the Twilio number's Voice Configuration "Method" MUST be set
+to GET, not the Twilio default POST. The `websockets` library's HTTP
+parser only accepts GET at the wire level (it expects a WS handshake,
+which is always GET) and raises `ValueError: unsupported HTTP method;
+expected GET; got POST` before `process_request` below is ever called —
+confirmed live 2026-09-20 (websockets==15.0.1's parse() in
+websockets/http11.py hard-codes the GET check). This has no effect on
+what TwiML we return (process_request ignores the request body/query
+entirely), only on whether the library accepts the request at all.
 """
 import asyncio
 import json
