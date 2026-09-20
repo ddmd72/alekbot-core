@@ -50,9 +50,10 @@ endpoints (`gpt-realtime-2.1`, `grok-voice-think-fast-2.0`) using this repo's re
    signal (spoken transcript) are not from an identically-configured channel. Flagged as a
    methodology asymmetry, not glossed over.
 4. **8 cases, not 4.** The brief's pasted loop zipped `[(20, False), (30, True)]` — the diagonal,
-   4 cases — while the brief's own prose says "8 cases total" / "2 delays × 2 interrupt settings
-   × 2 providers" three separate times (intro, Step 3, self-review checklist). Expanded to the
-   full 2×2 per provider to match the explicit, repeated spec.
+   4 cases — while the brief's own prose says "8 cases total" twice: Step 3 ("a `PASS`/`FAIL`
+   line per `{provider}_delay{20,30}_interrupt{False,True}` combination (8 cases total)") and
+   Step 4 ("the 8-case result table"). Expanded to the full 2×2 per provider to match the
+   explicit, repeated spec.
 
 ## Result (real run, 2026-09-20)
 
