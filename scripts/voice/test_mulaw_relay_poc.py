@@ -81,6 +81,8 @@ async def handle_twilio_stream(twilio_ws):
     async with websockets.connect(provider_url, additional_headers=headers) as provider_ws:
         await provider_ws.send(json.dumps(session_update_event()))
         stream_sid = None
+        response_active = False  # tracked for the barge-in test below — avoids a spurious
+        # response.cancel (and its error) on every utterance when nothing is playing yet
 
         async def twilio_to_provider():
             nonlocal stream_sid
@@ -99,6 +101,7 @@ async def handle_twilio_stream(twilio_ws):
                     break
 
         async def provider_to_twilio():
+            nonlocal response_active
             async for raw in provider_ws:
                 event = json.loads(raw)
                 # "response.output_audio.delta" is the current GA name (was "response.audio.delta"
@@ -112,6 +115,23 @@ async def handle_twilio_stream(twilio_ws):
                             "streamSid": stream_sid,
                             "media": {"payload": payload},
                         }))
+                elif event["type"] == "response.created":
+                    response_active = True
+                elif event["type"] == "response.done":
+                    response_active = False
+                elif event["type"] == "input_audio_buffer.speech_started":
+                    # Minimal barge-in, added live 2026-09-20 to test whether it's worth
+                    # pursuing further: on server VAD detecting the caller talking over the
+                    # model, tell Twilio to drop whatever's still buffered for playback and
+                    # tell OpenAI to stop generating the interrupted response. Without this,
+                    # already-sent audio deltas keep playing out regardless of the interrupt.
+                    # Guarded on response_active — response.cancel with nothing active errors.
+                    if response_active:
+                        print(f"[{PROVIDER}] speech_started mid-response — clearing Twilio buffer, cancelling")
+                        if stream_sid:
+                            await twilio_ws.send(json.dumps({"event": "clear", "streamSid": stream_sid}))
+                        await provider_ws.send(json.dumps({"type": "response.cancel"}))
+                        response_active = False
                 elif event["type"] == "session.updated":
                     # log the ECHOED format back — this is the pcm16-reversion check
                     print(f"[{PROVIDER}] session.updated audio config: {event['session'].get('audio')}")
