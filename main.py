@@ -7,6 +7,8 @@ from slack_bolt.async_app import AsyncApp
 
 from src.config.settings import load_settings
 from src.web.worker_oidc_verifier import verify_worker_oidc
+from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
+from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_quota_service import FirestoreQuotaService
@@ -832,6 +834,38 @@ async def main():
                         create_short_link_blueprint(short_links=short_link_service)
                     )
                     logger.info("✅ Short link blueprint registered at /s/<code>")
+
+                # /voice/session-config, /voice/submit-transcript — main-service
+                # control-plane endpoints consumed by the relay's
+                # CallControlPlanePort (Task 6). OIDC-protected the same way
+                # /worker is: verify_worker_oidc + the SERVICE_ACCOUNT_EMAIL
+                # local-dev bypass, wrapped as an async callable so the route
+                # stays testable without a real Google token.
+                voice_ephemeral_store = FirestoreEphemeralStore(db_client, collection="voice_tickets")
+
+                async def _voice_oidc_verifier(auth_header: str) -> bool:
+                    sa_email = config.get("SERVICE_ACCOUNT_EMAIL")
+                    if not sa_email:
+                        return True
+                    return verify_worker_oidc(auth_header, sa_email)
+
+                async def _voice_summary_consumer_placeholder(*, call_id, transcript_text, turns):
+                    # Task 15 wires the real LelikSummarizerAgent-backed consumer.
+                    logger.info(f"voice call {call_id}: summary consumer not yet wired (Task 15)")
+
+                main_app.register_blueprint(
+                    create_voice_control_plane_blueprint(
+                        ephemeral_store=voice_ephemeral_store,
+                        quota_service=quota_service,
+                        prompt_content_store=container.prompt_content_store,
+                        summary_consumer=_voice_summary_consumer_placeholder,
+                        oidc_verifier=_voice_oidc_verifier,
+                    )
+                )
+                logger.info(
+                    "✅ Voice control-plane blueprint registered at "
+                    "/voice/session-config, /voice/submit-transcript"
+                )
 
                 # ====================================================================
                 # PHASE 3: Telegram Integration (Optional)
