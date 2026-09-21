@@ -34,7 +34,9 @@ class RealtimeSessionPort(ABC):
         """Yield normalized events: audio_delta (payload: frame: AudioFrame),
         tool_call (payload: call_id, name, arguments), usage (payload: model,
         **token_kwargs), speech_started, speech_stopped, response_created,
-        response_done, error (payload: message)."""
+        response_done, user_transcript (payload: text - final transcript of
+        the caller's speech), model_transcript (payload: text - final
+        transcript of the model's spoken response), error (payload: message)."""
 
     @abstractmethod
     async def submit_tool_result(self, call_id: str, output: str) -> None:
