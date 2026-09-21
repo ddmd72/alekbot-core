@@ -6,21 +6,32 @@ involved — see Task 3's docstring for why construction is on-demand, not
 eager/registered). composition/ is the one layer allowed to cross the
 service/agent boundary (root CLAUDE.md Layer Semantics).
 
-One companion type today ("tutor"). _EXTRACTORS maps companion_type ->
-(agent_type string, agent class); extend both together when a second
-companion type ships its own extractor (RFC §6).
+Two companion types today ("tutor", "voice"). _EXTRACTORS maps
+companion_type -> (agent_type string, agent class); _TIMEOUTS_MS maps
+companion_type -> that type's own AgentConfig.timeout_ms (each extractor
+has a different cost profile — the tutor's 5-min batch JSON extraction vs
+the voice summarizer's much cheaper single-call plain-text summary, RFC
+docs/10_rfcs/VOICE_COMPANION_RFC.md §4.9). Extend both maps together when a
+new companion type ships its own extractor (RFC §6).
 """
 from typing import Any, Dict, List, Optional
 
+from ..agents.lelik_summarizer_agent import LelikSummarizerAgent
 from ..agents.tutor_extractor_agent import TutorExtractorAgent
 from ..domain.agent import AgentIntent, AgentConfig, AgentMessage, AgentStatus
 from ..domain.companion_extraction import EXTRACTION_TASK
-from ..infrastructure.agent_config import TUTOR_EXTRACTOR
+from ..infrastructure.agent_config import TUTOR_EXTRACTOR, VOICE_SUMMARIZER
 from ..ports.companion_extractor_port import CompanionExtractorPort
 from ..ports.prompt_builder_port import PromptBuilderPort
 
 _EXTRACTORS = {
     "tutor": ("tutor_extractor", TutorExtractorAgent),
+    "voice": ("lelik_summarizer", LelikSummarizerAgent),
+}
+
+_TIMEOUTS_MS = {
+    "tutor": TUTOR_EXTRACTOR.timeout_ms,
+    "voice": VOICE_SUMMARIZER.timeout_ms,
 }
 
 
@@ -67,7 +78,7 @@ class CompanionExtractorRunner(CompanionExtractorPort):
             config=AgentConfig(
                 agent_id=f"{agent_type}_{created_by_user_id}",
                 agent_type=agent_type,
-                timeout_ms=TUTOR_EXTRACTOR.timeout_ms,
+                timeout_ms=_TIMEOUTS_MS[companion_type],
                 capabilities=[agent_type],
             ),
             execution_context=execution_context,

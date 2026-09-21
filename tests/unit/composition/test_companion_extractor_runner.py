@@ -202,3 +202,50 @@ async def test_extract_defaults_quota_service_and_prompt_content_store_to_none(r
     agent = captured["agent"]
     assert agent._quota_service is None
     assert agent._prompt_content_store is None
+
+
+# ---------------------------------------------------------------------------
+# Task 15: "voice" extractor entry (LelikSummarizerAgent) — additive only,
+# none of the fixtures/tests above are touched.
+# ---------------------------------------------------------------------------
+
+def test_extractors_map_has_voice_entry():
+    from src.agents.lelik_summarizer_agent import LelikSummarizerAgent
+    from src.composition.companion_extractor_runner import _EXTRACTORS
+
+    assert "voice" in _EXTRACTORS
+    agent_type, agent_cls = _EXTRACTORS["voice"]
+    assert agent_type == "lelik_summarizer"
+    assert agent_cls is LelikSummarizerAgent
+
+
+async def test_voice_extraction_uses_its_own_timeout_not_tutors(runner, monkeypatch):
+    """Line 70 used to hardcode TUTOR_EXTRACTOR.timeout_ms for every companion_type.
+    After parameterizing it per companion_type, a "voice" extraction must construct
+    its agent with VOICE_SUMMARIZER's own timeout, not the tutor's."""
+    from src.infrastructure.agent_config import TUTOR_EXTRACTOR, VOICE_SUMMARIZER
+
+    assert VOICE_SUMMARIZER.timeout_ms != TUTOR_EXTRACTOR.timeout_ms
+
+    captured = {}
+
+    async def fake_process(self, message):
+        captured["agent"] = self
+        return AgentResponse.success(
+            task_id="t1", agent_id=self.agent_id, result={"records": [], "summary": "ok"},
+        )
+
+    monkeypatch.setattr(
+        "src.composition.companion_extractor_runner.LelikSummarizerAgent.process",
+        fake_process,
+    )
+
+    result = await runner.extract(
+        companion_type="voice", account_id="acc-1",
+        created_by_user_id="user-1", messages=[{"request_text": "hi", "response_text": "hello"}],
+    )
+
+    assert result == {"records": [], "summary": "ok"}
+    agent = captured["agent"]
+    assert agent.config.timeout_ms == VOICE_SUMMARIZER.timeout_ms
+    assert agent.config.timeout_ms != TUTOR_EXTRACTOR.timeout_ms

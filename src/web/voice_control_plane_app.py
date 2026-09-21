@@ -10,8 +10,9 @@ Two Quart routes consumed by the relay side (`CallControlPlanePort` /
 - `POST /voice/submit-transcript` — relay reports end-of-call usage +
   transcript. This records per-model usage/cost (pricing itself is a Task
   16 forward reference — `_price_realtime_usage` is a placeholder here),
-  hands the transcript to the injected `summary_consumer` (Task 15 wires
-  the real one), and releases the one-call-per-user marker
+  hands the transcript (plus `user_id`/`account_id`, needed by the real
+  Task 15 consumer to run extraction and deliver the summary) to the
+  injected `summary_consumer`, and releases the one-call-per-user marker
   (`voice_one_call:{user_id}`) written by the auth webhook before dialing
   out — this MUST happen even if usage recording or the summary consumer
   raises, since a stuck marker would permanently lock the user out of ever
@@ -88,6 +89,8 @@ def create_voice_control_plane_blueprint(
             try:
                 await summary_consumer(
                     call_id=call_id,
+                    user_id=user_id,
+                    account_id=account_id,
                     transcript_text=body["transcript_text"],
                     turns=body.get("turns", []),
                 )

@@ -927,6 +927,73 @@ class TestNotifySuppressTransientRetry:
         msg = coordinator.route_message.call_args[0][0]
         assert msg.context.get("suppress_transient_retry") is True
 
+
+class TestNotifyCallSummary:
+    """notify_call_summary() — Task 15: end-of-call summary delivery for the voice
+    companion (Lelik). Sibling of notify_text: verbatim text delivery + history
+    append, same shape, different call-site (RFC §4.9 has no CompanionRecord
+    store for Lelik, so this is the only durable trace of a call)."""
+
+    async def test_sends_summary_verbatim(self, state_repo, channel_factory, response_channel):
+        svc = UserNotificationService(
+            state_repo=state_repo,
+            channel_factory=channel_factory,
+            coordinator=MagicMock(),
+            notification_sla={},
+        )
+
+        await svc.notify_call_summary(user_id=_USER_ID, account_id=_ACCOUNT_ID, summary="Talked about Q3 budget.")
+
+        response_channel.send_long_text.assert_awaited_once_with("Talked about Q3 budget.")
+
+    async def test_persists_to_session_history(self, state_repo, channel_factory, response_channel):
+        session_store = MagicMock()
+        session_store.append_messages_batch = AsyncMock()
+        svc = UserNotificationService(
+            state_repo=state_repo,
+            channel_factory=channel_factory,
+            coordinator=MagicMock(),
+            notification_sla={},
+            session_store=session_store,
+        )
+
+        await svc.notify_call_summary(user_id=_USER_ID, account_id=_ACCOUNT_ID, summary="Talked about Q3 budget.")
+
+        session_store.append_messages_batch.assert_awaited_once()
+        kwargs = session_store.append_messages_batch.call_args.kwargs
+        assert kwargs["session_id"] == f"{_USER_ID}:{_CHANNEL_ID}"
+        assert kwargs["owner_id"] == _USER_ID
+        messages = kwargs["messages"]
+        assert messages[0].role == "user"
+        assert messages[1].role == "model"
+        assert messages[1].parts[0].text == "Talked about Q3 budget."
+
+    async def test_no_channel_skips_delivery(self, channel_factory):
+        state_repo = MagicMock()
+        state_repo.get_primary = AsyncMock(return_value=None)
+        state_repo.get = AsyncMock(return_value=None)
+        svc = UserNotificationService(
+            state_repo=state_repo,
+            channel_factory=channel_factory,
+            coordinator=MagicMock(),
+            notification_sla={},
+        )
+
+        await svc.notify_call_summary(user_id=_USER_ID, account_id=_ACCOUNT_ID, summary="hi")
+
+        channel_factory.create.assert_not_called()
+
+    async def test_send_long_text_exception_swallowed(self, state_repo, channel_factory, response_channel):
+        response_channel.send_long_text = AsyncMock(side_effect=RuntimeError("slack down"))
+        svc = UserNotificationService(
+            state_repo=state_repo,
+            channel_factory=channel_factory,
+            coordinator=MagicMock(),
+            notification_sla={},
+        )
+
+        await svc.notify_call_summary(user_id=_USER_ID, account_id=_ACCOUNT_ID, summary="hi")  # must not raise
+
     async def test_absent_by_default(self, service, coordinator, response_channel):
         coordinator.route_message.return_value = _make_success_response(SmartResponse(text="ok"))
 

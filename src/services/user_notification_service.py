@@ -229,6 +229,65 @@ class UserNotificationService:
                 exc_info=True,
             )
 
+    async def notify_call_summary(
+        self,
+        user_id: str,
+        account_id: str,
+        summary: str,
+    ) -> None:
+        """
+        Deliver an end-of-call summary (voice companion / Lelik, RFC
+        docs/10_rfcs/VOICE_COMPANION_RFC.md §4.9) to the user's channel verbatim
+        (no agent reformatting) AND persist it to session history.
+
+        Same shape as notify_text() (verbatim delivery + history append in one
+        try block so a history-write failure doesn't mask a successful
+        delivery), but its own method rather than a thin wrapper: the call
+        site (voice_control_plane_app.py's summary_consumer) always resolves
+        to the user's last-active/primary channel — there is no
+        channel_id_override/session_id to thread through the way async
+        delivery callers of notify_text need. Lelik has no CompanionRecord
+        store (RFC §4.9), so this history append is the only durable trace a
+        call ever leaves.
+        """
+        channel_info = await self._resolve_channel(user_id, None, None)
+        if not channel_info:
+            logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping call summary delivery")
+            return
+
+        response_channel = self._channel_factory.create(
+            platform=channel_info.platform,
+            channel_id=channel_info.channel_id,
+        )
+        if not response_channel:
+            logger.warning(
+                f"[Notification] Cannot create channel for call summary: platform={channel_info.platform}"
+            )
+            return
+
+        try:
+            await response_channel.send_long_text(summary)
+            logger.info(
+                f"📬 [Notification] Call summary delivered to {channel_info.platform} "
+                f"channel={channel_info.channel_id} user={user_id[:8]}"
+            )
+            if self._session_store:
+                session_id = f"{user_id}:{channel_info.channel_id}"
+                await self._session_store.append_messages_batch(
+                    session_id=session_id,
+                    owner_id=user_id,
+                    messages=[
+                        Message(role="user", parts=[MessagePart(text="[System: phone call ended]")]),
+                        Message(role="model", parts=[MessagePart(text=summary, full_text=summary)]),
+                    ],
+                )
+        except Exception as exc:
+            logger.error(
+                f"[Notification] Call summary delivery failed for {user_id[:8]} "
+                f"(platform={channel_info.platform}): {exc}",
+                exc_info=True,
+            )
+
     async def notify(
         self,
         user_id: str,
