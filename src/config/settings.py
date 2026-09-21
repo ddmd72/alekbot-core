@@ -89,6 +89,15 @@ def load_settings():
         "MICROSOFT_TASKS_WEBHOOK_SECRET": os.getenv("MICROSOFT_TASKS_WEBHOOK_SECRET", ""),
         # Unsplash image search (HtmlPageGeneratorAgent)
         "UNSPLASH_ACCESS_KEY": os.getenv("UNSPLASH_ACCESS_KEY", ""),
+        # Twilio (Voice Companion RFC §4.13) — outbound call origination. MVP,
+        # dev-only feature (same status as the Remote MCP Server): empty-string
+        # default, like MICROSOFT_TODO_*/UNSPLASH_ACCESS_KEY above, not the
+        # bare-None default used by secrets the whole app depends on
+        # (ANTHROPIC_API_KEY etc.) — UserAgentFactory._build_lelik skips
+        # LelikAgent construction gracefully when these are absent.
+        "TWILIO_ACCOUNT_SID": os.getenv("TWILIO_ACCOUNT_SID", ""),
+        "TWILIO_AUTH_TOKEN": os.getenv("TWILIO_AUTH_TOKEN", ""),
+        "TWILIO_PHONE_NUMBER": os.getenv("TWILIO_PHONE_NUMBER", ""),
     }
 
     if settings["GOOGLE_CLOUD_PROJECT"] and not env_config.use_emulator:

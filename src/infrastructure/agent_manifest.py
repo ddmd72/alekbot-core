@@ -728,6 +728,16 @@ VIDEO_GENERATION = AgentDescriptor(
 )
 
 
+LELIK = AgentDescriptor(
+    agent_id="lelik_agent",
+    agent_type="lelik",
+    eager=False,
+    internal=True,  # not reached via delegate_to_specialist - direct execute() caller only (RFC §4.13)
+    capabilities={},
+    description="Voice front desk - places the identity-confirming callback and holds the call (RFC VOICE_COMPANION_RFC.md)",
+)
+
+
 ALL_DESCRIPTORS = [
     MEMORY_SEARCH,
     WEB_SEARCH,
@@ -747,4 +757,5 @@ ALL_DESCRIPTORS = [
     TUTOR,
     IMAGE_GENERATION,
     VIDEO_GENERATION,
+    LELIK,
 ]

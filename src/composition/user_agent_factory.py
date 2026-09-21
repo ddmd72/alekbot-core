@@ -82,9 +82,11 @@ from ..agents.domain_researcher_agent import DomainResearcherAgent
 from ..agents.image_generation_agent import ImageGenerationAgent
 from ..agents.video_generation_agent import VideoGenerationAgent
 from ..agents.tutor_agent import TutorAgent
+from ..agents.lelik_agent import LelikAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
+from ..adapters.twilio_telephony_adapter import TwilioTelephonyAdapter
 from ..ports.task_queue import TaskQueue
 from ..ports.tasks_provider_port import TasksProviderPort
 from ..ports.agent_note_port import AgentNotePort
@@ -198,6 +200,16 @@ class UserAgentFactory(AgentFactoryPort):
 
         unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
         self._image_search = UnsplashAdapter(unsplash_key) if unsplash_key else None
+
+        # Voice companion (RFC VOICE_COMPANION_RFC.md §4.13) — Twilio credentials are
+        # optional at this layer (Slice 1, dev-only): a deployment without them simply
+        # never builds a LelikAgent (_build_lelik returns None), same guard shape as
+        # self._image_search above.
+        twilio_sid = self.config.get("TWILIO_ACCOUNT_SID")
+        twilio_token = self.config.get("TWILIO_AUTH_TOKEN")
+        self._telephony = (
+            TwilioTelephonyAdapter(twilio_sid, twilio_token) if twilio_sid and twilio_token else None
+        )
 
         self._cache: Dict[str, Dict[str, object]] = {}
         self._cache_ttl = 3600
@@ -785,6 +797,50 @@ class UserAgentFactory(AgentFactoryPort):
             user_id=user_id,
             user_timezone=ctx.user_profile.config.timezone,
             history_summary_service=ctx.history_summary_service,
+        )
+
+    def _build_lelik(
+        self, user_id: str, account_id: str, to_number: str,
+    ) -> Optional[LelikAgent]:
+        """Construct a LelikAgent for one outbound callback.
+
+        Not part of the `_LAZY_BUILDERS` dispatch table below: those are all
+        keyed by `agent_type` and invoked by `create_agent_on_demand` on an
+        intent-based `delegate_to_specialist` dispatch, which LelikAgent never
+        receives (internal=True, no Intent registered — RFC §4.13). The real
+        caller is a `lelik_agent_factory(user_id, account_id)` closure wired
+        into `create_voice_webhook_blueprint` (src/web/voice_webhook_app.py),
+        which resolves `to_number` (the bound caller's own E.164 number) before
+        calling this method — that wiring is main.py territory, not this method.
+
+        `account_id` is accepted for parity with that call site's signature but
+        not otherwise used here — LelikAgent is not multi-tenant-scoped beyond
+        the per-user `agent_id`, same as every other builder in this class.
+        """
+        if not self._telephony:
+            logger.info(
+                "[UserAgentFactory] No Twilio credentials configured, skipping lelik"
+            )
+            return None
+        from_number = self.config.get("TWILIO_PHONE_NUMBER")
+        if not from_number:
+            logger.info(
+                "[UserAgentFactory] TWILIO_PHONE_NUMBER not configured, skipping lelik"
+            )
+            return None
+        service_url = self.config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
+        return LelikAgent(
+            config=AgentConfig(
+                agent_id=f"lelik_agent_{user_id}",
+                agent_type="lelik",
+                timeout_ms=10_000,
+                capabilities=[],
+            ),
+            execution_context=None,
+            telephony=self._telephony,
+            from_number=from_number,
+            status_callback_url=f"{service_url}/voice/status",
+            to_number=to_number,
         )
 
     def _build_image_generation(
