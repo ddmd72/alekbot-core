@@ -1,7 +1,8 @@
 from quart import Blueprint, request, jsonify, g, send_file, redirect, abort, send_from_directory
 from functools import wraps
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime, timezone
+import asyncio
 import os
 
 from ..services.invite_code_service import InviteCodeService
@@ -42,6 +43,7 @@ def create_user_cabinet_blueprint(
     language_service: Optional[LanguageServicePort] = None,
     agent_note_port: Optional[AgentNotePort] = None,
     recurrence_port: Optional[RecurrencePort] = None,
+    twilio_verify_client: Optional[Any] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -289,6 +291,76 @@ def create_user_cabinet_blueprint(
             return jsonify({"error": error_msg}), 400
         except Exception as e:
             logger.error(f"Error linking Telegram: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/request-phone-otp", methods=["POST"])
+    @auth_required
+    async def request_phone_otp():
+        """
+        Start Twilio Verify OTP for a phone number, the proof-of-ownership step
+        `link_telegram` never had (RFC §4.6 — inheriting that trust model for a
+        phone number would permit squatting).
+        Body:
+            phone_number: E.164, e.g. "+346001"
+        """
+        if not twilio_verify_client:
+            return jsonify({"error": "Phone verification not configured"}), 501
+        try:
+            body = await request.get_json(force=True) or {}
+            phone_number = (body.get("phone_number") or "").strip()
+            if not phone_number.startswith("+"):
+                return jsonify({"error": "phone_number must be E.164 (e.g. +346001)"}), 400
+
+            # twilio.rest.Client is synchronous (requests under the hood) — offload
+            # to a thread so it doesn't stall the event loop (see
+            # TwilioTelephonyAdapter for the same pattern on call origination).
+            verification = await asyncio.to_thread(
+                twilio_verify_client.verifications.create, to=phone_number, channel="sms"
+            )
+            logger.info(f"📱 Phone OTP requested for user {g.user_id}: status={verification.status}")
+            return jsonify({"status": verification.status}), 200
+        except Exception as e:
+            logger.error(f"Error requesting phone OTP: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/verify-phone-otp", methods=["POST"])
+    @auth_required
+    async def verify_phone_otp():
+        """
+        Check the Twilio Verify OTP code and, on approval, link the phone number
+        to the authenticated user account.
+        Body:
+            phone_number: E.164, e.g. "+346001"
+            code: the code the user received via SMS
+        """
+        if not twilio_verify_client:
+            return jsonify({"error": "Phone verification not configured"}), 501
+        try:
+            body = await request.get_json(force=True) or {}
+            phone_number = (body.get("phone_number") or "").strip()
+            code = (body.get("code") or "").strip()
+            if not phone_number or not code:
+                return jsonify({"error": "phone_number and code are required"}), 400
+
+            check = await asyncio.to_thread(
+                twilio_verify_client.verification_checks.create, to=phone_number, code=code
+            )
+            if check.status != "approved":
+                return jsonify({"error": "invalid or expired code"}), 400
+
+            await user_repo.add_platform_id(g.user_id, "phone", phone_number)
+
+            logger.info(f"✅ Linked phone:{phone_number} to user {g.user_id}")
+            return jsonify({"success": True}), 200
+
+        except ValueError as e:
+            # Business logic errors (duplicate ID, user not found, etc)
+            error_msg = str(e)
+            if "already linked" in error_msg:
+                return jsonify({"error": "This phone number is already linked to another account"}), 409
+            return jsonify({"error": error_msg}), 400
+        except Exception as e:
+            logger.error(f"Error verifying phone OTP: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
     @bp.route("/api/user/invite-codes", methods=["POST"])
