@@ -13,8 +13,9 @@ Two Quart routes consumed by the relay side (`CallControlPlanePort` /
   hands the transcript to the injected `summary_consumer` (Task 15 wires
   the real one), and releases the one-call-per-user marker
   (`voice_one_call:{user_id}`) written by the auth webhook before dialing
-  out — this MUST happen even if the summary consumer fails, since a stuck
-  marker would permanently lock the user out of ever calling again.
+  out — this MUST happen even if usage recording or the summary consumer
+  raises, since a stuck marker would permanently lock the user out of ever
+  calling again.
 
 Both routes are OIDC-protected the same way `/worker` is (see
 `src/web/worker_oidc_verifier.py`): the verifier is injected as an async
@@ -71,25 +72,35 @@ def create_voice_control_plane_blueprint(
         user_id = body["user_id"]
         account_id = body["account_id"]
 
-        for model, tokens in body.get("usage_by_model", {}).items():
-            cost = _price_realtime_usage(model, tokens)  # Task 16 implements this
-            logger.info(f"voice call {call_id}: model={model} tokens={tokens} cost={cost}")
-            total_tokens = sum(tokens.values()) if isinstance(tokens, dict) else tokens
-            await quota_service.record_usage(account_id, model, total_tokens, cost)
-
         try:
-            await summary_consumer(
-                call_id=call_id,
-                transcript_text=body["transcript_text"],
-                turns=body.get("turns", []),
-            )
-        except Exception:
-            logger.error(f"voice call {call_id}: summary consumer failed", exc_info=True)
+            for model, tokens in body.get("usage_by_model", {}).items():
+                try:
+                    cost = _price_realtime_usage(model, tokens)  # Task 16 implements this
+                    logger.info(f"voice call {call_id}: model={model} tokens={tokens} cost={cost}")
+                    total_tokens = sum(tokens.values()) if isinstance(tokens, dict) else tokens
+                    await quota_service.record_usage(account_id, model, total_tokens, cost)
+                except Exception:
+                    logger.error(
+                        f"voice call {call_id}: usage recording failed for model={model}",
+                        exc_info=True,
+                    )
+
+            try:
+                await summary_consumer(
+                    call_id=call_id,
+                    transcript_text=body["transcript_text"],
+                    turns=body.get("turns", []),
+                )
+            except Exception:
+                logger.error(f"voice call {call_id}: summary consumer failed", exc_info=True)
         finally:
             # Release the one-call-per-user marker (written by the auth webhook
-            # before dialing out) regardless of summary-consumer outcome — a
-            # stuck marker would permanently lock the user out of ever calling
-            # again.
+            # before dialing out) regardless of usage-recording or
+            # summary-consumer outcome — a stuck marker would permanently lock
+            # the user out of ever calling again. Covers the whole
+            # post-authentication body, not just the summary_consumer call, so
+            # e.g. a malformed usage_by_model payload or a future QuotaService
+            # that raises can never leave the marker stuck either.
             await ephemeral_store.delete(f"voice_one_call:{user_id}")
 
         return jsonify({"ok": True}), 200

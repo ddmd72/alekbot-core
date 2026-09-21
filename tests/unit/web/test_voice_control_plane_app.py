@@ -110,6 +110,32 @@ async def test_submit_transcript_releases_one_call_marker(app_and_deps):
 
 
 @pytest.mark.asyncio
+async def test_submit_transcript_releases_marker_even_if_usage_recording_fails(app_and_deps):
+    """A `quota_service.record_usage` failure (e.g. a future QuotaService
+    implementation that doesn't swallow its own errors, or a malformed
+    usage_by_model payload) must not leave the one-call marker stuck either —
+    the guarantee covers the whole post-authentication body, not just the
+    summary_consumer call."""
+    app, ephemeral_store, quota_service, prompt_content_store, summary_consumer, _ = app_and_deps
+    quota_service.record_usage.side_effect = RuntimeError("boom")
+
+    client = app.test_client()
+    payload = {
+        "call_id": "c1",
+        "user_id": "u1",
+        "account_id": "a1",
+        "transcript_text": "hi there",
+        "usage_by_model": {"gpt-realtime-2.1": {"audio_input_tokens": 100, "text_output_tokens": 10}},
+        "turns": [],
+    }
+    response = await client.post("/voice/submit-transcript", json=payload, headers={"Authorization": "Bearer x"})
+
+    assert response.status_code == 200
+    ephemeral_store.delete.assert_awaited_once_with("voice_one_call:u1")
+    summary_consumer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_submit_transcript_releases_marker_even_if_summary_consumer_fails(app_and_deps):
     """A summary-consumer failure must not leave the one-call marker stuck —
     that would permanently lock the user out of ever calling again."""
