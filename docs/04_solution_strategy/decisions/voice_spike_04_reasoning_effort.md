@@ -80,10 +80,16 @@ Full run, real output, one session per row:
 **5 of 5 levels passed retention** — every level's final turn ("Who handles the Q3 budget?")
 correctly answered "Ivan Petrov" (counted directly from the printed transcript, not estimated).
 
-Reasoning tokens (`output_token_details.reasoning_tokens`) were present in every `response.done`
-event across all 30 turns — the split IS exposed by the API for this model, and it climbs
-monotonically with effort (113 → 118 → 223 → 240 → 276 total across the 6-turn session), confirming
-reasoning tokens are the mechanism driving the output-token/cost growth from `minimal` to `xhigh`.
+Reasoning tokens (`output_token_details.reasoning_tokens`) were present in the aggregate for every
+level tested — each level's summary reports a non-zero total rather than "n/a", so the split IS
+exposed by the API for this model at least once per level. (What was actually verified: the
+script's `reasoning_split_available` flag flips true the first time any turn in a level carries the
+field, then that level's per-turn `reasoning_tokens` values are summed — this proves "present
+somewhere in each level's 6 turns," not "present in literally all 30 individual `response.done`
+events"; no per-turn breakdown was printed or checked to support the stronger claim.) The
+level-total reasoning-token counts climb monotonically with effort (113 → 118 → 223 → 240 → 276
+across the 6-turn session), consistent with reasoning tokens being the mechanism driving the
+output-token/cost growth from `minimal` to `xhigh`.
 
 Total elapsed time and p50 latency both trend upward with effort overall, but not strictly
 monotonically at the low end: total goes 5.22s (`minimal`) → 5.09s (`low`, marginally *lower* than
