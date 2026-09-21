@@ -77,6 +77,14 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # Same judgment-call quality bar as consolidation (extraction is a
     # deliberate "what's worth remembering" decision, not mechanical work).
     "tutor_extractor": PerformanceTier.PERFORMANCE,
+    # RFC docs/10_rfcs/VOICE_COMPANION_RFC.md §4.9: "Bulk noisy-text summarization
+    # is a cheap-tier job" — unlike tutor_extractor, this is mechanical
+    # end-of-call summarization, not a judgment call about what to remember
+    # (it has no CompanionRecord store to write judgment calls into at all).
+    # Explicit pin, not left to fall through to self.default_tier: not
+    # manifest-registered (same as tutor_extractor), so
+    # test_every_llm_agent_has_a_default_tier can't catch a missing entry here.
+    "lelik_summarizer": PerformanceTier.ECO,
     # Stays BALANCED for the agent as a whole — this tier serves the `search_web` intent,
     # which is genuine multi-angle research. Measured 2026-07-29 on real user queries
     # (scripts/websearch/ab_user_queries.py): ECO/nano was 3.7x cheaper but returned 6.0
