@@ -87,6 +87,19 @@ async def test_receive_events_normalizes_audio_delta_and_usage():
 
 
 @pytest.mark.asyncio
+async def test_open_enables_input_audio_transcription():
+    ws = FakeWebSocket(incoming=[])
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    session = ws.sent[0]["session"]
+    # Without this field, OpenAI never emits conversation.item.input_audio_transcription.completed
+    # and user_transcript in _normalize() is unreachable in production.
+    assert session["audio"]["input"]["transcription"] == {"model": "gpt-transcribe"}
+
+
+@pytest.mark.asyncio
 async def test_receive_events_normalizes_user_transcript():
     incoming = [
         {"type": "conversation.item.input_audio_transcription.completed", "transcript": "hello there"},

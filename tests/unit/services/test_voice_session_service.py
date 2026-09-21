@@ -89,3 +89,31 @@ async def test_handle_call_alerts_and_flushes_on_provider_error():
     assert submit_kwargs["call_id"] == "t1"
     assert submit_kwargs["user_id"] == "u1"
     assert submit_kwargs["account_id"] == "a1"
+
+
+@pytest.mark.asyncio
+async def test_handle_call_still_submits_transcript_and_closes_when_open_fails():
+    # A transient provider connection failure in session.open() must still reach
+    # close()/submit_transcript() - otherwise the relay's one-call-per-user marker
+    # only releases via TTL instead of immediately, and the failure leaves no
+    # record on the main-service side.
+    control_plane = AsyncMock()
+    control_plane.fetch_session_config.return_value = {"instructions": "hi", "user_id": "u1", "account_id": "a1"}
+    realtime_session = AsyncMock()
+    realtime_session.open.side_effect = ConnectionError("provider unreachable")
+    service = VoiceSessionService(
+        realtime_session_factory=MagicMock(return_value=realtime_session),
+        control_plane=control_plane,
+        alert_sink=AsyncMock(),
+    )
+
+    with pytest.raises(ConnectionError):
+        await service.handle_call(ticket="t1", inbound_audio=_frames(), send_outbound_audio=AsyncMock())
+
+    realtime_session.close.assert_awaited_once()
+    control_plane.submit_transcript.assert_awaited_once()
+    submit_kwargs = control_plane.submit_transcript.await_args.kwargs
+    assert submit_kwargs["call_id"] == "t1"
+    assert submit_kwargs["user_id"] == "u1"
+    assert submit_kwargs["account_id"] == "a1"
+    assert submit_kwargs["buffer"].turns == []
