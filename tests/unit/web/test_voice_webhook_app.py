@@ -131,3 +131,93 @@ async def test_second_call_refused_while_one_already_in_flight(deps):
     assert "<Reject" in body
     lelik_agent.execute.assert_not_called()
     notification_service.notify_raw.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_answer_webhook_hangs_up_on_machine_without_opening_session():
+    user_repository = AsyncMock()
+    ephemeral_store = AsyncMock()
+    ephemeral_store.get.return_value = {"user_id": "u1", "account_id": "a1"}
+    prompt_builder = AsyncMock()
+
+    app = Quart(__name__)
+    app.register_blueprint(create_voice_webhook_blueprint(
+        user_repository=user_repository,
+        ephemeral_store=ephemeral_store,
+        alert_sink=AsyncMock(),
+        notification_service=AsyncMock(),
+        lelik_agent_factory=MagicMock(),
+        answer_url="https://main.example.com/voice/answer",
+        prompt_builder=prompt_builder,
+        relay_stream_url="wss://relay.example.com/",
+    ))
+    client = app.test_client()
+
+    response = await client.post("/voice/answer", form={"CallSid": "CA1", "AnsweredBy": "machine_end_beep", "ticket": "t1"})
+
+    body = (await response.get_data()).decode()
+    assert "<Hangup" in body
+    assert "<Connect" not in body
+    prompt_builder.build_for_agent.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
+    user_repository = AsyncMock()
+    ephemeral_store = AsyncMock()
+    ephemeral_store.get.return_value = {"user_id": "u1", "account_id": "a1"}
+    prompt_builder = AsyncMock()
+    prompt_builder.build_for_agent.return_value = "you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"
+
+    app = Quart(__name__)
+    app.register_blueprint(create_voice_webhook_blueprint(
+        user_repository=user_repository,
+        ephemeral_store=ephemeral_store,
+        alert_sink=AsyncMock(),
+        notification_service=AsyncMock(),
+        lelik_agent_factory=MagicMock(),
+        answer_url="https://main.example.com/voice/answer",
+        prompt_builder=prompt_builder,
+        relay_stream_url="wss://relay.example.com/",
+    ))
+    client = app.test_client()
+
+    response = await client.post("/voice/answer", form={"CallSid": "CA1", "AnsweredBy": "human", "ticket": "t1"})
+
+    body = (await response.get_data()).decode()
+    assert "<Connect>" in body
+    assert "wss://relay.example.com/" in body
+    assert "t1" in body
+    prompt_builder.build_for_agent.assert_awaited_once()
+    stashed = ephemeral_store.set.await_args.args
+    assert stashed[0] == "voice_ticket:t1"
+    assert "instructions" in stashed[1]
+
+
+@pytest.mark.asyncio
+async def test_answer_webhook_rejects_when_ticket_not_found():
+    """A redeemed/expired/forged ticket has no identity behind it in the
+    EphemeralStore - reject the call rather than opening a session with no
+    known user_id/account_id."""
+    ephemeral_store = AsyncMock()
+    ephemeral_store.get.return_value = None
+    prompt_builder = AsyncMock()
+
+    app = Quart(__name__)
+    app.register_blueprint(create_voice_webhook_blueprint(
+        user_repository=AsyncMock(),
+        ephemeral_store=ephemeral_store,
+        alert_sink=AsyncMock(),
+        notification_service=AsyncMock(),
+        lelik_agent_factory=MagicMock(),
+        answer_url="https://main.example.com/voice/answer",
+        prompt_builder=prompt_builder,
+        relay_stream_url="wss://relay.example.com/",
+    ))
+    client = app.test_client()
+
+    response = await client.post("/voice/answer", form={"CallSid": "CA1", "AnsweredBy": "human", "ticket": "unknown"})
+
+    body = (await response.get_data()).decode()
+    assert "<Reject" in body
+    prompt_builder.build_for_agent.assert_not_called()
