@@ -22,9 +22,12 @@ PROJECT_ID ?= $(GOOGLE_CLOUD_PROJECT)
 REGION ?= us-central1
 PYTHON ?= python3
 
-# The single live Cloud Run service + its async research job.
+# The single live Cloud Run service + its async research job + the voice relay
+# (second Cloud Run service, same image, different entrypoint — see
+# cloudbuild-dev.yaml and relay_main.py).
 SERVICE_NAME ?= alek-bot-dev
 RESEARCH_JOB ?= alek-research-job-dev
+VOICE_RELAY ?= alek-voice-relay-dev
 
 # Cloud Run service URL — defined in .env (gitignored), loaded via include above.
 # Required: SERVICE_URL_DEV. The deploy-time OAuth callback is derived from it in
@@ -46,6 +49,7 @@ K ?= 300
 .PHONY: logs logs-tail logs-tail-clean logs-tail-full logs-perf fetch-logs
 .PHONY: logs-mode-clean logs-mode-full
 .PHONY: logs-job fetch-logs-job list-jobs logs-execution cancel-job
+.PHONY: logs-relay fetch-logs-relay
 .PHONY: services status
 .PHONY: claude-model claude-rollback claude-forward dr-model dr-rollback dr-forward
 .PHONY: check-models check-pricing
@@ -103,6 +107,8 @@ help: ## Show this help message
 	@echo "  make list-jobs       List job executions with status"
 	@echo "  make logs-execution EXECUTION=<name>  View logs for a specific execution"
 	@echo "  make cancel-job EXECUTION=<name>      Cancel a running execution"
+	@echo "  make logs-relay      View recent voice relay service logs"
+	@echo "  make fetch-logs-relay [K=300]  Fetch last K relay logs to alek_debug_relay.log"
 	@echo ""
 	@echo "🗄️  MAINTENANCE:"
 	@echo "  make check-models    Check available Gemini models"
@@ -358,6 +364,30 @@ cancel-job: ## Cancel a running execution: make cancel-job EXECUTION=<name>
 	@gcloud run jobs executions cancel $(EXECUTION) \
 	  --region=$(REGION) \
 	  --project=$(PROJECT_ID)
+
+# --- Voice relay (Cloud Run service: $(VOICE_RELAY)) ---
+# A service, not a Job (it holds a live WebSocket per call), so these mirror
+# `logs`/`fetch-logs` above (parameterized to VOICE_RELAY) rather than
+# `logs-job`/`fetch-logs-job`, which target `gcloud run jobs` — the wrong
+# resource type for a second Cloud Run service.
+
+logs-relay: ## View last K voice relay log entries (default K=300)
+	@echo "📋 Logs for $(VOICE_RELAY) (last $(K) entries):"
+	@gcloud run services logs read $(VOICE_RELAY) \
+	  --region=$(REGION) \
+	  --limit=$(K) \
+	  --format="value(textPayload)" \
+	  --project=$(PROJECT_ID)
+
+fetch-logs-relay: ## Fetch last K voice relay logs to alek_debug_relay.log (default K=300)
+	@echo "📥 Fetching last $(K) voice relay log entries to alek_debug_relay.log..."
+	@gcloud run services logs read $(VOICE_RELAY) \
+	  --region=$(REGION) \
+	  --limit=$(K) \
+	  --format="value(textPayload)" \
+	  --project=$(PROJECT_ID) \
+	  > alek_debug_relay.log
+	@echo "✅ Done: $$(wc -l < alek_debug_relay.log) lines written"
 
 # ============================================================================
 # MAINTENANCE
