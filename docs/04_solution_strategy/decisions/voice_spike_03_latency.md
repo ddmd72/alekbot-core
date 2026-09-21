@@ -41,10 +41,14 @@ see Revisit-if).
 ## Verdict
 
 **681ms p50 / 910ms p95 sits inside the working conversational-latency bar this plan set going in
-(~800-1200ms p50, per Task 4's own note in the plan document, itself not an RFC-given number but a
-standard turn-taking voice UX range) — with margin, even measured over a home connection + ngrok
-rather than the eventual Cloud Run deployment.** Good enough to say the mechanism is not
-disqualified by latency, on a laptop, on OpenAI. **Not** good enough to set a production
+(~800-1200ms p50).** That bar is not sourced from the RFC or an external voice-UX reference — it
+was this plan's own working heuristic (`docs/superpowers/plans/2026-09-20-voice-companion-phase0-spikes.md`,
+Task 4), picked as a reasonable-sounding round number for "does this feel like a normal phone call
+pause," not measured or cited against a named source. Treat it as the owner's/plan's working bar,
+not an industry standard, until something more rigorous replaces it. Measured over a home
+connection + ngrok rather than the eventual Cloud Run deployment, the 681ms/910ms figures still
+clear that working bar with margin — good enough to say the mechanism is not disqualified by
+latency, on a laptop, on OpenAI. **Not** good enough to set a production
 latency budget or to compare providers — that needs the same measurement run from `us-central1`
 against both providers, which is real Slice-1-adjacent work, not this spike's job.
 
