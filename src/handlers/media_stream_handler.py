@@ -51,6 +51,18 @@ class MediaStreamHandler:
                 "media": {"payload": frame.payload},
             }))
 
+        # Cleanup (push the sentinel, await call_task) MUST run on every exit path
+        # from the loop below, not just the explicit "stop" branch: websockets==15.0.1's
+        # Connection.__aiter__ swallows ConnectionClosedOK internally and just returns
+        # (websockets/asyncio/connection.py:228-242) — a CLEAN close with no "stop"
+        # event ends the `async for raw in ws:` loop with no exception raised at all,
+        # so an `except` block alone never fires for that case. A single `finally`
+        # wrapping the whole loop covers all three exits uniformly: normal fallthrough
+        # (clean close, no "stop"), the explicit "stop" break, and any exception —
+        # without needing the "stop" branch (or an except branch) to duplicate the
+        # cleanup itself. Guarded on `call_task is not None` (loop may end before any
+        # "start" event ever arrived); awaiting an already-done task a second time is
+        # not a risk here since cleanup now only ever happens once, in this block.
         call_task: "asyncio.Future | None" = None
         try:
             async for raw in ws:
@@ -74,19 +86,12 @@ class MediaStreamHandler:
                         track="inbound",
                     ))
                 elif event == "stop":
-                    await inbound_queue.put(None)
-                    if call_task is not None:
-                        await call_task
                     break
         except Exception:
             logger.error(f"media stream for ticket={ticket} failed", exc_info=True)
-            # Unblock inbound_frames()/handle_call() so a mid-stream WebSocket
-            # error (e.g. Twilio dropping the connection without a "stop"
-            # event) doesn't leave call_task running forever against a dead
-            # connection.
+            raise
+        finally:
             await inbound_queue.put(None)
             if call_task is not None:
                 await call_task
-            raise
-        finally:
             logger.info(f"media stream closed for ticket={ticket}")
