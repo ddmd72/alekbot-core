@@ -83,3 +83,9 @@ python-telegram-bot==21.0
 # Realtime API WebSocket client — used by scripts/voice/test_late_function_call_output_poc.py
 # (Voice Companion RFC Phase 0 spike); not yet a runtime dependency of src/.
 websockets==15.0.1
+
+# Twilio SDK — used by scripts/voice/test_callback_roundtrip_poc.py (Voice Companion RFC Phase 0.6
+# spike: callback identity round trip + answering-machine detection). RFC §7 item 3 already names
+# `twilio` as needed for Slice 1, so pinned now rather than deferred; not yet a runtime dependency
+# of src/.
+twilio==9.11.1
