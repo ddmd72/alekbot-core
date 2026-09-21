@@ -4,6 +4,7 @@ import signal
 import logging
 import asyncio
 from slack_bolt.async_app import AsyncApp
+from twilio.rest import Client as TwilioClient
 
 from src.config.settings import load_settings
 from src.web.worker_oidc_verifier import verify_worker_oidc
@@ -599,6 +600,22 @@ async def main():
             task_queue=agent_task_queue,
         )
 
+        # Twilio Verify client for phone-binding OTP (Voice Companion RFC §4.6,
+        # Slice 1 Task 11) — same conditional-construction guard as
+        # UserAgentFactory._telephony (user_agent_factory.py ~line 208-212):
+        # optional, MVP/dev-only feature, gracefully absent when unconfigured.
+        # The Cabinet's phone-binding routes already 501 cleanly on None.
+        twilio_account_sid = config.get("TWILIO_ACCOUNT_SID")
+        twilio_auth_token = config.get("TWILIO_AUTH_TOKEN")
+        twilio_verify_service_sid = config.get("TWILIO_VERIFY_SERVICE_SID")
+        twilio_verify_client = (
+            TwilioClient(twilio_account_sid, twilio_auth_token).verify.v2.services(
+                twilio_verify_service_sid
+            )
+            if twilio_account_sid and twilio_auth_token and twilio_verify_service_sid
+            else None
+        )
+
         cabinet_bp = create_user_cabinet_blueprint(
             invite_service=invite_service,
             session_service=session_service,
@@ -617,6 +634,7 @@ async def main():
             language_service=_language_service,
             agent_note_port=container.notes_adapter,
             recurrence_port=container.recurrence_adapter,
+            twilio_verify_client=twilio_verify_client,
         )
 
         # Services for WorkerHandler — wrap ports so the handler never imports ports directly
