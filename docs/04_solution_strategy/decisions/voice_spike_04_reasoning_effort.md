@@ -3,6 +3,16 @@
 **Date:** 2026-09-21
 **Status:** Live (spike complete, real API data)
 
+**Owner's decision (2026-09-21): `medium`, not the spike's own cost/latency-optimal
+recommendation of `minimal`.** Deliberate margin, not a disagreement with the data — this probe is
+explicitly flagged below (Revisit-if) as a 6-turn short-session test, not the RFC §4.3 long-call
+retention scenario Lelik will actually face; `medium` also matches this repo's already-established
+convention for Smart (`project_smart_model_eval.md`: `gpt-5.4-mini` + `reasoning: medium` matched
+flagship quality on multi-step work at a fraction of the cost). `minimal`'s cost/latency edge over
+`medium` on this probe was small (~$0.003, ~0ms p50 difference) — cheap insurance for a real,
+untested risk. This is what Slice 1 item 8 should use; the sections below are the spike's own
+analysis, left as originally written.
+
 ## Question
 
 RFC §4.3 and Slice 1 item 8 (Lelik's session/persona assembly) need a `reasoning_effort` default.
