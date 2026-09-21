@@ -358,6 +358,52 @@ def calculate_external_cost(
     return round(per_unit, 6)
 
 
+# OpenAI Realtime API pricing (RFC §6, VOICE_COMPANION_RFC.md) — a dedicated table rather
+# than a fourth shape forced into _PRICING_PER_MILLION_TOKENS (one input/output pair per
+# model) or _PER_SECOND_SERVICES (one flat per-unit rate): a realtime call bills FOUR
+# independent token pools on one call (audio in/out, text in/out) plus a cached-token
+# discount, not one input/output pair. `usage` here is the already-flattened shape produced
+# by OpenAIRealtimeAdapter._flatten_usage — cached_tokens is a non-overlapping leg (the
+# adapter subtracts it out of the audio/text input counts before this function ever sees
+# them), so straight per-leg multiplication is correct and does not double-bill the cached
+# portion.
+# Dated per this repo's PRICE_SCHEDULE convention (CLAUDE.md "Prices change under you") —
+# this entry outranks `make check-pricing`'s LiteLLM/models.dev catalogs, which do not carry
+# realtime per-leg rates at all (RFC §9 item 12's pricing-audit gap; a dated comment was
+# chosen over extending the script for this narrow, single-model table). Confirmed against
+# the live OpenAI Realtime pricing table 2026-09-21.
+_REALTIME_PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
+    "gpt-realtime-2.1": {
+        "audio_input_tokens": 32.0,
+        "audio_output_tokens": 64.0,
+        "text_input_tokens": 4.0,
+        "text_output_tokens": 24.0,
+        "cached_tokens": 0.40,
+    },
+}
+
+
+def calculate_realtime_cost(model: str, usage: Dict[str, int]) -> float:
+    """Prices a realtime call's independent token legs (RFC §4.12, §6).
+
+    ``usage`` is expected in the already-flattened shape produced by
+    ``OpenAIRealtimeAdapter._flatten_usage`` — keys ``audio_input_tokens``,
+    ``audio_output_tokens``, ``text_input_tokens``, ``text_output_tokens``,
+    ``cached_tokens`` (any subset; missing keys default to 0). Reasoning
+    tokens are already folded into ``text_output_tokens`` by that flattening
+    step (RFC §4.3/§6: reasoning bills as text output) — this function has no
+    reasoning-specific logic of its own.
+
+    Returns 0.0 for an unpriced model, same fail-open contract as
+    ``calculate_cost``/``calculate_external_cost``.
+    """
+    rates = _REALTIME_PRICING_PER_MILLION_TOKENS.get(model)
+    if rates is None:
+        return 0.0
+    total = sum(usage.get(leg, 0) * rate_per_million / 1_000_000 for leg, rate_per_million in rates.items())
+    return round(total, 6)
+
+
 @dataclass
 class ModelUsage:
     """Usage accumulated on ONE model within an execution."""

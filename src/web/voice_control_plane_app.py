@@ -8,10 +8,11 @@ Two Quart routes consumed by the relay side (`CallControlPlanePort` /
   (minted by the auth webhook, a later task) into the realtime session
   config (instructions + identity) via `EphemeralStore`.
 - `POST /voice/submit-transcript` — relay reports end-of-call usage +
-  transcript. This records per-model usage/cost (pricing itself is a Task
-  16 forward reference — `_price_realtime_usage` is a placeholder here),
-  hands the transcript (plus `user_id`/`account_id`, needed by the real
-  Task 15 consumer to run extraction and deliver the summary) to the
+  transcript. This records per-model usage/cost, pricing via
+  `domain.billing.calculate_realtime_cost` on the already-flattened leg
+  counts `OpenAIRealtimeAdapter._flatten_usage` produced (Task 16), hands
+  the transcript (plus `user_id`/`account_id`, needed by the real Task 15
+  consumer to run extraction and deliver the summary) to the
   injected `summary_consumer`, and releases the one-call-per-user marker
   (`voice_one_call:{user_id}`) written by the auth webhook before dialing
   out — this MUST happen even if usage recording or the summary consumer
@@ -26,14 +27,8 @@ wiring, not duplicated here.
 """
 from quart import Blueprint, Response, jsonify, request
 
+from src.domain.billing import calculate_realtime_cost
 from src.utils.logger import logger
-
-
-def _price_realtime_usage(model: str, tokens: dict) -> float:
-    """Placeholder pricing hook — Task 16 implements real per-model realtime
-    pricing. Returns 0.0 so usage is still recorded (with a real token count)
-    while cost accounting is wired up."""
-    return 0.0
 
 
 def create_voice_control_plane_blueprint(
@@ -76,7 +71,7 @@ def create_voice_control_plane_blueprint(
         try:
             for model, tokens in body.get("usage_by_model", {}).items():
                 try:
-                    cost = _price_realtime_usage(model, tokens)  # Task 16 implements this
+                    cost = calculate_realtime_cost(model, tokens) if isinstance(tokens, dict) else 0.0
                     logger.info(f"voice call {call_id}: model={model} tokens={tokens} cost={cost}")
                     total_tokens = sum(tokens.values()) if isinstance(tokens, dict) else tokens
                     await quota_service.record_usage(account_id, model, total_tokens, cost)
