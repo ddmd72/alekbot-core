@@ -382,11 +382,44 @@ Lelik emits function call ask_alek(query)
        → main service: RequestContext(user_id, account_id) → Router → Smart → delegation
        → responds with full_response, link_list, rich_content
        → chat delivery, if any, happens here (§4.10) — the relay never posts to chat
-  → relay queues the injection; when no response is active:
-       conversation.item.create { type: "function_call_output", call_id, output: full_response }
-       response.create
+  → relay calls resolve_late_answer(call_id, full_response, interrupted_since_dispatch) (below)
   → Lelik verbalizes (§4.3)
 ```
+
+**`resolve_late_answer` — one seam, chosen by a spike, swappable without touching the rest of
+this mechanism.** Phase 0 spike 0.1 (`docs/04_solution_strategy/decisions/
+voice_spike_01_late_function_call_output.md`) found the naive version of this — always submit as
+`function_call_output`, trust the model to pick it up — **fails silently on OpenAI specifically
+when the caller spoke again during the wait**: no error, no acknowledgment, the model just
+continues the interrupting topic and the fact is gone. Absent an interruption, both providers
+handle the late injection correctly.
+
+The chosen default is deterministic, not a discretionary judgment call (§4.3's principle applied
+here too), and does not depend on either provider's undocumented behavior continuing to hold
+across model updates:
+
+```
+resolve_late_answer(call_id, full_response, interrupted_since_dispatch):
+    if not interrupted_since_dispatch:
+        conversation.item.create { type: "function_call_output", call_id, output: full_response }
+        response.create
+    else:
+        # the tool call the model made is stale context by now — don't rely on it noticing a
+        # late result tied to a call it may no longer be tracking. Surface the answer as fresh
+        # information instead, uncoupled from the original tool call.
+        conversation.item.create { type: "message", role: "system",
+            content: f"Alek's answer just arrived: {full_response}" }
+        response.create
+```
+
+`interrupted_since_dispatch` is tracked by the relay from the call-scoped turn log: true if any
+new user speech was observed between dispatching `ask_alek` and the answer arriving, regardless of
+whether that speech was itself directed at Alek. This function is the one place a future model
+update, a provider switch, or real Cloud-Run-build data overturning this default gets changed —
+not a broader refactor. The rejected alternative (resubmitting inside the *next* `response.create`
+rather than injecting a fresh system message) was not tested this session; it remains a candidate
+implementation for this same seam if the chosen default proves unsatisfying against real traffic,
+not a reason to reopen this decision from scratch.
 
 Lelik keeps talking while the task runs, which is what makes §4.1's narration load-bearing rather
 than decorative. "Async" here means *the provider's own late `function_call_output`* — not this
@@ -414,18 +447,21 @@ serialize.
 |---|---|
 | Call ends while the answer is in flight | Cancel the task; **discard the answer** (it served a conversation that no longer exists). Log it. No chat fallback unless §4.10 already required one. |
 | Model is mid-response when the answer arrives | `response.create` while a response is active is an error. Track `response.created`/`response.done`; queue the injection until idle. |
-| User barges in during injection | Submit the `function_call_output` item immediately (harmless — it is a conversation item), defer `response.create` to the next idle moment. |
+| **Caller speaks again while the answer is still being fetched, before it arrives** | `resolve_late_answer` (above) takes the fresh-message branch, not `function_call_output` — confirmed via spike 0.1 that OpenAI silently drops the latter in this exact case. |
+| User barges in during injection itself (after `resolve_late_answer` has already queued something) | Submit the queued item immediately (harmless — it is a conversation item either way), defer `response.create` to the next idle moment. |
 | Two `ask_alek` calls in flight | Match by `call_id`; serialize `response.create` so they cannot collide. |
 | Main service slow or hung | Hard relay-side timeout, start at 90s — Router → Smart with delegation is the cost, not cold start. On expiry inject a `function_call_output` saying Alek did not answer, so Lelik says so aloud. **Silent non-delivery is the worst outcome.** |
 | Transport failure | **No automatic retry** — it re-runs Alek's whole pipeline: double spend, possible double chat delivery. Fail loudly to Lelik. |
 | Relay restarts mid-call (deploy) | Call drops; answer in flight lands nowhere; transcript buffer lost. Accepted. |
 | Concurrency ceiling | Each in-flight `ask_alek` occupies a request slot on the 1 vCPU main service. Named, not solved, in v1. |
 
-**A late `function_call_output` is the load-bearing assumption of this section.** OpenAI documents
-async function calling; xAI documents the same event sequence but does not explicitly sanction
-submitting the output after the model has moved on. Nothing structurally forbids it in an
-event-based protocol, but it is undocumented on at least one provider. **Spike it on both, first**
-(§7).
+**Confirmed by spike, not assumed.** Phase 0 spike 0.1 ran this against both providers' live
+Realtime APIs (real calls, 8-case factorial: delay × interruption × provider). Absent an
+interruption, both providers pick up a late `function_call_output` coherently — the RFC's original
+premise holds there. With an interruption, only xAI does (and that signal came from an
+audio-transcript channel, not text — see the decision record's own caveat on that asymmetry);
+OpenAI does not, which is exactly the gap `resolve_late_answer` above exists to close. Full data:
+`docs/04_solution_strategy/decisions/voice_spike_01_late_function_call_output.md`.
 
 ### 4.8 Lelik's context at call start
 
@@ -941,18 +977,50 @@ unit and this is genuinely optional.
 
 1. **Does a late `function_call_output` work on both providers** (§4.7) — documented by OpenAI,
    undocumented by xAI. Phase 0.1, the highest-stakes unknown here; gates slice 2.
+   **Answered (2026-09-21), conditionally:** yes absent an interruption, on both providers; on
+   OpenAI, no, if the caller spoke again during the wait — silently dropped, not an error. Design
+   response is §4.7's `resolve_late_answer`. `decisions/voice_spike_01_late_function_call_output.md`.
 2. **Does μ-law hold end to end on OpenAI's GA API** (§5.2) — Phase 0.2, gates slice 1. (The xAI
    half is closed.)
+   **Answered for OpenAI (2026-09-21):** yes, clean on a real call, after fixing four unrelated
+   infra bugs (TwiML Bins are US1-region-only, `websockets`' HTTP parser requires GET not POST, a
+   stale session schema, a local TLS proxy issue) — none about the audio format itself. **xAI's
+   live audio leg was never run** — this is now the only genuinely open half.
+   `decisions/voice_spike_02_mulaw_e2e.md`.
 3. **Measured relay latency**, and end-to-end time-to-answer once slice 2 exists — Phase 0.3.
+   **Answered, partially (2026-09-21):** echo-relay p50 681ms / p95 910ms on OpenAI, over a
+   developer laptop + ngrok, not the eventual Cloud Run topology — treat as "not disqualifying,"
+   not a production number. The end-to-end (`ask_alek` included) figure is still open; it needs
+   slice 2 to exist. `decisions/voice_spike_03_latency.md`.
 4. **Which provider and tier** (§6) — decided by Phase 0 on latency, format handling and
    late-tool-result support, not price, which is a wash.
+   **Deferred by owner decision (2026-09-21), not resolved by Phase 0 data.** Three of six spikes
+   only ran against OpenAI; the one spike testing both (0.1) found xAI more tolerant of the
+   interrupt case, but that signal came from a non-parity audio-transcript channel, not text — it
+   doesn't cleanly outweigh OpenAI's much larger tested surface. Owner's call: pick the provider
+   empirically while building Slice 1, not from this data; run the missing xAI-parity spikes only
+   if that build surfaces a concrete reason to.
+   `docs/superpowers/plans/2026-09-20-voice-companion-phase0-spikes.md` (closing section).
 5. **Where reasoning effort should sit** for a phone call, and what it costs on the text-output leg
    (§4.3, §6) — Phase 0.4.
+   **Answered (2026-09-21):** 5/5 tested levels retained a planted fact on a short text-only probe;
+   the spike's own data-driven pick was `minimal` (cheapest, no retention cost). **Owner's shipping
+   default is `medium`** — deliberate margin against the real long-call retention risk this short
+   probe doesn't cover, and consistent with this repo's already-validated `medium` default for
+   Smart. `decisions/voice_spike_04_reasoning_effort.md`.
 6. **Does 128K remove the need for in-call tiering** (§4.9) — provisional on Phase 0.5 and on real
    token growth on a long call.
+   **Answered (2026-09-21):** OpenAI's Realtime API has native truncation on by default
+   (`truncation: "auto"`) — a free backstop as long as Slice 1 leaves that field untouched; xAI's
+   realtime endpoint has no equivalent. §4.9's "no custom tiering in v1" plan needs no change.
+   `decisions/voice_spike_05_native_truncation.md`.
 7. **Is the callback tolerable, and is machine detection reliable** (§4.6) — Phase 0.6, gates slice
    1. A "no" on the first sends identity to `<Gather>` DTMF on the inbound leg; a "no" on the second
    puts voicemail greetings into long-term memory.
+   **Answered (2026-09-21):** yes to both, on a small real sample — 3/3 person-answer trials at
+   ~10.3s mean round trip (owner's own read: "instant"), 2/2 forced-voicemail trials correctly
+   detected and hung up without opening a session. §4.6 proceeds as designed; no DTMF fallback
+   needed on this data. `decisions/voice_spike_06_callback_roundtrip.md`.
 8. **Provider's per-account concurrent realtime session limit** — unverified. (Per-*user*
    concurrency is settled: one, enforced at `AuthDecision` per §3.)
 9. **`min-instances` for the relay service** (§4.14) — the main service is held warm by scheduler
