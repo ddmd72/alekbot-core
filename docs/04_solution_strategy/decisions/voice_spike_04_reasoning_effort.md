@@ -103,14 +103,18 @@ within the bottom three.
 
 **All 5 levels retained the fact — no level failed.** Per the brief's own framing ("If no level
 both retains and stays under the latency bar... If no level failed, recommend `minimal`"),
-**`minimal` is the recommended default for Lelik's session config (Slice 1 item 8).** It is the
-cheapest level tested ($0.01721 for the 6-turn probe, vs $0.02064 at `xhigh` — a ~20% cost spread)
-and ties `low` for the lowest per-turn p50 (0.92s vs `high`/`xhigh`'s 1.12–1.15s), and it passed
-the same retention check every other level passed. (One honest wrinkle: `low`'s total elapsed
-across the 6 turns was marginally lower than `minimal`'s — 5.09s vs 5.22s, a 0.13s gap on a 6-turn
-sample, i.e. noise-level, not a signal that `low` is meaningfully faster; `minimal` still wins on
-cost, which is the tie-breaker.) Raising `reasoning_effort` past `minimal` bought nothing on this
-probe except more reasoning tokens, more latency, and more cost.
+**`minimal` is the recommended default for Lelik's session config (Slice 1 item 8).** On p50
+latency, `minimal`/`low`/`medium` are flat and tied at 0.90–0.92s per turn — `medium` actually
+posted the single lowest p50 of the five (0.90s) — with the real step-up confined to `high`/`xhigh`
+(1.12–1.15s); `minimal` has no latency edge over `medium` on this probe. The tie-breaker is cost:
+`minimal` is the cheapest of the three tied-on-latency levels ($0.01721 for the 6-turn probe vs
+`medium`'s $0.02023 and `xhigh`'s $0.02064 — roughly a 15-20% spread), and it passed the same
+retention check every other level passed. (One honest wrinkle: `low`'s total elapsed across the 6
+turns was marginally lower than `minimal`'s — 5.09s vs 5.22s, a 0.13s gap on a 6-turn sample, i.e.
+noise-level, not a signal that `low` is meaningfully faster; `minimal` still wins on cost, which is
+the tie-breaker.) Raising `reasoning_effort` past `minimal` bought nothing on this probe in
+retention, and only started costing meaningfully more in latency once past `medium` (at
+`high`/`xhigh`) — but `medium` itself was not a latency or retention penalty here, only a cost one.
 
 This is a **cheap, single-shot, six-turn, short-filler probe** — see Revisit-if before treating it
 as proof reasoning effort doesn't matter for retention in general.

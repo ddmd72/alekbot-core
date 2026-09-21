@@ -96,6 +96,9 @@ similar minimal library) is reused as the answer-webhook's transport.
 - **xAI leg of this spike was never run** — `PROVIDER=xai` against the same real-call setup is
   still open. Given `grok-voice-think-fast-2.0`'s session-config differences already surfaced in
   Task 1 (older `"modalities"` key, no genuine text-mode output), the xAI audio leg may have its
-  own surprises worth a short follow-up call before Slice 1 commits to a provider.
+  own surprises worth a short follow-up call before Slice 1 commits to a provider. **Note:**
+  `test_mulaw_relay_poc.py`'s `session_update_event()` currently raises `NotImplementedError` for
+  `PROVIDER=xai` (it only implements OpenAI's GA session-config shape) — that needs Task 1's
+  xAI session-config fix ported in before this follow-up run can happen.
 - **Barge-in latency**, properly measured with `turn_detection` tuned and a real `instructions`
   prompt set — this is Task 4's job (0.3, relay latency), not a redo of this ad hoc test.
