@@ -87,6 +87,36 @@ async def test_receive_events_normalizes_audio_delta_and_usage():
 
 
 @pytest.mark.asyncio
+async def test_receive_events_normalizes_user_transcript():
+    incoming = [
+        {"type": "conversation.item.input_audio_transcription.completed", "transcript": "hello there"},
+    ]
+    ws = FakeWebSocket(incoming=incoming)
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    events = [event async for event in adapter.receive_events()]
+
+    assert events[0].type == "user_transcript"
+    assert events[0].payload == {"text": "hello there"}
+
+
+@pytest.mark.asyncio
+async def test_receive_events_normalizes_model_transcript():
+    incoming = [
+        {"type": "response.output_audio_transcript.done", "transcript": "hi Dmytro"},
+    ]
+    ws = FakeWebSocket(incoming=incoming)
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    events = [event async for event in adapter.receive_events()]
+
+    assert events[0].type == "model_transcript"
+    assert events[0].payload == {"text": "hi Dmytro"}
+
+
+@pytest.mark.asyncio
 async def test_submit_tool_result_sends_function_call_output():
     ws = FakeWebSocket(incoming=[])
     adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
