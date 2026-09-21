@@ -32,9 +32,11 @@ class RealtimeSessionPort(ABC):
     @abstractmethod
     async def receive_events(self) -> AsyncIterator[RealtimeSessionEvent]:
         """Yield normalized events: audio_delta (payload: frame: AudioFrame),
-        tool_call (payload: call_id, name, arguments), usage (payload: model,
-        **token_kwargs), speech_started, speech_stopped, response_created,
-        response_done, user_transcript (payload: text - final transcript of
+        tool_call (payload: call_id, name, arguments), speech_started,
+        speech_stopped, response_created, response_done (payload: usage -
+        provider-native token usage dict, model - the provider's own model
+        id, so callers can label usage without hardcoding a provider-specific
+        model string), user_transcript (payload: text - final transcript of
         the caller's speech), model_transcript (payload: text - final
         transcript of the model's spoken response), error (payload: message)."""
 
