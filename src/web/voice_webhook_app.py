@@ -18,7 +18,14 @@ library, so this stays on POST and needs no Twilio number-config change; see
 3. Mint a short-TTL ticket (`voice_ticket:{uuid}`) carrying the resolved
    identity — the relay later redeems it via `POST /voice/session-config` —
    and the one-call marker, then hand off to the `LelikAgent` (Task 10) to
-   originate the actual callback.
+   originate the actual callback. If origination raises, both the ticket
+   and the marker are deleted immediately (mint-side counterpart to
+   `voice_control_plane_app.submit_transcript`'s release-on-failure
+   guarantee, commit d1dd648) — otherwise the marker would strand the user
+   locked out of any retry for up to `one_call_ttl_s` (default 3600s) with
+   no alert. An operational alert is posted and a graceful TwiML response
+   returned instead of letting the exception surface as a bare 500 to
+   Twilio.
 4. Per RFC §4.6 ("every session opened posts to the user's chat channel"),
    fire a short `notify_raw` confirmation once the callback has been
    originated, so the user sees this on their bound Slack/Telegram channel
@@ -64,15 +71,31 @@ def create_voice_webhook_blueprint(
 
         decision = AuthDecision(user_id=profile.user_id, account_id=profile.account_id)
         ticket = str(uuid.uuid4())
+        ticket_key = f"voice_ticket:{ticket}"
         await ephemeral_store.set(
-            f"voice_ticket:{ticket}",
+            ticket_key,
             {"user_id": decision.user_id, "account_id": decision.account_id},
             ttl_s=_TICKET_TTL_S,
         )
         await ephemeral_store.set(marker_key, {"in_flight": True}, ttl_s=one_call_ttl_s)
 
-        agent = lelik_agent_factory(user_id=decision.user_id, account_id=decision.account_id)
-        await agent.execute(purpose="user asked to talk", ticket=ticket, answer_url=answer_url)
+        try:
+            agent = lelik_agent_factory(user_id=decision.user_id, account_id=decision.account_id)
+            await agent.execute(purpose="user asked to talk", ticket=ticket, answer_url=answer_url)
+        except Exception as exc:
+            # Mint-side counterpart to submit_transcript's release-on-failure guarantee
+            # (voice_control_plane_app.py) - a ticket/marker written here but never
+            # redeemed by a live call must not survive on its own until TTL expiry
+            # (up to one_call_ttl_s, default 3600s), or the user is locked out of any
+            # retry for that whole window with no way to know why.
+            logger.error(
+                f"voice auth: callback origination failed for {decision.user_id}: {exc}",
+                exc_info=True,
+            )
+            await ephemeral_store.delete(ticket_key)
+            await ephemeral_store.delete(marker_key)
+            await alert_sink.post(f"Voice: callback origination failed for user {decision.user_id}: {exc}")
+            return _twiml_origination_failed()
 
         # RFC §4.6: every session opened posts to the user's chat channel.
         await notification_service.notify_raw(
@@ -92,4 +115,15 @@ def create_voice_webhook_blueprint(
 def _twiml_reject() -> Response:
     vr = VoiceResponse()
     vr.reject()
+    return Response(str(vr), mimetype="text/xml")
+
+
+def _twiml_origination_failed() -> Response:
+    """The dial was authenticated (unlike _twiml_reject's unbound/in-flight cases) but the
+    callback itself failed to originate - tell the caller plainly rather than silently
+    hanging up on them, then end the call cleanly (no dangling <Reject> since this wasn't
+    a rejection of the caller)."""
+    vr = VoiceResponse()
+    vr.say("Sorry, something went wrong placing your callback. Please try again shortly.")
+    vr.hangup()
     return Response(str(vr), mimetype="text/xml")
