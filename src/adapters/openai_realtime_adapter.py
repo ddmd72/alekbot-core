@@ -69,7 +69,7 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
             )
         if event_type == "response.done":
             usage = (event.get("response") or {}).get("usage", {})
-            return RealtimeSessionEvent(type="response_done", payload={"usage": usage})
+            return RealtimeSessionEvent(type="response_done", payload={"usage": usage, "model": self._model})
         if event_type == "response.created":
             return RealtimeSessionEvent(type="response_created", payload={})
         if event_type == "conversation.item.input_audio_transcription.completed":
