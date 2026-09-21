@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict
 
 from src.domain.voice_audio_frame import AudioFrame
 
@@ -30,7 +30,7 @@ class RealtimeSessionPort(ABC):
         """Push one inbound audio frame into the session."""
 
     @abstractmethod
-    def receive_events(self) -> AsyncIterator[RealtimeSessionEvent]:
+    async def receive_events(self) -> AsyncIterator[RealtimeSessionEvent]:
         """Yield normalized events: audio_delta (payload: frame: AudioFrame),
         tool_call (payload: call_id, name, arguments), usage (payload: model,
         **token_kwargs), speech_started, speech_stopped, response_created,
