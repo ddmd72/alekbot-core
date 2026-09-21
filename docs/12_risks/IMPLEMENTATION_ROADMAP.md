@@ -443,6 +443,32 @@ mandatory before team/multi-user rollout.
 
 ---
 
+### TD-9: `edit_video` billed at `generate_video`'s rate — wrong xAI model price used [P3] — 🔲 OPEN
+
+- **Problem:** `video_generation_delivery.py:76` calls
+  `calculate_external_cost(VIDEO_GENERATE_MODEL, duration_s=duration_s)` unconditionally, for both
+  `generate_video` and `edit_video` deliveries. `VIDEO_GENERATE_MODEL = "grok-imagine-video-1.5"`
+  in `billing.py`, but `GrokVideoAdapter` calls a genuinely different xAI model for edits —
+  `_EDIT_MODEL = "grok-imagine-video"` (no `-1.5`). There is no `VIDEO_EDIT_MODEL` pricing constant
+  at all, so edits are priced under the generate model's rate regardless of what actually ran.
+- **Confirmed 2026-09-20** by checking both model pages on docs.x.ai directly:
+  `grok-imagine-video-1.5` = $0.080/sec, `grok-imagine-video` = $0.050/sec — genuinely different
+  rates, first-party confirmed. (Also resolved while investigating: video pricing is NOT
+  resolution-tiered — flat per-second regardless of 480p/720p/1080p, unlike images. The
+  `VIDEO_GENERATION_RFC.md` §10 note citing $0.14/$0.25 per sec at 720p/1080p from third-party
+  sources does not hold against the official docs and should be treated as superseded.)
+- **Why it matters:** every `edit_video` call is recorded internally at 60% more than its real
+  cost ($0.08/sec vs the actual $0.05/sec). This is an over-count in our own cost ledger and
+  `daily_cost_limit` tracking, not an xAI overcharge — but `edit_video`'s reported cost in billing
+  summaries is wrong.
+- **Fix:** add `VIDEO_EDIT_MODEL = "grok-imagine-video"` + its $0.05 rate to
+  `_EXTERNAL_COST_PER_UNIT` in `billing.py` (mirrors the existing `IMAGE_GENERATE_MODEL` /
+  `IMAGE_EDIT_MODEL` split), and have `video_generation_delivery.py` pass the constant matching
+  whichever operation actually ran instead of hardcoding `VIDEO_GENERATE_MODEL`.
+- **Deferred deliberately** (owner, 2026-09-20): not worth a code+deploy cycle right now.
+
+---
+
 ## 🏢 Planned Milestones (Phase 3: Enterprise)
 
 - **Milestone 7**: User Onboarding & OAuth
