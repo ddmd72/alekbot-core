@@ -48,29 +48,48 @@ class VoiceSessionService:
     ) -> None:
         session = self._session_factory()
         buffer = VoiceCallBuffer(call_id=ticket)
+        forward_task: Optional[asyncio.Task] = None
+        consume_task: Optional[asyncio.Task] = None
 
-        await session.open(instructions=config["instructions"], reasoning_effort=self._reasoning_effort, tools=[])
-
-        # Inbound forwarding and outbound event consumption are two independent
-        # streams (inbound audio keeps arriving from the caller regardless of
-        # provider turn boundaries) - they must run as real concurrent tasks,
-        # not a fire-and-forget task raced against a synchronous loop. A bare
-        # `asyncio.ensure_future(...)` followed by an immediate `.cancel()` on
-        # loop exit never gives the forwarding task a chance to actually run
-        # if nothing in the receive loop truly suspends the event loop first -
-        # asyncio.wait() below is what forces that handoff.
-        forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
-        consume_task = asyncio.ensure_future(self._consume_events(ticket, session, buffer, send_outbound_audio))
         try:
+            # open() is inside the try/finally, not before it: a failed open (e.g. a
+            # transient connection error to the provider) must still reach close()
+            # and submit_transcript() below - otherwise the relay's one-call-per-user
+            # marker (RFC §3) only releases via TTL instead of immediately, and the
+            # failure leaves no record on the main-service side.
+            try:
+                await session.open(instructions=config["instructions"], reasoning_effort=self._reasoning_effort, tools=[])
+            except Exception as exc:
+                logger.error(f"voice call {ticket}: failed to open realtime session: {exc}")
+                raise
+
+            # Inbound forwarding and outbound event consumption are two independent
+            # streams (inbound audio keeps arriving from the caller regardless of
+            # provider turn boundaries) - they must run as real concurrent tasks,
+            # not a fire-and-forget task raced against a synchronous loop. A bare
+            # `asyncio.ensure_future(...)` followed by an immediate `.cancel()` on
+            # loop exit never gives the forwarding task a chance to actually run
+            # if nothing in the receive loop truly suspends the event loop first -
+            # asyncio.wait() below is what forces that handoff.
+            forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
+            consume_task = asyncio.ensure_future(self._consume_events(ticket, session, buffer, send_outbound_audio))
             await asyncio.wait({forward_task, consume_task}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for task in (forward_task, consume_task):
+            tasks = [task for task in (forward_task, consume_task) if task is not None]
+            for task in tasks:
                 if not task.done():
                     task.cancel()
-            results = await asyncio.gather(forward_task, consume_task, return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.error(f"voice call {ticket}: session loop crashed: {result}")
+            if tasks:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for result in results:
+                    # Logged, not re-raised: this is a top-level call loop with no
+                    # caller to propagate to - the call simply ends here, which is
+                    # the correct outcome for a crashed forward/consume loop. The
+                    # "error" event path above already alerts on provider-side
+                    # failures; this only catches an unexpected bug in the loop
+                    # itself, and still needs to be visible in logs.
+                    if isinstance(result, Exception):
+                        logger.error(f"voice call {ticket}: session loop crashed: {result}")
             await session.close()
             await self._control_plane.submit_transcript(
                 call_id=ticket,

@@ -9,6 +9,10 @@ from src.utils.logger import logger
 
 _MODEL = "gpt-realtime-2.1"
 _CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
+# Input-audio transcription model. Reuses the codebase's existing default transcription
+# model (OpenAITranscriptionAdapter.DEFAULT_MODEL) for consistency rather than the
+# realtime-specific whisper-1/gpt-realtime-whisper options that also appear in the docs.
+_TRANSCRIPTION_MODEL = "gpt-transcribe"
 
 
 def _strip_cache_boundary(instructions: str) -> str:
@@ -32,7 +36,13 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
             "type": "realtime",
             "output_modalities": ["audio"],
             "audio": {
-                "input": {"format": {"type": "audio/pcmu"}},
+                # "transcription" enables conversation.item.input_audio_transcription.completed -
+                # without it OpenAI never emits that event and user_transcript in _normalize()
+                # below is unreachable, shipping every VoiceTurnSegment.request_text empty.
+                # Field shape verified against developers.openai.com's live GA client-events
+                # reference and realtime-conversations guide (checked 2026-09-21), not inferred
+                # from this repo's Phase 0 spike data.
+                "input": {"format": {"type": "audio/pcmu"}, "transcription": {"model": _TRANSCRIPTION_MODEL}},
                 "output": {"format": {"type": "audio/pcmu"}},
             },
             "reasoning": {"effort": reasoning_effort},
@@ -72,6 +82,11 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
             return RealtimeSessionEvent(type="response_done", payload={"usage": usage, "model": self._model})
         if event_type == "response.created":
             return RealtimeSessionEvent(type="response_created", payload={})
+        # Event names verified against developers.openai.com's live GA Realtime API docs
+        # (client-events reference + realtime-conversations guide, checked 2026-09-21) - NOT
+        # against this repo's voice_spike_01 data, which only traced xAI's leg through these
+        # audio-transcript events; OpenAI's leg in that spike used text-modality events
+        # throughout and never exercised either event below.
         if event_type == "conversation.item.input_audio_transcription.completed":
             return RealtimeSessionEvent(type="user_transcript", payload={"text": event.get("transcript", "")})
         if event_type == "response.output_audio_transcript.done":
