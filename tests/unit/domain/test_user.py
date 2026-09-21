@@ -11,6 +11,7 @@ from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
 _ZERO_LLM_AGENT_TYPES = {
     "help",             # HelpAgent — static capabilities reference
     "file_management",  # FileManagementAgent — GCS download/delete only
+    "lelik",            # LelikAgent — places a Twilio call only, no LLM call
 }
 
 
