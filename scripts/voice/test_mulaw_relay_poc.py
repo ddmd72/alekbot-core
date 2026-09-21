@@ -49,9 +49,13 @@ def provider_ws_url_and_headers(config: dict) -> tuple[str, dict]:
 
 
 def session_update_event() -> dict:
-    # identical schema for both providers — xAI's realtime endpoint is OpenAI-Realtime-API-
-    # compatible (confirmed live 2026-09-20). This is the field to watch in session.updated
-    # for a silent reversion away from audio/pcmu.
+    # NOT identical schema for both providers. Task 1's script (test_late_function_call_output_poc.py,
+    # see its _session_config()) found xAI rejects this GA shape and instead requires the older flat
+    # "modalities" key (no "type" field) — see docs/04_solution_strategy/decisions/
+    # voice_spike_01_late_function_call_output.md. This function only implements the OpenAI shape;
+    # the PROVIDER=="xai" guard below fails loudly instead of silently sending a body xAI will
+    # reject. This is the field to watch in session.updated for a silent reversion away from
+    # audio/pcmu (OpenAI leg only).
     #
     # NOTE: an earlier version of this used the pre-GA flat "modalities": [...] field — the
     # same shape Task 1's script had to correct (missing_required_parameter session.type).
@@ -61,6 +65,16 @@ def session_update_event() -> dict:
     # Current GA schema, confirmed live: session.type="realtime" (required), output_modalities
     # is "audio" or "text" (not both at once), audio config is a sibling field, not nested
     # under output_modalities.
+    if PROVIDER == "xai":
+        raise NotImplementedError(
+            "session_update_event() only implements OpenAI's GA session-config shape. "
+            "xAI's realtime endpoint rejects this shape (it needs the older flat \"modalities\" "
+            "key, no \"type\" field) — see Task 1's finding in "
+            "scripts/voice/test_late_function_call_output_poc.py (_session_config()) and "
+            "docs/04_solution_strategy/decisions/voice_spike_01_late_function_call_output.md "
+            "for what xAI's body actually needs. Not implemented here — PROVIDER=xai is out of "
+            "scope for this script until that fix lands."
+        )
     return {
         "type": "session.update",
         "session": {

@@ -64,6 +64,12 @@ considered closed on that basis, not because every angle was exhausted.
   provider candidate at Slice 1 time (see spike 0.1's finding that xAI never demonstrated
   text-mode output and its late-injection signal came from the audio-transcript channel only),
   its latency profile is a real unknown, not assumed equal to OpenAI's.
-- **Reasoning effort was left at its default** for this run — Task 5 (0.4) measures how raising it
-  trades against latency and cost; this spike's numbers are the `minimal`-effort-equivalent
-  baseline, not a ceiling.
+- **Reasoning effort was not explicitly set in this spike's relay script** —
+  `test_mulaw_relay_poc.py`'s `session_update_event()` sends no `reasoning` field at all. No spike
+  in this plan determined what OpenAI's realtime API actually defaults to when the field is
+  omitted, so this 681ms p50 figure cannot be attributed to any specific effort level (`minimal` or
+  otherwise) — that would be an assumption, not a measured fact. This matters more now that the
+  owner has set `medium` as the actual shipping default (Task 5 / 0.4's addendum): if the true
+  server-side default already sits at `medium` or higher, this number is not a floor. Before
+  treating 681ms as any kind of production latency baseline, re-measure with `reasoning.effort`
+  explicitly set to `medium`.
