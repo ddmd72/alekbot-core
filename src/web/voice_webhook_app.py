@@ -82,7 +82,15 @@ def create_voice_webhook_blueprint(
         await ephemeral_store.set(marker_key, {"in_flight": True}, ttl_s=one_call_ttl_s)
 
         try:
-            agent = lelik_agent_factory(user_id=decision.user_id, account_id=decision.account_id)
+            # to_number is the caller's own E.164 number (RFC §4.6: the callback
+            # always returns to the exact number that dialed in) — the same value
+            # already used for the platform-identity lookup above. lelik_agent_factory
+            # is expected to be `UserAgentFactory._build_lelik(user_id, account_id,
+            # to_number)` (or a callable matching that 3-arg shape), not the 2-arg
+            # `(user_id, account_id)` this call site used before to_number existed.
+            agent = lelik_agent_factory(
+                user_id=decision.user_id, account_id=decision.account_id, to_number=caller,
+            )
             await agent.execute(purpose="user asked to talk", ticket=ticket, answer_url=answer_url)
         except Exception as exc:
             # Mint-side counterpart to submit_transcript's release-on-failure guarantee
