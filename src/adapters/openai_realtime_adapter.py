@@ -19,6 +19,80 @@ def _strip_cache_boundary(instructions: str) -> str:
     return instructions.replace(_CACHE_BOUNDARY, "")
 
 
+def _flatten_usage(usage: dict) -> Dict[str, int]:
+    """Flattens OpenAI's real response.done usage object into the flat leg
+    keys VoiceCallBuffer.add_usage / domain.billing.calculate_realtime_cost
+    expect (Task 16, RFC §4.12/§6).
+
+    OpenAI's Realtime API reports usage nested — roughly
+    ``{"input_tokens", "output_tokens",
+    "input_token_details": {"text_tokens", "audio_tokens", "cached_tokens",
+    "cached_tokens_details": {"text_tokens", "audio_tokens"}},
+    "output_token_details": {"text_tokens", "audio_tokens"}}`` — NOT flat
+    ``audio_input_tokens``/etc keys (verified against developers.openai.com's
+    live reference plus community-reported real payloads, checked
+    2026-09-21; this repo's own Phase 0 spike never exercised OpenAI's usage
+    shape - see the adapter's other "verified live, not against spike data"
+    comments). Passing the raw nested dict through unflattened would make
+    ``VoiceCallBuffer.add_usage(model, **usage)`` set a bucket key to a
+    nested dict, breaking its ``bucket.get(key, 0) + value`` arithmetic
+    (``0 + {...}`` raises ``TypeError``) the first time a real call reports
+    a `*_token_details` breakdown.
+
+    ``cached_tokens`` is a SUBSET of ``input_token_details``'s
+    ``text_tokens``/``audio_tokens`` counts, not additive (OpenAI's own
+    documented example: ``text_tokens=119`` includes the ``cached_tokens=64``
+    reported alongside it) — so it is subtracted from the audio/text input
+    legs here, matching this codebase's existing convention that
+    ``prompt_tokens`` is always uncached input and cache reads are billed as
+    a separate leg (see CLAUDE.md: "prompt_tokens in UsageMetadata always =
+    uncached input").
+
+    Reasoning tokens bill as text output (RFC §4.3/§6). The Realtime API does
+    not currently surface them as their own visible field (folded into
+    ``output_token_details.text_tokens`` per OpenAI's community-reported
+    behaviour) — this still adds ``output_token_details.reasoning_tokens``
+    onto ``text_output_tokens`` in case a future API revision does add one,
+    rather than silently dropping it.
+
+    Some realtime deployments only return the undifferentiated top-level
+    ``input_tokens``/``output_tokens`` totals with no ``*_token_details`` at
+    all (community-reported). There is no way to split an undifferentiated
+    total into audio/text legs, so this passes ``usage`` through unchanged in
+    that case rather than inventing a split — every value in it is already a
+    plain int, so add_usage's arithmetic stays safe.
+    """
+    input_details = usage.get("input_token_details")
+    output_details = usage.get("output_token_details")
+    if input_details is None and output_details is None:
+        return usage
+
+    input_details = input_details or {}
+    output_details = output_details or {}
+    cached_details = input_details.get("cached_tokens_details") or {}
+    cached_tokens = input_details.get("cached_tokens", 0)
+
+    if cached_details:
+        cached_audio_tokens = cached_details.get("audio_tokens", 0)
+        cached_text_tokens = cached_details.get("text_tokens", 0)
+    else:
+        # No per-modality split for the cached subset - the dominant realtime
+        # caching case is cached system instructions/tools (text), so treat
+        # the whole cached count as text rather than leaving it inside
+        # audio_input_tokens where it would be double-billed at both the full
+        # audio rate and the cached rate.
+        cached_audio_tokens = 0
+        cached_text_tokens = cached_tokens
+
+    return {
+        "audio_input_tokens": max(input_details.get("audio_tokens", 0) - cached_audio_tokens, 0),
+        "audio_output_tokens": output_details.get("audio_tokens", 0),
+        "text_input_tokens": max(input_details.get("text_tokens", 0) - cached_text_tokens, 0),
+        "text_output_tokens": output_details.get("text_tokens", 0) + output_details.get("reasoning_tokens", 0),
+        "cached_tokens": cached_tokens,
+    }
+
+
 class OpenAIRealtimeAdapter(RealtimeSessionPort):
     """RealtimeSessionPort against OpenAI's Realtime API (GA session shape,
     verified live during Phase 0 spikes - see RFC §4.7 and §9)."""
@@ -79,7 +153,9 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
             )
         if event_type == "response.done":
             usage = (event.get("response") or {}).get("usage", {})
-            return RealtimeSessionEvent(type="response_done", payload={"usage": usage, "model": self._model})
+            return RealtimeSessionEvent(
+                type="response_done", payload={"usage": _flatten_usage(usage), "model": self._model}
+            )
         if event_type == "response.created":
             return RealtimeSessionEvent(type="response_created", payload={})
         # Event names verified against developers.openai.com's live GA Realtime API docs

@@ -2,7 +2,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from src.adapters.openai_realtime_adapter import OpenAIRealtimeAdapter
+from src.adapters.openai_realtime_adapter import OpenAIRealtimeAdapter, _flatten_usage
 from src.domain.voice_audio_frame import AudioFrame
 
 
@@ -84,6 +84,84 @@ async def test_receive_events_normalizes_audio_delta_and_usage():
     assert events[0].payload["frame"].payload == "b64chunk"
     assert events[1].type == "response_done"
     assert events[1].payload["usage"] == {"input_tokens": 10, "output_tokens": 5}
+
+
+@pytest.mark.asyncio
+async def test_receive_events_flattens_real_nested_openai_usage_shape():
+    """OpenAI's real response.done usage is nested (verified against
+    developers.openai.com's live reference + community-reported payloads,
+    checked 2026-09-21) - NOT the flat audio_input_tokens/etc keys a naive
+    reading of RFC §6 might assume. _normalize must flatten it into the leg
+    keys VoiceCallBuffer.add_usage / calculate_realtime_cost expect, or
+    add_usage's **usage unpacking would set a bucket key to a nested dict
+    and crash its `bucket.get(key, 0) + value` arithmetic (0 + {dict})."""
+    nested_usage = {
+        "total_tokens": 400,
+        "input_tokens": 200,
+        "output_tokens": 200,
+        "input_token_details": {
+            "text_tokens": 120,
+            "audio_tokens": 80,
+            "image_tokens": 0,
+            "cached_tokens": 40,
+            "cached_tokens_details": {"text_tokens": 40, "audio_tokens": 0, "image_tokens": 0},
+        },
+        "output_token_details": {"text_tokens": 50, "audio_tokens": 150},
+    }
+    incoming = [{"type": "response.done", "response": {"usage": nested_usage}}]
+    ws = FakeWebSocket(incoming=incoming)
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    events = [event async for event in adapter.receive_events()]
+
+    assert events[0].payload["usage"] == {
+        "audio_input_tokens": 80,
+        "audio_output_tokens": 150,
+        "text_input_tokens": 80,
+        "text_output_tokens": 50,
+        "cached_tokens": 40,
+    }
+    # Every value is a plain int - safe to unpack into VoiceCallBuffer.add_usage(**usage).
+    assert all(isinstance(v, int) for v in events[0].payload["usage"].values())
+
+
+def test_flatten_usage_folds_reasoning_tokens_into_text_output():
+    """Reasoning tokens bill as text output (RFC §4.3/§6). The Realtime API
+    does not currently break reasoning_tokens out as its own visible field
+    (community-reported: folded into output_token_details.text_tokens), but
+    if a future API revision does add one, it must not be silently dropped."""
+    usage = {
+        "input_token_details": {"text_tokens": 10, "audio_tokens": 0},
+        "output_token_details": {"text_tokens": 50, "audio_tokens": 0, "reasoning_tokens": 30},
+    }
+    assert _flatten_usage(usage)["text_output_tokens"] == 80
+
+
+def test_flatten_usage_treats_cached_as_text_when_no_modality_breakdown():
+    """When the API reports a cached_tokens count without cached_tokens_details
+    (no per-modality split), the whole cached count is attributed to text -
+    the dominant realtime caching case (cached system instructions/tools) -
+    rather than left inside audio_input_tokens where it would be double-billed
+    at both the full audio rate and the cached rate."""
+    usage = {
+        "input_token_details": {"text_tokens": 100, "audio_tokens": 50, "cached_tokens": 20},
+        "output_token_details": {"text_tokens": 0, "audio_tokens": 0},
+    }
+    flat = _flatten_usage(usage)
+    assert flat["text_input_tokens"] == 80
+    assert flat["audio_input_tokens"] == 50
+    assert flat["cached_tokens"] == 20
+
+
+def test_flatten_usage_passes_through_undifferentiated_totals_unchanged():
+    """Some realtime deployments only return top-level input_tokens/output_tokens
+    with no *_token_details breakdown at all (community-reported). There is no
+    way to split an undifferentiated total into audio/text legs, so this must
+    pass the usage through unchanged rather than inventing a split - matching
+    the existing test_receive_events_normalizes_audio_delta_and_usage fixture."""
+    usage = {"input_tokens": 10, "output_tokens": 5}
+    assert _flatten_usage(usage) == usage
 
 
 @pytest.mark.asyncio
