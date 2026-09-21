@@ -70,8 +70,10 @@ endpoints (`gpt-realtime-2.1`, `grok-voice-think-fast-2.0`) using this repo's re
 
 No tool-call misfires (all 8 cases successfully triggered `lookup_fact` before the late-injection
 window opened) and no `error` events during the late-submission phase on either provider — this
-is not a connectivity or auth problem, it is a genuine model-behavior difference. Full stdout
-captured in the task report.
+is not a connectivity or auth problem, it is a genuine model-behavior difference. Full stdout is
+inlined in the Appendix below (moved here from the task report, which lives in the gitignored
+`.superpowers/` directory and is not a durable citation target for this repo's highest-priority
+open item).
 
 ## Verdict
 
@@ -116,3 +118,118 @@ A follow-up spike tests xAI in a genuinely audio/text-parity configuration, test
 resubmitting the function result inside the next `response.create` changes OpenAI's
 interrupt-case behavior, or a provider changelog documents late-injection semantics explicitly
 (none did as of 2026-09-20; see script header for the changelog check performed before this run).
+
+## Appendix — full real stdout (8-case run, 2026-09-20)
+
+No PII: the test conversation is a fictional "what's your favorite color" exchange, not real user
+data.
+
+```
+[openai] waiting 20s before submitting function_call_output (interrupt=False) ...
+openai recv: session.created
+openai recv: session.updated
+openai recv: conversation.item.added
+openai recv: conversation.item.done
+openai recv: response.created
+openai recv: response.output_item.added
+openai recv: conversation.item.added
+openai recv: response.content_part.added
+openai recv: response.output_text.delta  (x19)
+openai recv: response.output_item.added
+openai recv: conversation.item.added
+openai recv: response.function_call_arguments.delta  (x6)
+openai recv: response.output_text.done
+openai recv: response.content_part.done
+openai recv: conversation.item.done
+openai recv: response.output_item.done
+openai recv: response.function_call_arguments.done
+openai recv: conversation.item.done
+openai recv: response.output_item.done
+openai recv: response.done
+openai recv (late): rate_limits.updated
+openai recv (late): conversation.item.added
+openai recv (late): conversation.item.done
+openai recv (late): response.created
+openai recv (late): response.output_item.added
+openai recv (late): conversation.item.added
+openai recv (late): response.content_part.added
+openai recv (late): response.output_text.delta  (x6)
+openai recv (late): response.output_text.done
+openai recv (late): response.content_part.done
+openai recv (late): conversation.item.done
+openai recv (late): response.output_item.done
+openai recv (late): response.done
+openai final_text='Your favorite color is teal.' audio_transcript='' elapsed=0.44s coherent=True
+
+[openai] waiting 20s before submitting function_call_output (interrupt=True) ...
+  ... (tool call fires normally) ...
+  ... (interim "how are you" response drained) ...
+  ... (late function_call_output submitted, response streams 44 text deltas) ...
+openai final_text='Still feeling good—chatty, caffeinated-by-vibes, and happy to be here. If
+you want to pivot to something fun, practical, or totally random, I'm in. How's your day
+going?' audio_transcript='' elapsed=1.14s coherent=False
+
+[openai] waiting 30s before submitting function_call_output (interrupt=False) ...
+  ... (tool call fires normally) ...
+openai final_text='Your favorite color is teal. Lovely choice—calm, vibrant, and a little bit
+playful.' audio_transcript='' elapsed=0.57s coherent=True
+
+[openai] waiting 30s before submitting function_call_output (interrupt=True) ...
+  ... (tool call fires, interim response drained) ...
+openai final_text='Still doing great—bright-eyed and chatty, ready to dive into whatever you
+want next. If you'd like, we can switch topics entirely, or I can help with something
+practical. What's on your mind?' audio_transcript='' elapsed=1.62s coherent=False
+
+[xai] waiting 20s before submitting function_call_output (interrupt=False) ...
+xai recv: session.created
+xai recv: conversation.created
+xai recv: ping
+xai recv: session.updated
+xai recv: conversation.item.added
+xai recv: response.created
+xai recv: response.output_item.added
+xai recv: conversation.item.added
+xai recv: response.content_part.added
+xai recv: response.output_audio.delta / response.output_audio_transcript.delta (interleaved)
+xai recv: response.output_audio_transcript.done
+xai recv: response.content_part.done
+xai recv: response.output_audio.done
+xai recv: response.output_item.done
+xai recv: response.output_item.added
+xai recv: conversation.item.added
+xai recv: response.function_call_arguments.delta
+xai recv: response.function_call_arguments.done
+xai recv: response.output_item.done
+xai recv: response.done
+xai recv (late): ping (x2), conversation.item.added, response.created,
+  response.output_item.added, conversation.item.added, response.content_part.added,
+  response.output_audio.delta (x5), response.output_audio_transcript.done,
+  response.content_part.done, response.output_audio.done, response.output_item.done,
+  response.done
+xai final_text='' audio_transcript='Your favorite color is teal.' elapsed=1.36s coherent=True
+
+[xai] waiting 20s before submitting function_call_output (interrupt=True) ...
+  ... (tool call fires, interim "how are you" response drained — also audio-only) ...
+xai final_text='' audio_transcript='Got it—teal it is! Anything else on your mind?'
+elapsed=3.46s coherent=True
+
+[xai] waiting 30s before submitting function_call_output (interrupt=False) ...
+xai final_text='' audio_transcript='Your favorite color is teal.' elapsed=1.19s coherent=True
+
+[xai] waiting 30s before submitting function_call_output (interrupt=True) ...
+xai final_text='' audio_transcript='Got it—teal it is! Anything else on your mind?'
+elapsed=2.13s coherent=True
+
+=== SUMMARY ===
+openai_delay20_interruptFalse: PASS
+openai_delay20_interruptTrue: FAIL
+openai_delay30_interruptFalse: PASS
+openai_delay30_interruptTrue: FAIL
+xai_delay20_interruptFalse: PASS
+xai_delay20_interruptTrue: PASS
+xai_delay30_interruptFalse: PASS
+xai_delay30_interruptTrue: PASS
+```
+
+(Per-event-type lines collapsed with counts for readability — no event types omitted, only
+repeated `*.delta` lines of the same type were counted rather than listed individually.)
