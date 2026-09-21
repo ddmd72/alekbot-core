@@ -98,6 +98,10 @@ def load_settings():
         "TWILIO_ACCOUNT_SID": os.getenv("TWILIO_ACCOUNT_SID", ""),
         "TWILIO_AUTH_TOKEN": os.getenv("TWILIO_AUTH_TOKEN", ""),
         "TWILIO_PHONE_NUMBER": os.getenv("TWILIO_PHONE_NUMBER", ""),
+        # Twilio Verify service — phone-binding OTP (Slice 1 Task 11). Same
+        # graceful-absence status as the TWILIO_* keys above: the Cabinet's
+        # phone-binding routes 501 when this (or the client) isn't configured.
+        "TWILIO_VERIFY_SERVICE_SID": os.getenv("TWILIO_VERIFY_SERVICE_SID", ""),
         # Voice relay's own wss:// media-stream URL (Task 14 deploys the relay itself) —
         # same empty-string-default, gracefully-absent-for-now status as the TWILIO_*
         # keys above, not a bare-None secret the whole app depends on.
