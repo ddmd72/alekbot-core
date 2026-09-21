@@ -50,6 +50,8 @@ def create_voice_webhook_blueprint(
     lelik_agent_factory,
     answer_url,
     one_call_ttl_s: int = 3600,
+    prompt_builder=None,
+    relay_stream_url: str = "",
 ) -> Blueprint:
     bp = Blueprint("voice_webhook", __name__)
 
@@ -107,6 +109,60 @@ def create_voice_webhook_blueprint(
         vr = VoiceResponse()
         vr.say("Calling you back.")
         vr.hangup()
+        return Response(str(vr), mimetype="text/xml")
+
+    @bp.route("/voice/answer", methods=["POST"])
+    async def voice_answer():
+        """Twilio's webhook for the callback leg once it is answered.
+
+        1. AMD gate: if Twilio's `AnsweredBy` machine detection says a
+           machine/voicemail picked up, hang up immediately without ever
+           resolving the ticket or opening a persona/session - no point
+           spending an LLM call assembling Lelik's prompt for an answering
+           machine.
+        2. Resolve the ticket minted by `voice_auth` back to the caller's
+           identity via `EphemeralStore`. A ticket that isn't there (already
+           redeemed, expired, or forged) gets rejected outright - never open
+           a session without a known user_id/account_id.
+        3. Assemble Lelik's persona via `PromptBuilderPort.build_for_agent`
+           and stash it back onto the ticket (relay's `/voice/session-config`
+           reads it from there, Task 5/Task 4 territory) before pointing the
+           call at the relay's media-stream WebSocket.
+        """
+        form = await request.form
+        answered_by = form.get("AnsweredBy", "")
+        ticket = form.get("ticket", "")
+
+        if answered_by.startswith("machine"):
+            logger.info(
+                f"voice answer: machine detected ({answered_by}) for ticket {ticket}, "
+                "hanging up without opening a session"
+            )
+            vr = VoiceResponse()
+            vr.hangup()
+            return Response(str(vr), mimetype="text/xml")
+
+        ticket_key = f"voice_ticket:{ticket}"
+        identity = await ephemeral_store.get(ticket_key)
+        if identity is None:
+            logger.warning(f"voice answer: no identity found for ticket {ticket}, rejecting")
+            return _twiml_reject()
+
+        instructions = await prompt_builder.build_for_agent(
+            agent_type="lelik",
+            user_id=identity["user_id"],
+            account_id=identity["account_id"],
+        )
+        await ephemeral_store.set(
+            ticket_key,
+            {**identity, "instructions": instructions},
+            ttl_s=_TICKET_TTL_S,
+        )
+
+        vr = VoiceResponse()
+        connect = vr.connect()
+        stream = connect.stream(url=relay_stream_url)
+        stream.parameter(name="ticket", value=ticket)
         return Response(str(vr), mimetype="text/xml")
 
     return bp
