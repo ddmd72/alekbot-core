@@ -98,6 +98,10 @@ def load_settings():
         "TWILIO_ACCOUNT_SID": os.getenv("TWILIO_ACCOUNT_SID", ""),
         "TWILIO_AUTH_TOKEN": os.getenv("TWILIO_AUTH_TOKEN", ""),
         "TWILIO_PHONE_NUMBER": os.getenv("TWILIO_PHONE_NUMBER", ""),
+        # Voice relay's own wss:// media-stream URL (Task 14 deploys the relay itself) —
+        # same empty-string-default, gracefully-absent-for-now status as the TWILIO_*
+        # keys above, not a bare-None secret the whole app depends on.
+        "VOICE_RELAY_STREAM_URL": os.getenv("VOICE_RELAY_STREAM_URL", ""),
     }
 
     if settings["GOOGLE_CLOUD_PROJECT"] and not env_config.use_emulator:

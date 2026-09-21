@@ -73,7 +73,7 @@ async def test_bound_number_mints_ticket_and_marker_then_originates_callback(dep
     set_calls = {c.args[0]: c.args[1] for c in ephemeral_store.set.await_args_list}
     assert any(key.startswith("voice_ticket:") for key in set_calls)
     assert "voice_one_call:u1" in set_calls
-    lelik_agent_factory.assert_called_once_with(user_id="u1", account_id="a1")
+    lelik_agent_factory.assert_called_once_with(user_id="u1", account_id="a1", to_number="+346001")
     lelik_agent.execute.assert_awaited_once()
     alert_sink.post.assert_not_called()
 

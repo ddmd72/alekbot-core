@@ -8,6 +8,7 @@ from slack_bolt.async_app import AsyncApp
 from src.config.settings import load_settings
 from src.web.worker_oidc_verifier import verify_worker_oidc
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
+from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
@@ -866,6 +867,40 @@ async def main():
                     "✅ Voice control-plane blueprint registered at "
                     "/voice/session-config, /voice/submit-transcript"
                 )
+
+                # /voice/auth, /voice/answer — Twilio's own webhooks (Task 8/9),
+                # never registered until now (Task 10b: found as a real gap during
+                # Task 10's review). Reuses voice_ephemeral_store minted just above
+                # (same ticket/one-call-marker store the control plane reads/releases,
+                # not a second FirestoreEphemeralStore instance) plus other
+                # already-constructed instances: user_repo, _alert_webhook,
+                # notification_service, agent_factory.
+                #
+                # prompt_builder needs a REAL FactRepository (unlike companion_prompt_builder
+                # above, which is deliberately repo=None because its only caller always
+                # passes include_biographical=False) — voice_answer's build_for_agent call
+                # uses the include_biographical=True default, so Lelik gets the same
+                # biographical context every other agent gets. container.repository +
+                # container.assembly_service are both already-constructed shared ports;
+                # this just composes them the same way companion_prompt_builder/
+                # _email_prompt_builder do above and in service_container.py.
+                voice_prompt_builder = PromptBuilder(
+                    repo=container.repository, assembly_service=container.assembly_service
+                )
+
+                main_app.register_blueprint(
+                    create_voice_webhook_blueprint(
+                        user_repository=user_repo,
+                        ephemeral_store=voice_ephemeral_store,
+                        alert_sink=_alert_webhook,
+                        notification_service=notification_service,
+                        lelik_agent_factory=agent_factory._build_lelik,
+                        answer_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/voice/answer",
+                        prompt_builder=voice_prompt_builder,
+                        relay_stream_url=config.get("VOICE_RELAY_STREAM_URL", ""),
+                    )
+                )
+                logger.info("✅ Voice webhook blueprint registered at /voice/auth, /voice/answer")
 
                 # ====================================================================
                 # PHASE 3: Telegram Integration (Optional)
