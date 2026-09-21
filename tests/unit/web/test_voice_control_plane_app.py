@@ -136,6 +136,34 @@ async def test_submit_transcript_releases_marker_even_if_usage_recording_fails(a
 
 
 @pytest.mark.asyncio
+async def test_submit_transcript_passes_user_and_account_id_to_summary_consumer(app_and_deps):
+    """Task 15: the real summary_consumer (CompanionExtractorRunner.extract +
+    notify_call_summary) needs user_id/account_id to identify who to summarize
+    for and where to deliver — both must reach the consumer as kwargs."""
+    app, ephemeral_store, quota_service, prompt_content_store, summary_consumer, _ = app_and_deps
+
+    client = app.test_client()
+    payload = {
+        "call_id": "c1",
+        "user_id": "u1",
+        "account_id": "a1",
+        "transcript_text": "hi there",
+        "usage_by_model": {},
+        "turns": [{"request_text": "hi", "response_text": "hello"}],
+    }
+    response = await client.post("/voice/submit-transcript", json=payload, headers={"Authorization": "Bearer x"})
+
+    assert response.status_code == 200
+    summary_consumer.assert_awaited_once_with(
+        call_id="c1",
+        user_id="u1",
+        account_id="a1",
+        transcript_text="hi there",
+        turns=[{"request_text": "hi", "response_text": "hello"}],
+    )
+
+
+@pytest.mark.asyncio
 async def test_submit_transcript_releases_marker_even_if_summary_consumer_fails(app_and_deps):
     """A summary-consumer failure must not leave the one-call marker stuck —
     that would permanently lock the user out of ever calling again."""

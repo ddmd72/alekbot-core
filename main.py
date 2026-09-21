@@ -868,16 +868,33 @@ async def main():
                         return True
                     return verify_worker_oidc(auth_header, sa_email)
 
-                async def _voice_summary_consumer_placeholder(*, call_id, transcript_text, turns):
-                    # Task 15 wires the real LelikSummarizerAgent-backed consumer.
-                    logger.info(f"voice call {call_id}: summary consumer not yet wired (Task 15)")
+                async def _voice_summary_consumer(*, call_id, user_id, account_id, transcript_text, turns):
+                    # LelikSummarizerAgent-backed consumer (Task 15). Reuses
+                    # companion_extractor_runner (constructed above, "Initializing
+                    # Companion Extraction pipeline") the same way tutor batches do,
+                    # just with companion_type="voice" — turns are already
+                    # {"request_text", "response_text", ...} dicts (see
+                    # HttpCallControlPlaneAdapter.submit_transcript), the same
+                    # List[dict] shape CompanionExtractorRunner.extract() expects,
+                    # so no reshaping is needed before handing them over.
+                    extraction = await companion_extractor_runner.extract(
+                        companion_type="voice",
+                        account_id=account_id,
+                        created_by_user_id=user_id,
+                        messages=turns,
+                    )
+                    summary = extraction.get("summary") or ""
+                    if not summary:
+                        logger.warning(f"voice call {call_id}: summarizer returned an empty summary, nothing to deliver")
+                        return
+                    await notification_service.notify_call_summary(user_id, account_id, summary)
 
                 main_app.register_blueprint(
                     create_voice_control_plane_blueprint(
                         ephemeral_store=voice_ephemeral_store,
                         quota_service=quota_service,
                         prompt_content_store=container.prompt_content_store,
-                        summary_consumer=_voice_summary_consumer_placeholder,
+                        summary_consumer=_voice_summary_consumer,
                         oidc_verifier=_voice_oidc_verifier,
                     )
                 )

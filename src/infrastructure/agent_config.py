@@ -297,6 +297,23 @@ class TutorExtractorAgentConfig:
 
 
 # ---------------------------------------------------------------------------
+# LelikSummarizerAgent (src/agents/lelik_summarizer_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class VoiceSummarizerAgentConfig:
+    # Single-shot plain-text summary call over one call's turns — no structured
+    # JSON, no records (Lelik has no CompanionRecord store, RFC §4.9), so this
+    # is far cheaper than TutorExtractorAgentConfig's 5-min JSON-extraction
+    # budget. A phone call's transcript is bounded by call duration, not an
+    # accumulating batch window like the tutor's. Confirm this value against
+    # real turn counts during Task 20's manual verification.
+    timeout_ms: int = 60_000  # 1 min
+    max_tokens: int = 2048
+    temperature: float = 0.3
+
+
+# ---------------------------------------------------------------------------
 # Module-level instances — agents import and reference these at class-definition time
 # ---------------------------------------------------------------------------
 
@@ -308,6 +325,7 @@ MEMORY_SEARCH = MemorySearchAgentConfig()
 WEB_SEARCH = WebSearchAgentConfig()
 CONSOLIDATION = ConsolidationAgentConfig()
 TUTOR_EXTRACTOR = TutorExtractorAgentConfig()
+VOICE_SUMMARIZER = VoiceSummarizerAgentConfig()
 EMAIL_SEARCH = EmailSearchAgentConfig()
 EMAIL_CLASSIFICATION = EmailClassificationAgentConfig()
 DEEP_RESEARCH = DeepResearchAgentConfig()
