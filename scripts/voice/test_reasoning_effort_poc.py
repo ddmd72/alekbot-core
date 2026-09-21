@@ -59,7 +59,13 @@ def _session_config(effort: str) -> dict:
 
 
 async def _run_turn(ws, text: str) -> dict:
-    """Send one user turn, wait for response.done, return timing/usage/text for that turn."""
+    """Send one user turn, wait for response.done, return timing/usage/text for that turn.
+
+    Catch-and-continue on an "error" event, matching test_late_function_call_output_poc.py's
+    run_provider_case pattern (returns a failure signal instead of raising) — so one bad turn
+    doesn't crash the whole multi-level run. Returns {"error": None, ...} on success or
+    {"error": <event or reason>, "text": ..., "elapsed_s": ..., "usage": None} on failure.
+    """
     await ws.send(json.dumps({
         "type": "conversation.item.create",
         "item": {"type": "message", "role": "user", "content": [
@@ -71,7 +77,6 @@ async def _run_turn(ws, text: str) -> dict:
     await ws.send(json.dumps({"type": "response.create"}))
 
     final_text = ""
-    usage = None
     async for raw in ws:
         event = json.loads(raw)
         if event["type"] in ("response.output_text.delta", "response.text.delta"):
@@ -80,36 +85,72 @@ async def _run_turn(ws, text: str) -> dict:
             elapsed = time.monotonic() - t0
             response = event.get("response", {})
             usage = response.get("usage")
-            break
+            return {"text": final_text, "elapsed_s": elapsed, "usage": usage, "error": None}
         if event["type"] == "error":
-            raise RuntimeError(f"error event during turn {text!r}: {event}")
+            elapsed = time.monotonic() - t0
+            return {"text": final_text, "elapsed_s": elapsed, "usage": None, "error": event}
 
-    return {"text": final_text, "elapsed_s": elapsed, "usage": usage}
+    # connection closed without a terminal event
+    elapsed = time.monotonic() - t0
+    return {"text": final_text, "elapsed_s": elapsed, "usage": None,
+            "error": {"type": "connection_closed_without_response.done"}}
+
+
+def _failed_summary(effort: str, reason, turn_results: list) -> dict:
+    """Build a FAIL summary for an effort level that couldn't complete all 6 turns —
+    catch-and-continue: the caller still gets a row in the final table instead of a crash.
+    """
+    latencies = [r["elapsed_s"] for r in turn_results]
+    print(f"  --- summary: effort={effort} FAILED ({len(turn_results)}/{len(RETENTION_PROBE_SCRIPT)} "
+          f"turns completed) reason={reason}")
+    return {
+        "effort": effort,
+        "retention_pass": False,
+        "final_reply": None,
+        "total_elapsed_s": sum(latencies) if latencies else 0.0,
+        "p50_latency_s": statistics.median(latencies) if latencies else 0.0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_reasoning_tokens": None,
+        "cost_usd": 0.0,
+    }
 
 
 async def run_effort_level(effort: str, config: dict) -> dict:
-    """Run the full 6-turn retention probe at one reasoning-effort level."""
+    """Run the full 6-turn retention probe at one reasoning-effort level.
+
+    Catch-and-continue on any error (session.update rejection, a mid-probe "error" event, or a
+    transport-level failure) — matching test_late_function_call_output_poc.py's pattern of
+    returning a failure signal rather than raising, so one bad effort level doesn't take down
+    the whole 5-level run.
+    """
     headers = {"Authorization": f"Bearer {config['OPENAI_API_KEY']}"}
     turn_results = []
 
     print(f"\n=== reasoning_effort={effort} ===")
-    async with websockets.connect(OPENAI_WS_URL, additional_headers=headers) as ws:
-        await ws.send(json.dumps({
-            "type": "session.update",
-            "session": _session_config(effort),
-        }))
-        # drain session.updated before the first turn
-        async for raw in ws:
-            event = json.loads(raw)
-            if event["type"] == "session.updated":
-                break
-            if event["type"] == "error":
-                raise RuntimeError(f"session.update rejected for effort={effort}: {event}")
+    try:
+        async with websockets.connect(OPENAI_WS_URL, additional_headers=headers) as ws:
+            await ws.send(json.dumps({
+                "type": "session.update",
+                "session": _session_config(effort),
+            }))
+            # drain session.updated before the first turn
+            async for raw in ws:
+                event = json.loads(raw)
+                if event["type"] == "session.updated":
+                    break
+                if event["type"] == "error":
+                    return _failed_summary(effort, f"session.update rejected: {event}", turn_results)
 
-        for i, turn_text in enumerate(RETENTION_PROBE_SCRIPT):
-            result = await _run_turn(ws, turn_text)
-            turn_results.append(result)
-            print(f"  turn {i+1}/6 [{result['elapsed_s']:.2f}s]: {turn_text!r} -> {result['text']!r}")
+            for i, turn_text in enumerate(RETENTION_PROBE_SCRIPT):
+                result = await _run_turn(ws, turn_text)
+                if result["error"] is not None:
+                    print(f"  turn {i+1}/6 FAIL: error event {result['error']}")
+                    return _failed_summary(effort, f"turn {i+1} error: {result['error']}", turn_results)
+                turn_results.append(result)
+                print(f"  turn {i+1}/6 [{result['elapsed_s']:.2f}s]: {turn_text!r} -> {result['text']!r}")
+    except Exception as exc:
+        return _failed_summary(effort, f"transport exception: {exc}", turn_results)
 
     final_reply = turn_results[-1]["text"]
     retention_pass = "ivan petrov" in final_reply.lower()
