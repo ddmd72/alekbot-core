@@ -1,6 +1,8 @@
 import json
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
+import websockets
+
 from src.domain.voice_audio_frame import AudioFrame
 from src.ports.realtime_session_port import RealtimeSessionEvent, RealtimeSessionPort
 from src.utils.logger import logger
@@ -17,7 +19,7 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
     """RealtimeSessionPort against OpenAI's Realtime API (GA session shape,
     verified live during Phase 0 spikes - see RFC §4.7 and §9)."""
 
-    def __init__(self, api_key: str, model: str = _MODEL, ws_connect: Optional[Callable] = None) -> None:
+    def __init__(self, api_key: str, model: str = _MODEL, ws_connect: Callable = websockets.connect) -> None:
         self._api_key = api_key
         self._model = model
         self._connect = ws_connect
@@ -63,7 +65,7 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
         if event_type == "response.function_call_arguments.done":
             return RealtimeSessionEvent(
                 type="tool_call",
-                payload={"call_id": event["call_id"], "name": event.get("name"), "arguments": event.get("arguments")},
+                payload={"call_id": event.get("call_id"), "name": event.get("name"), "arguments": event.get("arguments")},
             )
         if event_type == "response.done":
             usage = (event.get("response") or {}).get("usage", {})
