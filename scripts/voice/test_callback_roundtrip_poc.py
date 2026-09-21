@@ -45,7 +45,10 @@ app = Quart(__name__)
 ACCOUNT_SID = os.environ["TWILIO_ACCOUNT_SID"]
 AUTH_TOKEN = os.environ["TWILIO_AUTH_TOKEN"]
 FROM_NUMBER = os.environ["TWILIO_PHONE_NUMBER"]
-BOUND_NUMBER = os.environ["SPIKE_BOUND_NUMBER"]  # the owner's real phone, E.164 — set per-run, not in .env
+BOUND_NUMBER = os.environ["SPIKE_BOUND_NUMBER"].strip()  # the owner's real phone, E.164 — set
+# per-run, not in .env. .strip() added after review: an un-normalized comparison would silently
+# reject a legitimate call on a stray trailing space/newline from copy-pasting the env var,
+# burning one of only 5 live person-answer trials with no hint the mismatch was whitespace.
 PUBLIC_BASE_URL = os.environ["SPIKE_NGROK_URL"]  # e.g. https://abcd1234.ngrok.io
 
 client = Client(ACCOUNT_SID, AUTH_TOKEN)
@@ -55,7 +58,7 @@ call_log = {}
 @app.route("/auth", methods=["POST"])
 async def auth_webhook():
     form = await request.form
-    caller = form.get("From")
+    caller = (form.get("From") or "").strip()
     inbound_ts = time.monotonic()
     print(f"[{datetime.now().isoformat()}] inbound call from {caller}")
     if caller != BOUND_NUMBER:
