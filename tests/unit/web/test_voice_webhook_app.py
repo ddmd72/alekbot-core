@@ -69,62 +69,136 @@ async def test_unbound_number_rejected_and_alerted_before_any_callback(deps):
 
 
 @pytest.mark.asyncio
-async def test_bound_number_mints_ticket_and_marker_then_originates_callback(deps):
+async def test_bound_number_mints_ticket_and_parks_callback_without_originating(deps):
+    """The callback must not be placed while the caller's line is still on this dial:
+    the carrier refuses the second call and the user gets a missed-call SMS. /voice/auth
+    only parks it under the inbound CallSid."""
     user_repository, ephemeral_store, alert_sink, notification_service, lelik_agent, lelik_agent_factory = deps
     user_repository.get_user_by_platform_id.return_value = MagicMock(user_id="u1", account_id="a1")
     ephemeral_store.get.return_value = None  # no existing one-call marker
 
     app = _app(deps)
     client = app.test_client()
-    response = await client.post("/voice/auth", form={"From": "+346001"})
+    response = await client.post("/voice/auth", form={"From": "+346001", "CallSid": "CAin"})
 
     body = (await response.get_data()).decode()
-    assert "<Hangup" in body
+    assert "<Say>" in body and "<Hangup" in body
     assert "<Reject" not in body
 
-    set_calls = {c.args[0]: c.args[1] for c in ephemeral_store.set.await_args_list}
-    assert any(key.startswith("voice_ticket:") for key in set_calls)
-    assert "voice_one_call:u1" in set_calls
-    lelik_agent_factory.assert_called_once_with(user_id="u1", account_id="a1", to_number="+346001")
-    lelik_agent.execute.assert_awaited_once()
+    set_calls = {c.args[0]: (c.args[1], c.kwargs["ttl_s"]) for c in ephemeral_store.set.await_args_list}
+    ticket_key = next(key for key in set_calls if key.startswith("voice_ticket:"))
+    assert set_calls[ticket_key][0] == {"user_id": "u1", "account_id": "a1"}
+    # Marker at the short TTL while only parked.
+    assert set_calls["voice_one_call:u1"][1] == 300
+    pending, _ = set_calls["voice_pending_callback:CAin"]
+    assert pending == {
+        "ticket": ticket_key.split(":", 1)[1], "user_id": "u1", "account_id": "a1", "to_number": "+346001",
+    }
+
+    lelik_agent_factory.assert_not_called()
+    lelik_agent.execute.assert_not_called()
+    notification_service.notify_raw.assert_not_called()
     alert_sink.post.assert_not_called()
 
+
+@pytest.mark.asyncio
+async def test_dial_without_call_sid_is_rejected(deps):
+    user_repository, ephemeral_store, _, _, _, _ = deps
+    user_repository.get_user_by_platform_id.return_value = MagicMock(user_id="u1", account_id="a1")
+    ephemeral_store.get.return_value = None
+
+    response = await _app(deps).test_client().post("/voice/auth", form={"From": "+346001"})
+
+    assert "<Reject" in (await response.get_data()).decode()
+    ephemeral_store.set.assert_not_called()
+
+
+_PENDING = {"ticket": "t1", "user_id": "u1", "account_id": "a1", "to_number": "+346001"}
+
+
+@pytest.mark.asyncio
+async def test_inbound_completed_originates_the_parked_callback(deps):
+    _, ephemeral_store, alert_sink, notification_service, lelik_agent, lelik_agent_factory = deps
+    ephemeral_store.get_and_delete.return_value = dict(_PENDING)
+
+    response = await _app(deps).test_client().post(
+        "/voice/inbound-status", form={"CallSid": "CAin", "CallStatus": "completed"},
+    )
+
+    assert response.status_code == 200
+    ephemeral_store.get_and_delete.assert_awaited_once_with("voice_pending_callback:CAin")
+    # Marker extended to the full call window once the callback is really going out.
+    marker = [c for c in ephemeral_store.set.await_args_list if c.args[0] == "voice_one_call:u1"]
+    assert marker and marker[-1].kwargs["ttl_s"] == 3600
+    lelik_agent_factory.assert_called_once_with(user_id="u1", account_id="a1", to_number="+346001")
+    lelik_agent.execute.assert_awaited_once()
+    assert lelik_agent.execute.await_args.kwargs["ticket"] == "t1"
+    assert lelik_agent.execute.await_args.kwargs["answer_url"] == "https://main.example.com/voice/answer"
     notification_service.notify_raw.assert_awaited_once()
-    _, notify_kwargs = notification_service.notify_raw.await_args
-    assert notify_kwargs["user_id"] == "u1"
-    assert notify_kwargs["account_id"] == "a1"
-    assert isinstance(notify_kwargs["text"], str) and notify_kwargs["text"]
+    assert notification_service.notify_raw.await_args.kwargs["user_id"] == "u1"
+    alert_sink.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_inbound_status_places_no_second_call(deps):
+    _, ephemeral_store, _, notification_service, lelik_agent, _ = deps
+    ephemeral_store.get_and_delete.return_value = None  # already claimed
+
+    response = await _app(deps).test_client().post(
+        "/voice/inbound-status", form={"CallSid": "CAin", "CallStatus": "completed"},
+    )
+
+    assert response.status_code == 200
+    lelik_agent.execute.assert_not_called()
+    notification_service.notify_raw.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call_status", ["initiated", "ringing", "in-progress"])
+async def test_non_terminal_inbound_status_is_ignored(deps, call_status):
+    _, ephemeral_store, _, _, lelik_agent, _ = deps
+
+    await _app(deps).test_client().post(
+        "/voice/inbound-status", form={"CallSid": "CAin", "CallStatus": call_status},
+    )
+
+    ephemeral_store.get_and_delete.assert_not_called()
+    lelik_agent.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call_status", ["no-answer", "busy", "failed", "canceled"])
+async def test_dial_that_never_completed_releases_without_calling_back(deps, call_status):
+    _, ephemeral_store, _, _, lelik_agent, _ = deps
+    ephemeral_store.get_and_delete.return_value = dict(_PENDING)
+
+    await _app(deps).test_client().post(
+        "/voice/inbound-status", form={"CallSid": "CAin", "CallStatus": call_status},
+    )
+
+    deleted = {c.args[0] for c in ephemeral_store.delete.await_args_list}
+    assert deleted == {"voice_ticket:t1", "voice_one_call:u1"}
+    lelik_agent.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_origination_failure_releases_ticket_and_marker_and_alerts(deps):
-    """If lelik_agent.execute() raises (network blip, agent error, ...), the
-    ticket and one-call marker minted just before the call must not be left
-    stuck for up to one_call_ttl_s - this is the mint-side counterpart to
-    Task 7's submit_transcript release-on-failure guarantee (commit
-    d1dd648). The handler must also alert and return graceful TwiML, not a
-    bare 500."""
-    user_repository, ephemeral_store, alert_sink, notification_service, lelik_agent, lelik_agent_factory = deps
-    user_repository.get_user_by_platform_id.return_value = MagicMock(user_id="u1", account_id="a1")
-    ephemeral_store.get.return_value = None  # no existing one-call marker
+    """If lelik_agent.execute() raises (network blip, agent error, ...), the ticket
+    and one-call marker must not be left stuck for up to one_call_ttl_s - the
+    mint-side counterpart to submit_transcript's release-on-failure guarantee
+    (commit d1dd648). The caller has already hung up, so there is no TwiML to
+    apologise with - an alert and a clean 200 to Twilio."""
+    _, ephemeral_store, alert_sink, notification_service, lelik_agent, _ = deps
+    ephemeral_store.get_and_delete.return_value = dict(_PENDING)
     lelik_agent.execute.side_effect = RuntimeError("origination boom")
 
-    app = _app(deps)
-    client = app.test_client()
-    response = await client.post("/voice/auth", form={"From": "+346001"})
+    response = await _app(deps).test_client().post(
+        "/voice/inbound-status", form={"CallSid": "CAin", "CallStatus": "completed"},
+    )
 
-    # Response must be graceful TwiML, not a crash.
     assert response.status_code == 200
-    body = (await response.get_data()).decode()
-    assert "<Response" in body
-
-    set_calls = {c.args[0]: c.args[1] for c in ephemeral_store.set.await_args_list}
-    ticket_key = next(key for key in set_calls if key.startswith("voice_ticket:"))
-
-    deleted_keys = {c.args[0] for c in ephemeral_store.delete.await_args_list}
-    assert ticket_key in deleted_keys
-    assert "voice_one_call:u1" in deleted_keys
-
+    deleted = {c.args[0] for c in ephemeral_store.delete.await_args_list}
+    assert deleted == {"voice_ticket:t1", "voice_one_call:u1"}
     alert_sink.post.assert_awaited_once()
     notification_service.notify_raw.assert_not_called()
 
@@ -397,6 +471,7 @@ async def test_status_callback_is_idempotent_when_ticket_already_released():
         ("/voice/auth", {"From": "+346001"}),
         ("/voice/answer?ticket=t1", {"CallSid": "CA1", "AnsweredBy": "human"}),
         ("/voice/status?ticket=t1", {"CallSid": "CA1", "CallStatus": "completed"}),
+        ("/voice/inbound-status", {"CallSid": "CA1", "CallStatus": "completed"}),
     ],
 )
 async def test_every_twilio_route_rejects_an_invalid_signature(path, form):

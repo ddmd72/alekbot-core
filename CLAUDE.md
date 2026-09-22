@@ -219,8 +219,10 @@ stale `running` jobs.
 
 **Voice Companion (Lelik)** — a phone call to the exocortex, not a chat surface. The owner dials the
 Twilio number; `/voice/auth` resolves the caller's `From` to a user (platform `"phone"`), enforces a
-one-call-per-user marker, mints a short-TTL **ticket**, and has `LelikAgent` originate a *callback* to
-the bound number (inbound dial is never the conversation leg — the callback is what proves identity).
+one-call-per-user marker, mints a short-TTL **ticket** and parks the callback under the inbound
+`CallSid`. Only when that dial ends (`/voice/inbound-status`, `completed`) does `LelikAgent` originate
+the *callback*. Placed any earlier, it hit the inbound dial's teardown and the carrier returned SIP
+480 (inbound dial is never the conversation leg — the callback is what proves identity).
 On pickup, `/voice/answer` has `LelikPersonaService` assemble Lelik's prompt and returns TwiML
 pointing Twilio's Media Stream at the relay. **Lelik starts warm, not as a front desk** (owner
 decision 2026-09-22, `decisions/lelik_warm_context.md`). He gets the whole biographical cache minus

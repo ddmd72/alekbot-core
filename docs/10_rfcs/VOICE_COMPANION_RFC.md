@@ -289,12 +289,30 @@ requirement instead of satisfying it.
 ```
 inbound dial → auth webhook (MAIN service)
   → number in the caller's platform map?  no → <Reject>, AlertSinkPort, done
-  → AuthDecision minted into the short-TTL ticket store (§4.5), one-call marker taken (§3)
+  → AuthDecision minted into the short-TTL ticket store (§4.5), one-call marker taken (§3),
+    callback parked under the inbound CallSid
   → TwiML: <Say> "calling you back" + <Hangup>
+inbound dial ENDS → INBOUND-STATUS webhook ("Call status changes" on the number), CallStatus=completed
+  → parked callback claimed atomically (a retried status delivery finds nothing)
   → LelikAgent.execute(purpose="user asked to talk") → TelephonyPort → outbound call
        answer-URL carries the ticket → ANSWER webhook (a different endpoint) → session TwiML
   → relay opens the WS, exchanges the ticket, session begins
 ```
+
+**The callback waits for the inbound dial to end.** The first build originated it from inside the
+auth webhook. It then reached the handset exactly while the ~2 s inbound dial ("calling you back" +
+hangup) was being torn down, and the carrier answered **SIP 480 Temporarily Unavailable** within a
+second. The owner got a missed-call SMS. A busy line is not the cause in itself: a callback that
+lands in the middle of the inbound call shows as a second incoming call. The cause is the teardown
+window, and spike 0.6's four instant `no-answer`s were the same 480. A fixed delay would only guess
+at that window, while the inbound call's own `completed` status marks its end. It needs one extra piece of number configuration ("Call status changes"
+→ `/voice/inbound-status`). While the callback is only parked, the marker holds the ticket's short
+TTL, so a status that never arrives locks the caller out for minutes, not an hour.
+
+**Region note.** An inbound dial is processed, and its webhooks are signed, in the region the
+number's *Active Region* names, and every region has its own auth token. The callback leg belongs to
+the region of the REST API that created it (`api.twilio.com` = US1). v1 keeps the number's Active
+Region on **US1**, so one token verifies every webhook.
 
 **The answer-URL is not the auth webhook.** They are two endpoints. Pointing the outbound call's
 answer-URL at the inbound handler is a loop that dials until something breaks — worth stating

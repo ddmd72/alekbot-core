@@ -49,6 +49,15 @@ unanswered; there is nothing for AMD to detect because the call never actually c
 anything. This is not a failed test of AMD — it's a real, useful finding in its own right (see
 Verdict).
 
+> **Correction (2026-09-22, first deployed call):** those four were **not** unanswered time-outs.
+> A time-out takes the full ring timeout (55 s). They ended within 1–3 s with **SIP 480
+> Temporarily Unavailable** from the carrier (Twilio call events, `sip_response_code`), and the
+> first real call reproduced it. This script originated the callback from inside `/auth`, so it
+> sometimes reached the handset while the ~2 s inbound dial was being torn down. A callback that
+> lands during the inbound call instead shows as a second incoming call, which is what the owner
+> saw on the successful trials. The fix is to originate on the inbound dial's `completed` status
+> (RFC §4.6).
+
 **Infra note, same class as spike 0.2's:** updating the Twilio number's Voice Configuration via
 the classic REST API (`IncomingPhoneNumbers.voice_url`) did not reliably take effect for live call
 routing during this session, even though re-reading the same API confirmed the write succeeded and
