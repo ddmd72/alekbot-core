@@ -371,3 +371,12 @@ async def test_truncate_sends_conversation_item_truncate():
         "type": "conversation.item.truncate", "item_id": "item_42", "content_index": 0, "audio_end_ms": 1500,
     }
     OPENAI_REALTIME_TRUNCATE_SHAPE.validate("openai_realtime", ws.sent[-1])
+
+
+@pytest.mark.asyncio
+async def test_open_sets_the_cedar_output_voice():
+    ws = FakeWebSocket(incoming=[])
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    assert ws.sent[0]["session"]["audio"]["output"]["voice"] == "cedar"
