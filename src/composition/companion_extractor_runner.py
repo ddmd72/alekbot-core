@@ -95,7 +95,9 @@ class CompanionExtractorRunner(CompanionExtractorPort):
             recipient=agent.agent_id,
             intent=AgentIntent.DELEGATE,
             payload={"task": EXTRACTION_TASK, "messages": messages},
-            context={"account_id": account_id},
+            # user_id lets the extractor load the user's prompt overrides (e.g. the
+            # LANG_* output-language slot), exactly as a user-facing agent would.
+            context={"account_id": account_id, "user_id": created_by_user_id},
         )
         response = await agent.process(message)
         if response.status != AgentStatus.SUCCESS:

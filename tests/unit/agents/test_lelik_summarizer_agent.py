@@ -89,3 +89,17 @@ async def test_execute_prompt_builder_failure(mock_llm):
     response = await agent.execute(_message())
     assert response.status == AgentStatus.FAILED
     assert "PromptBuilder failed" in response.error
+
+
+@pytest.mark.asyncio
+async def test_prompt_is_built_for_the_callers_identity_so_language_overrides_apply(agent, mock_prompt_builder):
+    """The summary lands in the user's chat, so it follows their LANG_* override - which
+    only loads when build_for_agent knows who the user is."""
+    message = _message()
+    message.context["user_id"] = "user-1"
+
+    await agent.execute(message)
+
+    kwargs = mock_prompt_builder.build_for_agent.await_args.kwargs
+    assert kwargs["user_id"] == "user-1"
+    assert kwargs["account_id"] == "acc-1"

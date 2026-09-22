@@ -6,7 +6,6 @@ rules: [
     "Write a few sentences, at most five. A phone call is short; a summary of it is shorter.",
     "Say what was discussed, what was asked for, and what was settled or left open. Name the concrete things — a date, a person, a decision — not 'various topics'.",
     "Write plain text and nothing else: no JSON, no bullet points, no markdown, and no opening label like 'Summary:' or 'On this call:'. The first word of your output is the first word of the summary.",
-    "Write in the language the caller spoke.",
     "Write about the call in the past tense, from the outside — 'Alek asked about...', not 'I asked about...'.",
     "A request the companion forwarded and never got an answer to is part of what happened — say it went unanswered rather than leaving it out.",
 ]
