@@ -13,6 +13,12 @@ _CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
 # model (OpenAITranscriptionAdapter.DEFAULT_MODEL) for consistency rather than the
 # realtime-specific whisper-1/gpt-realtime-whisper options that also appear in the docs.
 _TRANSCRIPTION_MODEL = "gpt-transcribe"
+# The billing-leg keys calculate_realtime_cost/VoiceCallBuffer.add_usage recognize -
+# used by _flatten_usage to detect when the undifferentiated-totals fallback path
+# produced a dict none of them price (see the warning below).
+_KNOWN_BILLING_LEG_KEYS = frozenset(
+    {"audio_input_tokens", "audio_output_tokens", "text_input_tokens", "text_output_tokens", "cached_tokens"}
+)
 
 
 def _strip_cache_boundary(instructions: str) -> str:
@@ -29,11 +35,15 @@ def _flatten_usage(usage: dict) -> Dict[str, int]:
     "input_token_details": {"text_tokens", "audio_tokens", "cached_tokens",
     "cached_tokens_details": {"text_tokens", "audio_tokens"}},
     "output_token_details": {"text_tokens", "audio_tokens"}}`` — NOT flat
-    ``audio_input_tokens``/etc keys (verified against developers.openai.com's
-    live reference plus community-reported real payloads, checked
-    2026-09-21; this repo's own Phase 0 spike never exercised OpenAI's usage
-    shape - see the adapter's other "verified live, not against spike data"
-    comments). Passing the raw nested dict through unflattened would make
+    ``audio_input_tokens``/etc keys. **This shape is inferred from
+    secondary/community-reported sources only** — the live
+    developers.openai.com reference page returned a 403 on every direct
+    fetch attempt during this investigation (checked 2026-09-21) and could
+    not be consulted directly; this repo's own Phase 0 spike never
+    exercised OpenAI's usage shape either - see the adapter's other
+    "verified live, not against spike data" comments. Treat this shape as
+    unconfirmed until checked against a captured real payload. Passing the
+    raw nested dict through unflattened would make
     ``VoiceCallBuffer.add_usage(model, **usage)`` set a bucket key to a
     nested dict, breaking its ``bucket.get(key, 0) + value`` arithmetic
     (``0 + {...}`` raises ``TypeError``) the first time a real call reports
@@ -60,11 +70,23 @@ def _flatten_usage(usage: dict) -> Dict[str, int]:
     all (community-reported). There is no way to split an undifferentiated
     total into audio/text legs, so this passes ``usage`` through unchanged in
     that case rather than inventing a split — every value in it is already a
-    plain int, so add_usage's arithmetic stays safe.
+    plain int, so add_usage's arithmetic stays safe. Because none of those
+    top-level keys match a leg ``calculate_realtime_cost`` prices, this
+    silently costs $0.00 for that call — a ``logger.warning`` fires when this
+    fallback is taken on a non-empty usage dict, so a real occurrence is
+    visible in Cloud Run logs instead of silently under-billing.
     """
     input_details = usage.get("input_token_details")
     output_details = usage.get("output_token_details")
     if input_details is None and output_details is None:
+        if usage and _KNOWN_BILLING_LEG_KEYS.isdisjoint(usage):
+            logger.warning(
+                "OpenAI realtime usage arrived in an unrecognized shape - no "
+                "input_token_details/output_token_details and none of the known "
+                f"billing-leg keys {sorted(_KNOWN_BILLING_LEG_KEYS)} are present. "
+                f"Passing it through unchanged means calculate_realtime_cost will "
+                f"price this call at $0.00. Raw usage: {usage!r}"
+            )
         return usage
 
     input_details = input_details or {}

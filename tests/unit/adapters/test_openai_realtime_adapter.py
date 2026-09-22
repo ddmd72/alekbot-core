@@ -1,4 +1,6 @@
 import json
+from unittest import mock
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -162,6 +164,43 @@ def test_flatten_usage_passes_through_undifferentiated_totals_unchanged():
     the existing test_receive_events_normalizes_audio_delta_and_usage fixture."""
     usage = {"input_tokens": 10, "output_tokens": 5}
     assert _flatten_usage(usage) == usage
+
+
+def test_flatten_usage_warns_on_unrecognized_shape_with_no_billing_leg_keys(caplog):
+    """The undifferentiated-totals fallback produces a dict with none of
+    calculate_realtime_cost's known leg keys (audio_input_tokens/etc), which
+    silently prices the call at $0.00. This must log a warning so a real
+    occurrence is visible in Cloud Run logs instead of vanishing."""
+    usage = {"input_tokens": 10, "output_tokens": 5}
+
+    with caplog.at_level("WARNING"):
+        _flatten_usage(usage)
+
+    assert any("unrecognized shape" in record.message for record in caplog.records)
+
+
+def test_flatten_usage_does_not_warn_on_empty_usage():
+    """An empty usage dict (no usage reported at all, e.g. _normalize's
+    ``.get("usage", {})`` default when the response carries none) is not an
+    unrecognized shape to warn about - there is nothing to have flattened."""
+    with mock.patch("src.adapters.openai_realtime_adapter.logger") as mock_logger:
+        result = _flatten_usage({})
+
+    assert result == {}
+    mock_logger.warning.assert_not_called()
+
+
+def test_flatten_usage_does_not_warn_when_billing_leg_keys_present():
+    """A usage dict that already carries recognized billing-leg keys (e.g. an
+    already-flattened shape passed back through) must not trigger the
+    unrecognized-shape warning."""
+    usage = {"audio_input_tokens": 10, "audio_output_tokens": 5}
+
+    with mock.patch("src.adapters.openai_realtime_adapter.logger") as mock_logger:
+        result = _flatten_usage(usage)
+
+    assert result == usage
+    mock_logger.warning.assert_not_called()
 
 
 @pytest.mark.asyncio
