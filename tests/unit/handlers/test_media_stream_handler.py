@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import pytest
 from unittest.mock import AsyncMock
@@ -64,7 +65,7 @@ async def test_handle_connection_cleans_up_on_clean_close_without_stop_event():
     task_holder: dict = {}
 
     class FakeSessionService:
-        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio):
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback):
             task_holder["task"] = asyncio.current_task()
             # This loop only terminates once handle_connection pushes the
             # None sentinel onto inbound_queue - if it never does (the bug),
@@ -95,7 +96,7 @@ async def test_clear_outbound_audio_sends_twilio_clear_with_real_stream_sid():
     captured: dict = {}
 
     class FakeSessionService:
-        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio):
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback):
             captured["clear"] = clear_outbound_audio
             await clear_outbound_audio()
 
@@ -131,7 +132,7 @@ async def test_clear_outbound_audio_is_reusable_across_repeated_barge_ins():
     ws = FakeTwilioWs(messages)
 
     class FakeSessionService:
-        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio):
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback):
             await clear_outbound_audio()
             await clear_outbound_audio()
 
@@ -142,3 +143,65 @@ async def test_clear_outbound_audio_is_reusable_across_repeated_barge_ins():
         {"event": "clear", "streamSid": "MZ1"},
         {"event": "clear", "streamSid": "MZ1"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_every_outbound_chunk_is_followed_by_a_mark_named_by_byte_total():
+    """Twilio echoes a mark once the audio before it has played - the only way the
+    relay learns what the caller actually heard (barge-in truncation, silence)."""
+    from src.domain.voice_audio_frame import AudioFrame
+
+    chunk = base64.b64encode(b"\xff" * 160).decode()
+    messages = [{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}}]
+    ws = FakeTwilioWs(messages)
+
+    class FakeSessionService:
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback):
+            for _ in range(2):
+                await send_outbound_audio(AudioFrame(
+                    encoding="audio/pcmu", sample_rate_hz=8000, payload=chunk, track="outbound",
+                ))
+
+    handler = MediaStreamHandler(session_service=FakeSessionService())
+    await asyncio.wait_for(handler.handle_connection(ws), timeout=2.0)
+
+    assert ws.sent == [
+        {"event": "media", "streamSid": "MZ1", "media": {"payload": chunk}},
+        {"event": "mark", "streamSid": "MZ1", "mark": {"name": "160"}},
+        {"event": "media", "streamSid": "MZ1", "media": {"payload": chunk}},
+        {"event": "mark", "streamSid": "MZ1", "mark": {"name": "320"}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_echoed_marks_advance_the_playback_handed_to_the_session():
+    chunk = base64.b64encode(b"\xff" * 160).decode()
+    seen = {}
+    release = asyncio.Event()
+
+    class FakeSessionService:
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback):
+            from src.domain.voice_audio_frame import AudioFrame
+            await send_outbound_audio(AudioFrame(
+                encoding="audio/pcmu", sample_rate_hz=8000, payload=chunk, track="outbound",
+            ))
+            seen["playback"] = playback
+            release.set()
+            async for _ in inbound_audio:
+                pass
+
+    class SlowWs(FakeTwilioWs):
+        async def __anext__(self):
+            if len(self._messages) == 1:  # the mark echo waits until the chunk was sent
+                await release.wait()
+            return await super().__anext__()
+
+    ws = SlowWs([
+        {"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}},
+        {"event": "mark", "streamSid": "MZ1", "mark": {"name": "160"}},
+    ])
+    handler = MediaStreamHandler(session_service=FakeSessionService())
+    await asyncio.wait_for(handler.handle_connection(ws), timeout=2.0)
+
+    assert seen["playback"].played_bytes == 160
+    assert seen["playback"].caught_up

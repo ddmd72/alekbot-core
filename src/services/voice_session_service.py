@@ -1,16 +1,33 @@
 import asyncio
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from src.domain.request_context import RequestContext
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
+from src.domain.voice_playback_tracker import PlaybackTracker
 from src.ports.alert_sink import AlertSinkPort
 from src.ports.call_control_plane_port import CallControlPlanePort
 from src.ports.realtime_session_port import RealtimeSessionPort
 from src.utils.logger import logger
 
 _UNKNOWN_MODEL_LABEL = "unknown"
+# SPOKEN_DELIVERY's `silence` rule reacts to this exact kind of note.
+_SILENCE_NOTE = "[The caller has been silent for {seconds} seconds.]"
+_WATCHDOG_TICK_S = 0.25
+
+
+@dataclass
+class _CallState:
+    """Turn state shared by the event loop and the silence watchdog of one call."""
+
+    playback: PlaybackTracker
+    response_active: bool = False
+    caller_speaking: bool = False
+    silence_prompted: bool = False
+    item_id: Optional[str] = None
+    item_start_bytes: int = 0
 
 
 class VoiceSessionService:
@@ -23,11 +40,13 @@ class VoiceSessionService:
         control_plane: CallControlPlanePort,
         alert_sink: AlertSinkPort,
         reasoning_effort: str = "medium",
+        silence_timeout_s: float = 8.0,
     ) -> None:
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
         self._alert_sink = alert_sink
         self._reasoning_effort = reasoning_effort
+        self._silence_timeout_s = silence_timeout_s
 
     async def handle_call(
         self,
@@ -35,10 +54,14 @@ class VoiceSessionService:
         inbound_audio: AsyncIterator[AudioFrame],
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
         clear_outbound_audio: Callable[[], Awaitable[None]],
+        playback: PlaybackTracker,
     ) -> None:
+        """`playback` is fed by the transport (bytes sent, marks echoed back); this
+        loop only reads it."""
         config = await self._control_plane.fetch_session_config(ticket)
+        state = _CallState(playback=playback)
         async with RequestContext(user_id=config["user_id"], account_id=config["account_id"]):
-            await self._run_call(ticket, config, inbound_audio, send_outbound_audio, clear_outbound_audio)
+            await self._run_call(ticket, config, inbound_audio, send_outbound_audio, clear_outbound_audio, state)
 
     async def _run_call(
         self,
@@ -47,11 +70,13 @@ class VoiceSessionService:
         inbound_audio: AsyncIterator[AudioFrame],
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
         clear_outbound_audio: Callable[[], Awaitable[None]],
+        state: _CallState,
     ) -> None:
         session = self._session_factory()
         buffer = VoiceCallBuffer(call_id=ticket)
         forward_task: Optional[asyncio.Task] = None
         consume_task: Optional[asyncio.Task] = None
+        watchdog_task: Optional[asyncio.Task] = None
 
         try:
             # open() is inside the try/finally, not before it: a failed open (e.g. a
@@ -75,11 +100,13 @@ class VoiceSessionService:
             # asyncio.wait() below is what forces that handoff.
             forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
             consume_task = asyncio.ensure_future(
-                self._consume_events(ticket, session, buffer, send_outbound_audio, clear_outbound_audio)
+                self._consume_events(ticket, session, buffer, send_outbound_audio, clear_outbound_audio, state)
             )
+            # The watchdog never ends on its own; the call ends with the audio streams.
+            watchdog_task = asyncio.ensure_future(self._watch_silence(session, state))
             await asyncio.wait({forward_task, consume_task}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            tasks = [task for task in (forward_task, consume_task) if task is not None]
+            tasks = [task for task in (forward_task, consume_task, watchdog_task) if task is not None]
             for task in tasks:
                 if not task.done():
                     task.cancel()
@@ -109,39 +136,39 @@ class VoiceSessionService:
         buffer: VoiceCallBuffer,
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
         clear_outbound_audio: Callable[[], Awaitable[None]],
+        state: _CallState,
     ) -> None:
         turn_start: Optional[datetime] = None
         pending_request_text = ""
         pending_response_text = ""
-        # Barge-in state (RFC §4.7; mechanism validated live in
-        # scripts/voice/test_mulaw_relay_poc.py:154-170). Tracked here rather than in
-        # the adapter because the decision is session-loop policy, not provider
-        # translation - the port stays a dumb "cancel now" command.
-        response_active = False
-
         async for event in session.receive_events():
             if event.type == "response_created":
                 turn_start = datetime.now(timezone.utc)
-                response_active = True
+                state.response_active = True
             elif event.type == "speech_started":
-                # The caller started talking over Lelik. Two independent buffers have
-                # to be drained or the interrupted reply keeps playing: audio already
-                # handed to Twilio (cleared via the callback) and audio OpenAI has not
-                # generated yet (stopped via cancel_response). Guarded on
-                # response_active - the POC documents that response.cancel with nothing
-                # in flight raises a provider-side error, which would end the call.
-                if response_active:
-                    await clear_outbound_audio()
-                    await session.cancel_response()
-                    response_active = False
+                state.caller_speaking = True
+                state.silence_prompted = False
+                # The caller started talking over Lelik (RFC §4.7; mechanism validated in
+                # scripts/voice/test_mulaw_relay_poc.py:154-170). Barge-in is ours alone -
+                # the provider's auto-interrupt is off (OpenAIRealtimeAdapter._TURN_DETECTION).
+                # Guarded on response_active: response.cancel with nothing in flight is a
+                # provider error, which would end the call.
+                if state.response_active:
+                    await self._barge_in(session, state, clear_outbound_audio)
+            elif event.type == "speech_stopped":
+                state.caller_speaking = False
             elif event.type == "audio_delta":
+                item_id = event.payload.get("item_id")
+                if item_id != state.item_id:
+                    state.item_id = item_id
+                    state.item_start_bytes = state.playback.sent_bytes
                 await send_outbound_audio(event.payload["frame"])
             elif event.type == "user_transcript":
                 pending_request_text += event.payload["text"]
             elif event.type == "model_transcript":
                 pending_response_text += event.payload["text"]
             elif event.type == "response_done":
-                response_active = False
+                state.response_active = False
                 usage = event.payload.get("usage", {})
                 if usage:
                     # The provider labels its own usage - VoiceSessionService is
@@ -161,6 +188,43 @@ class VoiceSessionService:
                 logger.error(f"voice call {ticket}: provider error {event.payload.get('message')}")
                 await self._alert_sink.post(f"Voice call {ticket} provider error: {event.payload.get('message')}")
                 return
+
+    async def _barge_in(
+        self, session: RealtimeSessionPort, state: _CallState,
+        clear_outbound_audio: Callable[[], Awaitable[None]],
+    ) -> None:
+        # Order matters. Read what was heard BEFORE clearing: Twilio echoes the marks of
+        # dropped audio after a clear, which would count unheard audio as played. Then
+        # drain both buffers - Twilio's queued playback and the provider's generation -
+        # and cut the item to the heard part, so the model resumes from where it was
+        # actually interrupted instead of believing it finished the reply.
+        heard_ms = state.playback.played_ms_since(state.item_start_bytes)
+        await clear_outbound_audio()
+        await session.cancel_response()
+        state.response_active = False
+        if state.item_id:
+            await session.truncate(state.item_id, heard_ms)
+
+    async def _watch_silence(self, session: RealtimeSessionPort, state: _CallState) -> None:
+        # The provider only speaks when a turn ends, so it cannot notice a caller who
+        # has gone quiet (and its idle_timeout_ms is server_vad-only). Silence counts
+        # from the moment Lelik's audio has finished PLAYING, not finished generating.
+        # One prompt per silence: re-armed only by the caller speaking again.
+        loop = asyncio.get_running_loop()
+        quiet_since = loop.time()
+        while True:
+            await asyncio.sleep(_WATCHDOG_TICK_S)
+            now = loop.time()
+            if state.response_active or state.caller_speaking or not state.playback.caught_up:
+                quiet_since = now
+                continue
+            if state.silence_prompted or now - quiet_since < self._silence_timeout_s:
+                continue
+            state.silence_prompted = True
+            await session.submit_message(
+                "system", _SILENCE_NOTE.format(seconds=round(self._silence_timeout_s)),
+            )
+            await session.request_response()
 
     async def _forward_inbound(self, session: RealtimeSessionPort, inbound_audio: AsyncIterator[AudioFrame]) -> None:
         async for frame in inbound_audio:

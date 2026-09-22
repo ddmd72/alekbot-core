@@ -31,7 +31,9 @@ class RealtimeSessionPort(ABC):
 
     @abstractmethod
     async def receive_events(self) -> AsyncIterator[RealtimeSessionEvent]:
-        """Yield normalized events: audio_delta (payload: frame: AudioFrame),
+        """Yield normalized events: audio_delta (payload: frame: AudioFrame,
+        item_id - the provider's id for the assistant item this audio belongs to,
+        needed to truncate it on barge-in),
         tool_call (payload: call_id, name, arguments), speech_started,
         speech_stopped, response_created, response_done (payload: usage -
         provider-native token usage dict, model - the provider's own model
@@ -60,6 +62,12 @@ class RealtimeSessionPort(ABC):
         """Cancel the in-flight response (barge-in). Caller is responsible for
         not calling this when no response is active (RFC §4.7 corner-case
         table; the provider errors on a cancel with nothing active)."""
+
+    @abstractmethod
+    async def truncate(self, item_id: str, audio_end_ms: int) -> None:
+        """Cut the assistant item down to the audio the caller actually heard, so
+        the model's context holds what was said, not what was generated. Must not
+        exceed the item's generated audio (the provider errors)."""
 
     @abstractmethod
     async def close(self) -> None:

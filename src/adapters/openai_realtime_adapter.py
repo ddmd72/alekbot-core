@@ -13,6 +13,19 @@ _CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
 # model (OpenAITranscriptionAdapter.DEFAULT_MODEL) for consistency rather than the
 # realtime-specific whisper-1/gpt-realtime-whisper options that also appear in the docs.
 _TRANSCRIPTION_MODEL = "gpt-transcribe"
+# semantic_vad ends a turn on what was said, not on a silence timer, so a mid-thought
+# pause does not hand Lelik the floor; "low" waits longest. interrupt_response=False
+# leaves barge-in to VoiceSessionService alone: with the provider also auto-cancelling,
+# our own response.cancel could land on nothing and the provider's error ends the call.
+# Shape: session.audio.input.turn_detection (developers.openai.com realtime-vad guide +
+# client-events reference, checked 2026-09-22). idle_timeout_ms is server_vad-only, so
+# silence is detected relay-side (VoiceSessionService's watchdog).
+_TURN_DETECTION = {
+    "type": "semantic_vad",
+    "eagerness": "low",
+    "create_response": True,
+    "interrupt_response": False,
+}
 # The billing-leg keys calculate_realtime_cost/VoiceCallBuffer.add_usage recognize -
 # used by _flatten_usage to detect when the undifferentiated-totals fallback path
 # produced a dict none of them price (see the warning below).
@@ -146,7 +159,11 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
                 # Field shape verified against developers.openai.com's live GA client-events
                 # reference and realtime-conversations guide (checked 2026-09-21), not inferred
                 # from this repo's Phase 0 spike data.
-                "input": {"format": {"type": "audio/pcmu"}, "transcription": {"model": _TRANSCRIPTION_MODEL}},
+                "input": {
+                    "format": {"type": "audio/pcmu"},
+                    "transcription": {"model": _TRANSCRIPTION_MODEL},
+                    "turn_detection": _TURN_DETECTION,
+                },
                 "output": {"format": {"type": "audio/pcmu"}},
             },
             "reasoning": {"effort": reasoning_effort},
@@ -175,7 +192,9 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
         if event_type in ("response.output_audio.delta", "response.audio.delta"):
             payload = event.get("delta") or event.get("audio")
             frame = AudioFrame(encoding="audio/pcmu", sample_rate_hz=8000, payload=payload, track="outbound")
-            return RealtimeSessionEvent(type="audio_delta", payload={"frame": frame})
+            return RealtimeSessionEvent(
+                type="audio_delta", payload={"frame": frame, "item_id": event.get("item_id")}
+            )
         if event_type == "response.function_call_arguments.done":
             return RealtimeSessionEvent(
                 type="tool_call",
@@ -227,6 +246,16 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
         # caller must only reach here while a response is actually active - OpenAI
         # errors on a response.cancel with nothing in flight.
         await self._ws.send(json.dumps({"type": "response.cancel"}))
+
+    async def truncate(self, item_id: str, audio_end_ms: int) -> None:
+        # Over WebSocket the server cannot know what was played, so the client must cut
+        # the unheard tail itself (realtime-conversations guide, checked 2026-09-22).
+        await self._ws.send(json.dumps({
+            "type": "conversation.item.truncate",
+            "item_id": item_id,
+            "content_index": 0,
+            "audio_end_ms": audio_end_ms,
+        }))
 
     async def close(self) -> None:
         if self._ws is not None:

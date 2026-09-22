@@ -18,6 +18,7 @@ import json
 from typing import AsyncIterator
 
 from src.domain.voice_audio_frame import AudioFrame
+from src.domain.voice_playback_tracker import PlaybackTracker
 from src.services.voice_session_service import VoiceSessionService
 from src.utils.logger import logger
 
@@ -34,6 +35,7 @@ class MediaStreamHandler:
         stream_sid = None
         ticket = None
         inbound_queue: "asyncio.Queue" = asyncio.Queue()
+        playback = PlaybackTracker()
 
         async def inbound_frames() -> AsyncIterator[AudioFrame]:
             while True:
@@ -49,6 +51,13 @@ class MediaStreamHandler:
                 "event": "media",
                 "streamSid": stream_sid,
                 "media": {"payload": frame.payload},
+            }))
+            # Twilio echoes a mark once the audio queued before it has played - the
+            # only signal of what the caller actually heard (PlaybackTracker).
+            await ws.send(json.dumps({
+                "event": "mark",
+                "streamSid": stream_sid,
+                "mark": {"name": playback.record_sent(frame.payload)},
             }))
 
         async def clear_outbound_audio() -> None:
@@ -86,6 +95,7 @@ class MediaStreamHandler:
                             inbound_audio=inbound_frames(),
                             send_outbound_audio=send_outbound,
                             clear_outbound_audio=clear_outbound_audio,
+                            playback=playback,
                         )
                     )
                 elif event == "media":
@@ -95,6 +105,8 @@ class MediaStreamHandler:
                         payload=msg["media"]["payload"],
                         track="inbound",
                     ))
+                elif event == "mark":
+                    playback.record_played(msg["mark"]["name"])
                 elif event == "stop":
                     break
         except Exception:

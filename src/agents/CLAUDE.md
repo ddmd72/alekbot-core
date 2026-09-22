@@ -210,7 +210,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     ≤300-char `response_summary`, not `full_response` (dormant pre-Phase-G, when Tutor produced no
     summary and `text == full_text`).
 - Lelik (`lelik_agent.py`, **`internal=True`, `capabilities={}`, `eager=False`**) — the voice
-  companion's front desk (`docs/10_rfcs/VOICE_COMPANION_RFC.md` §4.6/§4.13). The closest sibling to
+  companion's call originator (`docs/10_rfcs/VOICE_COMPANION_RFC.md` §4.6/§4.13). The closest sibling to
   Tutor architecturally (a companion, not a delegation specialist) but stricter: it has **no `Intent`
   at all**, so it is unreachable via `delegate_to_specialist` *and* via `AgentCoordinator`;
   `can_handle()` returns `False` unconditionally, existing only to satisfy `BaseAgent`. Registering an
@@ -219,7 +219,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     thing: `TelephonyPort.originate_call`. There is no `_DEFAULT_AGENT_TIERS["lelik"]` entry and none
     is needed — Lelik's *persona* is a `gpt-realtime-2.1` session opened by `OpenAIRealtimeAdapter`
     inside the relay process, which never goes through `AgentExecutionContext` at all.
-    `execution_context` is accepted for constructor parity and unused.
+    `execution_context` is accepted for constructor parity and unused. That session's prompt is
+    built by `services/lelik_persona_service.py` (warm context, RFC §4.8), not by this class.
   - **Constructor:** `(config, execution_context, telephony: TelephonyPort, from_number,
     status_callback_url, to_number)` — built by `UserAgentFactory._build_lelik(user_id, account_id)`,
     which `main.py` passes into the webhook blueprint as `lelik_agent_factory`. The **only** call site

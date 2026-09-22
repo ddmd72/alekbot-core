@@ -159,7 +159,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
 | ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
 | Tutor | BALANCED (OpenAI `gpt-5.6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
-| Lelik | n/a — **no LLM call** | none (`internal=True`, `capabilities={}`) | voice companion's front desk: places the Twilio callback. Not delegable — `voice_webhook_app.py` calls `execute()` directly. The *persona* runs on OpenAI Realtime in the relay, outside the tier system |
+| Lelik | n/a — **no LLM call** | none (`internal=True`, `capabilities={}`) | voice companion: places the Twilio callback. Not delegable — `voice_webhook_app.py` calls `execute()` directly. The *persona* runs on OpenAI Realtime in the relay, outside the tier system |
 | lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills |
 
 **Remote MCP Server** — alekbot as MCP *server* exposing memory search to claude.ai Custom Connectors
@@ -221,12 +221,19 @@ stale `running` jobs.
 Twilio number; `/voice/auth` resolves the caller's `From` to a user (platform `"phone"`), enforces a
 one-call-per-user marker, mints a short-TTL **ticket**, and has `LelikAgent` originate a *callback* to
 the bound number (inbound dial is never the conversation leg — the callback is what proves identity).
-On pickup, `/voice/answer` assembles Lelik's persona via `PromptBuilder.build_for_agent("lelik")` and
-returns TwiML pointing Twilio's Media Stream at the relay. Lelik is a **front desk, not Alek**: his
-biographical read is scoped to four fact domains (`_LELIK_FACT_DOMAINS` — biographical, preference,
-location, **agent_directive**; the last is not small talk, it is how the standing-directive block
-reaches the prompt at all), and anything outside that slice is meant to be forwarded to the human
-owner rather than answered from his own mouth (RFC §4.2/§4.8).
+On pickup, `/voice/answer` has `LelikPersonaService` assemble Lelik's prompt and returns TwiML
+pointing Twilio's Media Stream at the relay. **Lelik starts warm, not as a front desk** (owner
+decision 2026-09-22, `decisions/lelik_warm_context.md`). He gets the whole biographical cache minus
+`UserBotConfig.voice_excluded_fact_domains` (empty by default: give everything, trim what proves out
+of place), standing directives, and the primary channel's last 30 messages as stored summaries (no
+LLM call), read through `UserNotificationService.resolve_channel`. That is the same chain the call
+summary is written through, so past calls reach the next one. He talks from that and forwards to
+Alek only what he does not hold (mail, tasks, documents, web, actions). **Character is shared
+with Smart:** the `lelik` profile reuses Smart's overridable `ARCHETYPE_*`/`VIBE_*`/`VOICE_*`/
+`HUMOR_*`/`LANG_*`/`POLICY_*` slots, and user prompt overrides are per user by class+category, so a
+persona or language change applies to both. Lelik has only two tokens of his own:
+`COGNITIVE_PROCESS_LELIK` (role) and `SPOKEN_DELIVERY` (phone mechanics, in its own category so a
+`VOICE_*` override never replaces it) (RFC §4.1/§4.8).
 - **Two deploy units, on purpose.** The main Quart service (`main.py`) owns Twilio's webhooks,
   ticket minting, and the OIDC-protected control plane (`/voice/session-config`,
   `/voice/submit-transcript`). A **separate Cloud Run service** (`relay_main.py`, a plain
@@ -241,9 +248,12 @@ owner rather than answered from his own mouth (RFC §4.2/§4.8).
   **atomically consumed** by `/voice/session-config` via `get_and_delete` — single use, so a captured
   ticket cannot be replayed to read back the owner's persona and facts.
 - **Audio is μ-law 8 kHz end to end** — Twilio and OpenAI Realtime both speak it, so the relay is a
-  byte forward with no decode/resample. `VoiceSessionService` owns barge-in: on `speech_started` while
-  a response is active it clears Twilio's playback buffer **and** cancels the provider response
-  (guarded — a `response.cancel` with nothing in flight is a provider error).
+  byte forward with no decode/resample. Turn detection is `semantic_vad` (eagerness low) with the
+  provider's `interrupt_response` **off**, so `VoiceSessionService` alone owns barge-in. It reads
+  the heard milliseconds from `PlaybackTracker` (Twilio `mark` echoes) *before* clearing, then runs
+  `clear` → `response.cancel` → `conversation.item.truncate`, so the model knows where it was cut
+  off. A relay-side watchdog handles silence (the provider's `idle_timeout_ms` is server_vad-only):
+  8 s of quiet after playback ends injects one system note (RFC §5.2).
 - **Two agents, deliberately not one.** `LelikAgent` makes no LLM call (it only originates the call);
   `LelikSummarizerAgent` (ECO) turns the end-of-call transcript into a plain-text summary delivered via
   `UserNotificationService.notify_call_summary`. The summarizer must never be the participant it

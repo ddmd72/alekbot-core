@@ -1,4 +1,4 @@
-# RFC: Voice Companion — a spoken front desk for the existing agent stack
+# RFC: Voice Companion — a spoken companion over the existing agent stack
 
 **Status:** Proposed — telephony-only v1, dev-only and experimental
 **Date:** 2026-09-20 (supersedes the 2026-08-15 draft and its revisions; no changelog is kept — this document is the spec)
@@ -57,24 +57,31 @@ obstacles block the obvious routes:
 
 ## 4. Key design decisions
 
-### 4.1 Lelik is a front desk for Alek, not a second intelligence
+### 4.1 Lelik talks from what he knows; Alek does what Lelik cannot
 
-**Lelik is a voice assistant *to* Alek**: hear the request, clarify it if ambiguous, forward it, and
-keep the conversation alive while the answer is prepared. **Alek is never spoken** — he answers in
-text and Lelik says what matters aloud (§4.3).
+**Lelik is a companion on the phone who already knows the caller.** He starts every call warm
+(§4.8): the caller's facts, standing rules and the recent chat with Alek are his own memory, and he
+talks from it the way a friend does. **Alek is never spoken.** He is the one who reads mail, tasks
+and documents, searches, and acts, and he answers in text that Lelik turns into speech (§4.3).
 
-Three things follow from the framing rather than from a rule:
+Why not a front desk with a small slice of context: `decisions/lelik_warm_context.md`.
 
-- **Latency becomes the role's purpose.** The Realtime API's own async function calling lets the
-  model keep speaking while a call is pending and weave the result in when it arrives.
-- **Clarification before forwarding is an upgrade** on the text path, where a vague request reaches
+What still follows from the split:
+
+- **Latency is a role, not a failure.** The Realtime API's async function calling lets Lelik keep
+  talking while `ask_alek` is pending and weave the answer in when it arrives.
+- **Clarification before forwarding** is an upgrade on the text path, where a vague request reaches
   Smart and gets guessed at or asked back over a slow round trip.
-- **Attribution becomes in-character.** A front desk naturally says "Alek says…", so the boundary
-  between Lelik's own read and Alek's grounded answer is part of the role, not bolted on.
+- **Attribution is in character.** "Alek says…" separates Lelik's own read from Alek's grounded
+  answer.
 
-**The instruction is *narrate*, not *entertain*.** Entertainment as a goal produces filler;
-narration fills the same silence and lets the user hear whether the request was understood before
-the answer arrives — a free correctness check.
+**Character is shared and composed, not written for Lelik.** Lelik's prompt profile uses the same
+overridable slots as Smart's (`ARCHETYPE_*`, `VIBE_*`, `VOICE_*`, `HUMOR_*`, `LANG_*`, the
+`POLICY_*` set). Prompt overrides are per user and matched by class+category, so a persona or
+language change the owner makes applies to both agents. Lelik has only two tokens of his own: his
+role (`COGNITIVE_PROCESS_LELIK`) and the medium (`SPOKEN_DELIVERY`: turn-taking, giving the floor,
+barge-in, repair, opening and closing a phone call). The second has its own category, so a user's
+`VOICE_*` choice never replaces the phone mechanics.
 
 **Rejected — two realtime sessions (Lelik and Alek as two voice models).** A realtime model has
 different weights and no agent stack: the thing holding the memory is the thing replaced.
@@ -82,35 +89,34 @@ different weights and no agent stack: the thing holding the memory is the thing 
 **Rejected — TTS over Alek's answer in a second voice.** Markdown tables and URLs read aloud are
 unusable.
 
-### 4.2 Delegation is defined by capability, not by difficulty
+### 4.2 Delegation is defined by possession, and Lelik possesses a lot
 
 "Call Alek when it's hard" fails both ways: calling on every utterance is wasteful, and left to the
-model's discretion it will almost never call — LLMs judge their own competence poorly and answer
+model's discretion it will almost never call. LLMs judge their own competence poorly and answer
 confidently instead.
 
-The durable boundary is **possession**. Lelik has a scoped slice of the biography (§4.8) and no
-mail, tasks or search of his own, so "do I have this?" is a presence check, not a self-assessment —
-and models recognize missing data far better than insufficient intelligence. The rule: *forward
-anything touching the user, their affairs, mail, documents, or current facts outside Lelik's slice.*
+The durable boundary is **possession**. "Do I have this?" is a presence check, not a
+self-assessment, and models recognize missing data far better than insufficient intelligence.
+Lelik's prompt holds the caller's biography, directives and recent chat (§4.8). It does not hold
+mail, documents, tasks, calendar, the web, anything current, or the ability to act. The rule:
+*answer from what is in the prompt; forward what is not.* An explicit "ask Alek" from the caller
+always forces a call.
 
-**Over-forwarding is the safe failure** — extra cost rather than confident fabrication about the
-user's life, and §4.7's relay-attached context makes a redundant forward cheap.
+**No fabrication about the caller's life** remains the hard line: a fact about the caller that is in
+neither the prompt nor a tool result is never stated.
 
-**Backstops if the persona proves insufficient:** standing directives (exactly this class of rule);
-an explicit trigger phrase ("ask Alek") that forces a call; raising reasoning effort (§4.3).
+**Backstops if forwarding discipline slips:** standing directives, the "ask Alek" trigger phrase,
+raising reasoning effort (§4.3).
 
-**A tension to hold:** more context for Lelik means less delegation. Continuity and delegation
-discipline are two ends of one lever — which is why §4.8 keeps his slice small.
-
-**Persona drift is the standing hazard** — the role lives in a system prompt and a voice session is
-long by nature. Same class as `USER_TURN_SYSTEM_ANCHOR`: read `feedback_prompt_anchors.md` and its
-six failure modes *before* writing Lelik's prompt.
+**Persona drift is the standing hazard.** The role lives in a system prompt and a voice session is
+long by nature. It is the same class of problem as `USER_TURN_SYSTEM_ANCHOR`: read
+`feedback_prompt_anchors.md` and its six failure modes *before* changing Lelik's prompt.
 
 ### 4.3 Alek stays text-shaped; Lelik does the speaking
 
 **Alek's prompt does not change.** He is not told he is in a voice session and produces his ordinary
 reading-optimized answer. The mismatch between that and speech does not dissolve — it **moves to
-Lelik**, which is correct, because verbalizing on the user's behalf is the front desk's job.
+Lelik**, which is correct, because verbalizing on the user's behalf is Lelik's job.
 Reading-shaped fragments are not spoken at all (§4.10).
 
 **Lelik receives `full_response`, not `response_summary`.** Both come from Smart's `_RESPONSE_SCHEMA`
@@ -465,30 +471,35 @@ OpenAI does not, which is exactly the gap `resolve_late_answer` above exists to 
 
 ### 4.8 Lelik's context at call start
 
-**Biographical access is scoped, not off.** `include_biographical` + `session_domains` — the tutor
-turns biographical access fully off; Lelik turns it on restricted to a small explicit list of fact
-domains: enough for light continuity and small talk, not a substitute for forwarding. A live
-filtered read of the same fact store Alek uses, so nothing needs syncing. One list, because §4.6
-issues one authorization level.
+**Lelik starts warm** (`decisions/lelik_warm_context.md`). `LelikPersonaService` assembles, at
+`/voice/answer`:
 
-**Only the biographical leg of the companion assembler is live for Lelik.** Of
-`CompanionContextAssemblerService.assemble_context()`'s three: `get_summary(session_id)` reads
-`CompanionCacheRepository`, written **only by a companion's extractor** — and §4.9 builds none for
-Lelik, so it is always `None`; `own_records` reads the `CompanionRecord` store §4.9 rejects, so
-`include_own_records=False`. The toggles are plain keyword arguments, so **Lelik constructs no
-`CompanionConfig`**: its write-side fields (`window_threshold`, `batch_size`) are
-required-without-default and meaningless here, and the mechanism that delivers one to the tutor
-(`AgentDescriptor.companion_default_config` on a `ChannelBinding` via `$agent`) never runs for a
-phone call, which has no `channel_id`.
+| Source | What | Cost |
+|---|---|---|
+| Biographical cache | **every domain**, minus `UserBotConfig.voice_excluded_fact_domains` (default empty) | one cached read, the same one Smart makes |
+| Standing directives | the same list, `include_directives=True` | none |
+| Primary-channel history | the last 30 messages of the session the call summary is written into (§4.9): the user turn's text (capped at 500 chars) and the model turn's stored `text`, which is already its ≤300-char `response_summary`. Timestamps are in the caller's timezone | one `SessionStore` read, **no LLM call** |
+| Date/time, location | `include_datetime=True`; location and timezone from the caller's own `UserBotConfig` via a per-call `UserPromptBuilder` | none |
 
-**The history slice comes from `SessionStore`, not from the assembler** — a small summarized slice
-of the primary-channel session (§4.9's destination, read side), the path `TutorAgent` uses via
-`HistorySummaryService`. Keep it small: §4.2's tension says more context means less delegation, and
-§4.7 makes a redundant forward cheap.
+**Why a denylist, empty by default: give everything, trim what proves out of place.** Too little
+context fails silently: Lelik sounds cold or reaches for Alek, and nobody can hear a fact that was
+never loaded. Too much fails audibly: he says something out of place, and that domain gets
+excluded. The field is plain strings rather than `FactDomain`, so a typo in a hand-edited Firestore
+document is logged and ignored instead of failing the whole config load. **No Cabinet UI yet**
+(deferred; trigger: the first time a domain actually needs excluding).
 
-**The prompt stays deliberately small** — persona, tool definitions, trimmed history. The reasons are
-instruction retention (§4.3) and latency, not token spend: cached input is $0.4/1M against $32/1M
-uncached, and `-2.1` specifically improved caching.
+**The same channel chain as the write side.** History is read through
+`UserNotificationService.resolve_channel` (override → primary → last active), the chain
+`notify_call_summary` writes through. A second copy of that chain could drift, and then Lelik would
+read one session while his summaries land in another. Earlier call summaries therefore reach the
+next call automatically.
+
+**Not included:** RRF memory search (there is no query at call start), agent notes, and prefetched
+tasks, reminders or calendar (Alek's data, reached through `ask_alek`).
+
+**Size.** 100 facts plus 30 short history lines is a few thousand tokens, and cached input is
+$0.4/1M against $32/1M uncached. The real limit is instruction retention (§4.3), which is why the
+prompt carries character through shared tokens rather than a long rulebook.
 
 ### 4.9 The call is ephemeral; one summary lands in a named session
 
@@ -529,8 +540,8 @@ down here with the real reason.
 `notify_document_link` (`user_notification_service.py:425-495`) already performs exactly this
 sequence — resolve the channel, deliver, then `append_messages_batch` a synthetic `user` +
 `model` pair into `f"{user_id}:{channel_id}"`. The call summary is a sibling method on that
-service, which settles three things a direct `SessionStore` write leaves open: `_resolve_channel`
-is private, `REQ-ARCH-22` forbids a new service from importing `UserNotificationService`, and the
+service, which settles three things a direct `SessionStore` write leaves open: channel resolution
+lives there (`resolve_channel`), `REQ-ARCH-22` forbids a new service from importing `UserNotificationService`, and the
 *role* of the written message is not a free choice —
 `serialize_messages_for_consolidation()` reads user and model parts differently, so the
 established two-message shape is the one that consolidates correctly.
@@ -542,7 +553,7 @@ without reformatting anything.
 **Which session, precisely.** A session is per channel (`session_id = f"{user_id}:{channel_id}"`)
 and a phone call has no channel; a synthetic `phone:<E.164>` session would be *isolated* from every
 chat channel, failing Goal 4. **The call writes into the session of the user's primary notification
-channel**, resolved by the chain `_resolve_channel` already uses — override → primary → last active
+channel**, resolved by the chain `resolve_channel` already uses — override → primary → last active
 (`user_notification_service.py:95-125`). If neither resolves, the summary is dropped with a logged
 warning rather than written somewhere arbitrary. All of this is main-service work; the relay only
 submits the buffer.
@@ -749,11 +760,31 @@ token-inflation bug and its wrong per-model price attribution.
 Both objections to relaying fail on inspection. **Latency:** the relay does not introduce the
 transatlantic hop — that is a function of where Twilio's media engine and the provider endpoint sit,
 and carrier-direct SIP incurs the same crossing inside Twilio's network; with regions aligned the
-relay adds one same-region hop plus frame forwarding, and barge-in stays native to the provider (we
+relay adds one same-region hop plus frame forwarding, and turn detection stays native to the provider (we
 forward bytes and never implement VAD). **"More code":** Twilio sends `audio/x-mulaw` 8 kHz mono
 base64 and accepts `mulaw/8000` back, and **both candidate providers accept G.711 μ-law at 8 kHz**
 (OpenAI `g711_ulaw`, xAI `audio/pcmu`) — so the relay is a base64 decode and a byte forward, no
 resampling, no DSP.
+
+**What the relay does own: barge-in and silence.** Both depend on what the caller has *heard*, and
+over a WebSocket only the relay can know that: audio is written into Twilio far ahead of playback.
+- **Turn detection** is `semantic_vad` at `eagerness: low`, so a pause mid-thought does not end the
+  caller's turn. The provider's `interrupt_response` is **off**. With it on, the provider and the
+  relay both cancelled on barge-in, and a `response.cancel` landing on nothing is a provider error
+  that ends the call.
+- **Playback** is measured with Twilio `mark`s. Every outbound chunk is followed by a mark named by
+  the running byte total, and Twilio echoes it once the audio before it has played (μ-law 8 kHz,
+  8 bytes/ms; `PlaybackTracker`).
+- **Barge-in** runs in a fixed order: read the heard milliseconds of the current assistant item
+  (*before* clearing, because Twilio echoes the marks of dropped audio after a `clear`), then
+  `clear` → `response.cancel` → `conversation.item.truncate(item_id, heard_ms)`. Without the
+  truncate, the model believes it finished a reply the caller heard half of, and cannot resume
+  "from where it was cut off".
+- **Silence.** The model speaks only when a turn ends, and the provider's `idle_timeout_ms` exists
+  for `server_vad` only. So the relay runs a watchdog: once Lelik's audio has finished *playing*,
+  no response is active and the caller is not speaking, 8 s of quiet injects one system note and a
+  `response.create` (`SPOKEN_DELIVERY` answers it with a single light check). It re-arms only when
+  the caller speaks.
 
 **Rejected — carrier-direct SIP.** Cheapest and marginally lower latency, but it puts the media path
 outside every observability mechanism we rely on; the Twilio↔provider binding lives in a console no
@@ -892,8 +923,8 @@ remembers is the smallest thing worth having.
    session-opened notification + refused-dial alerting + the one-call-per-user marker (§3).
 7. `VoiceSessionService` (§4.5) — relay loop, call-scoped buffer, lifecycle, `RequestContext`
    invariant (§4.11), failures to `AlertSinkPort`.
-8. Lelik's persona: read-side toggles passed directly (§4.8), prompt via `PromptBuilder` written
-   against `feedback_prompt_anchors.md`. **Firestore artefacts are part of this item** — blueprint
+8. Lelik's persona: warm context assembled by `LelikPersonaService` (§4.8), prompt composed from
+   Smart's shared slots plus two Lelik tokens (§4.1), written against `feedback_prompt_anchors.md`. **Firestore artefacts are part of this item** — blueprint
    plus tokens, uploaded by hand (an AI may not run the uploader), with the new token listed in the
    blueprint's `class_order` or it renders as nothing, and `build_for_agent` failing closed on
    every call until the upload happens.

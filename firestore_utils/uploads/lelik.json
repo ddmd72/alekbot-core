@@ -2,6 +2,48 @@
   "agent_id": "lelik",
   "blueprint_id": "lelik_agent_v1",
   "tokens": {
-    "COGNITIVE_PROCESS_LELIK": {"order": 10, "non_overridable": true}
+    "COGNITIVE_PROCESS_LELIK": {
+      "order": 10,
+      "non_overridable": true
+    },
+    "ARCHETYPE_INTELLECTUAL_SNIPER": {
+      "order": 20
+    },
+    "VIBE_BATTLE_WEARY": {
+      "order": 30
+    },
+    "VOICE_APHORISTIC": {
+      "order": 40
+    },
+    "HUMOR_PRESET_RANEVSKAYA": {
+      "order": 60
+    },
+    "SPOKEN_DELIVERY": {
+      "order": 70,
+      "non_overridable": true
+    },
+    "FEW_SHOT_EXAMPLES_RANEVSKAYA_ZHVANETSKY": {
+      "order": 90,
+      "non_overridable": true
+    },
+    "LANG_MIRROR": {
+      "order": 300,
+      "non_overridable": false
+    },
+    "POLICY_PRIVACY": {
+      "order": 310
+    },
+    "POLICY_NO_OPEN_LOOPS": {
+      "order": 320
+    },
+    "POLICY_ANTI_GUARDIAN": {
+      "order": 330
+    },
+    "POLICY_WITTY_ACCENTUATION": {
+      "order": 340
+    },
+    "POLICY_ALIGN_WITH_ANCHORS": {
+      "order": 350
+    }
   }
 }

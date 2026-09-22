@@ -6,6 +6,13 @@ from quart import Quart
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 
 
+def _persona_factory(instructions="you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"):
+    """`persona_service_factory(user_id)` -> an object with async build_instructions()."""
+    persona = MagicMock()
+    persona.build_instructions = AsyncMock(return_value=instructions)
+    return AsyncMock(return_value=persona), persona
+
+
 @pytest.fixture
 def deps():
     user_repository = AsyncMock()
@@ -143,7 +150,7 @@ async def test_answer_webhook_hangs_up_on_machine_without_opening_session():
     user_repository = AsyncMock()
     ephemeral_store = AsyncMock()
     ephemeral_store.get.return_value = {"user_id": "u1", "account_id": "a1"}
-    prompt_builder = AsyncMock()
+    persona_factory, _ = _persona_factory()
 
     app = Quart(__name__)
     app.register_blueprint(create_voice_webhook_blueprint(
@@ -154,7 +161,7 @@ async def test_answer_webhook_hangs_up_on_machine_without_opening_session():
         lelik_agent_factory=MagicMock(),
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        prompt_builder=prompt_builder,
+        persona_service_factory=persona_factory,
         relay_stream_url="wss://relay.example.com/",
     ))
     client = app.test_client()
@@ -164,7 +171,7 @@ async def test_answer_webhook_hangs_up_on_machine_without_opening_session():
     body = (await response.get_data()).decode()
     assert "<Hangup" in body
     assert "<Connect" not in body
-    prompt_builder.build_for_agent.assert_not_called()
+    persona_factory.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -172,8 +179,7 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
     user_repository = AsyncMock()
     ephemeral_store = AsyncMock()
     ephemeral_store.get.return_value = {"user_id": "u1", "account_id": "a1"}
-    prompt_builder = AsyncMock()
-    prompt_builder.build_for_agent.return_value = "you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"
+    persona_factory, persona = _persona_factory()
 
     app = Quart(__name__)
     app.register_blueprint(create_voice_webhook_blueprint(
@@ -184,12 +190,7 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
         lelik_agent_factory=MagicMock(),
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        prompt_builder=prompt_builder,
-        # Task 19 fix round: /voice/answer now does a domain-scoped biographical
-        # read of its own before assembling the persona (RFC §4.8), so this route
-        # needs the repository injected. Mechanical adaptation to a new dependency;
-        # no assertion in this test changed.
-        fact_repository=AsyncMock(),
+        persona_service_factory=persona_factory,
         relay_stream_url="wss://relay.example.com/",
     ))
     client = app.test_client()
@@ -200,10 +201,11 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
     assert "<Connect>" in body
     assert "wss://relay.example.com/" in body
     assert "t1" in body
-    prompt_builder.build_for_agent.assert_awaited_once()
+    persona_factory.assert_awaited_once_with("u1")
+    persona.build_instructions.assert_awaited_once_with(user_id="u1", account_id="a1")
     stashed = ephemeral_store.set.await_args.args
     assert stashed[0] == "voice_ticket:t1"
-    assert "instructions" in stashed[1]
+    assert stashed[1]["instructions"] == "you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"
 
 
 @pytest.mark.asyncio
@@ -213,7 +215,7 @@ async def test_answer_webhook_rejects_when_ticket_not_found():
     known user_id/account_id."""
     ephemeral_store = AsyncMock()
     ephemeral_store.get.return_value = None
-    prompt_builder = AsyncMock()
+    persona_factory, _ = _persona_factory()
 
     app = Quart(__name__)
     app.register_blueprint(create_voice_webhook_blueprint(
@@ -224,7 +226,7 @@ async def test_answer_webhook_rejects_when_ticket_not_found():
         lelik_agent_factory=MagicMock(),
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        prompt_builder=prompt_builder,
+        persona_service_factory=persona_factory,
         relay_stream_url="wss://relay.example.com/",
     ))
     client = app.test_client()
@@ -233,7 +235,7 @@ async def test_answer_webhook_rejects_when_ticket_not_found():
 
     body = (await response.get_data()).decode()
     assert "<Reject" in body
-    prompt_builder.build_for_agent.assert_not_called()
+    persona_factory.assert_not_called()
 
 
 # =============================================================================
@@ -252,8 +254,7 @@ def _signed_app(*, ephemeral_store, signature_verifier=None):
         lelik_agent_factory=MagicMock(),
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=signature_verifier or AsyncMock(return_value=True),
-        prompt_builder=AsyncMock(),
-        fact_repository=AsyncMock(),
+        persona_service_factory=_persona_factory()[0],
         relay_stream_url="wss://relay.example.com/",
     ))
     return app

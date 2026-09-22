@@ -934,16 +934,29 @@ async def main():
                 # already-constructed instances: user_repo, _alert_webhook,
                 # notification_service, agent_factory.
                 #
-                # prompt_builder needs a REAL FactRepository (unlike companion_prompt_builder
-                # above, which is deliberately repo=None because its only caller always
-                # passes include_biographical=False) — voice_answer's build_for_agent call
-                # runs with include_biographical=True. container.repository +
-                # container.assembly_service are both already-constructed shared ports;
-                # this just composes them the same way companion_prompt_builder/
-                # _email_prompt_builder do above and in service_container.py.
-                voice_prompt_builder = PromptBuilder(
-                    repo=container.repository, assembly_service=container.assembly_service
-                )
+                # Lelik's call-start context (decisions/lelik_warm_context.md) is built per
+                # call: UserPromptBuilder carries the caller's own config, so the prompt gets
+                # their timezone and location; notification_service supplies the channel
+                # chain the end-of-call summary is written through.
+                from src.services.lelik_persona_service import LelikPersonaService
+                from src.services.prompt_builder import UserPromptBuilder
+
+                async def _lelik_persona_service_for(user_id: str) -> LelikPersonaService:
+                    profile = await user_repo.get_user(user_id)
+                    if profile is None:
+                        raise ValueError(f"no user profile for {user_id}")
+                    return LelikPersonaService(
+                        prompt_builder=UserPromptBuilder(
+                            repo=container.repository,
+                            user_id=user_id,
+                            config=profile.config,
+                            assembly_service=container.assembly_service,
+                        ),
+                        fact_repository=container.repository,
+                        session_store=session_store,
+                        notification_service=notification_service,
+                        config=profile.config,
+                    )
 
                 main_app.register_blueprint(
                     create_voice_webhook_blueprint(
@@ -954,16 +967,7 @@ async def main():
                         lelik_agent_factory=agent_factory._build_lelik,
                         answer_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/voice/answer",
                         signature_verifier=_voice_twilio_signature_verifier,
-                        prompt_builder=voice_prompt_builder,
-                        # RFC §4.8: voice_answer pre-fetches the biographical cache
-                        # itself so it can hand build_for_agent a domain-scoped slice
-                        # (see _LELIK_FACT_DOMAINS in voice_webhook_app.py) instead of
-                        # letting PromptBuilder pull the whole thing. Lightweight
-                        # stateless wrapper over the shared db_client, same
-                        # inline-construction pattern as the cabinet blueprint above.
-                        fact_repository=FirestoreFactRepository(
-                            db_client=db_client, env_config=env_config
-                        ),
+                        persona_service_factory=_lelik_persona_service_for,
                         relay_stream_url=config.get("VOICE_RELAY_STREAM_URL", ""),
                     )
                 )
