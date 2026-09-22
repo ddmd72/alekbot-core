@@ -56,5 +56,11 @@ class RealtimeSessionPort(ABC):
         this while a response is already active (RFC §4.7 corner-case table)."""
 
     @abstractmethod
+    async def cancel_response(self) -> None:
+        """Cancel the in-flight response (barge-in). Caller is responsible for
+        not calling this when no response is active (RFC §4.7 corner-case
+        table; the provider errors on a cancel with nothing active)."""
+
+    @abstractmethod
     async def close(self) -> None:
         """Close the session. No retry, no reconnect (RFC §4.14)."""

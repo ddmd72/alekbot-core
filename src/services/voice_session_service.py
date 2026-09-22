@@ -34,10 +34,11 @@ class VoiceSessionService:
         ticket: str,
         inbound_audio: AsyncIterator[AudioFrame],
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
+        clear_outbound_audio: Callable[[], Awaitable[None]],
     ) -> None:
         config = await self._control_plane.fetch_session_config(ticket)
         async with RequestContext(user_id=config["user_id"], account_id=config["account_id"]):
-            await self._run_call(ticket, config, inbound_audio, send_outbound_audio)
+            await self._run_call(ticket, config, inbound_audio, send_outbound_audio, clear_outbound_audio)
 
     async def _run_call(
         self,
@@ -45,6 +46,7 @@ class VoiceSessionService:
         config: dict,
         inbound_audio: AsyncIterator[AudioFrame],
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
+        clear_outbound_audio: Callable[[], Awaitable[None]],
     ) -> None:
         session = self._session_factory()
         buffer = VoiceCallBuffer(call_id=ticket)
@@ -72,7 +74,9 @@ class VoiceSessionService:
             # if nothing in the receive loop truly suspends the event loop first -
             # asyncio.wait() below is what forces that handoff.
             forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
-            consume_task = asyncio.ensure_future(self._consume_events(ticket, session, buffer, send_outbound_audio))
+            consume_task = asyncio.ensure_future(
+                self._consume_events(ticket, session, buffer, send_outbound_audio, clear_outbound_audio)
+            )
             await asyncio.wait({forward_task, consume_task}, return_when=asyncio.FIRST_COMPLETED)
         finally:
             tasks = [task for task in (forward_task, consume_task) if task is not None]
@@ -104,14 +108,32 @@ class VoiceSessionService:
         session: RealtimeSessionPort,
         buffer: VoiceCallBuffer,
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
+        clear_outbound_audio: Callable[[], Awaitable[None]],
     ) -> None:
         turn_start: Optional[datetime] = None
         pending_request_text = ""
         pending_response_text = ""
+        # Barge-in state (RFC §4.7; mechanism validated live in
+        # scripts/voice/test_mulaw_relay_poc.py:154-170). Tracked here rather than in
+        # the adapter because the decision is session-loop policy, not provider
+        # translation - the port stays a dumb "cancel now" command.
+        response_active = False
 
         async for event in session.receive_events():
             if event.type == "response_created":
                 turn_start = datetime.now(timezone.utc)
+                response_active = True
+            elif event.type == "speech_started":
+                # The caller started talking over Lelik. Two independent buffers have
+                # to be drained or the interrupted reply keeps playing: audio already
+                # handed to Twilio (cleared via the callback) and audio OpenAI has not
+                # generated yet (stopped via cancel_response). Guarded on
+                # response_active - the POC documents that response.cancel with nothing
+                # in flight raises a provider-side error, which would end the call.
+                if response_active:
+                    await clear_outbound_audio()
+                    await session.cancel_response()
+                    response_active = False
             elif event.type == "audio_delta":
                 await send_outbound_audio(event.payload["frame"])
             elif event.type == "user_transcript":
@@ -119,6 +141,7 @@ class VoiceSessionService:
             elif event.type == "model_transcript":
                 pending_response_text += event.payload["text"]
             elif event.type == "response_done":
+                response_active = False
                 usage = event.payload.get("usage", {})
                 if usage:
                     # The provider labels its own usage - VoiceSessionService is

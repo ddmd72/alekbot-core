@@ -81,3 +81,64 @@ async def test_handle_connection_cleans_up_on_clean_close_without_stop_event():
     assert task_holder["task"].done()
     assert len(consumed_frames) == 1
     assert consumed_frames[0].payload == "b64audio"
+
+
+@pytest.mark.asyncio
+async def test_clear_outbound_audio_sends_twilio_clear_with_real_stream_sid():
+    """Barge-in's Twilio half (I5): the handler hands VoiceSessionService a
+    callback that drops everything still queued for playback. Twilio's wire
+    shape is `{"event": "clear", "streamSid": ...}` (validated live in
+    scripts/voice/test_mulaw_relay_poc.py:168) and the streamSid must be the
+    real one captured from the `start` event, not the ticket."""
+    messages = [{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}}]
+    ws = FakeTwilioWs(messages)
+    captured: dict = {}
+
+    class FakeSessionService:
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio):
+            captured["clear"] = clear_outbound_audio
+            await clear_outbound_audio()
+
+    handler = MediaStreamHandler(session_service=FakeSessionService())
+    await asyncio.wait_for(handler.handle_connection(ws), timeout=2.0)
+
+    assert ws.sent == [{"event": "clear", "streamSid": "MZ1"}]
+
+
+@pytest.mark.asyncio
+async def test_no_clear_frame_is_sent_when_no_start_event_ever_arrives():
+    """A connection that closes before Twilio's `start` event must write
+    nothing to the socket. Note what this does and does not prove: the
+    `stream_sid is None` guard inside clear_outbound_audio is defensive parity
+    with send_outbound's identical guard and is NOT reachable through the
+    public flow - the callback is only handed to handle_call from inside the
+    `start` branch, after stream_sid is assigned. This asserts the observable
+    contract (no stray frames pre-start); the guard itself stays as a
+    belt-and-braces mirror of its sibling."""
+    ws = FakeTwilioWs([{"event": "media", "media": {"payload": "b64audio"}}])
+    handler = MediaStreamHandler(session_service=AsyncMock())
+
+    await asyncio.wait_for(handler.handle_connection(ws), timeout=2.0)
+
+    assert ws.sent == []
+
+
+@pytest.mark.asyncio
+async def test_clear_outbound_audio_is_reusable_across_repeated_barge_ins():
+    """One call can be interrupted many times, so the callback is not
+    single-use - each invocation emits its own clear frame."""
+    messages = [{"event": "start", "start": {"streamSid": "MZ1", "customParameters": {"ticket": "t1"}}}]
+    ws = FakeTwilioWs(messages)
+
+    class FakeSessionService:
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio):
+            await clear_outbound_audio()
+            await clear_outbound_audio()
+
+    handler = MediaStreamHandler(session_service=FakeSessionService())
+    await asyncio.wait_for(handler.handle_connection(ws), timeout=2.0)
+
+    assert ws.sent == [
+        {"event": "clear", "streamSid": "MZ1"},
+        {"event": "clear", "streamSid": "MZ1"},
+    ]

@@ -280,3 +280,33 @@ async def test_submit_message_sends_system_role_item():
     assert sent["type"] == "conversation.item.create"
     assert sent["item"]["role"] == "system"
     assert sent["item"]["content"][0]["text"] == "Alek's answer just arrived: teal"
+
+
+@pytest.mark.asyncio
+async def test_cancel_response_sends_response_cancel():
+    """Barge-in's provider half (I5). The exact client event OpenAI accepts is
+    `response.cancel` with no other keys - verified live against a real call in
+    scripts/voice/test_mulaw_relay_poc.py:169. Wire-level assertion (mocked
+    websocket, not a mocked port) per docs/how_to/ADAPTER_WIRE_TESTING.md."""
+    ws = FakeWebSocket(incoming=[])
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    await adapter.cancel_response()
+
+    assert ws.sent[-1] == {"type": "response.cancel"}
+
+
+@pytest.mark.asyncio
+async def test_receive_events_normalizes_speech_started():
+    """VoiceSessionService's barge-in branch keys off the normalized
+    `speech_started` type, so the provider's raw
+    `input_audio_buffer.speech_started` must reach it translated (RFC §4.4 -
+    the port carries audio, not provider shapes)."""
+    ws = FakeWebSocket(incoming=[{"type": "input_audio_buffer.speech_started"}])
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    events = [event async for event in adapter.receive_events()]
+
+    assert [event.type for event in events] == ["speech_started"]

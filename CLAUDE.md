@@ -159,6 +159,8 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
 | ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
 | Tutor | BALANCED (OpenAI `gpt-5.6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
+| Lelik | n/a — **no LLM call** | none (`internal=True`, `capabilities={}`) | voice companion's front desk: places the Twilio callback. Not delegable — `voice_webhook_app.py` calls `execute()` directly. The *persona* runs on OpenAI Realtime in the relay, outside the tier system |
+| lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills |
 
 **Remote MCP Server** — alekbot as MCP *server* exposing memory search to claude.ai Custom Connectors
 (inverse of its Maps MCP *client*). One tool `get_user_context(query, …)` → `SearchEnrichmentService.enrich_context`
@@ -214,6 +216,43 @@ stale `running` jobs.
   (`get_email_details`/`get_email_attachment`) → `search_web` → `create_html_page` report (Gmail-linked
   subjects) + short chat message. `notify_document_link` saves report URL + `fetch_url` hint to history.
   Cabinet: `/api/gmail/daily-review`.
+
+**Voice Companion (Lelik)** — a phone call to the exocortex, not a chat surface. The owner dials the
+Twilio number; `/voice/auth` resolves the caller's `From` to a user (platform `"phone"`), enforces a
+one-call-per-user marker, mints a short-TTL **ticket**, and has `LelikAgent` originate a *callback* to
+the bound number (inbound dial is never the conversation leg — the callback is what proves identity).
+On pickup, `/voice/answer` assembles Lelik's persona via `PromptBuilder.build_for_agent("lelik")` and
+returns TwiML pointing Twilio's Media Stream at the relay. Lelik is a **front desk, not Alek**: his
+biographical read is scoped to four fact domains (`_LELIK_FACT_DOMAINS` — biographical, preference,
+location, **agent_directive**; the last is not small talk, it is how the standing-directive block
+reaches the prompt at all), and anything outside that slice is meant to be forwarded to the human
+owner rather than answered from his own mouth (RFC §4.2/§4.8).
+- **Two deploy units, on purpose.** The main Quart service (`main.py`) owns Twilio's webhooks,
+  ticket minting, and the OIDC-protected control plane (`/voice/session-config`,
+  `/voice/submit-transcript`). A **separate Cloud Run service** (`relay_main.py`, a plain
+  `websockets` server — not Quart) owns the live audio. The split is forced by Cloud Run, not taste:
+  an open WebSocket is one long request, so a 20-minute call bills 20 minutes of CPU and would
+  compete with Slack/Telegram serving on the same 1 vCPU box, and the relay needs `--timeout=3600`
+  which must not be applied service-wide (RFC §4.14; a call over 60 min is cut — accepted v1 limit).
+  Same precedent as DeepResearch's Cloud Run **Job**. Session affinity is explicitly not needed — the
+  WebSocket *is* the session, and the relay always initiates toward the main service.
+- **The ticket is the only identity handoff between them.** It rides in the webhook **query string**
+  (Twilio leaves it untouched and its HMAC covers the full URL, so it cannot be swapped) and is
+  **atomically consumed** by `/voice/session-config` via `get_and_delete` — single use, so a captured
+  ticket cannot be replayed to read back the owner's persona and facts.
+- **Audio is μ-law 8 kHz end to end** — Twilio and OpenAI Realtime both speak it, so the relay is a
+  byte forward with no decode/resample. `VoiceSessionService` owns barge-in: on `speech_started` while
+  a response is active it clears Twilio's playback buffer **and** cancels the provider response
+  (guarded — a `response.cancel` with nothing in flight is a provider error).
+- **Two agents, deliberately not one.** `LelikAgent` makes no LLM call (it only originates the call);
+  `LelikSummarizerAgent` (ECO) turns the end-of-call transcript into a plain-text summary delivered via
+  `UserNotificationService.notify_call_summary`. The summarizer must never be the participant it
+  summarizes (RFC §4.9), and it has no `CompanionRecord` store — `records` is always `[]`.
+- Usage is priced by `domain.billing.calculate_realtime_cost` over the flat legs
+  `OpenAIRealtimeAdapter._flatten_usage` produces; `reasoning_tokens` are a **subset** of the output
+  text leg, never additive. RFC: `docs/10_rfcs/VOICE_COMPANION_RFC.md`. Deployment prerequisites
+  (relay service, `VOICE_RELAY_STREAM_URL`'s two-pass first deploy, Twilio secrets):
+  `docs/07_deployment/README.md`.
 
 **Consolidation** — long-term memory formation: sliding window fills → batch to Cloud Tasks queue →
 ConsolidationAgent ("Life Chronicler") extracts facts/principles from raw messages (non-blocking).

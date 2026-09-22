@@ -117,3 +117,136 @@ async def test_handle_call_still_submits_transcript_and_closes_when_open_fails()
     assert submit_kwargs["user_id"] == "u1"
     assert submit_kwargs["account_id"] == "a1"
     assert submit_kwargs["buffer"].turns == []
+
+
+@pytest.mark.asyncio
+async def test_speech_started_mid_response_clears_twilio_buffer_and_cancels():
+    """Barge-in (I5), mirroring the mechanism validated live in
+    scripts/voice/test_mulaw_relay_poc.py:158-170. Cancelling the provider's
+    response alone is not enough: audio already handed to Twilio keeps playing
+    out over the caller, so BOTH halves must fire."""
+    control_plane = AsyncMock()
+    control_plane.fetch_session_config.return_value = {"instructions": "hi", "user_id": "u1", "account_id": "a1"}
+    realtime_session = AsyncMock()
+
+    async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})
+        yield RealtimeSessionEvent(type="speech_started", payload={})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    service = VoiceSessionService(
+        realtime_session_factory=MagicMock(return_value=realtime_session),
+        control_plane=control_plane,
+        alert_sink=AsyncMock(),
+    )
+    clear_outbound = AsyncMock()
+
+    await service.handle_call(
+        ticket="t1",
+        inbound_audio=_frames(),
+        send_outbound_audio=AsyncMock(),
+        clear_outbound_audio=clear_outbound,
+    )
+
+    clear_outbound.assert_awaited_once()
+    realtime_session.cancel_response.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_speech_started_with_no_active_response_does_not_cancel():
+    """The response_active guard is load-bearing, not defensive tidiness: the
+    POC documents that a `response.cancel` with nothing in flight raises a
+    provider-side error, which this service turns into an alert + an ended
+    call. A caller who speaks first (before Lelik ever answers) must therefore
+    cancel nothing."""
+    control_plane = AsyncMock()
+    control_plane.fetch_session_config.return_value = {"instructions": "hi", "user_id": "u1", "account_id": "a1"}
+    realtime_session = AsyncMock()
+
+    async def events():
+        yield RealtimeSessionEvent(type="speech_started", payload={})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    service = VoiceSessionService(
+        realtime_session_factory=MagicMock(return_value=realtime_session),
+        control_plane=control_plane,
+        alert_sink=AsyncMock(),
+    )
+    clear_outbound = AsyncMock()
+
+    await service.handle_call(
+        ticket="t1",
+        inbound_audio=_frames(),
+        send_outbound_audio=AsyncMock(),
+        clear_outbound_audio=clear_outbound,
+    )
+
+    clear_outbound.assert_not_awaited()
+    realtime_session.cancel_response.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_speech_started_after_response_done_does_not_cancel():
+    """response_done must clear response_active, or the next utterance in a
+    normal (uninterrupted) exchange would fire a spurious response.cancel
+    against a finished response - the exact provider-side error the guard
+    exists to avoid."""
+    control_plane = AsyncMock()
+    control_plane.fetch_session_config.return_value = {"instructions": "hi", "user_id": "u1", "account_id": "a1"}
+    realtime_session = AsyncMock()
+
+    async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})
+        yield RealtimeSessionEvent(type="response_done", payload={"usage": {}, "model": "gpt-realtime-2.1"})
+        yield RealtimeSessionEvent(type="speech_started", payload={})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    service = VoiceSessionService(
+        realtime_session_factory=MagicMock(return_value=realtime_session),
+        control_plane=control_plane,
+        alert_sink=AsyncMock(),
+    )
+    clear_outbound = AsyncMock()
+
+    await service.handle_call(
+        ticket="t1",
+        inbound_audio=_frames(),
+        send_outbound_audio=AsyncMock(),
+        clear_outbound_audio=clear_outbound,
+    )
+
+    clear_outbound.assert_not_awaited()
+    realtime_session.cancel_response.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_second_barge_in_within_one_response_cancels_only_once():
+    """A caller talking in bursts produces several speech_started events inside
+    one response. The first consumes the active response; the rest must be
+    no-ops, again because a second response.cancel would hit nothing in flight."""
+    control_plane = AsyncMock()
+    control_plane.fetch_session_config.return_value = {"instructions": "hi", "user_id": "u1", "account_id": "a1"}
+    realtime_session = AsyncMock()
+
+    async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})
+        yield RealtimeSessionEvent(type="speech_started", payload={})
+        yield RealtimeSessionEvent(type="speech_started", payload={})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    service = VoiceSessionService(
+        realtime_session_factory=MagicMock(return_value=realtime_session),
+        control_plane=control_plane,
+        alert_sink=AsyncMock(),
+    )
+    clear_outbound = AsyncMock()
+
+    await service.handle_call(
+        ticket="t1",
+        inbound_audio=_frames(),
+        send_outbound_audio=AsyncMock(),
+        clear_outbound_audio=clear_outbound,
+    )
+
+    assert clear_outbound.await_count == 1
+    assert realtime_session.cancel_response.await_count == 1

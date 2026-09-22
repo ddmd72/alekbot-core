@@ -209,6 +209,41 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     `CompanionConfig.text_mode` defaults to `SUMMARY` — since Phase G it receives Tutor's real
     ≤300-char `response_summary`, not `full_response` (dormant pre-Phase-G, when Tutor produced no
     summary and `text == full_text`).
+- Lelik (`lelik_agent.py`, **`internal=True`, `capabilities={}`, `eager=False`**) — the voice
+  companion's front desk (`docs/10_rfcs/VOICE_COMPANION_RFC.md` §4.6/§4.13). The closest sibling to
+  Tutor architecturally (a companion, not a delegation specialist) but stricter: it has **no `Intent`
+  at all**, so it is unreachable via `delegate_to_specialist` *and* via `AgentCoordinator`;
+  `can_handle()` returns `False` unconditionally, existing only to satisfy `BaseAgent`. Registering an
+  intent is what the deferred **outbound**-calling RFC does, not Slice 1.
+  - **It makes no LLM call and has no tier.** `execute(purpose, ticket, answer_url)` does exactly one
+    thing: `TelephonyPort.originate_call`. There is no `_DEFAULT_AGENT_TIERS["lelik"]` entry and none
+    is needed — Lelik's *persona* is a `gpt-realtime-2.1` session opened by `OpenAIRealtimeAdapter`
+    inside the relay process, which never goes through `AgentExecutionContext` at all.
+    `execution_context` is accepted for constructor parity and unused.
+  - **Constructor:** `(config, execution_context, telephony: TelephonyPort, from_number,
+    status_callback_url, to_number)` — built by `UserAgentFactory._build_lelik(user_id, account_id)`,
+    which `main.py` passes into the webhook blueprint as `lelik_agent_factory`. The **only** call site
+    is `src/web/voice_webhook_app.py`'s `/voice/auth` route, which awaits `execute()` directly.
+  - **It deliberately does not catch `originate_call` failures.** The auth webhook's own try/except is
+    what deletes the ticket and releases the one-call marker; swallowing the exception into an
+    `AgentResponse.failure()` would strand both for up to `one_call_ttl_s` with no alert.
+  - **LelikSummarizerAgent** (`lelik_summarizer_agent.py`) — Lelik's extractor, the same slot
+    `TutorExtractorAgent` fills for Tutor and `ConsolidationAgent` fills for Alek. NOT
+    manifest-registered; constructed fresh per call by `composition/companion_extractor_runner.py`
+    (`_EXTRACTORS["voice"]`; services/ cannot import agents/, REQ-ARCH-22). Reached from
+    `main.py`'s `_voice_summary_consumer`, which `voice_control_plane_app.py`'s
+    `POST /voice/submit-transcript` invokes at end of call → `notify_call_summary`.
+    Constructor `(config, execution_context, prompt_builder)`; single LLM call, no tool loop, no
+    dedup-before-write. **Output is plain text, not JSON** — unlike `TutorExtractorAgent` there is
+    nothing to parse: Lelik has no `CompanionRecord` store, so `result["records"]` is hardcoded `[]`
+    and never asked of the model.
+    **Tier: `PerformanceTier.ECO`, explicitly pinned** in `domain/user.py::_DEFAULT_AGENT_TIERS
+    ["lelik_summarizer"]` — end-of-call summarization is mechanical bulk work, not
+    `tutor_extractor`'s judgment call. The pin is load-bearing precisely *because* the agent is not
+    manifest-registered: `test_every_llm_agent_has_a_default_tier` cannot see it, so without the
+    entry it would silently fall through to the user's `default_tier`. There is **no
+    `AgentProviderStrategy.STRATEGIES["lelik_summarizer"]`** either, so provider resolution falls back
+    to `STRATEGIES["quick"]` (`agent_context_builder.py:206`).
 
 ## Orchestration Patterns
 
