@@ -914,8 +914,7 @@ async def main():
                 # prompt_builder needs a REAL FactRepository (unlike companion_prompt_builder
                 # above, which is deliberately repo=None because its only caller always
                 # passes include_biographical=False) — voice_answer's build_for_agent call
-                # uses the include_biographical=True default, so Lelik gets the same
-                # biographical context every other agent gets. container.repository +
+                # runs with include_biographical=True. container.repository +
                 # container.assembly_service are both already-constructed shared ports;
                 # this just composes them the same way companion_prompt_builder/
                 # _email_prompt_builder do above and in service_container.py.
@@ -932,6 +931,15 @@ async def main():
                         lelik_agent_factory=agent_factory._build_lelik,
                         answer_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/voice/answer",
                         prompt_builder=voice_prompt_builder,
+                        # RFC §4.8: voice_answer pre-fetches the biographical cache
+                        # itself so it can hand build_for_agent a domain-scoped slice
+                        # (see _LELIK_FACT_DOMAINS in voice_webhook_app.py) instead of
+                        # letting PromptBuilder pull the whole thing. Lightweight
+                        # stateless wrapper over the shared db_client, same
+                        # inline-construction pattern as the cabinet blueprint above.
+                        fact_repository=FirestoreFactRepository(
+                            db_client=db_client, env_config=env_config
+                        ),
                         relay_stream_url=config.get("VOICE_RELAY_STREAM_URL", ""),
                     )
                 )

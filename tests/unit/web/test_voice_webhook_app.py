@@ -178,6 +178,11 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
         lelik_agent_factory=MagicMock(),
         answer_url="https://main.example.com/voice/answer",
         prompt_builder=prompt_builder,
+        # Task 19 fix round: /voice/answer now does a domain-scoped biographical
+        # read of its own before assembling the persona (RFC §4.8), so this route
+        # needs the repository injected. Mechanical adaptation to a new dependency;
+        # no assertion in this test changed.
+        fact_repository=AsyncMock(),
         relay_stream_url="wss://relay.example.com/",
     ))
     client = app.test_client()
