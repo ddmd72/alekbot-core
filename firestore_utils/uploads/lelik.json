@@ -2,6 +2,6 @@
   "agent_id": "lelik",
   "blueprint_id": "lelik_agent_v1",
   "tokens": {
-    "COGNITIVE_PROCESS_LELIK": {"order": 10, "non_overridable": false}
+    "COGNITIVE_PROCESS_LELIK": {"order": 10, "non_overridable": true}
   }
 }
