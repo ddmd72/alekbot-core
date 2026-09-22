@@ -234,6 +234,13 @@ async def test_link_platform_identity_success(user_repo, test_user):
     assert written_ref is doc_ref
     assert written_data["platform_identities"]["slack"] == "U123456"
 
+    # Both reads must participate in the transaction — otherwise a regression
+    # back to untransacted `await user_ref.get()` / `conflict_query.stream()`
+    # would still pass every test in this file silently.
+    query = user_repo.users_col.where.return_value.limit.return_value
+    doc_ref.get.assert_awaited_once_with(transaction=transaction)
+    query.stream.assert_called_once_with(transaction=transaction)
+
 
 @pytest.mark.asyncio
 async def test_link_platform_identity_user_not_found(user_repo):
