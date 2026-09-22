@@ -59,12 +59,24 @@ class LelikAgent(BaseAgent):
         return False
 
     async def execute(self, purpose: str, ticket: str, answer_url: str) -> AgentResponse:
-        answer_url_with_ticket = f"{answer_url}?{urlencode({'ticket': ticket})}"
+        # Both callback URLs carry the ticket in their QUERY STRING — Twilio
+        # POSTs only its own fields (CallSid, AnsweredBy, CallStatus, ...) in
+        # the body and leaves the configured URL's query string untouched, so
+        # this is the only channel that reaches the webhooks (which read it
+        # back with `request.args`, not `await request.form`).
+        #
+        # The status callback needs it for the same reason `/voice/answer`
+        # does: it is the only correlation path from a call-status event back
+        # to the ticket/user whose one-call marker must be released when the
+        # callback rings out, is busy, or fails at the carrier and
+        # `/voice/answer` is therefore never reached at all. CallSid cannot
+        # serve — it only exists once this very call returns.
+        ticket_qs = urlencode({"ticket": ticket})
         call_sid = await self._telephony.originate_call(
             to=self._to_number,
             from_=self._from_number,
-            answer_url=answer_url_with_ticket,
-            status_callback_url=self._status_callback_url,
+            answer_url=f"{answer_url}?{ticket_qs}",
+            status_callback_url=f"{self._status_callback_url}?{ticket_qs}",
         )
         return AgentResponse.success(
             task_id=str(uuid4()),

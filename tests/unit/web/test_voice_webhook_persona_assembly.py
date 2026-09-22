@@ -51,6 +51,11 @@ def _app(*, ephemeral_store, prompt_builder, alert_sink, fact_repository=None):
         notification_service=AsyncMock(),
         lelik_agent_factory=MagicMock(),
         answer_url="https://main.example.com/voice/answer",
+        # FIX I3 (final whole-branch review): the Twilio-facing routes now verify
+        # the X-Twilio-Signature header via an injected async callable, the same
+        # shape voice_control_plane_app injects its OIDC verifier. Mechanical
+        # adaptation to a new REQUIRED dependency; no assertion in this file changed.
+        signature_verifier=AsyncMock(return_value=True),
         prompt_builder=prompt_builder,
         fact_repository=fact_repository if fact_repository is not None else AsyncMock(),
         relay_stream_url="wss://relay.example.com/",
@@ -70,7 +75,7 @@ async def test_answer_webhook_requests_lelik_persona_with_explicit_read_toggles(
         prompt_builder=prompt_builder,
         alert_sink=AsyncMock(),
     ).test_client()
-    await client.post("/voice/answer", form={"CallSid": "CA1", "AnsweredBy": "human", "ticket": "t1"})
+    await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
 
     kwargs = prompt_builder.build_for_agent.await_args.kwargs
     assert kwargs["agent_type"] == "lelik"
@@ -96,7 +101,7 @@ async def test_persona_assembly_failure_releases_ticket_and_marker_and_alerts():
         alert_sink=alert_sink,
     ).test_client()
     response = await client.post(
-        "/voice/answer", form={"CallSid": "CA1", "AnsweredBy": "human", "ticket": "t1"},
+        "/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"},
     )
 
     # Graceful TwiML, not a bare 500 to Twilio, and no session opened.
@@ -135,7 +140,7 @@ async def test_biographical_read_is_scoped_to_the_four_allowed_domains():
         alert_sink=AsyncMock(),
         fact_repository=fact_repository,
     ).test_client()
-    await client.post("/voice/answer", form={"CallSid": "CA1", "AnsweredBy": "human", "ticket": "t1"})
+    await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
 
     # Facts belong to the account, not the user (PromptBuilder's own strict separation).
     fact_repository.get_biographical_context_cached.assert_awaited_once_with("a1")
@@ -187,7 +192,7 @@ async def test_fact_fetch_failure_takes_the_same_graceful_path_as_assembly_failu
         fact_repository=fact_repository,
     ).test_client()
     response = await client.post(
-        "/voice/answer", form={"CallSid": "CA1", "AnsweredBy": "human", "ticket": "t1"},
+        "/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"},
     )
 
     assert response.status_code == 200

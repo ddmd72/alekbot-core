@@ -1,5 +1,10 @@
 """
-Voice auth webhook — Twilio's entry point for an inbound "call Lelik" dial.
+Voice webhooks — Twilio's entry points for a "call Lelik" session.
+
+Three routes, all Twilio-facing and all signature-verified via the injected
+`signature_verifier` (`src/web/twilio_signature_verifier.py`): `POST
+/voice/auth` (the inbound dial), `POST /voice/answer` (the callback leg was
+picked up) and `POST /voice/status` (the callback leg's lifecycle).
 
 `POST /voice/auth` (Twilio's default webhook method — Quart has no GET-only
 restriction, unlike the raw HTTP parser spike 0.2 hit on the `websockets`
@@ -32,6 +37,7 @@ library, so this stays on POST and needs no Twilio number-config change; see
    even though the interaction itself is happening over voice.
 """
 import uuid
+from typing import Optional
 
 from quart import Blueprint, Response, request
 from twilio.twiml.voice_response import VoiceResponse
@@ -41,6 +47,17 @@ from src.domain.voice_auth_decision import AuthDecision
 from src.utils.logger import logger
 
 _TICKET_TTL_S = 300
+
+# Twilio's `CallStatus` values that mean the call leg is over for good (as
+# opposed to the non-terminal `initiated` / `ringing` / `in-progress` it also
+# posts, because TwilioTelephonyAdapter subscribes to
+# status_callback_event=["initiated", "ringing", "answered", "completed"]).
+# Every one of these ends the one-call window, including the ones where
+# /voice/answer is NEVER reached: a callback that rings out, hits a busy
+# signal, or fails at the carrier produces no answer webhook at all, so this
+# route is the only thing that can release the ticket and the marker before
+# `one_call_ttl_s` (default 3600s) expires.
+_TERMINAL_CALL_STATUSES = frozenset({"completed", "no-answer", "busy", "failed", "canceled"})
 
 # RFC §4.8: Lelik reads "a small explicit list of fact domains ... enough for light
 # continuity and small talk, not a substitute for forwarding" — NOT Alek's whole
@@ -69,16 +86,44 @@ def create_voice_webhook_blueprint(
     notification_service,
     lelik_agent_factory,
     answer_url,
+    signature_verifier,
     one_call_ttl_s: int = 3600,
     prompt_builder=None,
     fact_repository=None,
     relay_stream_url: str = "",
 ) -> Blueprint:
+    """Build the Twilio-facing voice webhook blueprint.
+
+    `signature_verifier` is a REQUIRED async callable
+    `(url, form_params, signature) -> bool`, injected the same way
+    `voice_control_plane_app`'s `oidc_verifier` is: as a dependency, not an
+    import, so the routes stay testable without a real Twilio auth token and
+    the local-dev bypass policy lives in main.py's wiring. It is deliberately
+    NOT optional-with-a-default — an authentication gate that silently
+    disappears when a caller forgets to wire it is the exact failure class
+    CLAUDE.md's `config.get()` note warns about.
+    """
     bp = Blueprint("voice_webhook", __name__)
+
+    async def _reject_if_unsigned(form) -> Optional[Response]:
+        """403 unless the request carries a valid Twilio signature.
+
+        Passes the EXTERNAL URL (including query string) — see `_external_url`
+        — because that is what Twilio computed its HMAC over, and because the
+        call ticket now rides in that query string.
+        """
+        signature = request.headers.get("X-Twilio-Signature", "")
+        if await signature_verifier(_external_url(), dict(form), signature):
+            return None
+        logger.warning(f"voice webhook: rejected unsigned/invalid request to {request.path}")
+        return Response("forbidden", status=403)
 
     @bp.route("/voice/auth", methods=["POST"])
     async def voice_auth():
         form = await request.form
+        forbidden = await _reject_if_unsigned(form)
+        if forbidden is not None:
+            return forbidden
         caller = (form.get("From") or "").strip()
 
         profile = await user_repository.get_user_by_platform_id("phone", caller)
@@ -144,15 +189,32 @@ def create_voice_webhook_blueprint(
     async def voice_answer():
         """Twilio's webhook for the callback leg once it is answered.
 
-        1. AMD gate: if Twilio's `AnsweredBy` machine detection says a
-           machine/voicemail picked up, hang up immediately without ever
-           resolving the ticket or opening a persona/session - no point
-           spending an LLM call assembling Lelik's prompt for an answering
-           machine.
-        2. Resolve the ticket minted by `voice_auth` back to the caller's
+        1. Resolve the ticket minted by `voice_auth` back to the caller's
            identity via `EphemeralStore`. A ticket that isn't there (already
            redeemed, expired, or forged) gets rejected outright - never open
            a session without a known user_id/account_id.
+
+           **The ticket arrives in the QUERY STRING, not the form body.**
+           `LelikAgent.execute` builds the callback URL as
+           `f"{answer_url}?{urlencode({'ticket': ticket})}"`, and Twilio's
+           callback POST carries only its OWN fields (`CallSid`, `AnsweredBy`,
+           ...) in the body while leaving the configured URL's query string
+           untouched. Reading it from `await request.form` therefore always
+           produced an empty ticket and rejected EVERY real call - the seam
+           neither `test_lelik_agent.py` (producer) nor
+           `test_voice_webhook_app.py` (consumer, against a mocked form dict)
+           crossed. `request.args` is a synchronous Quart property parsed from
+           the URL; only `request.form` needs awaiting.
+        2. AMD gate: if Twilio's `AnsweredBy` machine detection says a
+           machine/voicemail picked up, hang up immediately without assembling
+           a persona or opening a session - no point spending an LLM call on
+           Lelik's prompt for an answering machine. The ticket and the one-call
+           marker are RELEASED here (same two keys, same `ephemeral_store.
+           delete` pattern as the persona-failure handler below): voicemail
+           ends the call, so leaving them behind would lock the caller out of
+           any retry for up to `one_call_ttl_s` (default 3600s). Resolving the
+           ticket before this gate is what makes that possible and costs one
+           ephemeral-store read, not an LLM call.
         3. Assemble Lelik's persona via `PromptBuilderPort.build_for_agent`,
            over a biographical read scoped to `_LELIK_FACT_DOMAINS` (RFC §4.8),
            and stash it back onto the ticket (relay's `/voice/session-config`
@@ -169,23 +231,28 @@ def create_voice_webhook_blueprint(
         and answer with graceful TTS instead of a bare 500.
         """
         form = await request.form
+        forbidden = await _reject_if_unsigned(form)
+        if forbidden is not None:
+            return forbidden
         answered_by = form.get("AnsweredBy", "")
-        ticket = form.get("ticket", "")
-
-        if answered_by.startswith("machine"):
-            logger.info(
-                f"voice answer: machine detected ({answered_by}) for ticket {ticket}, "
-                "hanging up without opening a session"
-            )
-            vr = VoiceResponse()
-            vr.hangup()
-            return Response(str(vr), mimetype="text/xml")
+        ticket = request.args.get("ticket", "")
 
         ticket_key = f"voice_ticket:{ticket}"
         identity = await ephemeral_store.get(ticket_key)
         if identity is None:
             logger.warning(f"voice answer: no identity found for ticket {ticket}, rejecting")
             return _twiml_reject()
+
+        if answered_by.startswith("machine"):
+            logger.info(
+                f"voice answer: machine detected ({answered_by}) for ticket {ticket}, "
+                "hanging up without opening a session"
+            )
+            await ephemeral_store.delete(ticket_key)
+            await ephemeral_store.delete(f"voice_one_call:{identity['user_id']}")
+            vr = VoiceResponse()
+            vr.hangup()
+            return Response(str(vr), mimetype="text/xml")
 
         # RFC §4.8's domain scoping, implemented through the kwarg that actually
         # exists. `build_for_agent` has no `session_domains` parameter (that belongs
@@ -246,7 +313,87 @@ def create_voice_webhook_blueprint(
         stream.parameter(name="ticket", value=ticket)
         return Response(str(vr), mimetype="text/xml")
 
+    @bp.route("/voice/status", methods=["POST"])
+    async def voice_status():
+        """Twilio's call-status callback for the outbound callback leg.
+
+        `TwilioTelephonyAdapter.originate_call` has always subscribed to
+        `status_callback_event=["initiated", "ringing", "answered",
+        "completed"]` and `UserAgentFactory._build_lelik` has always pointed
+        `status_callback_url` at `{service_url}/voice/status` - but the route
+        itself did not exist, so every one of those callbacks 404'd. The
+        consequence was not cosmetic: a callback that is dialed but never
+        answered (rings out, busy, carrier-level failure) reaches neither
+        `/voice/answer` nor `/voice/submit-transcript`, so NOTHING released the
+        ticket or the one-call marker and the caller stayed locked out until
+        `one_call_ttl_s` (default 3600s) expired.
+
+        The ticket rides in this URL's query string, appended by
+        `LelikAgent.execute` exactly like the answer callback's (and covered by
+        the same Twilio signature, which is computed over the full URL). There
+        is no other correlation path: Twilio's `CallSid` is only known AFTER
+        `originate_call` returns, i.e. after the ticket was already minted, and
+        mapping it back would need a second store write racing the `initiated`
+        callback.
+
+        Non-terminal statuses (`initiated`/`ringing`/`in-progress`) are
+        acknowledged and ignored - releasing on those would free the marker
+        while the call is still live. Twilio does not parse a TwiML body from a
+        status callback, so this returns a bare 200.
+        """
+        form = await request.form
+        forbidden = await _reject_if_unsigned(form)
+        if forbidden is not None:
+            return forbidden
+
+        call_status = (form.get("CallStatus") or "").strip().lower()
+        ticket = request.args.get("ticket", "")
+
+        if call_status not in _TERMINAL_CALL_STATUSES:
+            logger.info(f"voice status: non-terminal status '{call_status}' for ticket {ticket}, ignoring")
+            return Response("", status=200)
+
+        ticket_key = f"voice_ticket:{ticket}"
+        identity = await ephemeral_store.get(ticket_key)
+        if identity is None:
+            # Already released by /voice/answer's AMD branch, the persona-failure
+            # handler, /voice/session-config's single-use consumption, or a
+            # duplicate delivery of this same callback. Nothing left to do.
+            logger.info(
+                f"voice status: terminal status '{call_status}' for ticket {ticket}, "
+                "already released"
+            )
+            return Response("", status=200)
+
+        logger.info(f"voice status: terminal status '{call_status}' for ticket {ticket}, releasing")
+        await ephemeral_store.delete(ticket_key)
+        await ephemeral_store.delete(f"voice_one_call:{identity['user_id']}")
+        return Response("", status=200)
+
     return bp
+
+
+def _external_url() -> str:
+    """The absolute URL Twilio computed its signature over.
+
+    Cloud Run terminates TLS at its front end and forwards plain HTTP to the
+    container, and hypercorn here is started with no forwarded-header trust
+    (`main.py`: bare `HypercornConfig()` with only `bind`/`use_reloader`/
+    `accesslog`/`errorlog` set), so `request.url` reports `http://...` and would
+    never match the `https://...` URL Twilio signed. Rebuild it from the
+    `X-Forwarded-*` headers Cloud Run does set, falling back to the request's
+    own scheme/host for local dev.
+
+    The query string is included deliberately: it carries the call ticket, and
+    Twilio's HMAC covers the full URL, so a swapped ticket invalidates the
+    signature.
+    """
+    proto = (request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip()
+             or request.scheme)
+    host = (request.headers.get("X-Forwarded-Host", "").split(",")[0].strip()
+            or request.host)
+    query = request.query_string.decode()
+    return f"{proto}://{host}{request.path}" + (f"?{query}" if query else "")
 
 
 def _twiml_reject() -> Response:
