@@ -7,9 +7,10 @@ Two Quart routes consumed by the relay side (`CallControlPlanePort` /
 - `POST /voice/session-config` — relay resolves an opaque call ticket
   (minted by the auth webhook, a later task) into the realtime session
   config (instructions + identity) via `EphemeralStore`. The ticket is
-  **consumed on resolution** — single use, so a captured ticket cannot be
-  replayed within its TTL to read back the owner's persona and biographical
-  facts.
+  **atomically consumed on resolution** (`get_and_delete`, one Firestore
+  transaction) — single use, so a captured ticket cannot be replayed within
+  its TTL to read back the owner's persona and biographical facts, and two
+  concurrent redemptions cannot both succeed.
 - `POST /voice/submit-transcript` — relay reports end-of-call usage +
   transcript. This records per-model usage/cost, pricing via
   `domain.billing.calculate_realtime_cost` on the already-flattened leg
@@ -61,18 +62,20 @@ def create_voice_control_plane_blueprint(
             return unauthorized
         body = await request.get_json()
         ticket = body["ticket"]
-        ticket_key = f"voice_ticket:{ticket}"
-        config = await ephemeral_store.get(ticket_key)
+        # Single use, and atomically so. Until the ticket was consumed here it
+        # stayed redeemable for its whole TTL (`voice_webhook_app.
+        # _TICKET_TTL_S`, 300s) — a replayable bearer credential for an
+        # endpoint that hands back the owner's assembled persona, biographical
+        # facts and standing directives. `get_and_delete` rather than
+        # `get()` + `delete()` because the latter is two round trips: two
+        # concurrent requests for the same ticket could both read it before
+        # either delete landed, and both be served. The relay fetches the
+        # config exactly once per call
+        # (`HttpCallControlPlaneAdapter.fetch_session_config`), so single use
+        # costs the legitimate caller nothing.
+        config = await ephemeral_store.get_and_delete(f"voice_ticket:{ticket}")
         if config is None:
             return jsonify({"error": "unknown or expired ticket"}), 404
-        # Single use. Until this delete existed the ticket stayed redeemable for
-        # its whole TTL (`voice_webhook_app._TICKET_TTL_S`, 300s) — a replayable
-        # bearer credential for a public, unauthenticated-by-Twilio-standards
-        # endpoint that hands back the owner's assembled persona, biographical
-        # facts and standing directives. The relay fetches it exactly once per
-        # call (`HttpCallControlPlaneAdapter.fetch_session_config`), so consuming
-        # it here costs the legitimate caller nothing.
-        await ephemeral_store.delete(ticket_key)
         return jsonify(config), 200
 
     @bp.route("/voice/submit-transcript", methods=["POST"])

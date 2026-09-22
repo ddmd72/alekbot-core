@@ -22,3 +22,10 @@ class EphemeralStore(ABC):
 
     @abstractmethod
     async def delete(self, key: str) -> None: ...
+
+    @abstractmethod
+    async def get_and_delete(self, key: str) -> Optional[dict]:
+        """Atomically read and delete key in one step - returns None if the
+        key is missing or past its TTL, and None on a second concurrent call
+        racing the first (RFC's single-use ticket consumption relies on this;
+        plain get()-then-delete() is a TOCTOU race between two callers)."""
