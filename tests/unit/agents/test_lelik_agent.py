@@ -33,7 +33,15 @@ async def test_execute_originates_call_with_answer_url_carrying_ticket():
     assert call.kwargs["from_"] == "+346002"
     assert call.kwargs["to"] == "+346001"
     assert "ticket=t1" in call.kwargs["answer_url"]
-    assert call.kwargs["status_callback_url"] == "https://main.example.com/voice/status"
+    assert call.kwargs["answer_url"].startswith("https://main.example.com/voice/answer?")
+    # FIX I1(b), final whole-branch review: the status callback carries the
+    # ticket too. It is the only correlation path from a call-status event back
+    # to the ticket/user whose one-call marker must be released when the
+    # callback rings out, is busy, or fails at the carrier — in all of which
+    # /voice/answer is never reached at all. (Was asserted as the bare base URL
+    # before /voice/status existed as a route; the base URL is still asserted.)
+    assert "ticket=t1" in call.kwargs["status_callback_url"]
+    assert call.kwargs["status_callback_url"].startswith("https://main.example.com/voice/status?")
 
 
 @pytest.mark.asyncio

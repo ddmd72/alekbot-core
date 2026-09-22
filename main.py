@@ -8,6 +8,7 @@ from twilio.rest import Client as TwilioClient
 
 from src.config.settings import load_settings
 from src.web.worker_oidc_verifier import verify_worker_oidc
+from src.web.twilio_signature_verifier import verify_twilio_signature
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
@@ -860,13 +861,31 @@ async def main():
                 # /worker is: verify_worker_oidc + the SERVICE_ACCOUNT_EMAIL
                 # local-dev bypass, wrapped as an async callable so the route
                 # stays testable without a real Google token.
-                voice_ephemeral_store = FirestoreEphemeralStore(db_client, collection="voice_tickets")
+                # Collection name resolves through EnvironmentConfig like every
+                # other Firestore collection (env prefix, REQ multi-tenant
+                # convention) — it was hardcoded and unprefixed until now.
+                voice_ephemeral_store = FirestoreEphemeralStore(
+                    db_client, collection=env_config.voice_tickets_collection
+                )
 
                 async def _voice_oidc_verifier(auth_header: str) -> bool:
                     sa_email = config.get("SERVICE_ACCOUNT_EMAIL")
                     if not sa_email:
                         return True
                     return verify_worker_oidc(auth_header, sa_email)
+
+                async def _voice_twilio_signature_verifier(
+                    url: str, form_params: dict, signature: str
+                ) -> bool:
+                    # Same bypass shape as _voice_oidc_verifier above and as
+                    # /worker's SERVICE_ACCOUNT_EMAIL gate: with no auth token
+                    # configured (local dev) there is nothing to verify against,
+                    # so the gate opens. In Cloud Run TWILIO_AUTH_TOKEN is always
+                    # present (cloudbuild-dev.yaml --set-secrets).
+                    auth_token = config.get("TWILIO_AUTH_TOKEN")
+                    if not auth_token:
+                        return True
+                    return verify_twilio_signature(auth_token, url, form_params, signature)
 
                 async def _voice_summary_consumer(*, call_id, user_id, account_id, transcript_text, turns):
                     # LelikSummarizerAgent-backed consumer (Task 15). Reuses
@@ -896,6 +915,10 @@ async def main():
                         prompt_content_store=container.prompt_content_store,
                         summary_consumer=_voice_summary_consumer,
                         oidc_verifier=_voice_oidc_verifier,
+                        # A summary-pipeline failure is otherwise completely
+                        # silent: the call completes, usage is billed, and
+                        # nothing reaches chat or memory.
+                        alert_sink=_alert_webhook,
                     )
                 )
                 logger.info(
@@ -930,6 +953,7 @@ async def main():
                         notification_service=notification_service,
                         lelik_agent_factory=agent_factory._build_lelik,
                         answer_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/voice/answer",
+                        signature_verifier=_voice_twilio_signature_verifier,
                         prompt_builder=voice_prompt_builder,
                         # RFC §4.8: voice_answer pre-fetches the biographical cache
                         # itself so it can hand build_for_agent a domain-scoped slice
@@ -943,7 +967,10 @@ async def main():
                         relay_stream_url=config.get("VOICE_RELAY_STREAM_URL", ""),
                     )
                 )
-                logger.info("✅ Voice webhook blueprint registered at /voice/auth, /voice/answer")
+                logger.info(
+                    "✅ Voice webhook blueprint registered at "
+                    "/voice/auth, /voice/answer, /voice/status"
+                )
 
                 # ====================================================================
                 # PHASE 3: Telegram Integration (Optional)

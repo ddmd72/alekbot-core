@@ -34,6 +34,18 @@ VOICE_RELAY ?= alek-voice-relay-dev
 # the deploy target's substitutions — NOT from the local OAUTH_REDIRECT_URI in
 # .env (that one is a localhost value, used only for running the app locally).
 
+# Voice relay URL — same category as SERVICE_URL_DEV: a human-maintained .env
+# value turned into a Cloud Build substitution, never read directly from .env by
+# the app (CLAUDE.md, "Deploy-substitution trap"). Chicken-and-egg on a first
+# deploy: alek-voice-relay-dev has no URL until it exists, so deploy once, read
+# the URL back, set VOICE_RELAY_URL_DEV, deploy again — see
+# docs/07_deployment/README.md § Voice Relay Stream URL.
+#
+# The app needs the WebSocket form (Twilio's <Stream url="wss://...">), while
+# gcloud reports the https:// one — patsubst converts it, so .env holds exactly
+# what `gcloud run services describe` prints and nothing has to be hand-edited.
+_VOICE_RELAY_URL = $(patsubst https://%,wss://%,$(VOICE_RELAY_URL_DEV))
+
 # Default entry count for log reads
 K ?= 300
 
@@ -194,7 +206,7 @@ check: lint test-unit ## CI gate: ruff lint + unit/architecture tests
 deploy: ## Build + deploy to Cloud Run (the single live environment)
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL) .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json

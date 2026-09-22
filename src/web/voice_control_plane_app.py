@@ -6,7 +6,10 @@ Two Quart routes consumed by the relay side (`CallControlPlanePort` /
 
 - `POST /voice/session-config` — relay resolves an opaque call ticket
   (minted by the auth webhook, a later task) into the realtime session
-  config (instructions + identity) via `EphemeralStore`.
+  config (instructions + identity) via `EphemeralStore`. The ticket is
+  **consumed on resolution** — single use, so a captured ticket cannot be
+  replayed within its TTL to read back the owner's persona and biographical
+  facts.
 - `POST /voice/submit-transcript` — relay reports end-of-call usage +
   transcript. This records per-model usage/cost, pricing via
   `domain.billing.calculate_realtime_cost` on the already-flattened leg
@@ -41,6 +44,7 @@ def create_voice_control_plane_blueprint(
     prompt_content_store,
     summary_consumer,
     oidc_verifier,
+    alert_sink,
 ) -> Blueprint:
     bp = Blueprint("voice_control_plane", __name__)
 
@@ -57,9 +61,18 @@ def create_voice_control_plane_blueprint(
             return unauthorized
         body = await request.get_json()
         ticket = body["ticket"]
-        config = await ephemeral_store.get(f"voice_ticket:{ticket}")
+        ticket_key = f"voice_ticket:{ticket}"
+        config = await ephemeral_store.get(ticket_key)
         if config is None:
             return jsonify({"error": "unknown or expired ticket"}), 404
+        # Single use. Until this delete existed the ticket stayed redeemable for
+        # its whole TTL (`voice_webhook_app._TICKET_TTL_S`, 300s) — a replayable
+        # bearer credential for a public, unauthenticated-by-Twilio-standards
+        # endpoint that hands back the owner's assembled persona, biographical
+        # facts and standing directives. The relay fetches it exactly once per
+        # call (`HttpCallControlPlaneAdapter.fetch_session_config`), so consuming
+        # it here costs the legitimate caller nothing.
+        await ephemeral_store.delete(ticket_key)
         return jsonify(config), 200
 
     @bp.route("/voice/submit-transcript", methods=["POST"])
@@ -93,8 +106,27 @@ def create_voice_control_plane_blueprint(
                     transcript_text=body["transcript_text"],
                     turns=body.get("turns", []),
                 )
-            except Exception:
+            except Exception as exc:
+                # An alert, not just a log line. This `except` is the last stop
+                # for the entire end-of-call summary pipeline
+                # (CompanionExtractorRunner -> LelikSummarizerAgent ->
+                # notify_call_summary), and its silent-failure mode is
+                # invisible from the outside: the call completes normally, the
+                # usage is billed, and simply nothing ever reaches chat or
+                # memory. That is exactly what a missing Firestore prompt
+                # artefact for `lelik_summarizer` produced (build_for_agent
+                # fails closed by repo convention -> AgentResponse.failure ->
+                # runner raises -> here). The artefacts are fixed, but the
+                # failure CLASS is permanent — any future missing/broken prompt
+                # lands in this same block.
                 logger.error(f"voice call {call_id}: summary consumer failed", exc_info=True)
+                try:
+                    await alert_sink.post(
+                        f"Voice: end-of-call summary failed for call {call_id} "
+                        f"(user {user_id}) — nothing delivered to chat or memory: {exc}"
+                    )
+                except Exception:
+                    logger.error(f"voice call {call_id}: summary failure alert failed", exc_info=True)
 
             try:
                 turns = body.get("turns", [])

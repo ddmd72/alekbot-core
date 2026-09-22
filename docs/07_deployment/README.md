@@ -97,6 +97,37 @@ WebSocket is one long *billed* request under Cloud Run's request-based CPU/memor
   (`src/web/voice_webhook_app.py`, `src/adapters/twilio_telephony_adapter.py`), not the relay;
   `relay_main.py` never imports the `twilio` package.
 
+### Voice Relay Stream URL — two-pass first deploy
+
+The main service must hand Twilio the relay's WebSocket URL (`<Connect><Stream url="wss://…">` in
+`/voice/answer`), read from `VOICE_RELAY_STREAM_URL`. That value is genuinely a chicken-and-egg
+problem, not something code can resolve: the relay's Cloud Run URL does not exist until the relay
+has been deployed at least once, and both units deploy from the same `make deploy`.
+
+**Until `VOICE_RELAY_URL_DEV` is set in `.env`, every call fails with an empty stream URL** — the
+callback is answered, the persona is assembled, and the `<Stream>` points nowhere.
+
+1. **Deploy once.** `make deploy` creates `alek-voice-relay-dev` (the main service ships with an
+   empty stream URL on this pass — expected).
+2. **Read the relay's URL back.** Cloud Run service URLs are stable once the service exists, so
+   this is a one-time step:
+   ```bash
+   gcloud run services describe alek-voice-relay-dev \
+     --region=us-central1 --format='value(status.url)'
+   ```
+3. **Put it in `.env`** as `VOICE_RELAY_URL_DEV=<that https:// URL>`. Keep the `https://` form —
+   the `deploy` target converts it to `wss://` via `patsubst` and passes it to Cloud Build as
+   `_VOICE_RELAY_URL`, which `cloudbuild-dev.yaml` sets as `VOICE_RELAY_STREAM_URL` on the main
+   service. It follows `SERVICE_URL_DEV`'s convention exactly: a human-maintained `.env` value
+   reaching the deploy only through a substitution, never a shared key read directly from local
+   `.env` (CLAUDE.md, "Deploy-substitution trap").
+4. **`make deploy` again.** The main service now picks it up.
+
+This is the **fourth** prerequisite for the voice companion's live verification, alongside: Twilio
+secrets present in Secret Manager, the three Firestore prompt uploads for Lelik's persona
+(`COGNITIVE_PROCESS_LELIK`, `lelik_agent_v1`, `lelik`), and the four for the end-of-call summarizer
+(`COGNITIVE_PROCESS_LELIK_SUMMARIZER`, `lelik_summarizer_agent_v1`, `lelik_summarizer`).
+
 ---
 
 ## Cost Optimization

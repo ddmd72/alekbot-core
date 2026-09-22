@@ -193,6 +193,19 @@ class EnvironmentConfig:
         prefix = self.firestore_collection_prefix
         return f"{prefix}domain_email_facts_v1"
 
+    # --- Voice Companion Collections ---
+
+    @property
+    def voice_tickets_collection(self) -> str:
+        """
+        Voice-call tickets and the one-call-per-user marker, both short-TTL
+        (FirestoreEphemeralStore). RFC: docs/10_rfcs/VOICE_COMPANION_RFC.md §3, §4.6.
+        Dev: development_voice_tickets
+        Prod: voice_tickets
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}voice_tickets"
+
     @property
     def companion_records_collection(self) -> str:
         """
