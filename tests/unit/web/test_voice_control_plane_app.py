@@ -183,3 +183,106 @@ async def test_submit_transcript_releases_marker_even_if_summary_consumer_fails(
 
     assert response.status_code == 200
     ephemeral_store.delete.assert_awaited_once_with("voice_one_call:u1")
+
+
+@pytest.mark.asyncio
+async def test_submit_transcript_records_each_turn_to_prompt_content_store(app_and_deps):
+    """RFC §7 item 10 / plan self-review: the realtime call's actual content
+    (not just its cost) must reach PromptContentStore, one record_turn call
+    per VoiceTurnSegment."""
+    app, ephemeral_store, quota_service, prompt_content_store, summary_consumer, _ = app_and_deps
+
+    client = app.test_client()
+    payload = {
+        "call_id": "c1",
+        "user_id": "u1",
+        "account_id": "a1",
+        "transcript_text": "hi there",
+        "usage_by_model": {"gpt-realtime-2.1": {"audio_input_tokens": 100}},
+        "turns": [
+            {
+                "request_text": "what's the weather",
+                "response_text": "sunny in Valencia",
+                "started_at": "2026-09-22T10:00:00+00:00",
+                "ended_at": "2026-09-22T10:00:02+00:00",
+                "finish_reason": "completed",
+            },
+            {
+                "request_text": "thanks",
+                "response_text": "you're welcome",
+                "started_at": "2026-09-22T10:00:05+00:00",
+                "ended_at": "2026-09-22T10:00:06+00:00",
+                "finish_reason": "completed",
+            },
+        ],
+    }
+    response = await client.post("/voice/submit-transcript", json=payload, headers={"Authorization": "Bearer x"})
+
+    assert response.status_code == 200
+    assert prompt_content_store.record_turn.await_count == 2
+
+    first_call = prompt_content_store.record_turn.await_args_list[0]
+    assert first_call.kwargs["agent_id"] == "lelik_agent_u1"
+    assert first_call.kwargs["agent_type"] == "lelik"
+    assert first_call.kwargs["account_id"] == "a1"
+    assert first_call.kwargs["turn"] == 0
+    assert first_call.kwargs["provider"] == "openai"
+    assert first_call.kwargs["request"].model_name == "gpt-realtime-2.1"
+    assert "what's the weather" in first_call.kwargs["request"].messages[0].parts[0].text
+    assert first_call.kwargs["response"].text == "sunny in Valencia"
+    assert first_call.kwargs["latency_ms"] == pytest.approx(2000.0)
+
+    second_call = prompt_content_store.record_turn.await_args_list[1]
+    assert second_call.kwargs["turn"] == 1
+    assert second_call.kwargs["latency_ms"] == pytest.approx(1000.0)
+
+
+@pytest.mark.asyncio
+async def test_submit_transcript_skips_recording_when_no_turns(app_and_deps):
+    app, ephemeral_store, quota_service, prompt_content_store, summary_consumer, _ = app_and_deps
+
+    client = app.test_client()
+    payload = {
+        "call_id": "c1",
+        "user_id": "u1",
+        "account_id": "a1",
+        "transcript_text": "",
+        "usage_by_model": {},
+        "turns": [],
+    }
+    response = await client.post("/voice/submit-transcript", json=payload, headers={"Authorization": "Bearer x"})
+
+    assert response.status_code == 200
+    prompt_content_store.record_turn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_transcript_releases_marker_even_if_turn_recording_raises(app_and_deps):
+    """A malformed turn (e.g. bad ISO timestamp) must not break the marker
+    release or the rest of the handler — record_turn recording is
+    best-effort, matching the existing usage-recording and summary_consumer
+    error-isolation pattern in this same function."""
+    app, ephemeral_store, quota_service, prompt_content_store, summary_consumer, _ = app_and_deps
+
+    client = app.test_client()
+    payload = {
+        "call_id": "c1",
+        "user_id": "u1",
+        "account_id": "a1",
+        "transcript_text": "hi",
+        "usage_by_model": {},
+        "turns": [
+            {
+                "request_text": "hi",
+                "response_text": "hello",
+                "started_at": "not-a-timestamp",
+                "ended_at": "also-not-a-timestamp",
+                "finish_reason": "completed",
+            }
+        ],
+    }
+    response = await client.post("/voice/submit-transcript", json=payload, headers={"Authorization": "Bearer x"})
+
+    assert response.status_code == 200
+    ephemeral_store.delete.assert_awaited_once_with("voice_one_call:u1")
+    summary_consumer.assert_awaited_once()

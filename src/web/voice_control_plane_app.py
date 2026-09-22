@@ -25,9 +25,13 @@ callable rather than imported directly, so the route is testable without
 a real Google token and the local-dev bypass policy stays in main.py's
 wiring, not duplicated here.
 """
+from datetime import datetime
+
 from quart import Blueprint, Response, jsonify, request
 
 from src.domain.billing import calculate_realtime_cost
+from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart
+from src.domain.request_context import RequestContext
 from src.utils.logger import logger
 
 
@@ -91,6 +95,41 @@ def create_voice_control_plane_blueprint(
                 )
             except Exception:
                 logger.error(f"voice call {call_id}: summary consumer failed", exc_info=True)
+
+            try:
+                turns = body.get("turns", [])
+                if turns:
+                    # Exactly one realtime provider in Slice 1 (RFC §4.3) — not a
+                    # placeholder, a real hardcoded value.
+                    provider = "openai"
+                    model = next(iter(body.get("usage_by_model", {})), "")
+                    with RequestContext(user_id=user_id, account_id=account_id):
+                        for turn_index, turn_segment in enumerate(turns):
+                            started = datetime.fromisoformat(turn_segment["started_at"])
+                            ended = datetime.fromisoformat(turn_segment["ended_at"])
+                            latency_ms = (ended - started).total_seconds() * 1000
+                            request_obj = LLMRequest(
+                                model_name=model,
+                                messages=[
+                                    Message(
+                                        role="user",
+                                        parts=[MessagePart(text=turn_segment["request_text"])],
+                                    )
+                                ],
+                            )
+                            response_obj = LLMResponse(text=turn_segment["response_text"])
+                            await prompt_content_store.record_turn(
+                                request=request_obj,
+                                response=response_obj,
+                                agent_id=f"lelik_agent_{user_id}",
+                                agent_type="lelik",
+                                account_id=account_id,
+                                turn=turn_index,
+                                latency_ms=latency_ms,
+                                provider=provider,
+                            )
+            except Exception:
+                logger.error(f"voice call {call_id}: turn content recording failed", exc_info=True)
         finally:
             # Release the one-call-per-user marker (written by the auth webhook
             # before dialing out) regardless of usage-recording or
