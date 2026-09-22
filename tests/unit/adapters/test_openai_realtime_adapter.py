@@ -6,6 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.openai_realtime_adapter import OpenAIRealtimeAdapter, _flatten_usage
 from src.domain.voice_audio_frame import AudioFrame
+from tests.contracts.adapter_contracts import (
+    OPENAI_REALTIME_STRIPS_CACHE_BOUNDARY,
+    OPENAI_REALTIME_USES_GA_SESSION_SHAPE,
+)
 
 
 class FakeWebSocket:
@@ -55,6 +59,9 @@ async def test_open_sends_ga_session_shape_with_cache_boundary_stripped():
     assert session["reasoning"]["effort"] == "medium"
     assert "CACHE_BOUNDARY" not in session["instructions"]
     assert "truncation" not in session
+
+    OPENAI_REALTIME_STRIPS_CACHE_BOUNDARY.validate("openai_realtime", sent)
+    OPENAI_REALTIME_USES_GA_SESSION_SHAPE.validate("openai_realtime", sent)
 
 
 @pytest.mark.asyncio
