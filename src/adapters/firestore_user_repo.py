@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
+from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from ..domain.user import UserProfile
 from ..ports.user_repository import UserRepository
@@ -129,13 +130,18 @@ class FirestoreUserRepository(UserRepository):
         platform_user_id: str
     ) -> UserProfile:
         """
-        Link platform identity to existing user (Slack, Telegram, etc.).
+        Link platform identity to existing user (Slack, Telegram, Phone, etc.).
 
-        OAuth Multi-Tenant Session 7: Repository implementation.
+        Runs inside a Firestore transaction: the "is platform_user_id already
+        linked to someone else" check and the write happen atomically, closing
+        a TOCTOU race where two concurrent binds of the same platform_user_id
+        could otherwise both pass the check before either writes. More
+        security-sensitive for phone binding (Task 11) than for Slack/Telegram,
+        since OTP possession is the only proof of phone ownership.
 
         Args:
             user_id: Internal user UUID
-            platform: Platform name ("slack", "telegram")
+            platform: Platform name ("slack", "telegram", "phone")
             platform_user_id: Platform-specific user ID
 
         Returns:
@@ -144,29 +150,34 @@ class FirestoreUserRepository(UserRepository):
         Raises:
             ValueError: If user not found or identity already linked to another user
         """
-        # Check if user exists
-        user = await self.get_user(user_id)
-        if not user:
-            raise ValueError(f"User {user_id} not found")
+        user_ref = self.users_col.document(user_id)
+        field_path = f"platform_identities.{platform}"
+        conflict_query = self.users_col.where(filter=FieldFilter(field_path, "==", platform_user_id)).limit(1)
 
-        # Check if this platform identity is already linked to another user
-        existing_user = await self.get_user_by_platform_id(platform, platform_user_id)
-        if existing_user and existing_user.user_id != user_id:
-            raise ValueError(
-                f"Platform identity {platform}:{platform_user_id} already linked to user {existing_user.user_id}"
-            )
+        @firestore.async_transactional
+        async def _transaction(transaction) -> UserProfile:
+            user_snapshot = await user_ref.get(transaction=transaction)
+            if not user_snapshot.exists:
+                raise ValueError(f"User {user_id} not found")
+            user = UserProfile(**_sanitize_user_doc(user_snapshot.to_dict()))
 
-        # Update user's platform_identities
-        user.platform_identities[platform] = platform_user_id
-        user.updated_at = datetime.now(timezone.utc)
+            async for existing_doc in conflict_query.stream(transaction=transaction):
+                if existing_doc.id != user_id:
+                    raise ValueError(
+                        f"Platform identity {platform}:{platform_user_id} already linked to user {existing_doc.id}"
+                    )
 
-        # Persist to Firestore
-        await self.users_col.document(user_id).set(user.model_dump())
+            user.platform_identities[platform] = platform_user_id
+            user.updated_at = datetime.now(timezone.utc)
+            transaction.set(user_ref, user.model_dump())
+            return user
+
+        transaction = self.db.transaction()
+        user = await _transaction(transaction)
 
         logger.info(
             f"🔗 Linked platform identity: user {user_id} → {platform}:{platform_user_id}"
         )
-
         return user
     
     @log_execution_time
