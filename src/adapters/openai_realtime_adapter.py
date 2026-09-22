@@ -20,6 +20,9 @@ _TRANSCRIPTION_MODEL = "gpt-transcribe"
 # Shape: session.audio.input.turn_detection (developers.openai.com realtime-vad guide +
 # client-events reference, checked 2026-09-22). idle_timeout_ms is server_vad-only, so
 # silence is detected relay-side (VoiceSessionService's watchdog).
+# One voice for every call until it becomes a per-user setting. OpenAI recommends marin/cedar
+# for quality; cedar reads male, which fits Lelik. Fixed per session once audio is emitted.
+_VOICE = "cedar"
 _TURN_DETECTION = {
     "type": "semantic_vad",
     "eagerness": "low",
@@ -164,7 +167,7 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
                     "transcription": {"model": _TRANSCRIPTION_MODEL},
                     "turn_detection": _TURN_DETECTION,
                 },
-                "output": {"format": {"type": "audio/pcmu"}},
+                "output": {"format": {"type": "audio/pcmu"}, "voice": _VOICE},
             },
             "reasoning": {"effort": reasoning_effort},
             "instructions": _strip_cache_boundary(instructions),
