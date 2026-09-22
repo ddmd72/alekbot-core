@@ -58,8 +58,12 @@ class LelikSummarizerAgent(BaseAgent):
         self._on_agent_start(f"{len(messages)} turns")
 
         try:
+            # Identity loads the user's overrides - the summary lands in their chat, so it
+            # follows their output-language setting, not the language of the call.
             system_prompt = await self.prompt_builder.build_for_agent(
                 "lelik_summarizer",
+                user_id=message.context.get("user_id"),
+                account_id=message.context.get("account_id"),
                 include_biographical=False,
                 include_directives=False,
             )

@@ -151,9 +151,10 @@ class VoiceSessionService:
                 # The caller started talking over Lelik (RFC §4.7; mechanism validated in
                 # scripts/voice/test_mulaw_relay_poc.py:154-170). Barge-in is ours alone -
                 # the provider's auto-interrupt is off (OpenAIRealtimeAdapter._TURN_DETECTION).
-                # Guarded on response_active: response.cancel with nothing in flight is a
-                # provider error, which would end the call.
-                if state.response_active:
+                # "Talking" means audible, not generating: the provider finishes a reply
+                # seconds before Twilio finishes playing it, so gating on response_active
+                # alone let the whole tail play over the caller (first live call, 2026-09-22).
+                if state.response_active or not state.playback.caught_up:
                     await self._barge_in(session, state, clear_outbound_audio)
             elif event.type == "speech_stopped":
                 state.caller_speaking = False
@@ -200,10 +201,15 @@ class VoiceSessionService:
         # actually interrupted instead of believing it finished the reply.
         heard_ms = state.playback.played_ms_since(state.item_start_bytes)
         await clear_outbound_audio()
-        await session.cancel_response()
-        state.response_active = False
+        # Guarded: response.cancel with nothing in flight is a provider error that would
+        # end the call - a reply already fully generated is only still PLAYING.
+        if state.response_active:
+            await session.cancel_response()
+            state.response_active = False
         if state.item_id:
             await session.truncate(state.item_id, heard_ms)
+            # Truncated once; a second speech_started must not cut the same item again.
+            state.item_id = None
 
     async def _watch_silence(self, session: RealtimeSessionPort, state: _CallState) -> None:
         # The provider only speaks when a turn ends, so it cannot notice a caller who

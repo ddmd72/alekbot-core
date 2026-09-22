@@ -1,5 +1,8 @@
 {
   "blueprint_id": "lelik_summarizer_agent_v1",
   "outer_class": "LelikSummarizerAgent extends Agent",
-  "class_order": ["cognitive_process"]
+  "class_order": [
+    "cognitive_process",
+    "policies"
+  ]
 }

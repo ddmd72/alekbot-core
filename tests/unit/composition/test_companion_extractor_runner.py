@@ -249,3 +249,22 @@ async def test_voice_extraction_uses_its_own_timeout_not_tutors(runner, monkeypa
     agent = captured["agent"]
     assert agent.config.timeout_ms == VOICE_SUMMARIZER.timeout_ms
     assert agent.config.timeout_ms != TUTOR_EXTRACTOR.timeout_ms
+
+
+async def test_extractor_message_carries_the_user_identity(runner, monkeypatch):
+    """The extractor needs user_id to load the user's prompt overrides (LANG_* etc.)."""
+    captured = {}
+
+    async def fake_process(self, message):
+        captured["context"] = message.context
+        return AgentResponse.success(task_id="t1", agent_id="x", result={"records": [], "summary": "ok"})
+
+    monkeypatch.setattr(
+        "src.composition.companion_extractor_runner.TutorExtractorAgent.process", fake_process,
+    )
+
+    await runner.extract(
+        companion_type="tutor", account_id="acc-1", created_by_user_id="user-1", messages=[{"x": 1}],
+    )
+
+    assert captured["context"] == {"account_id": "acc-1", "user_id": "user-1"}

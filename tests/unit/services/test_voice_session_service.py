@@ -452,3 +452,87 @@ async def test_silence_watchdog_waits_while_a_response_is_active(monkeypatch):
     await _run_open_call(realtime_session, events, PlaybackTracker(), seconds=0.2, silence_timeout_s=0.05)
 
     realtime_session.submit_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_barge_in_while_a_finished_reply_is_still_playing_clears_and_truncates_without_cancel():
+    """First live call: the provider finished generating seconds before Twilio finished
+    playing, response_active was already False, and 'stop' was never heard. Barge-in
+    must follow playback; nothing is left to cancel, so no response.cancel."""
+    playback = PlaybackTracker()
+    calls = []
+    realtime_session = AsyncMock()
+    realtime_session.cancel_response.side_effect = lambda: calls.append("cancel")
+    realtime_session.truncate.side_effect = lambda item_id, ms: calls.append(("truncate", item_id, ms))
+
+    async def send(frame):
+        playback.record_sent(frame.payload)
+
+    async def clear():
+        calls.append("clear")
+
+    async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})
+        yield RealtimeSessionEvent(type="audio_delta", payload={"frame": _chunk(4000), "item_id": "item_1"})
+        yield RealtimeSessionEvent(type="response_done", payload={})
+        playback.record_played(str(1500 * 8))  # 1.5 s of 4 s heard so far
+        yield RealtimeSessionEvent(type="speech_started", payload={})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    await _service(realtime_session).handle_call(
+        ticket="t1", inbound_audio=_frames(), send_outbound_audio=send,
+        clear_outbound_audio=clear, playback=playback,
+    )
+
+    assert calls == ["clear", ("truncate", "item_1", 1500)]
+
+
+@pytest.mark.asyncio
+async def test_speech_after_the_reply_has_fully_played_is_not_a_barge_in():
+    playback = PlaybackTracker()
+    realtime_session = AsyncMock()
+    clear = AsyncMock()
+
+    async def send(frame):
+        playback.record_sent(frame.payload)
+
+    async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})
+        yield RealtimeSessionEvent(type="audio_delta", payload={"frame": _chunk(1000), "item_id": "item_1"})
+        yield RealtimeSessionEvent(type="response_done", payload={})
+        playback.record_played(str(playback.sent_bytes))
+        yield RealtimeSessionEvent(type="speech_started", payload={})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    await _service(realtime_session).handle_call(
+        ticket="t1", inbound_audio=_frames(), send_outbound_audio=send,
+        clear_outbound_audio=clear, playback=playback,
+    )
+
+    clear.assert_not_awaited()
+    realtime_session.truncate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_item_is_truncated_once_even_if_the_caller_keeps_talking_over_it():
+    playback = PlaybackTracker()
+    realtime_session = AsyncMock()
+
+    async def send(frame):
+        playback.record_sent(frame.payload)
+
+    async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})
+        yield RealtimeSessionEvent(type="audio_delta", payload={"frame": _chunk(4000), "item_id": "item_1"})
+        yield RealtimeSessionEvent(type="response_done", payload={})
+        yield RealtimeSessionEvent(type="speech_started", payload={})
+        yield RealtimeSessionEvent(type="speech_stopped", payload={})
+        yield RealtimeSessionEvent(type="speech_started", payload={})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    await _service(realtime_session).handle_call(
+        ticket="t1", inbound_audio=_frames(), send_outbound_audio=send,
+        clear_outbound_audio=AsyncMock(), playback=playback,
+    )
+
+    realtime_session.truncate.assert_awaited_once()
