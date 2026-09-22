@@ -64,7 +64,7 @@ async def test_handle_connection_cleans_up_on_clean_close_without_stop_event():
     task_holder: dict = {}
 
     class FakeSessionService:
-        async def handle_call(self, ticket, inbound_audio, send_outbound_audio):
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio):
             task_holder["task"] = asyncio.current_task()
             # This loop only terminates once handle_connection pushes the
             # None sentinel onto inbound_queue - if it never does (the bug),
