@@ -31,8 +31,8 @@ from quart import Blueprint, Response, jsonify, request
 
 from src.domain.billing import calculate_realtime_cost
 from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart
-from src.domain.request_context import RequestContext
 from src.utils.logger import logger
+from src.utils.telemetry import set_request_context
 
 
 def create_voice_control_plane_blueprint(
@@ -103,31 +103,38 @@ def create_voice_control_plane_blueprint(
                     # placeholder, a real hardcoded value.
                     provider = "openai"
                     model = next(iter(body.get("usage_by_model", {})), "")
-                    with RequestContext(user_id=user_id, account_id=account_id):
-                        for turn_index, turn_segment in enumerate(turns):
-                            started = datetime.fromisoformat(turn_segment["started_at"])
-                            ended = datetime.fromisoformat(turn_segment["ended_at"])
-                            latency_ms = (ended - started).total_seconds() * 1000
-                            request_obj = LLMRequest(
-                                model_name=model,
-                                messages=[
-                                    Message(
-                                        role="user",
-                                        parts=[MessagePart(text=turn_segment["request_text"])],
-                                    )
-                                ],
-                            )
-                            response_obj = LLMResponse(text=turn_segment["response_text"])
-                            await prompt_content_store.record_turn(
-                                request=request_obj,
-                                response=response_obj,
-                                agent_id=f"lelik_agent_{user_id}",
-                                agent_type="lelik",
-                                account_id=account_id,
-                                turn=turn_index,
-                                latency_ms=latency_ms,
-                                provider=provider,
-                            )
+                    # BigQueryPromptContentAdapter._build_record reads user_id via
+                    # src.utils.telemetry.get_request_context(), not from a
+                    # parameter — a separate ContextVar system from
+                    # src.domain.request_context.RequestContext (which only
+                    # backs Firestore tenancy resolution). No reset afterward:
+                    # each Quart request runs its own asyncio Task, matching
+                    # the only other real call site (slack/http_adapter.py).
+                    set_request_context(user_id=user_id)
+                    for turn_index, turn_segment in enumerate(turns):
+                        started = datetime.fromisoformat(turn_segment["started_at"])
+                        ended = datetime.fromisoformat(turn_segment["ended_at"])
+                        latency_ms = (ended - started).total_seconds() * 1000
+                        request_obj = LLMRequest(
+                            model_name=model,
+                            messages=[
+                                Message(
+                                    role="user",
+                                    parts=[MessagePart(text=turn_segment["request_text"])],
+                                )
+                            ],
+                        )
+                        response_obj = LLMResponse(text=turn_segment["response_text"])
+                        await prompt_content_store.record_turn(
+                            request=request_obj,
+                            response=response_obj,
+                            agent_id=f"lelik_agent_{user_id}",
+                            agent_type="lelik",
+                            account_id=account_id,
+                            turn=turn_index,
+                            latency_ms=latency_ms,
+                            provider=provider,
+                        )
             except Exception:
                 logger.error(f"voice call {call_id}: turn content recording failed", exc_info=True)
         finally:
