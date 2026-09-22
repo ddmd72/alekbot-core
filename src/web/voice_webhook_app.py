@@ -136,6 +136,15 @@ def create_voice_webhook_blueprint(
            and stash it back onto the ticket (relay's `/voice/session-config`
            reads it from there, Task 5/Task 4 territory) before pointing the
            call at the relay's media-stream WebSocket.
+
+        `build_for_agent` fails closed (repo convention: no fallback prompts) if
+        Lelik's Firestore prompt content (token/blueprint/profile, Task 19) is
+        missing or the assembly service raises for any other reason. Task 9 shipped
+        this call with no error handling around it (bare 500 to Twilio on any
+        raise); Task 19 closes that gap the same way `voice_auth`'s origination
+        failure is handled: release the ticket and the one-call marker (so the
+        caller is not locked out for `one_call_ttl_s`), post an operational alert,
+        and answer with graceful TTS instead of a bare 500.
         """
         form = await request.form
         answered_by = form.get("AnsweredBy", "")
@@ -156,11 +165,41 @@ def create_voice_webhook_blueprint(
             logger.warning(f"voice answer: no identity found for ticket {ticket}, rejecting")
             return _twiml_reject()
 
-        instructions = await prompt_builder.build_for_agent(
-            agent_type="lelik",
-            user_id=identity["user_id"],
-            account_id=identity["account_id"],
-        )
+        # NOTE (delta from RFC §4.8's read-side toggles / the task brief's sketch):
+        # build_for_agent has no session_domains / include_own_records /
+        # include_standing_directives kwargs — those belong to
+        # CompanionContextAssemblerService.assemble_context, which is not wired into
+        # this webhook (no assembler dependency on this blueprint, no per-call query
+        # phrase to drive its semantic domain filter at call start). Scoping Lelik's
+        # biographical read to a small explicit domain list per RFC §4.8 is deferred
+        # to a follow-up task; today include_biographical=True fetches the full
+        # unscoped biographical cache, same as any other agent's default.
+        # include_directives=True is §4.2's standing-directive backstop: the rulebook
+        # is the lever to reach for if the persona's forwarding discipline slips.
+        try:
+            instructions = await prompt_builder.build_for_agent(
+                agent_type="lelik",
+                user_id=identity["user_id"],
+                account_id=identity["account_id"],
+                include_biographical=True,
+                include_directives=True,
+            )
+        except Exception as exc:
+            # Same fail-open shape as voice_auth's origination-failure handling:
+            # a ticket/marker that survives a failed persona assembly would lock
+            # the caller out of any retry for up to one_call_ttl_s with no way to
+            # know why.
+            logger.error(
+                f"voice answer: persona assembly failed for ticket {ticket}: {exc}",
+                exc_info=True,
+            )
+            await ephemeral_store.delete(ticket_key)
+            await ephemeral_store.delete(f"voice_one_call:{identity['user_id']}")
+            await alert_sink.post(
+                f"Voice: persona assembly failed for user {identity['user_id']}: {exc}"
+            )
+            return _twiml_persona_failed()
+
         await ephemeral_store.set(
             ticket_key,
             {**identity, "instructions": instructions},
@@ -189,5 +228,16 @@ def _twiml_origination_failed() -> Response:
     a rejection of the caller)."""
     vr = VoiceResponse()
     vr.say("Sorry, something went wrong placing your callback. Please try again shortly.")
+    vr.hangup()
+    return Response(str(vr), mimetype="text/xml")
+
+
+def _twiml_persona_failed() -> Response:
+    """The callback was answered but Lelik's persona could not be assembled (e.g. the
+    Firestore prompt content is missing, or the assembly service raised) - same
+    plain-apology shape as _twiml_origination_failed, distinct call site so the two
+    failure classes stay easy to tell apart in logs/alerts."""
+    vr = VoiceResponse()
+    vr.say("Sorry, something went wrong setting up this call. Please try again shortly.")
     vr.hangup()
     return Response(str(vr), mimetype="text/xml")
