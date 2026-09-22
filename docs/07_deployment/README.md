@@ -123,6 +123,17 @@ callback is answered, the persona is assembled, and the `<Stream>` points nowher
    `.env` (CLAUDE.md, "Deploy-substitution trap").
 4. **`make deploy` again.** The main service now picks it up.
 
+### Twilio number configuration (Lelik's number)
+
+Set these by hand in the Console. The classic REST `IncomingPhoneNumbers` write did not reliably
+reach live routing (spike 0.6):
+- **Active Region: United States (US1).** Webhook signatures use the auth token of the region that
+  processes the call, and `TWILIO_AUTH_TOKEN` is the US1 token. In IE1, every `/voice/auth` 403s.
+- **A call comes in:** Webhook, `https://<SERVICE_URL_DEV>/voice/auth`, POST.
+- **Call status changes:** `https://<SERVICE_URL_DEV>/voice/inbound-status`, POST. The callback is
+  placed only once the inbound dial reports `completed`. Without this URL the dial is answered and
+  hung up, and nobody ever calls back.
+
 This is the **fourth** prerequisite for the voice companion's live verification, alongside: Twilio
 secrets present in Secret Manager, the four Firestore prompt uploads for Lelik's persona
 (`COGNITIVE_PROCESS_LELIK`, `SPOKEN_DELIVERY`, `lelik_agent_v1`, `lelik`; the character tokens are

@@ -1,15 +1,19 @@
 """
 Voice webhooks — Twilio's entry points for a "call Lelik" session.
 
-Three routes, all Twilio-facing and all signature-verified via the injected
+Four routes, all Twilio-facing and all signature-verified via the injected
 `signature_verifier` (`src/web/twilio_signature_verifier.py`): `POST
-/voice/auth` (the inbound dial), `POST /voice/answer` (the callback leg was
-picked up) and `POST /voice/status` (the callback leg's lifecycle).
+/voice/auth` (the inbound dial), `POST /voice/inbound-status` (the inbound
+dial's lifecycle, configured on the number as "Call status changes"), `POST
+/voice/answer` (the callback leg was picked up) and `POST /voice/status` (the
+callback leg's lifecycle).
 
-`POST /voice/auth` (Twilio's default webhook method — Quart has no GET-only
-restriction, unlike the raw HTTP parser spike 0.2 hit on the `websockets`
-library, so this stays on POST and needs no Twilio number-config change; see
-`docs/07_deployment/SCHEDULERS.md`-style deployment notes in Task 14):
+The callback is placed only once the inbound dial has ENDED. Originating it
+from inside `/voice/auth` raced the caller's own line: the phone was still on
+the inbound call, the carrier refused the second call at once (`no-answer` in
+under a second) and the user got a missed-call SMS instead of Lelik.
+
+`POST /voice/auth`:
 
 1. Resolve the caller's number (`From`) to a user via `UserRepository`
    (RFC §4.6 identity resolution — phone is bound as platform "phone",
@@ -17,24 +21,20 @@ library, so this stays on POST and needs no Twilio number-config change; see
    the dial and post an operational alert. No ticket, no marker, no callback
    is ever produced for an unbound caller.
 2. Enforce the RFC §3 one-call-per-user limit via the shared `EphemeralStore`
-   marker at `voice_one_call:{user_id}` (released by
-   `voice_control_plane_app.submit_transcript` at end-of-call). A caller with
-   a call already in flight is rejected, no callback originated.
+   marker at `voice_one_call:{user_id}`. A caller with a call already in
+   flight or pending is rejected.
 3. Mint a short-TTL ticket (`voice_ticket:{uuid}`) carrying the resolved
-   identity — the relay later redeems it via `POST /voice/session-config` —
-   and the one-call marker, then hand off to the `LelikAgent` (Task 10) to
-   originate the actual callback. If origination raises, both the ticket
-   and the marker are deleted immediately (mint-side counterpart to
-   `voice_control_plane_app.submit_transcript`'s release-on-failure
-   guarantee, commit d1dd648) — otherwise the marker would strand the user
-   locked out of any retry for up to `one_call_ttl_s` (default 3600s) with
-   no alert. An operational alert is posted and a graceful TwiML response
-   returned instead of letting the exception surface as a bare 500 to
-   Twilio.
-4. Per RFC §4.6 ("every session opened posts to the user's chat channel"),
-   fire a short `notify_raw` confirmation once the callback has been
-   originated, so the user sees this on their bound Slack/Telegram channel
-   even though the interaction itself is happening over voice.
+   identity, take the marker at the ticket's short TTL, and park the callback
+   under the inbound `CallSid` (`voice_pending_callback:{CallSid}`). Answer
+   with "Calling you back" + hangup.
+
+`POST /voice/inbound-status`: on the inbound dial's `completed`, atomically
+claim the parked callback (a duplicate status delivery finds nothing), extend
+the marker to `one_call_ttl_s`, and have `LelikAgent` originate the callback;
+then post the RFC §4.6 chat confirmation. Any other terminal status means the
+dial never got as far as our answer — release the ticket and marker. If
+origination raises, both are released and an alert posted. If no status ever
+arrives, the short TTLs release everything within `_TICKET_TTL_S`.
 """
 import uuid
 from typing import Optional
@@ -115,53 +115,90 @@ def create_voice_webhook_blueprint(
             logger.warning(f"voice auth: refused - {profile.user_id} already has a call in flight")
             return _twiml_reject()
 
+        inbound_call_sid = (form.get("CallSid") or "").strip()
+        if not inbound_call_sid:
+            logger.warning(f"voice auth: dial from {profile.user_id} carried no CallSid, rejecting")
+            return _twiml_reject()
+
         decision = AuthDecision(user_id=profile.user_id, account_id=profile.account_id)
         ticket = str(uuid.uuid4())
-        ticket_key = f"voice_ticket:{ticket}"
         await ephemeral_store.set(
-            ticket_key,
+            f"voice_ticket:{ticket}",
             {"user_id": decision.user_id, "account_id": decision.account_id},
             ttl_s=_TICKET_TTL_S,
         )
-        await ephemeral_store.set(marker_key, {"in_flight": True}, ttl_s=one_call_ttl_s)
-
-        try:
-            # to_number is the caller's own E.164 number (RFC §4.6: the callback
-            # always returns to the exact number that dialed in) — the same value
-            # already used for the platform-identity lookup above. lelik_agent_factory
-            # is expected to be `UserAgentFactory._build_lelik(user_id, account_id,
-            # to_number)` (or a callable matching that 3-arg shape), not the 2-arg
-            # `(user_id, account_id)` this call site used before to_number existed.
-            agent = lelik_agent_factory(
-                user_id=decision.user_id, account_id=decision.account_id, to_number=caller,
-            )
-            await agent.execute(purpose="user asked to talk", ticket=ticket, answer_url=answer_url)
-        except Exception as exc:
-            # Mint-side counterpart to submit_transcript's release-on-failure guarantee
-            # (voice_control_plane_app.py) - a ticket/marker written here but never
-            # redeemed by a live call must not survive on its own until TTL expiry
-            # (up to one_call_ttl_s, default 3600s), or the user is locked out of any
-            # retry for that whole window with no way to know why.
-            logger.error(
-                f"voice auth: callback origination failed for {decision.user_id}: {exc}",
-                exc_info=True,
-            )
-            await ephemeral_store.delete(ticket_key)
-            await ephemeral_store.delete(marker_key)
-            await alert_sink.post(f"Voice: callback origination failed for user {decision.user_id}: {exc}")
-            return _twiml_origination_failed()
-
-        # RFC §4.6: every session opened posts to the user's chat channel.
-        await notification_service.notify_raw(
-            user_id=decision.user_id,
-            account_id=decision.account_id,
-            text="📞 Calling you back now",
+        # Short TTL while the callback is only parked: if Twilio never reports the
+        # inbound dial as ended, the caller is locked out for minutes, not an hour.
+        await ephemeral_store.set(marker_key, {"in_flight": True}, ttl_s=_TICKET_TTL_S)
+        await ephemeral_store.set(
+            _pending_key(inbound_call_sid),
+            {
+                "ticket": ticket,
+                "user_id": decision.user_id,
+                "account_id": decision.account_id,
+                # The callback always returns to the exact number that dialed in (RFC §4.6).
+                "to_number": caller,
+            },
+            ttl_s=_TICKET_TTL_S,
         )
 
         vr = VoiceResponse()
         vr.say("Calling you back.")
         vr.hangup()
         return Response(str(vr), mimetype="text/xml")
+
+    @bp.route("/voice/inbound-status", methods=["POST"])
+    async def voice_inbound_status():
+        """The inbound dial's lifecycle — the moment the caller's line is free."""
+        form = await request.form
+        forbidden = await _reject_if_unsigned(form)
+        if forbidden is not None:
+            return forbidden
+
+        call_status = (form.get("CallStatus") or "").strip().lower()
+        if call_status not in _TERMINAL_CALL_STATUSES:
+            return Response("", status=200)
+
+        # Atomic claim: Twilio retries status callbacks, and a second delivery must
+        # not place a second call.
+        pending = await ephemeral_store.get_and_delete(_pending_key((form.get("CallSid") or "").strip()))
+        if pending is None:
+            return Response("", status=200)
+
+        ticket_key = f"voice_ticket:{pending['ticket']}"
+        marker_key = f"voice_one_call:{pending['user_id']}"
+        if call_status != "completed":
+            logger.info(f"voice inbound-status: dial ended '{call_status}' before the answer, releasing")
+            await ephemeral_store.delete(ticket_key)
+            await ephemeral_store.delete(marker_key)
+            return Response("", status=200)
+
+        await ephemeral_store.set(marker_key, {"in_flight": True}, ttl_s=one_call_ttl_s)
+        try:
+            agent = lelik_agent_factory(
+                user_id=pending["user_id"], account_id=pending["account_id"], to_number=pending["to_number"],
+            )
+            await agent.execute(purpose="user asked to talk", ticket=pending["ticket"], answer_url=answer_url)
+        except Exception as exc:
+            # A ticket/marker written for a callback that never went out must not
+            # survive on its own until TTL expiry, or the user is locked out of any
+            # retry for that whole window with no way to know why.
+            logger.error(
+                f"voice inbound-status: callback origination failed for {pending['user_id']}: {exc}",
+                exc_info=True,
+            )
+            await ephemeral_store.delete(ticket_key)
+            await ephemeral_store.delete(marker_key)
+            await alert_sink.post(f"Voice: callback origination failed for user {pending['user_id']}: {exc}")
+            return Response("", status=200)
+
+        # RFC §4.6: every session opened posts to the user's chat channel.
+        await notification_service.notify_raw(
+            user_id=pending["user_id"],
+            account_id=pending["account_id"],
+            text="📞 Calling you back now",
+        )
+        return Response("", status=200)
 
     @bp.route("/voice/answer", methods=["POST"])
     async def voice_answer():
@@ -327,6 +364,10 @@ def create_voice_webhook_blueprint(
     return bp
 
 
+def _pending_key(inbound_call_sid: str) -> str:
+    return f"voice_pending_callback:{inbound_call_sid}"
+
+
 def _external_url() -> str:
     """The absolute URL Twilio computed its signature over.
 
@@ -356,22 +397,10 @@ def _twiml_reject() -> Response:
     return Response(str(vr), mimetype="text/xml")
 
 
-def _twiml_origination_failed() -> Response:
-    """The dial was authenticated (unlike _twiml_reject's unbound/in-flight cases) but the
-    callback itself failed to originate - tell the caller plainly rather than silently
-    hanging up on them, then end the call cleanly (no dangling <Reject> since this wasn't
-    a rejection of the caller)."""
-    vr = VoiceResponse()
-    vr.say("Sorry, something went wrong placing your callback. Please try again shortly.")
-    vr.hangup()
-    return Response(str(vr), mimetype="text/xml")
-
-
 def _twiml_persona_failed() -> Response:
     """The callback was answered but Lelik's persona could not be assembled (e.g. the
     Firestore prompt content is missing, or the assembly service raised) - same
-    plain-apology shape as _twiml_origination_failed, distinct call site so the two
-    failure classes stay easy to tell apart in logs/alerts."""
+    plain-apology shape, its own function so the failure stays easy to find in logs/alerts."""
     vr = VoiceResponse()
     vr.say("Sorry, something went wrong setting up this call. Please try again shortly.")
     vr.hangup()
