@@ -33,7 +33,12 @@ def app_and_deps():
 @pytest.mark.asyncio
 async def test_session_config_resolves_ticket(app_and_deps):
     app, ephemeral_store, *_ = app_and_deps
-    ephemeral_store.get.return_value = {"instructions": "you are Lelik", "user_id": "u1", "account_id": "a1"}
+    # Resolution goes through the atomic consume (get_and_delete), not a
+    # get()-then-delete() pair — see the adapter's own tests for why. Expected
+    # behaviour here is unchanged: resolve returns the config.
+    ephemeral_store.get_and_delete.return_value = {
+        "instructions": "you are Lelik", "user_id": "u1", "account_id": "a1",
+    }
 
     client = app.test_client()
     response = await client.post(
@@ -43,13 +48,13 @@ async def test_session_config_resolves_ticket(app_and_deps):
     assert response.status_code == 200
     body = await response.get_json()
     assert body == {"instructions": "you are Lelik", "user_id": "u1", "account_id": "a1"}
-    ephemeral_store.get.assert_awaited_once_with("voice_ticket:ticket-1")
+    ephemeral_store.get_and_delete.assert_awaited_once_with("voice_ticket:ticket-1")
 
 
 @pytest.mark.asyncio
 async def test_session_config_404_on_unknown_ticket(app_and_deps):
     app, ephemeral_store, *_ = app_and_deps
-    ephemeral_store.get.return_value = None
+    ephemeral_store.get_and_delete.return_value = None
 
     client = app.test_client()
     response = await client.post(
@@ -300,7 +305,8 @@ async def test_submit_transcript_releases_marker_even_if_turn_recording_raises(a
 
 @pytest.mark.asyncio
 async def test_session_config_consumes_the_ticket_so_it_cannot_be_replayed(app_and_deps):
-    """FIX I2 — the ticket was a replayable bearer credential.
+    """FIX I2 — the ticket was a replayable bearer credential, and is now
+    consumed ATOMICALLY.
 
     `/voice/session-config` resolved it but never deleted it, so for the
     ticket's whole TTL (`voice_webhook_app._TICKET_TTL_S`, 300s) anyone who
@@ -309,9 +315,18 @@ async def test_session_config_consumes_the_ticket_so_it_cannot_be_replayed(app_a
     directives. The relay fetches the config exactly once per call
     (`HttpCallControlPlaneAdapter.fetch_session_config`), so single use costs
     the legitimate caller nothing.
+
+    Consumption must be ONE step, not `get()` then `delete()`: those are two
+    Firestore round trips, and two concurrent redemptions of the same ticket
+    could both complete their read before either delete landed. The atomicity
+    itself is proven at the adapter
+    (`tests/unit/adapters/test_firestore_ephemeral_store.py`); what this test
+    pins is that the route reaches for the atomic method at all.
     """
     app, ephemeral_store, *_rest = app_and_deps
-    ephemeral_store.get.return_value = {"instructions": "you are Lelik", "user_id": "u1", "account_id": "a1"}
+    ephemeral_store.get_and_delete.return_value = {
+        "instructions": "you are Lelik", "user_id": "u1", "account_id": "a1",
+    }
 
     client = app.test_client()
     response = await client.post(
@@ -319,16 +334,22 @@ async def test_session_config_consumes_the_ticket_so_it_cannot_be_replayed(app_a
     )
 
     assert response.status_code == 200
-    ephemeral_store.delete.assert_awaited_once_with("voice_ticket:t1")
+    ephemeral_store.get_and_delete.assert_awaited_once_with("voice_ticket:t1")
+    # Not a separate delete — that pair is the race this replaced.
+    ephemeral_store.delete.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_session_config_does_not_consume_a_ticket_it_could_not_resolve(app_and_deps):
     """An unknown/expired ticket 404s without a delete — there is nothing to
     consume, and issuing a delete for an attacker-supplied key would turn this
-    endpoint into an unauthenticated eviction primitive."""
+    endpoint into an unauthenticated eviction primitive.
+
+    The adapter keeps that guarantee inside the transaction (it only calls
+    `transaction.delete` when the document actually existed); this test pins
+    the route side: no separate delete path fires on a miss."""
     app, ephemeral_store, *_rest = app_and_deps
-    ephemeral_store.get.return_value = None
+    ephemeral_store.get_and_delete.return_value = None
 
     client = app.test_client()
     response = await client.post(
@@ -336,6 +357,7 @@ async def test_session_config_does_not_consume_a_ticket_it_could_not_resolve(app
     )
 
     assert response.status_code == 404
+    ephemeral_store.get_and_delete.assert_awaited_once_with("voice_ticket:unknown")
     ephemeral_store.delete.assert_not_called()
 
 
