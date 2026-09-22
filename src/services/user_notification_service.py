@@ -92,7 +92,7 @@ class UserNotificationService:
         except Exception as exc:
             logger.warning(f"[Notification] Failed to save primary for {user_id[:8]}: {exc}")
 
-    async def _resolve_channel(
+    async def resolve_channel(
         self, user_id: str, channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
     ) -> Optional["NotificationChannel"]:
@@ -139,7 +139,7 @@ class UserNotificationService:
 
         Uses fallback chain: override → primary → last active.
         """
-        channel_info = await self._resolve_channel(
+        channel_info = await self.resolve_channel(
             user_id, channel_id_override, platform_override,
         )
         if not channel_info:
@@ -189,7 +189,7 @@ class UserNotificationService:
         turns and consolidation must be able to see — same history-append shape as
         notify_document_link(). Uses fallback chain: override -> primary -> last active.
         """
-        channel_info = await self._resolve_channel(
+        channel_info = await self.resolve_channel(
             user_id, channel_id_override, platform_override,
         )
         if not channel_info:
@@ -250,7 +250,7 @@ class UserNotificationService:
         store (RFC §4.9), so this history append is the only durable trace a
         call ever leaves.
         """
-        channel_info = await self._resolve_channel(user_id, None, None)
+        channel_info = await self.resolve_channel(user_id, None, None)
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping call summary delivery")
             return
@@ -348,7 +348,7 @@ class UserNotificationService:
         else:
             effective_timeout_ms = sla.timeout_ms
 
-        channel_info = await self._resolve_channel(
+        channel_info = await self.resolve_channel(
             user_id, channel_id_override, platform_override,
         )
         if not channel_info:
@@ -499,7 +499,7 @@ class UserNotificationService:
         URL) is written to conversation history so the agent can re-read the
         document later via open_file (server-side, not via an external URL fetch).
         """
-        channel_info = await self._resolve_channel(
+        channel_info = await self.resolve_channel(
             user_id, channel_id_override, platform_override,
         )
         if not channel_info:
@@ -580,7 +580,7 @@ class UserNotificationService:
             )
             return
 
-        channel_info = await self._resolve_channel(
+        channel_info = await self.resolve_channel(
             user_id, channel_id_override, platform_override,
         )
         if not channel_info:

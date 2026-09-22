@@ -42,7 +42,6 @@ from typing import Optional
 from quart import Blueprint, Response, request
 from twilio.twiml.voice_response import VoiceResponse
 
-from src.domain.entities import FactDomain
 from src.domain.voice_auth_decision import AuthDecision
 from src.utils.logger import logger
 
@@ -59,26 +58,6 @@ _TICKET_TTL_S = 300
 # `one_call_ttl_s` (default 3600s) expires.
 _TERMINAL_CALL_STATUSES = frozenset({"completed", "no-answer", "busy", "failed", "canceled"})
 
-# RFC §4.8: Lelik reads "a small explicit list of fact domains ... enough for light
-# continuity and small talk, not a substitute for forwarding" — NOT Alek's whole
-# biographical cache. A fat context is what nudges a companion into answering from
-# its own mouth, which is precisely what §4.2's forwarding rule exists to prevent.
-#
-# AGENT_DIRECTIVE is deliberately in this list and MUST NOT be "cleaned up" out of
-# it. It is not small-talk content: `PromptBuilder.build_for_agent` extracts the
-# standing-directive block by filtering the *same* list that is passed in as
-# `biographical_facts` (`src/services/prompt_builder.py` — `directive_facts = [f for
-# f in biographical_facts if _domain(f) == FactDomain.AGENT_DIRECTIVE.value]`).
-# Dropping AGENT_DIRECTIVE here silently kills RFC §4.2's standing-directive
-# backstop while `include_directives=True` below still reads as if it were on.
-_LELIK_FACT_DOMAINS = frozenset({
-    FactDomain.BIOGRAPHICAL.value,
-    FactDomain.PREFERENCE.value,
-    FactDomain.LOCATION.value,
-    FactDomain.AGENT_DIRECTIVE.value,
-})
-
-
 def create_voice_webhook_blueprint(
     user_repository,
     ephemeral_store,
@@ -88,8 +67,7 @@ def create_voice_webhook_blueprint(
     answer_url,
     signature_verifier,
     one_call_ttl_s: int = 3600,
-    prompt_builder=None,
-    fact_repository=None,
+    persona_service_factory=None,
     relay_stream_url: str = "",
 ) -> Blueprint:
     """Build the Twilio-facing voice webhook blueprint.
@@ -215,9 +193,9 @@ def create_voice_webhook_blueprint(
            any retry for up to `one_call_ttl_s` (default 3600s). Resolving the
            ticket before this gate is what makes that possible and costs one
            ephemeral-store read, not an LLM call.
-        3. Assemble Lelik's persona via `PromptBuilderPort.build_for_agent`,
-           over a biographical read scoped to `_LELIK_FACT_DOMAINS` (RFC §4.8),
-           and stash it back onto the ticket (relay's `/voice/session-config`
+        3. Assemble Lelik's warm call-start prompt via
+           `persona_service_factory(user_id)` -> `LelikPersonaService` (RFC §4.8,
+           decisions/lelik_warm_context.md), and stash it back onto the ticket (relay's `/voice/session-config`
            reads it from there, Task 5/Task 4 territory) before pointing the
            call at the relay's media-stream WebSocket.
 
@@ -254,36 +232,12 @@ def create_voice_webhook_blueprint(
             vr.hangup()
             return Response(str(vr), mimetype="text/xml")
 
-        # RFC §4.8's domain scoping, implemented through the kwarg that actually
-        # exists. `build_for_agent` has no `session_domains` parameter (that belongs
-        # to CompanionContextAssemblerService.assemble_context, which is not wired
-        # into this webhook) — the real override point is `biographical_facts`:
-        # when it is non-None, PromptBuilder uses the list verbatim instead of
-        # fetching the full cache itself. So `include_biographical=True` here means
-        # "use exactly this list", not "go fetch everything".
-        # include_directives=True is §4.2's standing-directive backstop: the rulebook
-        # is the lever to reach for if the persona's forwarding discipline slips —
-        # and it is fed from the same scoped list, hence AGENT_DIRECTIVE's presence
-        # in _LELIK_FACT_DOMAINS (see the constant's comment).
-        #
-        # The fact fetch sits inside the persona-assembly try/except on purpose: a
-        # repository failure is a persona-assembly failure, not a reason to silently
-        # open a call on an empty context.
+        # A profile, fact-store or assembly failure is a persona failure, never a reason
+        # to open a call on an empty context.
         try:
-            all_facts = await fact_repository.get_biographical_context_cached(
-                identity["account_id"]
-            )
-            scoped_facts = [
-                f for f in (all_facts or [])
-                if isinstance(f, dict) and f.get("domain") in _LELIK_FACT_DOMAINS
-            ]
-            instructions = await prompt_builder.build_for_agent(
-                agent_type="lelik",
-                user_id=identity["user_id"],
-                account_id=identity["account_id"],
-                biographical_facts=scoped_facts,
-                include_biographical=True,
-                include_directives=True,
+            persona = await persona_service_factory(identity["user_id"])
+            instructions = await persona.build_instructions(
+                user_id=identity["user_id"], account_id=identity["account_id"],
             )
         except Exception as exc:
             # Same fail-open shape as voice_auth's origination-failure handling:

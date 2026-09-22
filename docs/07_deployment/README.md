@@ -124,8 +124,9 @@ callback is answered, the persona is assembled, and the `<Stream>` points nowher
 4. **`make deploy` again.** The main service now picks it up.
 
 This is the **fourth** prerequisite for the voice companion's live verification, alongside: Twilio
-secrets present in Secret Manager, the three Firestore prompt uploads for Lelik's persona
-(`COGNITIVE_PROCESS_LELIK`, `lelik_agent_v1`, `lelik`), and the four for the end-of-call summarizer
+secrets present in Secret Manager, the four Firestore prompt uploads for Lelik's persona
+(`COGNITIVE_PROCESS_LELIK`, `SPOKEN_DELIVERY`, `lelik_agent_v1`, `lelik`; the character tokens are
+Smart's existing ones), and the four for the end-of-call summarizer
 (`COGNITIVE_PROCESS_LELIK_SUMMARIZER`, `lelik_summarizer_agent_v1`, `lelik_summarizer`).
 
 ---

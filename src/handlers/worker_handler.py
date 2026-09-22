@@ -535,7 +535,7 @@ class WorkerHandler:
         deliver_video() billing call would under-bill a longer video.
 
         origin_platform is resolved the same way, for the same reason, but for a
-        different bug: UserNotificationService._resolve_channel() only honors
+        different bug: UserNotificationService.resolve_channel() only honors
         channel_id_override when platform_override is ALSO set (`if
         channel_id_override and platform_override:`) — omitting platform_override
         silently falls through to the user's primary/last-active channel instead

@@ -461,3 +461,49 @@ OPENAI_REALTIME_USES_GA_SESSION_SHAPE = ContractRule(
         ),
     },
 )
+
+OPENAI_REALTIME_BARGE_IN_IS_CLIENT_OWNED = ContractRule(
+    name="OPENAI_REALTIME_BARGE_IN_IS_CLIENT_OWNED",
+    description=(
+        "OpenAIRealtimeAdapter.open() must configure semantic_vad with the provider's "
+        "auto-interrupt OFF. VoiceSessionService owns barge-in (clear -> cancel -> "
+        "truncate); a provider auto-cancel racing our own response.cancel can land a "
+        "cancel on nothing, and that provider error ends the call. semantic_vad (not "
+        "server_vad) so a mid-thought pause does not end the caller's turn. "
+        "Input: captured session.update message {type: str, session: dict}."
+    ),
+    validators={
+        "openai_realtime": lambda kw: (
+            _eq(
+                kw["session"]["audio"]["input"]["turn_detection"]["type"],
+                "semantic_vad",
+                "openai_realtime: turn_detection must be semantic_vad",
+            ),
+            _eq(
+                kw["session"]["audio"]["input"]["turn_detection"]["interrupt_response"],
+                False,
+                "openai_realtime: provider auto-interrupt must be off (client owns barge-in)",
+            ),
+        ),
+    },
+)
+
+OPENAI_REALTIME_TRUNCATE_SHAPE = ContractRule(
+    name="OPENAI_REALTIME_TRUNCATE_SHAPE",
+    description=(
+        "OpenAIRealtimeAdapter.truncate() must send conversation.item.truncate with "
+        "item_id, content_index=0 and an integer audio_end_ms — over WebSocket the "
+        "server cannot know what was played, so the client cuts the unheard tail. "
+        "Input: captured client event dict."
+    ),
+    validators={
+        "openai_realtime": lambda kw: (
+            _eq(kw["type"], "conversation.item.truncate",
+                "openai_realtime: truncate must send conversation.item.truncate"),
+            _eq(kw["content_index"], 0, "openai_realtime: truncate content_index must be 0"),
+            _true(isinstance(kw["audio_end_ms"], int) and kw["audio_end_ms"] >= 0,
+                  "openai_realtime: audio_end_ms must be a non-negative int"),
+            _true(bool(kw["item_id"]), "openai_realtime: truncate needs an item_id"),
+        ),
+    },
+)

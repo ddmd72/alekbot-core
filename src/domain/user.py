@@ -277,6 +277,12 @@ class UserBotConfig(BaseModel):
     # None = let the provider auto-detect. Set via Cabinet UI.
     voice_languages: Optional[List[str]] = None
 
+    # Fact domains (FactDomain values) withheld from Lelik's call-start context. Empty = the
+    # whole biographical cache (decisions/lelik_warm_context.md: give everything, trim what
+    # proves out of place). Plain strings, not FactDomain: a typo in a hand-edited Firestore
+    # doc must not fail the whole config load — LelikPersonaService warns and ignores it.
+    voice_excluded_fact_domains: List[str] = Field(default_factory=list)
+
     # Gmail auto-indexing schedule
     # gmail_auto_index: enable daily incremental indexing via Cloud Scheduler
     # gmail_auto_index_hour: local hour (0-23) in user's timezone when indexing fires

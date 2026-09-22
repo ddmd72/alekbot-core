@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 from src.adapters.openai_realtime_adapter import OpenAIRealtimeAdapter, _flatten_usage
 from src.domain.voice_audio_frame import AudioFrame
 from tests.contracts.adapter_contracts import (
+    OPENAI_REALTIME_BARGE_IN_IS_CLIENT_OWNED,
     OPENAI_REALTIME_STRIPS_CACHE_BOUNDARY,
+    OPENAI_REALTIME_TRUNCATE_SHAPE,
     OPENAI_REALTIME_USES_GA_SESSION_SHAPE,
 )
 
@@ -321,3 +323,51 @@ async def test_receive_events_normalizes_speech_started():
     events = [event async for event in adapter.receive_events()]
 
     assert [event.type for event in events] == ["speech_started"]
+
+
+@pytest.mark.asyncio
+async def test_open_configures_semantic_vad_with_client_owned_barge_in():
+    """Playbook 1.1: a pause mid-thought must not hand Lelik the floor - semantic_vad
+    at low eagerness. Auto-interrupt off so barge-in has exactly one owner."""
+    ws = FakeWebSocket(incoming=[])
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    turn_detection = ws.sent[0]["session"]["audio"]["input"]["turn_detection"]
+    assert turn_detection == {
+        "type": "semantic_vad",
+        "eagerness": "low",
+        "create_response": True,
+        "interrupt_response": False,
+    }
+    OPENAI_REALTIME_BARGE_IN_IS_CLIENT_OWNED.validate("openai_realtime", ws.sent[0])
+
+
+@pytest.mark.asyncio
+async def test_receive_events_audio_delta_carries_item_id():
+    """Truncation targets the assistant item the audio came from."""
+    ws = FakeWebSocket(incoming=[
+        {"type": "response.output_audio.delta", "item_id": "item_42", "content_index": 0, "delta": "b64"},
+    ])
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    events = [event async for event in adapter.receive_events()]
+
+    assert events[0].type == "audio_delta"
+    assert events[0].payload["item_id"] == "item_42"
+    assert events[0].payload["frame"].payload == "b64"
+
+
+@pytest.mark.asyncio
+async def test_truncate_sends_conversation_item_truncate():
+    ws = FakeWebSocket(incoming=[])
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    await adapter.truncate("item_42", 1500)
+
+    assert ws.sent[-1] == {
+        "type": "conversation.item.truncate", "item_id": "item_42", "content_index": 0, "audio_end_ms": 1500,
+    }
+    OPENAI_REALTIME_TRUNCATE_SHAPE.validate("openai_realtime", ws.sent[-1])
