@@ -419,3 +419,45 @@ NODE_DOCX_INVOKED_WITH_NODE_AND_SCRIPT_PATH = ContractRule(
         ),
     },
 )
+
+OPENAI_REALTIME_STRIPS_CACHE_BOUNDARY = ContractRule(
+    name="OPENAI_REALTIME_STRIPS_CACHE_BOUNDARY",
+    description=(
+        "OpenAIRealtimeAdapter.open() must never forward the literal cache-boundary "
+        "marker used elsewhere in the prompt-caching pipeline into a live realtime "
+        "session's instructions field — it has no meaning to the Realtime API and "
+        "would leak an internal prompt-assembly artifact into the model's context. "
+        "Input: captured session.update message {type: str, session: dict}."
+    ),
+    validators={
+        "openai_realtime": lambda kw: _true(
+            "CACHE_BOUNDARY" not in kw["session"]["instructions"],
+            "openai_realtime: session.update instructions must not contain CACHE_BOUNDARY",
+        ),
+    },
+)
+
+OPENAI_REALTIME_USES_GA_SESSION_SHAPE = ContractRule(
+    name="OPENAI_REALTIME_USES_GA_SESSION_SHAPE",
+    description=(
+        "OpenAIRealtimeAdapter.open() must send the GA Realtime API session shape "
+        "(session.type == 'realtime', output_modalities as a nested audio-config field) "
+        "and never the pre-GA shape (a top-level 'modalities' array), which spike 0.1/0.2 "
+        "found the live API silently rejects with no error surfaced to the caller. "
+        "Input: captured session.update message {type: str, session: dict}."
+    ),
+    validators={
+        "openai_realtime": lambda kw: (
+            _eq(
+                kw["session"]["type"],
+                "realtime",
+                "openai_realtime: session.update must set session.type='realtime'",
+            ),
+            _not_in(
+                "modalities",
+                kw["session"],
+                "openai_realtime: session must not use the pre-GA top-level 'modalities' key",
+            ),
+        ),
+    },
+)
