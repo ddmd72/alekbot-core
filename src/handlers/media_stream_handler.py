@@ -51,6 +51,15 @@ class MediaStreamHandler:
                 "media": {"payload": frame.payload},
             }))
 
+        async def clear_outbound_audio() -> None:
+            # Barge-in half that Twilio owns: drop every media frame already queued
+            # for playback on its side. Cancelling the provider's response alone is
+            # not enough - audio sent before the interrupt keeps playing out over
+            # the caller's voice (validated in scripts/voice/test_mulaw_relay_poc.py).
+            if stream_sid is None:
+                return
+            await ws.send(json.dumps({"event": "clear", "streamSid": stream_sid}))
+
         # Cleanup (push the sentinel, await call_task) MUST run on every exit path
         # from the loop below, not just the explicit "stop" branch: websockets==15.0.1's
         # Connection.__aiter__ swallows ConnectionClosedOK internally and just returns
@@ -76,6 +85,7 @@ class MediaStreamHandler:
                             ticket=ticket,
                             inbound_audio=inbound_frames(),
                             send_outbound_audio=send_outbound,
+                            clear_outbound_audio=clear_outbound_audio,
                         )
                     )
                 elif event == "media":

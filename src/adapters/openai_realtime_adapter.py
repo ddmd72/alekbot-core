@@ -58,12 +58,20 @@ def _flatten_usage(usage: dict) -> Dict[str, int]:
     a separate leg (see CLAUDE.md: "prompt_tokens in UsageMetadata always =
     uncached input").
 
-    Reasoning tokens bill as text output (RFC §4.3/§6). The Realtime API does
-    not currently surface them as their own visible field (folded into
-    ``output_token_details.text_tokens`` per OpenAI's community-reported
-    behaviour) — this still adds ``output_token_details.reasoning_tokens``
-    onto ``text_output_tokens`` in case a future API revision does add one,
-    rather than silently dropping it.
+    Reasoning tokens bill as text output (RFC §4.3/§6), and they are a SUBSET
+    of ``output_tokens`` — and therefore of ``output_token_details.text_tokens``
+    — never an extra quantity charged on top of it. OpenAI's reasoning guide
+    states this directly: reasoning tokens "are billed as output tokens", i.e.
+    counted once, inside the output total. This repo's own Phase 0 spike uses
+    the same convention independently: ``scripts/voice/test_reasoning_effort_poc.py``
+    sums top-level ``usage["output_tokens"]`` for its cost figure and tracks
+    ``output_token_details.reasoning_tokens`` separately purely for display,
+    never adding it in (see also
+    ``decisions/voice_spike_04_reasoning_effort.md``, whose cost formula is
+    ``input_tokens*4 + output_tokens*24`` with no reasoning term). So
+    ``text_output_tokens`` is ``output_token_details.text_tokens`` alone:
+    adding ``reasoning_tokens`` onto it would double-bill the $24/1M
+    output-text leg on every call that reports a non-zero split.
 
     Some realtime deployments only return the undifferentiated top-level
     ``input_tokens``/``output_tokens`` totals with no ``*_token_details`` at
@@ -110,7 +118,7 @@ def _flatten_usage(usage: dict) -> Dict[str, int]:
         "audio_input_tokens": max(input_details.get("audio_tokens", 0) - cached_audio_tokens, 0),
         "audio_output_tokens": output_details.get("audio_tokens", 0),
         "text_input_tokens": max(input_details.get("text_tokens", 0) - cached_text_tokens, 0),
-        "text_output_tokens": output_details.get("text_tokens", 0) + output_details.get("reasoning_tokens", 0),
+        "text_output_tokens": output_details.get("text_tokens", 0),
         "cached_tokens": cached_tokens,
     }
 
@@ -212,6 +220,13 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
 
     async def request_response(self) -> None:
         await self._ws.send(json.dumps({"type": "response.create"}))
+
+    async def cancel_response(self) -> None:
+        # Barge-in: stop the provider generating the response the caller just talked
+        # over (validated live in scripts/voice/test_mulaw_relay_poc.py:158-170). The
+        # caller must only reach here while a response is actually active - OpenAI
+        # errors on a response.cancel with nothing in flight.
+        await self._ws.send(json.dumps({"type": "response.cancel"}))
 
     async def close(self) -> None:
         if self._ws is not None:
