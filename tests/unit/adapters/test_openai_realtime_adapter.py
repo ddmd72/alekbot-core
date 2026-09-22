@@ -136,15 +136,26 @@ async def test_receive_events_flattens_real_nested_openai_usage_shape():
 
 
 def test_flatten_usage_folds_reasoning_tokens_into_text_output():
-    """Reasoning tokens bill as text output (RFC §4.3/§6). The Realtime API
-    does not currently break reasoning_tokens out as its own visible field
-    (community-reported: folded into output_token_details.text_tokens), but
-    if a future API revision does add one, it must not be silently dropped."""
+    """Reasoning tokens bill as text output (RFC §4.3/§6) and are a SUBSET of
+    output_token_details.text_tokens, never an extra quantity on top of it -
+    OpenAI's reasoning guide states they "are billed as output tokens", i.e.
+    counted once inside the output total. So text_output_tokens is text_tokens
+    ALONE even when a non-zero reasoning_tokens is reported alongside it.
+
+    Regression guard for the double-billing bug this test previously locked in
+    (it asserted 80 = 50 + 30 until 2026-09-22): adding reasoning_tokens on top
+    inflated the $24/1M output-text leg by ~28-50% on every realtime call that
+    reported a split. Three independent in-repo sources use the subset
+    convention - scripts/voice/test_reasoning_effort_poc.py (sums top-level
+    output_tokens, tracks reasoning for display only),
+    decisions/voice_spike_04_reasoning_effort.md (cost = input*4 + output*24,
+    no reasoning term) and scripts/validation/probe_openai_websearch_usage.py
+    ("output_tokens (TOTAL, incl. reasoning)")."""
     usage = {
         "input_token_details": {"text_tokens": 10, "audio_tokens": 0},
         "output_token_details": {"text_tokens": 50, "audio_tokens": 0, "reasoning_tokens": 30},
     }
-    assert _flatten_usage(usage)["text_output_tokens"] == 80
+    assert _flatten_usage(usage)["text_output_tokens"] == 50
 
 
 def test_flatten_usage_treats_cached_as_text_when_no_modality_breakdown():

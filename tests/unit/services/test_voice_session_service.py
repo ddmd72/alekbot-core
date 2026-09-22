@@ -42,7 +42,10 @@ async def test_handle_call_relays_audio_and_flushes_buffer_on_close():
     # send_outbound_audio is Callable[[AudioFrame], Awaitable[None]] - must be awaitable,
     # unlike a plain list.append.
     await service.handle_call(
-        ticket="t1", inbound_audio=inbound, send_outbound_audio=AsyncMock(side_effect=outbound_sent.append)
+        ticket="t1",
+        inbound_audio=inbound,
+        send_outbound_audio=AsyncMock(side_effect=outbound_sent.append),
+        clear_outbound_audio=AsyncMock(),
     )
 
     control_plane.fetch_session_config.assert_awaited_once_with("t1")
@@ -80,7 +83,12 @@ async def test_handle_call_alerts_and_flushes_on_provider_error():
     alert_sink = AsyncMock()
     service = VoiceSessionService(realtime_session_factory=MagicMock(return_value=realtime_session), control_plane=control_plane, alert_sink=alert_sink)
 
-    await service.handle_call(ticket="t1", inbound_audio=_frames(), send_outbound_audio=AsyncMock())
+    await service.handle_call(
+        ticket="t1",
+        inbound_audio=_frames(),
+        send_outbound_audio=AsyncMock(),
+        clear_outbound_audio=AsyncMock(),
+    )
 
     alert_sink.post.assert_awaited_once()
     assert "socket dropped" in alert_sink.post.await_args.args[0]
@@ -108,7 +116,12 @@ async def test_handle_call_still_submits_transcript_and_closes_when_open_fails()
     )
 
     with pytest.raises(ConnectionError):
-        await service.handle_call(ticket="t1", inbound_audio=_frames(), send_outbound_audio=AsyncMock())
+        await service.handle_call(
+            ticket="t1",
+            inbound_audio=_frames(),
+            send_outbound_audio=AsyncMock(),
+            clear_outbound_audio=AsyncMock(),
+        )
 
     realtime_session.close.assert_awaited_once()
     control_plane.submit_transcript.assert_awaited_once()
