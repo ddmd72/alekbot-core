@@ -13,6 +13,10 @@ flagship quality on multi-step work at a fraction of the cost). `minimal`'s cost
 untested risk. This is what Slice 1 item 8 should use; the sections below are the spike's own
 analysis, left as originally written.
 
+**Update (2026-09-23): raised to `high`** (`relay_main.py`). The persona anchor now asks for
+per-sentence rhythm and emotion planning before speech, which happens in reasoning. Revisit if
+time-to-first-audio becomes noticeable on calls.
+
 ## Question
 
 RFC §4.3 and Slice 1 item 8 (Lelik's session/persona assembly) need a `reasoning_effort` default.
