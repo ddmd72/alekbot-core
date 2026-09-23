@@ -161,7 +161,7 @@ class TestEngineForwardsMode:
 
     async def test_later_becomes_async(self):
         engine, coordinator = self._engine()
-        await engine._dispatch_single(
+        await engine.dispatch(
             ToolCall(name="delegate_to_specialist",
                      args={"intent": "search_memory", "query": "q", "mode": "later"}),
             {"user_id": "u1"}, {}, {}, "smart_agent", 0, 0.0,
@@ -170,7 +170,7 @@ class TestEngineForwardsMode:
 
     async def test_now_becomes_sync(self):
         engine, coordinator = self._engine()
-        await engine._dispatch_single(
+        await engine.dispatch(
             ToolCall(name="delegate_to_specialist",
                      args={"intent": "search_memory", "query": "q", "mode": "now"}),
             {"user_id": "u1"}, {}, {}, "smart_agent", 0, 0.0,
@@ -179,7 +179,7 @@ class TestEngineForwardsMode:
 
     async def test_absent_mode_forwards_none(self):
         engine, coordinator = self._engine()
-        await engine._dispatch_single(
+        await engine.dispatch(
             ToolCall(name="delegate_to_specialist",
                      args={"intent": "search_memory", "query": "q"}),
             {"user_id": "u1"}, {}, {}, "smart_agent", 0, 0.0,
@@ -189,7 +189,7 @@ class TestEngineForwardsMode:
     async def test_unknown_mode_is_ignored_not_fatal(self):
         """A model inventing a third word must not break the delegation."""
         engine, coordinator = self._engine()
-        await engine._dispatch_single(
+        await engine.dispatch(
             ToolCall(name="delegate_to_specialist",
                      args={"intent": "search_memory", "query": "q", "mode": "eventually"}),
             {"user_id": "u1"}, {}, {}, "smart_agent", 0, 0.0,

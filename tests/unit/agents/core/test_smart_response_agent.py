@@ -592,7 +592,7 @@ class TestDeliverResponseTool:
 # =========================================================================
 
 class TestDelegateToAgentWithRetry:
-    """Tests for DelegationEngine._dispatch_single (moved from SmartResponseAgent)."""
+    """Tests for DelegationEngine.dispatch (moved from SmartResponseAgent)."""
 
     @pytest.fixture
     def engine(self):
@@ -605,7 +605,7 @@ class TestDelegateToAgentWithRetry:
 
     async def test_no_intent_returns_error(self, engine, ctx):
         tc = ToolCall(name="delegate_to_specialist", args={"query": "q"})
-        result = await engine._dispatch_single(tc, ctx, {}, {}, "test", 0, 0)
+        result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
         assert "SYSTEM ERROR" in result.result_str
 
     async def test_str_context_params_wrapped_as_reasoning(self, engine, ctx):
@@ -616,7 +616,7 @@ class TestDelegateToAgentWithRetry:
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "q", "context": "some context reasoning"},
         )
-        result = await engine._dispatch_single(tc, ctx, {}, {}, "test", 0, 0)
+        result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
         assert result.result_str == "data"
 
     async def test_non_dict_context_params_becomes_empty(self, engine, ctx):
@@ -626,7 +626,7 @@ class TestDelegateToAgentWithRetry:
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "q", "context": 42},
         )
-        result = await engine._dispatch_single(tc, ctx, {}, {}, "test", 0, 0)
+        result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
         assert result.result_str == "data"
 
     async def test_failed_delegation_returns_error_result(self, engine, ctx):
@@ -637,7 +637,7 @@ class TestDelegateToAgentWithRetry:
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "q"},
         )
-        result = await engine._dispatch_single(tc, ctx, {}, {}, "test", 0, 0)
+        result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
         assert "SYSTEM" in result.result_str
         engine._coordinator.handle_delegation.assert_called_once()
 
@@ -650,7 +650,7 @@ class TestDelegateToAgentWithRetry:
             name="delegate_to_specialist",
             args={"intent": "search_emails", "query": "invoice"},
         )
-        result = await engine._dispatch_single(tc, ctx, {}, {}, "test", 0, 0)
+        result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
         assert "e1" in result.result_str
         assert "x@y.com" in result.result_str
 
@@ -1141,7 +1141,7 @@ class TestToolResponseFileData:
 
 
 class TestDelegateExtractsFileData:
-    """Tests for DelegationEngine._dispatch_single file_data extraction."""
+    """Tests for DelegationEngine.dispatch file_data extraction."""
 
     async def test_file_data_from_metadata(self):
         """When coordinator returns file_data in metadata, ToolResult captures it."""
@@ -1159,7 +1159,7 @@ class TestDelegateExtractsFileData:
             name="delegate_to_specialist",
             args={"intent": "open_file", "query": "get photo", "context": {"file_ref": "photo.jpg"}}
         )
-        result = await engine._dispatch_single(
+        result = await engine.dispatch(
             tool_call, {"user_id": "user1"}, {}, {}, "test", 0, 0,
         )
         assert result.file_data == file_data
@@ -1179,7 +1179,7 @@ class TestDelegateExtractsFileData:
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "find facts"}
         )
-        result = await engine._dispatch_single(
+        result = await engine.dispatch(
             tool_call, {"user_id": "user1"}, {}, {}, "test", 0, 0,
         )
         assert result.file_data is None
