@@ -400,4 +400,4 @@ async def test_open_sets_output_speed():
     adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
     await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
 
-    assert ws.sent[0]["session"]["audio"]["output"]["speed"] == 1.15
+    assert ws.sent[0]["session"]["audio"]["output"]["speed"] == 1.0

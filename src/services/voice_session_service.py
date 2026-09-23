@@ -16,6 +16,10 @@ from src.utils.logger import logger
 _UNKNOWN_MODEL_LABEL = "unknown"
 # SPOKEN_DELIVERY's `silence` rule reacts to this exact kind of note.
 _SILENCE_NOTE = "[The caller has been silent for {seconds} seconds.]"
+# Lelik placed the call, so he speaks first. The caller's own "hello?" usually falls into the
+# few seconds before the media stream exists and is never heard, and waiting for another
+# one left both sides silent for 10-20 s on every live call (2026-09-23).
+_PICKUP_NOTE = "[The caller has just picked up the phone you called. Speak first.]"
 _WATCHDOG_TICK_S = 0.25
 
 
@@ -102,6 +106,9 @@ class VoiceSessionService:
             # loop exit never gives the forwarding task a chance to actually run
             # if nothing in the receive loop truly suspends the event loop first -
             # asyncio.wait() below is what forces that handoff.
+            await session.submit_message("system", _PICKUP_NOTE)
+            await self._reply_to_turn(session, state)
+
             forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
             consume_task = asyncio.ensure_future(
                 self._consume_events(ticket, session, buffer, send_outbound_audio, clear_outbound_audio, state)
