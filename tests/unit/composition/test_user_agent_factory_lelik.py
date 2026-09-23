@@ -54,6 +54,7 @@ def test_lazy_tables_include_lelik():
 async def test_get_lelik_builds_on_demand_then_returns_the_registered_instance():
     agent = object()
     fake = SimpleNamespace(
+        ensure_agents_for_user=AsyncMock(),
         create_agent_on_demand=AsyncMock(return_value=True),
         coordinator=MagicMock(get_agent=MagicMock(return_value=agent)),
         _LAZY_AGENT_IDS=UserAgentFactory._LAZY_AGENT_IDS,
@@ -65,9 +66,22 @@ async def test_get_lelik_builds_on_demand_then_returns_the_registered_instance()
 
 @pytest.mark.asyncio
 async def test_get_lelik_is_none_when_it_cannot_be_built():
-    fake = SimpleNamespace(create_agent_on_demand=AsyncMock(return_value=False),
+    fake = SimpleNamespace(ensure_agents_for_user=AsyncMock(),
+                           create_agent_on_demand=AsyncMock(return_value=False),
                            coordinator=MagicMock(), _LAZY_AGENT_IDS=UserAgentFactory._LAZY_AGENT_IDS)
     assert await UserAgentFactory.get_lelik(fake, "u1") is None
+
+
+@pytest.mark.asyncio
+async def test_get_lelik_refreshes_the_users_agents_before_building():
+    order = []
+    fake = SimpleNamespace(
+        ensure_agents_for_user=AsyncMock(side_effect=lambda uid: order.append(("ensure", uid))),
+        create_agent_on_demand=AsyncMock(side_effect=lambda t, uid: order.append(("create", t, uid)) or True),
+        coordinator=MagicMock(), _LAZY_AGENT_IDS=UserAgentFactory._LAZY_AGENT_IDS,
+    )
+    await UserAgentFactory.get_lelik(fake, "u1")
+    assert order == [("ensure", "u1"), ("create", "lelik", "u1")]
 
 
 def test_alek_gateway_is_a_lazy_builder_with_the_notification_service():

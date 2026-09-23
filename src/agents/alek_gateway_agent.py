@@ -80,5 +80,5 @@ class AlekGatewayAgent(BaseAgent):
                 await self._notifications.notify_answer_copy(user_id, account_id, answer)
             except Exception as exc:
                 # The spoken answer matters more than its chat copy.
-                logger.error(f"[AlekGateway] chat copy failed for {user_id[:8]}: {exc}", exc_info=True)
+                logger.error(f"[AlekGateway] chat copy failed for {(user_id or '')[:8]}: {exc}", exc_info=True)
         return AgentResponse.success(task_id=message.task_id, agent_id=self.agent_id, result=answer)
