@@ -178,7 +178,9 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
             "instructions": _strip_cache_boundary(instructions),
         }
         if tools:
-            session["tools"] = tools
+            # The port carries the neutral declaration (BaseAgent._build_delegate_tool_declaration);
+            # OpenAI Realtime wants type=function.
+            session["tools"] = [{"type": "function", **tool} for tool in tools]
             session["tool_choice"] = "auto"
         await self._ws.send(json.dumps({"type": "session.update", "session": session}))
 

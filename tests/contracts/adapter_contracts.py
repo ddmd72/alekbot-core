@@ -494,6 +494,45 @@ OPENAI_REALTIME_BARGE_IN_IS_CLIENT_OWNED = ContractRule(
     },
 )
 
+def _validate_openai_realtime_tools_shape(kw: dict) -> None:
+    session = kw["session"]
+    tools = session.get("tools")
+    if not tools:
+        _not_in(
+            "tools", session,
+            "openai_realtime: session must carry no 'tools' key when no tools were passed",
+        )
+        return
+    _true(
+        all(
+            tool.get("type") == "function"
+            and "name" in tool and "description" in tool and "parameters" in tool
+            for tool in tools
+        ),
+        "openai_realtime: every session.tools entry must be "
+        "{'type': 'function', 'name', 'description', 'parameters'}",
+    )
+    _eq(
+        session.get("tool_choice"), "auto",
+        "openai_realtime: tool_choice must be 'auto' when tools are present",
+    )
+
+
+OPENAI_REALTIME_TOOLS_ARE_FUNCTION_SHAPED = ContractRule(
+    name="OPENAI_REALTIME_TOOLS_ARE_FUNCTION_SHAPED",
+    description=(
+        "OpenAIRealtimeAdapter.open() must translate the neutral tool declaration "
+        "(BaseAgent._build_delegate_tool_declaration: name/description/parameters) into "
+        "OpenAI Realtime's function shape - every session.tools entry needs type='function' "
+        "alongside the original name/description/parameters - with tool_choice='auto'. When no "
+        "tools are passed, session must carry no 'tools' key at all. "
+        "Input: captured session.update message {type: str, session: dict}."
+    ),
+    validators={
+        "openai_realtime": _validate_openai_realtime_tools_shape,
+    },
+)
+
 OPENAI_REALTIME_TRUNCATE_SHAPE = ContractRule(
     name="OPENAI_REALTIME_TRUNCATE_SHAPE",
     description=(
