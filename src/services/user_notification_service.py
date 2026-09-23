@@ -24,6 +24,7 @@ from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import NotifyResult
 from ..domain.request_context import RequestContext
 from ..domain.user import PerformanceTier
+from ..domain.voice_call_note import CALL_NOTE_PREFIX
 from ..ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from ..ports.notification_state_port import NotificationStatePort
 from ..ports.platform_media_port import PlatformMediaPort
@@ -250,7 +251,6 @@ class UserNotificationService:
         CompanionRecord store (RFC §4.9), so this history append is the only
         durable trace a call ever leaves.
         """
-        from ..domain.voice_call_note import CALL_NOTE_PREFIX
         note = f"{CALL_NOTE_PREFIX}{summary}"
         channel_info = await self.resolve_channel(user_id, None, None)
         if not channel_info:
@@ -289,6 +289,32 @@ class UserNotificationService:
                 f"(platform={channel_info.platform}): {exc}",
                 exc_info=True,
             )
+
+    async def notify_answer_copy(self, user_id: str, account_id: str, answer: SmartResponse) -> None:
+        """A copy of an answer Alek gave during a phone call (VOICE_COMPANION §4.10 rule 2):
+        links and tables are reading-shaped and always reach chat. Delivery only; the call
+        reaches history through its end-of-call summary."""
+        channel_info = await self.resolve_channel(user_id)
+        if not channel_info:
+            logger.info(f"[Notification] No channel for {user_id[:8]}, answer copy skipped")
+            return
+        response_channel = self._channel_factory.create(platform=channel_info.platform, channel_id=channel_info.channel_id)
+        if not response_channel:
+            logger.warning(f"[Notification] Cannot create channel for answer copy: platform={channel_info.platform}")
+            return
+        try:
+            await self._send_answer_text(response_channel, channel_info, f"{CALL_NOTE_PREFIX}{answer.text}", answer.link_list or [])
+            if answer.structured_data:
+                await response_channel.send_rich_content(answer.structured_data)
+        except Exception as exc:
+            logger.error(f"[Notification] Answer copy failed for {user_id[:8]}: {exc}", exc_info=True)
+
+    @staticmethod
+    async def _send_answer_text(response_channel, channel_info, text: str, link_list: list) -> None:
+        # Mention a Slack DM user so the message makes a sound.
+        if channel_info.platform == "slack" and channel_info.channel_id.startswith("U"):
+            text = f"<@{channel_info.channel_id}> {text}"
+        await response_channel.send_long_text(text, link_list=link_list or None)
 
     async def notify(
         self,
@@ -427,16 +453,11 @@ class UserNotificationService:
                 text = str(result) if result else ""
 
             if text:
-                # Prepend user mention for Slack so the message triggers a notification sound.
-                # channel_id is a Slack user ID (U...) when stored from a DM conversation.
-                if channel_info.platform == "slack" and channel_info.channel_id.startswith("U"):
-                    text = f"<@{channel_info.channel_id}> {text}"
-
                 # The channel owns the single-vs-thread decision: it measures the
                 # RENDERED length (after link resolution + formatting), so a body
                 # that fits raw but overflows once [N] anchors expand into full
                 # links is threaded instead of truncated.
-                await response_channel.send_long_text(text, link_list=link_list or None)
+                await self._send_answer_text(response_channel, channel_info, text, link_list)
                 logger.info(
                     f"📬 [Notification] Sent to {channel_info.platform} "
                     f"channel={channel_info.channel_id} user={user_id[:8]} kind={kind.value}"
