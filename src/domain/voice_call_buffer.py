@@ -29,6 +29,16 @@ class VoiceCallBuffer:
         self.turns.append(segment)
         self.transcript_text += f"\nUser: {segment.request_text}\nLelik: {segment.response_text}"
 
+    def recent_exchanges(self, limit: int) -> List[Dict[str, str]]:
+        """The last `limit` turns as spoken lines, for a delegation's call_context (RFC §4.7)."""
+        exchanges: List[Dict[str, str]] = []
+        for turn in self.turns[-limit:]:
+            if turn.request_text:
+                exchanges.append({"role": "user", "text": turn.request_text})
+            if turn.response_text:
+                exchanges.append({"role": "lelik", "text": turn.response_text})
+        return exchanges
+
     def add_usage(self, model: str, **token_kwargs: int) -> None:
         bucket = self.usage_by_model.setdefault(model, {})
         for key, value in token_kwargs.items():
