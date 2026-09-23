@@ -19,17 +19,16 @@ from quart import Quart
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 
 
-def _app(*, ephemeral_store, persona_service_factory, alert_sink):
+def _app(*, ephemeral_store, lelik_agent_provider, alert_sink):
     app = Quart(__name__)
     app.register_blueprint(create_voice_webhook_blueprint(
         user_repository=AsyncMock(),
         ephemeral_store=ephemeral_store,
         alert_sink=alert_sink,
         notification_service=AsyncMock(),
-        lelik_agent_factory=MagicMock(),
+        lelik_agent_provider=lelik_agent_provider,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        persona_service_factory=persona_service_factory,
         relay_stream_url="wss://relay.example.com/",
     ))
     return app
@@ -41,10 +40,10 @@ def _store():
     return ephemeral_store
 
 
-def _persona(**build_kwargs):
-    persona = MagicMock()
-    persona.build_instructions = AsyncMock(**build_kwargs)
-    return persona
+def _persona(**session_kwargs):
+    agent = MagicMock()
+    agent.session_config = AsyncMock(**session_kwargs)
+    return agent
 
 
 async def _assert_failed_closed(response, ephemeral_store, alert_sink):
@@ -66,27 +65,27 @@ async def _assert_failed_closed(response, ephemeral_store, alert_sink):
 @pytest.mark.asyncio
 async def test_answer_webhook_builds_the_persona_for_the_ticket_identity():
     ephemeral_store = _store()
-    persona = _persona(return_value="you are Lelik.")
-    factory = AsyncMock(return_value=persona)
+    agent = _persona(return_value={"instructions": "you are Lelik.", "tools": []})
+    factory = AsyncMock(return_value=agent)
 
     client = _app(
-        ephemeral_store=ephemeral_store, persona_service_factory=factory, alert_sink=AsyncMock(),
+        ephemeral_store=ephemeral_store, lelik_agent_provider=factory, alert_sink=AsyncMock(),
     ).test_client()
     await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
 
     factory.assert_awaited_once_with("u1")
-    persona.build_instructions.assert_awaited_once_with(user_id="u1", account_id="a1")
+    agent.session_config.assert_awaited_once_with(user_id="u1", account_id="a1")
 
 
 @pytest.mark.asyncio
 async def test_persona_assembly_failure_releases_ticket_and_marker_and_alerts():
     ephemeral_store = _store()
     alert_sink = AsyncMock()
-    persona = _persona(side_effect=KeyError("Blueprint not found: lelik_agent_v1"))
+    agent = _persona(side_effect=KeyError("Blueprint not found: lelik_agent_v1"))
 
     client = _app(
         ephemeral_store=ephemeral_store,
-        persona_service_factory=AsyncMock(return_value=persona),
+        lelik_agent_provider=AsyncMock(return_value=agent),
         alert_sink=alert_sink,
     ).test_client()
     response = await client.post(
@@ -105,7 +104,7 @@ async def test_persona_service_construction_failure_takes_the_same_graceful_path
 
     client = _app(
         ephemeral_store=ephemeral_store,
-        persona_service_factory=AsyncMock(side_effect=ValueError("no user profile for u1")),
+        lelik_agent_provider=AsyncMock(side_effect=ValueError("no user profile for u1")),
         alert_sink=alert_sink,
     ).test_client()
     response = await client.post(

@@ -7,10 +7,11 @@ from src.web.voice_webhook_app import create_voice_webhook_blueprint
 
 
 def _persona_factory(instructions="you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"):
-    """`persona_service_factory(user_id)` -> an object with async build_instructions()."""
-    persona = MagicMock()
-    persona.build_instructions = AsyncMock(return_value=instructions)
-    return AsyncMock(return_value=persona), persona
+    """`lelik_agent_provider(user_id)` -> an agent double whose session_config() returns
+    instructions + tools, same shape as LelikAgent.session_config()."""
+    agent = AsyncMock()
+    agent.session_config.return_value = {"instructions": instructions, "tools": []}
+    return AsyncMock(return_value=agent), agent
 
 
 @pytest.fixture
@@ -20,7 +21,7 @@ def deps():
     alert_sink = AsyncMock()
     notification_service = AsyncMock()
     lelik_agent = AsyncMock()
-    lelik_agent_factory = MagicMock(return_value=lelik_agent)
+    lelik_agent_factory = AsyncMock(return_value=lelik_agent)
     return (
         user_repository,
         ephemeral_store,
@@ -39,7 +40,7 @@ def _app(deps):
         ephemeral_store=ephemeral_store,
         alert_sink=alert_sink,
         notification_service=notification_service,
-        lelik_agent_factory=lelik_agent_factory,
+        lelik_agent_provider=lelik_agent_factory,
         answer_url="https://main.example.com/voice/answer",
         # FIX I3 (final whole-branch review): the Twilio-facing routes now verify
         # the X-Twilio-Signature header via an injected async callable, the same
@@ -130,10 +131,11 @@ async def test_inbound_completed_originates_the_parked_callback(deps):
     # Marker extended to the full call window once the callback is really going out.
     marker = [c for c in ephemeral_store.set.await_args_list if c.args[0] == "voice_one_call:u1"]
     assert marker and marker[-1].kwargs["ttl_s"] == 3600
-    lelik_agent_factory.assert_called_once_with(user_id="u1", account_id="a1", to_number="+346001")
+    lelik_agent_factory.assert_awaited_once_with("u1")
     lelik_agent.execute.assert_awaited_once()
     assert lelik_agent.execute.await_args.kwargs["ticket"] == "t1"
     assert lelik_agent.execute.await_args.kwargs["answer_url"] == "https://main.example.com/voice/answer"
+    assert lelik_agent.execute.await_args.kwargs["to_number"] == "+346001"
     notification_service.notify_raw.assert_awaited_once()
     assert notification_service.notify_raw.await_args.kwargs["user_id"] == "u1"
     alert_sink.post.assert_not_called()
@@ -232,10 +234,9 @@ async def test_answer_webhook_hangs_up_on_machine_without_opening_session():
         ephemeral_store=ephemeral_store,
         alert_sink=AsyncMock(),
         notification_service=AsyncMock(),
-        lelik_agent_factory=MagicMock(),
+        lelik_agent_provider=persona_factory,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        persona_service_factory=persona_factory,
         relay_stream_url="wss://relay.example.com/",
     ))
     client = app.test_client()
@@ -253,7 +254,7 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
     user_repository = AsyncMock()
     ephemeral_store = AsyncMock()
     ephemeral_store.get.return_value = {"user_id": "u1", "account_id": "a1"}
-    persona_factory, persona = _persona_factory()
+    persona_factory, agent = _persona_factory()
 
     app = Quart(__name__)
     app.register_blueprint(create_voice_webhook_blueprint(
@@ -261,10 +262,9 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
         ephemeral_store=ephemeral_store,
         alert_sink=AsyncMock(),
         notification_service=AsyncMock(),
-        lelik_agent_factory=MagicMock(),
+        lelik_agent_provider=persona_factory,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        persona_service_factory=persona_factory,
         relay_stream_url="wss://relay.example.com/",
     ))
     client = app.test_client()
@@ -276,7 +276,7 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
     assert "wss://relay.example.com/" in body
     assert "t1" in body
     persona_factory.assert_awaited_once_with("u1")
-    persona.build_instructions.assert_awaited_once_with(user_id="u1", account_id="a1")
+    agent.session_config.assert_awaited_once_with(user_id="u1", account_id="a1")
     stashed = ephemeral_store.set.await_args.args
     assert stashed[0] == "voice_ticket:t1"
     assert stashed[1]["instructions"] == "you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"
@@ -297,10 +297,9 @@ async def test_answer_webhook_rejects_when_ticket_not_found():
         ephemeral_store=ephemeral_store,
         alert_sink=AsyncMock(),
         notification_service=AsyncMock(),
-        lelik_agent_factory=MagicMock(),
+        lelik_agent_provider=persona_factory,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        persona_service_factory=persona_factory,
         relay_stream_url="wss://relay.example.com/",
     ))
     client = app.test_client()
@@ -325,10 +324,9 @@ def _signed_app(*, ephemeral_store, signature_verifier=None):
         ephemeral_store=ephemeral_store,
         alert_sink=AsyncMock(),
         notification_service=AsyncMock(),
-        lelik_agent_factory=MagicMock(),
+        lelik_agent_provider=_persona_factory()[0],
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=signature_verifier or AsyncMock(return_value=True),
-        persona_service_factory=_persona_factory()[0],
         relay_stream_url="wss://relay.example.com/",
     ))
     return app

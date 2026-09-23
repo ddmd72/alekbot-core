@@ -63,11 +63,10 @@ def create_voice_webhook_blueprint(
     ephemeral_store,
     alert_sink,
     notification_service,
-    lelik_agent_factory,
+    lelik_agent_provider,
     answer_url,
     signature_verifier,
     one_call_ttl_s: int = 3600,
-    persona_service_factory=None,
     relay_stream_url: str = "",
 ) -> Blueprint:
     """Build the Twilio-facing voice webhook blueprint.
@@ -175,10 +174,13 @@ def create_voice_webhook_blueprint(
 
         await ephemeral_store.set(marker_key, {"in_flight": True}, ttl_s=one_call_ttl_s)
         try:
-            agent = lelik_agent_factory(
-                user_id=pending["user_id"], account_id=pending["account_id"], to_number=pending["to_number"],
+            agent = await lelik_agent_provider(pending["user_id"])
+            if agent is None:
+                raise RuntimeError("voice companion is not configured on this deployment")
+            await agent.execute(
+                purpose="user asked to talk", ticket=pending["ticket"],
+                answer_url=answer_url, to_number=pending["to_number"],
             )
-            await agent.execute(purpose="user asked to talk", ticket=pending["ticket"], answer_url=answer_url)
         except Exception as exc:
             # A ticket/marker written for a callback that never went out must not
             # survive on its own until TTL expiry, or the user is locked out of any
@@ -230,11 +232,11 @@ def create_voice_webhook_blueprint(
            any retry for up to `one_call_ttl_s` (default 3600s). Resolving the
            ticket before this gate is what makes that possible and costs one
            ephemeral-store read, not an LLM call.
-        3. Assemble Lelik's warm call-start prompt via
-           `persona_service_factory(user_id)` -> `LelikPersonaService` (RFC §4.8,
-           decisions/lelik_warm_context.md), and stash it back onto the ticket (relay's `/voice/session-config`
-           reads it from there, Task 5/Task 4 territory) before pointing the
-           call at the relay's media-stream WebSocket.
+        3. Assemble Lelik's warm call-start session via
+           `lelik_agent_provider(user_id)` -> `LelikAgent.session_config()` (RFC §4.8,
+           decisions/lelik_warm_context.md), and stash instructions + tools back onto the
+           ticket (relay's `/voice/session-config` reads it from there) before pointing
+           the call at the relay's media-stream WebSocket.
 
         `build_for_agent` fails closed (repo convention: no fallback prompts) if
         Lelik's Firestore prompt content (token/blueprint/profile, Task 19) is
@@ -272,8 +274,10 @@ def create_voice_webhook_blueprint(
         # A profile, fact-store or assembly failure is a persona failure, never a reason
         # to open a call on an empty context.
         try:
-            persona = await persona_service_factory(identity["user_id"])
-            instructions = await persona.build_instructions(
+            agent = await lelik_agent_provider(identity["user_id"])
+            if agent is None:
+                raise RuntimeError("voice companion is not configured on this deployment")
+            session = await agent.session_config(
                 user_id=identity["user_id"], account_id=identity["account_id"],
             )
         except Exception as exc:
@@ -292,11 +296,7 @@ def create_voice_webhook_blueprint(
             )
             return _twiml_persona_failed()
 
-        await ephemeral_store.set(
-            ticket_key,
-            {**identity, "instructions": instructions},
-            ttl_s=_TICKET_TTL_S,
-        )
+        await ephemeral_store.set(ticket_key, {**identity, **session}, ttl_s=_TICKET_TTL_S)
 
         vr = VoiceResponse()
         connect = vr.connect()

@@ -942,7 +942,7 @@ async def main():
                 #
                 # Lelik's call-start context (decisions/lelik_warm_context.md) is now built
                 # by UserAgentFactory._build_lelik itself (per-user prompt_builder + persona),
-                # the same lazy-agent path as every other specialist — see get_lelik below.
+                # the same lazy-agent path as every other specialist — see agent_factory.get_lelik.
 
                 main_app.register_blueprint(
                     create_voice_webhook_blueprint(
@@ -950,10 +950,9 @@ async def main():
                         ephemeral_store=voice_ephemeral_store,
                         alert_sink=_alert_webhook,
                         notification_service=notification_service,
-                        lelik_agent_factory=agent_factory._build_lelik,
+                        lelik_agent_provider=agent_factory.get_lelik,
                         answer_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/voice/answer",
                         signature_verifier=_voice_twilio_signature_verifier,
-                        persona_service_factory=_lelik_persona_service_for,
                         relay_stream_url=config.get("VOICE_RELAY_STREAM_URL", ""),
                     )
                 )

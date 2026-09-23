@@ -221,10 +221,12 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     inside the relay process, which never goes through `AgentExecutionContext` at all.
     `execution_context` is accepted for constructor parity and unused. That session's prompt is
     built by `services/lelik_persona_service.py` (warm context, RFC §4.8), not by this class.
-  - **Constructor:** `(config, execution_context, telephony: TelephonyPort, from_number,
-    status_callback_url, to_number)` — built by `UserAgentFactory._build_lelik(user_id, account_id)`,
-    which `main.py` passes into the webhook blueprint as `lelik_agent_factory`. The **only** call site
-    is `src/web/voice_webhook_app.py`'s `/voice/auth` route, which awaits `execute()` directly.
+  - **Constructor:** `(config, telephony: TelephonyPort, from_number, status_callback_url,
+    prompt_builder, persona: LelikPersonaService)` — built lazily by
+    `UserAgentFactory._build_lelik(user_id, ctx)` like any other per-user specialist, reached via
+    `UserAgentFactory.get_lelik(user_id)`, which `main.py` passes into the webhook blueprint as
+    `lelik_agent_provider`. Call sites: `src/web/voice_webhook_app.py`'s `/voice/inbound-status`
+    route awaits `execute()`, `/voice/answer` awaits `session_config()`.
   - **It deliberately does not catch `originate_call` failures.** The auth webhook's own try/except is
     what deletes the ticket and releases the one-call marker; swallowing the exception into an
     `AgentResponse.failure()` would strand both for up to `one_call_ttl_s` with no alert.
