@@ -803,6 +803,8 @@ class UserAgentFactory(AgentFactoryPort):
     async def get_lelik(self, user_id: str) -> Optional[LelikAgent]:
         """The user's LelikAgent, built on first use like any lazy agent. The voice
         webhooks and /voice/delegate reach it here; the coordinator never routes to it."""
+        # Refreshes last_used so the TTL sweep cannot unregister the Router/gateway mid-call.
+        await self.ensure_agents_for_user(user_id)
         if not await self.create_agent_on_demand("lelik", user_id):
             return None
         return self.coordinator.get_agent(f"{self._LAZY_AGENT_IDS['lelik']}_{user_id}")
