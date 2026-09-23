@@ -173,6 +173,13 @@ def create_voice_control_plane_blueprint(
             except Exception:
                 logger.error(f"voice call {call_id}: turn content recording failed", exc_info=True)
         finally:
+            # Every write above (turns, and the summarizer's own LLM turn) is scheduled in
+            # the background. Cloud Run throttles the CPU once this response is sent, and
+            # writes left pending starved for minutes, then failed with SSL EOF (2026-09-23).
+            try:
+                await prompt_content_store.flush()
+            except Exception:
+                logger.error(f"voice call {call_id}: prompt content flush failed", exc_info=True)
             # Release the one-call-per-user marker (written by the auth webhook
             # before dialing out) regardless of usage-recording or
             # summary-consumer outcome — a stuck marker would permanently lock

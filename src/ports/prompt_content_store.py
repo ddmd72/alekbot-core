@@ -74,3 +74,13 @@ class PromptContentStore(ABC):
         (e.g. "claude_job", "openai_webhook").
         """
         ...
+
+    async def flush(self, timeout_s: float = 10.0) -> None:
+        """Wait, up to ``timeout_s``, for writes ``record_turn`` scheduled in the background.
+
+        For a request that ends right after capturing: Cloud Run throttles the CPU once
+        the response is sent, and a write still pending then starves until the next
+        request. Non-raising; a write that outlives the timeout is left running, not
+        cancelled. A store that writes synchronously has nothing to wait for.
+        """
+        return None
