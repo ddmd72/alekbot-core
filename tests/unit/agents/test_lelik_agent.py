@@ -8,11 +8,11 @@ from src.agents.lelik_agent import LelikAgent
 def _build_agent(telephony):
     return LelikAgent(
         config=MagicMock(agent_id="lelik_agent_u1"),
-        execution_context=MagicMock(),
         telephony=telephony,
         from_number="+346002",
         status_callback_url="https://main.example.com/voice/status",
-        to_number="+346001",
+        prompt_builder=AsyncMock(),
+        persona=AsyncMock(),
     )
 
 
@@ -24,7 +24,8 @@ async def test_execute_originates_call_with_answer_url_carrying_ticket():
     agent = _build_agent(telephony)
 
     response = await agent.execute(
-        purpose="user asked to talk", ticket="t1", answer_url="https://main.example.com/voice/answer"
+        purpose="user asked to talk", ticket="t1", answer_url="https://main.example.com/voice/answer",
+        to_number="+346001",
     )
 
     assert response.status == AgentStatus.SUCCESS
@@ -55,7 +56,10 @@ async def test_execute_propagates_origination_failure():
     agent = _build_agent(telephony)
 
     with pytest.raises(RuntimeError, match="origination boom"):
-        await agent.execute(purpose="user asked to talk", ticket="t1", answer_url="https://main.example.com/voice/answer")
+        await agent.execute(
+            purpose="user asked to talk", ticket="t1", answer_url="https://main.example.com/voice/answer",
+            to_number="+346001",
+        )
 
 
 @pytest.mark.asyncio
