@@ -68,3 +68,11 @@ async def test_get_lelik_is_none_when_it_cannot_be_built():
     fake = SimpleNamespace(create_agent_on_demand=AsyncMock(return_value=False),
                            coordinator=MagicMock(), _LAZY_AGENT_IDS=UserAgentFactory._LAZY_AGENT_IDS)
     assert await UserAgentFactory.get_lelik(fake, "u1") is None
+
+
+def test_alek_gateway_is_a_lazy_builder_with_the_notification_service():
+    fake = SimpleNamespace(notification_service=MagicMock())
+    agent = UserAgentFactory._build_alek_gateway(fake, "u1", _ctx())
+    assert agent.agent_id == "alek_agent_u1"
+    assert agent._notifications is fake.notification_service
+    assert UserAgentFactory._LAZY_AGENT_IDS["alek"] == "alek_agent"

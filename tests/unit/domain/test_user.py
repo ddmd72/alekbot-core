@@ -12,6 +12,7 @@ _ZERO_LLM_AGENT_TYPES = {
     "help",             # HelpAgent — static capabilities reference
     "file_management",  # FileManagementAgent — GCS download/delete only
     "lelik",            # LelikAgent — places a Twilio call only, no LLM call
+    "alek",  # AlekGatewayAgent — routes to the Router, no LLM call of its own
 }
 
 

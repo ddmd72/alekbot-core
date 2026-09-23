@@ -76,6 +76,8 @@ class Intent:
     DOMAIN_RESEARCH     = "domain_research"
     # Text language tutor — companion agent, bound-channel only (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §7/§9)
     TUTOR_CHAT          = "tutor_chat"
+    # Alek as a specialist — internal, named only by LELIK's allowlist (VOICE_COMPANION_RFC §4.7)
+    ASK_ALEK            = "ask_alek"
     # Image generation/editing via grok-imagine-image-2.0
     GENERATE_IMAGE      = "generate_image"
     EDIT_IMAGE          = "edit_image"
@@ -726,8 +728,26 @@ LELIK = AgentDescriptor(
     internal=True,  # never a delegation target; the voice webhooks and /voice/delegate reach it directly
     capabilities={},
     description="Voice companion - places the callback, holds the call, delegates like any agent (VOICE_COMPANION_RFC.md)",
-    allowed_intents=frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_WEB}),
+    allowed_intents=frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_WEB, Intent.ASK_ALEK}),
     intent_fanout={Intent.SEARCH_WEB: SEARCH_WEB_MAPS_FANOUT},
+)
+
+
+ALEK = AgentDescriptor(
+    agent_id="alek_agent",
+    agent_type="alek",
+    eager=False,
+    internal=True,  # offered only to allowlists that name it (Lelik); never to Smart/Quick
+    capabilities={Intent.ASK_ALEK: ExecutionMode.SYNC},
+    description="Alek — the user's full exocortex, through the Router",
+    capability_descriptions={
+        Intent.ASK_ALEK: (
+            "Alek, the user's full exocortex, answering in writing. Holds what you do not: mail, "
+            "documents, tasks and reminders, calendar, memory beyond your snapshot, the web, and any "
+            "action in the world. Slow: tens of seconds. He does not hear the call, so put the whole "
+            "question in query."
+        ),
+    },
 )
 
 
@@ -751,4 +771,5 @@ ALL_DESCRIPTORS = [
     IMAGE_GENERATION,
     VIDEO_GENERATION,
     LELIK,
+    ALEK,
 ]
