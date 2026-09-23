@@ -301,6 +301,21 @@ TASKS = AgentDescriptor(
 # Set as class-level _descriptor in their agent classes.
 # ---------------------------------------------------------------------------
 
+# The web+maps pairing every search_web caller gets (Quick, Smart, Lelik).
+SEARCH_WEB_MAPS_FANOUT = FanoutSpec(
+    intents=[Intent.MAPS_QUERY],
+    hint=(
+        "Two specialists answered: Web Search (general internet) and Maps (Google Maps database).\n"
+        "How to reconcile:\n"
+        "- Places, addresses, distances, routes, travel time, opening hours → Maps is authoritative (structured geodata).\n"
+        "- Reviews, ratings, editorial opinions, news about a place → Web Search is richer.\n"
+        "- If both return data about the same place and facts conflict → trust Maps for factual attributes "
+        "(location, hours, distance), trust Web for subjective content (reviews, recommendations).\n"
+        "- If Maps returned nothing useful — ignore it, use Web Search only.\n"
+        "Synthesize both into a single coherent answer for the user."
+    ),
+)
+
 # Quick doubles as emergency fallback for Smart failures (see AgentFallbackService).
 # Keep its provider/model config conservative and fixed — that's what makes it reliable
 # when Smart's dynamic assembly fails.
@@ -311,19 +326,7 @@ QUICK_RESPONSE = AgentDescriptor(
     allowed_intents=None,   # can call all non-internal intents
     intent_remap={},
     intent_fanout={
-        Intent.SEARCH_WEB: FanoutSpec(
-            intents=[Intent.MAPS_QUERY],
-            hint=(
-                "Two specialists answered: Web Search (general internet) and Maps (Google Maps database).\n"
-                "How to reconcile:\n"
-                "- Places, addresses, distances, routes, travel time, opening hours → Maps is authoritative (structured geodata).\n"
-                "- Reviews, ratings, editorial opinions, news about a place → Web Search is richer.\n"
-                "- If both return data about the same place and facts conflict → trust Maps for factual attributes "
-                "(location, hours, distance), trust Web for subjective content (reviews, recommendations).\n"
-                "- If Maps returned nothing useful — ignore it, use Web Search only.\n"
-                "Synthesize both into a single coherent answer for the user."
-            ),
-        ),
+        Intent.SEARCH_WEB: SEARCH_WEB_MAPS_FANOUT,
     },
 )
 
@@ -334,19 +337,7 @@ SMART_RESPONSE = AgentDescriptor(
     allowed_intents=None,   # can call all non-internal intents
     intent_remap={},
     intent_fanout={
-        Intent.SEARCH_WEB: FanoutSpec(
-            intents=[Intent.MAPS_QUERY],
-            hint=(
-                "Two specialists answered: Web Search (general internet) and Maps (Google Maps database).\n"
-                "How to reconcile:\n"
-                "- Places, addresses, distances, routes, travel time, opening hours → Maps is authoritative (structured geodata).\n"
-                "- Reviews, ratings, editorial opinions, news about a place → Web Search is richer.\n"
-                "- If both return data about the same place and facts conflict → trust Maps for factual attributes "
-                "(location, hours, distance), trust Web for subjective content (reviews, recommendations).\n"
-                "- If Maps returned nothing useful — ignore it, use Web Search only.\n"
-                "Synthesize both into a single coherent answer for the user."
-            ),
-        ),
+        Intent.SEARCH_WEB: SEARCH_WEB_MAPS_FANOUT,
     },
 )
 
@@ -732,9 +723,11 @@ LELIK = AgentDescriptor(
     agent_id="lelik_agent",
     agent_type="lelik",
     eager=False,
-    internal=True,  # not reached via delegate_to_specialist - direct execute() caller only (RFC §4.13)
+    internal=True,  # never a delegation target; the voice webhooks and /voice/delegate reach it directly
     capabilities={},
-    description="Voice front desk - places the identity-confirming callback and holds the call (RFC VOICE_COMPANION_RFC.md)",
+    description="Voice companion - places the callback, holds the call, delegates like any agent (VOICE_COMPANION_RFC.md)",
+    allowed_intents=frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_WEB}),
+    intent_fanout={Intent.SEARCH_WEB: SEARCH_WEB_MAPS_FANOUT},
 )
 
 
