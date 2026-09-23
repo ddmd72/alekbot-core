@@ -110,11 +110,11 @@ steps:
       - "--cpu=2"
       - "--set-env-vars=CLOUD_RUN_SERVICE_URL=$_SERVICE_URL"
       - "--set-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest"
-      # HTTP, not the default TCP probe: a bare TCP connect-and-close reaches the
-      # websockets server as a failed handshake and logs an ERROR per cold start,
-      # which the ERROR-severity alert policies would page on. relay_main.py's
-      # process_request answers any non-Upgrade request with 200.
-      - "--startup-probe=httpGet.path=/,httpGet.port=8080"
+      # Default TCP startup probe on purpose. An HTTP probe (httpGet /) was tried for
+      # the "opening handshake failed" noise and did not remove it (the empty
+      # connections are not the probe). Its default 3x10s window then failed a slow
+      # cold start (2026-09-23), so it was reverted.
+      - "--startup-probe=tcpSocket.port=8080"
       # Twilio Media Streams connects to this WebSocket directly and cannot
       # present a Google-signed OIDC token, so — same reasoning as
       # alek-bot-dev's own --allow-unauthenticated — Cloud Run ingress must
