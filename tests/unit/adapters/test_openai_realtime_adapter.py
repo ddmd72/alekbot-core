@@ -337,7 +337,7 @@ async def test_open_configures_semantic_vad_with_client_owned_barge_in():
     assert turn_detection == {
         "type": "semantic_vad",
         "eagerness": "low",
-        "create_response": True,
+        "create_response": False,
         "interrupt_response": False,
     }
     OPENAI_REALTIME_BARGE_IN_IS_CLIENT_OWNED.validate("openai_realtime", ws.sent[0])
@@ -380,3 +380,15 @@ async def test_open_sets_the_cedar_output_voice():
     await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
 
     assert ws.sent[0]["session"]["audio"]["output"]["voice"] == "cedar"
+
+
+@pytest.mark.asyncio
+async def test_receive_events_normalizes_turn_committed_with_item_id():
+    """With create_response off, the committed turn is the relay's cue to anchor and reply."""
+    ws = FakeWebSocket(incoming=[{"type": "input_audio_buffer.committed", "item_id": "item_user_7"}])
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    events = [event async for event in adapter.receive_events()]
+
+    assert [(e.type, e.payload) for e in events] == [("turn_committed", {"item_id": "item_user_7"})]

@@ -807,6 +807,13 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   `clear` → `response.cancel` → `conversation.item.truncate(item_id, heard_ms)`. Without the
   truncate, the model believes it finished a reply the caller heard half of, and cannot resume
   "from where it was cut off".
+- **Every reply is started by the relay, behind a persona anchor.** `create_response` is off. On
+  `input_audio_buffer.committed` the relay appends a `system` item, `build_persona_anchor(...)`
+  (the same anchor the text path uses, which lists the persona sections present in the prompt,
+  `spoken_delivery` among them), then sends `response.create`. Anchors are **not** deleted: a
+  `conversation.item.delete` of a missing item is a provider error, and any provider error ends the
+  call. The cost is ~500 cached chars per turn. Revisit if long calls show the model habituating
+  to the repeated anchor.
 - **Silence.** The model speaks only when a turn ends, and the provider's `idle_timeout_ms` exists
   for `server_vad` only. So the relay runs a watchdog: once Lelik's audio has finished *playing*,
   no response is active and the caller is not speaking, 8 s of quiet injects one system note and a

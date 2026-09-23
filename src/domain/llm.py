@@ -99,6 +99,8 @@ PERSONA_SECTIONS = (
     "engagement",
     "few_shot_examples",
     "standing_directives",
+    # Lelik's phone-medium section; only his prompt has it, so text agents are unaffected.
+    "spoken_delivery",
 )
 
 # Below this many persona sections the prompt is not persona-bearing (specialist

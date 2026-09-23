@@ -255,7 +255,9 @@ persona or language change applies to both. Lelik has only two tokens of his own
   the heard milliseconds from `PlaybackTracker` (Twilio `mark` echoes) *before* clearing, then runs
   `clear` → `response.cancel` → `conversation.item.truncate`, so the model knows where it was cut
   off. A relay-side watchdog handles silence (the provider's `idle_timeout_ms` is server_vad-only):
-  8 s of quiet after playback ends injects one system note (RFC §5.2).
+  8 s of quiet after playback ends injects one system note. `create_response` is off, so every reply
+  is started by the relay after appending the text path's `build_persona_anchor` as a `system` item.
+  Anchors are never deleted, because a failed delete is a call-ending provider error (RFC §5.2).
 - **Two agents, deliberately not one.** `LelikAgent` makes no LLM call (it only originates the call);
   `LelikSummarizerAgent` (ECO) turns the end-of-call transcript into a short note, with the shared
   character slots and the user's `LANG_*`, and one line when nothing is worth keeping. It is delivered via
