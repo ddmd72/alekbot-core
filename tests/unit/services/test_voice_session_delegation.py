@@ -255,3 +255,101 @@ async def test_watchdog_keeps_the_caller_company_while_a_delegation_is_pending(m
     notes = [c.args[1] for c in session.submit_message.await_args_list]
     assert any("Still waiting" in n for n in notes)
     assert not any("has been silent" in n for n in notes)
+
+
+# =============================================================================
+# Fix round 1: response.create is serialized; interruption is judged at injection;
+# an error while delivering an answer is logged, never lost.
+# =============================================================================
+
+_PERSONA_INSTRUCTIONS = "identity {\n x\n}\nvoice {\n y\n}"
+
+
+async def _suspend(*_args, **_kwargs):
+    # A real websocket send can yield; this double makes every one of them yield.
+    await asyncio.sleep(0)
+
+
+def _suspending_session(events):
+    session = AsyncMock()
+    session.receive_events = MagicMock(return_value=events())
+    session.submit_message.side_effect = _suspend
+    session.submit_tool_result.side_effect = _suspend
+    return session
+
+
+async def _call_with(session, delegate, instructions="you are Lelik", seconds=0.3):
+    control = AsyncMock()
+    control.fetch_session_config.return_value = {
+        "instructions": instructions, "user_id": "u1", "account_id": "a1", "tools": _TOOLS}
+    control.delegate.side_effect = delegate
+
+    async def inbound():
+        await asyncio.sleep(seconds)
+        return
+        yield  # pragma: no cover
+
+    await VoiceSessionService(realtime_session_factory=MagicMock(return_value=session),
+                              control_plane=control, alert_sink=AsyncMock()).handle_call(
+        ticket="t1", inbound_audio=inbound(), send_outbound_audio=AsyncMock(),
+        clear_outbound_audio=AsyncMock(), playback=PlaybackTracker())
+    return control
+
+
+@pytest.mark.asyncio
+async def test_two_answers_landing_while_idle_start_exactly_one_response():
+    """Both answers pass an idle check; only one may send response.create (RFC §4.7: serialize)."""
+    async def events():
+        for e in _opening():
+            yield e
+        yield _tool_call("c1")
+        yield _tool_call("c2", intent="search_memory")
+        await _hold()
+        yield  # pragma: no cover
+
+    session = _suspending_session(events)
+    await _call_with(session, AsyncMock(return_value="sunny"), instructions=_PERSONA_INSTRUCTIONS)
+    assert {c.args[0] for c in session.submit_tool_result.await_args_list} == {"c1", "c2"}
+    assert session.request_response.await_count == 2  # opening + ONE for both answers
+
+
+@pytest.mark.asyncio
+async def test_answer_queued_behind_a_response_is_a_fresh_message_if_the_caller_spoke_before_it_went_in():
+    """Queued while Lelik talked (not interrupted yet); the caller barges in before the flush."""
+    async def events():
+        for e in _opening():
+            yield e
+        yield _tool_call()
+        yield E(type="response_created", payload={})
+        await asyncio.sleep(0.05)  # the answer lands and is queued behind the active response
+        yield E(type="speech_started", payload={})
+        yield E(type="response_done", payload={})
+        await _hold()
+        yield  # pragma: no cover
+
+    session, _ = await _call(events, AsyncMock(return_value="sunny"))
+    session.submit_tool_result.assert_not_awaited()
+    notes = [c.args[1] for c in session.submit_message.await_args_list]
+    assert any("just arrived" in n and "sunny" in n for n in notes)
+
+
+@pytest.mark.asyncio
+async def test_failure_while_delivering_an_answer_is_logged_and_the_call_goes_on(monkeypatch):
+    fake_logger = MagicMock()
+    monkeypatch.setattr(voice_module, "logger", fake_logger)
+
+    async def events():
+        for e in _opening():
+            yield e
+        yield _tool_call()
+        await _hold()
+        yield  # pragma: no cover
+
+    session = AsyncMock()
+    session.receive_events = MagicMock(return_value=events())
+    session.submit_tool_result.side_effect = RuntimeError("socket closed")
+    control = await _call_with(session, AsyncMock(return_value="sunny"))
+    logged = [c for c in fake_logger.error.call_args_list if "not delivered" in c.args[0]]
+    assert len(logged) == 1 and logged[0].kwargs.get("exc_info") is True
+    session.close.assert_awaited_once()
+    control.submit_transcript.assert_awaited_once()
