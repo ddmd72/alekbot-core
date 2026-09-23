@@ -4,8 +4,8 @@ from src.domain.voice_call_buffer import VoiceCallBuffer
 
 
 class CallControlPlanePort(ABC):
-    """The relay's only edge to the main service (RFC §4.5). Slice 1 ships
-    two operations; Slice 2 adds ask_alek and send_to_chat additively."""
+    """The relay's only edge to the main service (RFC §4.5). Slice 1 shipped
+    two operations; Slice 2 adds delegate."""
 
     @abstractmethod
     async def fetch_session_config(self, ticket: str) -> dict:
@@ -22,3 +22,8 @@ class CallControlPlanePort(ABC):
         by later Slice 1 work (end-of-call summary delivery, one-call-marker
         release) that consumes the submitted payload on the main-service side.
         """
+
+    @abstractmethod
+    async def delegate(self, user_id: str, account_id: str, arguments: dict, call_context: list) -> str:
+        """Run one delegate_to_specialist call from the live session on the main service
+        (RFC §4.7) and return the result as text. No retry."""

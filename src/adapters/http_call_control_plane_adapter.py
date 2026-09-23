@@ -1,9 +1,14 @@
+import asyncio
 from typing import Callable, Optional
 
 import httpx
 
 from src.domain.voice_call_buffer import VoiceCallBuffer
 from src.ports.call_control_plane_port import CallControlPlanePort
+
+# Router -> Smart -> specialists takes tens of seconds; the relay's own wait_for is the
+# authoritative limit, this only has to outlast it (httpx defaults to 5 s).
+_DELEGATE_TIMEOUT_S = 150.0
 
 
 class HttpCallControlPlaneAdapter(CallControlPlanePort):
@@ -15,12 +20,14 @@ class HttpCallControlPlaneAdapter(CallControlPlanePort):
         self._id_token_provider = id_token_provider
         self._client = http_client or httpx.AsyncClient()
 
-    def _headers(self) -> dict:
-        return {"Authorization": f"Bearer {self._id_token_provider()}"}
+    async def _headers(self) -> dict:
+        # fetch_id_token blocks; off the loop so a mid-call request never stalls audio.
+        token = await asyncio.to_thread(self._id_token_provider)
+        return {"Authorization": f"Bearer {token}"}
 
     async def fetch_session_config(self, ticket: str) -> dict:
         response = await self._client.post(
-            f"{self._base_url}/voice/session-config", json={"ticket": ticket}, headers=self._headers()
+            f"{self._base_url}/voice/session-config", json={"ticket": ticket}, headers=await self._headers()
         )
         response.raise_for_status()
         return response.json()
@@ -44,6 +51,17 @@ class HttpCallControlPlaneAdapter(CallControlPlanePort):
             ],
         }
         response = await self._client.post(
-            f"{self._base_url}/voice/submit-transcript", json=payload, headers=self._headers()
+            f"{self._base_url}/voice/submit-transcript", json=payload, headers=await self._headers()
         )
         response.raise_for_status()
+
+    async def delegate(self, user_id: str, account_id: str, arguments: dict, call_context: list) -> str:
+        response = await self._client.post(
+            f"{self._base_url}/voice/delegate",
+            json={"user_id": user_id, "account_id": account_id,
+                  "arguments": arguments, "call_context": call_context},
+            headers=await self._headers(),
+            timeout=_DELEGATE_TIMEOUT_S,
+        )
+        response.raise_for_status()
+        return response.json()["output"]

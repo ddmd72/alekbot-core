@@ -1,8 +1,8 @@
 """
 Voice control-plane endpoints — main service.
 
-Two Quart routes consumed by the relay side (`CallControlPlanePort` /
-`HttpCallControlPlaneAdapter`, Task 6):
+Three Quart routes consumed by the relay side (`CallControlPlanePort` /
+`HttpCallControlPlaneAdapter`, Task 6/7):
 
 - `POST /voice/session-config` — relay resolves an opaque call ticket
   (minted by the auth webhook, a later task) into the realtime session
@@ -22,8 +22,15 @@ Two Quart routes consumed by the relay side (`CallControlPlanePort` /
   out — this MUST happen even if usage recording or the summary consumer
   raises, since a stuck marker would permanently lock the user out of ever
   calling again.
+- `POST /voice/delegate` — relay forwards one `delegate_to_specialist` tool
+  call raised inside the live realtime session (RFC §4.7). Runs it through
+  `LelikAgent.delegate` (the same `DelegationEngine` path a text orchestrator
+  uses), inside a `RequestContext` scoped to the call's user/account, and
+  returns the specialist's text result for the relay to speak back. No
+  retry — a retry would re-run Alek's pipeline (double spend, double chat
+  copy).
 
-Both routes are OIDC-protected the same way `/worker` is (see
+All three routes are OIDC-protected the same way `/worker` is (see
 `src/web/worker_oidc_verifier.py`): the verifier is injected as an async
 callable rather than imported directly, so the route is testable without
 a real Google token and the local-dev bypass policy stays in main.py's
@@ -35,6 +42,7 @@ from quart import Blueprint, Response, jsonify, request
 
 from src.domain.billing import calculate_realtime_cost
 from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart
+from src.domain.request_context import RequestContext
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context
 
@@ -46,6 +54,7 @@ def create_voice_control_plane_blueprint(
     summary_consumer,
     oidc_verifier,
     alert_sink,
+    lelik_agent_provider=None,
 ) -> Blueprint:
     bp = Blueprint("voice_control_plane", __name__)
 
@@ -190,5 +199,35 @@ def create_voice_control_plane_blueprint(
             await ephemeral_store.delete(f"voice_one_call:{user_id}")
 
         return jsonify({"ok": True}), 200
+
+    @bp.route("/voice/delegate", methods=["POST"])
+    async def delegate():
+        unauthorized = await _verify_or_401()
+        if unauthorized:
+            return unauthorized
+        body = await request.get_json()
+        user_id, account_id = body["user_id"], body["account_id"]
+        set_request_context(user_id=user_id)
+        try:
+            async with RequestContext(user_id=user_id, account_id=account_id):
+                agent = await lelik_agent_provider(user_id) if lelik_agent_provider else None
+                if agent is None:
+                    return jsonify({"error": "voice companion not configured"}), 503
+                output = await agent.delegate(
+                    user_id=user_id, account_id=account_id,
+                    arguments=body.get("arguments") or {}, call_context=body.get("call_context") or [],
+                )
+        except Exception:
+            logger.error(f"voice delegate failed for user {user_id}", exc_info=True)
+            return jsonify({"error": "delegation failed"}), 500
+        finally:
+            # Same throttled-CPU-after-response hazard submit_transcript's flush guards
+            # against (see its comment above) — this path schedules background BigQuery
+            # writes too (every specialist LLM call the delegation reaches).
+            try:
+                await prompt_content_store.flush()
+            except Exception:
+                logger.error(f"voice delegate for user {user_id}: prompt content flush failed", exc_info=True)
+        return jsonify({"output": output}), 200
 
     return bp

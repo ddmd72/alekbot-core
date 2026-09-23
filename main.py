@@ -925,11 +925,12 @@ async def main():
                         # silent: the call completes, usage is billed, and
                         # nothing reaches chat or memory.
                         alert_sink=_alert_webhook,
+                        lelik_agent_provider=agent_factory.get_lelik,
                     )
                 )
                 logger.info(
                     "✅ Voice control-plane blueprint registered at "
-                    "/voice/session-config, /voice/submit-transcript"
+                    "/voice/session-config, /voice/submit-transcript, /voice/delegate"
                 )
 
                 # /voice/auth, /voice/answer — Twilio's own webhooks (Task 8/9),
@@ -958,7 +959,7 @@ async def main():
                 )
                 logger.info(
                     "✅ Voice webhook blueprint registered at "
-                    "/voice/auth, /voice/answer, /voice/status"
+                    "/voice/auth, /voice/inbound-status, /voice/answer, /voice/status"
                 )
 
                 # ====================================================================
