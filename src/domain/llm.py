@@ -131,7 +131,9 @@ def build_persona_anchor(system_instruction: Optional[str]) -> Optional[str]:
     # the rhythm rule itself (not a pointer to a section) at the highest-attention position.
     # Text prompts have no spoken_delivery and never see this.
     spoken = (
-        "\n\nSPOKEN REPLY — before you speak, choose the rhythm and the emotion of every "
+        "\n\nSPOKEN REPLY — your normal pace is about 10% faster than your default speaking "
+        "speed: brisk, like a quick-talking friend on the phone, never an audiobook narrator. "
+        "Brisk, not rushed. Before you speak, choose the rhythm and the emotion of every "
         "sentence from what it means. Rush through the throwaway parts. Slow down on the word "
         "that matters. Pause for a beat before a punchline, a verdict or bad news. Each "
         "sentence carries its own mood. One even pace or one mood for the whole reply is a failure."

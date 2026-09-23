@@ -82,7 +82,8 @@ class TestSpokenPacing:
 
     def test_spoken_prompt_asks_for_per_sentence_pace_and_emotion(self):
         anchor = build_persona_anchor(self._TEXT_PROMPT + "\nspoken_delivery {\n w\n}")
-        assert "SPOKEN REPLY — before you speak, choose the rhythm and the emotion of every sentence" in anchor
+        assert "SPOKEN REPLY — your normal pace is about 10% faster than your default speaking speed" in anchor
+        assert "Before you speak, choose the rhythm and the emotion of every sentence" in anchor
         # The rule itself, not a pointer to a named section.
         assert "Pause for a beat before a punchline" in anchor
 
