@@ -1,64 +1,59 @@
 """
-LelikAgent — places the callback that starts every voice-companion call
-(RFC docs/10_rfcs/VOICE_COMPANION_RFC.md §4.6, §4.13).
+LelikAgent — the voice companion (docs/10_rfcs/VOICE_COMPANION_RFC.md §4.4, §4.7).
 
-Not a delegation-tool specialist: `internal=True` (see
-`infrastructure/agent_manifest.py::LELIK`) with no `Intent` registered, so it
-is never reachable via `delegate_to_specialist` or `AgentCoordinator`. The
-only caller in Slice 1 is `src/web/voice_webhook_app.py::voice_auth`, which
-constructs it via `lelik_agent_factory(user_id, account_id)` and awaits
-`execute(purpose, ticket, answer_url)` directly. Registering an intent for
-this agent is exactly what the deferred outbound RFC does, not Slice 1.
+Built the way TutorAgent is: its own prompt over context LelikPersonaService assembles,
+and the shared delegate_to_specialist tool over LELIK.allowed_intents. Its LLM call is
+a realtime session in the relay process, so there are three entry points, not one:
+execute() places the callback (§4.6), session_config() feeds the session at pickup
+(§4.8), delegate() runs one tool call from the live session through DelegationEngine.
 
-`execute()` does not catch `TelephonyPort.originate_call` failures — the
-auth webhook's own try/except is what releases the ticket and one-call
-marker on origination failure (commit 67beca7, mint-side counterpart to
-`voice_control_plane_app.submit_transcript`'s release-on-failure guarantee).
-Swallowing the exception here into an `AgentResponse.failure()` would leave
-that ticket/marker stranded for up to `one_call_ttl_s` with no alert.
-
-No LLM call happens here — Lelik's persona/instructions are assembled by
-the answer webhook via `PromptBuilderPort.build_for_agent` (Task 9) once the
-callback is actually answered, not by this agent. `execution_context` is
-accepted for constructor parity with other `BaseAgent` subclasses but is not
-used by `execute()`.
+execute() does not catch originate_call failures: the webhook's own try/except releases
+the ticket and one-call marker.
 """
-
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Dict, List
 from urllib.parse import urlencode
 from uuid import uuid4
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
-from ..ports.llm_port import AgentExecutionContext
+from ..domain.llm import ToolCall
+from ..infrastructure.agent_manifest import LELIK
+from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
+from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.telephony_port import TelephonyPort
 from .base_agent import BaseAgent
 
+if TYPE_CHECKING:
+    from ..services.lelik_persona_service import LelikPersonaService
+
+_DELEGATE_TOOL = "delegate_to_specialist"
+
 
 class LelikAgent(BaseAgent):
-    """Originates the identity-confirming callback for a voice-companion session."""
+    """The voice companion: places the call, feeds the session, delegates for it."""
+
+    _descriptor = LELIK
 
     def __init__(
         self,
         config: AgentConfig,
-        execution_context: Optional[AgentExecutionContext],
         telephony: TelephonyPort,
         from_number: str,
         status_callback_url: str,
-        to_number: str,
+        prompt_builder: PromptBuilderPort,
+        persona: "LelikPersonaService",
     ) -> None:
         super().__init__(config)
-        self._execution_context = execution_context
         self._telephony = telephony
         self._from_number = from_number
         self._status_callback_url = status_callback_url
-        self._to_number = to_number
+        self._prompt_builder = prompt_builder
+        self._persona = persona
 
     async def can_handle(self, message: AgentMessage) -> bool:
-        # Never routed via AgentCoordinator (internal=True, no Intent
-        # registered) — this only satisfies BaseAgent's abstract contract.
+        # Never a delegation target (internal, no capabilities); satisfies BaseAgent only.
         return False
 
-    async def execute(self, purpose: str, ticket: str, answer_url: str) -> AgentResponse:
+    async def execute(self, purpose: str, ticket: str, answer_url: str, to_number: str) -> AgentResponse:
         # Both callback URLs carry the ticket in their QUERY STRING — Twilio
         # POSTs only its own fields (CallSid, AnsweredBy, CallStatus, ...) in
         # the body and leaves the configured URL's query string untouched, so
@@ -73,13 +68,59 @@ class LelikAgent(BaseAgent):
         # serve — it only exists once this very call returns.
         ticket_qs = urlencode({"ticket": ticket})
         call_sid = await self._telephony.originate_call(
-            to=self._to_number,
+            to=to_number,
             from_=self._from_number,
             answer_url=f"{answer_url}?{ticket_qs}",
             status_callback_url=f"{self._status_callback_url}?{ticket_qs}",
         )
         return AgentResponse.success(
-            task_id=str(uuid4()),
-            agent_id=self.agent_id,
-            result={"call_sid": call_sid, "purpose": purpose},
+            task_id=str(uuid4()), agent_id=self.agent_id, result={"call_sid": call_sid, "purpose": purpose},
         )
+
+    async def session_config(self, user_id: str, account_id: str) -> Dict[str, Any]:
+        """Instructions + tools for the realtime session. Raises on failure: no call
+        opens on an empty context."""
+        context = await self._persona.assemble(user_id, account_id)
+        instructions = await self._prompt_builder.build_for_agent(
+            agent_type="lelik",
+            user_id=user_id,
+            account_id=account_id,
+            biographical_facts=context.biographical_facts,
+            conversation_history=context.conversation_history,
+            include_biographical=True,
+            include_directives=True,
+            include_datetime=True,
+        )
+        available = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
+        tools = [self._build_delegate_tool_declaration(available)] if available else []
+        return {"instructions": instructions, "tools": tools}
+
+    async def delegate(
+        self, user_id: str, account_id: str, arguments: Dict[str, Any], call_context: List[Dict[str, str]],
+    ) -> str:
+        """One delegate_to_specialist call from the live session, run exactly as a text
+        orchestrator's would be."""
+        context: Dict[str, Any] = {
+            "user_id": user_id,
+            "account_id": account_id,
+            self.coordinator.CALL_CHAIN_KEY: [self._descriptor.agent_id],
+        }
+        channel = await self._persona.primary_channel(user_id)
+        if channel is not None:
+            context.update(
+                session_id=f"{user_id}:{channel.channel_id}",
+                origin_channel_id=channel.channel_id,
+                origin_platform=channel.platform,
+            )
+        # "later" has no delivery path for a SYNC-declared intent (AgentWorkerHandler
+        # delivers only generator intents), so on the phone it would drop the answer.
+        args = {k: v for k, v in arguments.items() if k != "mode"}
+        args["context"] = {**normalize_delegate_context(arguments.get("context")), "call_context": call_context}
+        result = await DelegationEngine(self.coordinator).dispatch(
+            ToolCall(name=_DELEGATE_TOOL, args=args),
+            context,
+            dict(self._descriptor.intent_remap),
+            dict(self._descriptor.intent_fanout),
+            self.agent_id,
+        )
+        return result.result_str
