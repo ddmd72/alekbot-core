@@ -799,48 +799,39 @@ class UserAgentFactory(AgentFactoryPort):
             history_summary_service=ctx.history_summary_service,
         )
 
-    def _build_lelik(
-        self, user_id: str, account_id: str, to_number: str,
-    ) -> Optional[LelikAgent]:
-        """Construct a LelikAgent for one outbound callback.
+    async def get_lelik(self, user_id: str) -> Optional[LelikAgent]:
+        """The user's LelikAgent, built on first use like any lazy agent. The voice
+        webhooks and /voice/delegate reach it here; the coordinator never routes to it."""
+        if not await self.create_agent_on_demand("lelik", user_id):
+            return None
+        return self.coordinator.get_agent(f"{self._LAZY_AGENT_IDS['lelik']}_{user_id}")
 
-        Not part of the `_LAZY_BUILDERS` dispatch table below: those are all
-        keyed by `agent_type` and invoked by `create_agent_on_demand` on an
-        intent-based `delegate_to_specialist` dispatch, which LelikAgent never
-        receives (internal=True, no Intent registered — RFC §4.13). The real
-        caller is a `lelik_agent_factory(user_id, account_id)` closure wired
-        into `create_voice_webhook_blueprint` (src/web/voice_webhook_app.py),
-        which resolves `to_number` (the bound caller's own E.164 number) before
-        calling this method — that wiring is main.py territory, not this method.
-
-        `account_id` is accepted for parity with that call site's signature but
-        not otherwise used here — LelikAgent is not multi-tenant-scoped beyond
-        the per-user `agent_id`, same as every other builder in this class.
-        """
+    def _build_lelik(self, user_id: str, ctx: _UserContext) -> Optional[LelikAgent]:
         if not self._telephony:
-            logger.info(
-                "[UserAgentFactory] No Twilio credentials configured, skipping lelik"
-            )
+            logger.info("[UserAgentFactory] No Twilio credentials configured, skipping lelik")
             return None
         from_number = self.config.get("TWILIO_PHONE_NUMBER")
         if not from_number:
-            logger.info(
-                "[UserAgentFactory] TWILIO_PHONE_NUMBER not configured, skipping lelik"
-            )
+            logger.info("[UserAgentFactory] TWILIO_PHONE_NUMBER not configured, skipping lelik")
             return None
+        if not self.notification_service:
+            logger.warning("[UserAgentFactory] No notification_service, skipping lelik")
+            return None
+        from ..services.lelik_persona_service import LelikPersonaService
         service_url = self.config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
         return LelikAgent(
-            config=AgentConfig(
-                agent_id=f"lelik_agent_{user_id}",
-                agent_type="lelik",
-                timeout_ms=10_000,
-                capabilities=[],
-            ),
-            execution_context=None,
+            config=AgentConfig(agent_id=f"lelik_agent_{user_id}", agent_type="lelik",
+                               timeout_ms=10_000, capabilities=[]),
             telephony=self._telephony,
             from_number=from_number,
             status_callback_url=f"{service_url}/voice/status",
-            to_number=to_number,
+            prompt_builder=ctx.prompt_builder,
+            persona=LelikPersonaService(
+                fact_repository=self.repository,
+                session_store=self.session_store,
+                notification_service=self.notification_service,
+                config=ctx.user_profile.config,
+            ),
         )
 
     def _build_image_generation(
@@ -934,6 +925,7 @@ class UserAgentFactory(AgentFactoryPort):
         "image_generation": _build_image_generation,
         "video_generation": _build_video_generation,
         "tutor": _build_tutor,
+        "lelik": _build_lelik,
     }
 
     _LAZY_AGENT_IDS: Dict[str, str] = {
@@ -948,6 +940,7 @@ class UserAgentFactory(AgentFactoryPort):
         "image_generation": "image_generation_agent",
         "video_generation": "video_generation_agent",
         "tutor": "tutor_agent",
+        "lelik": "lelik_agent",
     }
 
     # ------------------------------------------------------------------

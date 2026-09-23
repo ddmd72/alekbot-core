@@ -490,6 +490,7 @@ async def main():
             anthropic_client=anthropic_client,
             quota_service=quota_service,
             companion_context_assembler=companion_context_assembler,
+            notification_service=notification_service,
         )
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
         _language_service._ensure_agents = agent_factory.ensure_agents_for_user
@@ -939,29 +940,9 @@ async def main():
                 # already-constructed instances: user_repo, _alert_webhook,
                 # notification_service, agent_factory.
                 #
-                # Lelik's call-start context (decisions/lelik_warm_context.md) is built per
-                # call: UserPromptBuilder carries the caller's own config, so the prompt gets
-                # their timezone and location; notification_service supplies the channel
-                # chain the end-of-call summary is written through.
-                from src.services.lelik_persona_service import LelikPersonaService
-                from src.services.prompt_builder import UserPromptBuilder
-
-                async def _lelik_persona_service_for(user_id: str) -> LelikPersonaService:
-                    profile = await user_repo.get_user(user_id)
-                    if profile is None:
-                        raise ValueError(f"no user profile for {user_id}")
-                    return LelikPersonaService(
-                        prompt_builder=UserPromptBuilder(
-                            repo=container.repository,
-                            user_id=user_id,
-                            config=profile.config,
-                            assembly_service=container.assembly_service,
-                        ),
-                        fact_repository=container.repository,
-                        session_store=session_store,
-                        notification_service=notification_service,
-                        config=profile.config,
-                    )
+                # Lelik's call-start context (decisions/lelik_warm_context.md) is now built
+                # by UserAgentFactory._build_lelik itself (per-user prompt_builder + persona),
+                # the same lazy-agent path as every other specialist — see get_lelik below.
 
                 main_app.register_blueprint(
                     create_voice_webhook_blueprint(
