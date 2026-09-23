@@ -26,7 +26,9 @@ _VOICE = "cedar"
 _TURN_DETECTION = {
     "type": "semantic_vad",
     "eagerness": "low",
-    "create_response": True,
+    # The relay starts every reply itself (VoiceSessionService, on `turn_committed`) so
+    # it can put the persona anchor right after the caller's turn first.
+    "create_response": False,
     "interrupt_response": False,
 }
 # The billing-leg keys calculate_realtime_cost/VoiceCallBuffer.add_usage recognize -
@@ -219,6 +221,8 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
             return RealtimeSessionEvent(type="user_transcript", payload={"text": event.get("transcript", "")})
         if event_type == "response.output_audio_transcript.done":
             return RealtimeSessionEvent(type="model_transcript", payload={"text": event.get("transcript", "")})
+        if event_type == "input_audio_buffer.committed":
+            return RealtimeSessionEvent(type="turn_committed", payload={"item_id": event.get("item_id")})
         if event_type == "input_audio_buffer.speech_started":
             return RealtimeSessionEvent(type="speech_started", payload={})
         if event_type == "input_audio_buffer.speech_stopped":

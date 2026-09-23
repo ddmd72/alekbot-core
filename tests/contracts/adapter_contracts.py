@@ -468,7 +468,8 @@ OPENAI_REALTIME_BARGE_IN_IS_CLIENT_OWNED = ContractRule(
         "OpenAIRealtimeAdapter.open() must configure semantic_vad with the provider's "
         "auto-interrupt OFF. VoiceSessionService owns barge-in (clear -> cancel -> "
         "truncate); a provider auto-cancel racing our own response.cancel can land a "
-        "cancel on nothing, and that provider error ends the call. semantic_vad (not "
+        "cancel on nothing, and that provider error ends the call. Auto-reply is off too: "
+        "the client places the persona anchor after each turn, then starts the reply. semantic_vad (not "
         "server_vad) so a mid-thought pause does not end the caller's turn. "
         "Input: captured session.update message {type: str, session: dict}."
     ),
@@ -483,6 +484,11 @@ OPENAI_REALTIME_BARGE_IN_IS_CLIENT_OWNED = ContractRule(
                 kw["session"]["audio"]["input"]["turn_detection"]["interrupt_response"],
                 False,
                 "openai_realtime: provider auto-interrupt must be off (client owns barge-in)",
+            ),
+            _eq(
+                kw["session"]["audio"]["input"]["turn_detection"]["create_response"],
+                False,
+                "openai_realtime: provider auto-reply must be off (client anchors, then replies)",
             ),
         ),
     },

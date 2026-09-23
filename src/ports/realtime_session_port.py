@@ -35,7 +35,9 @@ class RealtimeSessionPort(ABC):
         item_id - the provider's id for the assistant item this audio belongs to,
         needed to truncate it on barge-in),
         tool_call (payload: call_id, name, arguments), speech_started,
-        speech_stopped, response_created, response_done (payload: usage -
+        speech_stopped, turn_committed (payload: item_id - the caller's turn is
+        now a conversation item; the provider does not reply on its own, the
+        caller of this port starts the reply), response_created, response_done (payload: usage -
         provider-native token usage dict, model - the provider's own model
         id, so callers can label usage without hardcoding a provider-specific
         model string), user_transcript (payload: text - final transcript of

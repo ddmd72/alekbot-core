@@ -536,3 +536,97 @@ async def test_an_item_is_truncated_once_even_if_the_caller_keeps_talking_over_i
     )
 
     realtime_session.truncate.assert_awaited_once()
+
+
+# =============================================================================
+# Per-turn persona anchor (create_response off: the relay starts every reply)
+# =============================================================================
+
+_PERSONA_INSTRUCTIONS = "identity {\n x\n}\nvoice {\n y\n}\nhumor_engine {\n z\n}\nspoken_delivery {\n w\n}"
+
+
+def _service_with(realtime_session, instructions):
+    control_plane = AsyncMock()
+    control_plane.fetch_session_config.return_value = {
+        "instructions": instructions, "user_id": "u1", "account_id": "a1",
+    }
+    return VoiceSessionService(
+        realtime_session_factory=MagicMock(return_value=realtime_session),
+        control_plane=control_plane,
+        alert_sink=AsyncMock(),
+    )
+
+
+async def _run(service):
+    await service.handle_call(
+        ticket="t1", inbound_audio=_frames(), send_outbound_audio=AsyncMock(),
+        clear_outbound_audio=AsyncMock(), playback=PlaybackTracker(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_committed_turn_gets_the_persona_anchor_then_a_reply():
+    calls = []
+    realtime_session = AsyncMock()
+    realtime_session.submit_message.side_effect = lambda role, text: calls.append((role, text))
+    realtime_session.request_response.side_effect = lambda: calls.append("response.create")
+
+    async def events():
+        yield RealtimeSessionEvent(type="turn_committed", payload={"item_id": "item_user_1"})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    await _run(_service_with(realtime_session, _PERSONA_INSTRUCTIONS))
+
+    assert len(calls) == 2
+    role, anchor = calls[0]
+    assert role == "system"
+    assert "PERSONALITY ANCHOR" in anchor
+    assert "- spoken_delivery" in anchor and "- humor_engine" in anchor
+    assert calls[1] == "response.create"
+
+
+@pytest.mark.asyncio
+async def test_every_turn_is_anchored_and_anchors_are_not_deleted():
+    realtime_session = AsyncMock()
+
+    async def events():
+        for i in range(3):
+            yield RealtimeSessionEvent(type="turn_committed", payload={"item_id": f"item_user_{i}"})
+            yield RealtimeSessionEvent(type="response_created", payload={})
+            yield RealtimeSessionEvent(type="response_done", payload={})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    await _run(_service_with(realtime_session, _PERSONA_INSTRUCTIONS))
+
+    assert realtime_session.submit_message.await_count == 3
+    assert realtime_session.request_response.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_prompt_without_persona_sections_still_replies_without_an_anchor():
+    realtime_session = AsyncMock()
+
+    async def events():
+        yield RealtimeSessionEvent(type="turn_committed", payload={"item_id": "item_user_1"})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    await _run(_service_with(realtime_session, "you are Lelik"))
+
+    realtime_session.submit_message.assert_not_awaited()
+    realtime_session.request_response.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_turn_committed_while_a_response_is_active_starts_nothing():
+    """response.create while a response is active is a call-ending provider error."""
+    realtime_session = AsyncMock()
+
+    async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})
+        yield RealtimeSessionEvent(type="turn_committed", payload={"item_id": "item_user_1"})
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    await _run(_service_with(realtime_session, _PERSONA_INSTRUCTIONS))
+
+    realtime_session.submit_message.assert_not_awaited()
+    realtime_session.request_response.assert_not_awaited()

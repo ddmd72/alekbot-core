@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
+from src.domain.llm import build_persona_anchor
 from src.domain.request_context import RequestContext
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
@@ -28,6 +29,9 @@ class _CallState:
     silence_prompted: bool = False
     item_id: Optional[str] = None
     item_start_bytes: int = 0
+    # Built once per call from the session instructions; None when the prompt carries
+    # no persona sections to point at.
+    persona_anchor: Optional[str] = None
 
 
 class VoiceSessionService:
@@ -59,7 +63,7 @@ class VoiceSessionService:
         """`playback` is fed by the transport (bytes sent, marks echoed back); this
         loop only reads it."""
         config = await self._control_plane.fetch_session_config(ticket)
-        state = _CallState(playback=playback)
+        state = _CallState(playback=playback, persona_anchor=build_persona_anchor(config["instructions"]))
         async with RequestContext(user_id=config["user_id"], account_id=config["account_id"]):
             await self._run_call(ticket, config, inbound_audio, send_outbound_audio, clear_outbound_audio, state)
 
@@ -158,6 +162,8 @@ class VoiceSessionService:
                     await self._barge_in(session, state, clear_outbound_audio)
             elif event.type == "speech_stopped":
                 state.caller_speaking = False
+            elif event.type == "turn_committed":
+                await self._reply_to_turn(session, state)
             elif event.type == "audio_delta":
                 item_id = event.payload.get("item_id")
                 if item_id != state.item_id:
@@ -211,6 +217,21 @@ class VoiceSessionService:
             # Truncated once; a second speech_started must not cut the same item again.
             state.item_id = None
 
+    async def _reply_to_turn(self, session: RealtimeSessionPort, state: _CallState) -> None:
+        # The provider does not reply on its own (create_response off), so every reply
+        # starts here, with the persona anchor placed right after the caller's turn -
+        # the realtime twin of the text path's per-turn persona anchor. Anchors are left
+        # in the conversation rather than deleted: a delete of a missing item is a
+        # provider error, and any provider error ends the call.
+        # Guarded: response.create while a response is active is a call-ending error.
+        if state.response_active:
+            logger.warning("voice call: turn committed while a response is active, not starting another")
+            return
+        if state.persona_anchor:
+            await session.submit_message("system", state.persona_anchor)
+        state.response_active = True
+        await session.request_response()
+
     async def _watch_silence(self, session: RealtimeSessionPort, state: _CallState) -> None:
         # The provider only speaks when a turn ends, so it cannot notice a caller who
         # has gone quiet (and its idle_timeout_ms is server_vad-only). Silence counts
@@ -230,6 +251,7 @@ class VoiceSessionService:
             await session.submit_message(
                 "system", _SILENCE_NOTE.format(seconds=round(self._silence_timeout_s)),
             )
+            state.response_active = True
             await session.request_response()
 
     async def _forward_inbound(self, session: RealtimeSessionPort, inbound_audio: AsyncIterator[AudioFrame]) -> None:
