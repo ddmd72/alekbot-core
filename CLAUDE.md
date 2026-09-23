@@ -257,8 +257,10 @@ persona or language change applies to both. Lelik has only two tokens of his own
   off. A relay-side watchdog handles silence (the provider's `idle_timeout_ms` is server_vad-only):
   8 s of quiet after playback ends injects one system note (RFC §5.2).
 - **Two agents, deliberately not one.** `LelikAgent` makes no LLM call (it only originates the call);
-  `LelikSummarizerAgent` (ECO) turns the end-of-call transcript into a plain-text summary delivered via
-  `UserNotificationService.notify_call_summary`. The summarizer must never be the participant it
+  `LelikSummarizerAgent` (ECO) turns the end-of-call transcript into a short note, with the shared
+  character slots and the user's `LANG_*`, and one line when nothing is worth keeping. It is delivered via
+  `UserNotificationService.notify_call_summary` as the history pair `[System: phone call with Lelik, …]`
+  + `📞 <note>`. Smart's `PROTOCOL_VOICE_PARTNER` tells Alek who Lelik is and how to read that pair. The summarizer must never be the participant it
   summarizes (RFC §4.9), and it has no `CompanionRecord` store — `records` is always `[]`.
 - Usage is priced by `domain.billing.calculate_realtime_cost` over the flat legs
   `OpenAIRealtimeAdapter._flatten_usage` produces; `reasoning_tokens` are a **subset** of the output
