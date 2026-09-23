@@ -102,6 +102,17 @@ class BigQueryPromptContentAdapter(PromptContentStore):
         except Exception as e:  # building/scheduling must never break the LLM path
             logger.warning("BigQueryPromptContentAdapter: record_turn skipped: %s", e)
 
+    async def flush(self, timeout_s: float = 10.0) -> None:
+        pending = list(self._bg_tasks)
+        if not pending:
+            return
+        _, still_pending = await asyncio.wait(pending, timeout=timeout_s)
+        if still_pending:
+            logger.warning(
+                "BigQueryPromptContentAdapter: flush left %d write(s) pending after %.0fs",
+                len(still_pending), timeout_s,
+            )
+
     async def record_dr_result(
         self,
         *,
