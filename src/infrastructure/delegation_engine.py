@@ -89,6 +89,13 @@ def _format_result(intent: str, result: Any) -> str:
     return str(result)
 
 
+def normalize_delegate_context(raw: Any) -> Dict[str, Any]:
+    """The model may send `context` as free text; it becomes {"reasoning": text}."""
+    if isinstance(raw, str) and raw:
+        return {"reasoning": raw}
+    return raw if isinstance(raw, dict) else {}
+
+
 def _format_email_search_compact(result: Any) -> str:
     """Compact text representation of email search results for the LLM."""
     if not isinstance(result, str):
@@ -429,7 +436,7 @@ class DelegationEngine:
             len(tool_calls),
         )
         tasks = [
-            self._dispatch_single(
+            self.dispatch(
                 tc, context, intent_remap, intent_fanout, calling_agent_id,
                 max_retries, retry_backoff,
             )
@@ -453,27 +460,24 @@ class DelegationEngine:
     # Single tool dispatch                                                #
     # ------------------------------------------------------------------ #
 
-    async def _dispatch_single(
+    async def dispatch(
         self,
         tool_call: ToolCall,
         context: Dict[str, Any],
         intent_remap: Dict[str, str],
         intent_fanout: Dict[str, FanoutSpec],
         calling_agent_id: str,
-        max_retries: int,
-        retry_backoff: float,
+        max_retries: int = 1,
+        retry_backoff: float = 1.0,
     ) -> ToolResult:
-        """Dispatch a single delegate_to_specialist call to the coordinator."""
+        """Dispatch one delegate_to_specialist call: remap, fan-out, mode, coordinator.
+
+        Public for callers without a loop (LelikAgent).
+        """
         args = tool_call.args or {}
         intent = args.get("intent", "")
         query = args.get("query", "")
-        context_params = args.get("context", {})
-
-        # LLM may pass context as free-form string — wrap as reasoning
-        if isinstance(context_params, str) and context_params:
-            context_params = {"reasoning": context_params}
-        elif not isinstance(context_params, dict):
-            context_params = {}
+        context_params = normalize_delegate_context(args.get("context", {}))
 
         if not intent:
             return ToolResult(
