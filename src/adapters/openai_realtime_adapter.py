@@ -23,6 +23,9 @@ _TRANSCRIPTION_MODEL = "gpt-transcribe"
 # One voice for every call until it becomes a per-user setting. OpenAI recommends marin/cedar
 # for quality; cedar reads male, which fits Lelik. Fixed per session once audio is emitted.
 _VOICE = "cedar"
+# Post-generation speed-up (0.25-1.5, default 1.0): at 1.0 Lelik sounded measured and slow.
+# Pace WITHIN a reply is the model's (SPOKEN_DELIVERY `rhythm`); this scales it uniformly.
+_SPEED = 1.15
 _TURN_DETECTION = {
     "type": "semantic_vad",
     "eagerness": "low",
@@ -169,7 +172,7 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
                     "transcription": {"model": _TRANSCRIPTION_MODEL},
                     "turn_detection": _TURN_DETECTION,
                 },
-                "output": {"format": {"type": "audio/pcmu"}, "voice": _VOICE},
+                "output": {"format": {"type": "audio/pcmu"}, "voice": _VOICE, "speed": _SPEED},
             },
             "reasoning": {"effort": reasoning_effort},
             "instructions": _strip_cache_boundary(instructions),
