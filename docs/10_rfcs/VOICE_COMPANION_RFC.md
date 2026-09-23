@@ -69,7 +69,7 @@ Why not a front desk with a small slice of context: `decisions/lelik_warm_contex
 What still follows from the split:
 
 - **Latency is a role, not a failure.** The Realtime API's async function calling lets Lelik keep
-  talking while `ask_alek` is pending and weave the answer in when it arrives.
+  talking while a delegation (Alek's included) is pending and weave the answer in when it arrives.
 - **Clarification before forwarding** is an upgrade on the text path, where a vague request reaches
   Smart and gets guessed at or asked back over a slow round trip.
 - **Attribution is in character.** "Alek says…" separates Lelik's own read from Alek's grounded
@@ -97,10 +97,13 @@ confidently instead.
 
 The durable boundary is **possession**. "Do I have this?" is a presence check, not a
 self-assessment, and models recognize missing data far better than insufficient intelligence.
-Lelik's prompt holds the caller's biography, directives and recent chat (§4.8). It does not hold
-mail, documents, tasks, calendar, the web, anything current, or the ability to act. The rule:
-*answer from what is in the prompt; forward what is not.* An explicit "ask Alek" from the caller
-always forces a call.
+Lelik's prompt holds the caller's biography, directives and recent chat (§4.8). What it does not
+hold, he reaches the way every agent here does: `delegate_to_specialist` over his descriptor's
+`allowed_intents` (§4.7). Fast specialists answer directly: deep memory search, web search (with
+the maps fan-out). **Alek is one of those specialists**, reached through `ask_alek`, for anything
+that needs his full reach: mail, documents, tasks, actions, synthesis. The rule: *answer from what
+is in the prompt; delegate what is not, to the cheapest specialist that holds it.* An explicit "ask
+Alek" from the caller always forces `ask_alek`.
 
 **No fabrication about the caller's life** remains the hard line: a fact about the caller that is in
 neither the prompt nor a tool result is never stated.
@@ -163,10 +166,21 @@ tested and billed.
 **The session loop does not live in the agent** — minutes-long sessions do not fit `_call_llm`'s
 per-turn shape:
 
-- **`LelikAgent`** owns what agents own: persona prompt, tool set, permission toggles, policy,
-  outbound origination.
+- **`LelikAgent`** owns what agents own, built exactly the way `TutorAgent` builds it:
+  - the prompt, through its own `prompt_builder.build_for_agent("lelik", …)`, over context
+    assembled by a service (`LelikPersonaService` supplies facts and history, the way
+    `CompanionContextAssemblerService` does for the tutor);
+  - the tool set, through `coordinator.get_available_intents_for(self._descriptor)` and the shared
+    `delegate_to_specialist` declaration;
+  - outbound origination.
 - **`VoiceSessionService`** owns the loop: two live connections, byte relay, call-scoped buffer,
-  lifecycle, tool dispatch.
+  lifecycle, and forwarding the model's tool calls to the main service. It dispatches nothing
+  itself (§4.7).
+
+**Standard wherever the medium allows.** Lelik differs from a text agent in one respect only: his
+LLM call is a realtime session in another process. Everything else — descriptor, allowlist, tool
+declaration, dispatch, cycle guard, billing, tracing — is the path Smart, Quick and the tutor
+already use. A voice-only variant of any of these is a defect, not a design choice.
 
 `REQ-ARCH-03` + `REQ-ARCH-30` together mean the loop component **cannot be named `*Agent` at all** —
 naming discipline here is load-bearing, not cosmetic.
@@ -208,7 +222,7 @@ Origination        LelikAgent.execute(purpose) → TelephonyPort (Twilio REST) �
                      → TwiML <Connect><Stream> to the relay, carrying the same opaque TICKET
                    relay opens the WS, exchanges the ticket for the session config, connects to provider
 
-During the call    ask_alek / send_to_chat → CallControlPlanePort → HTTP → main service
+During the call    delegate_to_specialist → CallControlPlanePort.delegate → HTTP → main service
 End of the call    relay flushes the call buffer — transcript, usage events, turn segments —
                      → main service summarizes, writes to the primary-channel session,
                      delivers one message, records usage and turns (§4.12)
@@ -233,10 +247,11 @@ Same store, same TTL as §3's one-call-per-user marker.
 
 **`CallControlPlanePort` is a real port, not cleanliness.** `REQ-ARCH-18` forbids
 `httpx`/`aiohttp`/`requests` anywhere in `src/services/` (whitelist: one file,
-`google_oauth_service.py`), so `VoiceSessionService` cannot make an HTTP call itself. Four
-operations justify the contract — `fetch_session_config(ticket)`, `ask_alek(call_id, query,
-context)`, `send_to_chat(call_id, text)`, `submit_transcript(call_id, buffer)` (the buffer carries
-transcript, usage and turn segments together) — and the substitution need is named: if the relay
+`google_oauth_service.py`), so `VoiceSessionService` cannot make an HTTP call itself. Three
+operations justify the contract — `fetch_session_config(ticket)` (instructions **and** tool
+declarations), `delegate(call_id, tool_call, call_context)` (one model tool call, whatever its
+intent), `submit_transcript(call_id, buffer)` (transcript, usage and turn segments together) — and
+the substitution need is named: if the relay
 ever merges back into the main service, the adapter becomes an in-process call and nothing above it
 changes.
 
@@ -253,7 +268,7 @@ Architecture rules this shape satisfies that a naive relay would break are enume
 opens**, returning `AuthDecision(user_id, account_id)` or a refusal. The relay never sees the phone
 number — it receives a resolved identity in the session config, and nothing below consults caller ID
 again. Swapping the mechanism is then a change to one component with a typed result: relay,
-`ask_alek`, prompt assembly and billing are untouched. **That is the answer to "what happens when
+delegation, prompt assembly and billing are untouched. **That is the answer to "what happens when
 other people get access" — one component, not a new architecture.**
 
 **No port for it in v1** — one implementation, no I/O boundary. `AuthDecision` in `domain/` plus a
@@ -374,39 +389,93 @@ intolerable in practice — a better-shaped PIN than the rejected one, not a rev
 **Triggers to revisit:** the first non-owner user (both risks at once); any alert on a refused dial;
 STIR/SHAKEN in Spain.
 
-### 4.7 `ask_alek` — Alek is invariant per call
+### 4.7 Lelik delegates like every agent; Alek is one of his specialists
 
-**Alek does not remember between calls.** Each `ask_alek` is self-contained, like any specialist
-invocation. The alternative — writing every in-call turn into a session — pollutes chat history with
-requests the user never made and contradicts §4.10.
-
-**Providing context is therefore the caller's job, and it is not left to the model:**
+**One tool, the standard one.** Lelik's session carries exactly the tool every orchestrator here
+carries: `delegate_to_specialist(intent, query, context)`, built by the shared
+`_build_delegate_tool_declaration` from `coordinator.get_available_intents_for(LELIK)`. His
+descriptor, like the tutor's, declares an allowlist:
 
 ```
-ask_alek(query, context)
+LELIK.allowed_intents = {search_memory, search_web, ask_alek}
+LELIK.intent_fanout   = {search_web: SEARCH_WEB_MAPS_FANOUT}   # the constant Smart and Quick share
 ```
 
-`query` comes from Lelik. `context` is **always attached by the relay** from the call-scoped buffer
-— the last N exchanges of this call — whether or not Lelik supplies anything; Lelik may add to it
-("he means Ivan Petrov, the colleague") but cannot omit it.
+Maps arrive through the same `search_web → maps_query` fan-out Smart uses. Adding a capability to
+Lelik later is one allowlist entry, not a voice feature.
 
-The relay attaches it rather than the prompt demanding it because §4.3's figure says instruction
-retention across a long conversation is the model's weakest axis, and **this failure is silent**:
-Alek gets a context-free question and answers something plausible and wrong. A prompt token still
-teaches Lelik that Alek is stateless, but correctness does not depend on that token surviving twenty
-minutes.
+**Alek is a specialist behind an internal intent.** `ask_alek` is declared on an `ALEK` descriptor
+(`internal=True`, `ExecutionMode.SYNC`). Its agent is a zero-LLM gateway that routes the query to
+`router_agent_{user_id}` exactly as `ConversationHandler` does (`conversation_handler.py:700`).
+It goes to the Router, not Smart, because `router_agent.py:332` is where `enrich_context` (RRF
+memory search) runs, and Smart without it is Alek without memory.
+
+- **Visibility — one registry rule.** Today `internal=True` hides an intent from every tool list,
+  allowlist or not. The rule becomes: *internal intents are not offered by default; an explicit
+  allowlist may name one.* Smart and Quick (`allowed_intents=None`) keep seeing exactly what they
+  see now. Lelik names `ask_alek` explicitly. No existing allowlist names an internal intent (the
+  only internal specialist intents are `maps_query`, reached by fan-out, and the bound-channel
+  companions), so no current tool list changes.
+- **Loops — the coordinator already refuses them.** `AgentCoordinator._refuse_if_looping` rejects
+  any delegation whose target is already in the `_call_chain` riding in the context, and caps
+  depth at `MAX_DELEGATION_DEPTH`. The gateway's only obligation is the one every hop has: pass the
+  context, chain included, into the Router message. Visibility keeps Alek from calling himself
+  once; the chain guard makes a cycle impossible even if visibility were wrong.
+
+**Dispatch — the engine's, not a copy.** The model's tool call reaches the main service through
+`CallControlPlanePort.delegate` (relay → HTTP, OIDC as `/worker`). There it runs through
+`DelegationEngine`'s single-call dispatch, which the text loop already uses: remap, fan-out, mode,
+coordinator, chain guard, spans, billing. That dispatch is made public for this second caller
+rather than re-implemented. The context is seeded with `user_id`, `account_id` and
+`_call_chain=[lelik_agent]`, and `calling_agent_id="lelik_agent"`. The result is the same
+`result_str` a text orchestrator receives.
+
+**Alek is invariant per call, and the relay attaches the call context.** Each `ask_alek` is
+self-contained: nothing from one `ask_alek` is kept for the next. The gateway addresses the Router
+with the primary channel's `session_id`, the one the call summary is written into (§4.9), so Alek
+answers with the chat he shares with the user as **read-only** context. That is safe by
+construction: only `ConversationHandler` writes session history (`conversation_handler.py:941`,
+`:1049`), and Router, Smart and `BaseAgent` only read it. No in-call request ever lands in the chat
+as a turn the user never typed (§4.10). Whatever the model puts
+in `context`, the relay adds the call-scoped buffer's last N exchanges to every delegation as
+`params.call_context`. Instruction retention is the realtime model's weakest axis (§4.3), and a
+context-free question to Alek fails silently: he answers something plausible and wrong. The
+`PROTOCOL_LELIK_DELEGATION` token teaches Lelik to pass context, but correctness does not depend on
+that token surviving twenty minutes.
+
+**Parallelism is the model's choice.** Several `delegate_to_specialist` calls in one response are
+dispatched concurrently, as in the text loop. The protocol token says when: a lookup that a fast
+specialist answers roughly and Alek answers well goes to both. Lelik speaks the fast answer as
+provisional and folds Alek's in when it arrives. The relay never fans out on its own: choosing the
+fast specialist is a judgment about meaning, not a rule.
+
+**Lelik knows where he stands.** His role token states it: Alek is the user's personal exocortex, a
+network of agents holding their long-term memory, mail, tasks and documents. Lelik is its voice, the
+part the user talks to on the phone, sharing its memory (his `knowledge_base` is a snapshot of it).
+Smart's `PROTOCOL_VOICE_PARTNER` is the mirror image on Alek's side.
+
+**Rejected alternatives:**
+- **A voice-only HTTP path to the Router** (the earlier version of this section). It worked, but it
+  was a second delegation mechanism beside the one every agent uses, with its own dispatch, its own
+  retry and trace shape, and no cycle guard.
+- **Remote MCP tools in the realtime session.** OpenAI would call the tool servers directly from its
+  own infrastructure: outside `TokenLedger`, Logfire and `RequestContext`, a second path to the same
+  data. The Realtime API has no hosted tools (web search etc.) to reuse anyway.
+- **Relay-side automatic fan-out** (every question to a fast specialist and to Alek). Picking the
+  fast specialist is a judgment about meaning, and it doubles the spend on every turn.
 
 **Mechanism:**
 
 ```
-Lelik emits function call ask_alek(query)
-  → relay attaches call context, captures call_id
-  → relay spawns a tracked asyncio task (held in a set — RUF006 forbids fire-and-forget)
-       → CallControlPlanePort.ask_alek(...) → HTTP to the main service, OIDC-authenticated as /worker is
-       → main service: RequestContext(user_id, account_id) → Router → Smart → delegation
-       → responds with full_response, link_list, rich_content
+Lelik emits delegate_to_specialist(intent, query, context)   (one or several per response)
+  → relay adds params.call_context, captures call_id
+  → relay spawns a tracked asyncio task per call (held in a set — RUF006 forbids fire-and-forget)
+       → CallControlPlanePort.delegate(...) → main service, RequestContext(user_id, account_id)
+       → DelegationEngine single-call dispatch with LELIK's remap/fan-out → AgentCoordinator
+            search_memory / search_web(+maps)  → specialist → result_str
+            ask_alek → ALEK gateway → Router → Smart → full_response (+ link_list, rich_content)
        → chat delivery, if any, happens here (§4.10) — the relay never posts to chat
-  → relay calls resolve_late_answer(call_id, full_response, interrupted_since_dispatch) (below)
+  → relay calls resolve_late_answer(call_id, result_str, interrupted_since_dispatch) (below)
   → Lelik verbalizes (§4.3)
 ```
 
@@ -437,7 +506,7 @@ resolve_late_answer(call_id, full_response, interrupted_since_dispatch):
 ```
 
 `interrupted_since_dispatch` is tracked by the relay from the call-scoped turn log: true if any
-new user speech was observed between dispatching `ask_alek` and the answer arriving, regardless of
+new user speech was observed between dispatching the delegation and the answer arriving, regardless of
 whether that speech was itself directed at Alek. This function is the one place a future model
 update, a provider switch, or real Cloud-Run-build data overturning this default gets changed —
 not a broader refactor. The rejected alternative (resubmitting inside the *next* `response.create`
@@ -449,21 +518,10 @@ Lelik keeps talking while the task runs, which is what makes §4.1's narration l
 than decorative. "Async" here means *the provider's own late `function_call_output`* — not this
 repo's `ExecutionMode.ASYNC`, which enqueues a Cloud Task delivered by `UserNotificationService` to
 a chat channel. **No mechanism in `src/` returns an async result into a still-open caller session**,
-so that path cannot serve this one.
-
-**Alek is reached through the Router, not Smart.** `ConversationHandler` sends to
-`router_agent_{user_id}` (`conversation_handler.py:700`) and it is `router_agent.py:332` that calls
-`enrich_context` — the RRF memory search; `smart_response_agent.py` has none. Calling Smart directly
-is Alek without memory and Goal 2 fails, so the main service's entry point targets the Router
-exactly as `ConversationHandler` does. `SMART_RESPONSE` and `QUICK_RESPONSE` carry `capabilities={}`
-and are absent from `ALL_DESCRIPTORS` — that deliberate omission is unchanged and nothing here needs
-either registered.
-
-**Why not the in-process delegation machinery.** The relay is a separate Cloud Run service (§4.14);
-HTTP is the boundary either way. The main service then runs Router → Smart as an ordinary request —
-**the same concurrency shape as a second Slack message arriving mid-call**. There is no
-`asyncio.Lock` in `src/agents/core/`, so concurrent executions on a per-user singleton do not
-serialize.
+so that path cannot serve this one. The shared declaration's `mode: "later"` keeps its standard
+meaning and is not overridden for voice: the specialist works in the background, the result reaches
+the chat through `UserNotificationService`, and the tool call returns the usual acknowledgement at
+once. That is the right shape for "send me the full report" and needs no voice-specific path.
 
 **Corner cases — requirements, not commentary.**
 
@@ -473,11 +531,11 @@ serialize.
 | Model is mid-response when the answer arrives | `response.create` while a response is active is an error. Track `response.created`/`response.done`; queue the injection until idle. |
 | **Caller speaks again while the answer is still being fetched, before it arrives** | `resolve_late_answer` (above) takes the fresh-message branch, not `function_call_output` — confirmed via spike 0.1 that OpenAI silently drops the latter in this exact case. |
 | User barges in during injection itself (after `resolve_late_answer` has already queued something) | Submit the queued item immediately (harmless — it is a conversation item either way), defer `response.create` to the next idle moment. |
-| Two `ask_alek` calls in flight | Match by `call_id`; serialize `response.create` so they cannot collide. |
+| Two delegations in flight | Match by `call_id`; serialize `response.create` so they cannot collide. |
 | Main service slow or hung | Hard relay-side timeout, start at 90s — Router → Smart with delegation is the cost, not cold start. On expiry inject a `function_call_output` saying Alek did not answer, so Lelik says so aloud. **Silent non-delivery is the worst outcome.** |
 | Transport failure | **No automatic retry** — it re-runs Alek's whole pipeline: double spend, possible double chat delivery. Fail loudly to Lelik. |
 | Relay restarts mid-call (deploy) | Call drops; answer in flight lands nowhere; transcript buffer lost. Accepted. |
-| Concurrency ceiling | Each in-flight `ask_alek` occupies a request slot on the 1 vCPU main service. Named, not solved, in v1. |
+| Concurrency ceiling | Each in-flight delegation occupies a request slot on the 1 vCPU main service. Named, not solved, in v1. |
 
 **Confirmed by spike, not assumed.** Phase 0 spike 0.1 ran this against both providers' live
 Realtime APIs (real calls, 8-case factorial: delay × interruption × provider). Absent an
@@ -602,7 +660,7 @@ can be lost, irreversibly. The summarizer prompt is a first-class deliverable.
 
 ### 4.10 What reaches the chat, and when
 
-Most `ask_alek` calls are *internal* — Lelik needs data in order to speak — so copying every one
+Most delegations are *internal* — Lelik needs data in order to speak — so copying every one
 into Slack fills the channel with requests the user never made. It is also the wrong thing to ask
 Lelik to judge: the user is on the phone precisely because they cannot look at a screen, so anything
 delivered during the call is read *afterwards* anyway, and per §4.3 discretionary judgment held
@@ -612,9 +670,11 @@ across a long conversation is the model's weakest axis.
 2. **Structural exception — reading-shaped content always goes.** If Smart's `link_list` or
    `rich_content` is non-empty, a chat copy is sent regardless of anything Lelik decided. Reading a
    URL aloud is useless (§1), so this is a property of the answer, not a judgment call.
-3. **Explicit request — one simple tool.** `send_to_chat` posts the last answer through
-   `notify_raw`. The one chat-related thing Lelik may do, and deliberately the easy kind:
-   recognizing an explicit instruction, not modelling the user's future reading habits.
+3. **Explicit request — an intent, deferred.** "Send that to my chat" becomes a `send_to_chat`
+   intent on Lelik's allowlist, served by a zero-LLM agent over `notify_raw`. It is not a second
+   tool: the standard one carries it. It is the easy kind of judgment, recognizing an explicit
+   instruction rather than modelling the user's reading habits. **Not built in slice 2.** Rule 2
+   plus `mode: "later"` (§4.7) cover the known cases; build it when a real call asks for it.
 4. **At the end of the call, one message** — §4.9's summary, *delivered* as well as written to
    history: what was discussed plus the links and artefacts that came up. One clean trace to open
    after hanging up, instead of a scatter of messages that arrived while driving.
@@ -761,7 +821,7 @@ Session affinity is explicitly *not* needed — the WebSocket **is** the session
 needs routing back to the instance holding a given socket.
 
 **Failures report to `AlertSinkPort`** (`src/ports/alert_sink.py`) — provider connection failures,
-carrier socket drops, `ask_alek` timeouts — the same one-line shape `AgentCoordinator` and
+carrier socket drops, delegation timeouts — the same one-line shape `AgentCoordinator` and
 `FirestoreQuotaService` use. A call's only user-visible error surface is silence; it must not fail
 quietly.
 
@@ -882,7 +942,7 @@ at **$0.06–0.11/min on `gpt-realtime-2.1`** and **$0.02–0.05/min on `-2.1-mi
 
 **The text legs are not decoration.** `gpt-realtime-2.1` prices reasoning tokens as text output at
 $24/1M, so §4.3's reasoning-effort lever — the first knob this design reaches for when persona
-drift or tool discipline degrades — is paid there and nowhere else. `ask_alek` results injected as
+drift or tool discipline degrades — is paid there and nowhere else. Delegation results injected as
 `function_call_output` are text input at $4/1M, which is why §4.2 can afford to over-forward. A
 cost model built on the audio rates alone would miss both, and §4.12 would ship a ledger that
 under-reports the one dimension Phase 0 is tuning.
@@ -973,16 +1033,32 @@ remembers is the smallest thing worth having.
 11. Verify a spoken conversation's summary consolidates into facts by the ordinary path — no
     voice-specific consolidation protocol.
 
-**Slice 2 — the call reaches Alek.** Gated by 0.1.
+**Slice 2 — Lelik delegates.** Gated by 0.1 (done). One slice: once the standard path exists,
+each specialist is an allowlist entry, not a feature.
 
-1. `CallControlPlanePort` + adapter (§4.5) and the main-service entry points behind it: the
-   session-config exchange moves behind the port, `ask_alek` resolves through the Router (§4.7),
-   `send_to_chat`, transcript submission.
-2. Relay-attached call context and the full §4.7 corner-case table, including injection sequencing.
-3. The §4.10 delivery policy, including the structural `link_list`/`rich_content` rule and rule 5's
-   asymmetry (a structural copy already sent is not retracted).
-4. Nothing new in billing: Alek's own leg is already priced per model by `TokenLedger`, and slice
-   1 built the realtime legs. Confirm a call spanning both bills each at its own rate (§8).
+1. **Standard pieces, made shareable rather than copied.** `DelegationEngine`'s single-call
+   dispatch becomes public for a second caller. The `search_web → maps_query` `FanoutSpec`, today
+   duplicated verbatim in `QUICK_RESPONSE` and `SMART_RESPONSE`, becomes one constant. The registry
+   rule changes to "an explicit allowlist may name an internal intent" (§4.7).
+2. **Lelik as a standard agent.** `LELIK` gains `allowed_intents` and `intent_fanout`, and
+   `LelikAgent` builds the prompt (over `LelikPersonaService`'s context) and the tool declaration the
+   way `TutorAgent` does. The session config carries both, and `RealtimeSessionPort.open` translates
+   the neutral declaration to the provider's function shape.
+3. **Alek as a specialist.** `Intent.ASK_ALEK` on an internal `ALEK` descriptor. Its zero-LLM
+   gateway routes to the Router with the context and chain intact, and returns `full_response` plus
+   `link_list`/`rich_content`.
+4. **The relay forwards, the main service dispatches.** `CallControlPlanePort.delegate` and a
+   `/voice/delegate` endpoint (OIDC). `VoiceSessionService` turns `tool_call` events into tracked
+   tasks, attaches `params.call_context`, and hands results to `resolve_late_answer`. The full
+   corner-case table applies (§4.7).
+5. **Prompts.** `COGNITIVE_PROCESS_LELIK` states Lelik's place in the exocortex (§4.7) and a new
+   `PROTOCOL_LELIK_DELEGATION` covers which intent, when to call in parallel, and how to speak a
+   provisional answer. Smart's `PROTOCOL_VOICE_PARTNER` drops its "no tools yet" line, and
+   `capabilities.py` follows.
+6. **Chat delivery (§4.10):** rule 2's structural copy for `link_list`/`rich_content`, and rule 5's
+   asymmetry (a copy already sent is not retracted). `send_to_chat` stays deferred.
+7. **Nothing new in billing.** Specialists and Alek are priced per model by `TokenLedger` as in text,
+   and slice 1 built the realtime legs. Confirm a call spanning both bills each at its own rate (§8).
 
 **Slice 3 — a second way to ask for the call.** Deliberately small, and independent of slice 2: a
 Slack "call me" command reaching the same `LelikAgent.execute()` with no inbound leg. Origination
@@ -992,13 +1068,24 @@ unit and this is genuinely optional.
 
 ## 8. Test plan
 
-- **Router, not Smart:** `ask_alek` dispatch calls `enrich_context` and never reaches
-  `SmartResponseAgent` directly (§4.7).
+- **Standard delegation** (§4.7): Lelik's tool declaration is the shared
+  `_build_delegate_tool_declaration` over `get_available_intents_for(LELIK)`, and contains exactly
+  his allowlist. `/voice/delegate` dispatches through `DelegationEngine`'s public single-call
+  dispatch, so `search_web` fans out to `maps_query` exactly as for Smart. Smart's and Quick's tool
+  lists are unchanged by the registry rule (no `ask_alek`). An explicit allowlist can name an
+  internal intent, and `allowed_intents=None` still cannot see one.
+- **Cycle guard reaches through the gateway:** a delegation chain `lelik_agent → alek` that tries to
+  re-enter `alek` is refused by `_refuse_if_looping`, which proves the gateway propagates
+  `_call_chain` into the Router message.
+- **Router, not Smart:** the `ask_alek` gateway calls the Router, where `enrich_context` runs, and
+  never `SmartResponseAgent` directly (§4.7).
 - **Live delivery:** the `ask_alek` path does not go through `enqueue_agent_task` /
   `UserNotificationService` as its primary delivery, and a completed answer reaches the live session.
-- **Stateless Alek:** two successive `ask_alek` calls in one call each carry relay-attached context,
-  and the second works with the prompt token absent — the mechanism must not depend on Lelik
-  remembering.
+- **Stateless Alek:** two successive `ask_alek` calls in one call each carry the relay-attached
+  `params.call_context`, and the second works with the prompt token absent: the mechanism must not
+  depend on Lelik remembering. No in-call turn is written to any chat session.
+- **Parallel delegations:** two tool calls in one response are dispatched concurrently and resolved
+  independently by `call_id`.
 - **Corner-case table as tests** (§4.7): call ends mid-flight → task cancelled, answer discarded,
   nothing posted; injection deferred while a response is active; two in-flight calls matched by
   `call_id`; timeout produces a spoken failure rather than silence; no retry on transport failure.
@@ -1023,7 +1110,7 @@ unit and this is genuinely optional.
   auth webhook's route (the loop guard); machine detection hangs up without opening a session or
   writing a summary; binding without OTP is refused.
 - **Chat policy** (§4.10): a plain answer posts nothing; an answer with non-empty `link_list` posts
-  regardless; `send_to_chat` posts on request; the end-of-call summary posts once; an answer
+  regardless; the end-of-call summary posts once; an answer
   arriving after call end is neither spoken nor summarized — and if rule 2 had already sent a
   structural copy, that copy stays sent.
 - **Billing:** all four rate legs priced by `domain/billing.py` (not duplicated in the relay) and
@@ -1100,6 +1187,15 @@ unit and this is genuinely optional.
     frictions are the runner's hardcoded `TUTOR_EXTRACTOR.timeout_ms` and `companion_type` naming.
     If either turns out to be structural, the fork gets its reason written down; "the existing
     consumer persists" is not one.
+
+14. **Several function calls in one realtime response** (§4.7 parallelism). Spike 0.1 exercised one
+   call at a time. Confirm that `gpt-realtime-2.1` emits several `function_call` items in one
+   response and accepts their outputs out of order. If it does not, parallelism degrades to
+   sequential calls; nothing else in §4.7 changes.
+15. **Fast-specialist latency on a call.** `search_web` runs at BALANCED today (ECO only for
+   `fetch_url`). Measure spoken time-to-answer on the first slice 2 calls before tuning. If it is
+   too slow, `LELIK.intent_remap` can point it at a faster variant, the same lever Smart already has.
+
 
 ## 10. Rollback
 
