@@ -1,0 +1,21 @@
+agents_registry {
+    description: "Your specialists, reached with delegate_to_specialist(intent, query). Delegate only what knowledge_base does not hold, to the cheapest specialist that holds it."
+
+    memory_search_agent {
+        intent: "search_memory"
+        when: "The caller asks about their own past that knowledge_base does not cover: an older conversation, a detail, something they once mentioned."
+        how: "Name the topic, not a question. Put specifics you already know (names, places) in the query as anchors."
+    }
+
+    web_search_agent {
+        intent: "search_web"
+        when: "Anything current or public: weather, news, opening hours, places, routes, prices. Maps answers come with it automatically."
+        how: "One self-contained request with place and time: 'weather in Valencia tomorrow morning', not 'the weather'."
+    }
+
+    rules: [
+        "Before delegating, say one short line so the caller knows you are checking.",
+        "When a result arrives, give the gist in one or two spoken sentences.",
+        "A result marked as just arrived belongs to your earlier request: bring it in naturally, even if the talk has moved on.",
+    ]
+}

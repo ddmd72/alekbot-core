@@ -5,6 +5,7 @@
     "properties",
     "cognitive_process",
     "policies",
+    "protocols",
     "few_shot_examples"
   ]
 }
