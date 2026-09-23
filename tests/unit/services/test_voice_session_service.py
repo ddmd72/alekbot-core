@@ -182,6 +182,8 @@ async def test_speech_started_with_no_active_response_does_not_cancel():
     realtime_session = AsyncMock()
 
     async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})  # Lelik's opening line
+        yield RealtimeSessionEvent(type="response_done", payload={})
         yield RealtimeSessionEvent(type="speech_started", payload={})
 
     realtime_session.receive_events = MagicMock(return_value=events())
@@ -397,15 +399,16 @@ async def test_silence_watchdog_prompts_once_after_timeout(monkeypatch):
     realtime_session = AsyncMock()
 
     async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})  # Lelik's opening line
+        yield RealtimeSessionEvent(type="response_done", payload={})
         await asyncio.sleep(10)
         yield  # pragma: no cover
 
     await _run_open_call(realtime_session, events, PlaybackTracker(), seconds=0.3, silence_timeout_s=0.05)
 
-    realtime_session.submit_message.assert_awaited_once()
-    role, text = realtime_session.submit_message.await_args.args
-    assert role == "system" and "silent" in text
-    realtime_session.request_response.assert_awaited_once()
+    silence = [c.args for c in realtime_session.submit_message.await_args_list if "silent" in c.args[1]]
+    assert silence == [("system", "[The caller has been silent for 0 seconds.]")]
+    assert realtime_session.request_response.await_count == 2  # opening line + silence check
 
 
 @pytest.mark.asyncio
@@ -414,6 +417,8 @@ async def test_silence_watchdog_rearms_after_the_caller_speaks(monkeypatch):
     realtime_session = AsyncMock()
 
     async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})  # Lelik's opening line
+        yield RealtimeSessionEvent(type="response_done", payload={})
         await asyncio.sleep(0.15)
         yield RealtimeSessionEvent(type="speech_started", payload={})
         yield RealtimeSessionEvent(type="speech_stopped", payload={})
@@ -421,7 +426,8 @@ async def test_silence_watchdog_rearms_after_the_caller_speaks(monkeypatch):
 
     await _run_open_call(realtime_session, events, PlaybackTracker(), seconds=0.4, silence_timeout_s=0.05)
 
-    assert realtime_session.submit_message.await_count == 2
+    silence = [c for c in realtime_session.submit_message.await_args_list if "silent" in c.args[1]]
+    assert len(silence) == 2
 
 
 @pytest.mark.asyncio
@@ -432,12 +438,14 @@ async def test_silence_watchdog_waits_while_lelik_audio_is_still_playing(monkeyp
     playback.record_sent(_chunk(5000).payload)  # sent, never acknowledged as played
 
     async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})  # Lelik's opening line
+        yield RealtimeSessionEvent(type="response_done", payload={})
         await asyncio.sleep(10)
         yield  # pragma: no cover
 
     await _run_open_call(realtime_session, events, playback, seconds=0.2, silence_timeout_s=0.05)
 
-    realtime_session.submit_message.assert_not_awaited()
+    assert not [c for c in realtime_session.submit_message.await_args_list if "silent" in c.args[1]]
 
 
 @pytest.mark.asyncio
@@ -446,12 +454,14 @@ async def test_silence_watchdog_waits_while_a_response_is_active(monkeypatch):
     realtime_session = AsyncMock()
 
     async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})  # Lelik's opening line
+        yield RealtimeSessionEvent(type="response_done", payload={})
         yield RealtimeSessionEvent(type="response_created", payload={})
         await asyncio.sleep(10)
 
     await _run_open_call(realtime_session, events, PlaybackTracker(), seconds=0.2, silence_timeout_s=0.05)
 
-    realtime_session.submit_message.assert_not_awaited()
+    assert not [c for c in realtime_session.submit_message.await_args_list if "silent" in c.args[1]]
 
 
 @pytest.mark.asyncio
@@ -572,11 +582,15 @@ async def test_committed_turn_gets_the_persona_anchor_then_a_reply():
     realtime_session.request_response.side_effect = lambda: calls.append("response.create")
 
     async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})  # Lelik's opening line
+        yield RealtimeSessionEvent(type="response_done", payload={})
         yield RealtimeSessionEvent(type="turn_committed", payload={"item_id": "item_user_1"})
 
     realtime_session.receive_events = MagicMock(return_value=events())
     await _run(_service_with(realtime_session, _PERSONA_INSTRUCTIONS))
 
+    assert calls[0] == ("system", "[The caller has just picked up the phone you called. Speak first.]")
+    calls = calls[3:]  # pickup note, opening anchor, opening response.create
     assert len(calls) == 2
     role, anchor = calls[0]
     assert role == "system"
@@ -590,6 +604,8 @@ async def test_every_turn_is_anchored_and_anchors_are_not_deleted():
     realtime_session = AsyncMock()
 
     async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})  # Lelik's opening line
+        yield RealtimeSessionEvent(type="response_done", payload={})
         for i in range(3):
             yield RealtimeSessionEvent(type="turn_committed", payload={"item_id": f"item_user_{i}"})
             yield RealtimeSessionEvent(type="response_created", payload={})
@@ -598,8 +614,9 @@ async def test_every_turn_is_anchored_and_anchors_are_not_deleted():
     realtime_session.receive_events = MagicMock(return_value=events())
     await _run(_service_with(realtime_session, _PERSONA_INSTRUCTIONS))
 
-    assert realtime_session.submit_message.await_count == 3
-    assert realtime_session.request_response.await_count == 3
+    # pickup note + opening anchor + one anchor per turn; opening reply + one per turn
+    assert realtime_session.submit_message.await_count == 5
+    assert realtime_session.request_response.await_count == 4
 
 
 @pytest.mark.asyncio
@@ -607,13 +624,18 @@ async def test_prompt_without_persona_sections_still_replies_without_an_anchor()
     realtime_session = AsyncMock()
 
     async def events():
+        yield RealtimeSessionEvent(type="response_created", payload={})  # Lelik's opening line
+        yield RealtimeSessionEvent(type="response_done", payload={})
         yield RealtimeSessionEvent(type="turn_committed", payload={"item_id": "item_user_1"})
 
     realtime_session.receive_events = MagicMock(return_value=events())
     await _run(_service_with(realtime_session, "you are Lelik"))
 
-    realtime_session.submit_message.assert_not_awaited()
-    realtime_session.request_response.assert_awaited_once()
+    # Only the pickup note: no persona sections, so no anchor.
+    assert [c.args[1] for c in realtime_session.submit_message.await_args_list] == [
+        "[The caller has just picked up the phone you called. Speak first.]",
+    ]
+    assert realtime_session.request_response.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -628,5 +650,30 @@ async def test_turn_committed_while_a_response_is_active_starts_nothing():
     realtime_session.receive_events = MagicMock(return_value=events())
     await _run(_service_with(realtime_session, _PERSONA_INSTRUCTIONS))
 
-    realtime_session.submit_message.assert_not_awaited()
-    realtime_session.request_response.assert_not_awaited()
+    # Only the opening happened: the committed turn started nothing while it was active.
+    assert realtime_session.submit_message.await_count == 2  # pickup note + opening anchor
+    realtime_session.request_response.assert_awaited_once()
+
+
+
+@pytest.mark.asyncio
+async def test_lelik_speaks_first_as_soon_as_the_session_opens():
+    """He placed the call: the caller's own 'hello?' usually falls before the media stream
+    exists, and waiting for another one left both sides silent on every live call."""
+    calls = []
+    realtime_session = AsyncMock()
+    realtime_session.open.side_effect = lambda **kw: calls.append("open")
+    realtime_session.submit_message.side_effect = lambda role, text: calls.append(("msg", text[:20]))
+    realtime_session.request_response.side_effect = lambda: calls.append("response.create")
+
+    async def events():
+        return
+        yield  # pragma: no cover
+
+    realtime_session.receive_events = MagicMock(return_value=events())
+    await _run(_service_with(realtime_session, _PERSONA_INSTRUCTIONS))
+
+    assert calls[0] == "open"
+    assert calls[1] == ("msg", "[The caller has just")
+    assert calls[2] == ("msg", "PERSONALITY ANCHOR —")
+    assert calls[3] == "response.create"

@@ -23,9 +23,9 @@ _TRANSCRIPTION_MODEL = "gpt-transcribe"
 # One voice for every call until it becomes a per-user setting. OpenAI recommends marin/cedar
 # for quality; cedar reads male, which fits Lelik. Fixed per session once audio is emitted.
 _VOICE = "cedar"
-# Post-generation speed-up (0.25-1.5, default 1.0): at 1.0 Lelik sounded measured and slow.
-# Pace WITHIN a reply is the model's (SPOKEN_DELIVERY `rhythm`); this scales it uniformly.
-_SPEED = 1.15
+# Post-generation speed multiplier (0.25-1.5). 1.15 was tried and audibly degraded the audio
+# (line-noise artefacts over 8 kHz telephony), so it stays at the provider default.
+_SPEED = 1.0
 _TURN_DETECTION = {
     "type": "semantic_vad",
     "eagerness": "low",
