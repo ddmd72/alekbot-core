@@ -3,14 +3,15 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..domain.entities import FactDomain
+from ..domain.lelik_context import LelikContext
 from ..domain.llm import Message
 from ..domain.user import UserBotConfig
 from ..ports.repository import FactRepository
-from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from ..domain.notification import NotificationChannel
     from .user_notification_service import UserNotificationService
 
 # The primary channel's last K messages, as stored: a model turn's `text` is already its
@@ -23,7 +24,7 @@ _KNOWN_DOMAINS = frozenset(d.value for d in FactDomain)
 
 
 class LelikPersonaService:
-    """Assembles Lelik's call-start system prompt (RFC VOICE_COMPANION §4.8).
+    """Assembles the context Lelik's prompt is built from (§4.8); `LelikAgent` builds the prompt.
 
     Lelik starts warm: the whole biographical cache minus the user's
     `voice_excluded_fact_domains`, standing directives, the primary channel's
@@ -32,31 +33,28 @@ class LelikPersonaService:
 
     def __init__(
         self,
-        prompt_builder: PromptBuilderPort,
         fact_repository: FactRepository,
         session_store: SessionStore,
         notification_service: "UserNotificationService",
         config: UserBotConfig,
     ) -> None:
-        self._prompt_builder = prompt_builder
         self._facts = fact_repository
         self._sessions = session_store
         self._notifications = notification_service
         self._config = config
 
-    async def build_instructions(self, user_id: str, account_id: str) -> str:
-        """Raises on a fact-store or assembly failure — the caller fails the call closed."""
+    async def assemble(self, user_id: str, account_id: str) -> LelikContext:
+        """Raises on a fact-store failure — the caller fails the call closed."""
         facts = await self._facts.get_biographical_context_cached(account_id)
-        return await self._prompt_builder.build_for_agent(
-            agent_type="lelik",
-            user_id=user_id,
-            account_id=account_id,
+        return LelikContext(
             biographical_facts=self._without_excluded(facts or []),
             conversation_history=await self._recent_history(user_id),
-            include_biographical=True,
-            include_directives=True,
-            include_datetime=True,
         )
+
+    async def primary_channel(self, user_id: str) -> Optional["NotificationChannel"]:
+        # The chain notify_call_summary writes through: Lelik reads, and delegates
+        # into, the session his own call summaries land in.
+        return await self._notifications.resolve_channel(user_id)
 
     def _without_excluded(self, facts: List[Dict]) -> List[Dict]:
         excluded = set(self._config.voice_excluded_fact_domains)
@@ -66,9 +64,7 @@ class LelikPersonaService:
         return [f for f in facts if isinstance(f, dict) and f.get("domain") not in excluded]
 
     async def _recent_history(self, user_id: str) -> List[Dict]:
-        # Same resolution chain notify_call_summary writes through — Lelik must read the
-        # session his own call summaries land in.
-        channel = await self._notifications.resolve_channel(user_id)
+        channel = await self.primary_channel(user_id)
         if channel is None:
             logger.info(f"[LelikPersona] No primary/last-active channel for {user_id[:8]}, no history slice")
             return []
