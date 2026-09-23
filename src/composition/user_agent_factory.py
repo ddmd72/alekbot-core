@@ -83,6 +83,7 @@ from ..agents.image_generation_agent import ImageGenerationAgent
 from ..agents.video_generation_agent import VideoGenerationAgent
 from ..agents.tutor_agent import TutorAgent
 from ..agents.lelik_agent import LelikAgent
+from ..agents.alek_gateway_agent import AlekGatewayAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
@@ -834,6 +835,16 @@ class UserAgentFactory(AgentFactoryPort):
             ),
         )
 
+    def _build_alek_gateway(self, user_id: str, ctx: _UserContext) -> Optional[AlekGatewayAgent]:
+        if not self.notification_service:
+            logger.warning("[UserAgentFactory] No notification_service, skipping alek gateway")
+            return None
+        return AlekGatewayAgent(
+            config=AgentConfig(agent_id=f"alek_agent_{user_id}", agent_type="alek",
+                               timeout_ms=300_000, capabilities=["ask_alek"]),
+            notification_service=self.notification_service,
+        )
+
     def _build_image_generation(
         self, user_id: str, ctx: _UserContext,
     ) -> Optional[ImageGenerationAgent]:
@@ -926,6 +937,7 @@ class UserAgentFactory(AgentFactoryPort):
         "video_generation": _build_video_generation,
         "tutor": _build_tutor,
         "lelik": _build_lelik,
+        "alek": _build_alek_gateway,
     }
 
     _LAZY_AGENT_IDS: Dict[str, str] = {
@@ -941,6 +953,7 @@ class UserAgentFactory(AgentFactoryPort):
         "video_generation": "video_generation_agent",
         "tutor": "tutor_agent",
         "lelik": "lelik_agent",
+        "alek": "alek_agent",
     }
 
     # ------------------------------------------------------------------
