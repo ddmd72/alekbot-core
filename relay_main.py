@@ -70,6 +70,10 @@ async def main() -> None:
         realtime_session_factory=lambda: OpenAIRealtimeAdapter(api_key=openai_api_key),
         control_plane=control_plane,
         alert_sink=alert_sink,
+        # Owner's call 2026-09-23, raised from spike 0.4's `medium`: the per-turn anchor asks
+        # the model to plan each sentence's rhythm and emotion before speaking, and that
+        # planning happens in reasoning. Cost: reasoning bills as text output ($24/1M).
+        reasoning_effort="high",
     )
     handler = MediaStreamHandler(session_service=session_service)
 
