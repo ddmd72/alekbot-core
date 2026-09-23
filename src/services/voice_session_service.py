@@ -1,7 +1,8 @@
 import asyncio
+import json
 from datetime import datetime, timezone
-from dataclasses import dataclass
-from typing import AsyncIterator, Awaitable, Callable, Optional
+from dataclasses import dataclass, field
+from typing import AsyncIterator, Awaitable, Callable, List, Optional, Set, Tuple
 
 from src.domain.llm import build_persona_anchor
 from src.domain.request_context import RequestContext
@@ -21,6 +22,13 @@ _SILENCE_NOTE = "[The caller has been silent for {seconds} seconds.]"
 # one left both sides silent for 10-20 s on every live call (2026-09-23).
 _PICKUP_NOTE = "[The caller has just picked up the phone you called. Speak first.]"
 _WATCHDOG_TICK_S = 0.25
+_DELEGATION_TIMEOUT_S = 90.0
+# Attached to every delegation by the relay, never left to the model's retention (RFC §4.7).
+_CALL_CONTEXT_TURNS = 6
+_LATE_ANSWER_NOTE = "[The answer to your earlier request just arrived: {output}]"
+_DELEGATION_TIMED_OUT = "No answer arrived in time. Tell the caller in one line that it did not come through."
+_DELEGATION_FAILED = "The request failed. Tell the caller in one line that it did not go through."
+_WAITING_NOTE = "[Still waiting for the answer to your request. Keep the caller company in one short line.]"
 
 
 @dataclass
@@ -36,6 +44,10 @@ class _CallState:
     # Built once per call from the session instructions; None when the prompt carries
     # no persona sections to point at.
     persona_anchor: Optional[str] = None
+    caller_turns: int = 0  # speech_started count: "did the caller speak since dispatch?"
+    response_owed: bool = False
+    queued_answers: List[Tuple[str, str, bool]] = field(default_factory=list)
+    delegations: Set[asyncio.Task] = field(default_factory=set)
 
 
 class VoiceSessionService:
@@ -49,12 +61,14 @@ class VoiceSessionService:
         alert_sink: AlertSinkPort,
         reasoning_effort: str = "medium",
         silence_timeout_s: float = 8.0,
+        delegation_timeout_s: float = _DELEGATION_TIMEOUT_S,
     ) -> None:
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
         self._alert_sink = alert_sink
         self._reasoning_effort = reasoning_effort
         self._silence_timeout_s = silence_timeout_s
+        self._delegation_timeout_s = delegation_timeout_s
 
     async def handle_call(
         self,
@@ -93,7 +107,8 @@ class VoiceSessionService:
             # marker (RFC §3) only releases via TTL instead of immediately, and the
             # failure leaves no record on the main-service side.
             try:
-                await session.open(instructions=config["instructions"], reasoning_effort=self._reasoning_effort, tools=[])
+                await session.open(instructions=config["instructions"], reasoning_effort=self._reasoning_effort,
+                                   tools=config.get("tools", []))
             except Exception as exc:
                 logger.error(f"voice call {ticket}: failed to open realtime session: {exc}")
                 raise
@@ -111,13 +126,15 @@ class VoiceSessionService:
 
             forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
             consume_task = asyncio.ensure_future(
-                self._consume_events(ticket, session, buffer, send_outbound_audio, clear_outbound_audio, state)
+                self._consume_events(ticket, config, session, buffer, send_outbound_audio, clear_outbound_audio, state)
             )
             # The watchdog never ends on its own; the call ends with the audio streams.
             watchdog_task = asyncio.ensure_future(self._watch_silence(session, state))
             await asyncio.wait({forward_task, consume_task}, return_when=asyncio.FIRST_COMPLETED)
         finally:
             tasks = [task for task in (forward_task, consume_task, watchdog_task) if task is not None]
+            # In-flight delegations die with the call: their answer served a conversation that is gone.
+            tasks += list(state.delegations)
             for task in tasks:
                 if not task.done():
                     task.cancel()
@@ -143,6 +160,7 @@ class VoiceSessionService:
     async def _consume_events(
         self,
         ticket: str,
+        config: dict,
         session: RealtimeSessionPort,
         buffer: VoiceCallBuffer,
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
@@ -157,6 +175,7 @@ class VoiceSessionService:
                 turn_start = datetime.now(timezone.utc)
                 state.response_active = True
             elif event.type == "speech_started":
+                state.caller_turns += 1
                 state.caller_speaking = True
                 state.silence_prompted = False
                 # The caller started talking over Lelik (RFC §4.7; mechanism validated in
@@ -177,6 +196,8 @@ class VoiceSessionService:
                     state.item_id = item_id
                     state.item_start_bytes = state.playback.sent_bytes
                 await send_outbound_audio(event.payload["frame"])
+            elif event.type == "tool_call":
+                self._start_delegation(ticket, config, session, state, buffer, event.payload, pending_request_text)
             elif event.type == "user_transcript":
                 pending_request_text += event.payload["text"]
             elif event.type == "model_transcript":
@@ -198,6 +219,7 @@ class VoiceSessionService:
                 ))
                 pending_request_text = ""
                 pending_response_text = ""
+                await self._flush_answers(session, state)
             elif event.type == "error":
                 logger.error(f"voice call {ticket}: provider error {event.payload.get('message')}")
                 await self._alert_sink.post(f"Voice call {ticket} provider error: {event.payload.get('message')}")
@@ -237,6 +259,7 @@ class VoiceSessionService:
         if state.persona_anchor:
             await session.submit_message("system", state.persona_anchor)
         state.response_active = True
+        state.response_owed = False
         await session.request_response()
 
     async def _watch_silence(self, session: RealtimeSessionPort, state: _CallState) -> None:
@@ -255,12 +278,91 @@ class VoiceSessionService:
             if state.silence_prompted or now - quiet_since < self._silence_timeout_s:
                 continue
             state.silence_prompted = True
-            await session.submit_message(
-                "system", _SILENCE_NOTE.format(seconds=round(self._silence_timeout_s)),
-            )
+            note = _WAITING_NOTE if state.delegations else _SILENCE_NOTE.format(seconds=round(self._silence_timeout_s))
+            await session.submit_message("system", note)
             state.response_active = True
             await session.request_response()
 
     async def _forward_inbound(self, session: RealtimeSessionPort, inbound_audio: AsyncIterator[AudioFrame]) -> None:
         async for frame in inbound_audio:
             await session.send_audio(frame)
+
+    def _start_delegation(
+        self, ticket: str, config: dict, session: RealtimeSessionPort, state: _CallState,
+        buffer: VoiceCallBuffer, payload: dict, pending_request_text: str,
+    ) -> None:
+        try:
+            arguments = json.loads(payload.get("arguments") or "{}")
+        except ValueError:
+            arguments = {}
+        call_context = buffer.recent_exchanges(_CALL_CONTEXT_TURNS)
+        if pending_request_text:
+            call_context.append({"role": "user", "text": pending_request_text})
+        # Taken here, not when the task first runs: the event loop keeps consuming events
+        # before the task starts, and a caller turn in between must count as an interruption.
+        dispatched_at = state.caller_turns
+        # Tracked, never fire-and-forget (RUF006): the call's teardown cancels what is left.
+        task = asyncio.ensure_future(self._run_delegation(
+            ticket, config, session, state, payload.get("call_id"),
+            arguments if isinstance(arguments, dict) else {}, call_context, dispatched_at,
+        ))
+        state.delegations.add(task)
+        task.add_done_callback(state.delegations.discard)
+
+    async def _run_delegation(
+        self, ticket: str, config: dict, session: RealtimeSessionPort, state: _CallState,
+        call_id: str, arguments: dict, call_context: list, dispatched_at: int,
+    ) -> None:
+        try:
+            output = await asyncio.wait_for(
+                self._control_plane.delegate(
+                    user_id=config["user_id"], account_id=config["account_id"],
+                    arguments=arguments, call_context=call_context,
+                ),
+                timeout=self._delegation_timeout_s,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"voice call {ticket}: delegation {call_id} timed out")
+            output = _DELEGATION_TIMED_OUT
+        except asyncio.CancelledError:
+            logger.info(f"voice call {ticket}: call ended, delegation {call_id} discarded")
+            raise
+        except Exception as exc:
+            # No retry: it re-runs the whole pipeline (double spend, double chat copy).
+            logger.error(f"voice call {ticket}: delegation {call_id} failed: {exc}")
+            output = _DELEGATION_FAILED
+        await self._resolve_late_answer(session, state, call_id, output, state.caller_turns > dispatched_at)
+
+    async def _resolve_late_answer(
+        self, session: RealtimeSessionPort, state: _CallState, call_id: str, output: str, interrupted: bool,
+    ) -> None:
+        # The one seam RFC §4.7 names; swap the policy here, nowhere else.
+        if state.response_active:
+            # response.create during an active response is a call-ending provider error.
+            state.queued_answers.append((call_id, output, interrupted))
+            return
+        await self._inject_answer(session, call_id, output, interrupted)
+        await self._reply_or_owe(session, state)
+
+    async def _inject_answer(self, session: RealtimeSessionPort, call_id: str, output: str, interrupted: bool) -> None:
+        # Spike 0.1: after the caller spoke, OpenAI drops a late function_call_output silently.
+        if interrupted:
+            await session.submit_message("system", _LATE_ANSWER_NOTE.format(output=output))
+        else:
+            await session.submit_tool_result(call_id, output)
+
+    async def _reply_or_owe(self, session: RealtimeSessionPort, state: _CallState) -> None:
+        # A caller mid-sentence keeps the floor; their committed turn starts the reply.
+        if state.caller_speaking:
+            state.response_owed = True
+            return
+        await self._reply_to_turn(session, state)
+
+    async def _flush_answers(self, session: RealtimeSessionPort, state: _CallState) -> None:
+        if not state.queued_answers:
+            return
+        queued, state.queued_answers = state.queued_answers, []
+        for call_id, output, interrupted in queued:
+            await self._inject_answer(session, call_id, output, interrupted)
+        # All answers in, then one reply: two response.create can never collide.
+        await self._reply_or_owe(session, state)
