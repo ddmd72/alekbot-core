@@ -73,3 +73,20 @@ class TestFormatting:
         """Assembled prompts indent nested blocks; the scan must not depend on
         column zero."""
         assert build_persona_anchor("  identity {\n  }\n    voice {\n    }") is not None
+
+
+class TestSpokenPacing:
+    """Voice replies plan prosody before the audio exists; text prompts never see this."""
+
+    _TEXT_PROMPT = "identity {\n x\n}\nvoice {\n y\n}\nhumor_engine {\n z\n}"
+
+    def test_spoken_prompt_asks_for_per_sentence_pace_and_emotion(self):
+        anchor = build_persona_anchor(self._TEXT_PROMPT + "\nspoken_delivery {\n w\n}")
+        assert "SPOKEN REPLY — before you speak, choose the rhythm and the emotion of every sentence" in anchor
+        # The rule itself, not a pointer to a named section.
+        assert "Pause for a beat before a punchline" in anchor
+
+    def test_text_prompt_anchor_carries_no_pacing_line(self):
+        anchor = build_persona_anchor(self._TEXT_PROMPT)
+        assert "SPOKEN REPLY" not in anchor
+        assert anchor.endswith("Personalization over safe blandness.")

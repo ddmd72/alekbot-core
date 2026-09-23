@@ -392,3 +392,12 @@ async def test_receive_events_normalizes_turn_committed_with_item_id():
     events = [event async for event in adapter.receive_events()]
 
     assert [(e.type, e.payload) for e in events] == [("turn_committed", {"item_id": "item_user_7"})]
+
+
+@pytest.mark.asyncio
+async def test_open_sets_output_speed():
+    ws = FakeWebSocket(incoming=[])
+    adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
+    await adapter.open(instructions="hi", reasoning_effort="medium", tools=[])
+
+    assert ws.sent[0]["session"]["audio"]["output"]["speed"] == 1.15
