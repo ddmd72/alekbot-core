@@ -9,6 +9,18 @@
     "LANG_MIRROR": {
       "order": 300,
       "non_overridable": false
+    },
+    "ARCHETYPE_INTELLECTUAL_SNIPER": {
+      "order": 20
+    },
+    "VIBE_BATTLE_WEARY": {
+      "order": 30
+    },
+    "VOICE_APHORISTIC": {
+      "order": 40
+    },
+    "HUMOR_PRESET_RANEVSKAYA": {
+      "order": 60
     }
   }
 }

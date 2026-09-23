@@ -568,6 +568,15 @@ The earlier framing — "not through `notify()`, which reformats" — was a fals
 `notify()` is one method among several on that service, and the one being reused writes history
 without reformatting anything.
 
+**The note's shape.** The history gets a user turn `[System: phone call with Lelik, HH:MM–HH:MM
+(N min). The note below was posted to the user's chat.]` (user's timezone, window taken from the turn
+segments), and a model turn `📞 <note>`, which is exactly what was delivered. The first build wrote
+a bare `[System: phone call ended]` and a third-person report ("the caller asked…"). Alek read it as
+a reply of his own that he never gave. The note speaks with the shared character slots and the
+user's `LANG_*` (§4.1). Its length follows what is worth keeping: one line when the call held no new
+fact, decision or open request. Smart's `PROTOCOL_VOICE_PARTNER` tells Alek who Lelik is and how to
+read these pairs.
+
 **Which session, precisely.** A session is per channel (`session_id = f"{user_id}:{channel_id}"`)
 and a phone call has no channel; a synthetic `phone:<E.164>` session would be *isolated* from every
 chat channel, failing Goal 4. **The call writes into the session of the user's primary notification

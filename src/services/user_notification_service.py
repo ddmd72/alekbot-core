@@ -234,22 +234,24 @@ class UserNotificationService:
         user_id: str,
         account_id: str,
         summary: str,
+        call_event: str,
     ) -> None:
         """
-        Deliver an end-of-call summary (voice companion / Lelik, RFC
+        Deliver an end-of-call note (voice companion / Lelik, RFC
         docs/10_rfcs/VOICE_COMPANION_RFC.md §4.9) to the user's channel verbatim
-        (no agent reformatting) AND persist it to session history.
+        AND persist it to session history as an unmistakable event pair:
+        `call_event` (the `[System: phone call with Lelik, …]` line) as the user
+        turn, the delivered note as the model turn. A bare "[System: phone call
+        ended]" followed by a third-person report read to Alek as a reply of his
+        own that he never gave.
 
-        Same shape as notify_text() (verbatim delivery + history append in one
-        try block so a history-write failure doesn't mask a successful
-        delivery), but its own method rather than a thin wrapper: the call
-        site (voice_control_plane_app.py's summary_consumer) always resolves
-        to the user's last-active/primary channel — there is no
-        channel_id_override/session_id to thread through the way async
-        delivery callers of notify_text need. Lelik has no CompanionRecord
-        store (RFC §4.9), so this history append is the only durable trace a
-        call ever leaves.
+        Always resolves to the primary/last-active channel - there is no
+        channel_id_override/session_id to thread through. Lelik has no
+        CompanionRecord store (RFC §4.9), so this history append is the only
+        durable trace a call ever leaves.
         """
+        from ..domain.voice_call_note import CALL_NOTE_PREFIX
+        note = f"{CALL_NOTE_PREFIX}{summary}"
         channel_info = await self.resolve_channel(user_id, None, None)
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping call summary delivery")
@@ -266,7 +268,7 @@ class UserNotificationService:
             return
 
         try:
-            await response_channel.send_long_text(summary)
+            await response_channel.send_long_text(note)
             logger.info(
                 f"📬 [Notification] Call summary delivered to {channel_info.platform} "
                 f"channel={channel_info.channel_id} user={user_id[:8]}"
@@ -277,8 +279,8 @@ class UserNotificationService:
                     session_id=session_id,
                     owner_id=user_id,
                     messages=[
-                        Message(role="user", parts=[MessagePart(text="[System: phone call ended]")]),
-                        Message(role="model", parts=[MessagePart(text=summary, full_text=summary)]),
+                        Message(role="user", parts=[MessagePart(text=call_event)]),
+                        Message(role="model", parts=[MessagePart(text=note, full_text=note)]),
                     ],
                 )
         except Exception as exc:

@@ -906,7 +906,12 @@ async def main():
                     if not summary:
                         logger.warning(f"voice call {call_id}: summarizer returned an empty summary, nothing to deliver")
                         return
-                    await notification_service.notify_call_summary(user_id, account_id, summary)
+                    from src.domain.voice_call_note import call_event_from_turns
+                    profile = await user_repo.get_user(user_id)
+                    await notification_service.notify_call_summary(
+                        user_id, account_id, summary,
+                        call_event=call_event_from_turns(turns, profile.config.timezone if profile else "UTC"),
+                    )
 
                 main_app.register_blueprint(
                     create_voice_control_plane_blueprint(
