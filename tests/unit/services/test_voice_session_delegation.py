@@ -353,3 +353,123 @@ async def test_failure_while_delivering_an_answer_is_logged_and_the_call_goes_on
     assert len(logged) == 1 and logged[0].kwargs.get("exc_info") is True
     session.close.assert_awaited_once()
     control.submit_transcript.assert_awaited_once()
+
+
+# =============================================================================
+# Task B: company while waiting, late answers name their request, relay event logs.
+# =============================================================================
+
+def _replying_session(first_events):
+    """A session whose every response.create is answered by created + done, so the line
+    goes quiet again after each note - the watchdog's real-world rhythm."""
+    queue: asyncio.Queue = asyncio.Queue()
+    for e in first_events:
+        queue.put_nowait(e)
+
+    async def events():
+        while True:
+            yield await queue.get()
+
+    async def reply():
+        queue.put_nowait(E(type="response_created", payload={}))
+        queue.put_nowait(E(type="response_done", payload={}))
+
+    session = AsyncMock()
+    session.receive_events = MagicMock(return_value=events())
+    session.request_response.side_effect = reply
+    return session
+
+
+async def _never(**_):
+    await asyncio.sleep(10)
+
+
+@pytest.mark.asyncio
+async def test_watchdog_keeps_prompting_for_as_long_as_the_delegation_is_pending(monkeypatch):
+    monkeypatch.setattr(voice_module, "_WATCHDOG_TICK_S", 0.01)
+    session = _replying_session([_tool_call()])
+    control = AsyncMock()
+    control.fetch_session_config.return_value = {"instructions": "x", "user_id": "u1", "account_id": "a1", "tools": _TOOLS}
+    control.delegate.side_effect = _never
+
+    async def inbound():
+        await asyncio.sleep(0.4)
+        return
+        yield  # pragma: no cover
+
+    await VoiceSessionService(realtime_session_factory=MagicMock(return_value=session), control_plane=control,
+                              alert_sink=AsyncMock(), silence_timeout_s=0.05).handle_call(
+        ticket="t1", inbound_audio=inbound(), send_outbound_audio=AsyncMock(),
+        clear_outbound_audio=AsyncMock(), playback=PlaybackTracker())
+    notes = [c.args[1] for c in session.submit_message.await_args_list]
+    assert sum("Still waiting" in n for n in notes) >= 2
+    assert not any("has been silent" in n for n in notes)
+
+
+@pytest.mark.asyncio
+async def test_late_answer_note_names_the_request_it_answers():
+    async def slow(**_):
+        await asyncio.sleep(0.05)
+        return "sunny"
+
+    async def events():
+        for e in _opening():
+            yield e
+        yield _tool_call(intent="search_web", query="amazon whey protein links")
+        yield E(type="speech_started", payload={})
+        yield E(type="speech_stopped", payload={})
+        await _hold()
+        yield  # pragma: no cover
+
+    session, _ = await _call(events, slow)
+    notes = [c.args[1] for c in session.submit_message.await_args_list if "just arrived" in c.args[1]]
+    assert len(notes) == 1
+    assert "search_web: amazon whey protein links" in notes[0] and "sunny" in notes[0]
+
+
+def _info_lines(fake_logger):
+    return [c.args[0] for c in fake_logger.info.call_args_list]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_arrival_and_injection_are_logged_without_the_answer_text(monkeypatch):
+    fake_logger = MagicMock()
+    monkeypatch.setattr(voice_module, "logger", fake_logger)
+
+    async def events():
+        for e in _opening():
+            yield e
+        yield _tool_call("c7")
+        await _hold()
+        yield  # pragma: no cover
+
+    await _call(events, AsyncMock(return_value="secret answer text"))
+    lines = _info_lines(fake_logger)
+    assert any(line.startswith("voice call t1:") and "c7" in line and "search_web" in line and "dispatched" in line
+               for line in lines)
+    assert any("c7" in line and "arrived" in line and " ms" in line for line in lines)
+    assert any("c7" in line and "function_call_output" in line for line in lines)
+    logged = [c.args[0] for m in (fake_logger.info, fake_logger.warning, fake_logger.error)
+              for c in m.call_args_list]
+    assert not any("secret answer text" in line for line in logged)
+
+
+@pytest.mark.asyncio
+async def test_empty_response_and_barge_in_are_logged(monkeypatch):
+    fake_logger = MagicMock()
+    monkeypatch.setattr(voice_module, "logger", fake_logger)
+
+    async def events():
+        for e in _opening():  # the opening response carries no transcript
+            yield e
+        yield E(type="response_created", payload={})
+        yield E(type="speech_started", payload={})
+        await _hold()
+        yield  # pragma: no cover
+
+    await _call(events, AsyncMock())
+    lines = _info_lines(fake_logger)
+    assert any(line.startswith("voice call t1:") and "empty transcript" in line for line in lines)
+    assert any(line.startswith("voice call t1:") and "barge-in" in line and "cancelled=True" in line
+               for line in lines)
+    assert any(line.startswith("voice call t1:") and "starting response (pickup)" in line for line in lines)
