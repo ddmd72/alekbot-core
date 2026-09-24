@@ -21,7 +21,12 @@ _JSON_OBJ_RE = re.compile(r"\{[^{}]*\}")
 # Slack's own markup, e.g. "<https://x.y/path|Title>" — matched BEFORE the bare-URL scan so
 # the title never leaks into the extracted URL and the bare scan skips the covered span.
 _SLACK_LINK_RE = re.compile(r'<(https?://[^\s<>|]+)\|([^<>]+)>')
-_TRAILING_PUNCT = ".,;:!?)]}\"'"
+# An escape that can never be part of a URL (newline, tab, quote, backslash, Python's \xNN) ends
+# it. Cut on the escaped text: a Python-only escape makes json.loads fail, so relying on
+# the decoded newline alone let the match run into the next line.
+_ESCAPED_BREAK_RE = re.compile(r"""\\(?:[nrtfbv'"\\]|x[0-9a-fA-F]{2})""")
+# Backslash too: _URL_RE stops before a quote, so an escaped quote after a URL leaves its backslash.
+_TRAILING_PUNCT = ".,;:!?)]}\"'\\"
 
 
 def _clean_url(url: str) -> str:
@@ -91,9 +96,9 @@ def extract_result_links(text: str) -> List[Dict[str, Any]]:
     for match in _URL_RE.finditer(text):
         if _already_covered(match.start()):
             continue
-        # _URL_RE runs over the escaped text, where "\n" is two URL-legal characters; after
-        # unescaping, re-match so a decoded newline (or quote) ends the URL instead of joining it.
-        unescaped = _json_unescape(match.group(0))
+        # _URL_RE runs over the escaped text, where "\n" is two URL-legal characters: cut at the
+        # first escaped break, then re-match after unescaping (a decoded \u000a or \u00a0 ends it too).
+        unescaped = _json_unescape(_ESCAPED_BREAK_RE.split(match.group(0), maxsplit=1)[0])
         bounded = _URL_RE.match(unescaped)
         url = _clean_url(bounded.group(0) if bounded else unescaped)
         if url and url not in titles:
