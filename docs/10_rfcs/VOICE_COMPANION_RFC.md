@@ -906,7 +906,8 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   breath-pulse loop (`src/assets/voice/thinking_cue.ulaw`: 2 s of **G.711** μ-law 8 kHz — encode it
   with a standard encoder such as ffmpeg `pcm_mulaw`, never a home-made companding curve, whose
   silence bytes decode near full scale and whistle on the line; two soft puffs,
-  ~11 dB under speech; picked by ear from band-limited candidates, 2026-09-24). It plays when
+  ~25 dB under speech — at the edge of audibility, the owner's call after the first live call;
+  picked by ear from band-limited candidates, 2026-09-24). It plays when
   something is owed and nothing is audible: a reply to the caller or to an arriving answer has
   started but produced no audio yet, or a delegation is out and playback has caught up — never
   before the pickup greeting or the watchdog's own notes, never while the caller speaks. It starts
