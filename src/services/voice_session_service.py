@@ -114,6 +114,7 @@ class VoiceSessionService:
         cue_grace_s: float = 0.7,
         barge_in_min_speech_s: float = 0.0,
         hangup_after_silence_s: Optional[float] = None,
+        caller_opening: Optional[str] = None,
     ) -> None:
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
@@ -125,6 +126,7 @@ class VoiceSessionService:
         self._cue_grace_s = cue_grace_s
         self._barge_in_min_speech_s = barge_in_min_speech_s
         self._hangup_after_silence_s = hangup_after_silence_s
+        self._caller_opening = caller_opening
 
     async def handle_call(
         self,
@@ -181,6 +183,10 @@ class VoiceSessionService:
             # loop exit never gives the forwarding task a chance to actually run
             # if nothing in the receive loop truly suspends the event loop first -
             # asyncio.wait() below is what forces that handoff.
+            if self._caller_opening:
+                # A user turn, not system text: live, the caller's own request changed how
+                # Lelik spoke where the same rule as system text did not (2026-09-25).
+                await session.submit_message("user", self._caller_opening)
             await session.submit_message("system", _PICKUP_NOTE)
             await self._reply_to_turn(session, state, "pickup")
 
