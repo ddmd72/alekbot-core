@@ -473,3 +473,85 @@ async def test_empty_response_and_barge_in_are_logged(monkeypatch):
     assert any(line.startswith("voice call t1:") and "barge-in" in line and "cancelled=True" in line
                for line in lines)
     assert any(line.startswith("voice call t1:") and "starting response (pickup)" in line for line in lines)
+
+
+# =============================================================================
+# Task B fix round 1: an arriving answer wins the response slot; the empty-response log is exact.
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_answer_injected_while_a_waiting_note_is_due_still_gets_its_own_reply(monkeypatch):
+    """The injection suspends long past the silence timeout, so the re-armed watchdog is due
+    mid-injection; it must not take the slot and bury the answer under a waiting note."""
+    monkeypatch.setattr(voice_module, "_WATCHDOG_TICK_S", 0.01)
+    fake_logger = MagicMock()
+    monkeypatch.setattr(voice_module, "logger", fake_logger)
+
+    async def slow_send(*_args, **_kwargs):
+        await asyncio.sleep(0.2)
+
+    async def events():
+        for e in _opening():
+            yield e
+        yield _tool_call()
+        await _hold()
+        yield  # pragma: no cover
+
+    session = _suspending_session(events)
+    session.submit_tool_result.side_effect = slow_send
+    control = AsyncMock()
+    control.fetch_session_config.return_value = {"instructions": "x", "user_id": "u1", "account_id": "a1", "tools": _TOOLS}
+    control.delegate.side_effect = AsyncMock(return_value="sunny")
+
+    async def inbound():
+        await asyncio.sleep(0.4)
+        return
+        yield  # pragma: no cover
+
+    await VoiceSessionService(realtime_session_factory=MagicMock(return_value=session), control_plane=control,
+                              alert_sink=AsyncMock(), silence_timeout_s=0.05).handle_call(
+        ticket="t1", inbound_audio=inbound(), send_outbound_audio=AsyncMock(),
+        clear_outbound_audio=AsyncMock(), playback=PlaybackTracker())
+    session.submit_tool_result.assert_awaited_once_with("c1", "sunny")
+    assert not any("Still waiting" in c.args[1] for c in session.submit_message.await_args_list)
+    assert not any("already active" in c.args[0] for c in fake_logger.warning.call_args_list)
+    assert any("starting response (answer)" in line for line in _info_lines(fake_logger))
+    assert session.request_response.await_count == 2  # opening + the answer's own reply
+
+
+@pytest.mark.asyncio
+async def test_a_response_that_only_called_a_tool_is_not_logged_as_empty(monkeypatch):
+    fake_logger = MagicMock()
+    monkeypatch.setattr(voice_module, "logger", fake_logger)
+
+    async def events():
+        yield E(type="response_created", payload={})
+        yield E(type="model_transcript", payload={"text": "hi"})
+        yield E(type="response_done", payload={})
+        yield E(type="response_created", payload={})
+        yield _tool_call()
+        yield E(type="response_done", payload={})
+        await _hold()
+        yield  # pragma: no cover
+
+    await _call(events, AsyncMock(return_value="sunny"))
+    assert not any("empty transcript" in line for line in _info_lines(fake_logger))
+
+
+@pytest.mark.asyncio
+async def test_a_response_cancelled_by_barge_in_is_not_logged_as_empty(monkeypatch):
+    fake_logger = MagicMock()
+    monkeypatch.setattr(voice_module, "logger", fake_logger)
+
+    async def events():
+        yield E(type="response_created", payload={})
+        yield E(type="model_transcript", payload={"text": "hi"})
+        yield E(type="response_done", payload={})
+        yield E(type="response_created", payload={})
+        yield E(type="speech_started", payload={})
+        yield E(type="response_done", payload={})
+        await _hold()
+        yield  # pragma: no cover
+
+    await _call(events, AsyncMock())
+    assert not any("empty transcript" in line for line in _info_lines(fake_logger))
