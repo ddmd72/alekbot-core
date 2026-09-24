@@ -336,8 +336,20 @@ because both are "a Twilio voice webhook on the main service" and the mistake is
 **Answering-machine detection is mandatory on the callback, not optional polish.** If the owner does
 not pick up, the callback lands in voicemail — and Lelik would hold a conversation with a greeting
 and then summarize it into the owner's long-term memory (§4.9). Twilio's machine detection on the
-outbound call, hanging up on a machine, is the cheap fix; the expensive failure is a fabricated
-memory, not a wasted leg.
+outbound call is the cheap fix; the expensive failure is a fabricated memory, not a wasted leg.
+
+*Async, and it gates memory, not the call (2026-09-25).* Slice 1 ran it synchronously and hung up on
+a machine at `/voice/answer`. Live, that held every pickup for 4–5 s, and it hung up on the owner
+whenever he opened with a request: Twilio calls any first utterance over
+`MachineDetectionSpeechThreshold` (2.4 s) a machine greeting. Now the adapter sets `AsyncAmd`: the
+call connects at once, and the verdict (`AnsweredBy`, no `CallStatus`) is posted to the same
+`/voice/status?ticket=…` callback, which only records it (`voice_amd:{ticket}`). At
+`/voice/submit-transcript`, `domain.voice_amd.is_voicemail` skips the summary when the verdict is
+`machine_*` **and** the caller spoke in fewer than three turns — a greeting is a monologue, and it can
+split into two turns while Lelik talks over it; an owner who answers Lelik gets past two. A missing
+or `human`/`unknown` verdict is a live call. The one-call marker is released either way. Accepted
+cost: when the owner cannot pick up, Lelik says a line or two to his voicemail, and a real call that
+AMD misjudged and that stayed under three caller turns loses its summary.
 
 **No session exists until the callback connects.** There is no partially-authenticated window, no
 `session.update` upgrade, and one persona assembly. The gate sits on the same side of the boundary
@@ -902,7 +914,10 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   so it never reads as an answer that "just arrived". A tool call belonging to a response the caller
   has already barged into is answered with a fixed "not run" output and never dispatched — running
   it would spend real specialist time (and money) on half a question.
-- **Thinking cue.** A silent gap reads as a dropped line, so the relay fills it with a quiet
+- **Thinking cue — built, currently OFF.** With it on, Lelik's replies were cut after ~0.4–0.8 s
+  on the live calls of 2026-09-24, and the cuts stopped when the relay was routed back to a
+  revision without it; the cause is not found yet, so `relay_main.py` does not pass the clip.
+  Design as built: a silent gap reads as a dropped line, so the relay fills it with a quiet
   breath-pulse loop (`src/assets/voice/thinking_cue.ulaw`: 2 s of **G.711** μ-law 8 kHz — encode it
   with a standard encoder such as ffmpeg `pcm_mulaw`, never a home-made companding curve, whose
   silence bytes decode near full scale and whistle on the line; two soft puffs,
