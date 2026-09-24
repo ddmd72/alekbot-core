@@ -82,6 +82,11 @@ async def main() -> None:
         # the model to plan each sentence's rhythm and emotion before speaking, and that
         # planning happens in reasoning. Cost: reasoning bills as text output ($24/1M).
         reasoning_effort="high",
+        # Owner's call 2026-09-25: line noise and "uh-huh"s cut replies at ~400 ms; interrupting
+        # Lelik now takes a second of speech.
+        barge_in_min_speech_s=1.0,
+        # After the one "still there?", this much more silence hangs up (voicemail, a phone put down).
+        hangup_after_silence_s=20.0,
         # thinking_cue deliberately not passed (off): with it on, Lelik's replies were cut
         # after ~0.4-0.8 s on the live calls of 2026-09-24 and stopped when the relay was
         # routed back to a revision without it. Cause not found yet; the clip stays shipped.

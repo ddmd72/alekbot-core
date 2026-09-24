@@ -269,8 +269,9 @@ persona or language change applies to both. Lelik has only two tokens of his own
   provider's `interrupt_response` **off**, so `VoiceSessionService` alone owns barge-in. It reads
   the heard milliseconds from `PlaybackTracker` (Twilio `mark` echoes) *before* clearing, then runs
   `clear` → `response.cancel` → `conversation.item.truncate`, so the model knows where it was cut
-  off. A relay-side watchdog handles silence (the provider's `idle_timeout_ms` is server_vad-only):
-  8 s of quiet after playback ends injects one system note — except while a delegation is pending,
+  off. Only speech lasting 1 s interrupts (`barge_in_min_speech_s`); shorter blips are dismissed and
+  their turn gets no reply. A relay-side watchdog handles silence (the provider's `idle_timeout_ms` is server_vad-only):
+  8 s of quiet after playback ends injects one system note (and 20 s more of silence after it hangs up) — except while a delegation is pending,
   when it re-arms on its own and has Lelik keep the caller company instead, standing down while an answer is
   mid-injection so the answer always wins the reply slot; a tool call from a response the caller
   already barged into is answered "not run" rather than dispatched. A breath-pulse "thinking cue"
