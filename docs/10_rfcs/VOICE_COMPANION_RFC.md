@@ -903,7 +903,9 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   has already barged into is answered with a fixed "not run" output and never dispatched — running
   it would spend real specialist time (and money) on half a question.
 - **Thinking cue.** A silent gap reads as a dropped line, so the relay fills it with a quiet
-  breath-pulse loop (`src/assets/voice/thinking_cue.ulaw`: 2 s of μ-law 8 kHz, two soft puffs,
+  breath-pulse loop (`src/assets/voice/thinking_cue.ulaw`: 2 s of **G.711** μ-law 8 kHz — encode it
+  with a standard encoder such as ffmpeg `pcm_mulaw`, never a home-made companding curve, whose
+  silence bytes decode near full scale and whistle on the line; two soft puffs,
   ~11 dB under speech; picked by ear from band-limited candidates, 2026-09-24). It plays when
   something is owed and nothing is audible: a reply to the caller or to an arriving answer has
   started but produced no audio yet, or a delegation is out and playback has caught up — never
