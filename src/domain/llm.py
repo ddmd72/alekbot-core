@@ -127,16 +127,15 @@ def build_persona_anchor(system_instruction: Optional[str]) -> Optional[str]:
         return None
 
     listed = "\n".join(f"- {section}" for section in present)
-    # Spoken replies only: prosody is planned before the audio exists, so the anchor states
-    # the rhythm rule itself (not a pointer to a section) at the highest-attention position.
-    # Text prompts have no spoken_delivery and never see this.
+    # Spoken replies only, at the highest-attention position; text prompts have no
+    # spoken_delivery and never see this. It describes the result, not a technique: the
+    # per-sentence prosody rules it replaced read as a narrator on every live call, and the
+    # owner's own "livelier, like a person on the phone, no theatre" fixed it (2026-09-25).
     spoken = (
-        "\n\nSPOKEN REPLY — your normal pace is about 10% faster than your default speaking "
-        "speed: brisk, like a quick-talking friend on the phone, never an audiobook narrator. "
-        "Brisk, not rushed. Before you speak, choose the rhythm and the emotion of every "
-        "sentence from what it means. Rush through the throwaway parts. Slow down on the word "
-        "that matters. Pause for a beat before a punchline, a verdict or bad news. Each "
-        "sentence carries its own mood. One even pace or one mood for the whole reply is a failure."
+        "\n\nSPOKEN REPLY — talk like a real person on a phone call, not a narrator or a voice "
+        "assistant: short phrases, natural pauses, ordinary stress. Don't emphasize every word "
+        "and don't perform emotions; let the meaning carry the tone. Quick, relaxed pace. The "
+        "listener should hear only a friend on the phone."
         if "spoken_delivery" in present else ""
     )
     return (
