@@ -31,6 +31,7 @@ architecture test run instead (see task-13-report.md).
 import asyncio
 import os
 import signal
+from pathlib import Path
 
 import websockets
 
@@ -40,6 +41,13 @@ from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.handlers.media_stream_handler import MediaStreamHandler
 from src.services.voice_session_service import VoiceSessionService
 from src.utils.logger import logger
+
+# Breath-pulse filler played while Lelik thinks or waits (owner pick B2, 2026-09-24).
+_THINKING_CUE_PATH = Path(__file__).parent / "src" / "assets" / "voice" / "thinking_cue.ulaw"
+
+
+def _load_thinking_cue() -> bytes:
+    return _THINKING_CUE_PATH.read_bytes()
 
 
 def _fetch_id_token(audience: str) -> str:
@@ -74,6 +82,7 @@ async def main() -> None:
         # the model to plan each sentence's rhythm and emotion before speaking, and that
         # planning happens in reasoning. Cost: reasoning bills as text output ($24/1M).
         reasoning_effort="high",
+        thinking_cue=_load_thinking_cue(),
     )
     handler = MediaStreamHandler(session_service=session_service)
 
