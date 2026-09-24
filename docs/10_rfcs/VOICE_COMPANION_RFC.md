@@ -674,9 +674,16 @@ delivered during the call is read *afterwards* anyway, and per §4.3 discretiona
 across a long conversation is the model's weakest axis.
 
 1. **During the call, nothing goes to chat by default.**
-2. **Structural exception — reading-shaped content always goes.** If Smart's `link_list` or
-   `rich_content` is non-empty, a chat copy is sent regardless of anything Lelik decided. Reading a
-   URL aloud is useless (§1), so this is a property of the answer, not a judgment call.
+2. **Structural exception — reading-shaped content always goes.** Generalized beyond `ask_alek`:
+   any Lelik delegation whose result contains links gets a bare-anchor chat copy, sent regardless
+   of anything Lelik decided — reading a URL aloud is useless (§1), so this is a property of the
+   result, not a judgment call. `LelikAgent.delegate` runs this for every specialist except
+   `ask_alek`, whose own structured answer (`link_list`/`structured_data`, or — when both are
+   empty — links extracted from Smart's plain text) is instead copied by `AlekGatewayAgent`, so the
+   two paths never double-post. A **failed** result (rejection, exception, max retries, a fan-out
+   whose primary section errored) never posts a copy — its error string can itself contain a URL
+   (e.g. an OpenAI 429 pointing at `platform.openai.com`). Both copy paths are wrapped in a 5 s
+   timeout: the spoken answer must not wait on a slow or hung chat delivery.
 3. **Explicit request — an intent, deferred.** "Send that to my chat" becomes a `send_to_chat`
    intent on Lelik's allowlist, served by a zero-LLM agent over `notify_raw`. It is not a second
    tool: the standard one carries it. It is the easy kind of judgment, recognizing an explicit
@@ -885,7 +892,16 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   for `server_vad` only. So the relay runs a watchdog: once Lelik's audio has finished *playing*,
   no response is active and the caller is not speaking, 8 s of quiet injects one system note and a
   `response.create` (`SPOKEN_DELIVERY` answers it with a single light check). It re-arms only when
-  the caller speaks.
+  the caller speaks — **except while a delegation is pending**, when it re-arms on its own and keeps
+  firing a "keep the caller company" note instead (`SPOKEN_DELIVERY`'s `giving_the_floor` allows a
+  few sentences here), so a slow specialist never leaves dead air. It stands down while an answer is
+  mid-injection (`answers_in_flight`), so an arriving answer always wins the reply slot instead of
+  being buried under a waiting note. A **late** answer — injected after the caller has spoken again
+  — names the request it answers (`intent: query`, truncated) rather than reading as a reply to
+  whatever the caller just said; a late **timeout** uses distinct wording ("got no answer in time")
+  so it never reads as an answer that "just arrived". A tool call belonging to a response the caller
+  has already barged into is answered with a fixed "not run" output and never dispatched — running
+  it would spend real specialist time (and money) on half a question.
 
 **Rejected — carrier-direct SIP.** Cheapest and marginally lower latency, but it puts the media path
 outside every observability mechanism we rely on; the Twilio↔provider binding lives in a console no
@@ -1066,8 +1082,9 @@ live calls (2026-09-24 build); see §9 items 3, 14, 15 for the open questions th
    `PROTOCOL_LELIK_DELEGATION` covers which intent, when to call in parallel, and how to speak a
    provisional answer. Smart's `PROTOCOL_VOICE_PARTNER` drops its "no tools yet" line, and
    `capabilities.py` follows.
-6. **Chat delivery (§4.10):** rule 2's structural copy for `link_list`/`rich_content`, and rule 5's
-   asymmetry (a copy already sent is not retracted). `send_to_chat` stays deferred.
+6. **Chat delivery (§4.10):** rule 2's structural copy — generalized to any Lelik delegation with
+   links, not only `ask_alek`'s `link_list`/`rich_content` — and rule 5's asymmetry (a copy already
+   sent is not retracted). `send_to_chat` stays deferred.
 7. **Nothing new in billing.** Specialists and Alek are priced per model by `TokenLedger` as in text,
    and slice 1 built the realtime legs. Confirm a call spanning both bills each at its own rate (§8).
 
@@ -1120,9 +1137,9 @@ unit and this is genuinely optional.
   ticket that is unknown, expired, or already consumed; the outbound call's answer-URL is not the
   auth webhook's route (the loop guard); machine detection hangs up without opening a session or
   writing a summary; binding without OTP is refused.
-- **Chat policy** (§4.10): a plain answer posts nothing; an answer with non-empty `link_list` posts
-  regardless; the end-of-call summary posts once; an answer
-  arriving after call end is neither spoken nor summarized — and if rule 2 had already sent a
+- **Chat policy** (§4.10): a plain answer posts nothing; any delegation result with links posts a
+  bare-anchor copy regardless (a failed result never does); the end-of-call summary posts once; an
+  answer arriving after call end is neither spoken nor summarized — and if rule 2 had already sent a
   structural copy, that copy stays sent.
 - **Billing:** all four rate legs priced by `domain/billing.py` (not duplicated in the relay) and
   reported through `QuotaService.record_usage` **by the main service**, from usage the relay

@@ -256,9 +256,14 @@ persona or language change applies to both. Lelik has only two tokens of his own
   the heard milliseconds from `PlaybackTracker` (Twilio `mark` echoes) *before* clearing, then runs
   `clear` → `response.cancel` → `conversation.item.truncate`, so the model knows where it was cut
   off. A relay-side watchdog handles silence (the provider's `idle_timeout_ms` is server_vad-only):
-  8 s of quiet after playback ends injects one system note. `create_response` is off, so every reply
-  is started by the relay after appending the text path's `build_persona_anchor` as a `system` item.
-  Anchors are never deleted, because a failed delete is a call-ending provider error (RFC §5.2).
+  8 s of quiet after playback ends injects one system note — except while a delegation is pending,
+  when it re-arms on its own and keeps Lelik company instead, standing down while an answer is
+  mid-injection so the answer always wins the reply slot; a tool call from a response the caller
+  already barged into is answered "not run" rather than dispatched. `create_response` is off, so
+  every reply is started by the relay after appending the text path's `build_persona_anchor` as a
+  `system` item. Anchors are never deleted, because a failed delete is a call-ending provider error
+  (RFC §5.2). Any Lelik delegation result with links gets a bare-anchor chat copy (a failed result
+  never does), bounded at 5 s so a slow chat delivery never holds up the spoken answer.
 - **Two agents, deliberately not one.** `LelikAgent` is a standard delegating agent (Slice 2), not a
   call-placer only: three entry points — `execute()` places the callback, `session_config()` builds
   the realtime session's instructions + tool declaration (over `LELIK.allowed_intents`, the same
