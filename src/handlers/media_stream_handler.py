@@ -80,6 +80,24 @@ class MediaStreamHandler:
                 return
             await ws.send(json.dumps({"event": "clear", "streamSid": stream_sid}))
 
+        async def run_call(call_ticket: str) -> None:
+            try:
+                await self._session_service.handle_call(
+                    ticket=call_ticket,
+                    inbound_audio=inbound_frames(),
+                    send_outbound_audio=send_outbound,
+                    clear_outbound_audio=clear_outbound_audio,
+                    playback=playback,
+                    send_cue_audio=send_cue,
+                )
+            finally:
+                # A session that ends on its own (silence hang-up, provider failure) must end
+                # the call too: closing the stream ends Twilio's <Connect>, and with no TwiML
+                # after it Twilio hangs up. After a normal hang-up the socket is already closed.
+                close = getattr(ws, "close", None)
+                if close is not None:
+                    await close()
+
         # Cleanup (push the sentinel, await call_task) MUST run on every exit path
         # from the loop below, not just the explicit "stop" branch: websockets==15.0.1's
         # Connection.__aiter__ swallows ConnectionClosedOK internally and just returns
@@ -100,16 +118,7 @@ class MediaStreamHandler:
                 if event == "start":
                     stream_sid = msg["start"]["streamSid"]
                     ticket = msg["start"]["customParameters"]["ticket"]
-                    call_task = asyncio.ensure_future(
-                        self._session_service.handle_call(
-                            ticket=ticket,
-                            inbound_audio=inbound_frames(),
-                            send_outbound_audio=send_outbound,
-                            clear_outbound_audio=clear_outbound_audio,
-                            playback=playback,
-                            send_cue_audio=send_cue,
-                        )
-                    )
+                    call_task = asyncio.ensure_future(run_call(ticket))
                 elif event == "media":
                     await inbound_queue.put(AudioFrame(
                         encoding="audio/pcmu",

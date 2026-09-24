@@ -892,7 +892,12 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   (*before* clearing, because Twilio echoes the marks of dropped audio after a `clear`), then
   `clear` → `response.cancel` → `conversation.item.truncate(item_id, heard_ms)`. Without the
   truncate, the model believes it finished a reply the caller heard half of, and cannot resume
-  "from where it was cut off".
+  "from where it was cut off". **Only sustained speech barges in** (owner's call, 2026-09-25): live,
+  line noise and "uh-huh"s cut replies at ~400 ms, several times a minute. `speech_started` over an
+  audible Lelik now only arms a 1 s timer (`barge_in_min_speech_s`); the barge-in runs if the caller
+  is still speaking when it fires. Speech that stops sooner is dismissed, and its committed turn gets
+  no reply of its own — the words stay in the conversation for Lelik's next turn. Cost: interrupting
+  Lelik means talking over him for a second.
 - **Every reply is started by the relay, behind a persona anchor.** `create_response` is off. On
   `input_audio_buffer.committed` the relay appends a `system` item, `build_persona_anchor(...)`
   (the same anchor the text path uses, which lists the persona sections present in the prompt,
@@ -903,7 +908,10 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
 - **Silence.** The model speaks only when a turn ends, and the provider's `idle_timeout_ms` exists
   for `server_vad` only. So the relay runs a watchdog: once Lelik's audio has finished *playing*,
   no response is active and the caller is not speaking, 8 s of quiet injects one system note and a
-  `response.create` (`SPOKEN_DELIVERY` answers it with a single light check). It re-arms only when
+  `response.create` (`SPOKEN_DELIVERY` answers it with a single light check). If that check is met
+  with another 20 s of silence (`hangup_after_silence_s`) and no delegation is out, the relay ends the
+  call: the session returns, the media handler closes the stream, and with no TwiML after `<Connect>`
+  Twilio hangs up — a voicemail box or a phone put down no longer holds the line. It re-arms only when
   the caller speaks — **except while a delegation is pending**, when it re-arms on its own and keeps
   firing a "keep the caller company" note instead (`SPOKEN_DELIVERY`'s `giving_the_floor` allows a
   few sentences here), so a slow specialist never leaves dead air. It stands down while an answer is
