@@ -902,6 +902,18 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   so it never reads as an answer that "just arrived". A tool call belonging to a response the caller
   has already barged into is answered with a fixed "not run" output and never dispatched — running
   it would spend real specialist time (and money) on half a question.
+- **Thinking cue.** A silent gap reads as a dropped line, so the relay fills it with a quiet
+  breath-pulse loop (`src/assets/voice/thinking_cue.ulaw`: 2 s of μ-law 8 kHz, two soft puffs,
+  ~11 dB under speech; picked by ear from band-limited candidates, 2026-09-24). It plays when
+  something is owed and nothing is audible: a reply to the caller or to an arriving answer has
+  started but produced no audio yet, or a delegation is out and playback has caught up — never
+  before the pickup greeting or the watchdog's own notes, never while the caller speaks. It starts
+  after 0.7 s, so fast replies carry none. The cue goes to Twilio as `media` **without a `mark`**:
+  `PlaybackTracker` never counts it, so the watchdog and barge-in's `heard_ms` see only real speech.
+  It is paced in real time in 20 ms frames with ~100 ms lead, and whatever is still queued is
+  `clear`ed just before Lelik's first audio frame (or when the caller starts talking), so it never
+  delays or overlaps his reply. The relay logs `first audio after N ms` per response, which is the
+  thinking gap the cue covers.
 
 **Rejected — carrier-direct SIP.** Cheapest and marginally lower latency, but it puts the media path
 outside every observability mechanism we rely on; the Twilio↔provider binding lives in a console no
