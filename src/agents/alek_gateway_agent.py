@@ -10,17 +10,22 @@ written: only ConversationHandler writes history.
 Reading-shaped answers (links, tables) are copied to chat here, the moment Alek answers
 (§4.10 rule 2); the relay never posts to chat.
 """
+import asyncio
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, AgentStatus
 from ..domain.llm import MessagePart
 from ..domain.messaging import SmartResponse
+from ..domain.result_links import build_link_copy
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..utils.logger import logger
 from .base_agent import BaseAgent
 
 if TYPE_CHECKING:
     from ..services.user_notification_service import UserNotificationService
+
+# The spoken answer must not wait longer than this for its chat copy to land.
+_ANSWER_COPY_TIMEOUT_S = 5.0
 
 
 def _commission(query: str, reasoning: Optional[str], call_context: List[Dict[str, str]]) -> str:
@@ -75,10 +80,19 @@ class AlekGatewayAgent(BaseAgent):
             # Nothing writes history on this path; the summary would be paid for and dropped.
             summary_task.cancel()
         answer = response.result
-        if isinstance(answer, SmartResponse) and (answer.link_list or answer.structured_data):
-            try:
-                await self._notifications.notify_answer_copy(user_id, account_id, answer)
-            except Exception as exc:
-                # The spoken answer matters more than its chat copy.
-                logger.error(f"[AlekGateway] chat copy failed for {(user_id or '')[:8]}: {exc}", exc_info=True)
+        if isinstance(answer, SmartResponse):
+            # link_list/structured_data are Smart's own reading-shaped answer; otherwise fall
+            # back to scanning the plain text for links, same shape Lelik posts for any specialist.
+            copy = answer if (answer.link_list or answer.structured_data) else build_link_copy(answer.text)
+            if copy is not None:
+                try:
+                    await asyncio.wait_for(
+                        self._notifications.notify_answer_copy(user_id, account_id, copy),
+                        timeout=_ANSWER_COPY_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"[AlekGateway] chat copy timed out for {(user_id or '')[:8]}")
+                except Exception as exc:
+                    # The spoken answer matters more than its chat copy.
+                    logger.error(f"[AlekGateway] chat copy failed for {(user_id or '')[:8]}: {exc}", exc_info=True)
         return AgentResponse.success(task_id=message.task_id, agent_id=self.agent_id, result=answer)
