@@ -80,12 +80,12 @@ class TestSpokenPacing:
 
     _TEXT_PROMPT = "identity {\n x\n}\nvoice {\n y\n}\nhumor_engine {\n z\n}"
 
-    def test_spoken_prompt_asks_for_per_sentence_pace_and_emotion(self):
+    def test_spoken_prompt_asks_for_natural_phone_speech(self):
         anchor = build_persona_anchor(self._TEXT_PROMPT + "\nspoken_delivery {\n w\n}")
-        assert "SPOKEN REPLY — your normal pace is about 10% faster than your default speaking speed" in anchor
-        assert "Before you speak, choose the rhythm and the emotion of every sentence" in anchor
-        # The rule itself, not a pointer to a named section.
-        assert "Pause for a beat before a punchline" in anchor
+        assert "SPOKEN REPLY — talk like a real person on a phone call, not a narrator" in anchor
+        assert "Don't emphasize every word" in anchor
+        # Per-sentence prosody technique read as a narrator on live calls (2026-09-25).
+        assert "choose the rhythm and the emotion of every sentence" not in anchor
 
     def test_text_prompt_anchor_carries_no_pacing_line(self):
         anchor = build_persona_anchor(self._TEXT_PROMPT)
