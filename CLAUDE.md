@@ -159,7 +159,8 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
 | ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
 | Tutor | BALANCED (OpenAI `gpt-5.6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
-| Lelik | n/a — **no LLM call** | none (`internal=True`, `capabilities={}`) | voice companion: places the Twilio callback. Not delegable — `voice_webhook_app.py` calls `execute()` directly. The *persona* runs on OpenAI Realtime in the relay, outside the tier system |
+| Lelik | n/a — session is OpenAI Realtime in the relay | internal; allowlist `search_memory`, `search_web`, `ask_alek` | voice companion: callback, session config, delegation via `/voice/delegate` |
+| Alek gateway | zero-LLM | `ask_alek` (internal) | Lelik's route to Router → Smart; rule-2 chat copy |
 | lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills |
 
 **Remote MCP Server** — alekbot as MCP *server* exposing memory search to claude.ai Custom Connectors
@@ -258,12 +259,33 @@ persona or language change applies to both. Lelik has only two tokens of his own
   8 s of quiet after playback ends injects one system note. `create_response` is off, so every reply
   is started by the relay after appending the text path's `build_persona_anchor` as a `system` item.
   Anchors are never deleted, because a failed delete is a call-ending provider error (RFC §5.2).
-- **Two agents, deliberately not one.** `LelikAgent` makes no LLM call (it only originates the call);
+- **Two agents, deliberately not one.** `LelikAgent` is a standard delegating agent (Slice 2), not a
+  call-placer only: three entry points — `execute()` places the callback, `session_config()` builds
+  the realtime session's instructions + tool declaration (over `LELIK.allowed_intents`, the same
+  `_build_delegate_tool_declaration` Smart/Tutor use), `delegate()` runs one `delegate_to_specialist`
+  call from the live session through `DelegationEngine.dispatch` (made public for this second caller).
   `LelikSummarizerAgent` (ECO) turns the end-of-call transcript into a short note, with the shared
   character slots and the user's `LANG_*`, and one line when nothing is worth keeping. It is delivered via
   `UserNotificationService.notify_call_summary` as the history pair `[System: phone call with Lelik, …]`
   + `📞 <note>`. Smart's `PROTOCOL_VOICE_PARTNER` tells Alek who Lelik is and how to read that pair. The summarizer must never be the participant it
   summarizes (RFC §4.9), and it has no `CompanionRecord` store — `records` is always `[]`.
+- **`POST /voice/delegate`** — the relay forwards one `delegate_to_specialist` call raised inside the
+  live session to this OIDC-protected route (`voice_control_plane_app.py`), which resolves the
+  caller's `LelikAgent` via `get_lelik` and runs `agent.delegate()`, returning the specialist's text
+  for the relay to speak back.
+- **`resolve_late_answer`** (`VoiceSessionService`) is the one seam for the delegation-answer policy
+  (RFC §4.7): a `response.create` while a response is already active is a call-ending provider error,
+  so it queues the answer when the model is mid-turn and injects + replies otherwise.
+- **The relay's own delegation timeout is 90 s** (`asyncio.wait_for` in `VoiceSessionService._fetch_answer`)
+  — the only authoritative limit; the HTTP client and the gateway only have to outlast it.
+- **`mode` is stripped** from delegate arguments before dispatch (`LelikAgent.delegate`): `AgentWorkerHandler`
+  delivers only generator-declared intents, so a SYNC-declared intent forced into `mode: "later"` would
+  have nowhere to return its answer and silently drop it on the phone.
+- Per-user config (prompt builder, persona service, …) is cached with the agent, same ≈1 h TTL as
+  Smart and Tutor. `get_lelik` calls `ensure_agents_for_user` on every use, refreshing that TTL — which
+  also keeps the user's Router warm for `ask_alek`, the same mechanism every other entry point relies on.
+- `/voice/delegate` flushes `PromptContentStore` writes before responding, like `/voice/submit-transcript`
+  — Cloud Run throttles CPU once the response is sent, so background BigQuery writes left pending fail.
 - Usage is priced by `domain.billing.calculate_realtime_cost` over the flat legs
   `OpenAIRealtimeAdapter._flatten_usage` produces; `reasoning_tokens` are a **subset** of the output
   text leg, never additive. RFC: `docs/10_rfcs/VOICE_COMPANION_RFC.md`. Deployment prerequisites
