@@ -72,6 +72,12 @@ class _CallState:
     playback: PlaybackTracker
     ticket: str
     response_active: bool = False
+    # The active response was barged into (explains an empty transcript; its tool calls are not run).
+    response_cancelled: bool = False
+    # Speech over Lelik waiting to prove it is an interruption, not a blip (barge_in_min_speech_s).
+    pending_barge_in: Optional[asyncio.Task] = None
+    # The caller's last speech was too short to interrupt Lelik: its committed turn gets no reply.
+    speech_dismissed: bool = False
     response_reason: str = ""
     response_audible: bool = False  # the active response has sent its first audio
     response_started_at: float = 0.0
@@ -106,6 +112,8 @@ class VoiceSessionService:
         delegation_timeout_s: float = _DELEGATION_TIMEOUT_S,
         thinking_cue: bytes = b"",
         cue_grace_s: float = 0.7,
+        barge_in_min_speech_s: float = 0.0,
+        hangup_after_silence_s: Optional[float] = None,
     ) -> None:
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
@@ -115,6 +123,8 @@ class VoiceSessionService:
         self._delegation_timeout_s = delegation_timeout_s
         self._thinking_cue = thinking_cue
         self._cue_grace_s = cue_grace_s
+        self._barge_in_min_speech_s = barge_in_min_speech_s
+        self._hangup_after_silence_s = hangup_after_silence_s
 
     async def handle_call(
         self,
@@ -182,11 +192,14 @@ class VoiceSessionService:
             watchdog_task = asyncio.ensure_future(self._watch_silence(session, state))
             if self._thinking_cue and send_cue_audio is not None:
                 cue_task = asyncio.ensure_future(self._play_cue(state, send_cue_audio))
-            await asyncio.wait({forward_task, consume_task}, return_when=asyncio.FIRST_COMPLETED)
+            # The watchdog ends only to hang up after a long silence (hangup_after_silence_s).
+            await asyncio.wait({forward_task, consume_task, watchdog_task}, return_when=asyncio.FIRST_COMPLETED)
         finally:
             tasks = [task for task in (forward_task, consume_task, watchdog_task, cue_task) if task is not None]
             # In-flight delegations die with the call: their answer served a conversation that is gone.
             tasks += list(state.delegations)
+            if state.pending_barge_in is not None:
+                tasks.append(state.pending_barge_in)
             for task in tasks:
                 if not task.done():
                     task.cancel()
@@ -222,12 +235,13 @@ class VoiceSessionService:
         turn_start: Optional[datetime] = None
         pending_request_text = ""
         pending_response_text = ""
-        tool_called = cancelled = False  # Per response: either one explains an empty transcript.
+        tool_called = False  # Per response: this or a barge-in explains an empty transcript.
         async for event in session.receive_events():
             if event.type == "response_created":
                 turn_start = datetime.now(timezone.utc)
                 state.response_active = True
-                tool_called = cancelled = False
+                state.response_cancelled = False
+                tool_called = False
             elif event.type == "speech_started":
                 state.caller_turns += 1
                 state.caller_speaking = True
@@ -238,15 +252,33 @@ class VoiceSessionService:
                 # "Talking" means audible, not generating: the provider finishes a reply
                 # seconds before Twilio finishes playing it, so gating on response_active
                 # alone let the whole tail play over the caller (first live call, 2026-09-22).
+                state.speech_dismissed = False
                 if state.response_active or not state.playback.caught_up:
-                    cancelled = await self._barge_in(session, state, clear_outbound_audio) or cancelled
+                    if self._barge_in_min_speech_s > 0:
+                        # A line blip or an "uh-huh" also starts speech; only sustained speech
+                        # interrupts (live, 2026-09-25: replies cut by 400 ms noises).
+                        if state.pending_barge_in is None:
+                            state.pending_barge_in = asyncio.ensure_future(
+                                self._confirm_barge_in(session, state, clear_outbound_audio))
+                    else:
+                        await self._barge_in(session, state, clear_outbound_audio)
                 elif self._cue_tail_queued(state):
                     await clear_outbound_audio()
                 state.cue_tail_until = 0.0
             elif event.type == "speech_stopped":
                 state.caller_speaking = False
+                if state.pending_barge_in is not None and not state.pending_barge_in.done():
+                    state.pending_barge_in.cancel()
+                    state.pending_barge_in = None
+                    state.speech_dismissed = True
+                    logger.info(f"voice call {ticket}: speech too short to interrupt, Lelik keeps talking")
             elif event.type == "turn_committed":
-                await self._reply_to_turn(session, state, "turn")
+                if state.speech_dismissed:
+                    # Lelik is still mid-reply; the words stay in the conversation for his next turn.
+                    state.speech_dismissed = False
+                    logger.info(f"voice call {ticket}: short turn over Lelik not answered")
+                else:
+                    await self._reply_to_turn(session, state, "turn")
             elif event.type == "audio_delta":
                 if not state.response_audible:
                     state.response_audible = True
@@ -263,7 +295,7 @@ class VoiceSessionService:
                 await send_outbound_audio(event.payload["frame"])
             elif event.type == "tool_call":
                 tool_called = True
-                if cancelled:
+                if state.response_cancelled:
                     call_id = event.payload.get("call_id")
                     logger.info(f"voice call {ticket}: delegation {call_id} skipped (response cancelled)")
                     await session.submit_tool_result(call_id, _CANCELLED_TOOL_CALL)
@@ -288,7 +320,7 @@ class VoiceSessionService:
                     started_at=turn_start or datetime.now(timezone.utc),
                     ended_at=datetime.now(timezone.utc),
                 ))
-                if not (pending_response_text or tool_called or cancelled):
+                if not (pending_response_text or tool_called or state.response_cancelled):
                     logger.info(f"voice call {ticket}: response done with an empty transcript")
                 pending_request_text = ""
                 pending_response_text = ""
@@ -321,7 +353,22 @@ class VoiceSessionService:
             # Truncated once; a second speech_started must not cut the same item again.
             state.item_id = None
         logger.info(f"voice call {state.ticket}: barge-in, heard {heard_ms} ms, cancelled={cancelled}")
+        state.response_cancelled = state.response_cancelled or cancelled
         return cancelled
+
+    async def _confirm_barge_in(
+        self, session: RealtimeSessionPort, state: _CallState,
+        clear_outbound_audio: Callable[[], Awaitable[None]],
+    ) -> None:
+        await asyncio.sleep(self._barge_in_min_speech_s)
+        state.pending_barge_in = None
+        # Re-checked: Lelik may have finished (or the caller stopped) while we waited.
+        if state.caller_speaking and (state.response_active or not state.playback.caught_up):
+            try:
+                await self._barge_in(session, state, clear_outbound_audio)
+            except Exception as exc:
+                logger.error(f"voice call {state.ticket}: barge-in failed: {exc}", exc_info=True)
+                raise
 
     async def _reply_to_turn(self, session: RealtimeSessionPort, state: _CallState, reason: str) -> None:
         # The provider does not reply on its own (create_response off), so every reply
@@ -365,6 +412,11 @@ class VoiceSessionService:
             if busy or not state.playback.caught_up:
                 quiet_since = now
                 continue
+            if (self._hangup_after_silence_s is not None and state.silence_prompted and not state.delegations
+                    and now - quiet_since >= self._hangup_after_silence_s):
+                # The one "still there?" went unanswered: a voicemail box or a phone put down.
+                logger.info(f"voice call {state.ticket}: hanging up after {round(now - quiet_since)} s of silence")
+                return
             if (state.silence_prompted and not state.delegations) or now - quiet_since < self._silence_timeout_s:
                 continue
             state.silence_prompted = True
