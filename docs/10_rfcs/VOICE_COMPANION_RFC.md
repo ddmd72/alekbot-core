@@ -898,6 +898,12 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   is still speaking when it fires. Speech that stops sooner is dismissed, and its committed turn gets
   no reply of its own — the words stay in the conversation for Lelik's next turn. Cost: interrupting
   Lelik means talking over him for a second.
+- **The call opens with the caller's own request** (`caller_opening`, 2026-09-25). Before the
+  pickup note the relay adds one `user` item in the owner's words: talk faster and more like a
+  person, no narrator spacing inside a phrase, don't repeat one intonation in every phrase, greet
+  me by name and ask how to help. Live, the same delivery rules as system text (anchor,
+  `SPOKEN_DELIVERY`) left Lelik a narrator; the owner asking in-call changed him at once, and the
+  model then keeps matching its own earlier turns. The first reply answers this item.
 - **Every reply is started by the relay, behind a persona anchor.** `create_response` is off. On
   `input_audio_buffer.committed` the relay appends a `system` item, `build_persona_anchor(...)`
   (the same anchor the text path uses, which lists the persona sections present in the prompt,
