@@ -61,6 +61,8 @@ class _CallState:
     persona_anchor: Optional[str] = None
     caller_turns: int = 0  # speech_started count: "did the caller speak since dispatch?"
     response_owed: bool = False
+    # Answers being injected and not yet replied to: the watchdog holds off, or its note takes the slot.
+    answers_in_flight: int = 0
     queued_answers: List[_Answer] = field(default_factory=list)
     delegations: Set[asyncio.Task] = field(default_factory=set)
 
@@ -185,10 +187,12 @@ class VoiceSessionService:
         turn_start: Optional[datetime] = None
         pending_request_text = ""
         pending_response_text = ""
+        tool_called = cancelled = False  # Per response: either one explains an empty transcript.
         async for event in session.receive_events():
             if event.type == "response_created":
                 turn_start = datetime.now(timezone.utc)
                 state.response_active = True
+                tool_called = cancelled = False
             elif event.type == "speech_started":
                 state.caller_turns += 1
                 state.caller_speaking = True
@@ -200,7 +204,7 @@ class VoiceSessionService:
                 # seconds before Twilio finishes playing it, so gating on response_active
                 # alone let the whole tail play over the caller (first live call, 2026-09-22).
                 if state.response_active or not state.playback.caught_up:
-                    await self._barge_in(session, state, clear_outbound_audio)
+                    cancelled = await self._barge_in(session, state, clear_outbound_audio) or cancelled
             elif event.type == "speech_stopped":
                 state.caller_speaking = False
             elif event.type == "turn_committed":
@@ -212,6 +216,7 @@ class VoiceSessionService:
                     state.item_start_bytes = state.playback.sent_bytes
                 await send_outbound_audio(event.payload["frame"])
             elif event.type == "tool_call":
+                tool_called = True
                 self._start_delegation(ticket, config, session, state, buffer, event.payload, pending_request_text)
             elif event.type == "user_transcript":
                 pending_request_text += event.payload["text"]
@@ -232,7 +237,7 @@ class VoiceSessionService:
                     started_at=turn_start or datetime.now(timezone.utc),
                     ended_at=datetime.now(timezone.utc),
                 ))
-                if not pending_response_text:
+                if not (pending_response_text or tool_called or cancelled):
                     logger.info(f"voice call {ticket}: response done with an empty transcript")
                 pending_request_text = ""
                 pending_response_text = ""
@@ -245,7 +250,8 @@ class VoiceSessionService:
     async def _barge_in(
         self, session: RealtimeSessionPort, state: _CallState,
         clear_outbound_audio: Callable[[], Awaitable[None]],
-    ) -> None:
+    ) -> bool:
+        """Returns whether an in-flight response was cancelled."""
         # Order matters. Read what was heard BEFORE clearing: Twilio echoes the marks of
         # dropped audio after a clear, which would count unheard audio as played. Then
         # drain both buffers - Twilio's queued playback and the provider's generation -
@@ -264,6 +270,7 @@ class VoiceSessionService:
             # Truncated once; a second speech_started must not cut the same item again.
             state.item_id = None
         logger.info(f"voice call {state.ticket}: barge-in, heard {heard_ms} ms, cancelled={cancelled}")
+        return cancelled
 
     async def _reply_to_turn(self, session: RealtimeSessionPort, state: _CallState, reason: str) -> None:
         # The provider does not reply on its own (create_response off), so every reply
@@ -300,7 +307,8 @@ class VoiceSessionService:
         while True:
             await asyncio.sleep(_WATCHDOG_TICK_S)
             now = loop.time()
-            if state.response_active or state.caller_speaking or not state.playback.caught_up:
+            busy = state.response_active or state.answers_in_flight or state.caller_speaking
+            if busy or not state.playback.caught_up:
                 quiet_since = now
                 continue
             if (state.silence_prompted and not state.delegations) or now - quiet_since < self._silence_timeout_s:
@@ -387,8 +395,19 @@ class VoiceSessionService:
             state.queued_answers.append(answer)
             return
         logger.info(f"voice call {state.ticket}: answer {answer.call_id} arrived after {elapsed_ms} ms, injecting")
-        await self._inject_answer(session, state, answer)
-        await self._reply_or_owe(session, state)
+        await self._deliver_answers(session, state, [answer])
+
+    async def _deliver_answers(self, session: RealtimeSessionPort, state: _CallState, answers: List[_Answer]) -> None:
+        # Marked before the first await: the watchdog re-arms while a delegation is pending, and
+        # a waiting note slipped in mid-injection would take the reply slot and bury the answer.
+        state.answers_in_flight += 1
+        try:
+            for answer in answers:
+                await self._inject_answer(session, state, answer)
+            # All answers in, then one reply: two response.create can never collide.
+            await self._reply_or_owe(session, state)
+        finally:
+            state.answers_in_flight -= 1
 
     async def _inject_answer(self, session: RealtimeSessionPort, state: _CallState, answer: _Answer) -> None:
         # Spike 0.1: after the caller spoke, OpenAI drops a late function_call_output silently.
@@ -414,7 +433,4 @@ class VoiceSessionService:
             return
         queued, state.queued_answers = state.queued_answers, []
         logger.info(f"voice call {state.ticket}: flushing {len(queued)} queued answers")
-        for answer in queued:
-            await self._inject_answer(session, state, answer)
-        # All answers in, then one reply: two response.create can never collide.
-        await self._reply_or_owe(session, state)
+        await self._deliver_answers(session, state, queued)
