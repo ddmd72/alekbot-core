@@ -26,6 +26,10 @@ _DELEGATION_TIMEOUT_S = 90.0
 # Attached to every delegation by the relay, never left to the model's retention (RFC §4.7).
 _CALL_CONTEXT_TURNS = 6
 _LATE_ANSWER_NOTE = "[The answer to your earlier request ({request}) just arrived: {output}]"
+# Distinct from _LATE_ANSWER_NOTE: formatting the timeout sentinel into it read as
+# self-contradicting ("just arrived: No answer arrived in time...").
+_LATE_TIMEOUT_NOTE = ("[Your earlier request ({request}) got no answer in time. Tell the caller in "
+                       "one line that it did not come through.]")
 _REQUEST_LABEL_CHARS = 120
 _DELEGATION_TIMED_OUT = "No answer arrived in time. Tell the caller in one line that it did not come through."
 _DELEGATION_FAILED = "The request failed. Tell the caller in one line that it did not go through."
@@ -421,8 +425,11 @@ class VoiceSessionService:
     async def _inject_answer(self, session: RealtimeSessionPort, state: _CallState, answer: _Answer) -> None:
         # Spike 0.1: after the caller spoke, OpenAI drops a late function_call_output silently.
         if state.caller_turns > answer.dispatched_at:
-            await session.submit_message(
-                "system", _LATE_ANSWER_NOTE.format(request=answer.request, output=answer.output))
+            if answer.output == _DELEGATION_TIMED_OUT:
+                note = _LATE_TIMEOUT_NOTE.format(request=answer.request)
+            else:
+                note = _LATE_ANSWER_NOTE.format(request=answer.request, output=answer.output)
+            await session.submit_message("system", note)
             channel = "system note"
         else:
             await session.submit_tool_result(answer.call_id, answer.output)
