@@ -47,6 +47,10 @@ class ToolResult:
     history_context: Optional[Dict[str, Any]] = None
     delivery_items: List[DeliveryItem] = field(default_factory=list)
     file_data: Optional[Dict[str, Any]] = None
+    # A non-success outcome (rejection, exception, max retries, missing intent, a fan-out whose
+    # primary section errored). Additive: existing callers don't read it, so their behaviour
+    # is unchanged; LelikAgent reads it to skip posting a chat copy of a link found in an error string.
+    failed: bool = False
 
 
 @dataclass
@@ -87,6 +91,13 @@ def _format_result(intent: str, result: Any) -> str:
     if isinstance(result, list):
         return "\n".join(str(item) for item in result)
     return str(result)
+
+
+def normalize_delegate_context(raw: Any) -> Dict[str, Any]:
+    """The model may send `context` as free text; it becomes {"reasoning": text}."""
+    if isinstance(raw, str) and raw:
+        return {"reasoning": raw}
+    return raw if isinstance(raw, dict) else {}
 
 
 def _format_email_search_compact(result: Any) -> str:
@@ -429,7 +440,7 @@ class DelegationEngine:
             len(tool_calls),
         )
         tasks = [
-            self._dispatch_single(
+            self.dispatch(
                 tc, context, intent_remap, intent_fanout, calling_agent_id,
                 max_retries, retry_backoff,
             )
@@ -444,6 +455,7 @@ class DelegationEngine:
                 results.append(ToolResult(
                     name=tc.name,
                     result_str=f"AGENT ERROR: {result}",
+                    failed=True,
                 ))
             else:
                 results.append(result)
@@ -453,32 +465,30 @@ class DelegationEngine:
     # Single tool dispatch                                                #
     # ------------------------------------------------------------------ #
 
-    async def _dispatch_single(
+    async def dispatch(
         self,
         tool_call: ToolCall,
         context: Dict[str, Any],
         intent_remap: Dict[str, str],
         intent_fanout: Dict[str, FanoutSpec],
         calling_agent_id: str,
-        max_retries: int,
-        retry_backoff: float,
+        max_retries: int = 1,
+        retry_backoff: float = 1.0,
     ) -> ToolResult:
-        """Dispatch a single delegate_to_specialist call to the coordinator."""
+        """Dispatch one delegate_to_specialist call: remap, fan-out, mode, coordinator.
+
+        Public for callers without a loop (LelikAgent).
+        """
         args = tool_call.args or {}
         intent = args.get("intent", "")
         query = args.get("query", "")
-        context_params = args.get("context", {})
-
-        # LLM may pass context as free-form string — wrap as reasoning
-        if isinstance(context_params, str) and context_params:
-            context_params = {"reasoning": context_params}
-        elif not isinstance(context_params, dict):
-            context_params = {}
+        context_params = normalize_delegate_context(args.get("context", {}))
 
         if not intent:
             return ToolResult(
                 name=tool_call.name,
                 result_str=f"SYSTEM ERROR: delegate_to_specialist called without 'intent'. args={args}",
+                failed=True,
             )
 
         # Apply intent remap
@@ -563,11 +573,13 @@ class DelegationEngine:
                     f"Error: {response.error} "
                     f"Correct your input and try again."
                 ),
+                failed=True,
             )
 
         return ToolResult(
             name=tool_call.name,
             result_str="AGENT ERROR: Max retries exceeded",
+            failed=True,
         )
 
     # ------------------------------------------------------------------ #
@@ -625,6 +637,7 @@ class DelegationEngine:
         all_delivery_items: List[DeliveryItem] = []
         merged_history_context: Dict[str, Any] = {}
         structured_data = None
+        primary_failed = False
 
         for idx, (intent, response) in enumerate(zip(intents, responses)):
             is_primary = idx == 0
@@ -636,6 +649,7 @@ class DelegationEngine:
                 )
                 if is_primary:
                     sections.append(f"[{label}]\nAGENT ERROR: {response}")
+                    primary_failed = True
                 continue
 
             if response.status != AgentStatus.SUCCESS:
@@ -647,6 +661,7 @@ class DelegationEngine:
                     sections.append(
                         f"[{label}]\nSYSTEM: Specialist rejected: {response.error}"
                     )
+                    primary_failed = True
                 continue
 
             result_text = _format_result(intent, response.result)
@@ -670,4 +685,5 @@ class DelegationEngine:
             structured_data=structured_data,
             history_context=merged_history_context or None,
             delivery_items=all_delivery_items,
+            failed=primary_failed,
         )

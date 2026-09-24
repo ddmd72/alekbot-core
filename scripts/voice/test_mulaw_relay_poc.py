@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""
+POC: two-way μ-law audio relay between a Twilio Media Stream and a realtime
+provider (OpenAI or xAI, selected by PROVIDER env var). No resampling —
+both sides speak audio/x-mulaw 8kHz. Run, expose via ngrok, then point a
+Twilio number's Voice webhook directly at the ngrok URL (any path, plain
+HTTP webhook — not a TwiML Bin). Live discovery 2026-09-20: TwiML Bins are
+US1-only and return 401 for numbers routed via IE1/AU1, so this process
+serves its own static TwiML for plain HTTP requests (Twilio's webhook
+fetch) and hands real WebSocket upgrades (the Media Stream itself) to the
+relay handler — one port, one ngrok tunnel, no Bin involved.
+
+IMPORTANT — the Twilio number's Voice Configuration "Method" MUST be set
+to GET, not the Twilio default POST. The `websockets` library's HTTP
+parser only accepts GET at the wire level (it expects a WS handshake,
+which is always GET) and raises `ValueError: unsupported HTTP method;
+expected GET; got POST` before `process_request` below is ever called —
+confirmed live 2026-09-20 (websockets==15.0.1's parse() in
+websockets/http11.py hard-codes the GET check). This has no effect on
+what TwiML we return (process_request ignores the request body/query
+entirely), only on whether the library accepts the request at all.
+"""
+import asyncio
+import json
+import os
+import sys
+import time
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+from src.config.settings import load_settings
+
+import websockets
+
+PROVIDER = os.getenv("PROVIDER", "openai")  # "openai" | "xai"
+CONFIG = None  # set once in run_poc() before the server starts — see note there
+
+
+def provider_ws_url_and_headers(config: dict) -> tuple[str, dict]:
+    # both connection shapes verified live 2026-09-20 — see plan's "Verified against live docs"
+    if PROVIDER == "openai":
+        return (
+            "wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1",
+            {"Authorization": f"Bearer {config['OPENAI_API_KEY']}"},
+        )
+    return (
+        "wss://api.x.ai/v1/realtime?model=grok-voice-think-fast-2.0",
+        {"Authorization": f"Bearer {config['XAI_API_KEY']}"},
+    )
+
+
+def session_update_event() -> dict:
+    # NOT identical schema for both providers. Task 1's script (test_late_function_call_output_poc.py,
+    # see its _session_config()) found xAI rejects this GA shape and instead requires the older flat
+    # "modalities" key (no "type" field) — see docs/04_solution_strategy/decisions/
+    # voice_spike_01_late_function_call_output.md. This function only implements the OpenAI shape;
+    # the PROVIDER=="xai" guard below fails loudly instead of silently sending a body xAI will
+    # reject. This is the field to watch in session.updated for a silent reversion away from
+    # audio/pcmu (OpenAI leg only).
+    #
+    # NOTE: an earlier version of this used the pre-GA flat "modalities": [...] field — the
+    # same shape Task 1's script had to correct (missing_required_parameter session.type).
+    # That bug shipped here anyway (not backported from Task 1's finding) and caused a real,
+    # silent live-call failure 2026-09-20: OpenAI rejects that shape with an `error` event,
+    # which this script didn't print (see the `error` branch below, added for exactly this).
+    # Current GA schema, confirmed live: session.type="realtime" (required), output_modalities
+    # is "audio" or "text" (not both at once), audio config is a sibling field, not nested
+    # under output_modalities.
+    if PROVIDER == "xai":
+        raise NotImplementedError(
+            "session_update_event() only implements OpenAI's GA session-config shape. "
+            "xAI's realtime endpoint rejects this shape (it needs the older flat \"modalities\" "
+            "key, no \"type\" field) — see Task 1's finding in "
+            "scripts/voice/test_late_function_call_output_poc.py (_session_config()) and "
+            "docs/04_solution_strategy/decisions/voice_spike_01_late_function_call_output.md "
+            "for what xAI's body actually needs. Not implemented here — PROVIDER=xai is out of "
+            "scope for this script until that fix lands."
+        )
+    return {
+        "type": "session.update",
+        "session": {
+            "type": "realtime",
+            "output_modalities": ["audio"],
+            "audio": {
+                "input": {"format": {"type": "audio/pcmu"}},
+                "output": {"format": {"type": "audio/pcmu"}},
+            },
+        },
+    }
+
+
+async def handle_twilio_stream(twilio_ws):
+    provider_url, headers = provider_ws_url_and_headers(CONFIG)
+    # NOTE: installed websockets==15.0.1 renamed connect()'s `extra_headers` kwarg to
+    # `additional_headers` (same rename Task 1's POC already hit — confirmed via
+    # inspect.signature(websockets.connect) before writing this).
+    async with websockets.connect(provider_url, additional_headers=headers) as provider_ws:
+        await provider_ws.send(json.dumps(session_update_event()))
+        stream_sid = None
+        response_active = False  # tracked for the barge-in test below — avoids a spurious
+        # response.cancel (and its error) on every utterance when nothing is playing yet
+        speech_stopped_ts = None  # RFC Phase 0.3 latency spike: timestamp of the most recent
+        # input_audio_buffer.speech_stopped (end of the caller's utterance), cleared as soon as
+        # its first audio delta is measured. This is deliberately keyed off speech_stopped, not
+        # speech_started — speech_started fires when the caller BEGINS talking, which would
+        # inflate the measured gap by however long the utterance took (noise, not signal). The
+        # metric this spike wants is "how long do I wait after I stop talking".
+        latencies_ms = []  # one entry per measured utterance — printed as a p50/p95 summary on stop
+
+        async def twilio_to_provider():
+            nonlocal stream_sid
+            async for raw in twilio_ws:
+                msg = json.loads(raw)
+                if msg["event"] == "start":
+                    stream_sid = msg["start"]["streamSid"]
+                    print(f"[{PROVIDER}] stream started: {stream_sid}")
+                elif msg["event"] == "media":
+                    await provider_ws.send(json.dumps({
+                        "type": "input_audio_buffer.append",
+                        "audio": msg["media"]["payload"],  # already base64 mulaw — no decode/re-encode
+                    }))
+                elif msg["event"] == "stop":
+                    print(f"[{PROVIDER}] stream stopped")
+                    if latencies_ms:
+                        sorted_lat = sorted(latencies_ms)
+                        p50 = sorted_lat[len(sorted_lat) // 2]
+                        p95 = sorted_lat[int(len(sorted_lat) * 0.95)]
+                        print(f"[latency summary] n={len(sorted_lat)} p50={p50:.0f}ms p95={p95:.0f}ms")
+                    break
+
+        async def provider_to_twilio():
+            nonlocal response_active, speech_stopped_ts
+            async for raw in provider_ws:
+                event = json.loads(raw)
+                # "response.output_audio.delta" is the current GA name (was "response.audio.delta"
+                # pre-GA); a known community-reported bug means it sometimes never arrives — see
+                # this plan's "Verified against live docs" note if no audio comes through at all.
+                if event["type"] in ("response.output_audio.delta", "response.audio.delta"):
+                    payload = event.get("delta") or event.get("audio")
+                    if payload and stream_sid:
+                        await twilio_ws.send(json.dumps({
+                            "event": "media",
+                            "streamSid": stream_sid,
+                            "media": {"payload": payload},
+                        }))
+                    # RFC Phase 0.3 latency spike: only the FIRST delta after a fresh
+                    # speech_stopped marks the reply's start — clear the pending timestamp
+                    # immediately so a later delta in the same turn (or an unprompted
+                    # follow-up with no pending timestamp at all) neither double-counts nor crashes.
+                    if speech_stopped_ts is not None:
+                        elapsed_ms = (time.monotonic() - speech_stopped_ts) * 1000
+                        latencies_ms.append(elapsed_ms)
+                        print(f"[latency] {elapsed_ms:.0f}ms")
+                        speech_stopped_ts = None
+                elif event["type"] == "response.created":
+                    response_active = True
+                elif event["type"] == "response.done":
+                    response_active = False
+                elif event["type"] == "input_audio_buffer.speech_started":
+                    # Minimal barge-in, added live 2026-09-20 to test whether it's worth
+                    # pursuing further: on server VAD detecting the caller talking over the
+                    # model, tell Twilio to drop whatever's still buffered for playback and
+                    # tell OpenAI to stop generating the interrupted response. Without this,
+                    # already-sent audio deltas keep playing out regardless of the interrupt.
+                    # Guarded on response_active — response.cancel with nothing active errors.
+                    if response_active:
+                        print(f"[{PROVIDER}] speech_started mid-response — clearing Twilio buffer, cancelling")
+                        if stream_sid:
+                            await twilio_ws.send(json.dumps({"event": "clear", "streamSid": stream_sid}))
+                        await provider_ws.send(json.dumps({"type": "response.cancel"}))
+                        response_active = False
+                elif event["type"] == "input_audio_buffer.speech_stopped":
+                    # RFC Phase 0.3 latency spike: end of the caller's utterance — the clock
+                    # starts here, not on speech_started, so the measured gap is purely
+                    # "wait after I stopped talking" and doesn't include how long I was talking.
+                    speech_stopped_ts = time.monotonic()
+                elif event["type"] == "session.updated":
+                    # log the ECHOED format back — this is the pcm16-reversion check
+                    print(f"[{PROVIDER}] session.updated audio config: {event['session'].get('audio')}")
+                elif event["type"] == "error":
+                    # added after a real silent-failure incident 2026-09-20: a rejected
+                    # session.update (or any other provider-side error) previously vanished
+                    # with no print at all, indistinguishable from "nothing happening".
+                    print(f"[{PROVIDER}] ERROR event: {event.get('error', event)}")
+
+        await asyncio.gather(twilio_to_provider(), provider_to_twilio())
+
+
+def process_request(connection, request):
+    """Serve static TwiML for a plain HTTP request (Twilio's Voice webhook fetch);
+    return None for a real WebSocket upgrade (the Media Stream itself) so the
+    normal handshake proceeds into handle_twilio_stream(). This replaces the
+    TwiML-Bin approach, which 401s for numbers routed via IE1/AU1 (US1-only)."""
+    if request.headers.get("Upgrade", "").lower() == "websocket":
+        return None
+    host = request.headers.get("Host", "localhost:8765")
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<Response><Connect><Stream url="wss://{host}/" /></Connect></Response>'
+    )
+    body = twiml.encode("utf-8")
+    headers = websockets.Headers()
+    headers["Content-Type"] = "text/xml"
+    headers["Content-Length"] = str(len(body))
+    return websockets.Response(200, "OK", headers, body)
+
+
+async def run_poc():
+    global CONFIG
+    # Load once, up front, and fail fast — before the "listening" banner prints. Loading inside
+    # handle_twilio_stream() per-connection would let the banner look like a green light while a
+    # missing/bad OPENAI_API_KEY/XAI_API_KEY only surfaces after the owner has started ngrok,
+    # built the TwiML Bin, pointed the number at it, and dialed in.
+    try:
+        CONFIG = load_settings()
+    except Exception as exc:
+        print(f"FATAL: load_settings() failed before startup — fix this before wiring up ngrok/Twilio: {exc}")
+        sys.exit(1)
+
+    print(f"Relay listening on ws://0.0.0.0:8765 — provider={PROVIDER}")
+    print("Expose with: ngrok http 8765")
+    print("Point the Twilio number's Voice webhook directly at the ngrok https:// URL")
+    print("(any path, HTTP GET — websockets' parser only accepts GET) — no TwiML Bin needed,")
+    print("this process serves its own TwiML.")
+    # NOTE: the brief's original `from websockets.server import serve as ws_serve` resolves to
+    # `websockets.legacy.server.serve` on the pinned websockets==15.0.1 — that module is
+    # deprecated and emits a DeprecationWarning per call (confirmed via
+    # inspect.signature(websockets.server.serve) + module attribute before writing this).
+    # `websockets.serve` (top-level) is the current asyncio-based implementation; its handler
+    # signature (single ServerConnection arg, no path) matches handle_twilio_stream() as written,
+    # so no other change was needed.
+    async with websockets.serve(handle_twilio_stream, "0.0.0.0", 8765, process_request=process_request):
+        await asyncio.Future()  # run forever
+
+
+if __name__ == "__main__":
+    asyncio.run(run_poc())

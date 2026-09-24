@@ -4,9 +4,14 @@ import signal
 import logging
 import asyncio
 from slack_bolt.async_app import AsyncApp
+from twilio.rest import Client as TwilioClient
 
 from src.config.settings import load_settings
 from src.web.worker_oidc_verifier import verify_worker_oidc
+from src.web.twilio_signature_verifier import verify_twilio_signature
+from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
+from src.web.voice_webhook_app import create_voice_webhook_blueprint
+from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_quota_service import FirestoreQuotaService
@@ -485,6 +490,7 @@ async def main():
             anthropic_client=anthropic_client,
             quota_service=quota_service,
             companion_context_assembler=companion_context_assembler,
+            notification_service=notification_service,
         )
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
         _language_service._ensure_agents = agent_factory.ensure_agents_for_user
@@ -596,6 +602,22 @@ async def main():
             task_queue=agent_task_queue,
         )
 
+        # Twilio Verify client for phone-binding OTP (Voice Companion RFC §4.6,
+        # Slice 1 Task 11) — same conditional-construction guard as
+        # UserAgentFactory._telephony (user_agent_factory.py ~line 208-212):
+        # optional, MVP/dev-only feature, gracefully absent when unconfigured.
+        # The Cabinet's phone-binding routes already 501 cleanly on None.
+        twilio_account_sid = config.get("TWILIO_ACCOUNT_SID")
+        twilio_auth_token = config.get("TWILIO_AUTH_TOKEN")
+        twilio_verify_service_sid = config.get("TWILIO_VERIFY_SERVICE_SID")
+        twilio_verify_client = (
+            TwilioClient(twilio_account_sid, twilio_auth_token).verify.v2.services(
+                twilio_verify_service_sid
+            )
+            if twilio_account_sid and twilio_auth_token and twilio_verify_service_sid
+            else None
+        )
+
         cabinet_bp = create_user_cabinet_blueprint(
             invite_service=invite_service,
             session_service=session_service,
@@ -614,6 +636,7 @@ async def main():
             language_service=_language_service,
             agent_note_port=container.notes_adapter,
             recurrence_port=container.recurrence_adapter,
+            twilio_verify_client=twilio_verify_client,
         )
 
         # Services for WorkerHandler — wrap ports so the handler never imports ports directly
@@ -832,6 +855,108 @@ async def main():
                         create_short_link_blueprint(short_links=short_link_service)
                     )
                     logger.info("✅ Short link blueprint registered at /s/<code>")
+
+                # /voice/session-config, /voice/submit-transcript — main-service
+                # control-plane endpoints consumed by the relay's
+                # CallControlPlanePort (Task 6). OIDC-protected the same way
+                # /worker is: verify_worker_oidc + the SERVICE_ACCOUNT_EMAIL
+                # local-dev bypass, wrapped as an async callable so the route
+                # stays testable without a real Google token.
+                # Collection name resolves through EnvironmentConfig like every
+                # other Firestore collection (env prefix, REQ multi-tenant
+                # convention) — it was hardcoded and unprefixed until now.
+                voice_ephemeral_store = FirestoreEphemeralStore(
+                    db_client, collection=env_config.voice_tickets_collection
+                )
+
+                async def _voice_oidc_verifier(auth_header: str) -> bool:
+                    sa_email = config.get("SERVICE_ACCOUNT_EMAIL")
+                    if not sa_email:
+                        return True
+                    return verify_worker_oidc(auth_header, sa_email)
+
+                async def _voice_twilio_signature_verifier(
+                    url: str, form_params: dict, signature: str
+                ) -> bool:
+                    # Same bypass shape as _voice_oidc_verifier above and as
+                    # /worker's SERVICE_ACCOUNT_EMAIL gate: with no auth token
+                    # configured (local dev) there is nothing to verify against,
+                    # so the gate opens. In Cloud Run TWILIO_AUTH_TOKEN is always
+                    # present (cloudbuild-dev.yaml --set-secrets).
+                    auth_token = config.get("TWILIO_AUTH_TOKEN")
+                    if not auth_token:
+                        return True
+                    return verify_twilio_signature(auth_token, url, form_params, signature)
+
+                async def _voice_summary_consumer(*, call_id, user_id, account_id, transcript_text, turns):
+                    # LelikSummarizerAgent-backed consumer (Task 15). Reuses
+                    # companion_extractor_runner (constructed above, "Initializing
+                    # Companion Extraction pipeline") the same way tutor batches do,
+                    # just with companion_type="voice" — turns are already
+                    # {"request_text", "response_text", ...} dicts (see
+                    # HttpCallControlPlaneAdapter.submit_transcript), the same
+                    # List[dict] shape CompanionExtractorRunner.extract() expects,
+                    # so no reshaping is needed before handing them over.
+                    extraction = await companion_extractor_runner.extract(
+                        companion_type="voice",
+                        account_id=account_id,
+                        created_by_user_id=user_id,
+                        messages=turns,
+                    )
+                    summary = extraction.get("summary") or ""
+                    if not summary:
+                        logger.warning(f"voice call {call_id}: summarizer returned an empty summary, nothing to deliver")
+                        return
+                    from src.domain.voice_call_note import call_event_from_turns
+                    profile = await user_repo.get_user(user_id)
+                    await notification_service.notify_call_summary(
+                        user_id, account_id, summary,
+                        call_event=call_event_from_turns(turns, profile.config.timezone if profile else "UTC"),
+                    )
+
+                main_app.register_blueprint(
+                    create_voice_control_plane_blueprint(
+                        ephemeral_store=voice_ephemeral_store,
+                        quota_service=quota_service,
+                        prompt_content_store=container.prompt_content_store,
+                        summary_consumer=_voice_summary_consumer,
+                        oidc_verifier=_voice_oidc_verifier,
+                        # A summary-pipeline failure is otherwise completely
+                        # silent: the call completes, usage is billed, and
+                        # nothing reaches chat or memory.
+                        alert_sink=_alert_webhook,
+                        lelik_agent_provider=agent_factory.get_lelik,
+                    )
+                )
+                logger.info(
+                    "✅ Voice control-plane blueprint registered at "
+                    "/voice/session-config, /voice/submit-transcript, /voice/delegate"
+                )
+
+                # /voice/auth, /voice/answer — Twilio's own webhooks (Task 8/9),
+                # never registered until now (Task 10b: found as a real gap during
+                # Task 10's review). Reuses voice_ephemeral_store minted just above
+                # (same ticket/one-call-marker store the control plane reads/releases,
+                # not a second FirestoreEphemeralStore instance) plus other
+                # already-constructed instances: user_repo, _alert_webhook,
+                # notification_service, agent_factory.
+
+                main_app.register_blueprint(
+                    create_voice_webhook_blueprint(
+                        user_repository=user_repo,
+                        ephemeral_store=voice_ephemeral_store,
+                        alert_sink=_alert_webhook,
+                        notification_service=notification_service,
+                        lelik_agent_provider=agent_factory.get_lelik,
+                        answer_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/voice/answer",
+                        signature_verifier=_voice_twilio_signature_verifier,
+                        relay_stream_url=config.get("VOICE_RELAY_STREAM_URL", ""),
+                    )
+                )
+                logger.info(
+                    "✅ Voice webhook blueprint registered at "
+                    "/voice/auth, /voice/inbound-status, /voice/answer, /voice/status"
+                )
 
                 # ====================================================================
                 # PHASE 3: Telegram Integration (Optional)

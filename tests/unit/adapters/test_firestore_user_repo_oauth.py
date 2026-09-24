@@ -71,6 +71,62 @@ def test_user_with_slack():
 
 
 # ============================================================================
+# link_platform_identity() transactional test helpers
+#
+# link_platform_identity runs inside a Firestore transaction (closes a TOCTOU
+# race — see src/adapters/firestore_user_repo.py). Mirrors the passthrough-patch
+# technique from tests/unit/adapters/test_firestore_account_repo.py
+# (_make_repo_and_capture / _passthrough_transactional): patch
+# firestore.async_transactional to a bare passthrough so the transactional inner
+# function runs directly against a plain MagicMock() transaction, with no need
+# to stub the real SDK's transaction lifecycle.
+# ============================================================================
+def _passthrough_transactional(fn):
+    return fn
+
+
+def _async_iter(items):
+    async def _gen():
+        for item in items:
+            yield item
+    return _gen()
+
+
+def _setup_link_mocks(user_repo, *, existing_user_dict, conflict_doc_id=None):
+    """Wire users_col + db.transaction for one link_platform_identity call.
+
+    existing_user_dict: dict returned by the user doc's snapshot.to_dict(), or
+        None to simulate "user not found".
+    conflict_doc_id: if set, the conflict query yields one doc with this id
+        (simulating an existing platform-id binding); None means no conflict.
+    """
+    snapshot = MagicMock()
+    snapshot.exists = existing_user_dict is not None
+    if existing_user_dict is not None:
+        snapshot.to_dict.return_value = existing_user_dict
+
+    doc_ref = MagicMock()
+    doc_ref.get = AsyncMock(return_value=snapshot)
+
+    conflict_docs = []
+    if conflict_doc_id is not None:
+        conflict_doc = MagicMock()
+        conflict_doc.id = conflict_doc_id
+        conflict_docs = [conflict_doc]
+
+    query = MagicMock()
+    query.stream.return_value = _async_iter(conflict_docs)
+
+    user_repo.users_col.document.return_value = doc_ref
+    user_repo.users_col.where.return_value.limit.return_value = query
+
+    transaction = MagicMock()
+    user_repo.db.transaction.return_value = transaction
+
+    return doc_ref, transaction
+
+
+# ============================================================================
 # get_user_by_external_id() Tests
 # ============================================================================
 @pytest.mark.asyncio
@@ -159,66 +215,68 @@ async def test_get_user_by_external_id_query_format(user_repo, mock_db_client):
 @pytest.mark.asyncio
 async def test_link_platform_identity_success(user_repo, test_user):
     """Test linking platform identity to user."""
-    # Mock get_user
-    user_repo.get_user = AsyncMock(return_value=test_user)
-
-    # Mock get_user_by_platform_id (no existing link)
-    user_repo.get_user_by_platform_id = AsyncMock(return_value=None)
-
-    # Mock Firestore set
-    mock_doc_ref = MagicMock()
-    mock_doc_ref.set = AsyncMock()
-    user_repo.users_col.document.return_value = mock_doc_ref
-
-    # Execute
-    result = await user_repo.link_platform_identity(
-        user_id="user-123",
-        platform="slack",
-        platform_user_id="U123456"
+    doc_ref, transaction = _setup_link_mocks(
+        user_repo, existing_user_dict=test_user.model_dump(), conflict_doc_id=None
     )
 
-    # Verify
+    with patch(
+        "src.adapters.firestore_user_repo.firestore.async_transactional",
+        _passthrough_transactional,
+    ):
+        result = await user_repo.link_platform_identity(
+            user_id="user-123", platform="slack", platform_user_id="U123456"
+        )
+
     assert result.user_id == "user-123"
     assert result.platform_identities["slack"] == "U123456"
-    mock_doc_ref.set.assert_called_once()
+    transaction.set.assert_called_once()
+    written_ref, written_data = transaction.set.call_args.args[:2]
+    assert written_ref is doc_ref
+    assert written_data["platform_identities"]["slack"] == "U123456"
+
+    # Both reads must participate in the transaction — otherwise a regression
+    # back to untransacted `await user_ref.get()` / `conflict_query.stream()`
+    # would still pass every test in this file silently.
+    query = user_repo.users_col.where.return_value.limit.return_value
+    doc_ref.get.assert_awaited_once_with(transaction=transaction)
+    query.stream.assert_called_once_with(transaction=transaction)
 
 
 @pytest.mark.asyncio
 async def test_link_platform_identity_user_not_found(user_repo):
     """Test linking platform identity when user doesn't exist."""
-    # Mock get_user returns None
-    user_repo.get_user = AsyncMock(return_value=None)
+    _setup_link_mocks(user_repo, existing_user_dict=None, conflict_doc_id=None)
 
-    # Execute and verify exception
-    with pytest.raises(ValueError, match="User user-999 not found"):
-        await user_repo.link_platform_identity(
-            user_id="user-999",
-            platform="slack",
-            platform_user_id="U123456"
-        )
+    with patch(
+        "src.adapters.firestore_user_repo.firestore.async_transactional",
+        _passthrough_transactional,
+    ):
+        with pytest.raises(ValueError, match="User user-999 not found"):
+            await user_repo.link_platform_identity(
+                user_id="user-999", platform="slack", platform_user_id="U123456"
+            )
 
 
 @pytest.mark.asyncio
 async def test_link_platform_identity_already_linked_to_another_user(
-    user_repo, test_user, test_user_with_slack
+    user_repo, test_user
 ):
     """Test linking platform identity that's already linked to another user."""
-    # Mock get_user returns test_user
-    user_repo.get_user = AsyncMock(return_value=test_user)
+    _setup_link_mocks(
+        user_repo, existing_user_dict=test_user.model_dump(), conflict_doc_id="user-789"
+    )
 
-    # Mock get_user_by_platform_id returns different user
-    user_repo.get_user_by_platform_id = AsyncMock(return_value=test_user_with_slack)
-
-    # Execute and verify exception
-    with pytest.raises(
-        ValueError,
-        match="Platform identity slack:U123456 already linked to user user-789"
+    with patch(
+        "src.adapters.firestore_user_repo.firestore.async_transactional",
+        _passthrough_transactional,
     ):
-        await user_repo.link_platform_identity(
-            user_id="user-123",
-            platform="slack",
-            platform_user_id="U123456"
-        )
+        with pytest.raises(
+            ValueError,
+            match="Platform identity slack:U123456 already linked to user user-789"
+        ):
+            await user_repo.link_platform_identity(
+                user_id="user-123", platform="slack", platform_user_id="U123456"
+            )
 
 
 @pytest.mark.asyncio
@@ -226,64 +284,55 @@ async def test_link_platform_identity_already_linked_to_same_user(
     user_repo, test_user_with_slack
 ):
     """Test relinking platform identity to same user (idempotent)."""
-    # Mock get_user
-    user_repo.get_user = AsyncMock(return_value=test_user_with_slack)
-
-    # Mock get_user_by_platform_id returns same user
-    user_repo.get_user_by_platform_id = AsyncMock(return_value=test_user_with_slack)
-
-    # Mock Firestore set
-    mock_doc_ref = MagicMock()
-    mock_doc_ref.set = AsyncMock()
-    user_repo.users_col.document.return_value = mock_doc_ref
-
-    # Execute (should succeed - idempotent)
-    result = await user_repo.link_platform_identity(
-        user_id="user-789",
-        platform="slack",
-        platform_user_id="U123456"
+    # conflict_doc_id == the same user_id we're linking -> not a real conflict
+    doc_ref, transaction = _setup_link_mocks(
+        user_repo,
+        existing_user_dict=test_user_with_slack.model_dump(),
+        conflict_doc_id="user-789",
     )
 
-    # Verify
+    with patch(
+        "src.adapters.firestore_user_repo.firestore.async_transactional",
+        _passthrough_transactional,
+    ):
+        result = await user_repo.link_platform_identity(
+            user_id="user-789", platform="slack", platform_user_id="U123456"
+        )
+
     assert result.user_id == "user-789"
     assert result.platform_identities["slack"] == "U123456"
+    transaction.set.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_link_platform_identity_multiple_platforms(user_repo, test_user):
     """Test linking multiple platform identities to same user."""
-    # Start with user that has no platforms
     user = test_user.model_copy()
 
-    # Mock get_user
-    user_repo.get_user = AsyncMock(return_value=user)
-
-    # Mock get_user_by_platform_id (no conflicts)
-    user_repo.get_user_by_platform_id = AsyncMock(return_value=None)
-
-    # Mock Firestore set
-    mock_doc_ref = MagicMock()
-    mock_doc_ref.set = AsyncMock()
-    user_repo.users_col.document.return_value = mock_doc_ref
-
-    # Link Slack
-    result1 = await user_repo.link_platform_identity(
-        user_id="user-123",
-        platform="slack",
-        platform_user_id="U123456"
-    )
+    # First link: Slack
+    _setup_link_mocks(user_repo, existing_user_dict=user.model_dump(), conflict_doc_id=None)
+    with patch(
+        "src.adapters.firestore_user_repo.firestore.async_transactional",
+        _passthrough_transactional,
+    ):
+        result1 = await user_repo.link_platform_identity(
+            user_id="user-123", platform="slack", platform_user_id="U123456"
+        )
     assert "slack" in result1.platform_identities
 
-    # Link Telegram (update mock to return user with Slack)
-    user_repo.get_user = AsyncMock(return_value=result1)
-
-    result2 = await user_repo.link_platform_identity(
-        user_id="user-123",
-        platform="telegram",
-        platform_user_id="T123456"
+    # Second link: Telegram — the read now reflects result1's state (simulating
+    # that the first write actually landed), so both platforms survive.
+    _setup_link_mocks(
+        user_repo, existing_user_dict=result1.model_dump(), conflict_doc_id=None
     )
+    with patch(
+        "src.adapters.firestore_user_repo.firestore.async_transactional",
+        _passthrough_transactional,
+    ):
+        result2 = await user_repo.link_platform_identity(
+            user_id="user-123", platform="telegram", platform_user_id="T123456"
+        )
 
-    # Verify both platforms linked
     assert "slack" in result2.platform_identities
     assert "telegram" in result2.platform_identities
     assert result2.platform_identities["slack"] == "U123456"
@@ -293,26 +342,19 @@ async def test_link_platform_identity_multiple_platforms(user_repo, test_user):
 @pytest.mark.asyncio
 async def test_link_platform_identity_updates_timestamp(user_repo, test_user):
     """Test that linking updates user's updated_at timestamp."""
-    # Mock get_user
     original_updated_at = test_user.updated_at
-    user_repo.get_user = AsyncMock(return_value=test_user)
-
-    # Mock get_user_by_platform_id
-    user_repo.get_user_by_platform_id = AsyncMock(return_value=None)
-
-    # Mock Firestore set
-    mock_doc_ref = MagicMock()
-    mock_doc_ref.set = AsyncMock()
-    user_repo.users_col.document.return_value = mock_doc_ref
-
-    # Execute
-    result = await user_repo.link_platform_identity(
-        user_id="user-123",
-        platform="slack",
-        platform_user_id="U123456"
+    _setup_link_mocks(
+        user_repo, existing_user_dict=test_user.model_dump(), conflict_doc_id=None
     )
 
-    # Verify timestamp was updated
+    with patch(
+        "src.adapters.firestore_user_repo.firestore.async_transactional",
+        _passthrough_transactional,
+    ):
+        result = await user_repo.link_platform_identity(
+            user_id="user-123", platform="slack", platform_user_id="U123456"
+        )
+
     assert result.updated_at > original_updated_at
 
 
@@ -353,24 +395,19 @@ async def test_oauth_flow_external_id_lookup(user_repo, test_user):
 async def test_platform_linking_flow(user_repo, test_user):
     """Test typical platform linking flow: OAuth user links Slack."""
     # User authenticated via OAuth, now linking Slack
-
-    # Mock get_user
-    user_repo.get_user = AsyncMock(return_value=test_user)
-
-    # Mock get_user_by_platform_id (Slack not linked yet)
-    user_repo.get_user_by_platform_id = AsyncMock(return_value=None)
-
-    # Mock Firestore set
-    mock_doc_ref = MagicMock()
-    mock_doc_ref.set = AsyncMock()
-    user_repo.users_col.document.return_value = mock_doc_ref
-
-    # Link Slack
-    updated_user = await user_repo.link_platform_identity(
-        user_id="user-123",
-        platform="slack",
-        platform_user_id="U123456"
+    _setup_link_mocks(
+        user_repo, existing_user_dict=test_user.model_dump(), conflict_doc_id=None
     )
+
+    with patch(
+        "src.adapters.firestore_user_repo.firestore.async_transactional",
+        _passthrough_transactional,
+    ):
+        updated_user = await user_repo.link_platform_identity(
+            user_id="user-123",
+            platform="slack",
+            platform_user_id="U123456"
+        )
 
     # Verify
     assert updated_user.platform_identities["slack"] == "U123456"

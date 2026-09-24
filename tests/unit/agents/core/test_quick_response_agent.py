@@ -585,7 +585,7 @@ class TestQuickAgentIntentRemap:
         engine = DelegationEngine(coordinator)
 
         tool_call = ToolCall(name="delegate_to_specialist", args={"intent": "search_web", "query": "погода"})
-        await engine._dispatch_single(
+        await engine.dispatch(
             tool_call, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
 
@@ -603,7 +603,7 @@ class TestQuickAgentIntentRemap:
         engine = DelegationEngine(coordinator)
 
         tool_call = ToolCall(name="delegate_to_specialist", args={"intent": "search_memory", "query": "факты"})
-        await engine._dispatch_single(
+        await engine.dispatch(
             tool_call, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
 
@@ -861,7 +861,7 @@ class TestFormatEmailSearchCompact:
 
 
 class TestDelegateQuickEdgeCases:
-    """Tests for DelegationEngine._dispatch_single edge cases (moved from QuickResponseAgent)."""
+    """Tests for DelegationEngine.dispatch edge cases (moved from QuickResponseAgent)."""
 
     @pytest.fixture
     def engine(self):
@@ -877,7 +877,7 @@ class TestDelegateQuickEdgeCases:
         # Replaced with: intent missing returns error
         engine = DelegationEngine(AsyncMock())
         tc = ToolCall(name="delegate_to_specialist", args={"intent": "search_memory", "query": "test"})
-        result = await engine._dispatch_single(
+        result = await engine.dispatch(
             tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
         # coordinator called → assert it reached dispatch
@@ -885,7 +885,7 @@ class TestDelegateQuickEdgeCases:
 
     async def test_no_intent_returns_error_string(self, engine, ctx):
         tc = ToolCall(name="delegate_to_specialist", args={"query": "test"})
-        result = await engine._dispatch_single(tc, ctx, {}, {}, "test", 0, 0)
+        result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
         assert "SYSTEM ERROR" in result.result_str
 
     async def test_context_params_as_string_wrapped(self, engine, ctx):
@@ -897,7 +897,7 @@ class TestDelegateQuickEdgeCases:
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "test", "context": "some reasoning text"},
         )
-        result = await engine._dispatch_single(tc, ctx, {}, {}, "test", 0, 0)
+        result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
         assert result.result_str is not None
 
 
@@ -1047,7 +1047,7 @@ class TestSanitizeResponseEmpty:
 # =============================================================================
 
 class TestDelegateQuickNonDictContext:
-    """Tests for DelegationEngine._dispatch_single non-dict context handling."""
+    """Tests for DelegationEngine.dispatch non-dict context handling."""
 
     @pytest.mark.asyncio
     async def test_none_context_params_normalized(self):
@@ -1061,7 +1061,7 @@ class TestDelegateQuickNonDictContext:
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "test", "context": None},
         )
-        result = await engine._dispatch_single(
+        result = await engine.dispatch(
             tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
         assert result.result_str is not None
@@ -1072,7 +1072,7 @@ class TestDelegateQuickNonDictContext:
 # =============================================================================
 
 class TestDelegateQuickRetry:
-    """Tests for DelegationEngine._dispatch_single failure handling."""
+    """Tests for DelegationEngine.dispatch failure handling."""
 
     @pytest.mark.asyncio
     async def test_failure_returns_rejection_message(self):
@@ -1086,7 +1086,7 @@ class TestDelegateQuickRetry:
             name="delegate_to_specialist",
             args={"intent": "search_memory", "query": "q"},
         )
-        result = await engine._dispatch_single(
+        result = await engine.dispatch(
             tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
         assert "SYSTEM" in result.result_str
@@ -1097,7 +1097,7 @@ class TestDelegateQuickRetry:
 # =============================================================================
 
 class TestDelegateQuickSearchEmails:
-    """Tests for DelegationEngine._dispatch_single search_emails formatting."""
+    """Tests for DelegationEngine.dispatch search_emails formatting."""
 
     @pytest.mark.asyncio
     async def test_search_emails_result_formatted_compact(self):
@@ -1113,7 +1113,7 @@ class TestDelegateQuickSearchEmails:
             name="delegate_to_specialist",
             args={"intent": "search_emails", "query": "invoice"},
         )
-        result = await engine._dispatch_single(
+        result = await engine.dispatch(
             tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
         assert "abc123" in result.result_str

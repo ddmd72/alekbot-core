@@ -22,14 +22,29 @@ PROJECT_ID ?= $(GOOGLE_CLOUD_PROJECT)
 REGION ?= us-central1
 PYTHON ?= python3
 
-# The single live Cloud Run service + its async research job.
+# The single live Cloud Run service + its async research job + the voice relay
+# (second Cloud Run service, same image, different entrypoint — see
+# cloudbuild-dev.yaml and relay_main.py).
 SERVICE_NAME ?= alek-bot-dev
 RESEARCH_JOB ?= alek-research-job-dev
+VOICE_RELAY ?= alek-voice-relay-dev
 
 # Cloud Run service URL — defined in .env (gitignored), loaded via include above.
 # Required: SERVICE_URL_DEV. The deploy-time OAuth callback is derived from it in
 # the deploy target's substitutions — NOT from the local OAUTH_REDIRECT_URI in
 # .env (that one is a localhost value, used only for running the app locally).
+
+# Voice relay URL — same category as SERVICE_URL_DEV: a human-maintained .env
+# value turned into a Cloud Build substitution, never read directly from .env by
+# the app (CLAUDE.md, "Deploy-substitution trap"). Chicken-and-egg on a first
+# deploy: alek-voice-relay-dev has no URL until it exists, so deploy once, read
+# the URL back, set VOICE_RELAY_URL_DEV, deploy again — see
+# docs/07_deployment/README.md § Voice Relay Stream URL.
+#
+# The app needs the WebSocket form (Twilio's <Stream url="wss://...">), while
+# gcloud reports the https:// one — patsubst converts it, so .env holds exactly
+# what `gcloud run services describe` prints and nothing has to be hand-edited.
+_VOICE_RELAY_URL = $(patsubst https://%,wss://%,$(VOICE_RELAY_URL_DEV))
 
 # Default entry count for log reads
 K ?= 300
@@ -46,6 +61,7 @@ K ?= 300
 .PHONY: logs logs-tail logs-tail-clean logs-tail-full logs-perf fetch-logs
 .PHONY: logs-mode-clean logs-mode-full
 .PHONY: logs-job fetch-logs-job list-jobs logs-execution cancel-job
+.PHONY: logs-relay fetch-logs-relay
 .PHONY: services status
 .PHONY: claude-model claude-rollback claude-forward dr-model dr-rollback dr-forward
 .PHONY: check-models check-pricing
@@ -103,6 +119,8 @@ help: ## Show this help message
 	@echo "  make list-jobs       List job executions with status"
 	@echo "  make logs-execution EXECUTION=<name>  View logs for a specific execution"
 	@echo "  make cancel-job EXECUTION=<name>      Cancel a running execution"
+	@echo "  make logs-relay      View recent voice relay service logs"
+	@echo "  make fetch-logs-relay [K=300]  Fetch last K relay logs to alek_debug_relay.log"
 	@echo ""
 	@echo "🗄️  MAINTENANCE:"
 	@echo "  make check-models    Check available Gemini models"
@@ -188,7 +206,7 @@ check: lint test-unit ## CI gate: ruff lint + unit/architecture tests
 deploy: ## Build + deploy to Cloud Run (the single live environment)
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL) .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json
@@ -358,6 +376,30 @@ cancel-job: ## Cancel a running execution: make cancel-job EXECUTION=<name>
 	@gcloud run jobs executions cancel $(EXECUTION) \
 	  --region=$(REGION) \
 	  --project=$(PROJECT_ID)
+
+# --- Voice relay (Cloud Run service: $(VOICE_RELAY)) ---
+# A service, not a Job (it holds a live WebSocket per call), so these mirror
+# `logs`/`fetch-logs` above (parameterized to VOICE_RELAY) rather than
+# `logs-job`/`fetch-logs-job`, which target `gcloud run jobs` — the wrong
+# resource type for a second Cloud Run service.
+
+logs-relay: ## View last K voice relay log entries (default K=300)
+	@echo "📋 Logs for $(VOICE_RELAY) (last $(K) entries):"
+	@gcloud run services logs read $(VOICE_RELAY) \
+	  --region=$(REGION) \
+	  --limit=$(K) \
+	  --format="value(textPayload)" \
+	  --project=$(PROJECT_ID)
+
+fetch-logs-relay: ## Fetch last K voice relay logs to alek_debug_relay.log (default K=300)
+	@echo "📥 Fetching last $(K) voice relay log entries to alek_debug_relay.log..."
+	@gcloud run services logs read $(VOICE_RELAY) \
+	  --region=$(REGION) \
+	  --limit=$(K) \
+	  --format="value(textPayload)" \
+	  --project=$(PROJECT_ID) \
+	  > alek_debug_relay.log
+	@echo "✅ Done: $$(wc -l < alek_debug_relay.log) lines written"
 
 # ============================================================================
 # MAINTENANCE

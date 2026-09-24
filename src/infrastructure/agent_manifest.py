@@ -76,6 +76,8 @@ class Intent:
     DOMAIN_RESEARCH     = "domain_research"
     # Text language tutor — companion agent, bound-channel only (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §7/§9)
     TUTOR_CHAT          = "tutor_chat"
+    # Alek as a specialist — internal, named only by LELIK's allowlist (VOICE_COMPANION_RFC §4.7)
+    ASK_ALEK            = "ask_alek"
     # Image generation/editing via grok-imagine-image-2.0
     GENERATE_IMAGE      = "generate_image"
     EDIT_IMAGE          = "edit_image"
@@ -301,6 +303,21 @@ TASKS = AgentDescriptor(
 # Set as class-level _descriptor in their agent classes.
 # ---------------------------------------------------------------------------
 
+# The web+maps pairing every search_web caller gets (Quick, Smart, Lelik).
+SEARCH_WEB_MAPS_FANOUT = FanoutSpec(
+    intents=[Intent.MAPS_QUERY],
+    hint=(
+        "Two specialists answered: Web Search (general internet) and Maps (Google Maps database).\n"
+        "How to reconcile:\n"
+        "- Places, addresses, distances, routes, travel time, opening hours → Maps is authoritative (structured geodata).\n"
+        "- Reviews, ratings, editorial opinions, news about a place → Web Search is richer.\n"
+        "- If both return data about the same place and facts conflict → trust Maps for factual attributes "
+        "(location, hours, distance), trust Web for subjective content (reviews, recommendations).\n"
+        "- If Maps returned nothing useful — ignore it, use Web Search only.\n"
+        "Synthesize both into a single coherent answer for the user."
+    ),
+)
+
 # Quick doubles as emergency fallback for Smart failures (see AgentFallbackService).
 # Keep its provider/model config conservative and fixed — that's what makes it reliable
 # when Smart's dynamic assembly fails.
@@ -311,19 +328,7 @@ QUICK_RESPONSE = AgentDescriptor(
     allowed_intents=None,   # can call all non-internal intents
     intent_remap={},
     intent_fanout={
-        Intent.SEARCH_WEB: FanoutSpec(
-            intents=[Intent.MAPS_QUERY],
-            hint=(
-                "Two specialists answered: Web Search (general internet) and Maps (Google Maps database).\n"
-                "How to reconcile:\n"
-                "- Places, addresses, distances, routes, travel time, opening hours → Maps is authoritative (structured geodata).\n"
-                "- Reviews, ratings, editorial opinions, news about a place → Web Search is richer.\n"
-                "- If both return data about the same place and facts conflict → trust Maps for factual attributes "
-                "(location, hours, distance), trust Web for subjective content (reviews, recommendations).\n"
-                "- If Maps returned nothing useful — ignore it, use Web Search only.\n"
-                "Synthesize both into a single coherent answer for the user."
-            ),
-        ),
+        Intent.SEARCH_WEB: SEARCH_WEB_MAPS_FANOUT,
     },
 )
 
@@ -334,19 +339,7 @@ SMART_RESPONSE = AgentDescriptor(
     allowed_intents=None,   # can call all non-internal intents
     intent_remap={},
     intent_fanout={
-        Intent.SEARCH_WEB: FanoutSpec(
-            intents=[Intent.MAPS_QUERY],
-            hint=(
-                "Two specialists answered: Web Search (general internet) and Maps (Google Maps database).\n"
-                "How to reconcile:\n"
-                "- Places, addresses, distances, routes, travel time, opening hours → Maps is authoritative (structured geodata).\n"
-                "- Reviews, ratings, editorial opinions, news about a place → Web Search is richer.\n"
-                "- If both return data about the same place and facts conflict → trust Maps for factual attributes "
-                "(location, hours, distance), trust Web for subjective content (reviews, recommendations).\n"
-                "- If Maps returned nothing useful — ignore it, use Web Search only.\n"
-                "Synthesize both into a single coherent answer for the user."
-            ),
-        ),
+        Intent.SEARCH_WEB: SEARCH_WEB_MAPS_FANOUT,
     },
 )
 
@@ -728,6 +721,36 @@ VIDEO_GENERATION = AgentDescriptor(
 )
 
 
+LELIK = AgentDescriptor(
+    agent_id="lelik_agent",
+    agent_type="lelik",
+    eager=False,
+    internal=True,  # never a delegation target; the voice webhooks and /voice/delegate reach it directly
+    capabilities={},
+    description="Voice companion - places the callback, holds the call, delegates like any agent (VOICE_COMPANION_RFC.md)",
+    allowed_intents=frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_WEB, Intent.ASK_ALEK}),
+    intent_fanout={Intent.SEARCH_WEB: SEARCH_WEB_MAPS_FANOUT},
+)
+
+
+ALEK = AgentDescriptor(
+    agent_id="alek_agent",
+    agent_type="alek",
+    eager=False,
+    internal=True,  # offered only to allowlists that name it (Lelik); never to Smart/Quick
+    capabilities={Intent.ASK_ALEK: ExecutionMode.SYNC},
+    description="Alek — the user's full exocortex, through the Router",
+    capability_descriptions={
+        Intent.ASK_ALEK: (
+            "Alek, the user's full exocortex, answering in writing. Holds what you do not: mail, "
+            "documents, tasks and reminders, calendar, memory beyond your snapshot, the web, and any "
+            "action in the world. Slow: tens of seconds. He does not hear the call, so put the whole "
+            "question in query."
+        ),
+    },
+)
+
+
 ALL_DESCRIPTORS = [
     MEMORY_SEARCH,
     WEB_SEARCH,
@@ -747,4 +770,6 @@ ALL_DESCRIPTORS = [
     TUTOR,
     IMAGE_GENERATION,
     VIDEO_GENERATION,
+    LELIK,
+    ALEK,
 ]

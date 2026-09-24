@@ -117,6 +117,21 @@ delegate_to_specialist_extended_rules {
             }
         }
 
+        image_generation_specialist {
+            intent: "generate_image" or "edit_image"
+            query_formulation: "If the request is vague (no style/mood/subject detail), ask 1-2 clarifying questions in chat before delegating. Pass a natural-language creative brief — never write Aurora-specific prompt syntax yourself, the specialist translates it."
+            do_not: "Use edit_image without an uploaded reference image in the conversation — use generate_image for a new image instead."
+        }
+
+        video_generation_specialist {
+            intent: "generate_video" or "edit_video"
+            protocol: "See PROTOCOL_VIDEO_GEN_PREP — build the brief, present it for confirmation, wait, only then delegate. Do not skip straight to delegating here."
+            do_not: [
+                "Write Aurora-specific prompt syntax yourself — pass a natural-language creative brief, the specialist translates it.",
+                "Tell the user the video is ready in this turn — it arrives later, asynchronously.",
+            ]
+        }
+
 }
 
 delegation_rules {

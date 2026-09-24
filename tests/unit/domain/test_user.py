@@ -11,6 +11,8 @@ from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
 _ZERO_LLM_AGENT_TYPES = {
     "help",             # HelpAgent — static capabilities reference
     "file_management",  # FileManagementAgent — GCS download/delete only
+    "lelik",            # LelikAgent — places a Twilio call only, no LLM call
+    "alek",  # AlekGatewayAgent — routes to the Router, no LLM call of its own
 }
 
 
@@ -59,6 +61,20 @@ def test_maps_search_defaults_to_balanced_tier():
 def test_video_generation_has_performance_tier_by_default():
     assert UserBotConfig(agent_tiers={}).get_tier_for_agent("video_generation") == PerformanceTier.PERFORMANCE
     assert UserBotConfig(agent_tiers=None).get_tier_for_agent("video_generation") == PerformanceTier.PERFORMANCE
+
+
+def test_lelik_summarizer_defaults_to_eco_tier():
+    # RFC docs/10_rfcs/VOICE_COMPANION_RFC.md §4.9: "Bulk noisy-text summarization
+    # is a cheap-tier job." lelik_summarizer (like tutor_extractor) is not
+    # manifest-registered, so test_every_llm_agent_has_a_default_tier below can't
+    # catch a missing entry for it. Assert the explicit dict entry directly (not
+    # just the resolved tier) — self.default_tier is also ECO, so a
+    # get_tier_for_agent()-only assertion would pass by accident even with no
+    # _DEFAULT_AGENT_TIERS entry at all, which is exactly the "not an intentional
+    # design choice, just an accident of fallback behavior" gap this guards against.
+    assert _DEFAULT_AGENT_TIERS.get("lelik_summarizer") == PerformanceTier.ECO
+    assert UserBotConfig(agent_tiers={}).get_tier_for_agent("lelik_summarizer") == PerformanceTier.ECO
+    assert UserBotConfig(agent_tiers=None).get_tier_for_agent("lelik_summarizer") == PerformanceTier.ECO
 
 
 def test_user_bot_config_provider_defaults_intact():

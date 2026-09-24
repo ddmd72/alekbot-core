@@ -1,0 +1,11 @@
+{
+  "blueprint_id": "lelik_agent_v1",
+  "outer_class": "Lelik extends Agent",
+  "class_order": [
+    "properties",
+    "cognitive_process",
+    "policies",
+    "protocols",
+    "few_shot_examples"
+  ]
+}

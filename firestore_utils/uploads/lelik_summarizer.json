@@ -1,0 +1,26 @@
+{
+  "agent_id": "lelik_summarizer",
+  "blueprint_id": "lelik_summarizer_agent_v1",
+  "tokens": {
+    "COGNITIVE_PROCESS_LELIK_SUMMARIZER": {
+      "order": 10,
+      "non_overridable": true
+    },
+    "LANG_MIRROR": {
+      "order": 300,
+      "non_overridable": false
+    },
+    "ARCHETYPE_INTELLECTUAL_SNIPER": {
+      "order": 20
+    },
+    "VIBE_BATTLE_WEARY": {
+      "order": 30
+    },
+    "VOICE_APHORISTIC": {
+      "order": 40
+    },
+    "HUMOR_PRESET_RANEVSKAYA": {
+      "order": 60
+    }
+  }
+}
