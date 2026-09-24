@@ -134,8 +134,10 @@ class LelikAgent(BaseAgent):
             self.agent_id,
         )
         # ask_alek already copies Smart's own structured answer via notify_answer_copy
-        # (AlekGatewayAgent) — posting again here would double it.
-        if arguments.get("intent") != Intent.ASK_ALEK:
+        # (AlekGatewayAgent) — posting again here would double it. A failed result (rejection,
+        # exception, max retries, a fan-out whose primary errored) never posts either — its
+        # error string can itself contain a URL (e.g. an OpenAI 429 pointing at platform.openai.com).
+        if arguments.get("intent") != Intent.ASK_ALEK and not result.failed:
             await self._copy_links_to_chat(user_id, account_id, result.result_str)
         return result.result_str
 

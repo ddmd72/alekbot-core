@@ -47,6 +47,10 @@ class ToolResult:
     history_context: Optional[Dict[str, Any]] = None
     delivery_items: List[DeliveryItem] = field(default_factory=list)
     file_data: Optional[Dict[str, Any]] = None
+    # A non-success outcome (rejection, exception, max retries, missing intent, a fan-out whose
+    # primary section errored). Additive: existing callers don't read it, so their behaviour
+    # is unchanged; LelikAgent reads it to skip posting a chat copy of a link found in an error string.
+    failed: bool = False
 
 
 @dataclass
@@ -451,6 +455,7 @@ class DelegationEngine:
                 results.append(ToolResult(
                     name=tc.name,
                     result_str=f"AGENT ERROR: {result}",
+                    failed=True,
                 ))
             else:
                 results.append(result)
@@ -483,6 +488,7 @@ class DelegationEngine:
             return ToolResult(
                 name=tool_call.name,
                 result_str=f"SYSTEM ERROR: delegate_to_specialist called without 'intent'. args={args}",
+                failed=True,
             )
 
         # Apply intent remap
@@ -567,11 +573,13 @@ class DelegationEngine:
                     f"Error: {response.error} "
                     f"Correct your input and try again."
                 ),
+                failed=True,
             )
 
         return ToolResult(
             name=tool_call.name,
             result_str="AGENT ERROR: Max retries exceeded",
+            failed=True,
         )
 
     # ------------------------------------------------------------------ #
@@ -629,6 +637,7 @@ class DelegationEngine:
         all_delivery_items: List[DeliveryItem] = []
         merged_history_context: Dict[str, Any] = {}
         structured_data = None
+        primary_failed = False
 
         for idx, (intent, response) in enumerate(zip(intents, responses)):
             is_primary = idx == 0
@@ -640,6 +649,7 @@ class DelegationEngine:
                 )
                 if is_primary:
                     sections.append(f"[{label}]\nAGENT ERROR: {response}")
+                    primary_failed = True
                 continue
 
             if response.status != AgentStatus.SUCCESS:
@@ -651,6 +661,7 @@ class DelegationEngine:
                     sections.append(
                         f"[{label}]\nSYSTEM: Specialist rejected: {response.error}"
                     )
+                    primary_failed = True
                 continue
 
             result_text = _format_result(intent, response.result)
@@ -674,4 +685,5 @@ class DelegationEngine:
             structured_data=structured_data,
             history_context=merged_history_context or None,
             delivery_items=all_delivery_items,
+            failed=primary_failed,
         )
