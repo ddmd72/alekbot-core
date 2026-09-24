@@ -45,6 +45,16 @@ from src.utils.logger import logger
 # Breath-pulse filler played while Lelik thinks or waits (owner pick B2, 2026-09-24).
 _THINKING_CUE_PATH = Path(__file__).parent / "src" / "assets" / "voice" / "thinking_cue.ulaw"
 
+# Spoken as the owner's own first turn of every call (owner's wording, 2026-09-25): the same
+# delivery rules as system text left Lelik sounding like a narrator; asked in the call, he
+# changed at once, and his later turns follow his own first ones.
+_CALLER_OPENING = (
+    "Говори быстрее и человечнее, не как диктор. Не говори с расстановкой: внутри фразы — "
+    "без пауз между словами. Не повторяй одну и ту же интонацию в каждой фразе — пусть она "
+    "меняется, как в обычном разговоре. Поздоровайся со мной по имени и спроси, чем можешь "
+    "помочь (отвечай, применяя юмор и голос)."
+)
+
 
 def _load_thinking_cue() -> bytes:
     return _THINKING_CUE_PATH.read_bytes()
@@ -87,6 +97,7 @@ async def main() -> None:
         barge_in_min_speech_s=1.0,
         # After the one "still there?", this much more silence hangs up (voicemail, a phone put down).
         hangup_after_silence_s=20.0,
+        caller_opening=_CALLER_OPENING,
         # thinking_cue deliberately not passed (off): with it on, Lelik's replies were cut
         # after ~0.4-0.8 s on the live calls of 2026-09-24 and stopped when the relay was
         # routed back to a revision without it. Cause not found yet; the clip stays shipped.
