@@ -518,10 +518,17 @@ Lelik keeps talking while the task runs, which is what makes §4.1's narration l
 than decorative. "Async" here means *the provider's own late `function_call_output`* — not this
 repo's `ExecutionMode.ASYNC`, which enqueues a Cloud Task delivered by `UserNotificationService` to
 a chat channel. **No mechanism in `src/` returns an async result into a still-open caller session**,
-so that path cannot serve this one. The shared declaration's `mode: "later"` keeps its standard
-meaning and is not overridden for voice: the specialist works in the background, the result reaches
-the chat through `UserNotificationService`, and the tool call returns the usual acknowledgement at
-once. That is the right shape for "send me the full report" and needs no voice-specific path.
+so that path cannot serve this one.
+
+**Correction from Slice 2 (Task 4 finding):** the shared declaration's `mode: "later"` does *not*
+reach the chat for `ask_alek`, contrary to what this section originally claimed. `ask_alek` is a
+SYNC-declared intent, and `AgentWorkerHandler` — the consumer of the Cloud Task
+`ExecutionMode.ASYNC` enqueues — delivers only generator-declared (ASYNC) intents; a SYNC intent
+forced into `mode: "later"` has nowhere for its answer to land and would drop it silently. So
+`LelikAgent.delegate()` strips `mode` from the arguments before dispatch: on the phone, `ask_alek`
+always runs synchronously regardless of what the model requests. "Send me the full report" over the
+phone therefore still resolves through `resolve_late_answer` (the *provider's* async mechanism
+above), not through `ExecutionMode.ASYNC`.
 
 **Corner cases — requirements, not commentary.**
 
@@ -1036,6 +1043,10 @@ remembers is the smallest thing worth having.
 **Slice 2 — Lelik delegates.** Gated by 0.1 (done). One slice: once the standard path exists,
 each specialist is an allowlist entry, not a feature.
 
+**Status (2026-09-24):** code complete on `feat/voice-companion` — items 1–7 below implemented and
+`make check` green. Live verification (a real call exercising `ask_alek`) is pending the Slice 2
+live calls (2026-09-24 build); see §9 items 3, 14, 15 for the open questions that depend on it.
+
 1. **Standard pieces, made shareable rather than copied.** `DelegationEngine`'s single-call
    dispatch becomes public for a second caller. The `search_web → maps_query` `FanoutSpec`, today
    duplicated verbatim in `QUICK_RESPONSE` and `SMART_RESPONSE`, becomes one constant. The registry
@@ -1142,8 +1153,9 @@ unit and this is genuinely optional.
 3. **Measured relay latency**, and end-to-end time-to-answer once slice 2 exists — Phase 0.3.
    **Answered, partially (2026-09-21):** echo-relay p50 681ms / p95 910ms on OpenAI, over a
    developer laptop + ngrok, not the eventual Cloud Run topology — treat as "not disqualifying,"
-   not a production number. The end-to-end (`ask_alek` included) figure is still open; it needs
-   slice 2 to exist. `decisions/voice_spike_03_latency.md`.
+   not a production number. The end-to-end (`ask_alek` included) figure is still open; slice 2 now
+   exists in code, but the number itself is pending the Slice 2 live calls (2026-09-24 build).
+   `decisions/voice_spike_03_latency.md`.
 4. **Which provider and tier** (§6) — decided by Phase 0 on latency, format handling and
    late-tool-result support, not price, which is a wash.
    **Deferred by owner decision (2026-09-21), not resolved by Phase 0 data.** Three of six spikes
@@ -1191,10 +1203,12 @@ unit and this is genuinely optional.
 14. **Several function calls in one realtime response** (§4.7 parallelism). Spike 0.1 exercised one
    call at a time. Confirm that `gpt-realtime-2.1` emits several `function_call` items in one
    response and accepts their outputs out of order. If it does not, parallelism degrades to
-   sequential calls; nothing else in §4.7 changes.
+   sequential calls; nothing else in §4.7 changes. **Pending the Slice 2 live calls (2026-09-24
+   build)** — no number exists yet.
 15. **Fast-specialist latency on a call.** `search_web` runs at BALANCED today (ECO only for
    `fetch_url`). Measure spoken time-to-answer on the first slice 2 calls before tuning. If it is
    too slow, `LELIK.intent_remap` can point it at a faster variant, the same lever Smart already has.
+   **Pending the Slice 2 live calls (2026-09-24 build)** — no measurement exists yet.
 
 
 ## 10. Rollback

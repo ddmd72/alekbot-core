@@ -210,23 +210,43 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     ≤300-char `response_summary`, not `full_response` (dormant pre-Phase-G, when Tutor produced no
     summary and `text == full_text`).
 - Lelik (`lelik_agent.py`, **`internal=True`, `capabilities={}`, `eager=False`**) — the voice
-  companion's call originator (`docs/10_rfcs/VOICE_COMPANION_RFC.md` §4.6/§4.13). The closest sibling to
-  Tutor architecturally (a companion, not a delegation specialist) but stricter: it has **no `Intent`
-  at all**, so it is unreachable via `delegate_to_specialist` *and* via `AgentCoordinator`;
-  `can_handle()` returns `False` unconditionally, existing only to satisfy `BaseAgent`. Registering an
-  intent is what the deferred **outbound**-calling RFC does, not Slice 1.
-  - **It makes no LLM call and has no tier.** `execute(purpose, ticket, answer_url)` does exactly one
-    thing: `TelephonyPort.originate_call`. There is no `_DEFAULT_AGENT_TIERS["lelik"]` entry and none
-    is needed — Lelik's *persona* is a `gpt-realtime-2.1` session opened by `OpenAIRealtimeAdapter`
-    inside the relay process, which never goes through `AgentExecutionContext` at all.
-    `execution_context` is accepted for constructor parity and unused. That session's prompt is
-    built by `services/lelik_persona_service.py` (warm context, RFC §4.8), not by this class.
+  companion (`docs/10_rfcs/VOICE_COMPANION_RFC.md` §4.6/§4.7/§4.13), and as of Slice 2 a **standard
+  delegating agent**, not just a call originator: it has **no `Intent` of its own** (`capabilities={}`),
+  so it is still unreachable via `delegate_to_specialist` or `AgentCoordinator` and `can_handle()`
+  still returns `False` unconditionally — but its `LELIK` descriptor now carries `allowed_intents=
+  {search_memory, search_web, ask_alek}` and `intent_fanout={search_web: SEARCH_WEB_MAPS_FANOUT}`,
+  the same shape Tutor's descriptor has. Three entry points, one instance:
+  - **`execute(purpose, ticket, answer_url, to_number)`** — places the callback via
+    `TelephonyPort.originate_call`. No LLM call, no tier (there is no `_DEFAULT_AGENT_TIERS["lelik"]`
+    entry, and none is needed for this method).
+  - **`session_config(user_id, account_id)`** — builds the realtime session's instructions and tool
+    declaration. `LelikPersonaService.assemble()` supplies only the *context* (`LelikContext`:
+    biographical facts + primary-channel history, RFC §4.8) — `LelikAgent` itself calls
+    `prompt_builder.build_for_agent(agent_type="lelik", ...)` to turn that context into instructions,
+    and builds the tool declaration from `coordinator.get_available_intents_for(LELIK)` the same way
+    Smart/Tutor do. Raises on failure — no call opens on an empty context.
+  - **`delegate(user_id, account_id, arguments, call_context)`** — runs one `delegate_to_specialist`
+    call from the live realtime session through `DelegationEngine(coordinator).dispatch(...)` (public,
+    made for this second caller — see Orchestration Patterns below), exactly as a text orchestrator's
+    single-call dispatch would. Seeds `context[CALL_CHAIN_KEY]=[lelik_agent]`, attaches the primary
+    channel's `session_id`/`origin_channel_id`/`origin_platform` from `persona.primary_channel(user_id)`
+    when resolvable, and **strips `mode` from the arguments** before dispatch:
+    `AgentWorkerHandler` delivers only generator-declared (ASYNC) intents, so a SYNC-declared intent
+    forced into `mode: "later"` has no delivery path and would silently drop the answer on the phone.
+  - **Persona is a context source, not a prompt author.** `services/lelik_persona_service.py` never
+    calls the LLM and never renders prompt text — it assembles facts/history (RFC §4.8); rendering is
+    `LelikAgent`'s job via the shared `PromptBuilderPort`, same division as every other agent in this
+    file.
   - **Constructor:** `(config, telephony: TelephonyPort, from_number, status_callback_url,
     prompt_builder, persona: LelikPersonaService)` — built lazily by
     `UserAgentFactory._build_lelik(user_id, ctx)` like any other per-user specialist, reached via
-    `UserAgentFactory.get_lelik(user_id)`, which `main.py` passes into the webhook blueprint as
-    `lelik_agent_provider`. Call sites: `src/web/voice_webhook_app.py`'s `/voice/inbound-status`
-    route awaits `execute()`, `/voice/answer` awaits `session_config()`.
+    `UserAgentFactory.get_lelik(user_id)`. `get_lelik` calls `ensure_agents_for_user(user_id)` on
+    every use — refreshes `last_used` so the TTL sweep can't unregister the user's Router mid-call,
+    and as a side effect keeps that Router warm for `ask_alek`. `main.py` passes `get_lelik` into the
+    webhook blueprint (`lelik_agent_provider`) and into `voice_control_plane_app.py`'s `/voice/delegate`
+    route. Call sites: `voice_webhook_app.py`'s `/voice/inbound-status` awaits `execute()`,
+    `/voice/answer` awaits `session_config()`; `voice_control_plane_app.py`'s `/voice/delegate` awaits
+    `delegate()`.
   - **It deliberately does not catch `originate_call` failures.** The auth webhook's own try/except is
     what deletes the ticket and releases the one-call marker; swallowing the exception into an
     `AgentResponse.failure()` would strand both for up to `one_call_ttl_s` with no alert.
@@ -247,6 +267,37 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     entry it would silently fall through to the user's `default_tier`. There is **no
     `AgentProviderStrategy.STRATEGIES["lelik_summarizer"]`** either, so provider resolution falls back
     to `STRATEGIES["quick"]` (`agent_context_builder.py:206`).
+- AlekGatewayAgent (`alek_gateway_agent.py`, `agent_type="alek"`, **`internal=True`**, `eager=False`,
+  intent `ask_alek`) — Alek as a specialist behind a zero-LLM gateway (RFC §4.7), named only by
+  `LELIK.allowed_intents` (see the registry rule below — an internal intent an explicit allowlist
+  names). `RETRY_POLICY = NO_RETRY_POLICY`: a retry re-runs Router + Smart + specialists, so it would
+  double the spend and the chat copy.
+  - **Routes to the Router, not to Smart.** `execute()` builds an `AgentMessage` addressed to
+    `router_agent_{user_id}` and calls `coordinator.route_message()` — exactly what
+    `ConversationHandler` does for a normal turn, because `router_agent.py` is where `enrich_context`
+    (RRF memory search) runs; Smart without it is Alek without memory.
+  - **`current_message_parts`.** Smart builds its user turn from `context["current_message_parts"]`
+    only, so the routed message's `context` carries `[MessagePart(text=commission_text)]` alongside
+    the forwarded `message.context` — the commission text (the call's question, plus the last
+    exchanges and Lelik's reasoning, `_commission()`) is what Smart actually sees, not a bare string.
+  - **`response_summary_task` is cancelled.** Smart may schedule an async history-summary task on its
+    response metadata; on this path nothing writes history (see below), so the summary would be paid
+    for and discarded — the gateway cancels it explicitly rather than letting it run to waste.
+  - **The rule-2 chat copy goes through `notify_answer_copy`.** When Alek's answer is reading-shaped
+    (`SmartResponse.link_list` or `.structured_data`), the gateway calls
+    `UserNotificationService.notify_answer_copy` so links/tables land in chat the moment Alek answers
+    (RFC §4.10 rule 2) — a delivery-only call; failure is logged, not raised, because the spoken
+    answer matters more than its chat copy.
+  - **The gateway's path writes no history.** `ConversationHandler` is the only writer of session
+    history (root `CLAUDE.md` → Per-channel sessions), and `notify_answer_copy` only sends chat
+    messages/rich content — it does not append to history either. ASYNC generators Smart may have
+    dispatched along the way (e.g. `create_html_page`) still write document links through their own
+    normal async delivery path, by design — that is a separate mechanism from this gateway's
+    synchronous return.
+  - **Known limit:** sync `delivery_items` a Smart response may carry are dropped on this path — only
+    `full_response`/`link_list`/`structured_data` are read. Today the only sync `delivery_item` Smart
+    ever produces is WebSearch grounding attribution, and `ENABLE_GROUNDING_ATTRIBUTION` is off by
+    default, so this has not been observed in practice.
 
 ## Orchestration Patterns
 
@@ -267,6 +318,12 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   (DocGenerator/DocPlanner/Pdf/Html/DeepResearch/ClaudeDeepResearchRunner/FileManagement). Specialists
   registered via `ALL_DESCRIPTORS` in `main.py`; orchestrators set a class-level `_descriptor`
   (coordinator never routes TO them via registry).
+  **Registry rule (2026-09-23):** `internal=True` means "not offered by default" — excluded from
+  `get_available_intents()` and from `get_available_intents_for(d)` when `d.allowed_intents is None`.
+  A descriptor with an explicit `allowed_intents` may still name an internal intent —
+  `get_available_intents_for` then returns it for that caller only. This is how `LELIK` names
+  `ask_alek` without making it visible to Smart or Quick. See
+  `docs/04_solution_strategy/decisions/allowlist_names_internal_intent.md`.
   See **Creating a New Agent** below for the complete checklist.
 - **Intent** — typed string constants for all agent intent names. Defined in `agent_manifest.py`
   as `class Intent`. Import `Intent.SEARCH_MEMORY` etc. instead of raw string literals everywhere.
@@ -302,6 +359,10 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `params`. All context fields (`origin_channel_id`, `session_id`, etc.) propagate automatically
   to downstream tasks including async Cloud Task payloads. Agents pass `context=message.context`
   — zero knowledge of routing, channels, or session format.
+  **`dispatch()` is public** — the single-call step `_execute_loop` uses internally, exposed for a
+  caller with no loop of its own: `LelikAgent.delegate()` runs one `delegate_to_specialist` call from
+  the live realtime session through it, getting remap/fan-out/mode/coordinator/chain-guard/spans/
+  billing for free instead of a second implementation.
 - **Cycle guard** (`AgentCoordinator._refuse_if_looping`, 2026-08-25) — `context["_call_chain"]`
   accumulates the agent ids already entered; re-entering one is refused with the path named
   (`tutor → smart → tutor`), and `MAX_DELEGATION_DEPTH=8` additionally caps runaway chains of
@@ -312,7 +373,9 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   exists for, since every hop acks immediately and blocks nobody. An agent that rebuilds its own
   context instead of forwarding `message.context` silently resets the chain (that was
   `notes_agent`'s bug). Static complement: `AgentDescriptor.allowed_intents` restricts who may call
-  what by design; the chain catches what design missed.
+  what by design; the chain catches what design missed. **Lelik seeds `_call_chain=[lelik_agent]`**
+  on every `delegate()` call; `AlekGatewayAgent` forwards `message.context` whole into the routed
+  message, so the chain — and therefore the cycle guard — reaches through the Router into Smart.
 - **Per-call sync/async** — `handle_delegation(..., mode_override=ExecutionMode)` overrides the
   intent's declared mode for one call; `None` keeps the manifest value, so callers that pass
   nothing are unaffected. The LLM chooses via `mode: "now" | "later"` on `delegate_to_specialist`
