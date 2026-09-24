@@ -65,7 +65,8 @@ async def test_handle_connection_cleans_up_on_clean_close_without_stop_event():
     task_holder: dict = {}
 
     class FakeSessionService:
-        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback):
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback,
+                              send_cue_audio=None):
             task_holder["task"] = asyncio.current_task()
             # This loop only terminates once handle_connection pushes the
             # None sentinel onto inbound_queue - if it never does (the bug),
@@ -96,7 +97,8 @@ async def test_clear_outbound_audio_sends_twilio_clear_with_real_stream_sid():
     captured: dict = {}
 
     class FakeSessionService:
-        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback):
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback,
+                              send_cue_audio=None):
             captured["clear"] = clear_outbound_audio
             await clear_outbound_audio()
 
@@ -132,7 +134,8 @@ async def test_clear_outbound_audio_is_reusable_across_repeated_barge_ins():
     ws = FakeTwilioWs(messages)
 
     class FakeSessionService:
-        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback):
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback,
+                              send_cue_audio=None):
             await clear_outbound_audio()
             await clear_outbound_audio()
 
@@ -156,7 +159,8 @@ async def test_every_outbound_chunk_is_followed_by_a_mark_named_by_byte_total():
     ws = FakeTwilioWs(messages)
 
     class FakeSessionService:
-        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback):
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback,
+                              send_cue_audio=None):
             for _ in range(2):
                 await send_outbound_audio(AudioFrame(
                     encoding="audio/pcmu", sample_rate_hz=8000, payload=chunk, track="outbound",
@@ -180,7 +184,8 @@ async def test_echoed_marks_advance_the_playback_handed_to_the_session():
     release = asyncio.Event()
 
     class FakeSessionService:
-        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback):
+        async def handle_call(self, ticket, inbound_audio, send_outbound_audio, clear_outbound_audio, playback,
+                              send_cue_audio=None):
             from src.domain.voice_audio_frame import AudioFrame
             await send_outbound_audio(AudioFrame(
                 encoding="audio/pcmu", sample_rate_hz=8000, payload=chunk, track="outbound",

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
@@ -22,6 +23,15 @@ _SILENCE_NOTE = "[The caller has been silent for {seconds} seconds.]"
 # one left both sides silent for 10-20 s on every live call (2026-09-23).
 _PICKUP_NOTE = "[The caller has just picked up the phone you called. Speak first.]"
 _WATCHDOG_TICK_S = 0.25
+# Thinking cue: 20 ms μ-law frames, paced in real time with a short lead, so stopping it
+# never leaves more than ~100 ms queued in front of Lelik's first word.
+_CUE_FRAME_BYTES = 160
+_CUE_LEAD_BYTES = 800
+_CUE_TICK_S = 0.02
+_MULAW_BYTES_PER_S = 8000
+# Replies to the caller or to an arriving answer; the greeting and the watchdog's own
+# notes are Lelik's initiative, so a "thinking" sound before them would be noise.
+_CUE_REASONS = frozenset({"turn", "answer"})
 _DELEGATION_TIMEOUT_S = 90.0
 # Attached to every delegation by the relay, never left to the model's retention (RFC §4.7).
 _CALL_CONTEXT_TURNS = 6
@@ -62,6 +72,11 @@ class _CallState:
     playback: PlaybackTracker
     ticket: str
     response_active: bool = False
+    response_reason: str = ""
+    response_audible: bool = False  # the active response has sent its first audio
+    response_started_at: float = 0.0
+    # loop.time() until which cue audio may still be queued at Twilio: cleared before speech.
+    cue_tail_until: float = 0.0
     caller_speaking: bool = False
     silence_prompted: bool = False
     item_id: Optional[str] = None
@@ -89,6 +104,8 @@ class VoiceSessionService:
         reasoning_effort: str = "medium",
         silence_timeout_s: float = 8.0,
         delegation_timeout_s: float = _DELEGATION_TIMEOUT_S,
+        thinking_cue: bytes = b"",
+        cue_grace_s: float = 0.7,
     ) -> None:
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
@@ -96,6 +113,8 @@ class VoiceSessionService:
         self._reasoning_effort = reasoning_effort
         self._silence_timeout_s = silence_timeout_s
         self._delegation_timeout_s = delegation_timeout_s
+        self._thinking_cue = thinking_cue
+        self._cue_grace_s = cue_grace_s
 
     async def handle_call(
         self,
@@ -104,13 +123,15 @@ class VoiceSessionService:
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
         clear_outbound_audio: Callable[[], Awaitable[None]],
         playback: PlaybackTracker,
+        send_cue_audio: Optional[Callable[[AudioFrame], Awaitable[None]]] = None,
     ) -> None:
         """`playback` is fed by the transport (bytes sent, marks echoed back); this
-        loop only reads it."""
+        loop only reads it. `send_cue_audio` plays filler that playback never counts."""
         config = await self._control_plane.fetch_session_config(ticket)
         state = _CallState(playback=playback, ticket=ticket, persona_anchor=build_persona_anchor(config["instructions"]))
         async with RequestContext(user_id=config["user_id"], account_id=config["account_id"]):
-            await self._run_call(ticket, config, inbound_audio, send_outbound_audio, clear_outbound_audio, state)
+            await self._run_call(ticket, config, inbound_audio, send_outbound_audio, clear_outbound_audio, state,
+                                 send_cue_audio)
 
     async def _run_call(
         self,
@@ -120,12 +141,14 @@ class VoiceSessionService:
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
         clear_outbound_audio: Callable[[], Awaitable[None]],
         state: _CallState,
+        send_cue_audio: Optional[Callable[[AudioFrame], Awaitable[None]]] = None,
     ) -> None:
         session = self._session_factory()
         buffer = VoiceCallBuffer(call_id=ticket)
         forward_task: Optional[asyncio.Task] = None
         consume_task: Optional[asyncio.Task] = None
         watchdog_task: Optional[asyncio.Task] = None
+        cue_task: Optional[asyncio.Task] = None
 
         try:
             # open() is inside the try/finally, not before it: a failed open (e.g. a
@@ -157,9 +180,11 @@ class VoiceSessionService:
             )
             # The watchdog never ends on its own; the call ends with the audio streams.
             watchdog_task = asyncio.ensure_future(self._watch_silence(session, state))
+            if self._thinking_cue and send_cue_audio is not None:
+                cue_task = asyncio.ensure_future(self._play_cue(state, send_cue_audio))
             await asyncio.wait({forward_task, consume_task}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            tasks = [task for task in (forward_task, consume_task, watchdog_task) if task is not None]
+            tasks = [task for task in (forward_task, consume_task, watchdog_task, cue_task) if task is not None]
             # In-flight delegations die with the call: their answer served a conversation that is gone.
             tasks += list(state.delegations)
             for task in tasks:
@@ -215,11 +240,22 @@ class VoiceSessionService:
                 # alone let the whole tail play over the caller (first live call, 2026-09-22).
                 if state.response_active or not state.playback.caught_up:
                     cancelled = await self._barge_in(session, state, clear_outbound_audio) or cancelled
+                elif self._cue_tail_queued(state):
+                    await clear_outbound_audio()
+                state.cue_tail_until = 0.0
             elif event.type == "speech_stopped":
                 state.caller_speaking = False
             elif event.type == "turn_committed":
                 await self._reply_to_turn(session, state, "turn")
             elif event.type == "audio_delta":
+                if not state.response_audible:
+                    state.response_audible = True
+                    elapsed_ms = round((asyncio.get_running_loop().time() - state.response_started_at) * 1000)
+                    logger.info(f"voice call {ticket}: first audio after {elapsed_ms} ms ({state.response_reason})")
+                    if self._cue_tail_queued(state):
+                        # Only cue audio can be queued here (the cue plays only once playback caught up).
+                        await clear_outbound_audio()
+                    state.cue_tail_until = 0.0
                 item_id = event.payload.get("item_id")
                 if item_id != state.item_id:
                     state.item_id = item_id
@@ -306,6 +342,9 @@ class VoiceSessionService:
             return
         state.response_active = True
         state.response_owed = False
+        state.response_reason = reason
+        state.response_audible = False
+        state.response_started_at = asyncio.get_running_loop().time()
         logger.info(f"voice call {state.ticket}: starting response ({reason})")
         if note:
             await session.submit_message("system", note)
@@ -335,6 +374,55 @@ class VoiceSessionService:
             else:
                 note = _SILENCE_NOTE.format(seconds=round(self._silence_timeout_s))
                 await self._start_response(session, state, note, "silence")
+
+    @staticmethod
+    def _cue_tail_queued(state: _CallState) -> bool:
+        return asyncio.get_running_loop().time() < state.cue_tail_until
+
+    @staticmethod
+    def _cue_wanted(state: _CallState) -> bool:
+        """Something is owed and nothing is audible: Lelik is thinking, or a delegation is out."""
+        if state.caller_speaking or not state.playback.caught_up:
+            return False
+        speaking = state.response_active and state.response_audible
+        thinking = state.response_active and not state.response_audible and state.response_reason in _CUE_REASONS
+        waiting = bool(state.delegations or state.answers_in_flight) and not speaking
+        return thinking or waiting
+
+    async def _play_cue(self, state: _CallState, send_cue_audio: Callable[[AudioFrame], Awaitable[None]]) -> None:
+        loop = asyncio.get_running_loop()
+        clip = self._thinking_cue
+        # Long enough that any 20 ms window starting inside the clip is one contiguous slice.
+        looped = clip * (_CUE_FRAME_BYTES // len(clip) + 2)
+        wanted_since: Optional[float] = None
+        started_at: Optional[float] = None
+        sent = position = 0
+        while True:
+            await asyncio.sleep(_CUE_TICK_S)
+            now = loop.time()
+            if not self._cue_wanted(state):
+                if started_at is not None:
+                    logger.info(f"voice call {state.ticket}: cue stopped after {round((now - started_at) * 1000)} ms")
+                wanted_since = started_at = None
+                continue
+            if wanted_since is None:
+                wanted_since = now
+            if now - wanted_since < self._cue_grace_s:
+                continue
+            if started_at is None:
+                # Each pause starts the clip from its first sound, not mid-silence.
+                started_at, sent, position = now, 0, 0
+                kind = "thinking" if state.response_active else "waiting"
+                logger.info(f"voice call {state.ticket}: cue started ({kind})")
+            while sent < (now - started_at) * _MULAW_BYTES_PER_S + _CUE_LEAD_BYTES and self._cue_wanted(state):
+                chunk = looped[position:position + _CUE_FRAME_BYTES]
+                await send_cue_audio(AudioFrame(
+                    encoding="audio/pcmu", sample_rate_hz=8000,
+                    payload=base64.b64encode(chunk).decode(), track="outbound",
+                ))
+                sent += _CUE_FRAME_BYTES
+                position = (position + _CUE_FRAME_BYTES) % len(clip)
+                state.cue_tail_until = started_at + sent / _MULAW_BYTES_PER_S
 
     async def _forward_inbound(self, session: RealtimeSessionPort, inbound_audio: AsyncIterator[AudioFrame]) -> None:
         async for frame in inbound_audio:

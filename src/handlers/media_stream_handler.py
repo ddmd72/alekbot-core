@@ -60,6 +60,17 @@ class MediaStreamHandler:
                 "mark": {"name": playback.record_sent(frame.payload)},
             }))
 
+        async def send_cue(frame: AudioFrame) -> None:
+            # No mark: the thinking cue is filler, not speech the caller "heard" - it must not
+            # hold PlaybackTracker behind, or the silence watchdog would never see playback end.
+            if stream_sid is None:
+                return
+            await ws.send(json.dumps({
+                "event": "media",
+                "streamSid": stream_sid,
+                "media": {"payload": frame.payload},
+            }))
+
         async def clear_outbound_audio() -> None:
             # Barge-in half that Twilio owns: drop every media frame already queued
             # for playback on its side. Cancelling the provider's response alone is
@@ -96,6 +107,7 @@ class MediaStreamHandler:
                             send_outbound_audio=send_outbound,
                             clear_outbound_audio=clear_outbound_audio,
                             playback=playback,
+                            send_cue_audio=send_cue,
                         )
                     )
                 elif event == "media":
