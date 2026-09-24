@@ -233,6 +233,16 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     when resolvable, and **strips `mode` from the arguments** before dispatch:
     `AgentWorkerHandler` delivers only generator-declared (ASYNC) intents, so a SYNC-declared intent
     forced into `mode: "later"` has no delivery path and would silently drop the answer on the phone.
+  - **`delegate()` also runs the rule-2 chat copy for every specialist except `ask_alek`** (RFC
+    §4.10 rule 2, generalized beyond `ask_alek`'s own copy) — `domain/result_links.build_link_copy`
+    scans `result.result_str` for links and, when it finds any, posts a bare-anchor
+    `SmartResponse` via `notify_answer_copy` (`_copy_links_to_chat`), the shared builder also used by
+    `AlekGatewayAgent`'s fallback below so the two callers can't drift on the chat-copy shape. Skipped
+    when `result.failed` (`DelegationEngine.ToolResult.failed` — a rejection, exception, max retries,
+    or a fan-out whose primary section errored), since an error string can itself carry a URL (an
+    OpenAI 429 pointing at `platform.openai.com`, say). Wrapped in `asyncio.wait_for(...,
+    _ANSWER_COPY_TIMEOUT_S=5.0)` — the spoken result is already decided and returned regardless, so a
+    hung or slow chat delivery must not hold up the call.
   - **Persona is a context source, not a prompt author.** `services/lelik_persona_service.py` never
     calls the LLM and never renders prompt text — it assembles facts/history (RFC §4.8); rendering is
     `LelikAgent`'s job via the shared `PromptBuilderPort`, same division as every other agent in this
@@ -283,11 +293,17 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   - **`response_summary_task` is cancelled.** Smart may schedule an async history-summary task on its
     response metadata; on this path nothing writes history (see below), so the summary would be paid
     for and discarded — the gateway cancels it explicitly rather than letting it run to waste.
-  - **The rule-2 chat copy goes through `notify_answer_copy`.** When Alek's answer is reading-shaped
-    (`SmartResponse.link_list` or `.structured_data`), the gateway calls
-    `UserNotificationService.notify_answer_copy` so links/tables land in chat the moment Alek answers
-    (RFC §4.10 rule 2) — a delivery-only call; failure is logged, not raised, because the spoken
-    answer matters more than its chat copy.
+  - **The rule-2 chat copy goes through `notify_answer_copy`, with a text-scanned fallback.** When
+    Alek's answer is reading-shaped (`SmartResponse.link_list` or `.structured_data`), the gateway
+    posts it via `UserNotificationService.notify_answer_copy` unchanged — links/tables land in chat
+    the moment Alek answers (RFC §4.10 rule 2). When BOTH are empty, it falls back to
+    `domain/result_links.build_link_copy(answer.text)` — the same shared builder `LelikAgent.delegate`
+    uses for every other specialist — so a plain-text answer with bare URLs still gets a bare-anchor
+    copy instead of silently posting nothing. Wrapped in `asyncio.wait_for(...,
+    _ANSWER_COPY_TIMEOUT_S=5.0)`, same as Lelik's own copy; failure (including a timeout) is logged,
+    not raised, because the spoken answer matters more than its chat copy. `VoiceSessionService`'s
+    late-answer note (a different mechanism, in `services/`) names the request it answers and uses
+    distinct wording for a timeout, so it never reads as an answer that "just arrived" when none did.
   - **The gateway's path writes no history.** `ConversationHandler` is the only writer of session
     history (root `CLAUDE.md` → Per-channel sessions), and `notify_answer_copy` only sends chat
     messages/rich content — it does not append to history either. ASYNC generators Smart may have
