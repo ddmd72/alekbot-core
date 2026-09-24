@@ -8,6 +8,9 @@ from src.agents.lelik_agent import LelikAgent
 from src.domain.agent import AgentResponse
 from src.domain.messaging import SmartResponse
 from src.infrastructure.agent_coordinator import AgentCoordinator
+# Adapter import is TEST-ONLY, to prove the text renders correctly through the real
+# resolver — src/agents/ must never import src/adapters/ (REQ-ARCH-23).
+from src.adapters.slack.response_channel import SlackResponseChannel
 
 
 def _agent(delegation_result: str):
@@ -55,7 +58,37 @@ async def test_search_findings_with_urls_post_one_chat_copy():
     assert answer.link_list == [
         {"anchor": 1, "title": "Amazon.es listing", "url": "https://www.amazon.es/dp/B000QSNYGI"},
     ]
-    assert answer.text == "[1] Amazon.es listing"
+    # Bare anchor only — the platform resolvers fold "[N]" into "<url|title>" themselves;
+    # a title alongside the anchor would render twice (see the real-resolver test below).
+    assert answer.text == "[1]"
+
+
+@pytest.mark.asyncio
+async def test_chat_copy_renders_once_per_title_through_the_real_slack_resolver():
+    """Reproduces the review finding: f"[{anchor}] {title}" made _resolve_links_slack's bare-[N]
+    branch emit "<url|title> title" — the title left dangling after the resolved link. Runs the
+    ACTUAL resolver (not a reimplementation) over what delegate() hands notify_answer_copy."""
+    result_str = (
+        '{"findings": ['
+        '{"text": "a", "source": "Amazon.es listing", "url": "https://www.amazon.es/dp/B1"}, '
+        '{"text": "b", "source": "MyProtein", "url": "https://www.myprotein.com/whey"}'
+        ']}'
+    )
+    agent, notifications, _ = _agent(result_str)
+
+    await agent.delegate(
+        user_id="u1", account_id="a1",
+        arguments={"intent": "search_memory", "query": "amazon protein links"},
+        call_context=[],
+    )
+
+    answer: SmartResponse = notifications.notify_answer_copy.await_args.args[2]
+    channel = SlackResponseChannel(app_client=MagicMock(), channel_id="C1", bot_token="xoxb-test")
+    rendered = channel._resolve_links_slack(answer.text, answer.link_list)
+
+    for link in answer.link_list:
+        assert rendered.count(link["title"]) == 1, rendered
+        assert f"<{link['url']}|{link['title']}>" in rendered
 
 
 @pytest.mark.asyncio
