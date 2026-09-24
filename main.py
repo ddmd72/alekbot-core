@@ -940,10 +940,6 @@ async def main():
                 # not a second FirestoreEphemeralStore instance) plus other
                 # already-constructed instances: user_repo, _alert_webhook,
                 # notification_service, agent_factory.
-                #
-                # Lelik's call-start context (decisions/lelik_warm_context.md) is now built
-                # by UserAgentFactory._build_lelik itself (per-user prompt_builder + persona),
-                # the same lazy-agent path as every other specialist — see agent_factory.get_lelik.
 
                 main_app.register_blueprint(
                     create_voice_webhook_blueprint(

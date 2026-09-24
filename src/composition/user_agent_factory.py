@@ -31,6 +31,7 @@ from ..ports.session_store import SessionStore
 from ..services.prompt_builder import UserPromptBuilder
 from ..services.search_enrichment_service import SearchEnrichmentService
 from ..services.biographical_context_service import BiographicalContextService
+from ..services.lelik_persona_service import LelikPersonaService
 from ..ports.fact_write_port import FactWritePort
 from ..services.provider_registry import ProviderRegistry
 from ..services.agent_context_builder import AgentContextBuilder
@@ -820,7 +821,6 @@ class UserAgentFactory(AgentFactoryPort):
         if not self.notification_service:
             logger.warning("[UserAgentFactory] No notification_service, skipping lelik")
             return None
-        from ..services.lelik_persona_service import LelikPersonaService
         service_url = self.config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
         return LelikAgent(
             config=AgentConfig(agent_id=f"lelik_agent_{user_id}", agent_type="lelik",
