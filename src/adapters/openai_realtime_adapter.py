@@ -20,9 +20,9 @@ _TRANSCRIPTION_MODEL = "gpt-transcribe"
 # Shape: session.audio.input.turn_detection (developers.openai.com realtime-vad guide +
 # client-events reference, checked 2026-09-22). idle_timeout_ms is server_vad-only, so
 # silence is detected relay-side (VoiceSessionService's watchdog).
-# One voice for every call until it becomes a per-user setting. OpenAI recommends marin/cedar
-# for quality; cedar reads male, which fits Lelik. Fixed per session once audio is emitted.
-_VOICE = "cedar"
+# One voice for every call until it becomes a per-user setting. Owner's pick 2026-09-25
+# (was cedar: flat intonation on live calls). Fixed per session once audio is emitted.
+_VOICE = "ballad"
 # Post-generation speed multiplier (0.25-1.5). 1.15 was tried and audibly degraded the audio
 # (line-noise artefacts over 8 kHz telephony), so it stays at the provider default.
 _SPEED = 1.0
