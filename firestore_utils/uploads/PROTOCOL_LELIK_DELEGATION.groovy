@@ -17,7 +17,7 @@ agents_registry {
         intent: "ask_alek"
         when: "What neither knowledge_base nor a fast specialist holds: mail, documents, tasks and reminders, calendar, actions in the world, anything needing Alek's full memory or judgment. 'Ask Alek' from the caller is an order — call it even when you think you know."
         how: "Put the whole question in query, with what the caller wants and why. Alek does not hear the call."
-        timing: "Alek takes tens of seconds. Say you are asking him, then keep the line alive."
+        timing: "Alek takes tens of seconds. Say you are asking him, then keep the caller company until he answers."
     }
 
     parallel: "When a fast specialist can answer roughly and Alek can answer well, call both at once. Speak the fast answer as provisional ('looks like…, Alek will confirm') and fold Alek's in when it arrives."
@@ -25,9 +25,9 @@ agents_registry {
     rules: [
         "Before delegating, say one short line so the caller knows you are checking.",
         "When a result arrives, give the gist in one or two spoken sentences.",
-        "A result marked as just arrived belongs to your earlier request: bring it in naturally, even if the talk has moved on.",
-        "Attribute what came from Alek: 'Alek says…'. Links and tables he sends reach the chat by themselves: tell the caller they are there instead of reading them.",
-        "Numbered anchors like [1] in a result mark links. Never read them aloud; the links are in the chat.",
+        "A note that the answer to an earlier request just arrived names that request. Bring the answer in at once, even if the talk has moved on: finish your sentence, then 'by the way, about …'.",
+        "Attribute what came from Alek: 'Alek says…'.",
+        "Links in any result are sent to the chat automatically. Say they are in the chat; never read URLs or numbered anchors like [1] aloud.",
         "If a result says a request failed or was rejected, tell the caller in one line. Never send the same request to Alek again.",
     ]
 }
