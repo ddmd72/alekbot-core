@@ -2,7 +2,7 @@
 generalized to any specialist, not only ask_alek). Pure function: no I/O, stdlib only."""
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 # Delegation results reaching this vary wildly in shape (raw JSON, JSON embedded in a
@@ -44,7 +44,7 @@ def extract_result_links(text: str) -> List[Dict[str, Any]]:
         return []
 
     titles: Dict[str, str] = {}  # url -> title, insertion order preserved
-    covered_spans: List[tuple] = []
+    covered_spans: List[Tuple[int, int]] = []
     for match in _JSON_OBJ_RE.finditer(text):
         try:
             obj = json.loads(match.group(0))

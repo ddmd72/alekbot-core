@@ -144,7 +144,9 @@ class LelikAgent(BaseAgent):
             links = extract_result_links(result_str)
             if not links:
                 return
-            text = "\n".join(f"[{link['anchor']}] {link['title']}" for link in links)
+            # Bare [N] only — title text would duplicate: the resolvers (_resolve_links_slack /
+            # _resolve_links_telegram) fold "[N]" into "<url|title>" themselves.
+            text = "\n".join(f"[{link['anchor']}]" for link in links)
             await self._notifications.notify_answer_copy(
                 user_id, account_id, SmartResponse(text=text, link_list=links),
             )
