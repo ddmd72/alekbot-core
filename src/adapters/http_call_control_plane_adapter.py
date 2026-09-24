@@ -9,6 +9,8 @@ from src.ports.call_control_plane_port import CallControlPlanePort
 # Router -> Smart -> specialists takes tens of seconds; the relay's own wait_for is the
 # authoritative limit, this only has to outlast it (httpx defaults to 5 s).
 _DELEGATE_TIMEOUT_S = 150.0
+# The main side summarizes and flushes before responding.
+_SUBMIT_TRANSCRIPT_TIMEOUT_S = 60.0
 
 
 class HttpCallControlPlaneAdapter(CallControlPlanePort):
@@ -51,7 +53,8 @@ class HttpCallControlPlaneAdapter(CallControlPlanePort):
             ],
         }
         response = await self._client.post(
-            f"{self._base_url}/voice/submit-transcript", json=payload, headers=await self._headers()
+            f"{self._base_url}/voice/submit-transcript", json=payload, headers=await self._headers(),
+            timeout=_SUBMIT_TRANSCRIPT_TIMEOUT_S,
         )
         response.raise_for_status()
 
