@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 from quart import Quart
 
+import src.web.voice_control_plane_app as voice_control_plane_app
 from src.domain.request_context import get_current_account_id
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 
@@ -87,6 +88,35 @@ async def test_delegate_flushes_prompt_content_before_returning():
         "/voice/delegate", json=_BODY, headers={"Authorization": "Bearer x"})
     assert response.status_code == 500
     prompt_content_store.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delegate_opens_span_with_intent_attribute(monkeypatch):
+    # Groups one phone-call tool call's delegation spans under a named root in Logfire.
+    calls = []
+
+    class _NullSpan:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_start_span(name, attributes=None, ctx=None):
+        calls.append((name, attributes))
+        return _NullSpan()
+
+    monkeypatch.setattr(voice_control_plane_app, "start_span", fake_start_span)
+    agent = AsyncMock()
+    agent.delegate.return_value = "sunny"
+    provider = AsyncMock(return_value=agent)
+    response = await _app(provider).post("/voice/delegate", json=_BODY, headers={"Authorization": "Bearer x"})
+    assert response.status_code == 200
+    assert len(calls) == 1
+    name, attrs = calls[0]
+    assert name == "voice.delegate"
+    assert attrs["voice.delegate.user_id"] == "u1"
+    assert attrs["voice.delegate.intent"] == "search_web"
 
 
 @pytest.mark.asyncio

@@ -32,6 +32,20 @@ async def test_answer_stores_instructions_and_tools_on_the_ticket():
 
 
 @pytest.mark.asyncio
+async def test_answer_ticket_identity_wins_over_session_keys():
+    # /voice/delegate trusts user_id/account_id from the stored ticket - a session_config
+    # that happens to echo back a user_id key must never override the caller's real identity.
+    store = AsyncMock()
+    store.get.return_value = {"user_id": "u1", "account_id": "a1"}
+    agent = AsyncMock()
+    agent.session_config.return_value = {"instructions": "PROMPT", "tools": [_TOOL], "user_id": "evil"}
+    client = _app(store, AsyncMock(return_value=agent)).test_client()
+    await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
+    stored = store.set.await_args.args[1]
+    assert stored["user_id"] == "u1"
+
+
+@pytest.mark.asyncio
 async def test_answer_with_no_lelik_available_fails_closed():
     store = AsyncMock()
     store.get.return_value = {"user_id": "u1", "account_id": "a1"}

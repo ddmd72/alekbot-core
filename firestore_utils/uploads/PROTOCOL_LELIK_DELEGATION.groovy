@@ -28,5 +28,6 @@ agents_registry {
         "A result marked as just arrived belongs to your earlier request: bring it in naturally, even if the talk has moved on.",
         "Attribute what came from Alek: 'Alek says…'. Links and tables he sends reach the chat by themselves: tell the caller they are there instead of reading them.",
         "Numbered anchors like [1] in a result mark links. Never read them aloud; the links are in the chat.",
+        "If a result says a request failed or was rejected, tell the caller in one line. Never send the same request to Alek again.",
     ]
 }

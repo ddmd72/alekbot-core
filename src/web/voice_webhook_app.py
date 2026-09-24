@@ -37,13 +37,16 @@ origination raises, both are released and an alert posted. If no status ever
 arrives, the short TTLs release everything within `_TICKET_TTL_S`.
 """
 import uuid
-from typing import Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from quart import Blueprint, Response, request
 from twilio.twiml.voice_response import VoiceResponse
 
 from src.domain.voice_auth_decision import AuthDecision
 from src.utils.logger import logger
+
+if TYPE_CHECKING:  # type-only: web/ must not import agents/ at runtime (REQ-ARCH-15)
+    from src.agents.lelik_agent import LelikAgent
 
 _TICKET_TTL_S = 300
 
@@ -63,7 +66,7 @@ def create_voice_webhook_blueprint(
     ephemeral_store,
     alert_sink,
     notification_service,
-    lelik_agent_provider,
+    lelik_agent_provider: Callable[[str], Awaitable[Optional["LelikAgent"]]],
     answer_url,
     signature_verifier,
     one_call_ttl_s: int = 3600,
@@ -296,7 +299,8 @@ def create_voice_webhook_blueprint(
             )
             return _twiml_persona_failed()
 
-        await ephemeral_store.set(ticket_key, {**identity, **session}, ttl_s=_TICKET_TTL_S)
+        # identity wins: /voice/delegate trusts user_id/account_id from this record.
+        await ephemeral_store.set(ticket_key, {**session, **identity}, ttl_s=_TICKET_TTL_S)
 
         vr = VoiceResponse()
         connect = vr.connect()
