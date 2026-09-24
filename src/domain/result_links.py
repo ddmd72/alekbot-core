@@ -18,6 +18,9 @@ _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 # (its inner "{" blocks the outer "}" from being reached), so finditer naturally lands
 # on the inner finding objects instead.
 _JSON_OBJ_RE = re.compile(r"\{[^{}]*\}")
+# Slack's own markup, e.g. "<https://x.y/path|Title>" — matched BEFORE the bare-URL scan so
+# the title never leaks into the extracted URL and the bare scan skips the covered span.
+_SLACK_LINK_RE = re.compile(r'<(https?://[^\s<>|]+)\|([^<>]+)>')
 _TRAILING_PUNCT = ".,;:!?)]}\"'"
 
 
@@ -30,6 +33,17 @@ def _clean_url(url: str) -> str:
     return url
 
 
+def _json_unescape(fragment: str) -> str:
+    """A URL landing on the bare-URL path may still carry JSON string escapes (``\\/``, ``\\uXXXX``)
+    when it came from a finding the flat ``_JSON_OBJ_RE`` could not parse (e.g. nested braces).
+    Decoding via ``json.loads`` on the quoted fragment handles every escape ``json`` defines,
+    instead of a partial hand-rolled replace table; an unparseable fragment is returned as-is."""
+    try:
+        return json.loads(f'"{fragment}"')
+    except ValueError:
+        return fragment
+
+
 def _host_title(url: str) -> str:
     host = urlparse(url).hostname or url
     return host[4:] if host.startswith("www.") else host
@@ -40,7 +54,8 @@ def extract_result_links(text: str) -> List[Dict[str, Any]]:
     (the same shape SmartResponse.link_list / send_long_text(link_list=...) render).
 
     Title: the JSON object's "source" or "title" field when the URL sits inside one
-    (WebSearchAgent's findings shape), else the URL's host without "www.".
+    (WebSearchAgent's findings shape), Slack markup's own title text, else the URL's host
+    without "www.".
     """
     if not text:
         return []
@@ -64,10 +79,19 @@ def extract_result_links(text: str) -> List[Dict[str, Any]]:
     def _already_covered(pos: int) -> bool:
         return any(start <= pos < end for start, end in covered_spans)
 
+    for match in _SLACK_LINK_RE.finditer(text):
+        if _already_covered(match.start()):
+            continue
+        url = _clean_url(match.group(1))
+        title = match.group(2).strip()
+        if url and url not in titles:
+            titles[url] = title or _host_title(url)
+        covered_spans.append(match.span())
+
     for match in _URL_RE.finditer(text):
         if _already_covered(match.start()):
             continue
-        url = _clean_url(match.group(0))
+        url = _clean_url(_json_unescape(match.group(0)))
         if url and url not in titles:
             titles[url] = _host_title(url)
 
