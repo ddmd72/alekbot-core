@@ -32,6 +32,10 @@ _DELEGATION_FAILED = "The request failed. Tell the caller in one line that it di
 _WAITING_NOTE = ("[Still waiting for the answer to your request. Keep the caller company: pick up a thread "
                  "from this conversation and riff on it with your humor, a few sentences. "
                  "Do not talk about the waiting itself.]")
+# A barge-in cancels the response, but its function_call_arguments.done can still arrive a few ms
+# later (live, 2026-09-24 09:29:09) — the function_call item still needs an output or it is left
+# dangling for the next turn, but running it would spend ~30s of Smart on half a question.
+_CANCELLED_TOOL_CALL = "Not run: the caller interrupted before this request was complete."
 
 
 def _request_label(arguments: dict) -> str:
@@ -217,7 +221,12 @@ class VoiceSessionService:
                 await send_outbound_audio(event.payload["frame"])
             elif event.type == "tool_call":
                 tool_called = True
-                self._start_delegation(ticket, config, session, state, buffer, event.payload, pending_request_text)
+                if cancelled:
+                    call_id = event.payload.get("call_id")
+                    logger.info(f"voice call {ticket}: delegation {call_id} skipped (response cancelled)")
+                    await session.submit_tool_result(call_id, _CANCELLED_TOOL_CALL)
+                else:
+                    self._start_delegation(ticket, config, session, state, buffer, event.payload, pending_request_text)
             elif event.type == "user_transcript":
                 pending_request_text += event.payload["text"]
             elif event.type == "model_transcript":
