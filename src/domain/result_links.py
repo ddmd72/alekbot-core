@@ -91,7 +91,11 @@ def extract_result_links(text: str) -> List[Dict[str, Any]]:
     for match in _URL_RE.finditer(text):
         if _already_covered(match.start()):
             continue
-        url = _clean_url(_json_unescape(match.group(0)))
+        # _URL_RE runs over the escaped text, where "\n" is two URL-legal characters; after
+        # unescaping, re-match so a decoded newline (or quote) ends the URL instead of joining it.
+        unescaped = _json_unescape(match.group(0))
+        bounded = _URL_RE.match(unescaped)
+        url = _clean_url(bounded.group(0) if bounded else unescaped)
         if url and url not in titles:
             titles[url] = _host_title(url)
 
