@@ -5,6 +5,8 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from .messaging import SmartResponse
+
 # Delegation results reaching this vary wildly in shape (raw JSON, JSON embedded in a
 # fan-out "Primary specialist: ..." string, or bare prose with URLs) — a sane cap keeps
 # a pathological result from flooding the chat copy with anchors.
@@ -73,3 +75,17 @@ def extract_result_links(text: str) -> List[Dict[str, Any]]:
         {"anchor": i + 1, "title": title, "url": url}
         for i, (url, title) in enumerate(titles.items())
     ][:MAX_LINKS]
+
+
+def build_link_copy(result_str: str) -> Optional[SmartResponse]:
+    """The chat-copy shape for a delegation result's links: bare ``[N]`` anchors only — a title
+    alongside the anchor would duplicate, since the platform resolvers (``_resolve_links_slack`` /
+    ``_resolve_links_telegram``) fold "[N]" into "<url|title>" themselves. Shared by LelikAgent's
+    own-result copy and AlekGatewayAgent's fallback (VOICE_COMPANION_RFC §4.10 rule 2) so the two
+    callers can't drift on how a link list becomes a chat message. ``None`` when there is nothing
+    to post — pure, no I/O: callers own delivery and its failure handling."""
+    links = extract_result_links(result_str)
+    if not links:
+        return None
+    text = "\n".join(f"[{link['anchor']}]" for link in links)
+    return SmartResponse(text=text, link_list=links)

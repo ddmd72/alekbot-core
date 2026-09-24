@@ -14,14 +14,14 @@ delegate() also carries rule 2 (VOICE_COMPANION_RFC §4.10) generalized to every
 not just ask_alek: any specialist's result may contain reading-shaped links (search_web
 findings, bare URLs in prose), and those reach chat the same way Alek's own answer does.
 """
+import asyncio
 from typing import TYPE_CHECKING, Any, Dict, List
 from urllib.parse import urlencode
 from uuid import uuid4
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.llm import ToolCall
-from ..domain.messaging import SmartResponse
-from ..domain.result_links import extract_result_links
+from ..domain.result_links import build_link_copy
 from ..infrastructure.agent_manifest import LELIK, Intent
 from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -34,6 +34,9 @@ if TYPE_CHECKING:
     from ..services.user_notification_service import UserNotificationService
 
 _DELEGATE_TOOL = "delegate_to_specialist"
+# The spoken result is already decided and returned regardless of this call — it must not
+# hold up the phone conversation waiting on a slow or hung chat delivery.
+_ANSWER_COPY_TIMEOUT_S = 5.0
 
 
 class LelikAgent(BaseAgent):
@@ -142,16 +145,16 @@ class LelikAgent(BaseAgent):
         return result.result_str
 
     async def _copy_links_to_chat(self, user_id: str, account_id: str, result_str: str) -> None:
+        copy = build_link_copy(result_str)
+        if copy is None:
+            return
         try:
-            links = extract_result_links(result_str)
-            if not links:
-                return
-            # Bare [N] only — title text would duplicate: the resolvers (_resolve_links_slack /
-            # _resolve_links_telegram) fold "[N]" into "<url|title>" themselves.
-            text = "\n".join(f"[{link['anchor']}]" for link in links)
-            await self._notifications.notify_answer_copy(
-                user_id, account_id, SmartResponse(text=text, link_list=links),
+            await asyncio.wait_for(
+                self._notifications.notify_answer_copy(user_id, account_id, copy),
+                timeout=_ANSWER_COPY_TIMEOUT_S,
             )
+        except asyncio.TimeoutError:
+            logger.warning(f"[Lelik] link chat copy timed out for {(user_id or '')[:8]}")
         except Exception as exc:
             # The spoken result_str is already decided and returned regardless of this failing.
             logger.error(f"[Lelik] link chat copy failed for {(user_id or '')[:8]}: {exc}", exc_info=True)
