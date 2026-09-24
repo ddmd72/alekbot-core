@@ -214,7 +214,8 @@ skipped, web search result returned alone. The orchestrator never sees an error 
 
 `intent_fanout` is a declarative field on `AgentDescriptor`, analogous to `intent_remap`.
 Configured via `FanoutSpec(intents: List[str], hint: str)`. The engine applies it in
-`_dispatch_single()` after intent remap, before coordinator dispatch.
+`dispatch()` (renamed from `_dispatch_single`, made public 2026-09-23 for `LelikAgent`'s
+single-call use — VOICE_COMPANION_RFC §4.7) after intent remap, before coordinator dispatch.
 
 Currently configured on both Quick and Smart:
 ```python

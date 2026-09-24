@@ -419,3 +419,136 @@ NODE_DOCX_INVOKED_WITH_NODE_AND_SCRIPT_PATH = ContractRule(
         ),
     },
 )
+
+OPENAI_REALTIME_STRIPS_CACHE_BOUNDARY = ContractRule(
+    name="OPENAI_REALTIME_STRIPS_CACHE_BOUNDARY",
+    description=(
+        "OpenAIRealtimeAdapter.open() must never forward the literal cache-boundary "
+        "marker used elsewhere in the prompt-caching pipeline into a live realtime "
+        "session's instructions field — it has no meaning to the Realtime API and "
+        "would leak an internal prompt-assembly artifact into the model's context. "
+        "Input: captured session.update message {type: str, session: dict}."
+    ),
+    validators={
+        "openai_realtime": lambda kw: _true(
+            "CACHE_BOUNDARY" not in kw["session"]["instructions"],
+            "openai_realtime: session.update instructions must not contain CACHE_BOUNDARY",
+        ),
+    },
+)
+
+OPENAI_REALTIME_USES_GA_SESSION_SHAPE = ContractRule(
+    name="OPENAI_REALTIME_USES_GA_SESSION_SHAPE",
+    description=(
+        "OpenAIRealtimeAdapter.open() must send the GA Realtime API session shape "
+        "(session.type == 'realtime', output_modalities as a nested audio-config field) "
+        "and never the pre-GA shape (a top-level 'modalities' array), which spike 0.1/0.2 "
+        "found the live API silently rejects with no error surfaced to the caller. "
+        "Input: captured session.update message {type: str, session: dict}."
+    ),
+    validators={
+        "openai_realtime": lambda kw: (
+            _eq(
+                kw["session"]["type"],
+                "realtime",
+                "openai_realtime: session.update must set session.type='realtime'",
+            ),
+            _not_in(
+                "modalities",
+                kw["session"],
+                "openai_realtime: session must not use the pre-GA top-level 'modalities' key",
+            ),
+        ),
+    },
+)
+
+OPENAI_REALTIME_BARGE_IN_IS_CLIENT_OWNED = ContractRule(
+    name="OPENAI_REALTIME_BARGE_IN_IS_CLIENT_OWNED",
+    description=(
+        "OpenAIRealtimeAdapter.open() must configure semantic_vad with the provider's "
+        "auto-interrupt OFF. VoiceSessionService owns barge-in (clear -> cancel -> "
+        "truncate); a provider auto-cancel racing our own response.cancel can land a "
+        "cancel on nothing, and that provider error ends the call. Auto-reply is off too: "
+        "the client places the persona anchor after each turn, then starts the reply. semantic_vad (not "
+        "server_vad) so a mid-thought pause does not end the caller's turn. "
+        "Input: captured session.update message {type: str, session: dict}."
+    ),
+    validators={
+        "openai_realtime": lambda kw: (
+            _eq(
+                kw["session"]["audio"]["input"]["turn_detection"]["type"],
+                "semantic_vad",
+                "openai_realtime: turn_detection must be semantic_vad",
+            ),
+            _eq(
+                kw["session"]["audio"]["input"]["turn_detection"]["interrupt_response"],
+                False,
+                "openai_realtime: provider auto-interrupt must be off (client owns barge-in)",
+            ),
+            _eq(
+                kw["session"]["audio"]["input"]["turn_detection"]["create_response"],
+                False,
+                "openai_realtime: provider auto-reply must be off (client anchors, then replies)",
+            ),
+        ),
+    },
+)
+
+def _validate_openai_realtime_tools_shape(kw: dict) -> None:
+    session = kw["session"]
+    tools = session.get("tools")
+    if not tools:
+        _not_in(
+            "tools", session,
+            "openai_realtime: session must carry no 'tools' key when no tools were passed",
+        )
+        return
+    _true(
+        all(
+            tool.get("type") == "function"
+            and "name" in tool and "description" in tool and "parameters" in tool
+            for tool in tools
+        ),
+        "openai_realtime: every session.tools entry must be "
+        "{'type': 'function', 'name', 'description', 'parameters'}",
+    )
+    _eq(
+        session.get("tool_choice"), "auto",
+        "openai_realtime: tool_choice must be 'auto' when tools are present",
+    )
+
+
+OPENAI_REALTIME_TOOLS_ARE_FUNCTION_SHAPED = ContractRule(
+    name="OPENAI_REALTIME_TOOLS_ARE_FUNCTION_SHAPED",
+    description=(
+        "OpenAIRealtimeAdapter.open() must translate the neutral tool declaration "
+        "(BaseAgent._build_delegate_tool_declaration: name/description/parameters) into "
+        "OpenAI Realtime's function shape - every session.tools entry needs type='function' "
+        "alongside the original name/description/parameters - with tool_choice='auto'. When no "
+        "tools are passed, session must carry no 'tools' key at all. "
+        "Input: captured session.update message {type: str, session: dict}."
+    ),
+    validators={
+        "openai_realtime": _validate_openai_realtime_tools_shape,
+    },
+)
+
+OPENAI_REALTIME_TRUNCATE_SHAPE = ContractRule(
+    name="OPENAI_REALTIME_TRUNCATE_SHAPE",
+    description=(
+        "OpenAIRealtimeAdapter.truncate() must send conversation.item.truncate with "
+        "item_id, content_index=0 and an integer audio_end_ms — over WebSocket the "
+        "server cannot know what was played, so the client cuts the unheard tail. "
+        "Input: captured client event dict."
+    ),
+    validators={
+        "openai_realtime": lambda kw: (
+            _eq(kw["type"], "conversation.item.truncate",
+                "openai_realtime: truncate must send conversation.item.truncate"),
+            _eq(kw["content_index"], 0, "openai_realtime: truncate content_index must be 0"),
+            _true(isinstance(kw["audio_end_ms"], int) and kw["audio_end_ms"] >= 0,
+                  "openai_realtime: audio_end_ms must be a non-negative int"),
+            _true(bool(kw["item_id"]), "openai_realtime: truncate needs an item_id"),
+        ),
+    },
+)

@@ -77,6 +77,14 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # Same judgment-call quality bar as consolidation (extraction is a
     # deliberate "what's worth remembering" decision, not mechanical work).
     "tutor_extractor": PerformanceTier.PERFORMANCE,
+    # RFC docs/10_rfcs/VOICE_COMPANION_RFC.md §4.9: "Bulk noisy-text summarization
+    # is a cheap-tier job" — unlike tutor_extractor, this is mechanical
+    # end-of-call summarization, not a judgment call about what to remember
+    # (it has no CompanionRecord store to write judgment calls into at all).
+    # Explicit pin, not left to fall through to self.default_tier: not
+    # manifest-registered (same as tutor_extractor), so
+    # test_every_llm_agent_has_a_default_tier can't catch a missing entry here.
+    "lelik_summarizer": PerformanceTier.ECO,
     # Stays BALANCED for the agent as a whole — this tier serves the `search_web` intent,
     # which is genuine multi-angle research. Measured 2026-07-29 on real user queries
     # (scripts/websearch/ab_user_queries.py): ECO/nano was 3.7x cheaper but returned 6.0
@@ -268,6 +276,12 @@ class UserBotConfig(BaseModel):
     # (uk/en/fr/es) and cannot express a language the bot speaks no UI in, e.g. "ru".
     # None = let the provider auto-detect. Set via Cabinet UI.
     voice_languages: Optional[List[str]] = None
+
+    # Fact domains (FactDomain values) withheld from Lelik's call-start context. Empty = the
+    # whole biographical cache (decisions/lelik_warm_context.md: give everything, trim what
+    # proves out of place). Plain strings, not FactDomain: a typo in a hand-edited Firestore
+    # doc must not fail the whole config load — LelikPersonaService warns and ignores it.
+    voice_excluded_fact_domains: List[str] = Field(default_factory=list)
 
     # Gmail auto-indexing schedule
     # gmail_auto_index: enable daily incremental indexing via Cloud Scheduler

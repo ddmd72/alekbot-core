@@ -56,8 +56,9 @@ class AgentDescriptor:
         description:              agent-level fallback description
 
     Part B — what this agent needs (for orchestrators that delegate):
-        allowed_intents:  frozenset of intent names this agent may call,
-                          or None to allow all non-internal intents.
+        allowed_intents:  frozenset of intent names this agent may call (may
+                          name internal intents), or None to allow all
+                          non-internal intents.
         intent_remap:     dispatch-time substitution applied AFTER intent
                           selection. Empty by default; reserved for routing
                           variants that need to map LLM-visible intents to
@@ -177,20 +178,11 @@ class AgentRegistry:
             return descriptor.capabilities[intent]
         return None
 
-    def get_available_intents(self) -> List[Dict[str, str]]:
-        """
-        Return all non-internal intents formatted for agent tool declarations.
-
-        Format: [{"name": "search_memory", "description": "..."}, ...]
-        Uses per-intent description when available, falls back to agent description.
-        Auto-updates whenever new agents are registered.
-
-        Internal agents (internal=True) are excluded — their intents are
-        implementation details not shown to LLMs.
-        """
+    def _describe(self, include_internal: bool) -> List[Dict[str, Any]]:
+        """Build tool-declaration items, optionally including internal agents' intents."""
         result = []
         for agent_id, descriptor in self._agents.items():
-            if descriptor.internal:
+            if descriptor.internal and not include_internal:
                 continue
             for intent in descriptor.capabilities:
                 description = (
@@ -204,20 +196,26 @@ class AgentRegistry:
                 result.append(item)
         return result
 
+    def get_available_intents(self) -> List[Dict[str, str]]:
+        """
+        Return all non-internal intents formatted for agent tool declarations.
+
+        Format: [{"name": "search_memory", "description": "..."}, ...]
+        Uses per-intent description when available, falls back to agent description.
+        Auto-updates whenever new agents are registered.
+
+        Internal agents (internal=True) are excluded — their intents are
+        implementation details not shown to LLMs.
+        """
+        return self._describe(include_internal=False)
+
     def get_available_intents_for(self, descriptor: AgentDescriptor) -> List[Dict[str, str]]:
-        """
-        Return intents available to a specific orchestrator agent.
-
-        If descriptor.allowed_intents is None → all non-internal intents.
-        If descriptor.allowed_intents is a frozenset → filtered subset.
-
-        Intent remapping (descriptor.intent_remap) is NOT applied here —
-        it is applied at dispatch time in the calling agent.
-        """
-        all_intents = self.get_available_intents()
+        """None → every non-internal intent. A frozenset → exactly the registered intents it
+        names. Internal means "not offered by default", so an explicit allowlist may name one
+        (VOICE_COMPANION_RFC §4.7: Lelik names ask_alek). Remapping is applied at dispatch."""
         if descriptor.allowed_intents is None:
-            return all_intents
-        return [i for i in all_intents if i["name"] in descriptor.allowed_intents]
+            return self._describe(include_internal=False)
+        return [i for i in self._describe(include_internal=True) if i["name"] in descriptor.allowed_intents]
 
     def list_agents(self) -> List[AgentDescriptor]:
         """Return all registered descriptors."""

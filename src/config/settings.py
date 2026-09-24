@@ -89,6 +89,23 @@ def load_settings():
         "MICROSOFT_TASKS_WEBHOOK_SECRET": os.getenv("MICROSOFT_TASKS_WEBHOOK_SECRET", ""),
         # Unsplash image search (HtmlPageGeneratorAgent)
         "UNSPLASH_ACCESS_KEY": os.getenv("UNSPLASH_ACCESS_KEY", ""),
+        # Twilio (Voice Companion RFC §4.13) — outbound call origination. MVP,
+        # dev-only feature (same status as the Remote MCP Server): empty-string
+        # default, like MICROSOFT_TODO_*/UNSPLASH_ACCESS_KEY above, not the
+        # bare-None default used by secrets the whole app depends on
+        # (ANTHROPIC_API_KEY etc.) — UserAgentFactory._build_lelik skips
+        # LelikAgent construction gracefully when these are absent.
+        "TWILIO_ACCOUNT_SID": os.getenv("TWILIO_ACCOUNT_SID", ""),
+        "TWILIO_AUTH_TOKEN": os.getenv("TWILIO_AUTH_TOKEN", ""),
+        "TWILIO_PHONE_NUMBER": os.getenv("TWILIO_PHONE_NUMBER", ""),
+        # Twilio Verify service — phone-binding OTP (Slice 1 Task 11). Same
+        # graceful-absence status as the TWILIO_* keys above: the Cabinet's
+        # phone-binding routes 501 when this (or the client) isn't configured.
+        "TWILIO_VERIFY_SERVICE_SID": os.getenv("TWILIO_VERIFY_SERVICE_SID", ""),
+        # Voice relay's own wss:// media-stream URL (Task 14 deploys the relay itself) —
+        # same empty-string-default, gracefully-absent-for-now status as the TWILIO_*
+        # keys above, not a bare-None secret the whole app depends on.
+        "VOICE_RELAY_STREAM_URL": os.getenv("VOICE_RELAY_STREAM_URL", ""),
     }
 
     if settings["GOOGLE_CLOUD_PROJECT"] and not env_config.use_emulator:
