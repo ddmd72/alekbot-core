@@ -235,7 +235,10 @@ one-call-per-user marker, mints a short-TTL **ticket** and parks the callback un
 `CallSid`. Only when that dial ends (`/voice/inbound-status`, `completed`) does `LelikAgent` originate
 the *callback*. Placed any earlier, it hit the inbound dial's teardown and the carrier returned SIP
 480 (inbound dial is never the conversation leg — the callback is what proves identity).
-On pickup, `/voice/answer` has `LelikPersonaService` assemble Lelik's prompt and returns TwiML
+Machine detection is **async** (RFC §4.6): the callback connects at once, the `AnsweredBy` verdict
+lands on `/voice/status`, and it only gates memory — a `machine_*` call with under three caller turns
+gets no summary (`domain.voice_amd.is_voicemail`). Sync AMD hung up on an owner who opened with a
+request (>2.4 s of speech reads as a greeting). On pickup, `/voice/answer` has `LelikPersonaService` assemble Lelik's prompt and returns TwiML
 pointing Twilio's Media Stream at the relay. **Lelik starts warm, not as a front desk** (owner
 decision 2026-09-22, `decisions/lelik_warm_context.md`). He gets the whole biographical cache minus
 `UserBotConfig.voice_excluded_fact_domains` (empty by default: give everything, trim what proves out
@@ -270,9 +273,9 @@ persona or language change applies to both. Lelik has only two tokens of his own
   8 s of quiet after playback ends injects one system note — except while a delegation is pending,
   when it re-arms on its own and has Lelik keep the caller company instead, standing down while an answer is
   mid-injection so the answer always wins the reply slot; a tool call from a response the caller
-  already barged into is answered "not run" rather than dispatched. Silent gaps (Lelik thinking,
-  a delegation out) get a quiet breath-pulse cue after 0.7 s, sent as `media` without a `mark` so
-  `PlaybackTracker` never counts it, and `clear`ed right before Lelik's first word. `create_response` is off, so
+  already barged into is answered "not run" rather than dispatched. A breath-pulse "thinking cue"
+  for silent gaps is built but OFF (`relay_main.py` does not pass the clip): with it on, replies
+  were cut after ~0.4-0.8 s on live calls, cause not yet found. `create_response` is off, so
   every reply is started by the relay after appending the text path's `build_persona_anchor` as a
   `system` item. Anchors are never deleted, because a failed delete is a call-ending provider error
   (RFC §5.2). Any Lelik delegation result with links gets a bare-anchor chat copy (a failed result

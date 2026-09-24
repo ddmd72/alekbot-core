@@ -27,7 +27,12 @@ class TwilioTelephonyAdapter(TelephonyPort):
             from_=from_,
             url=answer_url,
             machine_detection="DetectMessageEnd",
-            async_amd=False,
+            # Async: the call connects at once and the verdict arrives on the status callback.
+            # Sync AMD held every pickup for 4-5 s and hung up on an owner who opened with a
+            # request longer than Twilio's 2.4 s "human greeting" threshold (live, 2026-09-24).
+            async_amd=True,
+            async_amd_status_callback=status_callback_url,
+            async_amd_status_callback_method="POST",
             status_callback=status_callback_url,
             status_callback_event=["initiated", "ringing", "answered", "completed"],
         )

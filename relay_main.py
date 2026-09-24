@@ -82,7 +82,9 @@ async def main() -> None:
         # the model to plan each sentence's rhythm and emotion before speaking, and that
         # planning happens in reasoning. Cost: reasoning bills as text output ($24/1M).
         reasoning_effort="high",
-        thinking_cue=_load_thinking_cue(),
+        # thinking_cue deliberately not passed (off): with it on, Lelik's replies were cut
+        # after ~0.4-0.8 s on the live calls of 2026-09-24 and stopped when the relay was
+        # routed back to a revision without it. Cause not found yet; the clip stays shipped.
     )
     handler = MediaStreamHandler(session_service=session_service)
 

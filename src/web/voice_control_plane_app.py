@@ -44,6 +44,7 @@ from quart import Blueprint, Response, jsonify, request
 from src.domain.billing import calculate_realtime_cost
 from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart
 from src.domain.request_context import RequestContext
+from src.domain.voice_amd import is_voicemail
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
@@ -114,14 +115,27 @@ def create_voice_control_plane_blueprint(
                         exc_info=True,
                     )
 
+            answered_by = None
             try:
-                await summary_consumer(
-                    call_id=call_id,
-                    user_id=user_id,
-                    account_id=account_id,
-                    transcript_text=body["transcript_text"],
-                    turns=body.get("turns", []),
-                )
+                amd = await ephemeral_store.get(f"voice_amd:{call_id}")
+                answered_by = amd.get("answered_by") if isinstance(amd, dict) else None
+            except Exception:
+                # Unknown verdict = live call: losing a real summary is worse than keeping voicemail's.
+                logger.error(f"voice call {call_id}: AMD verdict lookup failed", exc_info=True)
+            caller_texts = [turn.get("request_text", "") for turn in body.get("turns", [])]
+            voicemail = is_voicemail(answered_by, caller_texts)
+            if voicemail:
+                # RFC §4.6: a voicemail greeting must never become a memory.
+                logger.info(f"voice call {call_id}: voicemail ({answered_by}), summary skipped")
+            try:
+                if not voicemail:
+                    await summary_consumer(
+                        call_id=call_id,
+                        user_id=user_id,
+                        account_id=account_id,
+                        transcript_text=body["transcript_text"],
+                        turns=body.get("turns", []),
+                    )
             except Exception as exc:
                 # An alert, not just a log line. This `except` is the last stop
                 # for the entire end-of-call summary pipeline
@@ -201,6 +215,7 @@ def create_voice_control_plane_blueprint(
             # e.g. a malformed usage_by_model payload or a future QuotaService
             # that raises can never leave the marker stuck either.
             await ephemeral_store.delete(f"voice_one_call:{user_id}")
+            # voice_amd:{call_id} is left to its TTL: nothing reads it after this point.
 
         return jsonify({"ok": True}), 200
 

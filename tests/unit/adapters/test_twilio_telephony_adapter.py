@@ -25,7 +25,9 @@ async def test_originate_call_uses_answer_url_not_auth_webhook():
         from_="+346002",
         url="https://main.example.com/voice/answer",
         machine_detection="DetectMessageEnd",
-        async_amd=False,
+        async_amd=True,
+        async_amd_status_callback="https://main.example.com/voice/status",
+        async_amd_status_callback_method="POST",
         status_callback="https://main.example.com/voice/status",
         status_callback_event=["initiated", "ringing", "answered", "completed"],
     )

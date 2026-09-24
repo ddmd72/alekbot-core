@@ -263,6 +263,8 @@ def create_voice_webhook_blueprint(
             logger.warning(f"voice answer: no identity found for ticket {ticket}, rejecting")
             return _twiml_reject()
 
+        # Sync-AMD path only: with async AMD (the adapter's mode) Twilio sends no AnsweredBy
+        # here, and the verdict lands on /voice/status instead.
         if answered_by.startswith("machine"):
             logger.info(
                 f"voice answer: machine detected ({answered_by}) for ticket {ticket}, "
@@ -343,6 +345,14 @@ def create_voice_webhook_blueprint(
 
         call_status = (form.get("CallStatus") or "").strip().lower()
         ticket = request.args.get("ticket", "")
+
+        answered_by = form.get("AnsweredBy")
+        if answered_by and not call_status:
+            # Async AMD verdict (TwilioTelephonyAdapter points it here). The call is already
+            # live, so it is only recorded; /voice/submit-transcript weighs it at call end.
+            logger.info(f"voice status: AMD verdict '{answered_by}' for ticket {ticket}")
+            await ephemeral_store.set(f"voice_amd:{ticket}", {"answered_by": answered_by}, ttl_s=one_call_ttl_s)
+            return Response("", status=200)
 
         if call_status not in _TERMINAL_CALL_STATUSES:
             logger.info(f"voice status: non-terminal status '{call_status}' for ticket {ticket}, ignoring")
