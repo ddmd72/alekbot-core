@@ -24,7 +24,7 @@ def _agent(channel=None, available=None):
     agent = LelikAgent(
         config=MagicMock(agent_id="lelik_agent_u1"), telephony=AsyncMock(),
         from_number="+1", status_callback_url="https://x/voice/status",
-        prompt_builder=prompt_builder, persona=persona,
+        prompt_builder=prompt_builder, persona=persona, notifications=AsyncMock(),
     )
     coordinator = MagicMock()
     coordinator.CALL_CHAIN_KEY = AgentCoordinator.CALL_CHAIN_KEY

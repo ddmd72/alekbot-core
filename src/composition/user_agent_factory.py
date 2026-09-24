@@ -835,6 +835,7 @@ class UserAgentFactory(AgentFactoryPort):
                 notification_service=self.notification_service,
                 config=ctx.user_profile.config,
             ),
+            notifications=self.notification_service,
         )
 
     def _build_alek_gateway(self, user_id: str, ctx: _UserContext) -> Optional[AlekGatewayAgent]:

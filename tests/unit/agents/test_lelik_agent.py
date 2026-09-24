@@ -13,6 +13,7 @@ def _build_agent(telephony):
         status_callback_url="https://main.example.com/voice/status",
         prompt_builder=AsyncMock(),
         persona=AsyncMock(),
+        notifications=AsyncMock(),
     )
 
 

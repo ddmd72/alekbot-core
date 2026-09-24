@@ -9,6 +9,10 @@ execute() places the callback (§4.6), session_config() feeds the session at pic
 
 execute() does not catch originate_call failures: the webhook's own try/except releases
 the ticket and one-call marker.
+
+delegate() also carries rule 2 (VOICE_COMPANION_RFC §4.10) generalized to every delegation,
+not just ask_alek: any specialist's result may contain reading-shaped links (search_web
+findings, bare URLs in prose), and those reach chat the same way Alek's own answer does.
 """
 from typing import TYPE_CHECKING, Any, Dict, List
 from urllib.parse import urlencode
@@ -16,14 +20,18 @@ from uuid import uuid4
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.llm import ToolCall
-from ..infrastructure.agent_manifest import LELIK
+from ..domain.messaging import SmartResponse
+from ..domain.result_links import extract_result_links
+from ..infrastructure.agent_manifest import LELIK, Intent
 from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.telephony_port import TelephonyPort
+from ..utils.logger import logger
 from .base_agent import BaseAgent
 
 if TYPE_CHECKING:
     from ..services.lelik_persona_service import LelikPersonaService
+    from ..services.user_notification_service import UserNotificationService
 
 _DELEGATE_TOOL = "delegate_to_specialist"
 
@@ -41,6 +49,7 @@ class LelikAgent(BaseAgent):
         status_callback_url: str,
         prompt_builder: PromptBuilderPort,
         persona: "LelikPersonaService",
+        notifications: "UserNotificationService",
     ) -> None:
         super().__init__(config)
         self._telephony = telephony
@@ -48,6 +57,7 @@ class LelikAgent(BaseAgent):
         self._status_callback_url = status_callback_url
         self._prompt_builder = prompt_builder
         self._persona = persona
+        self._notifications = notifications
 
     async def can_handle(self, message: AgentMessage) -> bool:
         # Never a delegation target (internal, no capabilities); satisfies BaseAgent only.
@@ -123,4 +133,21 @@ class LelikAgent(BaseAgent):
             dict(self._descriptor.intent_fanout),
             self.agent_id,
         )
+        # ask_alek already copies Smart's own structured answer via notify_answer_copy
+        # (AlekGatewayAgent) — posting again here would double it.
+        if arguments.get("intent") != Intent.ASK_ALEK:
+            await self._copy_links_to_chat(user_id, account_id, result.result_str)
         return result.result_str
+
+    async def _copy_links_to_chat(self, user_id: str, account_id: str, result_str: str) -> None:
+        try:
+            links = extract_result_links(result_str)
+            if not links:
+                return
+            text = "\n".join(f"[{link['anchor']}] {link['title']}" for link in links)
+            await self._notifications.notify_answer_copy(
+                user_id, account_id, SmartResponse(text=text, link_list=links),
+            )
+        except Exception as exc:
+            # The spoken result_str is already decided and returned regardless of this failing.
+            logger.error(f"[Lelik] link chat copy failed for {(user_id or '')[:8]}: {exc}", exc_info=True)

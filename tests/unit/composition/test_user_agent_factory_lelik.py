@@ -37,6 +37,7 @@ def test_build_lelik_wires_the_users_prompt_builder_and_persona():
     assert agent._prompt_builder is ctx.prompt_builder
     assert agent._persona._notifications is fake.notification_service
     assert agent._persona._config is ctx.user_profile.config
+    assert agent._notifications is fake.notification_service
     assert agent._status_callback_url == "https://main.example.com/voice/status"
 
 
