@@ -909,9 +909,20 @@ async def main():
                         return
                     from src.domain.voice_call_note import call_event_from_turns
                     profile = await user_repo.get_user(user_id)
+                    try:
+                        kind_record = await voice_ephemeral_store.get(f"voice_call_kind:{call_id}")
+                        call_kind = (kind_record or {}).get("call_kind", "phone")
+                    except Exception:
+                        # The summary is the last stop of the call pipeline — a
+                        # lookup failure here must not lose it. Fall back to the
+                        # default header and keep delivering.
+                        logger.warning(f"voice call {call_id}: failed to read call kind, defaulting to phone", exc_info=True)
+                        call_kind = "phone"
                     await notification_service.notify_call_summary(
                         user_id, account_id, summary,
-                        call_event=call_event_from_turns(turns, profile.config.timezone if profile else "UTC"),
+                        call_event=call_event_from_turns(
+                            turns, profile.config.timezone if profile else "UTC", call_kind=call_kind
+                        ),
                     )
 
                 main_app.register_blueprint(
