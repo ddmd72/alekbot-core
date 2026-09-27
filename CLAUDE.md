@@ -314,6 +314,23 @@ persona or language change applies to both. Lelik has only two tokens of his own
   (relay service, `VOICE_RELAY_STREAM_URL`'s two-pass first deploy, Twilio secrets):
   `docs/07_deployment/README.md`.
 
+**Voice web transport** (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) — a second call kind, a
+Cabinet call page over WebRTC, next to the Twilio phone path, sharing the same `VoiceSessionService`
+and Lelik persona. Cloudflare's Realtime SFU dials the same relay's `/sfu/*` routes (not a new
+deploy unit); `SfuStreamHandler` pairs the ingest/egress WebSocket legs by ticket and drives
+`PacedAudioOutlet` for provider→browser pacing at wideband PCM (24 kHz to the model, 48 kHz stereo
+to the SFU), vs. Twilio's narrowband μ-law. Main-service side: `MediaRoomPort` /
+`CloudflareSfuAdapter` mint SFU sessions over HTTPS, and `VoiceCallSetupService` (extracted from the
+Twilio webhook's inline setup) is now shared by both entry points for the one-call marker, ticket
+and persona prep, keyed by `call_kind` (`phone`/`web`) so the pickup note and summary header read
+right either way. Because both SFU legs must land on the same process, the relay's
+`--max-instances=1` (already required for other reasons) is now also a **pairing constraint**, not
+just a cost choice — scaling calls up means relay shards (N single-instance relays, main service
+picks one per call), not raising this number. Two relay-only knobs, `os.getenv` not
+`load_settings()` (optional, not secrets): `VOICE_WEB_REASONING_EFFORT` and
+`VOICE_WEB_CALLER_OPENING`, both defaulting to match the phone path (`reasoning_effort` is `medium`
+on both voice paths as of 2026-09-27, no longer `high`).
+
 **Consolidation** — long-term memory formation: sliding window fills → batch to Cloud Tasks queue →
 ConsolidationAgent ("Life Chronicler") extracts facts/principles from raw messages (non-blocking).
 Thresholds (per-user): prod threshold=50/batch=30, dev threshold=70/batch=50. Dedup 0.96 (number-aware —
