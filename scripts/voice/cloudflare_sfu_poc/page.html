@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SFU voice POC</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.4 -apple-system, system-ui, sans-serif; margin: 0; padding: 16px; max-width: 640px; }
+  button { font-size: 18px; padding: 14px 20px; margin: 6px 6px 6px 0; border-radius: 12px; border: 1px solid #888; }
+  #state { font-weight: 600; margin: 12px 0; }
+  pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background: rgba(127,127,127,.12); padding: 8px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<h1>SFU voice POC</h1>
+<div id="state">idle</div>
+<button id="call">Call</button>
+<button id="ping" disabled>Ping (echo RTT)</button>
+<button id="hangup" disabled>Hang up</button>
+<audio id="remote" autoplay playsinline></audio>
+<pre id="log"></pre>
+<script>
+const $ = (id) => document.getElementById(id);
+const log = (...a) => { const s = a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" "); $("log").textContent = s + "\n" + $("log").textContent; };
+const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json());
+const serverLog = (obj) => fetch("/api/log", { method: "POST", body: JSON.stringify(obj) });
+const setState = (s) => { $("state").textContent = s; };
+
+let pc, ctx, callId, micGain, pingOsc, pingGain, analyser, statsTimer, wakeLock;
+
+async function call() {
+  $("call").disabled = true;
+  setState("starting");
+  // iOS: the AudioContext must be created/resumed inside the tap handler.
+  ctx = new AudioContext({ sampleRate: 48000 });
+  await ctx.resume();
+  const mic = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  // Outgoing = mic + a gated test tone (for the echo round-trip ping).
+  const dest = ctx.createMediaStreamDestination();
+  micGain = ctx.createGain();
+  ctx.createMediaStreamSource(mic).connect(micGain).connect(dest);
+  pingOsc = ctx.createOscillator(); pingOsc.frequency.value = 1500;
+  pingGain = ctx.createGain(); pingGain.gain.value = 0;
+  pingOsc.connect(pingGain).connect(dest); pingOsc.start();
+
+  try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) { log("wakeLock failed", String(e)); }
+
+  pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }], bundlePolicy: "max-bundle" });
+  pc.onconnectionstatechange = () => { log("pc", pc.connectionState); setState(pc.connectionState); };
+  pc.ontrack = (ev) => {
+    log("remote track", ev.track.kind);
+    const stream = new MediaStream([ev.track]);
+    $("remote").srcObject = stream;
+    analyser = ctx.createAnalyser(); analyser.fftSize = 512;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+  };
+  const tx = pc.addTransceiver(dest.stream.getAudioTracks()[0], { direction: "sendonly" });
+  await pc.setLocalDescription(await pc.createOffer());
+  const pub = await post("/api/publish", { sdp: pc.localDescription.sdp, mid: tx.mid });
+  callId = pub.callId;
+  await pc.setRemoteDescription({ type: "answer", sdp: pub.sdp });
+  await new Promise((resolve, reject) => {
+    const check = () => {
+      if (pc.connectionState === "connected") resolve();
+      else if (pc.connectionState === "failed") reject(new Error("pc failed"));
+      else setTimeout(check, 50);
+    };
+    check();
+  });
+  const t0 = performance.now();
+  const conn = await post("/api/connect", { callId });
+  log("connect", { requiresImmediateRenegotiation: conn.requiresImmediateRenegotiation, ms: Math.round(performance.now() - t0) });
+  if (conn.sdp) {
+    await pc.setRemoteDescription({ type: "offer", sdp: conn.sdp });
+    await pc.setLocalDescription(await pc.createAnswer());
+    await post("/api/renegotiate", { callId, sdp: pc.localDescription.sdp });
+  }
+  setState("live");
+  $("ping").disabled = false; $("hangup").disabled = false;
+  statsTimer = setInterval(reportStats, 10000);
+}
+
+async function reportStats() {
+  if (!pc) return;
+  const out = {};
+  (await pc.getStats()).forEach((r) => {
+    if (r.type === "candidate-pair" && r.nominated) out.rttMs = Math.round((r.currentRoundTripTime || 0) * 1000);
+    if (r.type === "inbound-rtp" && r.kind === "audio") {
+      out.inJitterMs = Math.round((r.jitter || 0) * 1000);
+      out.inLost = r.packetsLost;
+      out.jitterBufferMs = r.jitterBufferEmittedCount ? Math.round(r.jitterBufferDelay / r.jitterBufferEmittedCount * 1000) : null;
+    }
+    if (r.type === "outbound-rtp" && r.kind === "audio") out.outBytes = r.bytesSent;
+  });
+  serverLog({ callId, webrtc: out });
+}
+
+async function ping() {
+  // Mute the mic so only the tone travels; detect it on the returned (echoed) track.
+  micGain.gain.value = 0;
+  await new Promise(r => setTimeout(r, 400));
+  const buf = new Float32Array(analyser.fftSize);
+  const t0 = performance.now();
+  const t0Wall = Date.now();
+  pingGain.gain.setValueAtTime(0.8, ctx.currentTime);
+  pingGain.gain.setValueAtTime(0, ctx.currentTime + 0.08);
+  const rtt = await new Promise((resolve) => {
+    const tick = () => {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0; for (const v of buf) sum += v * v;
+      if (Math.sqrt(sum / buf.length) > 0.05) return resolve(Math.round(performance.now() - t0));
+      if (performance.now() - t0 > 3000) return resolve(null);
+      setTimeout(tick, 2);
+    };
+    tick();
+  });
+  micGain.gain.value = 1;
+  log("echo round trip ms", rtt);
+  serverLog({ callId, echoRoundTripMs: rtt, pingStartWall: t0Wall, pingHeardWall: rtt === null ? null : t0Wall + rtt });
+}
+
+async function hangup() {
+  clearInterval(statsTimer);
+  const res = await post("/api/hangup", { callId });
+  pc?.close(); ctx?.close(); wakeLock?.release?.();
+  log(res.report || "no report");
+  setState("ended");
+  $("ping").disabled = true; $("hangup").disabled = true; $("call").disabled = false;
+}
+
+$("call").onclick = () => call().catch((e) => { log("error", String(e)); setState("error"); $("call").disabled = false; });
+$("ping").onclick = () => ping();
+$("hangup").onclick = () => hangup();
+</script>
+</body>
+</html>
