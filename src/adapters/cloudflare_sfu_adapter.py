@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import httpx
 
@@ -12,6 +12,17 @@ _TIMEOUT_S = 15.0
 # Track names are ours; the relay and the page never see them.
 _CALLER_TRACK = "mic"
 _AGENT_TRACK = "lelik"
+# A close of an adapter the SFU no longer has (already closed, or gone after the call ended) is
+# the expected outcome of an idempotent hangup, not a failure.
+_ALREADY_CLOSED = (404, 410)
+
+
+class _SfuStatusError(MediaRoomError):
+    """The SFU answered with an HTTP error status."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class CloudflareSfuAdapter(MediaRoomPort):
@@ -23,12 +34,27 @@ class CloudflareSfuAdapter(MediaRoomPort):
         self._headers = {"Authorization": f"Bearer {app_secret}"}
         self._client = http_client or httpx.AsyncClient(timeout=_TIMEOUT_S)
 
-    async def _call(self, method: str, path: str, body: Optional[dict] = None) -> dict:
-        response = await self._client.request(method, f"{self._base}{path}", headers=self._headers, json=body)
+    async def _call(self, method: str, path: str, body: Optional[dict] = None,
+                    quiet_statuses: Tuple[int, ...] = ()) -> dict:
+        """Every failure leaves here as MediaRoomError, so callers need one except clause.
+        Log lines carry the method, path and exception type only; never the headers (secret)."""
+        try:
+            response = await self._client.request(method, f"{self._base}{path}", headers=self._headers, json=body)
+        except httpx.HTTPError as exc:
+            logger.error(f"[CloudflareSfu] {method} {path} failed: {type(exc).__name__}: {exc}")
+            raise MediaRoomError(f"{method} {path} failed: {type(exc).__name__}") from exc
         if response.status_code >= 400:
-            logger.error(f"[CloudflareSfu] {method} {path} -> {response.status_code}: {response.text[:300]}")
-            raise MediaRoomError(f"{method} {path} returned {response.status_code}")
-        return response.json() if response.status_code != 204 else {}
+            log = logger.info if response.status_code in quiet_statuses else logger.error
+            log(f"[CloudflareSfu] {method} {path} -> {response.status_code}: {response.text[:300]}")
+            raise _SfuStatusError(f"{method} {path} returned {response.status_code}", response.status_code)
+        # POC behaviour: an empty 2xx body is an empty object.
+        if response.status_code == 204 or not response.text:
+            return {}
+        try:
+            return response.json()
+        except ValueError as exc:
+            logger.error(f"[CloudflareSfu] {method} {path} -> {response.status_code}: body is not JSON")
+            raise MediaRoomError(f"{method} {path} returned a non-JSON body") from exc
 
     async def open_caller(self, offer_sdp: str, mid: str) -> CallerLeg:
         session_id = (await self._call("POST", "/sessions/new"))["sessionId"]
@@ -67,6 +93,12 @@ class CloudflareSfuAdapter(MediaRoomPort):
     async def close(self, adapter_ids: List[str]) -> None:
         for adapter_id in adapter_ids:
             try:
-                await self._call("POST", "/adapters/websocket/close", {"tracks": [{"adapterId": adapter_id}]})
+                await self._call("POST", "/adapters/websocket/close", {"tracks": [{"adapterId": adapter_id}]},
+                                 quiet_statuses=_ALREADY_CLOSED)
+            except _SfuStatusError as exc:
+                if exc.status_code in _ALREADY_CLOSED:
+                    logger.info(f"[CloudflareSfu] adapter {adapter_id} was already closed")
+                else:
+                    logger.error(f"[CloudflareSfu] closing adapter {adapter_id} failed: {exc}")
             except Exception:
                 logger.error(f"[CloudflareSfu] closing adapter {adapter_id} failed", exc_info=True)
