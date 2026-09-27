@@ -216,31 +216,24 @@ class VoiceSessionService:
             # The watchdog ends only to hang up after a long silence (hangup_after_silence_s).
             await asyncio.wait({forward_task, consume_task, watchdog_task}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            # Before the delegations are cancelled: an abandoned answer is posted to the user's chat
-            # by the main service when it finishes. Concurrently, so teardown waits one bound, not N.
-            pending = [call_id for task, call_id in state.pending_delegations.items() if not task.done()]
-            if pending:
-                logger.info(f"voice call {ticket}: call ended with {len(pending)} pending delegations, abandoning")
-                await asyncio.gather(*(self._abandon(ticket, call_id) for call_id in pending))
-            tasks = [task for task in (forward_task, consume_task, watchdog_task, cue_task) if task is not None]
-            # In-flight delegations stop here: the abandoned ones reach chat from the main service.
-            tasks += list(state.delegations)
+            # 1. The call's own loops first, so nothing (the watchdog, a flush) starts a response
+            #    on a call that is ending.
+            loops = [task for task in (forward_task, consume_task, watchdog_task, cue_task) if task is not None]
             if state.pending_barge_in is not None:
-                tasks.append(state.pending_barge_in)
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            if tasks:
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                for result in results:
-                    # Logged, not re-raised: this is a top-level call loop with no
-                    # caller to propagate to - the call simply ends here, which is
-                    # the correct outcome for a crashed forward/consume loop. The
-                    # "error" event path above already alerts on provider-side
-                    # failures; this only catches an unexpected bug in the loop
-                    # itself, and still needs to be visible in logs.
-                    if isinstance(result, Exception):
-                        logger.error(f"voice call {ticket}: session loop crashed: {result}")
+                loops.append(state.pending_barge_in)
+            await self._cancel_all(ticket, loops)
+            # 2. Abandon what the caller will not hear, before the delegations are cancelled: the
+            #    main service posts those answers to the user's chat. Concurrently, so teardown
+            #    waits one bound (_ABANDON_TIMEOUT_S), not one per delegation.
+            abandoned = [call_id for task, call_id in state.pending_delegations.items() if not task.done()]
+            # Arrived while a response was active and never spoken; timeouts and failures carry no answer.
+            abandoned += [answer.call_id for answer in state.queued_answers
+                          if answer.output not in (_DELEGATION_TIMED_OUT, _DELEGATION_FAILED)]
+            if abandoned:
+                logger.info(f"voice call {ticket}: call ended with {len(abandoned)} unheard answers, abandoning")
+                await asyncio.gather(*(self._abandon(ticket, call_id) for call_id in abandoned))
+            # 3. In-flight delegations stop here: the abandoned ones reach chat from the main service.
+            await self._cancel_all(ticket, list(state.delegations))
             await session.close()
             await self._control_plane.submit_transcript(
                 call_id=ticket,
@@ -248,6 +241,23 @@ class VoiceSessionService:
                 account_id=config["account_id"],
                 buffer=buffer,
             )
+
+    async def _cancel_all(self, ticket: str, tasks: List[asyncio.Task]) -> None:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if not tasks:
+            return
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            # Logged, not re-raised: this is a top-level call loop with no
+            # caller to propagate to - the call simply ends here, which is
+            # the correct outcome for a crashed forward/consume loop. The
+            # "error" event path above already alerts on provider-side
+            # failures; this only catches an unexpected bug in the loop
+            # itself, and still needs to be visible in logs.
+            if isinstance(result, Exception):
+                logger.error(f"voice call {ticket}: session loop crashed: {result}")
 
     async def _consume_events(
         self,
@@ -577,9 +587,10 @@ class VoiceSessionService:
             )
         except asyncio.TimeoutError:
             logger.warning(f"voice call {ticket}: delegation {call_id} timed out, its answer goes to chat")
-            # No longer waited for: a call ending now must not abandon it a second time.
-            state.pending_delegations.pop(asyncio.current_task(), None)
+            # Still pending until the abandon has landed: a call ending mid-abandon (which cancels
+            # this task) abandons it again from teardown. Twice is harmless; never is a lost answer.
             await self._abandon(ticket, call_id)
+            state.pending_delegations.pop(asyncio.current_task(), None)
             return _DELEGATION_TIMED_OUT
         except Exception as exc:
             # No retry: it re-runs the whole pipeline (double spend, double chat copy).

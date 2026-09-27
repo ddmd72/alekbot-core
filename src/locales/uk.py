@@ -126,4 +126,5 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.NEW_TOPIC_ACK.value: "Нова тема. Історію очищено.",
     UIMessage.SOURCES_HEADING.value: "Джерела:",
     UIMessage.CONSOLIDATION_STARTED.value: "🧠 Розпочато консолідацію пам'яті…",
+    UIMessage.VOICE_REQUEST_FAILED.value: "Запит не вдалося виконати.",
 }

@@ -26,3 +26,5 @@ class UIMessage(Enum):
     NEW_TOPIC_ACK = "new_topic_ack"
     SOURCES_HEADING = "sources_heading"
     CONSOLIDATION_STARTED = "consolidation_started"
+    # A request Lelik sent during a call failed after the call stopped waiting for it.
+    VOICE_REQUEST_FAILED = "voice_request_failed"

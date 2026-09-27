@@ -197,3 +197,89 @@ async def test_a_hanging_abandon_holds_teardown_only_for_its_bound(monkeypatch):
     # Two pending, abandoned concurrently: one bound (0.5 s) on top of the 0.3 s call, not two (1.0 s).
     assert loop.time() - started < 0.3 + 0.9
     control.submit_transcript.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_teardown_stops_the_call_loops_before_abandoning_then_cancels_delegations():
+    order = []
+
+    async def never(**kwargs):
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            order.append("delegation cancelled")
+            raise
+
+    async def abandon(ticket, call_id):
+        order.append("abandon")
+
+    async def events():
+        for e in _opening():
+            yield e
+        yield _tool_call()
+        try:
+            await _hold()
+        except asyncio.CancelledError:
+            order.append("event loop cancelled")
+            raise
+        yield  # pragma: no cover
+
+    _, control = await _call(events, never, abandon=abandon)
+    assert order == ["event loop cancelled", "abandon", "delegation cancelled"]
+    control.submit_transcript.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_queued_answer_never_spoken_is_abandoned_at_call_end():
+    async def events():
+        for e in _opening():
+            yield e
+        yield E(type="response_created", payload={})  # a response is active and never ends
+        yield _tool_call()
+        await _hold()
+        yield  # pragma: no cover
+
+    session, control = await _call(events, AsyncMock(return_value="sunny"))
+    session.submit_tool_result.assert_not_awaited()  # queued behind the active response, never spoken
+    control.abandon_delegation.assert_awaited_once_with("t1", "c1")
+    names = [name for name, _, _ in control.mock_calls]
+    assert names.index("abandon_delegation") < names.index("submit_transcript")
+
+
+@pytest.mark.asyncio
+async def test_queued_failure_is_not_abandoned():
+    async def events():
+        for e in _opening():
+            yield e
+        yield E(type="response_created", payload={})
+        yield _tool_call()
+        await _hold()
+        yield  # pragma: no cover
+
+    _, control = await _call(events, AsyncMock(side_effect=RuntimeError("503")))
+    control.abandon_delegation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_call_ending_mid_timeout_abandon_abandons_again_from_teardown(monkeypatch):
+    monkeypatch.setattr(voice_session_service, "_ABANDON_TIMEOUT_S", 0.5)
+    calls = []
+
+    async def never(**_):
+        await asyncio.sleep(10)
+
+    async def abandon(ticket, call_id):
+        calls.append(call_id)
+        if len(calls) == 1:
+            await asyncio.sleep(10)  # the timeout path's abandon is still in flight at call end
+
+    async def events():
+        for e in _opening():
+            yield e
+        yield _tool_call()
+        await _hold()
+        yield  # pragma: no cover
+
+    _, control = await _call(events, never, timeout_s=0.05, abandon=abandon)
+    assert calls == ["c1", "c1"]
+    control.submit_transcript.assert_awaited_once()

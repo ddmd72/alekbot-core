@@ -22,6 +22,7 @@ from uuid import uuid4
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.llm import ToolCall
 from ..domain.result_links import build_link_copy
+from ..domain.voice_delegation_outcome import VoiceDelegationOutcome
 from ..infrastructure.agent_manifest import LELIK, Intent
 from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -113,6 +114,13 @@ class LelikAgent(BaseAgent):
     ) -> str:
         """One delegate_to_specialist call from the live session, run exactly as a text
         orchestrator's would be."""
+        return (await self.delegate_outcome(user_id, account_id, arguments, call_context)).text
+
+    async def delegate_outcome(
+        self, user_id: str, account_id: str, arguments: Dict[str, Any], call_context: List[Dict[str, str]],
+    ) -> VoiceDelegationOutcome:
+        """`delegate`, plus whether the result is a failure: /voice/delegate keeps an answer
+        for chat only when it is a real one (a failure's text is an error string)."""
         context: Dict[str, Any] = {
             "user_id": user_id,
             "account_id": account_id,
@@ -142,7 +150,7 @@ class LelikAgent(BaseAgent):
         # error string can itself contain a URL (e.g. an OpenAI 429 pointing at platform.openai.com).
         if arguments.get("intent") != Intent.ASK_ALEK and not result.failed:
             await self._copy_links_to_chat(user_id, account_id, result.result_str)
-        return result.result_str
+        return VoiceDelegationOutcome(text=result.result_str, failed=bool(result.failed))
 
     async def _copy_links_to_chat(self, user_id: str, account_id: str, result_str: str) -> None:
         copy = build_link_copy(result_str)
