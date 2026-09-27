@@ -277,9 +277,8 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
     assert "t1" in body
     persona_factory.assert_awaited_once_with("u1")
     agent.session_config.assert_awaited_once_with(user_id="u1", account_id="a1")
-    stashed = ephemeral_store.set.await_args.args
-    assert stashed[0] == "voice_ticket:t1"
-    assert stashed[1]["instructions"] == "you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"
+    set_calls = {c.args[0]: c.args[1] for c in ephemeral_store.set.await_args_list}
+    assert set_calls["voice_ticket:t1"]["instructions"] == "you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"
 
 
 @pytest.mark.asyncio

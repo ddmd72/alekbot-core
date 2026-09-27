@@ -27,8 +27,8 @@ async def test_answer_stores_instructions_and_tools_on_the_ticket():
     agent.session_config.return_value = {"instructions": "PROMPT", "tools": [_TOOL]}
     client = _app(store, AsyncMock(return_value=agent)).test_client()
     await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
-    stored = store.set.await_args.args[1]
-    assert stored == {"user_id": "u1", "account_id": "a1", "instructions": "PROMPT", "tools": [_TOOL]}
+    stored = {c.args[0]: c.args[1] for c in store.set.await_args_list}["voice_ticket:t1"]
+    assert stored == {"user_id": "u1", "account_id": "a1", "instructions": "PROMPT", "tools": [_TOOL], "call_kind": "phone"}
 
 
 @pytest.mark.asyncio
@@ -41,7 +41,7 @@ async def test_answer_ticket_identity_wins_over_session_keys():
     agent.session_config.return_value = {"instructions": "PROMPT", "tools": [_TOOL], "user_id": "evil"}
     client = _app(store, AsyncMock(return_value=agent)).test_client()
     await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
-    stored = store.set.await_args.args[1]
+    stored = {c.args[0]: c.args[1] for c in store.set.await_args_list}["voice_ticket:t1"]
     assert stored["user_id"] == "u1"
 
 
