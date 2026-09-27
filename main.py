@@ -969,6 +969,39 @@ async def main():
                     "/voice/auth, /voice/inbound-status, /voice/answer, /voice/status"
                 )
 
+                # Cabinet web call (VOICE_WEB_TRANSPORT_RFC §5.2) — browser-to-Lelik calls over
+                # Cloudflare's Calls SFU, the second call kind next to the Twilio phone path
+                # above. MVP/dev-only like the rest of Voice Companion: skipped (not a boot
+                # failure) when either the Cloudflare app credentials or the relay's own
+                # wss:// URL isn't configured, so the app boots exactly as before this feature
+                # existed. `_alert_webhook` is passed through unguarded, same as the Twilio
+                # webhook blueprint just above — `VoiceCallSetupService`/the control-plane
+                # blueprint already accept a None alert_sink on that path with no extra
+                # None-guard, so this introduces no new failure mode.
+                if config.get("CLOUDFLARE_SFU_APP_ID") and config.get("CLOUDFLARE_SFU_APP_SECRET") \
+                        and config.get("VOICE_RELAY_STREAM_URL"):
+                    from urllib.parse import urlsplit
+                    from src.adapters.cloudflare_sfu_adapter import CloudflareSfuAdapter
+                    from src.services.voice_call_setup_service import VoiceCallSetupService
+                    from src.web.voice_web_call_app import create_voice_web_call_blueprint
+
+                    relay_parts = urlsplit(config.get("VOICE_RELAY_STREAM_URL", ""))
+                    main_app.register_blueprint(create_voice_web_call_blueprint(
+                        session_service=session_service,
+                        call_setup=VoiceCallSetupService(voice_ephemeral_store, _alert_webhook, agent_factory.get_lelik),
+                        media_room=CloudflareSfuAdapter(config["CLOUDFLARE_SFU_APP_ID"], config["CLOUDFLARE_SFU_APP_SECRET"]),
+                        ephemeral_store=voice_ephemeral_store,
+                        relay_base_url=f"{relay_parts.scheme}://{relay_parts.netloc}",
+                    ))
+                    logger.info(
+                        "✅ Voice web-call blueprint registered at /cabinet/call, /api/voice/web-call"
+                    )
+                else:
+                    logger.warning(
+                        "⚠️ Voice web-call blueprint skipped — CLOUDFLARE_SFU_APP_ID/"
+                        "CLOUDFLARE_SFU_APP_SECRET/VOICE_RELAY_STREAM_URL not fully configured"
+                    )
+
                 # ====================================================================
                 # PHASE 3: Telegram Integration (Optional)
                 # Initialize Telegram adapter if configured
