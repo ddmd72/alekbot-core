@@ -64,6 +64,9 @@ async def test_tool_call_is_forwarded_with_call_context_and_answered_as_function
         yield E(type="response_created", payload={})
         yield _tool_call()
         yield E(type="response_done", payload={})
+        # The dispatch filler's own turn: its response_done flushes the queued answer.
+        yield E(type="response_created", payload={})
+        yield E(type="response_done", payload={})
         await _hold()
         yield  # pragma: no cover
 
@@ -73,7 +76,7 @@ async def test_tool_call_is_forwarded_with_call_context_and_answered_as_function
     assert kwargs["arguments"] == {"intent": "search_web", "query": "weather"}
     assert kwargs["call_context"][-1] == {"role": "user", "text": "what's the weather"}
     session.submit_tool_result.assert_awaited_once_with("c1", "sunny")
-    assert session.request_response.await_count == 2  # opening line + the answer
+    assert session.request_response.await_count == 3  # opening line + dispatch filler + the answer
 
 
 @pytest.mark.asyncio
