@@ -120,7 +120,7 @@ async def main() -> None:
     # first is the transport itself; the two env knobs let UAT tune reasoning cost/latency and the
     # caller-opening line without a redeploy.
     web_reasoning = os.environ.get("VOICE_WEB_REASONING_EFFORT", "medium")
-    web_opening = _CALLER_OPENING if os.environ.get("VOICE_WEB_CALLER_OPENING", "on") == "on" else None
+    web_opening = _CALLER_OPENING if os.environ.get("VOICE_WEB_CALLER_OPENING", "on").strip().lower() == "on" else None
     web_session_service = VoiceSessionService(
         realtime_session_factory=lambda: OpenAIRealtimeAdapter(api_key=openai_api_key, audio_format=PCM16_24K),
         control_plane=control_plane,

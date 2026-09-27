@@ -96,7 +96,7 @@ it). Wire format (POC-verified): each WS binary message is protobuf
 | 1 | μ-law is a constant inside domain (`MULAW_8K_BYTES_PER_MS` in `PlaybackTracker`) | `AudioFormat` value object (`encoding`, `sample_rate_hz`, `channels`, `bytes_per_ms`) with `MULAW_8K`, `PCM16_24K`, `PCM16_48K_STEREO`; `PlaybackTracker.bytes_per_ms` defaults to μ-law | `domain/` |
 | 2 | `audio/pcmu` hardcoded in `OpenAIRealtimeAdapter` | `audio_format: AudioFormat = MULAW_8K` ctor arg; session formats and outbound `AudioFrame`s derive from it | `adapters/` |
 | 3 | A transport = one Twilio handler | `SfuStreamHandler` beside `MediaStreamHandler`, kept a **thin vendor adapter** (sockets, protocol, timing). Vendor-neutral logic is pure domain: `PacedAudioOutlet` (provider audio → fixed frames, tail padding, idle silence, played-marks), SFU packet codec, resampling 48k stereo ⇄ 24k mono (numpy precedent: `domain/vector_math.py`). No port in front of the handler: a driving adapter calls the core's primary port (`handle_call`), nothing calls it | `handlers/`, `domain/` |
-| 4 | Call setup (marker → persona → ticket) is inline in Twilio webhooks | `VoiceCallSetupService`; the web entry point uses it; the Twilio blueprint builds it internally from its existing constructor args (see §5.5 for the stop rule) | `services/` |
+| 4 | Call setup (marker → persona → ticket) is inline in Twilio webhooks | `VoiceCallSetupService`; the web entry point uses it; the Twilio blueprint builds it internally from its existing constructor args (§5.5) | `services/` |
 | 5 | No boundary for an SFU | `MediaRoomPort` + `CloudflareSfuAdapter`. Justified: system boundary, real alternative (LiveKit / self-hosted SFU) | `ports/`, `adapters/` |
 | 6 | "phone" is hardcoded in the pickup note and the summary header | `call_kind` (`phone`/`web`) on the ticket → relay picks the pickup note; `voice_call_kind:{ticket}` → summary header wording | `domain/` + service |
 
@@ -133,14 +133,20 @@ it). Wire format (POC-verified): each WS binary message is protobuf
   `attach_agent(caller_session_id, ingest_url, egress_url) -> AgentLeg`,
   `complete_negotiation(caller_session_id, answer_sdp)`, `close(adapter_ids)`.
 - `VoiceCallSetupService`: `claim(user_id, holder, ttl_s) -> bool` (short setup TTL),
-  `claim_extend(user_id, holder, ttl_s)` (call lifetime once the SFU answered), `holder(user_id)`,
-  `prepare(ticket, user_id, account_id, call_kind) -> None` (persona + ticket +
-  `voice_call_kind:{ticket}`; on failure releases ticket + marker, alerts, raises
-  `VoiceCallSetupError`), `release(ticket, user_id)`.
-- **Twilio blueprint migration, with a stop rule.** `create_voice_webhook_blueprint`'s signature is
-  used by 8 test files; the blueprint constructs `VoiceCallSetupService` from the arguments it
-  already receives. If any existing test fails, the migration is reverted and recorded as a
-  deferral — tests are not edited without per-test approval.
+  `holder(user_id)`, `prepare(ticket, user_id, account_id, call_kind) -> None` (persona + ticket +
+  `voice_call_kind:{ticket}`; on any failure, including the ticket writes, releases ticket +
+  marker, alerts, raises `VoiceCallSetupError`), `release(ticket, user_id)`. There is no
+  `claim_extend`: the web marker is extended to the full call TTL only when the relay redeems the
+  ticket in `/voice/session-config` (`voice_control_plane_app.py`, review Ruling 4). Extending it
+  when the SFU answered would hold the marker for an hour even if the relay never arrived.
+- **Twilio blueprint migration (shipped).** `create_voice_webhook_blueprint` keeps its signature and
+  constructs `VoiceCallSetupService` from the arguments it already receives; `/voice/answer` uses
+  `prepare()`. `/voice/auth`, `/voice/inbound-status` and the AMD path still manage the marker and
+  ticket inline. Three pre-existing tests read "the last `store.set` call", which `prepare()`'s
+  extra `voice_call_kind` write changed. They were updated by reviewer ruling to look the ticket
+  write up by key (commit `558cb2b`): `test_answer_webhook_assembles_persona_and_streams_on_human_pickup`,
+  `test_answer_stores_instructions_and_tools_on_the_ticket`,
+  `test_answer_ticket_identity_wins_over_session_keys`.
 - `voice_web_call_app.py` blueprint (Cabinet JWT via a shared `cabinet_auth` helper), web call
   record `voice_web_call:{call_id}` = `{user_id, account_id, ticket, session_id, adapter_ids}`;
   every route checks the record's `user_id` against the token.
@@ -192,7 +198,6 @@ or the Opus bytes (`bytesProcessed` on close looked Opus-sized) — irrelevant u
 - **`handle_call`'s callback bundle → an ABC transport port** — the bundle is already the port
   structurally; converting it rewrites ~100 lines across 15 test files for no behaviour change.
 - **Thinking cue for non-μ-law transports** — the cue is off; revisit with the cue itself.
-- **Twilio webhook migration** if §5.5's stop rule trips.
 
 ## 9. Test plan
 

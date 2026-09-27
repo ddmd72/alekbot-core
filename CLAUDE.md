@@ -320,10 +320,12 @@ and Lelik persona. Cloudflare's Realtime SFU dials the same relay's `/sfu/*` rou
 deploy unit); `SfuStreamHandler` pairs the ingest/egress WebSocket legs by ticket and drives
 `PacedAudioOutlet` for provider→browser pacing at wideband PCM (24 kHz to the model, 48 kHz stereo
 to the SFU), vs. Twilio's narrowband μ-law. Main-service side: `MediaRoomPort` /
-`CloudflareSfuAdapter` mint SFU sessions over HTTPS, and `VoiceCallSetupService` (extracted from the
-Twilio webhook's inline setup) is now shared by both entry points for the one-call marker, ticket
-and persona prep, keyed by `call_kind` (`phone`/`web`) so the pickup note and summary header read
-right either way. Because both SFU legs must land on the same process, the relay's
+`CloudflareSfuAdapter` mint SFU sessions over HTTPS. `VoiceCallSetupService` (extracted from the
+Twilio webhook's inline setup) does persona + ticket prep (`prepare`, keyed by `call_kind`
+`phone`/`web` so the pickup note and summary header read right) for both entry points; the web path
+also uses it for the one-call marker, while Twilio's `/voice/auth`, `/voice/inbound-status` and AMD
+paths still manage marker and ticket inline. The web marker holds a short setup TTL and is extended
+to the call TTL only when the relay redeems the ticket in `/voice/session-config`. Because both SFU legs must land on the same process, the relay's
 `--max-instances=1` (already required for other reasons) is now also a **pairing constraint**, not
 just a cost choice — scaling calls up means relay shards (N single-instance relays, main service
 picks one per call), not raising this number. Two relay-only knobs, `os.getenv` not

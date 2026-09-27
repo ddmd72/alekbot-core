@@ -974,10 +974,11 @@ async def main():
                 # above. MVP/dev-only like the rest of Voice Companion: skipped (not a boot
                 # failure) when either the Cloudflare app credentials or the relay's own
                 # wss:// URL isn't configured, so the app boots exactly as before this feature
-                # existed. `_alert_webhook` is passed through unguarded, same as the Twilio
-                # webhook blueprint just above — `VoiceCallSetupService`/the control-plane
-                # blueprint already accept a None alert_sink on that path with no extra
-                # None-guard, so this introduces no new failure mode.
+                # existed. `_alert_webhook` is passed through unguarded, the same risk the
+                # Twilio webhook blueprint just above already carries: with no alert webhook
+                # configured it is None, and a failed `VoiceCallSetupService.prepare` releases
+                # the ticket and marker first, then crashes on `None.post` — the request ends in
+                # a 500 instead of its handled error response, but nothing stays held.
                 if config.get("CLOUDFLARE_SFU_APP_ID") and config.get("CLOUDFLARE_SFU_APP_SECRET") \
                         and config.get("VOICE_RELAY_STREAM_URL"):
                     from urllib.parse import urlsplit
