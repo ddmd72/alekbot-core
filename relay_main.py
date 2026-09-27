@@ -22,6 +22,16 @@ Environment variables (static — set at relay deploy time, Task 14):
                            `self._alert_sink.post(...)` unconditionally on a
                            provider error event with no None-guard — passing
                            None would crash the call instead of alerting.
+  VOICE_WEB_REASONING_EFFORT
+                           Optional knob (default "medium") for the web-call
+                           VoiceSessionService only (VOICE_WEB_TRANSPORT_RFC
+                           §5.4) — read with os.environ.get, not load_settings
+                           (CLAUDE.md: optional knobs, not secrets/required
+                           config, are os.getenv'd at their call site).
+  VOICE_WEB_CALLER_OPENING
+                           Optional knob (default "on"); "off" disables the
+                           owner's-first-turn opening on web calls only, same
+                           text as the phone path (_CALLER_OPENING).
   PORT                    Cloud Run injects this; defaults to 8080 locally.
 
 This is wiring, like `job_main.py` — no dedicated unit test file (confirmed
@@ -38,7 +48,9 @@ import websockets
 from src.adapters.http_call_control_plane_adapter import HttpCallControlPlaneAdapter
 from src.adapters.openai_realtime_adapter import OpenAIRealtimeAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
+from src.domain.voice_audio_format import PCM16_24K
 from src.handlers.media_stream_handler import MediaStreamHandler
+from src.handlers.sfu_stream_handler import SfuStreamHandler
 from src.services.voice_session_service import VoiceSessionService
 from src.utils.logger import logger
 
@@ -88,10 +100,8 @@ async def main() -> None:
         realtime_session_factory=lambda: OpenAIRealtimeAdapter(api_key=openai_api_key),
         control_plane=control_plane,
         alert_sink=alert_sink,
-        # Owner's call 2026-09-23, raised from spike 0.4's `medium`: the per-turn anchor asks
-        # the model to plan each sentence's rhythm and emotion before speaking, and that
-        # planning happens in reasoning. Cost: reasoning bills as text output ($24/1M).
-        reasoning_effort="high",
+        # Owner's call 2026-09-27: medium on every voice path (was high since 2026-09-23).
+        reasoning_effort="medium",
         # Owner's call 2026-09-25: line noise and "uh-huh"s cut replies at ~400 ms; interrupting
         # Lelik now takes a second of speech.
         barge_in_min_speech_s=1.0,
@@ -103,6 +113,31 @@ async def main() -> None:
         # routed back to a revision without it. Cause not found yet; the clip stays shipped.
     )
     handler = MediaStreamHandler(session_service=session_service)
+
+    # Web calls (VOICE_WEB_TRANSPORT_RFC §5.4): a second VoiceSessionService/OpenAIRealtimeAdapter
+    # pair at 24 kHz PCM (the phone pair above stays 8 kHz mu-law), routed by path alongside the
+    # Twilio Media Stream handler. Defaults mirror the phone service so the only variable UAT sees
+    # first is the transport itself; the two env knobs let UAT tune reasoning cost/latency and the
+    # caller-opening line without a redeploy.
+    web_reasoning = os.environ.get("VOICE_WEB_REASONING_EFFORT", "medium")
+    web_opening = _CALLER_OPENING if os.environ.get("VOICE_WEB_CALLER_OPENING", "on") == "on" else None
+    web_session_service = VoiceSessionService(
+        realtime_session_factory=lambda: OpenAIRealtimeAdapter(api_key=openai_api_key, audio_format=PCM16_24K),
+        control_plane=control_plane,
+        alert_sink=alert_sink,
+        reasoning_effort=web_reasoning,
+        barge_in_min_speech_s=1.0,
+        hangup_after_silence_s=20.0,
+        caller_opening=web_opening,
+    )
+    sfu_handler = SfuStreamHandler(session_service=web_session_service)
+
+    async def route(connection):
+        path = connection.request.path
+        if path.startswith("/sfu/"):
+            await sfu_handler.handle_connection(connection, path)
+        else:
+            await handler.handle_connection(connection)
 
     async def process_request(connection, request):
         # Mirrors scripts/voice/test_mulaw_relay_poc.py's process_request: a real
@@ -121,7 +156,7 @@ async def main() -> None:
         loop.add_signal_handler(sig, shutdown_event.set)
 
     port = int(os.environ.get("PORT", "8080"))
-    async with websockets.serve(handler.handle_connection, "0.0.0.0", port, process_request=process_request):
+    async with websockets.serve(route, "0.0.0.0", port, process_request=process_request):
         logger.info(f"voice relay listening on :{port}")
         await shutdown_event.wait()
         logger.info("voice relay shutting down")
