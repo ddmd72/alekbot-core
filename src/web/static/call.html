@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Call Lelik</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* ─── Tokens & Base (mirrors cabinet.html) ─────────────────────────── */
+      :root {
+        --bg-app: #f2f2f7;
+        --bg-panel-solid: #ffffff;
+        --text-main: #000000;
+        --text-muted: #86868b;
+        --border-light: rgba(0, 0, 0, 0.08);
+        --accent: #0071e3;
+        --accent-hover: #0077ed;
+        --accent-danger: #ff3b30;
+        --accent-danger-hover: #ff453a;
+        --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
+        --shadow-lg:
+          0 12px 32px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.04);
+        --radius-lg: 24px;
+        --radius-xl: 32px;
+        --font-sans:
+          -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        --transition-fast: 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg-app: #000000;
+          --bg-panel-solid: #1c1c1e;
+          --text-main: #f5f5f7;
+          --text-muted: #86868b;
+          --border-light: rgba(255, 255, 255, 0.12);
+          --accent: #0a84ff;
+          --accent-hover: #409cff;
+          --accent-danger: #ff453a;
+          --accent-danger-hover: #ff6961;
+          --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.6);
+          --shadow-lg:
+            0 12px 32px rgba(0, 0, 0, 0.8), 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        height: 100%;
+        background-color: var(--bg-app);
+        color: var(--text-main);
+        font-family: var(--font-sans);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        letter-spacing: -0.01em;
+        overflow-x: hidden;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100%;
+        padding: 16px;
+      }
+
+      .back-link {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--text-muted);
+        text-decoration: none;
+        padding: 8px 4px;
+      }
+      .back-link:hover {
+        color: var(--text-main);
+      }
+
+      .card {
+        width: 100%;
+        max-width: 420px;
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-lg);
+        padding: 40px 24px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 28px;
+        text-align: center;
+      }
+
+      h1 {
+        font-size: 22px;
+        font-weight: 600;
+      }
+
+      #state {
+        font-size: 17px;
+        font-weight: 500;
+        color: var(--text-muted);
+        min-height: 24px;
+      }
+
+      .call-btn {
+        width: 100%;
+        min-height: 64px;
+        font-size: 19px;
+        font-weight: 600;
+        color: #fff;
+        background: var(--accent);
+        border: none;
+        border-radius: var(--radius-lg);
+        cursor: pointer;
+        box-shadow: var(--shadow-md);
+        transition: var(--transition-fast);
+        -webkit-tap-highlight-color: transparent;
+      }
+      .call-btn:hover:not(:disabled) {
+        background: var(--accent-hover);
+      }
+      .call-btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .call-btn.danger {
+        background: var(--accent-danger);
+      }
+      .call-btn.danger:hover:not(:disabled) {
+        background: var(--accent-danger-hover);
+      }
+    </style>
+  </head>
+  <body>
+    <a class="back-link" href="/cabinet" id="back-link">← Back to Cabinet</a>
+
+    <div class="card">
+      <h1 id="title">Call Lelik</h1>
+      <div id="state">Ready to call</div>
+      <button id="call-btn" class="call-btn">Call</button>
+    </div>
+
+    <audio id="remote-audio" autoplay playsinline hidden></audio>
+
+    <script>
+      /* ── i18n ────────────────────────────────────────── */
+      const LANG_DICT = {
+        en: {
+          "app.title": "Call Lelik",
+          "back.cabinet": "← Back to Cabinet",
+          "state.idle": "Ready to call",
+          "state.connecting": "Connecting…",
+          "state.live": "Live",
+          "state.ended": "Ended",
+          "state.busy": "Busy — a call is already in progress",
+          "state.mic_blocked": "Microphone blocked",
+          "state.could_not_connect": "Could not connect",
+          "button.call": "Call",
+          "button.hangup": "Hang up",
+        },
+        uk: {
+          "app.title": "Дзвінок Леліку",
+          "back.cabinet": "← Назад до кабінету",
+          "state.idle": "Готово до дзвінка",
+          "state.connecting": "З'єднання…",
+          "state.live": "У розмові",
+          "state.ended": "Завершено",
+          "state.busy": "Зайнято — дзвінок вже триває",
+          "state.mic_blocked": "Мікрофон заблоковано",
+          "state.could_not_connect": "Не вдалося з'єднатися",
+          "button.call": "Подзвонити",
+          "button.hangup": "Завершити",
+        },
+        fr: {
+          "app.title": "Appeler Lelik",
+          "back.cabinet": "← Retour au cabinet",
+          "state.idle": "Prêt à appeler",
+          "state.connecting": "Connexion…",
+          "state.live": "En direct",
+          "state.ended": "Terminé",
+          "state.busy": "Occupé — un appel est déjà en cours",
+          "state.mic_blocked": "Microphone bloqué",
+          "state.could_not_connect": "Connexion impossible",
+          "button.call": "Appeler",
+          "button.hangup": "Raccrocher",
+        },
+        es: {
+          "app.title": "Llamar a Lelik",
+          "back.cabinet": "← Volver al panel",
+          "state.idle": "Listo para llamar",
+          "state.connecting": "Conectando…",
+          "state.live": "En directo",
+          "state.ended": "Finalizada",
+          "state.busy": "Ocupado — ya hay una llamada en curso",
+          "state.mic_blocked": "Micrófono bloqueado",
+          "state.could_not_connect": "No se pudo conectar",
+          "button.call": "Llamar",
+          "button.hangup": "Colgar",
+        },
+      };
+
+      const _currentLang = (() => {
+        const code = (navigator.language || "en").slice(0, 2).toLowerCase();
+        return LANG_DICT[code] ? code : "en";
+      })();
+
+      function t(key) {
+        return (LANG_DICT[_currentLang] || LANG_DICT.en)[key] || key;
+      }
+
+      function applyTranslations() {
+        document.title = t("app.title");
+        document.getElementById("title").textContent = t("app.title");
+        document.getElementById("back-link").textContent = t("back.cabinet");
+      }
+
+      /* ── Call state ──────────────────────────────────── */
+      const $ = (id) => document.getElementById(id);
+      const stateEl = $("state");
+      const btn = $("call-btn");
+      const remoteAudio = $("remote-audio");
+
+      let pc = null;
+      let localStream = null;
+      let wakeLock = null;
+      let callId = null;
+      let statusTimer = null;
+      let inCall = false;
+
+      function setState(text) {
+        stateEl.textContent = text;
+      }
+
+      function renderButton(mode) {
+        // mode: "idle" | "connecting" | "live"
+        if (mode === "connecting") {
+          btn.textContent = t("button.call");
+          btn.disabled = true;
+          btn.classList.remove("danger");
+        } else if (mode === "live") {
+          btn.textContent = t("button.hangup");
+          btn.disabled = false;
+          btn.classList.add("danger");
+        } else {
+          btn.textContent = t("button.call");
+          btn.disabled = false;
+          btn.classList.remove("danger");
+        }
+      }
+
+      async function requestWakeLock() {
+        try {
+          wakeLock = await navigator.wakeLock?.request("screen");
+        } catch (e) {
+          // Not fatal — the call still works without it.
+        }
+      }
+
+      document.addEventListener("visibilitychange", async () => {
+        if (document.visibilityState === "visible" && pc) {
+          await requestWakeLock();
+        }
+      });
+
+      function waitForConnected(peer) {
+        return new Promise((resolve, reject) => {
+          const check = () => {
+            if (peer.connectionState === "connected") resolve();
+            else if (peer.connectionState === "failed") reject(new Error("pc failed"));
+            else setTimeout(check, 50);
+          };
+          check();
+        });
+      }
+
+      function stopStatusPolling() {
+        if (statusTimer) {
+          clearInterval(statusTimer);
+          statusTimer = null;
+        }
+      }
+
+      async function pollStatus() {
+        if (!callId) return;
+        try {
+          const resp = await fetch(`/api/voice/web-call/${callId}/status`, {
+            credentials: "same-origin",
+          });
+          if (!resp.ok) return; // transient — keep polling
+          const body = await resp.json();
+          if (body.state === "ended") {
+            await endCall(false);
+            setState(t("state.ended"));
+            renderButton("idle");
+          }
+        } catch (e) {
+          // transient network hiccup — keep polling
+        }
+      }
+
+      async function endCall(notifyServer) {
+        stopStatusPolling();
+        inCall = false;
+        const endingCallId = callId;
+        callId = null;
+        if (notifyServer && endingCallId) {
+          try {
+            await fetch(`/api/voice/web-call/${endingCallId}/hangup`, {
+              method: "POST",
+              credentials: "same-origin",
+            });
+          } catch (e) {
+            // best effort — nothing more to do client-side
+          }
+        }
+        if (pc) {
+          pc.close();
+          pc = null;
+        }
+        if (localStream) {
+          localStream.getTracks().forEach((track) => track.stop());
+          localStream = null;
+        }
+        if (wakeLock) {
+          try {
+            await wakeLock.release();
+          } catch (e) {
+            // already released
+          }
+          wakeLock = null;
+        }
+      }
+
+      async function startCall() {
+        inCall = true;
+        renderButton("connecting");
+        setState(t("state.connecting"));
+
+        try {
+          localStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          });
+        } catch (e) {
+          inCall = false;
+          setState(t("state.mic_blocked"));
+          renderButton("idle");
+          return;
+        }
+
+        let handledState = false;
+        try {
+          await requestWakeLock();
+
+          pc = new RTCPeerConnection({
+            iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }],
+            bundlePolicy: "max-bundle",
+          });
+          pc.ontrack = (ev) => {
+            remoteAudio.srcObject = new MediaStream([ev.track]);
+          };
+          const tx = pc.addTransceiver(localStream.getAudioTracks()[0], { direction: "sendonly" });
+
+          await pc.setLocalDescription(await pc.createOffer());
+          const startResp = await fetch("/api/voice/web-call", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sdp: pc.localDescription.sdp, mid: tx.mid }),
+          });
+          if (startResp.status === 409) {
+            handledState = true;
+            setState(t("state.busy"));
+            throw new Error("busy");
+          }
+          if (!startResp.ok) {
+            throw new Error(`start failed: ${startResp.status}`);
+          }
+          const startBody = await startResp.json();
+          callId = startBody.call_id;
+          await pc.setRemoteDescription({ type: "answer", sdp: startBody.sdp });
+          await waitForConnected(pc);
+
+          const connectResp = await fetch(`/api/voice/web-call/${callId}/connect`, {
+            method: "POST",
+            credentials: "same-origin",
+          });
+          if (!connectResp.ok) {
+            throw new Error(`connect failed: ${connectResp.status}`);
+          }
+          const connectBody = await connectResp.json();
+          if (connectBody.sdp) {
+            await pc.setRemoteDescription({ type: "offer", sdp: connectBody.sdp });
+            await pc.setLocalDescription(await pc.createAnswer());
+            await fetch(`/api/voice/web-call/${callId}/renegotiate`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sdp: pc.localDescription.sdp }),
+            });
+          }
+
+          setState(t("state.live"));
+          renderButton("live");
+          statusTimer = setInterval(pollStatus, 2000);
+        } catch (e) {
+          if (!handledState) {
+            setState(t("state.could_not_connect"));
+          }
+          await endCall(Boolean(callId));
+          renderButton("idle");
+        }
+      }
+
+      async function hangupCall() {
+        btn.disabled = true;
+        await endCall(true);
+        setState(t("state.ended"));
+        renderButton("idle");
+      }
+
+      btn.addEventListener("click", () => {
+        if (inCall) {
+          hangupCall();
+        } else {
+          startCall();
+        }
+      });
+
+      window.addEventListener("pagehide", () => {
+        if (callId) {
+          fetch(`/api/voice/web-call/${callId}/hangup`, {
+            method: "POST",
+            keepalive: true,
+            credentials: "same-origin",
+          });
+        }
+      });
+
+      applyTranslations();
+      setState(t("state.idle"));
+    </script>
+  </body>
+</html>
