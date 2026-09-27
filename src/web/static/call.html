@@ -415,7 +415,23 @@
             throw new Error(`start failed: ${startResp.status}`);
           }
           const startBody = await startResp.json();
-          callId = startBody.call_id;
+          const startedCallId = startBody.call_id;
+          if (myToken !== callToken) {
+            // Superseded while POST /api/voice/web-call was in flight: hangupCall() ran with
+            // the global callId still null (nothing to notify from its side) and already reset
+            // the UI to "Ended". The server has now claimed the marker/ticket and opened the
+            // SFU leg for a call we're abandoning — release it explicitly (fire-and-forget,
+            // same pattern as pagehide) instead of leaving it to expire on its own TTL, and
+            // don't touch `pc` (already closed) or write the global callId for an abandoned
+            // call the rest of this function no longer owns.
+            fetch(`/api/voice/web-call/${startedCallId}/hangup`, {
+              method: "POST",
+              keepalive: true,
+              credentials: "same-origin",
+            });
+            return;
+          }
+          callId = startedCallId;
           await pc.setRemoteDescription({ type: "answer", sdp: startBody.sdp });
           await waitForConnected(pc);
 
@@ -427,6 +443,13 @@
             throw new Error(`connect failed: ${connectResp.status}`);
           }
           const connectBody = await connectResp.json();
+          if (myToken !== callToken) {
+            // Superseded while POST .../connect was in flight. callId was already set above,
+            // so hangupCall()'s endCall(true) already had a real id to notify — the server is
+            // already released. Just don't let this stale continuation overwrite the "Ended"
+            // state with "Live", or start a status-poll timer for an already-abandoned call.
+            return;
+          }
           if (connectBody.sdp) {
             await pc.setRemoteDescription({ type: "offer", sdp: connectBody.sdp });
             await pc.setLocalDescription(await pc.createAnswer());
