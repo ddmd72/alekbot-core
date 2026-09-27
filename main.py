@@ -925,6 +925,12 @@ async def main():
                         ),
                     )
 
+                async def _voice_late_answer_sink(*, user_id, account_id, request, output):
+                    # An answer the relay stopped waiting for (300 s timeout, or the call ended):
+                    # Lelik told the caller it would come to chat. The label is "intent: query".
+                    from src.domain.voice_call_note import late_answer_text
+                    await notification_service.notify_raw(user_id, account_id, late_answer_text(request, output))
+
                 main_app.register_blueprint(
                     create_voice_control_plane_blueprint(
                         ephemeral_store=voice_ephemeral_store,
@@ -937,11 +943,13 @@ async def main():
                         # nothing reaches chat or memory.
                         alert_sink=_alert_webhook,
                         lelik_agent_provider=agent_factory.get_lelik,
+                        late_answer_sink=_voice_late_answer_sink,
                     )
                 )
                 logger.info(
                     "✅ Voice control-plane blueprint registered at "
-                    "/voice/session-config, /voice/submit-transcript, /voice/delegate"
+                    "/voice/session-config, /voice/submit-transcript, /voice/delegate, "
+                    "/voice/delegate/abandon"
                 )
 
                 # /voice/auth, /voice/answer — Twilio's own webhooks (Task 8/9),

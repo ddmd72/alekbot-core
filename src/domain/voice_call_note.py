@@ -6,6 +6,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 CALL_NOTE_PREFIX = "📞 "
 
 
+def late_answer_text(request: str, output: str) -> str:
+    """Chat text for an answer the relay stopped waiting for. `request` is the relay's
+    "intent: query" label; the query alone heads the note (whole label if it has no ": ")."""
+    _, sep, query = request.partition(": ")
+    return f"{CALL_NOTE_PREFIX}{query if sep else request}\n\n{output}"
+
+
 def _call_label(call_kind: str) -> str:
     return "web call" if call_kind == "web" else "phone call"
 
