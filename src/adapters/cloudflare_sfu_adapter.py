@@ -39,20 +39,23 @@ class CloudflareSfuAdapter(MediaRoomPort):
         return CallerLeg(session_id=session_id, answer_sdp=answer["sessionDescription"]["sdp"])
 
     async def attach_agent(self, caller_session_id: str, ingest_url: str, egress_url: str) -> AgentLeg:
-        ingest = (await self._call("POST", "/adapters/websocket/new", {"tracks": [{
-            "location": "local", "trackName": _AGENT_TRACK, "inputCodec": "pcm", "endpoint": ingest_url,
-        }]}))["tracks"][0]
-        egress = (await self._call("POST", "/adapters/websocket/new", {"tracks": [{
-            "location": "remote", "sessionId": caller_session_id, "trackName": _CALLER_TRACK,
-            "outputCodec": "pcm", "endpoint": egress_url,
-        }]}))["tracks"][0]
-        adapter_ids = [ingest["adapterId"], egress["adapterId"]]
+        adapter_ids: List[str] = []
         try:
+            ingest = (await self._call("POST", "/adapters/websocket/new", {"tracks": [{
+                "location": "local", "trackName": _AGENT_TRACK, "inputCodec": "pcm", "endpoint": ingest_url,
+            }]}))["tracks"][0]
+            adapter_ids.append(ingest["adapterId"])
+            egress = (await self._call("POST", "/adapters/websocket/new", {"tracks": [{
+                "location": "remote", "sessionId": caller_session_id, "trackName": _CALLER_TRACK,
+                "outputCodec": "pcm", "endpoint": egress_url,
+            }]}))["tracks"][0]
+            adapter_ids.append(egress["adapterId"])
             pull = await self._call("POST", f"/sessions/{caller_session_id}/tracks/new", {"tracks": [{
                 "location": "remote", "sessionId": ingest["sessionId"], "trackName": _AGENT_TRACK,
             }]})
         except MediaRoomError:
-            await self.close(adapter_ids)
+            if adapter_ids:
+                await self.close(adapter_ids)
             raise
         offer = (pull.get("sessionDescription") or {}).get("sdp") if pull.get("requiresImmediateRenegotiation") else None
         return AgentLeg(adapter_ids=adapter_ids, offer_sdp=offer)
