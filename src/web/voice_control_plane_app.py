@@ -28,9 +28,18 @@ Three Quart routes consumed by the relay side (`CallControlPlanePort` /
   uses), inside a `RequestContext` scoped to the call's user/account, and
   returns the specialist's text result for the relay to speak back. No
   retry — a retry would re-run Alek's pipeline (double spend, double chat
-  copy).
+  copy). When the body names the delegation (`ticket` + `call_id`), the
+  result is also kept for `_LATE_ANSWER_TTL_S` so it can reach chat if the
+  relay stopped waiting for it.
+- `POST /voice/delegate/abandon` — the relay stopped waiting for one
+  delegation (its 300 s timeout, or the call ended while it was pending).
+  The answer then goes to the user's chat through the injected
+  `late_answer_sink`, exactly once, whichever side gets there first: both
+  routes write their own marker first (result / abandoned), then the
+  abandoned side is checked, and the post is claimed only by an atomic
+  `get_and_delete` on the result key.
 
-All three routes are OIDC-protected the same way `/worker` is (see
+All four routes are OIDC-protected the same way `/worker` is (see
 `src/web/worker_oidc_verifier.py`): the verifier is injected as an async
 callable rather than imported directly, so the route is testable without
 a real Google token and the local-dev bypass policy stays in main.py's
@@ -48,6 +57,18 @@ from src.domain.voice_amd import is_voicemail
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
+# Long enough to cover the relay's 300 s wait plus a slow delegation finishing after it.
+_LATE_ANSWER_TTL_S = 900
+
+
+def _result_key(ticket: str, call_id: str) -> str:
+    return f"voice_delegation_result:{ticket}:{call_id}"
+
+
+def _abandoned_key(ticket: str, call_id: str) -> str:
+    return f"voice_delegation_abandoned:{ticket}:{call_id}"
+
+
 if TYPE_CHECKING:  # type-only: web/ must not import agents/ at runtime (REQ-ARCH-15)
     from src.agents.lelik_agent import LelikAgent
 
@@ -61,8 +82,25 @@ def create_voice_control_plane_blueprint(
     alert_sink,
     lelik_agent_provider: Callable[[str], Awaitable[Optional["LelikAgent"]]] = None,
     one_call_ttl_s: int = 3600,
+    late_answer_sink: Optional[Callable[..., Awaitable[None]]] = None,
 ) -> Blueprint:
+    """`late_answer_sink(user_id=, account_id=, request=, output=)` posts an answer the relay
+    stopped waiting for to the user's chat; without it such answers are kept but never posted."""
     bp = Blueprint("voice_control_plane", __name__)
+
+    async def _post_claimed(ticket: str, call_id: str) -> None:
+        # The only claim: two racing callers cannot both get the record back.
+        claimed = await ephemeral_store.get_and_delete(_result_key(ticket, call_id))
+        if claimed is None:
+            return
+        if late_answer_sink is None:
+            logger.warning(f"voice call {ticket}: late answer to {call_id} dropped, no sink configured")
+            return
+        await late_answer_sink(
+            user_id=claimed["user_id"], account_id=claimed["account_id"],
+            request=claimed.get("request", ""), output=claimed["output"],
+        )
+        logger.info(f"voice call {ticket}: late answer to {call_id} posted to chat")
 
     async def _verify_or_401() -> Response | None:
         auth_header = request.headers.get("Authorization", "")
@@ -270,6 +308,37 @@ def create_voice_control_plane_blueprint(
                     await prompt_content_store.flush()
                 except Exception:
                     logger.error(f"voice delegate for user {user_id}: prompt content flush failed", exc_info=True)
+        ticket, call_id = body.get("ticket"), body.get("call_id")
+        # Only a real answer is kept: an empty one has nothing to post.
+        if ticket and call_id and output:
+            # Result first, abandoned check second — the abandon route writes and reads in the
+            # opposite order, so whichever lands second always sees the other's marker.
+            try:
+                await ephemeral_store.set(_result_key(ticket, call_id), {
+                    "output": output, "request": body.get("request", ""),
+                    "user_id": user_id, "account_id": account_id,
+                }, ttl_s=_LATE_ANSWER_TTL_S)
+                if await ephemeral_store.get(_abandoned_key(ticket, call_id)) is not None:
+                    await _post_claimed(ticket, call_id)
+            except Exception:
+                # The relay may still be waiting: its answer must not turn into an error.
+                logger.error(f"voice call {ticket}: keeping/posting the answer to {call_id} failed", exc_info=True)
         return jsonify({"output": output}), 200
+
+    @bp.route("/voice/delegate/abandon", methods=["POST"])
+    async def abandon_delegation():
+        unauthorized = await _verify_or_401()
+        if unauthorized:
+            return unauthorized
+        body = await request.get_json()
+        ticket, call_id = body["ticket"], body["call_id"]
+        logger.info(f"voice call {ticket}: relay abandoned delegation {call_id}")
+        try:
+            await ephemeral_store.set(_abandoned_key(ticket, call_id), {"abandoned": True},
+                                      ttl_s=_LATE_ANSWER_TTL_S)
+            await _post_claimed(ticket, call_id)
+        except Exception:
+            logger.error(f"voice call {ticket}: posting the abandoned answer to {call_id} failed", exc_info=True)
+        return jsonify({"ok": True}), 200
 
     return bp

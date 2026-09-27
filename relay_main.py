@@ -108,6 +108,9 @@ async def main() -> None:
         # After the one "still there?", this much more silence hangs up (voicemail, a phone put down).
         hangup_after_silence_s=20.0,
         caller_opening=_CALLER_OPENING,
+        # Owner's call 2026-09-28: an ask_alek took 105 s live and was lost at 90 s. What still
+        # outlasts this is posted to the user's chat by the main service.
+        delegation_timeout_s=300.0,
         # thinking_cue deliberately not passed (off): with it on, Lelik's replies were cut
         # after ~0.4-0.8 s on the live calls of 2026-09-24 and stopped when the relay was
         # routed back to a revision without it. Cause not found yet; the clip stays shipped.
@@ -129,6 +132,8 @@ async def main() -> None:
         barge_in_min_speech_s=1.0,
         hangup_after_silence_s=20.0,
         caller_opening=web_opening,
+        # Owner's call 2026-09-28: same 300 s as the phone path.
+        delegation_timeout_s=300.0,
     )
     sfu_handler = SfuStreamHandler(session_service=web_session_service)
 

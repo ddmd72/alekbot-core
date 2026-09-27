@@ -24,6 +24,16 @@ class CallControlPlanePort(ABC):
         """
 
     @abstractmethod
-    async def delegate(self, user_id: str, account_id: str, arguments: dict, call_context: list) -> str:
+    async def delegate(self, user_id: str, account_id: str, arguments: dict, call_context: list,
+                       ticket: str = "", call_id: str = "", request: str = "") -> str:
         """Run one delegate_to_specialist call from the live session on the main service
-        (RFC §4.7) and return the result as text. No retry."""
+        (RFC §4.7) and return the result as text. No retry.
+
+        `ticket` + `call_id` name the delegation so the main side can keep its result and post
+        it to chat if the relay stops waiting (`abandon_delegation`); `request` is the short
+        label that post is headed with. All three optional: without them nothing is kept."""
+
+    @abstractmethod
+    async def abandon_delegation(self, ticket: str, call_id: str) -> None:
+        """Tell the main service the relay no longer waits for this delegation (timed out, or
+        the call ended): its answer goes to the user's chat instead. Best effort; never raises."""
