@@ -30,7 +30,10 @@ Three Quart routes consumed by the relay side (`CallControlPlanePort` /
   retry — a retry would re-run Alek's pipeline (double spend, double chat
   copy). When the body names the delegation (`ticket` + `call_id`), the
   result is also kept for `_LATE_ANSWER_TTL_S` so it can reach chat if the
-  relay stopped waiting for it.
+  relay stopped waiting for it (a failed delegation is kept as a flag, never
+  its error text). The delegation runs shielded from the handler: Quart
+  cancels a handler whose client disconnects, and the relay disconnects
+  exactly when it stops waiting.
 - `POST /voice/delegate/abandon` — the relay stopped waiting for one
   delegation (its 300 s timeout, or the call ended while it was pending).
   The answer then goes to the user's chat through the injected
@@ -45,8 +48,9 @@ callable rather than imported directly, so the route is testable without
 a real Google token and the local-dev bypass policy stays in main.py's
 wiring, not duplicated here.
 """
+import asyncio
 from datetime import datetime
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional, Set
 
 from quart import Blueprint, Response, jsonify, request
 
@@ -54,11 +58,29 @@ from src.domain.billing import calculate_realtime_cost
 from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart
 from src.domain.request_context import RequestContext
 from src.domain.voice_amd import is_voicemail
+from src.domain.voice_delegation_outcome import VoiceDelegationOutcome
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
 # Long enough to cover the relay's 300 s wait plus a slow delegation finishing after it.
 _LATE_ANSWER_TTL_S = 900
+
+
+# Strong references to shielded delegations whose handler may already be gone (asyncio keeps
+# only weak ones; RUF006).
+_IN_FLIGHT_DELEGATIONS: Set[asyncio.Task] = set()
+
+
+class _LelikNotConfigured(Exception):
+    """No voice companion for this user: the relay gets a 503, nothing is kept."""
+
+
+def _forget_delegation(task: asyncio.Task) -> None:
+    _IN_FLIGHT_DELEGATIONS.discard(task)
+    # Retrieved so a delegation that failed after its handler was cancelled does not log
+    # "exception was never retrieved"; the failure itself is logged inside the task.
+    if not task.cancelled():
+        task.exception()
 
 
 def _result_key(ticket: str, call_id: str) -> str:
@@ -84,8 +106,9 @@ def create_voice_control_plane_blueprint(
     one_call_ttl_s: int = 3600,
     late_answer_sink: Optional[Callable[..., Awaitable[None]]] = None,
 ) -> Blueprint:
-    """`late_answer_sink(user_id=, account_id=, request=, output=)` posts an answer the relay
-    stopped waiting for to the user's chat; without it such answers are kept but never posted."""
+    """`late_answer_sink(user_id=, account_id=, request=, output=, failed=)` posts an answer the
+    relay stopped waiting for to the user's chat; `failed` means the delegation failed and `output`
+    is empty (its error text is never kept). Without a sink such answers are kept, never posted."""
     bp = Blueprint("voice_control_plane", __name__)
 
     async def _post_claimed(ticket: str, call_id: str) -> None:
@@ -98,7 +121,8 @@ def create_voice_control_plane_blueprint(
             return
         await late_answer_sink(
             user_id=claimed["user_id"], account_id=claimed["account_id"],
-            request=claimed.get("request", ""), output=claimed["output"],
+            request=claimed.get("request", ""), output=claimed.get("output", ""),
+            failed=bool(claimed.get("failed")),
         )
         logger.info(f"voice call {ticket}: late answer to {call_id} posted to chat")
 
@@ -274,14 +298,29 @@ def create_voice_control_plane_blueprint(
 
         return jsonify({"ok": True}), 200
 
-    @bp.route("/voice/delegate", methods=["POST"])
-    async def delegate():
-        unauthorized = await _verify_or_401()
-        if unauthorized:
-            return unauthorized
-        body = await request.get_json()
-        user_id, account_id = body["user_id"], body["account_id"]
-        set_request_context(user_id=user_id)
+    async def _keep_for_chat(body: dict, user_id: str, account_id: str, outcome: VoiceDelegationOutcome) -> None:
+        ticket, call_id = body.get("ticket"), body.get("call_id")
+        if not (ticket and call_id):
+            return
+        # A failure is kept as a flag, never as its text: an error string must not reach chat.
+        if outcome.failed:
+            record = {"failed": True}
+        elif outcome.text:
+            record = {"output": outcome.text}
+        else:
+            return  # Nothing to post.
+        record.update(request=body.get("request", ""), user_id=user_id, account_id=account_id)
+        # Result first, abandoned check second — the abandon route writes and reads in the
+        # opposite order, so whichever lands second always sees the other's marker.
+        try:
+            await ephemeral_store.set(_result_key(ticket, call_id), record, ttl_s=_LATE_ANSWER_TTL_S)
+            if await ephemeral_store.get(_abandoned_key(ticket, call_id)) is not None:
+                await _post_claimed(ticket, call_id)
+        except Exception:
+            # The relay may still be waiting: its answer must not turn into an error.
+            logger.error(f"voice call {ticket}: keeping/posting the answer to {call_id} failed", exc_info=True)
+
+    async def _run_delegation(body: dict, user_id: str, account_id: str) -> str:
         arguments = body.get("arguments") or {}
         # Groups one phone-call tool call's delegation spans under a named root in Logfire.
         with start_span("voice.delegate", {
@@ -292,14 +331,16 @@ def create_voice_control_plane_blueprint(
                 async with RequestContext(user_id=user_id, account_id=account_id):
                     agent = await lelik_agent_provider(user_id) if lelik_agent_provider else None
                     if agent is None:
-                        return jsonify({"error": "voice companion not configured"}), 503
-                    output = await agent.delegate(
+                        raise _LelikNotConfigured()
+                    outcome = await agent.delegate_outcome(
                         user_id=user_id, account_id=account_id,
                         arguments=arguments, call_context=body.get("call_context") or [],
                     )
+            except _LelikNotConfigured:
+                raise
             except Exception:
                 logger.error(f"voice delegate failed for user {user_id}", exc_info=True)
-                return jsonify({"error": "delegation failed"}), 500
+                raise
             finally:
                 # Same throttled-CPU-after-response hazard submit_transcript's flush guards
                 # against (see its comment above) — this path schedules background BigQuery
@@ -308,21 +349,30 @@ def create_voice_control_plane_blueprint(
                     await prompt_content_store.flush()
                 except Exception:
                     logger.error(f"voice delegate for user {user_id}: prompt content flush failed", exc_info=True)
-        ticket, call_id = body.get("ticket"), body.get("call_id")
-        # Only a real answer is kept: an empty one has nothing to post.
-        if ticket and call_id and output:
-            # Result first, abandoned check second — the abandon route writes and reads in the
-            # opposite order, so whichever lands second always sees the other's marker.
-            try:
-                await ephemeral_store.set(_result_key(ticket, call_id), {
-                    "output": output, "request": body.get("request", ""),
-                    "user_id": user_id, "account_id": account_id,
-                }, ttl_s=_LATE_ANSWER_TTL_S)
-                if await ephemeral_store.get(_abandoned_key(ticket, call_id)) is not None:
-                    await _post_claimed(ticket, call_id)
-            except Exception:
-                # The relay may still be waiting: its answer must not turn into an error.
-                logger.error(f"voice call {ticket}: keeping/posting the answer to {call_id} failed", exc_info=True)
+            await _keep_for_chat(body, user_id, account_id, outcome)
+        return outcome.text
+
+    @bp.route("/voice/delegate", methods=["POST"])
+    async def delegate():
+        unauthorized = await _verify_or_401()
+        if unauthorized:
+            return unauthorized
+        body = await request.get_json()
+        user_id, account_id = body["user_id"], body["account_id"]
+        set_request_context(user_id=user_id)
+        # Shielded: Quart cancels a handler when its client disconnects, and the relay does
+        # disconnect when it stops waiting (its 300 s timeout, or the call ended). The delegation
+        # must still finish, so its answer can be kept and posted to chat.
+        task = asyncio.ensure_future(_run_delegation(body, user_id, account_id))
+        _IN_FLIGHT_DELEGATIONS.add(task)
+        task.add_done_callback(_forget_delegation)
+        try:
+            output = await asyncio.shield(task)
+        except _LelikNotConfigured:
+            return jsonify({"error": "voice companion not configured"}), 503
+        except Exception:
+            # Logged inside _run_delegation.
+            return jsonify({"error": "delegation failed"}), 500
         return jsonify({"output": output}), 200
 
     @bp.route("/voice/delegate/abandon", methods=["POST"])

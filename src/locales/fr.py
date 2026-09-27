@@ -97,4 +97,5 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.NEW_TOPIC_ACK.value: "Nouveau sujet. Historique effacé.",
     UIMessage.SOURCES_HEADING.value: "Sources :",
     UIMessage.CONSOLIDATION_STARTED.value: "🧠 Consolidation de la mémoire lancée…",
+    UIMessage.VOICE_REQUEST_FAILED.value: "La demande n'a pas abouti.",
 }

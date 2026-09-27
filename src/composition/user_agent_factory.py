@@ -84,7 +84,7 @@ from ..agents.image_generation_agent import ImageGenerationAgent
 from ..agents.video_generation_agent import VideoGenerationAgent
 from ..agents.tutor_agent import TutorAgent
 from ..agents.lelik_agent import LelikAgent
-from ..agents.alek_gateway_agent import AlekGatewayAgent
+from ..agents.alek_gateway_agent import ASK_ALEK_TIMEOUT_MS, AlekGatewayAgent
 from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
@@ -845,7 +845,7 @@ class UserAgentFactory(AgentFactoryPort):
             return None
         return AlekGatewayAgent(
             config=AgentConfig(agent_id=f"alek_agent_{user_id}", agent_type="alek",
-                               timeout_ms=300_000, capabilities=["ask_alek"]),
+                               timeout_ms=ASK_ALEK_TIMEOUT_MS, capabilities=["ask_alek"]),
             notification_service=self.notification_service,
         )
 

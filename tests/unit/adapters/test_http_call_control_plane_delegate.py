@@ -21,7 +21,8 @@ async def test_delegate_posts_the_tool_call_and_returns_output():
     assert call.args[0] == "https://main.example.com/voice/delegate"
     assert call.kwargs["json"] == {"user_id": "u1", "account_id": "a1",
                                    "arguments": {"intent": "search_web", "query": "q"},
-                                   "call_context": [{"role": "user", "text": "hi"}]}
+                                   "call_context": [{"role": "user", "text": "hi"}],
+                                   "ticket": "", "call_id": "", "request": ""}
     assert call.kwargs["headers"] == {"Authorization": "Bearer tok"}
     # Alek takes tens of seconds; httpx's 5 s default would cut every ask_alek.
     assert call.kwargs["timeout"] >= 120

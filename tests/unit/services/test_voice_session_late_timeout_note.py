@@ -62,7 +62,7 @@ async def test_late_timeout_reads_as_no_answer_not_as_one_that_arrived():
 
     session, _ = await _call(events, never, timeout_s=0.05)
 
-    notes = [c.args[1] for c in session.submit_message.await_args_list if "no answer in time" in c.args[1]]
+    notes = [c.args[1] for c in session.submit_message.await_args_list if "is taking long" in c.args[1]]
     assert len(notes) == 1
     assert "search_web: amazon whey protein links" in notes[0]
     assert "just arrived" not in notes[0]

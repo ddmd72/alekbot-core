@@ -166,7 +166,7 @@ async def test_timeout_is_spoken_not_silent():
 
     session, _ = await _call(events, never, timeout_s=0.05)
     [(call_id, output)] = [c.args for c in session.submit_tool_result.await_args_list]
-    assert call_id == "c1" and "did not come through" in output
+    assert call_id == "c1" and "will come to their chat" in output
 
 
 @pytest.mark.asyncio

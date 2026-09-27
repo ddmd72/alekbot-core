@@ -925,10 +925,21 @@ async def main():
                         ),
                     )
 
-                async def _voice_late_answer_sink(*, user_id, account_id, request, output):
+                async def _voice_late_answer_sink(*, user_id, account_id, request, output, failed=False):
                     # An answer the relay stopped waiting for (300 s timeout, or the call ended):
                     # Lelik told the caller it would come to chat. The label is "intent: query".
+                    # A failed delegation posts a short localized line, never its error text.
                     from src.domain.voice_call_note import late_answer_text
+                    from src.domain.ui_messages import UIMessage
+                    from src.domain.language import LanguageCode
+                    if failed:
+                        try:
+                            lang = await _language_service.resolve_ui_language(user_id)
+                        except Exception:
+                            # The line still goes out, in English, rather than being lost.
+                            logger.warning(f"voice late answer: UI language lookup failed for {user_id}", exc_info=True)
+                            lang = LanguageCode.EN
+                        output = _localization.get_ui_string(lang, UIMessage.VOICE_REQUEST_FAILED)
                     await notification_service.notify_raw(user_id, account_id, late_answer_text(request, output))
 
                 main_app.register_blueprint(
