@@ -21,6 +21,7 @@ from ..ports.language_service_port import LanguageServicePort
 from ..ports.agent_note_port import AgentNotePort
 from ..ports.recurrence_port import RecurrencePort
 from ..utils.logger import logger
+from .cabinet_auth import make_auth_required
 
 # Documentation owner (loaded from environment variable - Secret Manager)
 DOCS_OWNER_USER_ID = os.getenv('DOCS_OWNER_USER_ID')
@@ -63,32 +64,7 @@ def create_user_cabinet_blueprint(
     SITE_DIR = os.path.join(project_root, 'site')
 
     # Authentication Middleware
-    def auth_required(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Check Authorization header (API)
-            auth_header = request.headers.get("Authorization")
-            token = None
-            
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header.split(" ")[1]
-            else:
-                # Check Cookie (Web UI)
-                token = request.cookies.get("access_token")
-
-            if not token:
-                return jsonify({"error": "Missing authorization"}), 401
-
-            try:
-                payload = session_service.verify_access_token(token)
-                g.user_id = payload["sub"]
-                g.account_id = payload["account_id"]
-                g.role = payload.get("role", "viewer")
-                return await func(*args, **kwargs)
-            except Exception as e:
-                logger.warning(f"Auth failed: {e}")
-                return jsonify({"error": "Invalid or expired token"}), 401
-        return wrapper
+    auth_required = make_auth_required(session_service)
 
     # Owner-only Middleware (for internal features like docs)
     def owner_only(func):
