@@ -52,10 +52,6 @@ class VoiceCallSetupService:
     async def holder(self, user_id: str) -> Optional[dict]:
         return await self._store.get(self._marker_key(user_id))
 
-    async def claim_extend(self, user_id: str, holder: dict, ttl_s: int) -> None:
-        """Re-write the marker the caller already holds with a longer TTL (setup -> live)."""
-        await self._store.set(self._marker_key(user_id), {"in_flight": True, **holder}, ttl_s=ttl_s)
-
     async def prepare(self, ticket: str, user_id: str, account_id: str, call_kind: str) -> None:
         try:
             agent = await self._lelik(user_id)
