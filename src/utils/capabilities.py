@@ -129,6 +129,10 @@ the call lands here, and I remember it from then on. During a call he can look t
 memory and on the web, and ask me for anything else — mail, tasks, documents. Links and tables from
 those answers arrive here in chat while you talk.
 
+You can also call from your browser instead of your phone: a one-button call page in the Cabinet
+(no dialing, no callback) reaches the same Lelik, in clearer audio, over the same summary and
+memory pipeline as a phone call.
+
 ---
 
 *Documents*

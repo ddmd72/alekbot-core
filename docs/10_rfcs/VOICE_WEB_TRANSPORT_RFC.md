@@ -1,6 +1,6 @@
 # RFC: Voice Web Transport — call Lelik from the Cabinet over WebRTC
 
-**Status:** Proposed — spike done, implementation not started
+**Status:** Implemented, pending UAT
 **Date:** 2026-09-27
 **Owner:** Dmytro
 **Milestone:** Voice — second transport

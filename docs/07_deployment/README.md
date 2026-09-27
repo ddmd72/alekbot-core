@@ -140,6 +140,34 @@ secrets present in Secret Manager, the four Firestore prompt uploads for Lelik's
 Smart's existing ones), and the four for the end-of-call summarizer
 (`COGNITIVE_PROCESS_LELIK_SUMMARIZER`, `lelik_summarizer_agent_v1`, `lelik_summarizer`).
 
+### Cloudflare Realtime SFU (web calls)
+
+Web calls from the Cabinet (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) reuse the relay deployed
+above — no new Cloud Run unit, no new relay secret. Only the **main** service needs credentials, to
+mint SFU sessions server-side:
+
+1. **Create a Cloudflare Realtime app** in the Cloudflare dashboard (Realtime → Calls SFU, or the
+   TURN/Calls API section — naming varies by account). Note the **App ID** and **App Secret**; the
+   secret is shown once.
+2. **Create the two secrets** in Secret Manager and grant the runtime SA `secretAccessor`, the same
+   pattern as every other secret in `cloudbuild-dev.yaml`'s main-service `--set-secrets`:
+   ```bash
+   echo -n "<app-id>" | gcloud secrets create CLOUDFLARE_SFU_APP_ID --data-file=-
+   echo -n "<app-secret>" | gcloud secrets create CLOUDFLARE_SFU_APP_SECRET --data-file=-
+   ```
+3. **Deploy.** `cloudbuild-dev.yaml` already references
+   `CLOUDFLARE_SFU_APP_ID=CLOUDFLARE_SFU_APP_ID:latest,CLOUDFLARE_SFU_APP_SECRET=CLOUDFLARE_SFU_APP_SECRET:latest`
+   on the main service. Until both secrets exist, `main.py` logs a warning and skips registering the
+   `/cabinet/call` + `/api/voice/web-call` blueprint — the app boots normally either way, same
+   graceful-absence pattern as the Twilio keys.
+4. **Two optional relay knobs**, read with `os.environ.get` (not `load_settings()` — see CLAUDE.md
+   "`config.get()` vs `os.getenv()`"), both defaulting to match the phone path so UAT sees only the
+   transport change first: `VOICE_WEB_REASONING_EFFORT` (default `medium`), `VOICE_WEB_CALLER_OPENING`
+   (`on`/`off`, default `on`). Neither needs a cloudbuild change unless overridden.
+
+This is a prerequisite for the web call's live verification, alongside the Twilio prerequisites
+above (they are independent transports sharing one `VoiceSessionService`/persona).
+
 ---
 
 ## Cost Optimization
