@@ -71,6 +71,13 @@ async def test_dispatch_filler_starts_immediately_after_the_dispatching_turn():
     assert any(n == voice_module._DISPATCH_NOTE for n in notes)
     # opening line + the immediate dispatch filler; the watchdog's own note is 8 s away
     assert session.request_response.await_count == 2
+    # The note must be submitted before request_response is called for it, not after -
+    # session.mock_calls preserves the real order across submit_message and request_response.
+    calls = list(session.mock_calls)
+    dispatch_idx = next(i for i, c in enumerate(calls)
+                        if c[0] == "submit_message" and c[1] == ("system", voice_module._DISPATCH_NOTE))
+    second_reply_idx = [i for i, c in enumerate(calls) if c[0] == "request_response"][1]
+    assert dispatch_idx < second_reply_idx
 
 
 @pytest.mark.asyncio
