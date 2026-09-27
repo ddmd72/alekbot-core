@@ -320,7 +320,9 @@
           if (!resp.ok) return; // transient — keep polling
           const body = await resp.json();
           if (body.state === "ended") {
-            await endCall(false);
+            // The relay ended the call, but only hangup closes the SFU adapters (otherwise
+            // Cloudflare keeps retrying egress) and deletes the record. Hangup is idempotent.
+            await endCall(true);
             setState(t("state.ended"));
             renderButton("idle");
           }
