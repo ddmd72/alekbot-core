@@ -37,6 +37,12 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
     @auth_required
     async def start():
         body = await request.get_json()
+        # Validated BEFORE claim: a malformed body must never hold the one-call marker (or a
+        # ticket) for its TTL just to be rejected. "mid present" mirrors what str(body["mid"])
+        # below needs — any non-None value, not necessarily non-empty (mid "0" is common).
+        if (not isinstance(body, dict) or not isinstance(body.get("sdp"), str) or not body.get("sdp")
+                or body.get("mid") is None):
+            return jsonify({"error": "invalid request"}), 400
         call_id, ticket = uuid.uuid4().hex, str(uuid.uuid4())
         if not await call_setup.claim(g.user_id, {"call_id": call_id}, ttl_s=_TICKET_TTL_S):
             return jsonify({"error": "a call is already in progress"}), 409
@@ -44,18 +50,25 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
             await call_setup.prepare(ticket, g.user_id, g.account_id, "web")
         except VoiceCallSetupError:
             return jsonify({"error": "could not prepare the call"}), 503
+        # One try around both the SFU call and the record write: an SFU timeout/network error
+        # (not just a MediaRoomError) or a store failure on the write must both release the
+        # marker and ticket rather than escape as a bare 500 and hold them for the ticket's
+        # full 300s TTL.
         try:
             leg = await media_room.open_caller(body["sdp"], str(body["mid"]))
-        except MediaRoomError:
-            logger.error(f"web call: SFU refused the caller for {g.user_id}", exc_info=True)
+            await ephemeral_store.set(f"voice_web_call:{call_id}", {
+                "user_id": g.user_id, "account_id": g.account_id, "ticket": ticket,
+                "session_id": leg.session_id, "adapter_ids": [],
+            }, ttl_s=call_ttl_s)
+        except Exception:
+            logger.error(f"web call: could not start the call for {g.user_id}", exc_info=True)
             await call_setup.release(ticket, g.user_id)
             return jsonify({"error": "media service unavailable"}), 502
-        await ephemeral_store.set(f"voice_web_call:{call_id}", {
-            "user_id": g.user_id, "account_id": g.account_id, "ticket": ticket,
-            "session_id": leg.session_id, "adapter_ids": [],
-        }, ttl_s=call_ttl_s)
-        # The call is live now: hold the marker for the call's lifetime, not the setup window.
-        await call_setup.claim_extend(g.user_id, {"call_id": call_id}, ttl_s=call_ttl_s)
+        # The marker stays at the short setup-window TTL from `claim` above — it is extended to
+        # the full call TTL only once the relay actually redeems the ticket
+        # (`voice_control_plane_app.session_config`), not just because the offer/answer
+        # succeeded here. Extending it this early would hold the marker for up to an hour even
+        # if the relay never shows up.
         return jsonify({"call_id": call_id, "sdp": leg.answer_sdp}), 201
 
     @bp.route("/api/voice/web-call/<call_id>/connect", methods=["POST"])

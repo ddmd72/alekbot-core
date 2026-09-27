@@ -245,25 +245,27 @@
       let callId = null;
       let statusTimer = null;
       let inCall = false;
+      // Bumped on every startCall() and on every manual hang up. A startCall() invocation
+      // captures its own token; if a manual "Hang up" click (or a new call) supersedes it
+      // before its promise chain settles, its catch block sees a stale token and no-ops
+      // instead of overwriting the state/button the newer action already set.
+      let callToken = 0;
 
       function setState(text) {
         stateEl.textContent = text;
       }
 
       function renderButton(mode) {
-        // mode: "idle" | "connecting" | "live"
-        if (mode === "connecting") {
+        // mode: "idle" | "connecting" | "live" — while connecting the button stays enabled
+        // and reads "Hang up", so a stuck connection attempt is never a dead end.
+        if (mode === "idle") {
           btn.textContent = t("button.call");
-          btn.disabled = true;
+          btn.disabled = false;
           btn.classList.remove("danger");
-        } else if (mode === "live") {
+        } else {
           btn.textContent = t("button.hangup");
           btn.disabled = false;
           btn.classList.add("danger");
-        } else {
-          btn.textContent = t("button.call");
-          btn.disabled = false;
-          btn.classList.remove("danger");
         }
       }
 
@@ -282,11 +284,21 @@
       });
 
       function waitForConnected(peer) {
+        // No timeout here would mean a stalled ICE handshake leaves the page stuck on
+        // "Connecting…" indefinitely — 15s is generous for a real handshake and short enough
+        // that the caller isn't left waiting on a call that is never going to complete.
+        const CONNECT_TIMEOUT_MS = 15000;
         return new Promise((resolve, reject) => {
+          const deadline = performance.now() + CONNECT_TIMEOUT_MS;
           const check = () => {
             if (peer.connectionState === "connected") resolve();
-            else if (peer.connectionState === "failed") reject(new Error("pc failed"));
-            else setTimeout(check, 50);
+            else if (peer.connectionState === "failed" || peer.connectionState === "closed") {
+              reject(new Error(`pc ${peer.connectionState}`));
+            } else if (performance.now() > deadline) {
+              reject(new Error("connection timed out"));
+            } else {
+              setTimeout(check, 50);
+            }
           };
           check();
         });
@@ -351,6 +363,7 @@
       }
 
       async function startCall() {
+        const myToken = ++callToken;
         inCall = true;
         renderButton("connecting");
         setState(t("state.connecting"));
@@ -360,9 +373,16 @@
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
           });
         } catch (e) {
+          if (myToken !== callToken) return; // superseded by a manual hang up
           inCall = false;
           setState(t("state.mic_blocked"));
           renderButton("idle");
+          return;
+        }
+        if (myToken !== callToken) {
+          // Hung up while the mic permission prompt was open — hangupCall() already cleaned
+          // up everything it knew about; this stream wasn't acquired yet at that point.
+          localStream.getTracks().forEach((track) => track.stop());
           return;
         }
 
@@ -422,6 +442,7 @@
           renderButton("live");
           statusTimer = setInterval(pollStatus, 2000);
         } catch (e) {
+          if (myToken !== callToken) return; // superseded by a manual hang up already handled
           if (!handledState) {
             setState(t("state.could_not_connect"));
           }
@@ -431,6 +452,7 @@
       }
 
       async function hangupCall() {
+        callToken++; // invalidate any in-flight startCall() so its error path no-ops
         btn.disabled = true;
         await endCall(true);
         setState(t("state.ended"));

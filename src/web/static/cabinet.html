@@ -286,6 +286,15 @@
           padding: 12px 24px;
         }
       }
+      /* Five nav-items (incl. Call) at the default 12px/24px padding overflow a 375px-wide
+         phone screen (`.mobile-bottom-nav` is `width: max-content`, so it would rather push
+         past the viewport edge than wrap) — tighten horizontal padding only, only for this
+         bar, only below the width where it starts to matter. */
+      @media (max-width: 400px) {
+        .mobile-bottom-nav .nav-item {
+          padding: 12px 12px;
+        }
+      }
       @media (min-width: 768px) {
         .mobile-bottom-nav {
           display: none;
@@ -990,6 +999,9 @@
         </button>
         <button class="nav-item" onclick="navigate('settings')" id="nav-mobile-settings">
           Settings
+        </button>
+        <button class="nav-item" onclick="location.href='/cabinet/call'" id="nav-mobile-call">
+          Call
         </button>
       </nav>
 
@@ -1719,6 +1731,7 @@
         "#nav-settings":              "nav.settings",
         "#nav-mobile-settings":       "nav.settings",
         "#nav-call":                  "nav.call",
+        "#nav-mobile-call":           "nav.call",
         "#memory-title":              "memory.title",
         "#memory-subtitle":           "memory.subtitle",
         "#memory-search-btn":         "memory.search_btn",
