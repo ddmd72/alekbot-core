@@ -53,21 +53,30 @@ class VoiceCallSetupService:
         return await self._store.get(self._marker_key(user_id))
 
     async def prepare(self, ticket: str, user_id: str, account_id: str, call_kind: str) -> None:
+        # The ticket writes sit inside the same failure handling as the persona assembly: on the
+        # phone path the marker is already at its full call TTL here, so a store failure that
+        # escaped without a release would lock the owner out of calling for an hour.
         try:
             agent = await self._lelik(user_id)
             if agent is None:
                 raise RuntimeError("voice companion is not configured on this deployment")
             session = await agent.session_config(user_id=user_id, account_id=account_id)
+            # identity wins over anything the session carried: /voice/delegate trusts these ids.
+            await self._store.set(f"voice_ticket:{ticket}", {
+                **session, "user_id": user_id, "account_id": account_id, "call_kind": call_kind,
+            }, ttl_s=self._ticket_ttl_s)
+            await self._store.set(f"voice_call_kind:{ticket}", {"call_kind": call_kind}, ttl_s=self._one_call_ttl_s)
         except Exception as exc:
-            logger.error(f"voice setup: persona assembly failed for {user_id}: {exc}", exc_info=True)
-            await self.release(ticket, user_id)
-            await self._alerts.post(f"Voice: persona assembly failed for user {user_id}: {exc}")
+            logger.error(f"voice setup: call preparation failed for {user_id} (ticket {ticket}): {exc}",
+                         exc_info=True)
+            try:
+                await self.release(ticket, user_id)
+            except Exception:
+                # Same store that just failed: the marker then expires on its own TTL.
+                logger.error(f"voice setup: release after a failed preparation also failed for {user_id}",
+                             exc_info=True)
+            await self._alerts.post(f"Voice: call preparation failed for user {user_id}: {exc}")
             raise VoiceCallSetupError(str(exc)) from exc
-        # identity wins over anything the session carried: /voice/delegate trusts these ids.
-        await self._store.set(f"voice_ticket:{ticket}", {
-            **session, "user_id": user_id, "account_id": account_id, "call_kind": call_kind,
-        }, ttl_s=self._ticket_ttl_s)
-        await self._store.set(f"voice_call_kind:{ticket}", {"call_kind": call_kind}, ttl_s=self._one_call_ttl_s)
 
     async def release(self, ticket: str, user_id: str) -> None:
         await self._store.delete(f"voice_ticket:{ticket}")
