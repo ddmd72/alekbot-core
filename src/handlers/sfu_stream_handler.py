@@ -12,9 +12,12 @@ sockets of a ticket reach this process.
 """
 import asyncio
 import base64
+import uuid
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
+
+from websockets.exceptions import ConnectionClosed
 
 from src.domain.paced_audio_outlet import PacedAudioOutlet
 from src.domain.pcm_downsampler import PcmDownsampler
@@ -31,6 +34,9 @@ _FRAME_BYTES = PCM16_48K_STEREO.bytes_per_ms * _FRAME_MS  # 3840
 _FRAME_SAMPLES = PCM16_48K_STEREO.sample_rate_hz * _FRAME_MS // 1000  # 960, the timestamp step
 # The SFU garbage-collects a track that gets no packets for 30 s, so Lelik's silence is sent too
 # (PacedAudioOutlet yields a silence frame whenever nothing is queued).
+# `/sfu/*` is public: any socket naming an unknown ticket opens a registry entry that lives for
+# the pair timeout. Bounding the not-yet-paired entries keeps junk connections from piling up.
+_MAX_UNPAIRED_CALLS = 32
 
 
 def parse_sfu_path(path: str) -> Optional[Tuple[str, str]]:
@@ -41,6 +47,14 @@ def parse_sfu_path(path: str) -> Optional[Tuple[str, str]]:
         return None
     ticket = (parse_qs(parts.query).get("ticket") or [""])[0]
     return (kind, ticket) if ticket else None
+
+
+def is_ticket_shaped(ticket: str) -> bool:
+    """Tickets are minted as `str(uuid.uuid4())`; anything else never came from us."""
+    try:
+        return str(uuid.UUID(ticket)) == ticket
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -67,11 +81,13 @@ class SfuStreamHandler:
     it runs once the other half arrives (VOICE_WEB_TRANSPORT_RFC §5.4)."""
 
     def __init__(self, session_service: VoiceSessionService, pair_timeout_s: float = 15.0,
-                 egress_reattach_s: float = 5.0, frame_interval_s: float = _FRAME_MS / 1000) -> None:
+                 egress_reattach_s: float = 5.0, frame_interval_s: float = _FRAME_MS / 1000,
+                 max_unpaired_calls: int = _MAX_UNPAIRED_CALLS) -> None:
         self._session_service = session_service
         self._pair_timeout_s = pair_timeout_s
         self._egress_reattach_s = egress_reattach_s
         self._frame_interval_s = frame_interval_s
+        self._max_unpaired_calls = max_unpaired_calls
         self._calls: Dict[str, _SfuCall] = {}
 
     async def handle_connection(self, ws, path: str) -> None:
@@ -81,8 +97,18 @@ class SfuStreamHandler:
             await ws.close()
             return
         kind, ticket = parsed
+        if not is_ticket_shaped(ticket):
+            logger.warning(f"sfu stream: rejected {kind} connection with a malformed ticket")
+            await ws.close()
+            return
         call = self._calls.get(ticket)
         if call is None:
+            unpaired = sum(1 for c in self._calls.values() if not c.paired.is_set())
+            if unpaired >= self._max_unpaired_calls:
+                logger.warning(f"sfu stream: rejected {kind} connection, {unpaired} calls already "
+                               f"waiting for their second socket")
+                await ws.close()
+                return
             call = _SfuCall(ticket=ticket)
             self._calls[ticket] = call
             call.task = asyncio.ensure_future(self._run(call))
@@ -149,6 +175,9 @@ class SfuStreamHandler:
                         encoding=PCM16_24K.encoding, sample_rate_hz=PCM16_24K.sample_rate_hz,
                         payload=base64.b64encode(pcm24).decode("ascii"), track="inbound",
                     ))
+        except ConnectionClosed as exc:
+            # Routine: the SFU drops egress on hangup and between stream-mode retries.
+            logger.info(f"sfu stream {call.ticket}: egress closed abnormally ({exc})")
         except Exception:
             logger.error(f"sfu stream {call.ticket}: egress read failed", exc_info=True)
         if call.egress_ws is not ws or call.ended.is_set():
@@ -185,8 +214,17 @@ class SfuStreamHandler:
 
     async def _drain(self, call: _SfuCall, ws) -> None:
         # The ingest socket carries nothing to us; iterating it is how its close is noticed.
-        async for _ in ws:
-            pass
+        # Everything is caught here: `_pace` only polls `drain.done()`, so an exception left
+        # in this task would surface as "Task exception was never retrieved".
+        try:
+            async for _ in ws:
+                pass
+        except ConnectionClosed as exc:
+            logger.info(f"sfu stream {call.ticket}: ingest closed abnormally ({exc})")
+            return
+        except Exception:
+            logger.error(f"sfu stream {call.ticket}: ingest read failed", exc_info=True)
+            return
         logger.info(f"sfu stream {call.ticket}: ingest closed by the SFU")
 
     async def _pace(self, call: _SfuCall, ws, drain: asyncio.Task) -> None:

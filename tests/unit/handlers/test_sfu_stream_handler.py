@@ -10,6 +10,8 @@ from src.domain.voice_audio_frame import AudioFrame
 from src.handlers.sfu_stream_handler import SfuStreamHandler, parse_sfu_path
 
 FRAME = 3840
+# Tickets are uuid4 strings; the handler rejects anything else (final-review finding 7).
+T1 = "5f0c1a3e-8d2b-4c1f-9a7e-2b6d4e8f1a03"
 
 
 class FakeSfuWs:
@@ -78,15 +80,15 @@ async def test_both_halves_start_one_call_and_mic_reaches_it_as_pcm24k():
     service = FakeSessionService()
     handler = _handler(service)
     ingest, egress = FakeSfuWs(), FakeSfuWs()
-    tasks = [asyncio.ensure_future(handler.handle_connection(ingest, "/sfu/ingest?ticket=t1")),
-             asyncio.ensure_future(handler.handle_connection(egress, "/sfu/egress?ticket=t1"))]
+    tasks = [asyncio.ensure_future(handler.handle_connection(ingest, f"/sfu/ingest?ticket={T1}")),
+             asyncio.ensure_future(handler.handle_connection(egress, f"/sfu/egress?ticket={T1}"))]
     await egress.incoming.put(_mic_packet(1))
     await egress.incoming.put(_mic_packet(2))
     await asyncio.sleep(0.05)
     await egress.close()  # egress gone, nobody reattaches -> call ends after the reattach window
     await asyncio.wait_for(asyncio.gather(*tasks), timeout=2)
 
-    assert len(service.calls) == 1 and service.calls[0]["ticket"] == "t1"
+    assert len(service.calls) == 1 and service.calls[0]["ticket"] == T1
     frames = service.calls[0]["frames"]
     assert frames and all(f.encoding == "audio/pcm" and f.sample_rate_hz == 24000 for f in frames)
     # Each 20 ms SFU frame (960 stereo samples) becomes 480 mono samples = 960 bytes at 24 kHz.
@@ -99,7 +101,7 @@ async def test_pair_timeout_closes_a_lonely_half_without_starting_a_call():
     service = FakeSessionService()
     handler = _handler(service, pair_timeout_s=0.05)
     ingest = FakeSfuWs()
-    await asyncio.wait_for(handler.handle_connection(ingest, "/sfu/ingest?ticket=t1"), timeout=1)
+    await asyncio.wait_for(handler.handle_connection(ingest, f"/sfu/ingest?ticket={T1}"), timeout=1)
     assert service.calls == [] and ingest.closed
 
 
@@ -108,12 +110,12 @@ async def test_egress_reconnect_within_window_keeps_the_same_call():
     service = FakeSessionService()
     handler = _handler(service, egress_reattach_s=0.3)
     ingest, egress1, egress2 = FakeSfuWs(), FakeSfuWs(), FakeSfuWs()
-    t_in = asyncio.ensure_future(handler.handle_connection(ingest, "/sfu/ingest?ticket=t1"))
-    t_e1 = asyncio.ensure_future(handler.handle_connection(egress1, "/sfu/egress?ticket=t1"))
+    t_in = asyncio.ensure_future(handler.handle_connection(ingest, f"/sfu/ingest?ticket={T1}"))
+    t_e1 = asyncio.ensure_future(handler.handle_connection(egress1, f"/sfu/egress?ticket={T1}"))
     await asyncio.sleep(0.02)
     await egress1.close()
     await asyncio.sleep(0.05)
-    t_e2 = asyncio.ensure_future(handler.handle_connection(egress2, "/sfu/egress?ticket=t1"))
+    t_e2 = asyncio.ensure_future(handler.handle_connection(egress2, f"/sfu/egress?ticket={T1}"))
     await egress2.incoming.put(_mic_packet(3))
     await asyncio.sleep(0.4)  # longer than the reattach window: the call must still be alive
     assert len(service.calls) == 1 and not ingest.closed
@@ -127,8 +129,8 @@ async def test_ingest_close_ends_the_call():
     service = FakeSessionService()
     handler = _handler(service)
     ingest, egress = FakeSfuWs(), FakeSfuWs()
-    tasks = [asyncio.ensure_future(handler.handle_connection(ingest, "/sfu/ingest?ticket=t1")),
-             asyncio.ensure_future(handler.handle_connection(egress, "/sfu/egress?ticket=t1"))]
+    tasks = [asyncio.ensure_future(handler.handle_connection(ingest, f"/sfu/ingest?ticket={T1}")),
+             asyncio.ensure_future(handler.handle_connection(egress, f"/sfu/egress?ticket={T1}"))]
     await asyncio.sleep(0.02)
     await ingest.close()
     await asyncio.wait_for(asyncio.gather(*tasks), timeout=2)
@@ -144,8 +146,8 @@ async def test_pacer_sends_silence_then_speech_and_flushes_a_partial_tail():
     service = FakeSessionService(behaviour=speak)
     handler = _handler(service)
     ingest, egress = FakeSfuWs(), FakeSfuWs()
-    tasks = [asyncio.ensure_future(handler.handle_connection(ingest, "/sfu/ingest?ticket=t1")),
-             asyncio.ensure_future(handler.handle_connection(egress, "/sfu/egress?ticket=t1"))]
+    tasks = [asyncio.ensure_future(handler.handle_connection(ingest, f"/sfu/ingest?ticket={T1}")),
+             asyncio.ensure_future(handler.handle_connection(egress, f"/sfu/egress?ticket={T1}"))]
     await asyncio.sleep(0.15)
     playback = service.calls[0]["playback"]
     assert playback.sent_bytes == 3000 and playback.caught_up
@@ -169,8 +171,8 @@ async def test_clear_drops_queued_speech_and_marks_it_played():
     service = FakeSessionService(behaviour=speak_then_clear)
     handler = _handler(service, frame_interval_s=0.02)
     ingest, egress = FakeSfuWs(), FakeSfuWs()
-    tasks = [asyncio.ensure_future(handler.handle_connection(ingest, "/sfu/ingest?ticket=t1")),
-             asyncio.ensure_future(handler.handle_connection(egress, "/sfu/egress?ticket=t1"))]
+    tasks = [asyncio.ensure_future(handler.handle_connection(ingest, f"/sfu/ingest?ticket={T1}")),
+             asyncio.ensure_future(handler.handle_connection(egress, f"/sfu/egress?ticket={T1}"))]
     await asyncio.sleep(0.1)
     assert service.calls[0]["playback"].caught_up
     await egress.close()
@@ -183,8 +185,8 @@ async def test_malformed_and_text_messages_are_skipped():
     service = FakeSessionService()
     handler = _handler(service)
     ingest, egress = FakeSfuWs(), FakeSfuWs()
-    tasks = [asyncio.ensure_future(handler.handle_connection(ingest, "/sfu/ingest?ticket=t1")),
-             asyncio.ensure_future(handler.handle_connection(egress, "/sfu/egress?ticket=t1"))]
+    tasks = [asyncio.ensure_future(handler.handle_connection(ingest, f"/sfu/ingest?ticket={T1}")),
+             asyncio.ensure_future(handler.handle_connection(egress, f"/sfu/egress?ticket={T1}"))]
     await egress.incoming.put("hello")
     await egress.incoming.put(b"\x2a\x05ab")
     await egress.incoming.put(_mic_packet(1))
