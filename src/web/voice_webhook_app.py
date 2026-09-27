@@ -43,6 +43,7 @@ from quart import Blueprint, Response, request
 from twilio.twiml.voice_response import VoiceResponse
 
 from src.domain.voice_auth_decision import AuthDecision
+from src.services.voice_call_setup_service import VoiceCallSetupError, VoiceCallSetupService
 from src.utils.logger import logger
 
 if TYPE_CHECKING:  # type-only: web/ must not import agents/ at runtime (REQ-ARCH-15)
@@ -84,6 +85,8 @@ def create_voice_webhook_blueprint(
     CLAUDE.md's `config.get()` note warns about.
     """
     bp = Blueprint("voice_webhook", __name__)
+    call_setup = VoiceCallSetupService(ephemeral_store, alert_sink, lelik_agent_provider,
+                                       ticket_ttl_s=_TICKET_TTL_S, one_call_ttl_s=one_call_ttl_s)
 
     async def _reject_if_unsigned(form) -> Optional[Response]:
         """403 unless the request carries a valid Twilio signature.
@@ -279,30 +282,9 @@ def create_voice_webhook_blueprint(
         # A profile, fact-store or assembly failure is a persona failure, never a reason
         # to open a call on an empty context.
         try:
-            agent = await lelik_agent_provider(identity["user_id"])
-            if agent is None:
-                raise RuntimeError("voice companion is not configured on this deployment")
-            session = await agent.session_config(
-                user_id=identity["user_id"], account_id=identity["account_id"],
-            )
-        except Exception as exc:
-            # Same fail-open shape as voice_auth's origination-failure handling:
-            # a ticket/marker that survives a failed persona assembly would lock
-            # the caller out of any retry for up to one_call_ttl_s with no way to
-            # know why.
-            logger.error(
-                f"voice answer: persona assembly failed for ticket {ticket}: {exc}",
-                exc_info=True,
-            )
-            await ephemeral_store.delete(ticket_key)
-            await ephemeral_store.delete(f"voice_one_call:{identity['user_id']}")
-            await alert_sink.post(
-                f"Voice: persona assembly failed for user {identity['user_id']}: {exc}"
-            )
+            await call_setup.prepare(ticket, identity["user_id"], identity["account_id"], "phone")
+        except VoiceCallSetupError:
             return _twiml_persona_failed()
-
-        # identity wins: /voice/delegate trusts user_id/account_id from this record.
-        await ephemeral_store.set(ticket_key, {**session, **identity}, ttl_s=_TICKET_TTL_S)
 
         vr = VoiceResponse()
         connect = vr.connect()
