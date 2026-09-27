@@ -87,6 +87,13 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         except MediaRoomError:
             logger.error(f"web call {call_id}: attaching the relay failed", exc_info=True)
             return jsonify({"error": "media service unavailable"}), 502
+        # attach_agent is several SFU round-trips; a hangup in that window deletes the record
+        # and closes the adapters it listed (none yet). Writing the record back here would
+        # resurrect a hung-up call and leave these adapters dialling the relay.
+        if await _owned(call_id) is None:
+            logger.info(f"web call {call_id}: hung up while the relay was being attached")
+            await media_room.close(leg.adapter_ids)
+            return jsonify({"error": "not found"}), 404
         await ephemeral_store.set(f"voice_web_call:{call_id}", {**record, "adapter_ids": leg.adapter_ids},
                                   ttl_s=call_ttl_s)
         return jsonify({"sdp": leg.offer_sdp})
@@ -114,6 +121,8 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         # Ticket still unredeemed = the relay never started: nothing will release the marker.
         if await ephemeral_store.get(f"voice_ticket:{record['ticket']}") is not None:
             await call_setup.release(record["ticket"], g.user_id)
+        # The record goes last: a connect still attaching re-reads it and cleans up after itself.
+        await ephemeral_store.delete(f"voice_web_call:{call_id}")
         return jsonify({"ok": True})
 
     @bp.route("/api/voice/web-call/<call_id>/status", methods=["GET"])
