@@ -22,6 +22,8 @@ _SILENCE_NOTE = "[The caller has been silent for {seconds} seconds.]"
 # few seconds before the media stream exists and is never heard, and waiting for another
 # one left both sides silent for 10-20 s on every live call (2026-09-23).
 _PICKUP_NOTE = "[The caller has just picked up the phone you called. Speak first.]"
+# The web page (VOICE_WEB_TRANSPORT_RFC §5.3 #6): the caller pressed "call"; Lelik still opens.
+_WEB_PICKUP_NOTE = "[The caller has just connected to you from the web page. Speak first.]"
 _WATCHDOG_TICK_S = 0.25
 # Thinking cue: 20 ms μ-law frames, paced in real time with a short lead, so stopping it
 # never leaves more than ~100 ms queued in front of Lelik's first word.
@@ -187,7 +189,8 @@ class VoiceSessionService:
                 # A user turn, not system text: live, the caller's own request changed how
                 # Lelik spoke where the same rule as system text did not (2026-09-25).
                 await session.submit_message("user", self._caller_opening)
-            await session.submit_message("system", _PICKUP_NOTE)
+            pickup_note = _WEB_PICKUP_NOTE if config.get("call_kind") == "web" else _PICKUP_NOTE
+            await session.submit_message("system", pickup_note)
             await self._reply_to_turn(session, state, "pickup")
 
             forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
