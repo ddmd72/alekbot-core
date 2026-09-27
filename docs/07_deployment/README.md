@@ -144,22 +144,32 @@ Smart's existing ones), and the four for the end-of-call summarizer
 
 Web calls from the Cabinet (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) reuse the relay deployed
 above — no new Cloud Run unit, no new relay secret. Only the **main** service needs credentials, to
-mint SFU sessions server-side:
+mint SFU sessions server-side.
+
+> **Steps 1–2 are prerequisites for ANY deploy of this branch, not only for web calls.**
+> `cloudbuild-dev.yaml` references `CLOUDFLARE_SFU_APP_ID:latest` and
+> `CLOUDFLARE_SFU_APP_SECRET:latest` in the main service's `--set-secrets` unconditionally, so
+> `gcloud run deploy` **fails** until both secrets exist and the runtime service account can read
+> them. Do them before the first deploy.
 
 1. **Create a Cloudflare Realtime app** in the Cloudflare dashboard (Realtime → Calls SFU, or the
    TURN/Calls API section — naming varies by account). Note the **App ID** and **App Secret**; the
    secret is shown once.
-2. **Create the two secrets** in Secret Manager and grant the runtime SA `secretAccessor`, the same
-   pattern as every other secret in `cloudbuild-dev.yaml`'s main-service `--set-secrets`:
+2. **Create the two secrets and grant the runtime service account access**, the same pattern as
+   every other secret in `cloudbuild-dev.yaml`'s main-service `--set-secrets`:
    ```bash
-   echo -n "<app-id>" | gcloud secrets create CLOUDFLARE_SFU_APP_ID --data-file=-
-   echo -n "<app-secret>" | gcloud secrets create CLOUDFLARE_SFU_APP_SECRET --data-file=-
+   echo -n "<APP_ID>" | gcloud secrets create CLOUDFLARE_SFU_APP_ID --data-file=- --project=<PROJECT_ID>
+   echo -n "<APP_SECRET>" | gcloud secrets create CLOUDFLARE_SFU_APP_SECRET --data-file=- --project=<PROJECT_ID>
+   for s in CLOUDFLARE_SFU_APP_ID CLOUDFLARE_SFU_APP_SECRET; do
+     gcloud secrets add-iam-policy-binding "$s" --project=<PROJECT_ID> \
+       --member="serviceAccount:<SERVICE_ACCOUNT_EMAIL>" --role=roles/secretmanager.secretAccessor
+   done
    ```
-3. **Deploy.** `cloudbuild-dev.yaml` already references
-   `CLOUDFLARE_SFU_APP_ID=CLOUDFLARE_SFU_APP_ID:latest,CLOUDFLARE_SFU_APP_SECRET=CLOUDFLARE_SFU_APP_SECRET:latest`
-   on the main service. Until both secrets exist, `main.py` logs a warning and skips registering the
-   `/cabinet/call` + `/api/voice/web-call` blueprint — the app boots normally either way, same
-   graceful-absence pattern as the Twilio keys.
+   `echo -n` matters: a trailing newline in the secret breaks the `Authorization` header.
+3. **Deploy.** The main service now starts with the two keys and registers the `/cabinet/call` +
+   `/api/voice/web-call` blueprint. The "logs a warning and skips the blueprint" behaviour in
+   `main.py` applies only to **local runs** without the keys in `.env` — a deployed revision always
+   gets them from Secret Manager (or the deploy fails, see above).
 4. **Two optional relay knobs**, read with `os.environ.get` (not `load_settings()` — see CLAUDE.md
    "`config.get()` vs `os.getenv()`"), both defaulting to match the phone path so UAT sees only the
    transport change first: `VOICE_WEB_REASONING_EFFORT` (default `medium`), `VOICE_WEB_CALLER_OPENING`

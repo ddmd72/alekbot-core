@@ -54,9 +54,8 @@ garbage-collects a track with no packets for 30 s.
 
 **Pairing constraint, load-bearing:** both WebSocket legs of one call (ingest, egress)
 carry the same ticket and must land on the same relay process to be paired in memory, so
-the relay stays `--max-instances=1`. This was already the deploy config for other reasons
-(§ below); the SFU transport makes it a **correctness** requirement, not just a cost
-choice. Scaling path if concurrent-call capacity is ever exceeded: N relay shards, each
+the relay stays `--max-instances=1`. That was already the relay's deploy config; the SFU
+transport makes it a **correctness** requirement, not just a cost choice. Scaling path if concurrent-call capacity is ever exceeded: N relay shards, each
 still `--max-instances=1`, with the main service picking a shard per call (hash of user or
 least-loaded) — not built (YAGNI), since capacity per instance is unmeasured until UAT.
 
@@ -96,11 +95,6 @@ UAT's `VOICE_WEB_REASONING_EFFORT` knob says otherwise.
   for the phone path (cause of its 2026-09-24 reply-cutting bug not yet found); it is not
   built for PCM in the meantime and will be revisited together with re-enabling the cue
   itself, not separately per transport.
-- **Twilio webhook blueprint migration onto the shared `VoiceCallSetupService`, if it ever
-  breaks a test.** The blueprint's constructor signature is depended on by 8 existing test
-  files; the RFC's stop rule is to build `VoiceCallSetupService` from the same arguments
-  internally and revert without editing any test if that trips (tests are not modified
-  without per-test approval).
 
 ## Consequences
 
