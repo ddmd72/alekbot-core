@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import httpx
 
@@ -35,17 +35,21 @@ class CloudflareSfuAdapter(MediaRoomPort):
         self._client = http_client or httpx.AsyncClient(timeout=_TIMEOUT_S)
 
     async def _call(self, method: str, path: str, body: Optional[dict] = None,
-                    quiet_statuses: Tuple[int, ...] = ()) -> dict:
+                    log_errors: bool = True) -> dict:
         """Every failure leaves here as MediaRoomError, so callers need one except clause.
-        Log lines carry the method, path and exception type only; never the headers (secret)."""
+        Log lines carry the method, path and exception type only; never the headers (secret).
+        `log_errors=False` skips every log line here — the caller owns logging instead. `close()`
+        uses this: its failures are best-effort cleanup and must log exactly once, at its own
+        level, not at this call's default ERROR plus its own line."""
         try:
             response = await self._client.request(method, f"{self._base}{path}", headers=self._headers, json=body)
         except httpx.HTTPError as exc:
-            logger.error(f"[CloudflareSfu] {method} {path} failed: {type(exc).__name__}: {exc}")
+            if log_errors:
+                logger.error(f"[CloudflareSfu] {method} {path} failed: {type(exc).__name__}: {exc}")
             raise MediaRoomError(f"{method} {path} failed: {type(exc).__name__}") from exc
         if response.status_code >= 400:
-            log = logger.info if response.status_code in quiet_statuses else logger.error
-            log(f"[CloudflareSfu] {method} {path} -> {response.status_code}: {response.text[:300]}")
+            if log_errors:
+                logger.error(f"[CloudflareSfu] {method} {path} -> {response.status_code}: {response.text[:300]}")
             raise _SfuStatusError(f"{method} {path} returned {response.status_code}", response.status_code)
         # POC behaviour: an empty 2xx body is an empty object.
         if response.status_code == 204 or not response.text:
@@ -53,7 +57,8 @@ class CloudflareSfuAdapter(MediaRoomPort):
         try:
             return response.json()
         except ValueError as exc:
-            logger.error(f"[CloudflareSfu] {method} {path} -> {response.status_code}: body is not JSON")
+            if log_errors:
+                logger.error(f"[CloudflareSfu] {method} {path} -> {response.status_code}: body is not JSON")
             raise MediaRoomError(f"{method} {path} returned a non-JSON body") from exc
 
     async def open_caller(self, offer_sdp: str, mid: str) -> CallerLeg:
@@ -91,14 +96,17 @@ class CloudflareSfuAdapter(MediaRoomPort):
                          {"sessionDescription": {"type": "answer", "sdp": answer_sdp}})
 
     async def close(self, adapter_ids: List[str]) -> None:
+        # Best-effort cleanup: a close failure never blocks hangup, and it logs exactly once (at
+        # WARNING, not ERROR) — `log_errors=False` stops `_call` from also logging the same
+        # failure at ERROR before it gets here.
         for adapter_id in adapter_ids:
             try:
                 await self._call("POST", "/adapters/websocket/close", {"tracks": [{"adapterId": adapter_id}]},
-                                 quiet_statuses=_ALREADY_CLOSED)
+                                 log_errors=False)
             except _SfuStatusError as exc:
                 if exc.status_code in _ALREADY_CLOSED:
                     logger.info(f"[CloudflareSfu] adapter {adapter_id} was already closed")
                 else:
-                    logger.error(f"[CloudflareSfu] closing adapter {adapter_id} failed: {exc}")
-            except Exception:
-                logger.error(f"[CloudflareSfu] closing adapter {adapter_id} failed", exc_info=True)
+                    logger.warning(f"[CloudflareSfu] closing adapter {adapter_id} failed: {exc}")
+            except Exception as exc:
+                logger.warning(f"[CloudflareSfu] closing adapter {adapter_id} failed: {type(exc).__name__}: {exc}")
