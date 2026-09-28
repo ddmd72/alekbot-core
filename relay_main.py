@@ -57,15 +57,10 @@ from src.utils.logger import logger
 # Breath-pulse filler played while Lelik thinks or waits (owner pick B2, 2026-09-24).
 _THINKING_CUE_PATH = Path(__file__).parent / "src" / "assets" / "voice" / "thinking_cue.ulaw"
 
-# Spoken as the owner's own first turn of every call (owner's wording, 2026-09-25): the same
-# delivery rules as system text left Lelik sounding like a narrator; asked in the call, he
-# changed at once, and his later turns follow his own first ones.
-_CALLER_OPENING = (
-    "Говори быстрее и человечнее, не как диктор. Не говори с расстановкой: внутри фразы — "
-    "без пауз между словами. Не повторяй одну и ту же интонацию в каждой фразе — пусть она "
-    "меняется, как в обычном разговоре. Поздоровайся со мной по имени и спроси, чем можешь "
-    "помочь (отвечай, применяя юмор и голос)."
-)
+# The owner's first turn of every call: only a cue for Lelik to speak first (owner's wording,
+# 2026-09-28). Delivery rules no longer ride here — one place for them, not three. The language
+# reminder matters: this English item is the first input, and LANG_MIRROR would otherwise mirror it.
+_CALLER_OPENING = "Welcome the user. Do not forget to follow language settings"
 
 
 def _load_thinking_cue() -> bytes:
