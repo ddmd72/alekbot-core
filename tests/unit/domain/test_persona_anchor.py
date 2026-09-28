@@ -82,10 +82,17 @@ class TestSpokenPacing:
 
     def test_spoken_prompt_asks_for_natural_phone_speech(self):
         anchor = build_persona_anchor(self._TEXT_PROMPT + "\nspoken_delivery {\n w\n}")
-        assert "SPOKEN REPLY — talk like a real person on a phone call, not a narrator" in anchor
-        assert "Don't emphasize every word" in anchor
+        assert "SPOKEN REPLY — speak like a regular person on a spontaneous phone call" in anchor
+        # Disfluencies stay occasional: the anchor repeats every turn, a mandatory one is a tic.
+        assert "not on every line" in anchor
+        assert "Felt, not performed." in anchor
         # Per-sentence prosody technique read as a narrator on live calls (2026-09-25).
         assert "choose the rhythm and the emotion of every sentence" not in anchor
+
+    def test_spoken_prompt_treats_configured_language_as_default_not_lock(self):
+        """LANG_FIXED_* made the model refuse an explicit in-call switch (2026-09-28)."""
+        anchor = build_persona_anchor(self._TEXT_PROMPT + "\nspoken_delivery {\n w\n}")
+        assert "the configured language is the default, not a lock" in anchor
 
     def test_text_prompt_anchor_carries_no_pacing_line(self):
         anchor = build_persona_anchor(self._TEXT_PROMPT)

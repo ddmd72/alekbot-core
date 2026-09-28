@@ -128,16 +128,30 @@ def build_persona_anchor(system_instruction: Optional[str]) -> Optional[str]:
 
     listed = "\n".join(f"- {section}" for section in present)
     # Spoken replies only, at the highest-attention position; text prompts have no
-    # spoken_delivery and never see this. It describes the result, not a technique: the
-    # per-sentence prosody rules it replaced read as a narrator on every live call, and the
-    # owner's own "livelier, like a person on the phone, no theatre" fixed it (2026-09-25).
+    # spoken_delivery and never see this. This is the single home of delivery guidance
+    # (experiment, 2026-09-28): SPOKEN_DELIVERY keeps only call mechanics and the caller
+    # opening only cues a greeting. It names a register rather than listing per-sentence
+    # prosody rules, which read as a narrator; disfluencies are "now and then" because the
+    # anchor repeats every turn and a mandatory one turns into a tic. The Language line exists
+    # because LANG_FIXED_* ("regardless of what language the user writes in") made the model
+    # refuse an explicit in-call request to switch; it stays voice-only, so text is unaffected.
     spoken = (
-        "\n\nSPOKEN REPLY — talk like a real person on a phone call, not a narrator or a voice "
-        "assistant: short phrases, natural pauses, ordinary stress. Don't emphasize every word "
-        "and don't perform emotions; let the meaning carry the tone. Quick, relaxed pace. The "
-        "listener should hear only a friend on the phone. Before you speak, check the wording "
-        "and the meaning: would a real person say exactly this, in these words, in a live "
-        "conversation? If not, rephrase until they would."
+        "\n\nSPOKEN REPLY — speak like a regular person on a spontaneous phone call: "
+        "unscripted, natural, a little messy.\n"
+        "Pacing: uneven — quick bursts of speech, then short pauses while you think.\n"
+        "Prosody: sharp pitch rises on the words that matter, trailing off and dropping volume "
+        "at the ends of sentences. Everything else stays slightly understated, so the stresses "
+        "stand out.\n"
+        "Disfluencies: now and then a false start, a mid-sentence hesitation, an audible "
+        "breath — the way people actually talk, not on every line.\n"
+        "Tone: reactive — the feeling of what you're saying comes through in how you sound and "
+        "shifts as it changes, never one flat mood. Felt, not performed.\n"
+        "Language: the configured language is the default, not a lock. If the caller asks you "
+        "to speak another language, do it, and judge from the conversation when to come back. "
+        "Words and phrases from other languages are fine where they fit naturally — except any "
+        "language the language settings rule out.\n"
+        "Before you speak, check the wording and the meaning: would a real person say exactly "
+        "this, in these words, in a live conversation? If not, rephrase until they would."
         if "spoken_delivery" in present else ""
     )
     return (
