@@ -10,8 +10,12 @@ and FirestoreCompanionMemoryRepository: `db_client` is a
 `google.cloud.firestore_v1.async_client.AsyncClient`; `.collection(name).document(key)`
 then `.get()` / `.set()` / `.delete()` are awaited coroutines, and `.get()`
 returns a snapshot exposing `.exists` / `.to_dict()`.
+
+`expires_at` is a Firestore Timestamp so the collection's TTL policy deletes
+records nobody reads back (docs/07_deployment/README.md); TTL deletion is lazy,
+so reads still check expiry themselves.
 """
-import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from google.cloud import firestore
@@ -26,7 +30,7 @@ class FirestoreEphemeralStore(EphemeralStore):
 
     async def set(self, key: str, value: dict, ttl_s: int) -> None:
         doc = self._db.collection(self._collection).document(key)
-        await doc.set({"value": value, "expires_at": time.time() + ttl_s})
+        await doc.set({"value": value, "expires_at": datetime.now(timezone.utc) + timedelta(seconds=ttl_s)})
 
     async def get(self, key: str) -> Optional[dict]:
         doc = self._db.collection(self._collection).document(key)
@@ -34,7 +38,7 @@ class FirestoreEphemeralStore(EphemeralStore):
         if not snap.exists:
             return None
         data = snap.to_dict()
-        if data["expires_at"] < time.time():
+        if data["expires_at"] < datetime.now(timezone.utc):
             await doc.delete()
             return None
         return data["value"]
@@ -77,7 +81,7 @@ class FirestoreEphemeralStore(EphemeralStore):
             data = snap.to_dict()
             # Consume either way: the document is now spent or stale.
             transaction.delete(doc_ref)
-            if data["expires_at"] < time.time():
+            if data["expires_at"] < datetime.now(timezone.utc):
                 return None
             return data["value"]
 

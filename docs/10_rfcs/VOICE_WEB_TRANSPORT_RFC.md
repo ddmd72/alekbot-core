@@ -251,9 +251,13 @@ text nudges the owner toward the built-in mic when on Bluetooth.
 
 **Ringback.** The call page now plays a Spanish-style ringback tone (425 Hz, 1.5 s on / 3.0 s
 off) from the moment the Call button is tapped until the first sustained (≥150 ms) audible
-sound from Lelik, via a `AnalyserNode` on the same `<audio>` element `pc.ontrack` targets. Reaching
-`connected` on the RTCPeerConnection does not stop it — only actual voice does, since the
-WebRTC connection can be live for a second or more before Lelik's audio starts.
+sound from Lelik, detected by an `AnalyserNode` on a separate `MediaStreamSource` tap of the
+remote track — the `<audio>` element stays the sole playback path, so a suspended
+`AudioContext` (iOS lock screen, Siri) can never silence Lelik. Reaching `connected` on the
+RTCPeerConnection does not stop it — only actual voice does, since the WebRTC connection can be
+live for a second or more before Lelik's audio starts. Two safety nets: if no analyser could be
+created, ringback stops at Live; otherwise it is capped at 8 s past Live
+(`RINGBACK_LIVE_CAP_MS`) even if detection never fires.
 
 **Dispatch filler.** Live logs showed 12 s of dead air between a delegation being dispatched and
 the watchdog's own `_WAITING_NOTE` (which only fires `_silence_timeout_s` later). A new
@@ -314,8 +318,7 @@ so text-surface prompts are unaffected.
   (existing behaviour, §5.2), once as the late-answer post if the relay had already stopped
   waiting.
 - Cloud Run CPU throttling of the shielded delegation task after the relay's HTTP connection
-  closes is unverified beyond one production span (105.96 s, completed) — the design assumption
-  (Cloud Run does not throttle enough to matter) held once but is not load-tested.
+  closes — resolved as accepted, see §13.
 
 **§9 test-plan correction.** §9 originally said "no existing test edited." That held for the
 2026-09-27 transport work through its first ten tasks, but two later, reviewer-ruled edits (both
@@ -343,3 +346,52 @@ Every edit above was applied by the implementer only after an explicit per-test 
 ("intended change", never "code wrong"); see the two plans' progress ledgers
 (`.superpowers/sdd/2026-09-27-voice-web-transport/progress.md`,
 `.superpowers/sdd/2026-09-28-voice-web-uat-round1/progress.md`) for the full rulings.
+
+## 13. Pre-merge closeout (2026-09-28)
+
+**Cabinet HTML revalidates.** `/cabinet` and `/cabinet/call` are served with
+`Cache-Control: no-cache` (ETag revalidation, 304 when unchanged). Quart's `send_file` default
+(`public, max-age=43200`) served the owner the previous day's page after a deploy — the actual
+cause of "no ringback" in UAT round 2, not the ringback code.
+
+**iOS ringer switch.** Until mic capture starts, iOS plays WebAudio through a session the ringer
+switch mutes, so ringback was silent on a phone in silent mode. The Call tap sets
+`navigator.audioSession.type = "play-and-record"` (Safari 17+, feature-detected) before starting
+ringback; `endCall` restores `"auto"`.
+
+**Ephemeral records expire server-side.** `FirestoreEphemeralStore` writes `expires_at` as a
+Firestore Timestamp, and the voice tickets collection has a TTL policy on that field
+(`docs/07_deployment/README.md`). Before this, `expires_at` was a float checked only on read, so
+anything never read back — abandoned-delegation markers, unclaimed results, call-kind keys —
+stayed forever (18 such documents at the switch, purged once; no dual-format reader). Reads keep
+their own expiry check because TTL deletion is lazy (up to ~24 h).
+
+**CPU throttling accepted.** The main service keeps Cloud Run's default CPU allocation (CPU only
+during requests). Two production observations of the shielded late-answer task running after the
+relay's HTTP connection closed: a 105.96 s delegation span completed (2026-09-27), and an answer
+posted to chat 15 s after disconnect (2026-09-28). Neither showed throttling. Revisit only if a
+late answer is lost with the delegation span cut short — the fix would be always-on CPU for the
+main service, at its idle cost.
+
+**Test edits (reviewer-ruled, intended change — float → Timestamp `expires_at`):** in
+`tests/unit/adapters/test_firestore_ephemeral_store.py`: `test_get_returns_none_when_expired`,
+`test_get_returns_value_when_not_expired`, `test_set_writes_value_and_expires_at` (now also
+asserts a tz-aware datetime), `test_get_and_delete_returns_value_and_deletes_inside_the_transaction`,
+`test_get_and_delete_returns_none_when_expired_but_still_consumes`,
+`test_two_concurrent_get_and_delete_calls_yield_exactly_one_winner`. Fixture values changed type
+only; the expired/live semantics of each test are unchanged.
+
+**Whole-branch review, fixed:** `SfuStreamHandler` removes a call from its registry by identity,
+so a stale unpaired call timing out can no longer evict a newer call the SFU's retries opened
+under the same ticket; `CloudflareSfuAdapter.attach_agent` treats a 2xx body whose track carries
+an `errorCode` (or no `adapterId`) as a `MediaRoomError`, so the already-created ingest adapter is
+closed instead of leaking behind a bare 500.
+
+**Whole-branch review, deferred (trigger to revisit):**
+- SFU adapters are closed only by the page's `/hangup`. A killed tab leaves them redialling the
+  relay with a spent ticket (each attempt: session-config 404, logged). Closing server-side on
+  `submit_transcript` is the fix — revisit on the first such log loop.
+- An ingest drop ends the call (tested behaviour); egress alone has a reattach window, because
+  only egress retries were observed. Revisit if a live call ends on an ingest blip.
+- The late-answer record is written on the spoken-answer path (a Firestore set + get before the
+  relay gets the answer). Revisit if delegation spans show it as a measurable share.

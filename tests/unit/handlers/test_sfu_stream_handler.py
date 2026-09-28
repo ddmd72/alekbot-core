@@ -194,3 +194,30 @@ async def test_malformed_and_text_messages_are_skipped():
     await egress.close()
     await asyncio.wait_for(asyncio.gather(*tasks), timeout=2)
     assert service.calls[0]["frames"]
+
+
+@pytest.mark.asyncio
+async def test_a_stale_unpaired_call_timing_out_does_not_evict_the_newer_call_on_its_ticket():
+    service = FakeSessionService()
+    handler = _handler(service, pair_timeout_s=0.3, egress_reattach_s=0.05)
+    # Call A: egress only, then it drops — A is ended and forgotten, but its _run still waits
+    # out the pair timeout.
+    stale_egress = FakeSfuWs()
+    t_stale = asyncio.ensure_future(handler.handle_connection(stale_egress, f"/sfu/egress?ticket={T1}"))
+    await asyncio.sleep(0.02)
+    stale_call = handler._calls[T1]
+    await stale_egress.close()
+    await asyncio.wait_for(t_stale, timeout=1)
+    assert T1 not in handler._calls
+    # Call B: the SFU's retry pairs under the same ticket and goes live.
+    ingest, egress = FakeSfuWs(), FakeSfuWs()
+    t_live = [asyncio.ensure_future(handler.handle_connection(ingest, f"/sfu/ingest?ticket={T1}")),
+              asyncio.ensure_future(handler.handle_connection(egress, f"/sfu/egress?ticket={T1}"))]
+    await asyncio.sleep(0.02)
+    live_call = handler._calls[T1]
+    assert live_call is not stale_call
+    await asyncio.wait_for(stale_call.task, timeout=1)  # A's pair timeout fires while B is live
+
+    assert handler._calls.get(T1) is live_call and not ingest.closed
+    await egress.close()
+    await asyncio.wait_for(asyncio.gather(*t_live), timeout=2)

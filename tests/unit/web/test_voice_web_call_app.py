@@ -165,3 +165,10 @@ async def test_unauthenticated_is_401():
         relay_base_url="wss://relay.example.com"))
     resp = await session_less.test_client().post("/api/voice/web-call", json={"sdp": "o", "mid": "0"})
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_call_page_is_served_no_cache():
+    resp = await _app(MemoryStore(), _room()).test_client().get("/cabinet/call")
+    assert resp.status_code == 200
+    assert resp.headers["Cache-Control"] == "no-cache"
