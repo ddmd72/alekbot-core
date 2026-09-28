@@ -41,6 +41,15 @@ narrator on every live call. Naming a register instead of assembling it from rul
 - **Relaxing `LANG_FIXED_*` itself.** Those tokens are shared with Smart's text path, where language
   changes go through `LanguagePreferenceService`; the fix belongs to the voice-only anchor.
 
+## Follow-up: delivery rules leaked into content (same day)
+
+Live calls had Lelik announce his own manner in nearly every turn: "no pathos and no narrator
+theatre", "sprinkle chaos with logic", "less theatre". The model voiced "not X" contrasts from its
+delivery instructions as content, and call summaries carried the theme into the next call's warm
+context. The anchor now names only the target ("loose", "genuinely felt" instead of "a little
+messy", "felt, not performed") and adds one boundary: "How you sound is never a topic". The
+history loop fades on its own as the 30-message window turns over.
+
 ## Rollback
 
 The full previous `SPOKEN_DELIVERY` content is backed up locally in `scripts/memory/` (gitignored).
