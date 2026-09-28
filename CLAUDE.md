@@ -249,8 +249,13 @@ Alek only what he does not hold (mail, tasks, documents, web, actions). **Charac
 with Smart:** the `lelik` profile reuses Smart's overridable `ARCHETYPE_*`/`VIBE_*`/`VOICE_*`/
 `HUMOR_*`/`LANG_*`/`POLICY_*` slots, and user prompt overrides are per user by class+category, so a
 persona or language change applies to both. Lelik has only two tokens of his own:
-`COGNITIVE_PROCESS_LELIK` (role) and `SPOKEN_DELIVERY` (phone mechanics, in its own category so a
-`VOICE_*` override never replaces it) (RFC §4.1/§4.8).
+`COGNITIVE_PROCESS_LELIK` (role) and `SPOKEN_DELIVERY` (call mechanics only — unreadable medium,
+confirm before irreversible actions, silence/delegation hosting — in its own category so a
+`VOICE_*` override never replaces it) (RFC §4.1/§4.8). **How he sounds lives in one place:** the
+spoken paragraph of `build_persona_anchor` (a named register — spontaneous phone call — not
+per-sentence prosody rules, which read as a narrator; plus "configured language is the default,
+not a lock"). The caller opening is only a greeting cue. Three sources of delivery rules
+contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_source.md`.
 - **Two deploy units, on purpose.** The main Quart service (`main.py`) owns Twilio's webhooks,
   ticket minting, and the OIDC-protected control plane (`/voice/session-config`,
   `/voice/submit-transcript`). A **separate Cloud Run service** (`relay_main.py`, a plain
