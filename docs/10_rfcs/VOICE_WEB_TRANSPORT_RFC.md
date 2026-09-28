@@ -201,7 +201,9 @@ or the Opus bytes (`bytesProcessed` on close looked Opus-sized) — irrelevant u
 
 ## 9. Test plan
 
-Unit (new files only; no existing test edited): `AudioFormat`; `PlaybackTracker` at 48 B/ms;
+Unit (new files only; existing tests are read-only for the implementer — a task reviewer rules
+per test, intended change vs. code wrong, and specifies the exact edit applied in a fix round; see
+§12 for round 1's rulings): `AudioFormat`; `PlaybackTracker` at 48 B/ms;
 OpenAI adapter wire test for `audio/pcm` 24k; SFU packet codec round trip + malformed input;
 resampler tone preservation (1 kHz survives both ways) + chunk-boundary continuity;
 `PacedAudioOutlet` framing / tail padding / mark release / clear;
@@ -231,3 +233,113 @@ stay green. Live: §10.
    use WS adapters?
 4. A forgotten open tab with background noise keeps VAD busy; the relay's 60-min `--timeout` is the
    only hard cap today. A per-call max duration may be needed.
+
+## 12. UAT round 1 (2026-09-28)
+
+The owner's first live web calls (2026-09-27) surfaced five gaps. Plan:
+`docs/superpowers/plans/2026-09-28-voice-web-uat-round1.md`.
+
+**Bluetooth HFP.** A headset paired over Bluetooth exposes its microphone through the HFP
+profile, which forces the *entire* Bluetooth link — including the speaker leg — down to
+narrowband (typically 16 kHz-equivalent, mono, compressed). Selecting the built-in microphone
+instead keeps the Bluetooth output on A2DP (wideband stereo), which is the leg the owner
+actually judges quality on. `call.html` now exposes a `<select>` of `audioinput` devices,
+persisted per browser in `localStorage`, with the choice enforced via
+`getUserMedia({deviceId:{exact:…}})` and a fallback to the default device on
+`OverconstrainedError`/`NotFoundError` (e.g. a saved device unplugged since the last call). Hint
+text nudges the owner toward the built-in mic when on Bluetooth.
+
+**Ringback.** The call page now plays a Spanish-style ringback tone (425 Hz, 1.5 s on / 3.0 s
+off) from the moment the Call button is tapped until the first sustained (≥150 ms) audible
+sound from Lelik, via a `AnalyserNode` on the same `<audio>` element `pc.ontrack` targets. Reaching
+`connected` on the RTCPeerConnection does not stop it — only actual voice does, since the
+WebRTC connection can be live for a second or more before Lelik's audio starts.
+
+**Dispatch filler.** Live logs showed 12 s of dead air between a delegation being dispatched and
+the watchdog's own `_WAITING_NOTE` (which only fires `_silence_timeout_s` later). A new
+`_DISPATCH_NOTE` fires immediately after the turn that dispatched the tool call — one line asking
+Lelik to keep the caller company, gated on nothing already owning the reply slot (no active
+response, caller not speaking, no answer already flushed, not barged into). **Trade-off:** a
+delegation that resolves in under a second now still waits behind the filler's own sentence
+before the real answer can be spoken, since only one response can be active at a time
+(`response.create` while one is active is call-ending) and the filler's `response_done` is what
+flushes the queued answer.
+
+**300 s relay timeout, 600 s `ask_alek` ceiling, late answers reach chat.** The relay's
+`VoiceSessionService._fetch_answer` timeout is 300 s (was 90 s), configured per instance in
+`relay_main.py`. The `ask_alek` path (Lelik → `AlekGatewayAgent` → Router → Smart) gets a
+600 s ceiling — `ASK_ALEK_TIMEOUT_MS` on both the gateway's `AgentConfig` and the explicit
+per-message `timeout_ms`, which `RouterAgent`/`BaseAgent._execute_with_timeout` already prefer
+over any agent-level default — chosen to outlast the relay's 300 s while staying under the
+abandon marker's 900 s TTL and Cloud Run's 1800 s request timeout.
+
+An answer that outlives the relay's wait (timeout, or the call ending with the delegation still
+in flight) is posted to the caller's chat instead of being discarded. Key protocol, both sides
+best-effort and idempotent:
+- `/voice/delegate` runs the dispatch inside a **shielded**, module-tracked task
+  (`asyncio.shield` + a strong reference held until a done-callback releases it), so a Cloud Run
+  disconnect on the relay's side does not cancel the in-flight delegation.
+- On success it stores `voice_delegation_result:{ticket}:{call_id} = {output, request, user_id,
+  account_id}` (TTL 900 s), then checks for an existing `voice_delegation_abandoned:{ticket}:
+  {call_id}` marker; if present, it claims the result with an atomic `get_and_delete` and posts.
+- The relay's timeout path, and call teardown for any still-pending delegation, call
+  `POST /voice/delegate/abandon`, which writes the abandoned marker and independently attempts
+  the same `get_and_delete` claim.
+- Whichever side runs second always sees the other's marker (Firestore writes are strongly
+  consistent) and `get_and_delete` is the single atomic claim point, so **at most one side posts,
+  and a repeat abandon (timeout, then again at call end) finds nothing to claim** — exactly-once
+  delivery, not at-least-once.
+- A **failed** delegation is never posted verbatim (raw errors can carry URLs, and Lelik has
+  already told the caller a real answer is coming): it is stored as `{failed: True}` with no
+  text, and the sink posts a short, localized neutral line ("The request did not go through.")
+  instead.
+- Teardown order in `_run_call`'s `finally`: cancel event loop tasks (forward/consume/
+  watchdog/cue/barge-in) → bounded concurrent abandons (one `wait_for(…, 5s)` per pending
+  delegation, run together so N pending delegations cost one 5 s bound, not N×5 s) → cancel and
+  gather the delegation tasks themselves → `session.close()` → `submit_transcript`.
+
+**Live-speech gate.** `build_persona_anchor`'s spoken paragraph now ends with: "Before you speak,
+check the wording and the meaning: would a real person say exactly this, in these words, in a
+live conversation? If not, rephrase until they would." — gated on `spoken_delivery` being present,
+so text-surface prompts are unaffected.
+
+**Known gaps (deferred, from the round's ledger; not blocking):**
+- An answer that is **mid-injection** at call end (already taken off the pending/queued state,
+  not yet spoken — the few ms inside `submit_message`/`submit_tool_result`) is not abandoned.
+- A chat-post failure **after** `get_and_delete` has already claimed the result loses that one
+  answer (logged at error, no retry, no alert).
+- `notify_raw` (used by the late-answer sink) writes no session history, so Alek has no record of
+  a late answer that already reached the caller's chat.
+- A link-bearing answer can reach chat twice: once as the gateway's own bare-anchor chat copy
+  (existing behaviour, §5.2), once as the late-answer post if the relay had already stopped
+  waiting.
+- Cloud Run CPU throttling of the shielded delegation task after the relay's HTTP connection
+  closes is unverified beyond one production span (105.96 s, completed) — the design assumption
+  (Cloud Run does not throttle enough to matter) held once but is not load-tested.
+
+**§9 test-plan correction.** §9 originally said "no existing test edited." That held for the
+2026-09-27 transport work through its first ten tasks, but two later, reviewer-ruled edits (both
+rounds strictly read-only for the implementer; the task reviewer names the exact edit) changed
+that:
+- 2026-09-27 plan, Task 12 (webhook now reads the call's key, not the last store write):
+  `tests/unit/web/test_voice_webhook_app.py::test_answer_webhook_assembles_persona_and_streams_on_human_pickup`,
+  `tests/unit/web/test_voice_webhook_session_tools.py::test_answer_stores_instructions_and_tools_on_the_ticket`,
+  `tests/unit/web/test_voice_webhook_session_tools.py::test_answer_ticket_identity_wins_over_session_keys`.
+- 2026-09-28 plan (this round), Task 1 (the dispatch filler's own turn extends the fixture's event
+  stream so a queued answer gets flushed):
+  `tests/unit/services/test_voice_session_delegation.py::test_tool_call_is_forwarded_with_call_context_and_answered_as_function_output`,
+  `tests/unit/services/test_voice_session_cancelled_tool_call.py::test_tool_call_without_a_prior_cancel_is_dispatched_as_before`.
+- 2026-09-28 plan, Task 2 (reworded timeout copy + the new `delegate`/`call_id`/`ticket`/`request`
+  body fields + `delegate_outcome` replacing `delegate` at the endpoint):
+  `tests/unit/adapters/test_http_call_control_plane_delegate.py::test_delegate_posts_the_tool_call_and_returns_output`,
+  `tests/unit/services/test_voice_session_delegation.py::test_timeout_is_spoken_not_silent`,
+  `tests/unit/services/test_voice_session_late_timeout_note.py::test_late_timeout_reads_as_no_answer_not_as_one_that_arrived`,
+  and, in `tests/unit/web/test_voice_delegate_endpoint.py`:
+  `test_delegate_runs_lelik_dispatch_inside_the_callers_request_context`,
+  `test_delegate_flushes_prompt_content_before_returning`, `test_delegate_opens_span_with_intent_attribute`,
+  `test_delegate_flush_failure_does_not_change_the_response`, `test_delegate_500_when_dispatch_raises`.
+
+Every edit above was applied by the implementer only after an explicit per-test reviewer ruling
+("intended change", never "code wrong"); see the two plans' progress ledgers
+(`.superpowers/sdd/2026-09-27-voice-web-transport/progress.md`,
+`.superpowers/sdd/2026-09-28-voice-web-uat-round1/progress.md`) for the full rulings.

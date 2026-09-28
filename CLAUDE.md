@@ -298,8 +298,17 @@ persona or language change applies to both. Lelik has only two tokens of his own
 - **`resolve_late_answer`** (`VoiceSessionService`) is the one seam for the delegation-answer policy
   (RFC §4.7): a `response.create` while a response is already active is a call-ending provider error,
   so it queues the answer when the model is mid-turn and injects + replies otherwise.
-- **The relay's own delegation timeout is 90 s** (`asyncio.wait_for` in `VoiceSessionService._fetch_answer`)
-  — the only authoritative limit; the HTTP client and the gateway only have to outlast it.
+- **The relay's own delegation timeout is 300 s** (`asyncio.wait_for` in
+  `VoiceSessionService._fetch_answer`, raised from 90 s after UAT round 1, 2026-09-28) — the HTTP
+  client (330 s) and the `ask_alek` path's own 600 s ceiling (`ASK_ALEK_TIMEOUT_MS` on the
+  gateway's `AgentConfig` + the routed message's `timeout_ms`) both outlast it. A delegation that
+  finishes after the relay stops waiting (timeout, or call end) is posted to the caller's chat
+  instead of being discarded — both sides write a marker and whichever claims the finished result
+  with an atomic `get_and_delete` posts it exactly once; see RFC §12.
+- **The dispatch filler** (`_DISPATCH_NOTE`) fires immediately after a turn that dispatches a
+  delegation, so Lelik keeps talking during the 12 s+ gap before the silence watchdog's own
+  `_WAITING_NOTE` would otherwise fire — at the cost of even a sub-second answer now waiting
+  behind the filler's own reply for the next response slot.
 - **`mode` is stripped** from delegate arguments before dispatch (`LelikAgent.delegate`): `AgentWorkerHandler`
   delivers only generator-declared intents, so a SYNC-declared intent forced into `mode: "later"` would
   have nowhere to return its answer and silently drop it on the phone.

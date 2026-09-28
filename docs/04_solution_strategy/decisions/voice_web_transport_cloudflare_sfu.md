@@ -126,3 +126,18 @@ silence pacing; `CloudflareSfuAdapter`'s request shapes against mocked httpx;
 `VoiceCallSetupService` claim/prepare/release; the web-call blueprint's auth, ownership,
 busy (409), SFU-failure marker release, and status routes. `make check` (architecture
 suite) must stay green throughout.
+
+## UAT round 1 (2026-09-28)
+
+The owner's first live web calls surfaced a `CloudflareSfuAdapter.close()` logging defect
+alongside the four behavioural gaps `VOICE_WEB_TRANSPORT_RFC.md` §12 covers in full
+(Bluetooth HFP, ringback, dispatch filler, the 300 s/600 s late-answer protocol, the
+live-speech gate). `close()`'s best-effort cleanup logged a real failure (e.g. a 503) twice
+— once inside `_call`'s own ERROR log, once again in `close()`'s except clause — at a
+severity (ERROR) that misrepresents an idempotent hangup path. Fixed: `_call` gained a
+`log_errors` flag so `close()` can own its own single log line, at WARNING; the
+already-closed case (404/410) is unchanged at INFO. This closes the "double ERROR log on
+real close failure" item the 2026-09-27 final review left as a residual. One pre-existing
+test (`test_a_real_close_failure_is_still_an_error`) asserted the old ERROR-level behaviour
+and now fails by design; it was not edited — its expectation is exactly what this decision
+reverses, and a reviewer ruling on it is pending.
