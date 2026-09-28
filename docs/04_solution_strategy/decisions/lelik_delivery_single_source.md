@@ -50,6 +50,16 @@ context. The anchor now names only the target ("loose", "genuinely felt" instead
 messy", "felt, not performed") and adds one boundary: "How you sound is never a topic". The
 history loop fades on its own as the 30-message window turns over.
 
+## Follow-up: filling the delegation pause (same day)
+
+The pause filler rambled: the role token, `_DISPATCH_NOTE`, `_WAITING_NOTE` and `SPOKEN_DELIVERY`
+each asked to "keep the caller company" / "riff on it with your humor, a few sentences", and the
+relay notes pointed only at "this conversation", which is empty early in a call. Now the behaviour
+lives once, in `COGNITIVE_PROCESS_LELIK`: fill the pause the way a person does while something
+loads — something useful, or tie the question to what you know about the caller — usually one short
+line, sometimes just "still coming". The relay notes are bare signals; `SPOKEN_DELIVERY` defers to
+the role. Firestore backups of both tokens are in `scripts/memory/`.
+
 ## Rollback
 
 The full previous `SPOKEN_DELIVERY` content is backed up locally in `scripts/memory/` (gitignored).

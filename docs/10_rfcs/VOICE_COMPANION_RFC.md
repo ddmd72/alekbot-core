@@ -924,8 +924,10 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   call: the session returns, the media handler closes the stream, and with no TwiML after `<Connect>`
   Twilio hangs up — a voicemail box or a phone put down no longer holds the line. It re-arms only when
   the caller speaks — **except while a delegation is pending**, when it re-arms on its own and keeps
-  firing a "keep the caller company" note instead (`SPOKEN_DELIVERY`'s `giving_the_floor` allows a
-  few sentences here), so a slow specialist never leaves dead air. It stands down while an answer is
+  firing a bare "still waiting" note instead (since 2026-09-28 the note is a signal only; how to
+  fill the pause — one short line drawn from what Lelik knows about the caller, a plain "still
+  coming" now and then — lives once, in `COGNITIVE_PROCESS_LELIK`), so a slow specialist never
+  leaves dead air. It stands down while an answer is
   mid-injection (`answers_in_flight`), so an arriving answer always wins the reply slot instead of
   being buried under a waiting note. A **late** answer — injected after the caller has spoken again
   — names the request it answers (`intent: query`, truncated) rather than reading as a reply to
