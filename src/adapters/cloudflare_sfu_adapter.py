@@ -61,6 +61,20 @@ class CloudflareSfuAdapter(MediaRoomPort):
                 logger.error(f"[CloudflareSfu] {method} {path} -> {response.status_code}: body is not JSON")
             raise MediaRoomError(f"{method} {path} returned a non-JSON body") from exc
 
+    @staticmethod
+    def _adapter_track(response: dict, direction: str) -> dict:
+        """The one track of an /adapters/websocket/new response. Cloudflare reports per-track
+        failures inside a 2xx body, so a missing adapter is a MediaRoomError like any other."""
+        try:
+            track = response["tracks"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            logger.error(f"[CloudflareSfu] {direction} adapter response has no track")
+            raise MediaRoomError(f"{direction} adapter response has no track") from exc
+        if track.get("errorCode") or not track.get("adapterId"):
+            logger.error(f"[CloudflareSfu] {direction} adapter not created: {track.get('errorCode')}")
+            raise MediaRoomError(f"{direction} adapter not created: {track.get('errorCode')}")
+        return track
+
     async def open_caller(self, offer_sdp: str, mid: str) -> CallerLeg:
         session_id = (await self._call("POST", "/sessions/new"))["sessionId"]
         answer = await self._call("POST", f"/sessions/{session_id}/tracks/new", {
@@ -72,14 +86,14 @@ class CloudflareSfuAdapter(MediaRoomPort):
     async def attach_agent(self, caller_session_id: str, ingest_url: str, egress_url: str) -> AgentLeg:
         adapter_ids: List[str] = []
         try:
-            ingest = (await self._call("POST", "/adapters/websocket/new", {"tracks": [{
+            ingest = self._adapter_track(await self._call("POST", "/adapters/websocket/new", {"tracks": [{
                 "location": "local", "trackName": _AGENT_TRACK, "inputCodec": "pcm", "endpoint": ingest_url,
-            }]}))["tracks"][0]
+            }]}), "ingest")
             adapter_ids.append(ingest["adapterId"])
-            egress = (await self._call("POST", "/adapters/websocket/new", {"tracks": [{
+            egress = self._adapter_track(await self._call("POST", "/adapters/websocket/new", {"tracks": [{
                 "location": "remote", "sessionId": caller_session_id, "trackName": _CALLER_TRACK,
                 "outputCodec": "pcm", "endpoint": egress_url,
-            }]}))["tracks"][0]
+            }]}), "egress")
             adapter_ids.append(egress["adapterId"])
             pull = await self._call("POST", f"/sessions/{caller_session_id}/tracks/new", {"tracks": [{
                 "location": "remote", "sessionId": ingest["sessionId"], "trackName": _AGENT_TRACK,

@@ -175,6 +175,14 @@ mint SFU sessions server-side.
    transport change first: `VOICE_WEB_REASONING_EFFORT` (default `medium`), `VOICE_WEB_CALLER_OPENING`
    (`on`/`off`, default `on`). Neither needs a cloudbuild change unless overridden.
 
+5. **TTL policy on the voice tickets collection** (one-time, per database). Tickets, the one-call
+   marker, call-kind keys and late-answer records all live in `development_voice_tickets` with a
+   Timestamp `expires_at`; without the policy, records nobody reads back are never deleted:
+   ```bash
+   gcloud firestore fields ttls update expires_at --collection-group=development_voice_tickets \
+     --enable-ttl --database=us-production --project=<PROJECT_ID>
+   ```
+
 This is a prerequisite for the web call's live verification, alongside the Twilio prerequisites
 above (they are independent transports sharing one `VoiceSessionService`/persona).
 

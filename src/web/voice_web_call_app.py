@@ -31,7 +31,10 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
 
     @bp.route("/cabinet/call")
     async def call_page():
-        return await send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "call.html"))
+        response = await send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "call.html"))
+        # Revalidate on every load: send_file's 12 h max-age served a stale page after deploys.
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @bp.route("/api/voice/web-call", methods=["POST"])
     @auth_required

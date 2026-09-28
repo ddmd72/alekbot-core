@@ -138,8 +138,14 @@ class SfuStreamHandler:
             for ws in (call.ingest_ws, call.egress_ws):
                 if ws is not None:
                     await ws.close()
-            self._calls.pop(call.ticket, None)
+            self._forget(call)
             logger.info(f"sfu stream {call.ticket}: call closed")
+
+    def _forget(self, call: _SfuCall) -> None:
+        # By identity: a stale call (e.g. an unpaired one still waiting out its pair timeout)
+        # must never evict a newer call the SFU's retries opened under the same ticket.
+        if self._calls.get(call.ticket) is call:
+            del self._calls[call.ticket]
 
     @staticmethod
     async def _inbound_frames(call: _SfuCall) -> AsyncIterator[AudioFrame]:
@@ -188,7 +194,7 @@ class SfuStreamHandler:
             logger.info(f"sfu stream {call.ticket}: egress gone and not reattached, ending call")
             call.end()
             if not call.paired.is_set():
-                self._calls.pop(call.ticket, None)
+                self._forget(call)
 
     async def _serve_ingest(self, call: _SfuCall, ws) -> None:
         if call.ingest_ws is not None:

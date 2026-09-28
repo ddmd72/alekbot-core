@@ -424,6 +424,15 @@
       let audibleMonitorTimer = null;
       let audibleAboveSince = null;
 
+      // iOS routes WebAudio through the ringer-switch-muted "ambient" session until mic capture
+      // starts, so ringback is silent on a phone in silent mode. Declaring play-and-record up
+      // front (Safari 17+ Audio Session API) makes it audible; "auto" restores the default.
+      function setAudioSessionType(type) {
+        try {
+          if (navigator.audioSession) navigator.audioSession.type = type;
+        } catch (e) {}
+      }
+
       function ensureAudioContext() {
         try {
           const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -625,6 +634,7 @@
             audioCtx.suspend().catch(() => {});
           } catch (e) {}
         }
+        setAudioSessionType("auto");
         stopStatusPolling();
         inCall = false;
         const endingCallId = callId;
@@ -664,6 +674,7 @@
         setState(t("state.connecting"));
         // Must run synchronously in this tap handler, before any await — iOS only allows
         // creating/resuming an AudioContext inside a user-gesture call stack.
+        setAudioSessionType("play-and-record");
         startRingback();
 
         const AUDIO_PROCESSING = {

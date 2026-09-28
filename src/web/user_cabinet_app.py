@@ -116,7 +116,10 @@ def create_user_cabinet_blueprint(
         # Use absolute path relative to this file
         current_dir = os.path.dirname(os.path.abspath(__file__))
         static_file = os.path.join(current_dir, "static", "cabinet.html")
-        return await send_file(static_file)
+        response = await send_file(static_file)
+        # Revalidate on every load: send_file's 12 h max-age served a stale page after deploys.
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @bp.route("/join")
     async def join_team_page():

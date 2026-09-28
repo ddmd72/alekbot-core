@@ -1,5 +1,5 @@
 import asyncio
-import time
+from datetime import datetime, timedelta, timezone
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,7 +32,7 @@ async def test_get_returns_none_when_missing():
 
 @pytest.mark.asyncio
 async def test_get_returns_none_when_expired():
-    expired_at = time.time() - 5
+    expired_at = datetime.now(timezone.utc) - timedelta(seconds=5)
     doc = _doc_mock(exists=True, data={"value": {"user_id": "u1"}, "expires_at": expired_at})
     col = MagicMock()
     col.document.return_value = doc
@@ -48,7 +48,7 @@ async def test_get_returns_none_when_expired():
 
 @pytest.mark.asyncio
 async def test_get_returns_value_when_not_expired():
-    doc = _doc_mock(exists=True, data={"value": {"user_id": "u1"}, "expires_at": time.time() + 60})
+    doc = _doc_mock(exists=True, data={"value": {"user_id": "u1"}, "expires_at": datetime.now(timezone.utc) + timedelta(seconds=60)})
     col = MagicMock()
     col.document.return_value = doc
     db = MagicMock()
@@ -69,12 +69,14 @@ async def test_set_writes_value_and_expires_at():
     db.collection.return_value = col
 
     store = FirestoreEphemeralStore(db_client=db, collection="voice_tickets")
-    before = time.time()
+    before = datetime.now(timezone.utc)
     await store.set("ticket-1", {"user_id": "u1"}, ttl_s=30)
 
     written = doc.set.call_args.args[0]
     assert written["value"] == {"user_id": "u1"}
-    assert before + 30 <= written["expires_at"] <= before + 31
+    # A tz-aware datetime is what Firestore stores as a Timestamp — the only type a TTL policy acts on.
+    assert written["expires_at"].tzinfo is not None
+    assert before + timedelta(seconds=30) <= written["expires_at"] <= before + timedelta(seconds=31)
 
 
 # =============================================================================
@@ -116,7 +118,7 @@ def _txn_store(doc_ref):
 
 @pytest.mark.asyncio
 async def test_get_and_delete_returns_value_and_deletes_inside_the_transaction(monkeypatch):
-    doc_ref = _txn_doc_mock(exists=True, data={"value": {"user_id": "u1"}, "expires_at": time.time() + 60})
+    doc_ref = _txn_doc_mock(exists=True, data={"value": {"user_id": "u1"}, "expires_at": datetime.now(timezone.utc) + timedelta(seconds=60)})
     store, db = _txn_store(doc_ref)
     monkeypatch.setattr(
         "src.adapters.firestore_ephemeral_store.firestore.async_transactional",
@@ -150,7 +152,7 @@ async def test_get_and_delete_returns_none_when_missing_and_deletes_nothing(monk
 async def test_get_and_delete_returns_none_when_expired_but_still_consumes(monkeypatch):
     """An expired ticket is reported absent AND cleaned up — same housekeeping
     as get(), so a stale document does not linger past its TTL."""
-    doc_ref = _txn_doc_mock(exists=True, data={"value": {"user_id": "u1"}, "expires_at": time.time() - 5})
+    doc_ref = _txn_doc_mock(exists=True, data={"value": {"user_id": "u1"}, "expires_at": datetime.now(timezone.utc) - timedelta(seconds=5)})
     store, db = _txn_store(doc_ref)
     monkeypatch.setattr(
         "src.adapters.firestore_ephemeral_store.firestore.async_transactional",
@@ -184,7 +186,7 @@ async def test_two_concurrent_get_and_delete_calls_yield_exactly_one_winner(monk
         await asyncio.sleep(0)  # force interleaving
         snap = MagicMock()
         snap.exists = state["present"]
-        snap.to_dict.return_value = {"value": {"user_id": "u1"}, "expires_at": time.time() + 60}
+        snap.to_dict.return_value = {"value": {"user_id": "u1"}, "expires_at": datetime.now(timezone.utc) + timedelta(seconds=60)}
         return snap
 
     doc_ref.get = AsyncMock(side_effect=_get)

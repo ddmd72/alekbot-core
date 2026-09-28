@@ -546,12 +546,12 @@ above), not through `ExecutionMode.ASYNC`.
 
 | Case | Required behaviour |
 |---|---|
-| Call ends while the answer is in flight | Cancel the task; **discard the answer** (it served a conversation that no longer exists). Log it. No chat fallback unless §4.10 already required one. |
+| Call ends while the answer is in flight | **Superseded 2026-09-28:** the answer is posted to the caller's chat, exactly once — see `VOICE_WEB_TRANSPORT_RFC.md` §12. (Originally: discard it.) |
 | Model is mid-response when the answer arrives | `response.create` while a response is active is an error. Track `response.created`/`response.done`; queue the injection until idle. |
 | **Caller speaks again while the answer is still being fetched, before it arrives** | `resolve_late_answer` (above) takes the fresh-message branch, not `function_call_output` — confirmed via spike 0.1 that OpenAI silently drops the latter in this exact case. |
 | User barges in during injection itself (after `resolve_late_answer` has already queued something) | Submit the queued item immediately (harmless — it is a conversation item either way), defer `response.create` to the next idle moment. |
 | Two delegations in flight | Match by `call_id`; serialize `response.create` so they cannot collide. |
-| Main service slow or hung | Hard relay-side timeout, start at 90s — Router → Smart with delegation is the cost, not cold start. On expiry inject a `function_call_output` saying Alek did not answer, so Lelik says so aloud. **Silent non-delivery is the worst outcome.** |
+| Main service slow or hung | Hard relay-side timeout — 300 s since 2026-09-28, with the late answer going to chat (`VOICE_WEB_TRANSPORT_RFC.md` §12); originally 90s — Router → Smart with delegation is the cost, not cold start. On expiry inject a `function_call_output` saying Alek did not answer, so Lelik says so aloud. **Silent non-delivery is the worst outcome.** |
 | Transport failure | **No automatic retry** — it re-runs Alek's whole pipeline: double spend, possible double chat delivery. Fail loudly to Lelik. |
 | Relay restarts mid-call (deploy) | Call drops; answer in flight lands nowhere; transcript buffer lost. Accepted. |
 | Concurrency ceiling | Each in-flight delegation occupies a request slot on the 1 vCPU main service. Named, not solved, in v1. |
@@ -1158,8 +1158,8 @@ unit and this is genuinely optional.
   depend on Lelik remembering. No in-call turn is written to any chat session.
 - **Parallel delegations:** two tool calls in one response are dispatched concurrently and resolved
   independently by `call_id`.
-- **Corner-case table as tests** (§4.7): call ends mid-flight → task cancelled, answer discarded,
-  nothing posted; injection deferred while a response is active; two in-flight calls matched by
+- **Corner-case table as tests** (§4.7): call ends mid-flight → answer posted to chat exactly
+  once (superseded 2026-09-28, `VOICE_WEB_TRANSPORT_RFC.md` §12; originally: discarded); injection deferred while a response is active; two in-flight calls matched by
   `call_id`; timeout produces a spoken failure rather than silence; no retry on transport failure.
 - **Port/adapter:** wire tests at the SDK boundary per `ADAPTER_WIRE_TESTING.md` plus contract
   validators in `tests/contracts/adapter_contracts.py` — session lifecycle, tool-call event
