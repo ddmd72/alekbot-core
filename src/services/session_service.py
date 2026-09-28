@@ -20,8 +20,8 @@ class SessionService:
     JWT-based session management service.
 
     Provides stateless authentication via JWT tokens:
-    - Access tokens (short-lived, 1 hour)
-    - Refresh tokens (long-lived, 30 days)
+    - Access tokens (24 hours — one login lasts a day)
+    - Refresh tokens (24 hours, age-capped by the current TTL on verify)
 
     Tokens contain:
     - user_id: Internal user UUID
@@ -40,16 +40,16 @@ class SessionService:
     def __init__(
         self,
         secret_key: str,
-        access_token_ttl: int = 3600,  # 1 hour
-        refresh_token_ttl: int = 2592000,  # 30 days
+        access_token_ttl: int = 86400,  # 24 hours
+        refresh_token_ttl: int = 86400,  # 24 hours
     ):
         """
         Initialize session service.
 
         Args:
             secret_key: JWT signing secret (min 32 characters)
-            access_token_ttl: Access token TTL in seconds (default: 1 hour)
-            refresh_token_ttl: Refresh token TTL in seconds (default: 30 days)
+            access_token_ttl: Access token TTL in seconds (default: 24 hours)
+            refresh_token_ttl: Refresh token TTL in seconds (default: 24 hours)
 
         Raises:
             ValueError: If secret_key is too short
@@ -224,6 +224,12 @@ class SessionService:
             # Verify token type
             if payload.get("type") != "refresh":
                 raise ValueError(f"Expected refresh token, got: {payload.get('type')}")
+
+            # Age is capped by the CURRENT ttl, not only the token's own exp: tokens minted
+            # under an older, longer ttl must stop working as soon as the ttl is lowered.
+            issued_at = payload.get("iat", 0)
+            if datetime.now(timezone.utc).timestamp() - issued_at > self.refresh_token_ttl:
+                raise jwt.ExpiredSignatureError("Refresh token older than the current TTL")
 
             logger.debug(f"✅ Refresh token verified - user: {payload.get('sub')}")
             return payload

@@ -348,6 +348,12 @@ picks one per call), not raising this number. Two relay-only knobs, `os.getenv` 
 `load_settings()` (optional, not secrets): `VOICE_WEB_REASONING_EFFORT` and
 `VOICE_WEB_CALLER_OPENING`, both defaulting to match the phone path (`reasoning_effort` is `medium`
 on both voice paths as of 2026-09-27, no longer `high`).
+- **On a phone, `/cabinet/call` is the Cabinet's front door** (RFC §14): a bare `/cabinet` on a
+  touch device redirects there. The page is Home-Screen installable
+  (`/cabinet/call/manifest.webmanifest` + icon routes; the app has **no static folder**, so
+  `/static/*` 404s). Siri = a Shortcuts "Open URL" action. **The Cabinet session is capped at 24h
+  with no silent refresh** (owner rule: sensitive data), and refresh tokens older than the current
+  TTL are rejected. See `decisions/cabinet_session_24h_cap.md`.
 
 **Consolidation** — long-term memory formation: sliding window fills → batch to Cloud Tasks queue →
 ConsolidationAgent ("Life Chronicler") extracts facts/principles from raw messages (non-blocking).

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Alek Bot — Cabinet</title>
 
     <meta property="og:title" content="Alek Bot — Cabinet" />
@@ -265,34 +265,54 @@
           display: none; /* Hide top nav on very small screens, make bottom bar */
         }
 
+        /* A real tab bar: spans the viewport, equal columns, icon + short label. Always fits,
+           whatever the language — the old max-content pill ran off both screen edges. */
         .mobile-bottom-nav {
-          display: flex;
+          display: grid;
+          grid-auto-flow: column;
+          grid-auto-columns: 1fr;
           position: fixed;
-          bottom: 20px;
-          left: 50%;
-          transform: translateX(-50%);
+          left: 10px;
+          right: 10px;
+          bottom: calc(10px + env(safe-area-inset-bottom));
           background: var(--bg-panel);
           border: 1px solid var(--border-light);
           backdrop-filter: blur(20px);
           -webkit-backdrop-filter: blur(20px);
-          border-radius: 100px;
-          padding: 8px;
+          border-radius: 24px;
+          padding: 6px;
           box-shadow: var(--shadow-lg);
           z-index: 50;
-          width: max-content;
         }
 
         .mobile-bottom-nav .nav-item {
-          padding: 12px 24px;
+          min-width: 0;
+          padding: 6px 2px;
+          border-radius: 18px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 2px;
+          -webkit-tap-highlight-color: transparent;
         }
-      }
-      /* Five nav-items (incl. Call) at the default 12px/24px padding overflow a 375px-wide
-         phone screen (`.mobile-bottom-nav` is `width: max-content`, so it would rather push
-         past the viewport edge than wrap) — tighten horizontal padding only, only for this
-         bar, only below the width where it starts to matter. */
-      @media (max-width: 400px) {
-        .mobile-bottom-nav .nav-item {
-          padding: 12px 12px;
+        .mobile-bottom-nav .nav-item svg {
+          width: 24px;
+          height: 24px;
+        }
+        .mobile-bottom-nav .tab-label {
+          max-width: 100%;
+          font-size: 11px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .mobile-bottom-nav .nav-item.call-tab {
+          color: var(--accent-success);
+        }
+
+        /* `.app` raises specificity: the base .main-content rule comes later in the file. */
+        .app .main-content {
+          padding-bottom: calc(110px + env(safe-area-inset-bottom));
         }
       }
       @media (min-width: 768px) {
@@ -922,7 +942,7 @@
       <!-- Mac-like Floating Header -->
       <header class="header">
         <div class="logo">
-          <img src="/static/alek-logo.png" width="28" height="28"
+          <img src="/cabinet/call/icon-192.png" width="28" height="28"
                style="border-radius: 6px; object-fit: cover;" alt="Alek" />
           Alek
         </div>
@@ -976,32 +996,25 @@
 
       <!-- Mobile Bottom Nav -->
       <nav class="mobile-bottom-nav">
-        <button
-          class="nav-item active"
-          onclick="navigate('integrations')"
-          id="nav-mobile-integrations"
-        >
-          Integrations
+        <button class="nav-item active" onclick="navigate('integrations')" id="nav-mobile-integrations">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          <span class="tab-label">Integrations</span>
         </button>
-        <button
-          class="nav-item"
-          onclick="navigate('memory')"
-          id="nav-mobile-memory"
-        >
-          Memory
+        <button class="nav-item" onclick="navigate('memory')" id="nav-mobile-memory">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
+          <span class="tab-label">Memory</span>
         </button>
-        <button
-          class="nav-item hidden"
-          onclick="navigate('team')"
-          id="nav-mobile-team"
-        >
-          Team
+        <button class="nav-item hidden" onclick="navigate('team')" id="nav-mobile-team">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14c2.8 0 4.5 1.9 4.5 5"/></svg>
+          <span class="tab-label">Team</span>
         </button>
         <button class="nav-item" onclick="navigate('settings')" id="nav-mobile-settings">
-          Settings
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span class="tab-label">Settings</span>
         </button>
-        <button class="nav-item" onclick="location.href='/cabinet/call'" id="nav-mobile-call">
-          Call
+        <button class="nav-item call-tab" onclick="location.href='/cabinet/call'" id="nav-mobile-call">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          <span class="tab-label">Call</span>
         </button>
       </nav>
 
@@ -1723,15 +1736,15 @@
       // Selector → translation key (for static DOM elements)
       const I18N_SELECTORS = {
         "#nav-integrations":          "nav.integrations",
-        "#nav-mobile-integrations":   "nav.integrations",
+        "#nav-mobile-integrations .tab-label":   "nav.integrations",
         "#nav-memory":                "nav.memory",
-        "#nav-mobile-memory":         "nav.memory",
+        "#nav-mobile-memory .tab-label":         "nav.memory",
         "#nav-team":                  "nav.team",
-        "#nav-mobile-team":           "nav.team",
+        "#nav-mobile-team .tab-label":           "nav.team",
         "#nav-settings":              "nav.settings",
-        "#nav-mobile-settings":       "nav.settings",
+        "#nav-mobile-settings .tab-label":       "nav.settings",
         "#nav-call":                  "nav.call",
-        "#nav-mobile-call":           "nav.call",
+        "#nav-mobile-call .tab-label":           "nav.call",
         "#memory-title":              "memory.title",
         "#memory-subtitle":           "memory.subtitle",
         "#memory-search-btn":         "memory.search_btn",
@@ -2169,7 +2182,20 @@
       }
 
       /* ── Init ────────────────────────────────────────── */
+      // On a phone the Cabinet's front door is the call screen. Only a bare /cabinet redirects:
+      // ?tab= (the call screen's back link) and OAuth/invite return params stay here.
+      function redirectPhoneToCall() {
+        const qs = new URLSearchParams(window.location.search);
+        const isPhone = window.matchMedia("(max-width: 767px) and (pointer: coarse)").matches;
+        if (isPhone && [...qs.keys()].length === 0) {
+          window.location.replace("/cabinet/call");
+          return true;
+        }
+        return false;
+      }
+
       async function init() {
+        if (redirectPhoneToCall()) return;
         try {
           const res = await fetch(`${API}/auth/me`, { credentials: "include" });
           if (!res.ok) throw new Error("Not authenticated");
@@ -2203,7 +2229,8 @@
           if (qs.get("microsoft_todo_error"))
             showToast("To Do connection error", "error");
 
-          navigate("integrations");
+          const tab = qs.get("tab");
+          navigate(tab && document.getElementById(`section-${tab}`) ? tab : "integrations");
         } catch {
           showToast("Please log in first", "error");
           setTimeout(() => (window.location.href = "/auth/login"), 2000);
