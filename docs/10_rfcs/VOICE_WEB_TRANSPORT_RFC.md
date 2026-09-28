@@ -305,7 +305,8 @@ best-effort and idempotent:
 **Live-speech gate.** `build_persona_anchor`'s spoken paragraph now ends with: "Before you speak,
 check the wording and the meaning: would a real person say exactly this, in these words, in a
 live conversation? If not, rephrase until they would." — gated on `spoken_delivery` being present,
-so text-surface prompts are unaffected.
+so text-surface prompts are unaffected. (Kept when the rest of that paragraph was rewritten as a
+register description on 2026-09-28 — see `decisions/lelik_delivery_single_source.md`.)
 
 **Known gaps (deferred, from the round's ledger; not blocking):**
 - An answer that is **mid-injection** at call end (already taken off the pending/queued state,

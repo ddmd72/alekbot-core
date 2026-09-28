@@ -904,15 +904,11 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   me by name and ask how to help. Live, the same delivery rules as system text (anchor,
   `SPOKEN_DELIVERY`) left Lelik a narrator; the owner asking in-call changed him at once, and the
   model then keeps matching its own earlier turns. The first reply answers this item.
-  **Superseded 2026-09-28 (experiment):** the item is now only a cue to speak first — "Welcome the
-  user. Do not forget to follow language settings" — in English per repo rules, with the language
-  reminder so `LANG_MIRROR` does not mirror it. Delivery guidance is being consolidated into a single
-  place instead of three contradictory ones (token, opening, anchor): the spoken part of
-  `build_persona_anchor` now names a register (spontaneous phone call; uneven pacing, pitch rises on
-  key words, occasional disfluencies, felt-not-performed tone), and `SPOKEN_DELIVERY` in Firestore is
-  cut to call mechanics only (unreadable medium, confirm before irreversible actions, silence /
-  delegation hosting). Previous token content is backed up locally (gitignored); revert if live calls
-  get worse.
+  **Superseded 2026-09-28:** the item is now only a cue to speak first — "Welcome the user. Do not
+  forget to follow language settings" — in English per repo rules, with the language reminder so
+  `LANG_MIRROR` does not mirror it. Delivery guidance lives in one place, the spoken part of
+  `build_persona_anchor`; `SPOKEN_DELIVERY` keeps call mechanics only. Owner verdict on the live
+  call: "a radical improvement". See `decisions/lelik_delivery_single_source.md`.
 - **Every reply is started by the relay, behind a persona anchor.** `create_response` is off. On
   `input_audio_buffer.committed` the relay appends a `system` item, `build_persona_anchor(...)`
   (the same anchor the text path uses, which lists the persona sections present in the prompt,
