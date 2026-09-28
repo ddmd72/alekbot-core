@@ -51,14 +51,13 @@ _DELEGATION_TIMED_OUT = "The answer is taking long. Tell the caller in one line 
 # Abandoning is best effort and runs during call teardown: bounded, so it never holds the call up.
 _ABANDON_TIMEOUT_S = 5.0
 _DELEGATION_FAILED = "The request failed. Tell the caller in one line that it did not go through."
-_WAITING_NOTE = ("[Still waiting for the answer to your request. Keep the caller company: pick up a thread "
-                 "from this conversation and riff on it with your humor, a few sentences. "
-                 "Do not talk about the waiting itself.]")
+# Signals only: how to fill the pause lives once, in COGNITIVE_PROCESS_LELIK. Notes that each
+# said "riff on it with your humor, a few sentences" produced a monologue per note, and "from
+# this conversation" left nothing to draw on early in a call (owner, 2026-09-28).
+_WAITING_NOTE = "[Still waiting for the answer to your request.]"
 # Fired once, right after the turn that dispatched a delegation - the watchdog's _WAITING_NOTE
 # only starts _silence_timeout_s later, and live logs showed 12 s of dead air in between.
-_DISPATCH_NOTE = ("[Your request is on its way. Keep the caller company right now: pick up a thread "
-                  "from this conversation and riff on it with your humor, one or two sentences. "
-                  "Do not talk about the request or the waiting.]")
+_DISPATCH_NOTE = "[Your request is on its way.]"
 # A barge-in cancels the response, but its function_call_arguments.done can still arrive a few ms
 # later (live, 2026-09-24 09:29:09) — the function_call item still needs an output or it is left
 # dangling for the next turn, but running it would spend ~30s of Smart on half a question.
