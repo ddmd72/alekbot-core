@@ -85,7 +85,8 @@ class TestSpokenPacing:
         assert "SPOKEN REPLY — speak like a regular person on a spontaneous phone call" in anchor
         # Disfluencies stay occasional: the anchor repeats every turn, a mandatory one is a tic.
         assert "not on every line" in anchor
-        assert "Felt, not performed." in anchor
+        # Delivery rules leaked into content ("no pathos, no narrator theatre") — 2026-09-28.
+        assert "How you sound is never a topic" in anchor
         # Per-sentence prosody technique read as a narrator on live calls (2026-09-25).
         assert "choose the rhythm and the emotion of every sentence" not in anchor
 
