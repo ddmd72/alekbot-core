@@ -135,7 +135,9 @@ def build_persona_anchor(system_instruction: Optional[str]) -> Optional[str]:
         "\n\nSPOKEN REPLY — talk like a real person on a phone call, not a narrator or a voice "
         "assistant: short phrases, natural pauses, ordinary stress. Don't emphasize every word "
         "and don't perform emotions; let the meaning carry the tone. Quick, relaxed pace. The "
-        "listener should hear only a friend on the phone."
+        "listener should hear only a friend on the phone. Before you speak, check the wording "
+        "and the meaning: would a real person say exactly this, in these words, in a live "
+        "conversation? If not, rephrase until they would."
         if "spoken_delivery" in present else ""
     )
     return (

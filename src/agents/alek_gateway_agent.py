@@ -24,6 +24,12 @@ from .base_agent import BaseAgent
 if TYPE_CHECKING:
     from ..services.user_notification_service import UserNotificationService
 
+# The whole ask_alek path (gateway config + the message it routes to Router -> Smart; a message
+# timeout wins over each agent's own config, BaseAgent._execute_with_timeout). It must outlast the
+# relay's 300 s wait, since a later answer is posted to chat, stay under ~1200 s (the late-answer
+# markers' TTL plus margin) and under Cloud Run's 1800 s request timeout. Owner, 2026-09-28.
+ASK_ALEK_TIMEOUT_MS = 600_000
+
 # The spoken answer must not wait longer than this for its chat copy to land.
 _ANSWER_COPY_TIMEOUT_S = 5.0
 
@@ -67,7 +73,8 @@ class AlekGatewayAgent(BaseAgent):
             payload={"text": text, "attachments": []},
             # Smart builds its user turn from current_message_parts only.
             context={**message.context, "current_message_parts": [MessagePart(text=text)]},
-            timeout_ms=None,
+            # Explicit, so Smart's own 300 s config cap does not cut an answer the relay abandoned.
+            timeout_ms=ASK_ALEK_TIMEOUT_MS,
         )
         response = await self.coordinator.route_message(routed)
         if response.status != AgentStatus.SUCCESS:

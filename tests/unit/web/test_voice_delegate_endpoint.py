@@ -5,6 +5,7 @@ from quart import Quart
 
 import src.web.voice_control_plane_app as voice_control_plane_app
 from src.domain.request_context import get_current_account_id
+from src.domain.voice_delegation_outcome import VoiceDelegationOutcome
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 
 
@@ -30,9 +31,9 @@ async def test_delegate_runs_lelik_dispatch_inside_the_callers_request_context()
 
     async def delegate(**kwargs):
         seen.update(kwargs, account=get_current_account_id())
-        return "sunny"
+        return VoiceDelegationOutcome("sunny", False)
 
-    agent.delegate.side_effect = delegate
+    agent.delegate_outcome.side_effect = delegate
     provider = AsyncMock(return_value=agent)
     response = await _app(provider).post("/voice/delegate", json=_BODY, headers={"Authorization": "Bearer x"})
     assert response.status_code == 200
@@ -58,7 +59,7 @@ async def test_delegate_503_when_lelik_is_not_configured():
 @pytest.mark.asyncio
 async def test_delegate_500_when_dispatch_raises():
     agent = AsyncMock()
-    agent.delegate.side_effect = RuntimeError("boom")
+    agent.delegate_outcome.side_effect = RuntimeError("boom")
     response = await _app(AsyncMock(return_value=agent)).post(
         "/voice/delegate", json=_BODY, headers={"Authorization": "Bearer x"})
     assert response.status_code == 500
@@ -73,7 +74,7 @@ async def test_delegate_500_when_dispatch_raises():
 async def test_delegate_flushes_prompt_content_before_returning():
     prompt_content_store = AsyncMock()
     agent = AsyncMock()
-    agent.delegate.return_value = "sunny"
+    agent.delegate_outcome.return_value = VoiceDelegationOutcome("sunny", False)
     provider = AsyncMock(return_value=agent)
     response = await _app(provider, prompt_content_store=prompt_content_store).post(
         "/voice/delegate", json=_BODY, headers={"Authorization": "Bearer x"})
@@ -82,7 +83,7 @@ async def test_delegate_flushes_prompt_content_before_returning():
 
     prompt_content_store = AsyncMock()
     agent = AsyncMock()
-    agent.delegate.side_effect = RuntimeError("boom")
+    agent.delegate_outcome.side_effect = RuntimeError("boom")
     provider = AsyncMock(return_value=agent)
     response = await _app(provider, prompt_content_store=prompt_content_store).post(
         "/voice/delegate", json=_BODY, headers={"Authorization": "Bearer x"})
@@ -108,7 +109,7 @@ async def test_delegate_opens_span_with_intent_attribute(monkeypatch):
 
     monkeypatch.setattr(voice_control_plane_app, "start_span", fake_start_span)
     agent = AsyncMock()
-    agent.delegate.return_value = "sunny"
+    agent.delegate_outcome.return_value = VoiceDelegationOutcome("sunny", False)
     provider = AsyncMock(return_value=agent)
     response = await _app(provider).post("/voice/delegate", json=_BODY, headers={"Authorization": "Bearer x"})
     assert response.status_code == 200
@@ -124,7 +125,7 @@ async def test_delegate_flush_failure_does_not_change_the_response():
     prompt_content_store = AsyncMock()
     prompt_content_store.flush.side_effect = RuntimeError("flush boom")
     agent = AsyncMock()
-    agent.delegate.return_value = "sunny"
+    agent.delegate_outcome.return_value = VoiceDelegationOutcome("sunny", False)
     provider = AsyncMock(return_value=agent)
     response = await _app(provider, prompt_content_store=prompt_content_store).post(
         "/voice/delegate", json=_BODY, headers={"Authorization": "Bearer x"})

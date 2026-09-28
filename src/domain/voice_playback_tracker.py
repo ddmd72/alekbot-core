@@ -22,6 +22,8 @@ class PlaybackTracker:
 
     sent_bytes: int = 0
     played_bytes: int = 0
+    # Provider-format bytes per millisecond; μ-law 8 kHz unless the transport says otherwise.
+    bytes_per_ms: int = MULAW_8K_BYTES_PER_MS
 
     def record_sent(self, b64_payload: str) -> str:
         """Account one outbound chunk; returns the mark name to send after it."""
@@ -43,4 +45,4 @@ class PlaybackTracker:
 
     def played_ms_since(self, start_bytes: int) -> int:
         """Milliseconds heard of the audio sent after byte offset `start_bytes`."""
-        return max(self.played_bytes - start_bytes, 0) // MULAW_8K_BYTES_PER_MS
+        return max(self.played_bytes - start_bytes, 0) // self.bytes_per_ms

@@ -106,6 +106,12 @@ def load_settings():
         # same empty-string-default, gracefully-absent-for-now status as the TWILIO_*
         # keys above, not a bare-None secret the whole app depends on.
         "VOICE_RELAY_STREAM_URL": os.getenv("VOICE_RELAY_STREAM_URL", ""),
+        # Cloudflare Calls SFU (VOICE_WEB_TRANSPORT_RFC.md) — mints the browser's SFU
+        # session token for web calls. Same graceful-absence status as the TWILIO_*/
+        # VOICE_RELAY_STREAM_URL keys above: main.py skips registering the web-call
+        # blueprint when either is missing, so the app boots exactly as before.
+        "CLOUDFLARE_SFU_APP_ID": os.getenv("CLOUDFLARE_SFU_APP_ID", ""),
+        "CLOUDFLARE_SFU_APP_SECRET": os.getenv("CLOUDFLARE_SFU_APP_SECRET", ""),
     }
 
     if settings["GOOGLE_CLOUD_PROJECT"] and not env_config.use_emulator:

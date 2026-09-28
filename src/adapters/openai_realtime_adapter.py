@@ -3,6 +3,7 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 import websockets
 
+from src.domain.voice_audio_format import MULAW_8K, AudioFormat
 from src.domain.voice_audio_frame import AudioFrame
 from src.ports.realtime_session_port import RealtimeSessionEvent, RealtimeSessionPort
 from src.utils.logger import logger
@@ -144,14 +145,25 @@ def _flatten_usage(usage: dict) -> Dict[str, int]:
     }
 
 
+def _wire_format(audio_format: AudioFormat) -> Dict[str, Any]:
+    """Converts AudioFormat to OpenAI Realtime's wire format.
+
+    OpenAI GA shape: μ-law carries no rate; PCM names its rate (24 kHz is the provider's own).
+    """
+    if audio_format.encoding == "audio/pcmu":
+        return {"type": "audio/pcmu"}
+    return {"type": audio_format.encoding, "rate": audio_format.sample_rate_hz}
+
+
 class OpenAIRealtimeAdapter(RealtimeSessionPort):
     """RealtimeSessionPort against OpenAI's Realtime API (GA session shape,
     verified live during Phase 0 spikes - see RFC §4.7 and §9)."""
 
-    def __init__(self, api_key: str, model: str = _MODEL, ws_connect: Callable = websockets.connect) -> None:
+    def __init__(self, api_key: str, model: str = _MODEL, ws_connect: Callable = websockets.connect, audio_format: AudioFormat = MULAW_8K) -> None:
         self._api_key = api_key
         self._model = model
         self._connect = ws_connect
+        self._audio_format = audio_format
         self._ws = None
 
     async def open(self, instructions: str, reasoning_effort: str, tools: List[dict]) -> None:
@@ -168,11 +180,11 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
                 # reference and realtime-conversations guide (checked 2026-09-21), not inferred
                 # from this repo's Phase 0 spike data.
                 "input": {
-                    "format": {"type": "audio/pcmu"},
+                    "format": _wire_format(self._audio_format),
                     "transcription": {"model": _TRANSCRIPTION_MODEL},
                     "turn_detection": _TURN_DETECTION,
                 },
-                "output": {"format": {"type": "audio/pcmu"}, "voice": _VOICE, "speed": _SPEED},
+                "output": {"format": _wire_format(self._audio_format), "voice": _VOICE, "speed": _SPEED},
             },
             "reasoning": {"effort": reasoning_effort},
             "instructions": _strip_cache_boundary(instructions),
@@ -201,7 +213,9 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
         event_type = event.get("type")
         if event_type in ("response.output_audio.delta", "response.audio.delta"):
             payload = event.get("delta") or event.get("audio")
-            frame = AudioFrame(encoding="audio/pcmu", sample_rate_hz=8000, payload=payload, track="outbound")
+            frame = AudioFrame(encoding=self._audio_format.encoding,
+                               sample_rate_hz=self._audio_format.sample_rate_hz,
+                               payload=payload, track="outbound")
             return RealtimeSessionEvent(
                 type="audio_delta", payload={"frame": frame, "item_id": event.get("item_id")}
             )

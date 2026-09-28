@@ -286,6 +286,15 @@
           padding: 12px 24px;
         }
       }
+      /* Five nav-items (incl. Call) at the default 12px/24px padding overflow a 375px-wide
+         phone screen (`.mobile-bottom-nav` is `width: max-content`, so it would rather push
+         past the viewport edge than wrap) — tighten horizontal padding only, only for this
+         bar, only below the width where it starts to matter. */
+      @media (max-width: 400px) {
+        .mobile-bottom-nav .nav-item {
+          padding: 12px 12px;
+        }
+      }
       @media (min-width: 768px) {
         .mobile-bottom-nav {
           display: none;
@@ -939,6 +948,9 @@
           <button class="nav-item" onclick="navigate('settings')" id="nav-settings">
             Settings
           </button>
+          <button class="nav-item" onclick="location.href='/cabinet/call'" id="nav-call">
+            Call
+          </button>
         </nav>
 
         <div class="user-profile">
@@ -987,6 +999,9 @@
         </button>
         <button class="nav-item" onclick="navigate('settings')" id="nav-mobile-settings">
           Settings
+        </button>
+        <button class="nav-item" onclick="location.href='/cabinet/call'" id="nav-mobile-call">
+          Call
         </button>
       </nav>
 
@@ -1448,6 +1463,7 @@
           "nav.memory": "Memory",
           "nav.team": "Team",
           "nav.settings": "Settings",
+          "nav.call": "Call",
           "memory.title": "Your Memory",
           "memory.subtitle": "Search, manage, and refine the knowledge base Alek uses to assist you.",
           "memory.search_btn": "Search",
@@ -1512,6 +1528,7 @@
           "nav.memory": "Пам\u2019ять",
           "nav.team": "Команда",
           "nav.settings": "Налаштування",
+          "nav.call": "Дзвінок",
           "memory.title": "Ваша пам\u2019ять",
           "memory.subtitle": "Шукайте, керуйте та вдосконалюйте базу знань, яку Alek використовує для вашої допомоги.",
           "memory.search_btn": "Пошук",
@@ -1576,6 +1593,7 @@
           "nav.memory": "M\u00e9moire",
           "nav.team": "\u00c9quipe",
           "nav.settings": "Param\u00e8tres",
+          "nav.call": "Appel",
           "memory.title": "Votre m\u00e9moire",
           "memory.subtitle": "Recherchez, g\u00e9rez et affinez la base de connaissances qu'Alek utilise.",
           "memory.search_btn": "Rechercher",
@@ -1640,6 +1658,7 @@
           "nav.memory": "Memoria",
           "nav.team": "Equipo",
           "nav.settings": "Ajustes",
+          "nav.call": "Llamar",
           "memory.title": "Tu memoria",
           "memory.subtitle": "Busca, gestiona y perfecciona la base de conocimiento que usa Alek.",
           "memory.search_btn": "Buscar",
@@ -1711,6 +1730,8 @@
         "#nav-mobile-team":           "nav.team",
         "#nav-settings":              "nav.settings",
         "#nav-mobile-settings":       "nav.settings",
+        "#nav-call":                  "nav.call",
+        "#nav-mobile-call":           "nav.call",
         "#memory-title":              "memory.title",
         "#memory-subtitle":           "memory.subtitle",
         "#memory-search-btn":         "memory.search_btn",

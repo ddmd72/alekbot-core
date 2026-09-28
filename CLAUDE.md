@@ -298,8 +298,17 @@ persona or language change applies to both. Lelik has only two tokens of his own
 - **`resolve_late_answer`** (`VoiceSessionService`) is the one seam for the delegation-answer policy
   (RFC §4.7): a `response.create` while a response is already active is a call-ending provider error,
   so it queues the answer when the model is mid-turn and injects + replies otherwise.
-- **The relay's own delegation timeout is 90 s** (`asyncio.wait_for` in `VoiceSessionService._fetch_answer`)
-  — the only authoritative limit; the HTTP client and the gateway only have to outlast it.
+- **The relay's own delegation timeout is 300 s** (`asyncio.wait_for` in
+  `VoiceSessionService._fetch_answer`, raised from 90 s after UAT round 1, 2026-09-28) — the HTTP
+  client (330 s) and the `ask_alek` path's own 600 s ceiling (`ASK_ALEK_TIMEOUT_MS` on the
+  gateway's `AgentConfig` + the routed message's `timeout_ms`) both outlast it. A delegation that
+  finishes after the relay stops waiting (timeout, or call end) is posted to the caller's chat
+  instead of being discarded — both sides write a marker and whichever claims the finished result
+  with an atomic `get_and_delete` posts it exactly once; see RFC §12.
+- **The dispatch filler** (`_DISPATCH_NOTE`) fires immediately after a turn that dispatches a
+  delegation, so Lelik keeps talking during the 12 s+ gap before the silence watchdog's own
+  `_WAITING_NOTE` would otherwise fire — at the cost of even a sub-second answer now waiting
+  behind the filler's own reply for the next response slot.
 - **`mode` is stripped** from delegate arguments before dispatch (`LelikAgent.delegate`): `AgentWorkerHandler`
   delivers only generator-declared intents, so a SYNC-declared intent forced into `mode: "later"` would
   have nowhere to return its answer and silently drop it on the phone.
@@ -313,6 +322,25 @@ persona or language change applies to both. Lelik has only two tokens of his own
   text leg, never additive. RFC: `docs/10_rfcs/VOICE_COMPANION_RFC.md`. Deployment prerequisites
   (relay service, `VOICE_RELAY_STREAM_URL`'s two-pass first deploy, Twilio secrets):
   `docs/07_deployment/README.md`.
+
+**Voice web transport** (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) — a second call kind, a
+Cabinet call page over WebRTC, next to the Twilio phone path, sharing the same `VoiceSessionService`
+and Lelik persona. Cloudflare's Realtime SFU dials the same relay's `/sfu/*` routes (not a new
+deploy unit); `SfuStreamHandler` pairs the ingest/egress WebSocket legs by ticket and drives
+`PacedAudioOutlet` for provider→browser pacing at wideband PCM (24 kHz to the model, 48 kHz stereo
+to the SFU), vs. Twilio's narrowband μ-law. Main-service side: `MediaRoomPort` /
+`CloudflareSfuAdapter` mint SFU sessions over HTTPS. `VoiceCallSetupService` (extracted from the
+Twilio webhook's inline setup) does persona + ticket prep (`prepare`, keyed by `call_kind`
+`phone`/`web` so the pickup note and summary header read right) for both entry points; the web path
+also uses it for the one-call marker, while Twilio's `/voice/auth`, `/voice/inbound-status` and AMD
+paths still manage marker and ticket inline. The web marker holds a short setup TTL and is extended
+to the call TTL only when the relay redeems the ticket in `/voice/session-config`. Because both SFU legs must land on the same process, the relay's
+`--max-instances=1` (already required for other reasons) is now also a **pairing constraint**, not
+just a cost choice — scaling calls up means relay shards (N single-instance relays, main service
+picks one per call), not raising this number. Two relay-only knobs, `os.getenv` not
+`load_settings()` (optional, not secrets): `VOICE_WEB_REASONING_EFFORT` and
+`VOICE_WEB_CALLER_OPENING`, both defaulting to match the phone path (`reasoning_effort` is `medium`
+on both voice paths as of 2026-09-27, no longer `high`).
 
 **Consolidation** — long-term memory formation: sliding window fills → batch to Cloud Tasks queue →
 ConsolidationAgent ("Life Chronicler") extracts facts/principles from raw messages (non-blocking).
