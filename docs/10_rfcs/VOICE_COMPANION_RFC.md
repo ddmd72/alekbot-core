@@ -926,8 +926,15 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   the caller speaks — **except while a delegation is pending**, when it re-arms on its own and keeps
   firing a bare "still waiting" note instead (since 2026-09-28 the note is a signal only; how to
   fill the pause — one short line drawn from what Lelik knows about the caller, a plain "still
-  coming" now and then — lives once, in `COGNITIVE_PROCESS_LELIK`), so a slow specialist never
-  leaves dead air. It stands down while an answer is
+  coming" now and then, never two pauses on the same topic — lives once, in
+  `COGNITIVE_PROCESS_LELIK`; the gap between notes is drawn from 8–15 s, `waiting_gap_max_s`, so
+  they do not land on a metronome beat), so a slow specialist never leaves dead air.
+- **The greeting's first 3 s cannot be interrupted** (`greeting_guard_s`, 2026-09-28). On web calls
+  the browser's echo canceller adapts during the first second or two of far-end audio — which is
+  the greeting — so Lelik's own voice came back as the caller ("Радий…" transcribed as "Radi."),
+  sustained past `barge_in_min_speech_s`, cut the greeting and got a second greeting in reply.
+  Speech that starts inside the guard is dismissed like a blip; the caller opening asks for a
+  one-sentence greeting so the guard never traps the caller in a long one. It stands down while an answer is
   mid-injection (`answers_in_flight`), so an arriving answer always wins the reply slot instead of
   being buried under a waiting note. A **late** answer — injected after the caller has spoken again
   — names the request it answers (`intent: query`, truncated) rather than reading as a reply to

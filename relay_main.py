@@ -58,9 +58,10 @@ from src.utils.logger import logger
 _THINKING_CUE_PATH = Path(__file__).parent / "src" / "assets" / "voice" / "thinking_cue.ulaw"
 
 # The owner's first turn of every call: only a cue for Lelik to speak first (owner's wording,
-# 2026-09-28). Delivery rules no longer ride here — one place for them, not three. The language
+# 2026-09-28). Delivery rules no longer ride here — one place for them, not three. "One short
+# sentence" because the greeting's first seconds cannot be interrupted (greeting_guard_s). The language
 # reminder matters: this English item is the first input, and LANG_MIRROR would otherwise mirror it.
-_CALLER_OPENING = "Welcome the user. Do not forget to follow language settings"
+_CALLER_OPENING = "Welcome the user in one short sentence. Do not forget to follow language settings"
 
 
 def _load_thinking_cue() -> bytes:
@@ -103,6 +104,12 @@ async def main() -> None:
         # After the one "still there?", this much more silence hangs up (voicemail, a phone put down).
         hangup_after_silence_s=20.0,
         caller_opening=_CALLER_OPENING,
+        # Owner's call 2026-09-28: while a delegation is out, each "still waiting" note comes after
+        # a random 8-15 s of quiet (silence_timeout_s is the floor), not on a fixed beat.
+        waiting_gap_max_s=15.0,
+        # Owner's call 2026-09-28: speech in the greeting's first 3 s never interrupts it — the
+        # browser's echo canceller is still adapting and Lelik's own voice came back as the caller.
+        greeting_guard_s=3.0,
         # Owner's call 2026-09-28: an ask_alek took 105 s live and was lost at 90 s. What still
         # outlasts this is posted to the user's chat by the main service.
         delegation_timeout_s=300.0,
@@ -127,6 +134,8 @@ async def main() -> None:
         barge_in_min_speech_s=1.0,
         hangup_after_silence_s=20.0,
         caller_opening=web_opening,
+        waiting_gap_max_s=15.0,
+        greeting_guard_s=3.0,
         # Owner's call 2026-09-28: same 300 s as the phone path.
         delegation_timeout_s=300.0,
     )
