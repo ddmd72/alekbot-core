@@ -275,9 +275,11 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
   the heard milliseconds from `PlaybackTracker` (Twilio `mark` echoes) *before* clearing, then runs
   `clear` → `response.cancel` → `conversation.item.truncate`, so the model knows where it was cut
   off. Only speech lasting 1 s interrupts (`barge_in_min_speech_s`); shorter blips are dismissed and
-  their turn gets no reply. A relay-side watchdog handles silence (the provider's `idle_timeout_ms` is server_vad-only):
+  their turn gets no reply. Speech that starts in the greeting's first 3 s never interrupts it
+  (`greeting_guard_s`): the browser's echo canceller is still adapting, and Lelik's own greeting came
+  back as the caller and made him greet twice. A relay-side watchdog handles silence (the provider's `idle_timeout_ms` is server_vad-only):
   8 s of quiet after playback ends injects one system note (and 20 s more of silence after it hangs up) — except while a delegation is pending,
-  when it re-arms on its own and has Lelik keep the caller company instead, standing down while an answer is
+  when it re-arms on its own after a random 8–15 s (`waiting_gap_max_s`) and has Lelik fill the pause instead, standing down while an answer is
   mid-injection so the answer always wins the reply slot; a tool call from a response the caller
   already barged into is answered "not run" rather than dispatched. A breath-pulse "thinking cue"
   for silent gaps is built but OFF (`relay_main.py` does not pass the clip): with it on, replies

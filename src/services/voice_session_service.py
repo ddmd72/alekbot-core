@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import random
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Awaitable, Callable, Dict, List, NamedTuple, Optional, Set
@@ -91,6 +92,8 @@ class _CallState:
     response_reason: str = ""
     response_audible: bool = False  # the active response has sent its first audio
     response_started_at: float = 0.0
+    greeting_audible_at: Optional[float] = None
+    speech_in_greeting_guard: bool = False
     # loop.time() until which cue audio may still be queued at Twilio: cleared before speech.
     cue_tail_until: float = 0.0
     caller_speaking: bool = False
@@ -128,6 +131,8 @@ class VoiceSessionService:
         barge_in_min_speech_s: float = 0.0,
         hangup_after_silence_s: Optional[float] = None,
         caller_opening: Optional[str] = None,
+        waiting_gap_max_s: Optional[float] = None,
+        greeting_guard_s: float = 0.0,
     ) -> None:
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
@@ -140,6 +145,24 @@ class VoiceSessionService:
         self._barge_in_min_speech_s = barge_in_min_speech_s
         self._hangup_after_silence_s = hangup_after_silence_s
         self._caller_opening = caller_opening
+        self._waiting_gap_max_s = waiting_gap_max_s
+        self._greeting_guard_s = greeting_guard_s
+
+    def _in_greeting_guard(self, state: "_CallState") -> bool:
+        # The browser's echo canceller adapts over the first second or two of far-end audio, and
+        # the greeting is the call's first sound: live web calls heard Lelik's own "Радий" back as
+        # the caller ("Radi."), cut the greeting and greeted twice (2026-09-28). Speech that starts
+        # this early in the greeting never interrupts it.
+        if self._greeting_guard_s <= 0 or state.response_reason != "pickup" or state.greeting_audible_at is None:
+            return False
+        return asyncio.get_running_loop().time() - state.greeting_audible_at < self._greeting_guard_s
+
+    def _next_waiting_gap(self) -> float:
+        # While a delegation is out, notes at a fixed beat read as a metronome (owner, 2026-09-28):
+        # each gap is drawn from [silence_timeout_s, waiting_gap_max_s].
+        if self._waiting_gap_max_s is None or self._waiting_gap_max_s <= self._silence_timeout_s:
+            return self._silence_timeout_s
+        return random.uniform(self._silence_timeout_s, self._waiting_gap_max_s)
 
     async def handle_call(
         self,
@@ -289,8 +312,11 @@ class VoiceSessionService:
                 # seconds before Twilio finishes playing it, so gating on response_active
                 # alone let the whole tail play over the caller (first live call, 2026-09-22).
                 state.speech_dismissed = False
+                state.speech_in_greeting_guard = False
                 if state.response_active or not state.playback.caught_up:
-                    if self._barge_in_min_speech_s > 0:
+                    if self._in_greeting_guard(state):
+                        state.speech_in_greeting_guard = True
+                    elif self._barge_in_min_speech_s > 0:
                         # A line blip or an "uh-huh" also starts speech; only sustained speech
                         # interrupts (live, 2026-09-25: replies cut by 400 ms noises).
                         if state.pending_barge_in is None:
@@ -303,7 +329,11 @@ class VoiceSessionService:
                 state.cue_tail_until = 0.0
             elif event.type == "speech_stopped":
                 state.caller_speaking = False
-                if state.pending_barge_in is not None and not state.pending_barge_in.done():
+                if state.speech_in_greeting_guard:
+                    state.speech_in_greeting_guard = False
+                    state.speech_dismissed = True
+                    logger.info(f"voice call {ticket}: speech during the greeting's first seconds, not an interruption")
+                elif state.pending_barge_in is not None and not state.pending_barge_in.done():
                     state.pending_barge_in.cancel()
                     state.pending_barge_in = None
                     state.speech_dismissed = True
@@ -318,7 +348,9 @@ class VoiceSessionService:
             elif event.type == "audio_delta":
                 if not state.response_audible:
                     state.response_audible = True
-                    elapsed_ms = round((asyncio.get_running_loop().time() - state.response_started_at) * 1000)
+                    if state.response_reason == "pickup":
+                        state.greeting_audible_at = asyncio.get_running_loop().time()
+                    elapsed_ms =round((asyncio.get_running_loop().time() - state.response_started_at) * 1000)
                     logger.info(f"voice call {ticket}: first audio after {elapsed_ms} ms ({state.response_reason})")
                     if self._cue_tail_queued(state):
                         # Only cue audio can be queued here (the cue plays only once playback caught up).
@@ -452,6 +484,7 @@ class VoiceSessionService:
         # pending every note re-arms it, so Lelik keeps the caller company until the answer.
         loop = asyncio.get_running_loop()
         quiet_since = loop.time()
+        waiting_gap = self._next_waiting_gap()
         while True:
             await asyncio.sleep(_WATCHDOG_TICK_S)
             now = loop.time()
@@ -464,11 +497,13 @@ class VoiceSessionService:
                 # The one "still there?" went unanswered: a voicemail box or a phone put down.
                 logger.info(f"voice call {state.ticket}: hanging up after {round(now - quiet_since)} s of silence")
                 return
-            if (state.silence_prompted and not state.delegations) or now - quiet_since < self._silence_timeout_s:
+            limit = waiting_gap if state.delegations else self._silence_timeout_s
+            if (state.silence_prompted and not state.delegations) or now - quiet_since < limit:
                 continue
             state.silence_prompted = True
             quiet_since = now
             if state.delegations:
+                waiting_gap = self._next_waiting_gap()
                 await self._start_response(session, state, _WAITING_NOTE, "waiting")
             else:
                 note = _SILENCE_NOTE.format(seconds=round(self._silence_timeout_s))
