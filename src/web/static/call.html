@@ -395,7 +395,8 @@
       /* ── Ringback ─────────────────────────────────────── */
       // Spain dial tone: 425 Hz, 1.5 s on / 3.0 s off. Plays from Call tap until the first
       // audible sound from Lelik (not until the WebRTC connection — the relay sends digital
-      // silence frames before he actually speaks), or hang-up/error/ended/pagehide.
+      // silence frames before he actually speaks), or hang-up/error/ended/pagehide. Capped to
+      // at most RINGBACK_LIVE_CAP_MS past "Live" regardless — it must never ring indefinitely.
       const RINGBACK_FREQ_HZ = 425;
       const RINGBACK_ON_S = 1.5;
       const RINGBACK_OFF_S = 3.0;
@@ -404,21 +405,22 @@
       const AUDIBLE_RMS_THRESHOLD = 0.02;
       const AUDIBLE_SUSTAIN_MS = 150;
       const AUDIBLE_POLL_MS = 50;
+      const RINGBACK_LIVE_CAP_MS = 8000;
 
       // One AudioContext for the page's lifetime (iOS requires it to be created — or, if
       // already created, resumed — synchronously inside a user-gesture handler; a call page
       // reuses the same context across calls rather than creating a new one each time).
+      // Used ONLY for the ringback tone and for tapping the remote track to detect Lelik's
+      // first sound — never for playback. The <audio id="remote-audio"> element is the sole
+      // playback path for Lelik's voice, so a suspended/interrupted AudioContext (iOS screen
+      // lock, a Siri/phone interruption) can never make the call go silent, and the browser's
+      // own echo cancellation — which covers normal <audio>/<video> element output but not
+      // audio routed through Web Audio — keeps covering it.
       let audioCtx = null;
       let ringOsc = null;
       let ringGain = null;
       let ringLoopTimer = null;
       let ringActive = false;
-      // The remote <audio> element can only ever be captured by Web Audio once — Safari also
-      // requires the remote WebRTC track to be routed through the <audio> element (already
-      // done via remoteAudio.srcObject) for this analysis to work at all. Created lazily and
-      // kept for the page's lifetime.
-      let remoteSource = null;
-      let remoteAnalyser = null;
       let audibleMonitorTimer = null;
       let audibleAboveSince = null;
 
@@ -428,7 +430,9 @@
           if (!Ctx) return null;
           if (!audioCtx) {
             audioCtx = new Ctx();
-          } else if (audioCtx.state === "suspended") {
+          } else if (audioCtx.state === "suspended" || audioCtx.state === "interrupted") {
+            // "interrupted" is Safari/iOS-specific (e.g. a phone call or Siri took the audio
+            // session) — resume covers both that and a plain browser-initiated suspend.
             audioCtx.resume().catch(() => {});
           }
           return audioCtx;
@@ -445,23 +449,20 @@
         ringGain.gain.setValueAtTime(0, now + RINGBACK_ON_S);
       }
 
-      function ensureRemoteAnalyser() {
-        if (remoteAnalyser) return remoteAnalyser;
+      function buildRemoteAnalyser(track) {
+        // A fresh tap per call, built from a fresh MediaStream wrapping the just-arrived
+        // track — connected ONLY to the analyser, never to ctx.destination. This is purely a
+        // measurement tap: Lelik's actual playback goes through remoteAudio.srcObject
+        // (the <audio> element), completely independent of this graph and of audioCtx's state.
         if (!audioCtx) return null;
         try {
-          if (!remoteSource) {
-            remoteSource = audioCtx.createMediaElementSource(remoteAudio);
-            // Capturing the element for analysis reroutes its output into the Web Audio
-            // graph instead of the element's own playback path — reconnect to destination
-            // explicitly or Lelik goes silent the moment analysis starts.
-            remoteSource.connect(audioCtx.destination);
-          }
-          remoteAnalyser = audioCtx.createAnalyser();
-          remoteAnalyser.fftSize = 512;
-          remoteSource.connect(remoteAnalyser);
-          return remoteAnalyser;
+          const source = audioCtx.createMediaStreamSource(new MediaStream([track]));
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 512;
+          source.connect(analyser);
+          return analyser;
         } catch (e) {
-          // Analysis unavailable — ringback still stops on hangup/error/ended/pagehide below.
+          // Analysis unavailable — the Live-time fallback below stops ringback instead.
           return null;
         }
       }
@@ -474,9 +475,10 @@
         audibleAboveSince = null;
       }
 
-      function startAudibleMonitor() {
+      function startAudibleMonitor(track) {
+        if (!ringActive) return; // ringback already stopped — nothing to watch for anymore
         if (audibleMonitorTimer) return; // already watching
-        const analyser = ensureRemoteAnalyser();
+        const analyser = buildRemoteAnalyser(track);
         if (!analyser) return;
         const data = new Float32Array(analyser.fftSize);
         audibleMonitorTimer = setInterval(() => {
@@ -510,7 +512,8 @@
           ringActive = true;
           scheduleRingCycle();
           ringLoopTimer = setInterval(scheduleRingCycle, RINGBACK_CYCLE_MS);
-          startAudibleMonitor();
+          // Audible-detection monitoring itself starts later, once pc.ontrack hands us the
+          // actual remote track to tap.
         } catch (e) {
           ringActive = false;
           // WebAudio unavailable/blocked — the call proceeds without a ringback tone.
@@ -518,10 +521,11 @@
       }
 
       function stopRingback() {
-        // Idempotent and safe to call from multiple sites (audible detection, hangup, error,
-        // ended, pagehide) — never restarted once stopped for the rest of this call. Only the
-        // oscillator/gain and the poll timer are torn down; audioCtx and the remote-audio
-        // routing stay up so Lelik keeps being audible for the rest of the call.
+        // Idempotent and safe to call from multiple sites (audible detection, Live-time
+        // fallback/cap, hangup, error, ended, pagehide) — never restarted once stopped for the
+        // rest of this call. Only the oscillator/gain and the poll timer are torn down;
+        // audioCtx is untouched here (endCall() owns suspending it) and Lelik's playback was
+        // never routed through it in the first place.
         if (!ringActive) return;
         ringActive = false;
         if (ringLoopTimer) {
@@ -610,6 +614,17 @@
 
       async function endCall(notifyServer) {
         stopRingback();
+        // Unconditional, not only via stopRingback(): stopRingback() no-ops once ringback has
+        // already stopped (audible detection, or the Live-time fallback/cap below), but the
+        // monitor timer must always be cleared here regardless, so it can never outlive the call.
+        stopAudibleMonitor();
+        if (audioCtx) {
+          // Guarded — suspending an already-suspended/closed context, or one that never
+          // started, must never throw. Resumed on the next Call tap (ensureAudioContext).
+          try {
+            audioCtx.suspend().catch(() => {});
+          } catch (e) {}
+        }
         stopStatusPolling();
         inCall = false;
         const endingCallId = callId;
@@ -663,6 +678,8 @@
             : { audio: AUDIO_PROCESSING };
           localStream = await navigator.mediaDevices.getUserMedia(constraints);
         } catch (e) {
+          if (myToken !== callToken) return; // superseded by a manual hang up — don't touch
+          // storage/UI or retry getUserMedia for a call that's already been abandoned
           if (savedMic && (e.name === "OverconstrainedError" || e.name === "NotFoundError")) {
             // The saved device is gone (unplugged, permission revoked for it, etc.) — clear
             // the stale choice and fall back to the default mic rather than failing the call.
@@ -671,7 +688,7 @@
             try {
               localStream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_PROCESSING });
             } catch (e2) {
-              if (myToken !== callToken) return; // superseded by a manual hang up
+              if (myToken !== callToken) return; // superseded during the retry's permission prompt
               inCall = false;
               stopRingback();
               setState(t("state.mic_blocked"));
@@ -679,7 +696,6 @@
               return;
             }
           } else {
-            if (myToken !== callToken) return; // superseded by a manual hang up
             inCall = false;
             stopRingback();
             setState(t("state.mic_blocked"));
@@ -706,8 +722,10 @@
             bundlePolicy: "max-bundle",
           });
           pc.ontrack = (ev) => {
+            // The sole playback path for Lelik's voice — independent of audioCtx.
             remoteAudio.srcObject = new MediaStream([ev.track]);
-            startAudibleMonitor();
+            // A separate tap on the same track, for ringback's audible-detection only.
+            startAudibleMonitor(ev.track);
           };
           const tx = pc.addTransceiver(localStream.getAudioTracks()[0], { direction: "sendonly" });
 
@@ -776,6 +794,21 @@
           setState(t("state.live"));
           renderButton("live");
           statusTimer = setInterval(pollStatus, 2000);
+
+          // Ringback safety net: if nothing ever started watching for Lelik's first sound
+          // (analyser creation failed, or AudioContext unavailable/blocked), don't ring
+          // indefinitely — stop right now that the call is confirmed live. Otherwise cap it:
+          // ringback must never keep playing more than RINGBACK_LIVE_CAP_MS past Live even if
+          // audible detection never fires for some other reason.
+          if (!audibleMonitorTimer) {
+            stopRingback();
+          } else {
+            setTimeout(() => {
+              // Guarded by this call's own token — without it, a cap timer left over from an
+              // earlier call could fire during a freshly-started one and cut its ringback short.
+              if (myToken === callToken) stopRingback();
+            }, RINGBACK_LIVE_CAP_MS);
+          }
         } catch (e) {
           if (myToken !== callToken) return; // superseded by a manual hang up already handled
           if (!handledState) {
