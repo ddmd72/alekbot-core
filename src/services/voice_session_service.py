@@ -3,7 +3,7 @@ import base64
 import json
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Awaitable, Callable, List, NamedTuple, Optional, Set
+from typing import AsyncIterator, Awaitable, Callable, Dict, List, NamedTuple, Optional, Set
 
 from src.domain.llm import build_persona_anchor
 from src.domain.request_context import RequestContext
@@ -22,6 +22,8 @@ _SILENCE_NOTE = "[The caller has been silent for {seconds} seconds.]"
 # few seconds before the media stream exists and is never heard, and waiting for another
 # one left both sides silent for 10-20 s on every live call (2026-09-23).
 _PICKUP_NOTE = "[The caller has just picked up the phone you called. Speak first.]"
+# The web page (VOICE_WEB_TRANSPORT_RFC §5.3 #6): the caller pressed "call"; Lelik still opens.
+_WEB_PICKUP_NOTE = "[The caller has just connected to you from the web page. Speak first.]"
 _WATCHDOG_TICK_S = 0.25
 # Thinking cue: 20 ms μ-law frames, paced in real time with a short lead, so stopping it
 # never leaves more than ~100 ms queued in front of Lelik's first word.
@@ -38,16 +40,25 @@ _CALL_CONTEXT_TURNS = 6
 _LATE_ANSWER_NOTE = "[The answer to your earlier request ({request}) just arrived: {output}]"
 # Distinct from _LATE_ANSWER_NOTE: formatting the timeout/failure sentinels into it read as
 # self-contradicting ("just arrived: No answer arrived in time...").
-_LATE_TIMEOUT_NOTE = ("[Your earlier request ({request}) got no answer in time. Tell the caller in "
-                       "one line that it did not come through.]")
+# The relay stopped waiting, not the main service: the answer still comes, to the user's chat
+# (the main side posts it once the relay abandons the delegation, owner 2026-09-28).
+_LATE_TIMEOUT_NOTE = ("[Your earlier request ({request}) is taking long. Tell the caller in one line "
+                      "that the answer will come to their chat.]")
 _LATE_FAILURE_NOTE = ("[Your earlier request ({request}) failed. Tell the caller in one line that it "
                       "did not go through.]")
 _REQUEST_LABEL_CHARS = 120
-_DELEGATION_TIMED_OUT = "No answer arrived in time. Tell the caller in one line that it did not come through."
+_DELEGATION_TIMED_OUT = "The answer is taking long. Tell the caller in one line that it will come to their chat."
+# Abandoning is best effort and runs during call teardown: bounded, so it never holds the call up.
+_ABANDON_TIMEOUT_S = 5.0
 _DELEGATION_FAILED = "The request failed. Tell the caller in one line that it did not go through."
 _WAITING_NOTE = ("[Still waiting for the answer to your request. Keep the caller company: pick up a thread "
                  "from this conversation and riff on it with your humor, a few sentences. "
                  "Do not talk about the waiting itself.]")
+# Fired once, right after the turn that dispatched a delegation - the watchdog's _WAITING_NOTE
+# only starts _silence_timeout_s later, and live logs showed 12 s of dead air in between.
+_DISPATCH_NOTE = ("[Your request is on its way. Keep the caller company right now: pick up a thread "
+                  "from this conversation and riff on it with your humor, one or two sentences. "
+                  "Do not talk about the request or the waiting.]")
 # A barge-in cancels the response, but its function_call_arguments.done can still arrive a few ms
 # later (live, 2026-09-24 09:29:09) — the function_call item still needs an output or it is left
 # dangling for the next turn, but running it would spend ~30s of Smart on half a question.
@@ -96,6 +107,9 @@ class _CallState:
     answers_in_flight: int = 0
     queued_answers: List[_Answer] = field(default_factory=list)
     delegations: Set[asyncio.Task] = field(default_factory=set)
+    # Delegation task -> realtime call_id, while the relay still waits for its answer. What is left
+    # here when the call ends is abandoned, so the main service posts those answers to chat.
+    pending_delegations: Dict[asyncio.Task, str] = field(default_factory=dict)
 
 
 class VoiceSessionService:
@@ -187,7 +201,8 @@ class VoiceSessionService:
                 # A user turn, not system text: live, the caller's own request changed how
                 # Lelik spoke where the same rule as system text did not (2026-09-25).
                 await session.submit_message("user", self._caller_opening)
-            await session.submit_message("system", _PICKUP_NOTE)
+            pickup_note = _WEB_PICKUP_NOTE if config.get("call_kind") == "web" else _PICKUP_NOTE
+            await session.submit_message("system", pickup_note)
             await self._reply_to_turn(session, state, "pickup")
 
             forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
@@ -201,25 +216,24 @@ class VoiceSessionService:
             # The watchdog ends only to hang up after a long silence (hangup_after_silence_s).
             await asyncio.wait({forward_task, consume_task, watchdog_task}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            tasks = [task for task in (forward_task, consume_task, watchdog_task, cue_task) if task is not None]
-            # In-flight delegations die with the call: their answer served a conversation that is gone.
-            tasks += list(state.delegations)
+            # 1. The call's own loops first, so nothing (the watchdog, a flush) starts a response
+            #    on a call that is ending.
+            loops = [task for task in (forward_task, consume_task, watchdog_task, cue_task) if task is not None]
             if state.pending_barge_in is not None:
-                tasks.append(state.pending_barge_in)
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            if tasks:
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                for result in results:
-                    # Logged, not re-raised: this is a top-level call loop with no
-                    # caller to propagate to - the call simply ends here, which is
-                    # the correct outcome for a crashed forward/consume loop. The
-                    # "error" event path above already alerts on provider-side
-                    # failures; this only catches an unexpected bug in the loop
-                    # itself, and still needs to be visible in logs.
-                    if isinstance(result, Exception):
-                        logger.error(f"voice call {ticket}: session loop crashed: {result}")
+                loops.append(state.pending_barge_in)
+            await self._cancel_all(ticket, loops)
+            # 2. Abandon what the caller will not hear, before the delegations are cancelled: the
+            #    main service posts those answers to the user's chat. Concurrently, so teardown
+            #    waits one bound (_ABANDON_TIMEOUT_S), not one per delegation.
+            abandoned = [call_id for task, call_id in state.pending_delegations.items() if not task.done()]
+            # Arrived while a response was active and never spoken; timeouts and failures carry no answer.
+            abandoned += [answer.call_id for answer in state.queued_answers
+                          if answer.output not in (_DELEGATION_TIMED_OUT, _DELEGATION_FAILED)]
+            if abandoned:
+                logger.info(f"voice call {ticket}: call ended with {len(abandoned)} unheard answers, abandoning")
+                await asyncio.gather(*(self._abandon(ticket, call_id) for call_id in abandoned))
+            # 3. In-flight delegations stop here: the abandoned ones reach chat from the main service.
+            await self._cancel_all(ticket, list(state.delegations))
             await session.close()
             await self._control_plane.submit_transcript(
                 call_id=ticket,
@@ -227,6 +241,23 @@ class VoiceSessionService:
                 account_id=config["account_id"],
                 buffer=buffer,
             )
+
+    async def _cancel_all(self, ticket: str, tasks: List[asyncio.Task]) -> None:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if not tasks:
+            return
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            # Logged, not re-raised: this is a top-level call loop with no
+            # caller to propagate to - the call simply ends here, which is
+            # the correct outcome for a crashed forward/consume loop. The
+            # "error" event path above already alerts on provider-side
+            # failures; this only catches an unexpected bug in the loop
+            # itself, and still needs to be visible in logs.
+            if isinstance(result, Exception):
+                logger.error(f"voice call {ticket}: session loop crashed: {result}")
 
     async def _consume_events(
         self,
@@ -328,9 +359,20 @@ class VoiceSessionService:
                 ))
                 if not (pending_response_text or tool_called or state.response_cancelled):
                     logger.info(f"voice call {ticket}: response done with an empty transcript")
+                # Captured now, not after: _flush_answers below awaits, and a concurrent barge-in
+                # confirmation (a separate task) could flip response_cancelled in that window,
+                # while tool_called is a local about to be reset by the next response_created.
+                dispatched_a_tool = tool_called
+                was_cancelled = state.response_cancelled
                 pending_request_text = ""
                 pending_response_text = ""
                 await self._flush_answers(session, state)
+                if (dispatched_a_tool and state.delegations and not state.response_active
+                        and not state.caller_speaking and state.answers_in_flight == 0 and not was_cancelled):
+                    # The answer isn't back yet (still delegating) and nothing else claimed the
+                    # reply slot: keep the caller company immediately instead of leaving dead air
+                    # until the watchdog's own _WAITING_NOTE, _silence_timeout_s later.
+                    await self._start_response(session, state, _DISPATCH_NOTE, "waiting")
             elif event.type == "error":
                 logger.error(f"voice call {ticket}: provider error {event.payload.get('message')}")
                 await self._alert_sink.post(f"Voice call {ticket} provider error: {event.payload.get('message')}")
@@ -510,6 +552,8 @@ class VoiceSessionService:
         ))
         state.delegations.add(task)
         task.add_done_callback(state.delegations.discard)
+        state.pending_delegations[task] = payload.get("call_id")
+        task.add_done_callback(lambda done: state.pending_delegations.pop(done, None))
 
     async def _run_delegation(
         self, ticket: str, config: dict, session: RealtimeSessionPort, state: _CallState,
@@ -518,7 +562,7 @@ class VoiceSessionService:
         loop = asyncio.get_running_loop()
         started = loop.time()
         try:
-            output = await self._fetch_answer(ticket, config, call_id, arguments, call_context)
+            output = await self._fetch_answer(ticket, config, state, call_id, arguments, call_context)
             elapsed_ms = round((loop.time() - started) * 1000)
             answer = _Answer(call_id, output, dispatched_at, _request_label(arguments))
             await self._resolve_late_answer(session, state, answer, elapsed_ms)
@@ -529,22 +573,40 @@ class VoiceSessionService:
             # Nothing gathers a finished delegation task, so an error here is logged or lost.
             logger.error(f"voice call {ticket}: answer to delegation {call_id} not delivered: {exc}", exc_info=True)
 
-    async def _fetch_answer(self, ticket: str, config: dict, call_id: str, arguments: dict, call_context: list) -> str:
+    async def _fetch_answer(
+        self, ticket: str, config: dict, state: _CallState, call_id: str, arguments: dict, call_context: list,
+    ) -> str:
         try:
             return await asyncio.wait_for(
                 self._control_plane.delegate(
                     user_id=config["user_id"], account_id=config["account_id"],
                     arguments=arguments, call_context=call_context,
+                    ticket=ticket, call_id=call_id, request=_request_label(arguments),
                 ),
                 timeout=self._delegation_timeout_s,
             )
         except asyncio.TimeoutError:
-            logger.warning(f"voice call {ticket}: delegation {call_id} timed out")
+            logger.warning(f"voice call {ticket}: delegation {call_id} timed out, its answer goes to chat")
+            # Still pending until the abandon has landed: a call ending mid-abandon (which cancels
+            # this task) abandons it again from teardown. Twice is harmless; never is a lost answer.
+            await self._abandon(ticket, call_id)
+            state.pending_delegations.pop(asyncio.current_task(), None)
             return _DELEGATION_TIMED_OUT
         except Exception as exc:
             # No retry: it re-runs the whole pipeline (double spend, double chat copy).
             logger.error(f"voice call {ticket}: delegation {call_id} failed: {exc}")
             return _DELEGATION_FAILED
+        finally:
+            # The answer (or its failure) is in the relay's hands: nothing left to abandon.
+            state.pending_delegations.pop(asyncio.current_task(), None)
+
+    async def _abandon(self, ticket: str, call_id: str) -> None:
+        # The port promises never to raise; bounded and caught here anyway, since this runs in
+        # call teardown and a slow OIDC token fetch is outside the adapter's own HTTP timeout.
+        try:
+            await asyncio.wait_for(self._control_plane.abandon_delegation(ticket, call_id), _ABANDON_TIMEOUT_S)
+        except Exception as exc:
+            logger.warning(f"voice call {ticket}: abandoning delegation {call_id} failed: {exc!r}")
 
     async def _resolve_late_answer(
         self, session: RealtimeSessionPort, state: _CallState, answer: _Answer, elapsed_ms: int,

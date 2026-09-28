@@ -98,3 +98,13 @@ class TestGmailIndexAsyncPath:
         assert call_order == ["persist", "enqueue"]
         email_job_repo.create_job.assert_awaited_once_with(job)
         task_queue.enqueue_email_indexing_task.assert_awaited_once_with("job-1")
+
+
+class TestCabinetPage:
+
+    async def test_cabinet_page_is_served_no_cache(self):
+        app = _app(email_indexing_service=MagicMock(), email_job_repo=MagicMock(),
+                   task_queue=MagicMock(), oauth_credentials_port=MagicMock())
+        resp = await app.test_client().get("/cabinet")
+        assert resp.status_code == 200
+        assert resp.headers["Cache-Control"] == "no-cache"

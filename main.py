@@ -909,10 +909,38 @@ async def main():
                         return
                     from src.domain.voice_call_note import call_event_from_turns
                     profile = await user_repo.get_user(user_id)
+                    try:
+                        kind_record = await voice_ephemeral_store.get(f"voice_call_kind:{call_id}")
+                        call_kind = (kind_record or {}).get("call_kind", "phone")
+                    except Exception:
+                        # The summary is the last stop of the call pipeline — a
+                        # lookup failure here must not lose it. Fall back to the
+                        # default header and keep delivering.
+                        logger.warning(f"voice call {call_id}: failed to read call kind, defaulting to phone", exc_info=True)
+                        call_kind = "phone"
                     await notification_service.notify_call_summary(
                         user_id, account_id, summary,
-                        call_event=call_event_from_turns(turns, profile.config.timezone if profile else "UTC"),
+                        call_event=call_event_from_turns(
+                            turns, profile.config.timezone if profile else "UTC", call_kind=call_kind
+                        ),
                     )
+
+                async def _voice_late_answer_sink(*, user_id, account_id, request, output, failed=False):
+                    # An answer the relay stopped waiting for (300 s timeout, or the call ended):
+                    # Lelik told the caller it would come to chat. The label is "intent: query".
+                    # A failed delegation posts a short localized line, never its error text.
+                    from src.domain.voice_call_note import late_answer_text
+                    from src.domain.ui_messages import UIMessage
+                    from src.domain.language import LanguageCode
+                    if failed:
+                        try:
+                            lang = await _language_service.resolve_ui_language(user_id)
+                        except Exception:
+                            # The line still goes out, in English, rather than being lost.
+                            logger.warning(f"voice late answer: UI language lookup failed for {user_id}", exc_info=True)
+                            lang = LanguageCode.EN
+                        output = _localization.get_ui_string(lang, UIMessage.VOICE_REQUEST_FAILED)
+                    await notification_service.notify_raw(user_id, account_id, late_answer_text(request, output))
 
                 main_app.register_blueprint(
                     create_voice_control_plane_blueprint(
@@ -926,11 +954,13 @@ async def main():
                         # nothing reaches chat or memory.
                         alert_sink=_alert_webhook,
                         lelik_agent_provider=agent_factory.get_lelik,
+                        late_answer_sink=_voice_late_answer_sink,
                     )
                 )
                 logger.info(
                     "✅ Voice control-plane blueprint registered at "
-                    "/voice/session-config, /voice/submit-transcript, /voice/delegate"
+                    "/voice/session-config, /voice/submit-transcript, /voice/delegate, "
+                    "/voice/delegate/abandon"
                 )
 
                 # /voice/auth, /voice/answer — Twilio's own webhooks (Task 8/9),
@@ -957,6 +987,40 @@ async def main():
                     "✅ Voice webhook blueprint registered at "
                     "/voice/auth, /voice/inbound-status, /voice/answer, /voice/status"
                 )
+
+                # Cabinet web call (VOICE_WEB_TRANSPORT_RFC §5.2) — browser-to-Lelik calls over
+                # Cloudflare's Calls SFU, the second call kind next to the Twilio phone path
+                # above. MVP/dev-only like the rest of Voice Companion: skipped (not a boot
+                # failure) when either the Cloudflare app credentials or the relay's own
+                # wss:// URL isn't configured, so the app boots exactly as before this feature
+                # existed. `_alert_webhook` is passed through unguarded, the same risk the
+                # Twilio webhook blueprint just above already carries: with no alert webhook
+                # configured it is None, and a failed `VoiceCallSetupService.prepare` releases
+                # the ticket and marker first, then crashes on `None.post` — the request ends in
+                # a 500 instead of its handled error response, but nothing stays held.
+                if config.get("CLOUDFLARE_SFU_APP_ID") and config.get("CLOUDFLARE_SFU_APP_SECRET") \
+                        and config.get("VOICE_RELAY_STREAM_URL"):
+                    from urllib.parse import urlsplit
+                    from src.adapters.cloudflare_sfu_adapter import CloudflareSfuAdapter
+                    from src.services.voice_call_setup_service import VoiceCallSetupService
+                    from src.web.voice_web_call_app import create_voice_web_call_blueprint
+
+                    relay_parts = urlsplit(config.get("VOICE_RELAY_STREAM_URL", ""))
+                    main_app.register_blueprint(create_voice_web_call_blueprint(
+                        session_service=session_service,
+                        call_setup=VoiceCallSetupService(voice_ephemeral_store, _alert_webhook, agent_factory.get_lelik),
+                        media_room=CloudflareSfuAdapter(config["CLOUDFLARE_SFU_APP_ID"], config["CLOUDFLARE_SFU_APP_SECRET"]),
+                        ephemeral_store=voice_ephemeral_store,
+                        relay_base_url=f"{relay_parts.scheme}://{relay_parts.netloc}",
+                    ))
+                    logger.info(
+                        "✅ Voice web-call blueprint registered at /cabinet/call, /api/voice/web-call"
+                    )
+                else:
+                    logger.warning(
+                        "⚠️ Voice web-call blueprint skipped — CLOUDFLARE_SFU_APP_ID/"
+                        "CLOUDFLARE_SFU_APP_SECRET/VOICE_RELAY_STREAM_URL not fully configured"
+                    )
 
                 # ====================================================================
                 # PHASE 3: Telegram Integration (Optional)

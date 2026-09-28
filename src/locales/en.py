@@ -121,4 +121,5 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.NEW_TOPIC_ACK.value: "New topic. History cleared.",
     UIMessage.SOURCES_HEADING.value: "Sources:",
     UIMessage.CONSOLIDATION_STARTED.value: "🧠 Memory consolidation started…",
+    UIMessage.VOICE_REQUEST_FAILED.value: "The request did not go through.",
 }

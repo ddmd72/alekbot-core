@@ -140,6 +140,52 @@ secrets present in Secret Manager, the four Firestore prompt uploads for Lelik's
 Smart's existing ones), and the four for the end-of-call summarizer
 (`COGNITIVE_PROCESS_LELIK_SUMMARIZER`, `lelik_summarizer_agent_v1`, `lelik_summarizer`).
 
+### Cloudflare Realtime SFU (web calls)
+
+Web calls from the Cabinet (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) reuse the relay deployed
+above — no new Cloud Run unit, no new relay secret. Only the **main** service needs credentials, to
+mint SFU sessions server-side.
+
+> **Steps 1–2 are prerequisites for ANY deploy of this branch, not only for web calls.**
+> `cloudbuild-dev.yaml` references `CLOUDFLARE_SFU_APP_ID:latest` and
+> `CLOUDFLARE_SFU_APP_SECRET:latest` in the main service's `--set-secrets` unconditionally, so
+> `gcloud run deploy` **fails** until both secrets exist and the runtime service account can read
+> them. Do them before the first deploy.
+
+1. **Create a Cloudflare Realtime app** in the Cloudflare dashboard (Realtime → Calls SFU, or the
+   TURN/Calls API section — naming varies by account). Note the **App ID** and **App Secret**; the
+   secret is shown once.
+2. **Create the two secrets and grant the runtime service account access**, the same pattern as
+   every other secret in `cloudbuild-dev.yaml`'s main-service `--set-secrets`:
+   ```bash
+   echo -n "<APP_ID>" | gcloud secrets create CLOUDFLARE_SFU_APP_ID --data-file=- --project=<PROJECT_ID>
+   echo -n "<APP_SECRET>" | gcloud secrets create CLOUDFLARE_SFU_APP_SECRET --data-file=- --project=<PROJECT_ID>
+   for s in CLOUDFLARE_SFU_APP_ID CLOUDFLARE_SFU_APP_SECRET; do
+     gcloud secrets add-iam-policy-binding "$s" --project=<PROJECT_ID> \
+       --member="serviceAccount:<SERVICE_ACCOUNT_EMAIL>" --role=roles/secretmanager.secretAccessor
+   done
+   ```
+   `echo -n` matters: a trailing newline in the secret breaks the `Authorization` header.
+3. **Deploy.** The main service now starts with the two keys and registers the `/cabinet/call` +
+   `/api/voice/web-call` blueprint. The "logs a warning and skips the blueprint" behaviour in
+   `main.py` applies only to **local runs** without the keys in `.env` — a deployed revision always
+   gets them from Secret Manager (or the deploy fails, see above).
+4. **Two optional relay knobs**, read with `os.environ.get` (not `load_settings()` — see CLAUDE.md
+   "`config.get()` vs `os.getenv()`"), both defaulting to match the phone path so UAT sees only the
+   transport change first: `VOICE_WEB_REASONING_EFFORT` (default `medium`), `VOICE_WEB_CALLER_OPENING`
+   (`on`/`off`, default `on`). Neither needs a cloudbuild change unless overridden.
+
+5. **TTL policy on the voice tickets collection** (one-time, per database). Tickets, the one-call
+   marker, call-kind keys and late-answer records all live in `development_voice_tickets` with a
+   Timestamp `expires_at`; without the policy, records nobody reads back are never deleted:
+   ```bash
+   gcloud firestore fields ttls update expires_at --collection-group=development_voice_tickets \
+     --enable-ttl --database=us-production --project=<PROJECT_ID>
+   ```
+
+This is a prerequisite for the web call's live verification, alongside the Twilio prerequisites
+above (they are independent transports sharing one `VoiceSessionService`/persona).
+
 ---
 
 ## Cost Optimization

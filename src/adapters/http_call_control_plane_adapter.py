@@ -5,10 +5,13 @@ import httpx
 
 from src.domain.voice_call_buffer import VoiceCallBuffer
 from src.ports.call_control_plane_port import CallControlPlanePort
+from src.utils.logger import logger
 
 # Router -> Smart -> specialists takes tens of seconds; the relay's own wait_for is the
-# authoritative limit, this only has to outlast it (httpx defaults to 5 s).
-_DELEGATE_TIMEOUT_S = 150.0
+# authoritative limit (300 s, owner 2026-09-28), this only has to outlast it (httpx defaults to 5 s).
+_DELEGATE_TIMEOUT_S = 330.0
+# Abandoning is best effort and runs during call teardown: it must never hold the call up.
+_ABANDON_TIMEOUT_S = 5.0
 # The main side summarizes and flushes before responding.
 _SUBMIT_TRANSCRIPT_TIMEOUT_S = 60.0
 
@@ -58,13 +61,26 @@ class HttpCallControlPlaneAdapter(CallControlPlanePort):
         )
         response.raise_for_status()
 
-    async def delegate(self, user_id: str, account_id: str, arguments: dict, call_context: list) -> str:
+    async def delegate(self, user_id: str, account_id: str, arguments: dict, call_context: list,
+                       ticket: str = "", call_id: str = "", request: str = "") -> str:
         response = await self._client.post(
             f"{self._base_url}/voice/delegate",
             json={"user_id": user_id, "account_id": account_id,
-                  "arguments": arguments, "call_context": call_context},
+                  "arguments": arguments, "call_context": call_context,
+                  "ticket": ticket, "call_id": call_id, "request": request},
             headers=await self._headers(),
             timeout=_DELEGATE_TIMEOUT_S,
         )
         response.raise_for_status()
         return response.json()["output"]
+
+    async def abandon_delegation(self, ticket: str, call_id: str) -> None:
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/voice/delegate/abandon", json={"ticket": ticket, "call_id": call_id},
+                headers=await self._headers(), timeout=_ABANDON_TIMEOUT_S,
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            # Never raises: a lost abandon only means the late answer stays unposted (TTL cleans it).
+            logger.warning(f"voice call {ticket}: abandoning delegation {call_id} failed: {exc}")

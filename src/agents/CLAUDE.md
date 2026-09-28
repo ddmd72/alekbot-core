@@ -376,9 +376,15 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   to downstream tasks including async Cloud Task payloads. Agents pass `context=message.context`
   — zero knowledge of routing, channels, or session format.
   **`dispatch()` is public** — the single-call step `_execute_loop` uses internally, exposed for a
-  caller with no loop of its own: `LelikAgent.delegate()` runs one `delegate_to_specialist` call from
-  the live realtime session through it, getting remap/fan-out/mode/coordinator/chain-guard/spans/
-  billing for free instead of a second implementation.
+  caller with no loop of its own: `LelikAgent.delegate_outcome()` runs one `delegate_to_specialist`
+  call from the live realtime session through it, getting remap/fan-out/mode/coordinator/
+  chain-guard/spans/billing for free instead of a second implementation. It returns
+  `VoiceDelegationOutcome(text, failed)` (`src/domain/voice_delegation_outcome.py`) so a caller can
+  tell a real answer from a failure without parsing text — added for the UAT-round-1 late-answer
+  protocol (RFC `VOICE_WEB_TRANSPORT_RFC.md` §12), which must never post a failed delegation's raw
+  error to chat. `delegate()` is kept as a thin wrapper (`(await delegate_outcome(...)).text`) — no
+  production caller uses it any more (`/voice/delegate` calls `delegate_outcome` directly), but it
+  stays for anything that only needs the text and not the failure flag.
 - **Cycle guard** (`AgentCoordinator._refuse_if_looping`, 2026-08-25) — `context["_call_chain"]`
   accumulates the agent ids already entered; re-entering one is refused with the path named
   (`tutor → smart → tutor`), and `MAX_DELEGATION_DEPTH=8` additionally caps runaway chains of

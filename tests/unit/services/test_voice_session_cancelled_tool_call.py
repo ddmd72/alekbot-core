@@ -75,6 +75,9 @@ async def test_tool_call_without_a_prior_cancel_is_dispatched_as_before():
         yield E(type="response_created", payload={})
         yield _tool_call()
         yield E(type="response_done", payload={})
+        # The dispatch filler's own turn: its response_done flushes the queued answer.
+        yield E(type="response_created", payload={})
+        yield E(type="response_done", payload={})
         await _hold()
         yield  # pragma: no cover
 
