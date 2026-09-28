@@ -148,6 +148,37 @@
       .call-btn.danger:hover:not(:disabled) {
         background: var(--accent-danger-hover);
       }
+
+      .mic-row {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        text-align: left;
+      }
+      .mic-row label {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-muted);
+      }
+      .mic-row select {
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 15px;
+        font-family: var(--font-sans);
+        color: var(--text-main);
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: 12px;
+      }
+      .mic-row select:disabled {
+        opacity: 0.6;
+      }
+      .mic-row .hint {
+        font-size: 13px;
+        color: var(--text-muted);
+        line-height: 1.4;
+      }
     </style>
   </head>
   <body>
@@ -157,6 +188,14 @@
       <h1 id="title">Call Lelik</h1>
       <div id="state">Ready to call</div>
       <button id="call-btn" class="call-btn">Call</button>
+      <div class="mic-row">
+        <label for="mic-select" id="mic-label">Microphone</label>
+        <select id="mic-select"></select>
+        <p class="hint" id="mic-hint">
+          Using Bluetooth headphones? Pick the built-in microphone to keep
+          full sound quality.
+        </p>
+      </div>
     </div>
 
     <audio id="remote-audio" autoplay playsinline hidden></audio>
@@ -176,6 +215,11 @@
           "state.could_not_connect": "Could not connect",
           "button.call": "Call",
           "button.hangup": "Hang up",
+          "mic.label": "Microphone",
+          "mic.default": "Default microphone",
+          "mic.unnamed": "Microphone",
+          "mic.hint":
+            "Using Bluetooth headphones? Pick the built-in microphone to keep full sound quality.",
         },
         uk: {
           "app.title": "Дзвінок Леліку",
@@ -189,6 +233,11 @@
           "state.could_not_connect": "Не вдалося з'єднатися",
           "button.call": "Подзвонити",
           "button.hangup": "Завершити",
+          "mic.label": "Мікрофон",
+          "mic.default": "Мікрофон за замовчуванням",
+          "mic.unnamed": "Мікрофон",
+          "mic.hint":
+            "Використовуєте Bluetooth-навушники? Оберіть вбудований мікрофон, щоб зберегти повну якість звуку.",
         },
         fr: {
           "app.title": "Appeler Lelik",
@@ -202,6 +251,11 @@
           "state.could_not_connect": "Connexion impossible",
           "button.call": "Appeler",
           "button.hangup": "Raccrocher",
+          "mic.label": "Microphone",
+          "mic.default": "Microphone par défaut",
+          "mic.unnamed": "Microphone",
+          "mic.hint":
+            "Vous utilisez un casque Bluetooth ? Choisissez le micro intégré pour conserver la pleine qualité audio.",
         },
         es: {
           "app.title": "Llamar a Lelik",
@@ -215,6 +269,11 @@
           "state.could_not_connect": "No se pudo conectar",
           "button.call": "Llamar",
           "button.hangup": "Colgar",
+          "mic.label": "Micrófono",
+          "mic.default": "Micrófono predeterminado",
+          "mic.unnamed": "Micrófono",
+          "mic.hint":
+            "¿Usas auriculares Bluetooth? Elige el micrófono integrado para mantener la calidad de audio completa.",
         },
       };
 
@@ -231,6 +290,8 @@
         document.title = t("app.title");
         document.getElementById("title").textContent = t("app.title");
         document.getElementById("back-link").textContent = t("back.cabinet");
+        document.getElementById("mic-label").textContent = t("mic.label");
+        document.getElementById("mic-hint").textContent = t("mic.hint");
       }
 
       /* ── Call state ──────────────────────────────────── */
@@ -238,6 +299,7 @@
       const stateEl = $("state");
       const btn = $("call-btn");
       const remoteAudio = $("remote-audio");
+      const micSelect = $("mic-select");
 
       let pc = null;
       let localStream = null;
@@ -266,6 +328,221 @@
           btn.textContent = t("button.hangup");
           btn.disabled = false;
           btn.classList.add("danger");
+        }
+        // The mic choice only takes effect at the getUserMedia() call that starts a call —
+        // switching it mid-call has no effect, so lock it while connecting/live.
+        micSelect.disabled = mode !== "idle";
+      }
+
+      /* ── Microphone choice ───────────────────────────── */
+      // Persisted so the caller's pick survives a reload. Every localStorage access is
+      // wrapped — private-mode/disabled storage must degrade to "no saved choice", never throw.
+      const MIC_STORAGE_KEY = "alek_call_mic_device_id";
+
+      function loadSavedMic() {
+        try {
+          return localStorage.getItem(MIC_STORAGE_KEY) || "";
+        } catch (e) {
+          return "";
+        }
+      }
+
+      function saveMic(deviceId) {
+        try {
+          if (deviceId) localStorage.setItem(MIC_STORAGE_KEY, deviceId);
+          else localStorage.removeItem(MIC_STORAGE_KEY);
+        } catch (e) {
+          // Storage unavailable — the choice just won't persist across reloads.
+        }
+      }
+
+      async function refreshMicList() {
+        if (!navigator.mediaDevices?.enumerateDevices) return;
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const mics = devices.filter((d) => d.kind === "audioinput");
+          const saved = loadSavedMic();
+          const previousValue = micSelect.value;
+          micSelect.innerHTML = "";
+          const defaultOpt = document.createElement("option");
+          defaultOpt.value = "";
+          defaultOpt.textContent = t("mic.default");
+          micSelect.appendChild(defaultOpt);
+          mics.forEach((d, i) => {
+            const opt = document.createElement("option");
+            opt.value = d.deviceId;
+            // Labels are empty strings until the user has granted mic permission at least
+            // once — fall back to a numbered placeholder so the list is still usable.
+            opt.textContent = d.label || `${t("mic.unnamed")} ${i + 1}`;
+            micSelect.appendChild(opt);
+          });
+          const stillPresent = [saved, previousValue].find(
+            (v) => v && mics.some((d) => d.deviceId === v),
+          );
+          micSelect.value = stillPresent || "";
+        } catch (e) {
+          // enumerateDevices failing is non-fatal — the call still works on the default mic.
+        }
+      }
+
+      micSelect.addEventListener("change", () => {
+        saveMic(micSelect.value);
+      });
+      if (navigator.mediaDevices?.addEventListener) {
+        navigator.mediaDevices.addEventListener("devicechange", refreshMicList);
+      }
+
+      /* ── Ringback ─────────────────────────────────────── */
+      // Spain dial tone: 425 Hz, 1.5 s on / 3.0 s off. Plays from Call tap until the first
+      // audible sound from Lelik (not until the WebRTC connection — the relay sends digital
+      // silence frames before he actually speaks), or hang-up/error/ended/pagehide.
+      const RINGBACK_FREQ_HZ = 425;
+      const RINGBACK_ON_S = 1.5;
+      const RINGBACK_OFF_S = 3.0;
+      const RINGBACK_GAIN = 0.15;
+      const RINGBACK_CYCLE_MS = (RINGBACK_ON_S + RINGBACK_OFF_S) * 1000;
+      const AUDIBLE_RMS_THRESHOLD = 0.02;
+      const AUDIBLE_SUSTAIN_MS = 150;
+      const AUDIBLE_POLL_MS = 50;
+
+      // One AudioContext for the page's lifetime (iOS requires it to be created — or, if
+      // already created, resumed — synchronously inside a user-gesture handler; a call page
+      // reuses the same context across calls rather than creating a new one each time).
+      let audioCtx = null;
+      let ringOsc = null;
+      let ringGain = null;
+      let ringLoopTimer = null;
+      let ringActive = false;
+      // The remote <audio> element can only ever be captured by Web Audio once — Safari also
+      // requires the remote WebRTC track to be routed through the <audio> element (already
+      // done via remoteAudio.srcObject) for this analysis to work at all. Created lazily and
+      // kept for the page's lifetime.
+      let remoteSource = null;
+      let remoteAnalyser = null;
+      let audibleMonitorTimer = null;
+      let audibleAboveSince = null;
+
+      function ensureAudioContext() {
+        try {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          if (!Ctx) return null;
+          if (!audioCtx) {
+            audioCtx = new Ctx();
+          } else if (audioCtx.state === "suspended") {
+            audioCtx.resume().catch(() => {});
+          }
+          return audioCtx;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function scheduleRingCycle() {
+        if (!audioCtx || !ringGain) return;
+        const now = audioCtx.currentTime;
+        ringGain.gain.cancelScheduledValues(now);
+        ringGain.gain.setValueAtTime(RINGBACK_GAIN, now);
+        ringGain.gain.setValueAtTime(0, now + RINGBACK_ON_S);
+      }
+
+      function ensureRemoteAnalyser() {
+        if (remoteAnalyser) return remoteAnalyser;
+        if (!audioCtx) return null;
+        try {
+          if (!remoteSource) {
+            remoteSource = audioCtx.createMediaElementSource(remoteAudio);
+            // Capturing the element for analysis reroutes its output into the Web Audio
+            // graph instead of the element's own playback path — reconnect to destination
+            // explicitly or Lelik goes silent the moment analysis starts.
+            remoteSource.connect(audioCtx.destination);
+          }
+          remoteAnalyser = audioCtx.createAnalyser();
+          remoteAnalyser.fftSize = 512;
+          remoteSource.connect(remoteAnalyser);
+          return remoteAnalyser;
+        } catch (e) {
+          // Analysis unavailable — ringback still stops on hangup/error/ended/pagehide below.
+          return null;
+        }
+      }
+
+      function stopAudibleMonitor() {
+        if (audibleMonitorTimer) {
+          clearInterval(audibleMonitorTimer);
+          audibleMonitorTimer = null;
+        }
+        audibleAboveSince = null;
+      }
+
+      function startAudibleMonitor() {
+        if (audibleMonitorTimer) return; // already watching
+        const analyser = ensureRemoteAnalyser();
+        if (!analyser) return;
+        const data = new Float32Array(analyser.fftSize);
+        audibleMonitorTimer = setInterval(() => {
+          analyser.getFloatTimeDomainData(data);
+          let sumSquares = 0;
+          for (let i = 0; i < data.length; i++) sumSquares += data[i] * data[i];
+          const rms = Math.sqrt(sumSquares / data.length);
+          const now = performance.now();
+          if (rms > AUDIBLE_RMS_THRESHOLD) {
+            if (audibleAboveSince === null) audibleAboveSince = now;
+            if (now - audibleAboveSince >= AUDIBLE_SUSTAIN_MS) {
+              stopRingback();
+            }
+          } else {
+            audibleAboveSince = null;
+          }
+        }, AUDIBLE_POLL_MS);
+      }
+
+      function startRingback() {
+        const ctx = ensureAudioContext();
+        if (!ctx) return;
+        try {
+          ringGain = ctx.createGain();
+          ringGain.gain.value = 0;
+          ringGain.connect(ctx.destination);
+          ringOsc = ctx.createOscillator();
+          ringOsc.frequency.value = RINGBACK_FREQ_HZ;
+          ringOsc.connect(ringGain);
+          ringOsc.start();
+          ringActive = true;
+          scheduleRingCycle();
+          ringLoopTimer = setInterval(scheduleRingCycle, RINGBACK_CYCLE_MS);
+          startAudibleMonitor();
+        } catch (e) {
+          ringActive = false;
+          // WebAudio unavailable/blocked — the call proceeds without a ringback tone.
+        }
+      }
+
+      function stopRingback() {
+        // Idempotent and safe to call from multiple sites (audible detection, hangup, error,
+        // ended, pagehide) — never restarted once stopped for the rest of this call. Only the
+        // oscillator/gain and the poll timer are torn down; audioCtx and the remote-audio
+        // routing stay up so Lelik keeps being audible for the rest of the call.
+        if (!ringActive) return;
+        ringActive = false;
+        if (ringLoopTimer) {
+          clearInterval(ringLoopTimer);
+          ringLoopTimer = null;
+        }
+        stopAudibleMonitor();
+        if (ringOsc) {
+          try {
+            ringOsc.stop();
+          } catch (e) {}
+          try {
+            ringOsc.disconnect();
+          } catch (e) {}
+          ringOsc = null;
+        }
+        if (ringGain) {
+          try {
+            ringGain.disconnect();
+          } catch (e) {}
+          ringGain = null;
         }
       }
 
@@ -332,6 +609,7 @@
       }
 
       async function endCall(notifyServer) {
+        stopRingback();
         stopStatusPolling();
         inCall = false;
         const endingCallId = callId;
@@ -369,17 +647,45 @@
         inCall = true;
         renderButton("connecting");
         setState(t("state.connecting"));
+        // Must run synchronously in this tap handler, before any await — iOS only allows
+        // creating/resuming an AudioContext inside a user-gesture call stack.
+        startRingback();
 
+        const AUDIO_PROCESSING = {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        };
+        const savedMic = loadSavedMic();
         try {
-          localStream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          });
+          const constraints = savedMic
+            ? { audio: { ...AUDIO_PROCESSING, deviceId: { exact: savedMic } } }
+            : { audio: AUDIO_PROCESSING };
+          localStream = await navigator.mediaDevices.getUserMedia(constraints);
         } catch (e) {
-          if (myToken !== callToken) return; // superseded by a manual hang up
-          inCall = false;
-          setState(t("state.mic_blocked"));
-          renderButton("idle");
-          return;
+          if (savedMic && (e.name === "OverconstrainedError" || e.name === "NotFoundError")) {
+            // The saved device is gone (unplugged, permission revoked for it, etc.) — clear
+            // the stale choice and fall back to the default mic rather than failing the call.
+            saveMic("");
+            micSelect.value = "";
+            try {
+              localStream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_PROCESSING });
+            } catch (e2) {
+              if (myToken !== callToken) return; // superseded by a manual hang up
+              inCall = false;
+              stopRingback();
+              setState(t("state.mic_blocked"));
+              renderButton("idle");
+              return;
+            }
+          } else {
+            if (myToken !== callToken) return; // superseded by a manual hang up
+            inCall = false;
+            stopRingback();
+            setState(t("state.mic_blocked"));
+            renderButton("idle");
+            return;
+          }
         }
         if (myToken !== callToken) {
           // Hung up while the mic permission prompt was open — hangupCall() already cleaned
@@ -387,6 +693,9 @@
           localStream.getTracks().forEach((track) => track.stop());
           return;
         }
+        // Labels are empty until permission is granted at least once — refresh now that it
+        // has been (fire-and-forget; the call itself doesn't need to wait on this).
+        refreshMicList();
 
         let handledState = false;
         try {
@@ -398,6 +707,7 @@
           });
           pc.ontrack = (ev) => {
             remoteAudio.srcObject = new MediaStream([ev.track]);
+            startAudibleMonitor();
           };
           const tx = pc.addTransceiver(localStream.getAudioTracks()[0], { direction: "sendonly" });
 
@@ -493,6 +803,7 @@
       });
 
       window.addEventListener("pagehide", () => {
+        stopRingback();
         if (callId) {
           fetch(`/api/voice/web-call/${callId}/hangup`, {
             method: "POST",
@@ -504,6 +815,7 @@
 
       applyTranslations();
       setState(t("state.idle"));
+      refreshMicList();
     </script>
   </body>
 </html>
