@@ -137,7 +137,8 @@ live-speech gate). `close()`'s best-effort cleanup logged a real failure (e.g. a
 severity (ERROR) that misrepresents an idempotent hangup path. Fixed: `_call` gained a
 `log_errors` flag so `close()` can own its own single log line, at WARNING; the
 already-closed case (404/410) is unchanged at INFO. This closes the "double ERROR log on
-real close failure" item the 2026-09-27 final review left as a residual. One pre-existing
-test (`test_a_real_close_failure_is_still_an_error`) asserted the old ERROR-level behaviour
-and now fails by design; it was not edited — its expectation is exactly what this decision
-reverses, and a reviewer ruling on it is pending.
+real close failure" item the 2026-09-27 final review left as a residual. The branch-created
+test asserting the old ERROR-level behaviour (`test_a_real_close_failure_is_still_an_error`,
+added on this branch by `a57be37`) was updated by reviewer ruling to
+`test_a_real_close_failure_is_logged_as_a_warning_not_an_error`, asserting the
+WARNING-not-ERROR behaviour this decision establishes.

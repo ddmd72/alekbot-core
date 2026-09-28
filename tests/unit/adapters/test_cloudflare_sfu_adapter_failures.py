@@ -90,8 +90,9 @@ async def test_closing_an_already_closed_adapter_logs_no_error_and_does_not_rais
 
 
 @pytest.mark.asyncio
-async def test_a_real_close_failure_is_still_an_error(caplog):
+async def test_a_real_close_failure_is_logged_as_a_warning_not_an_error(caplog):
     client = AsyncMock()
     client.request.side_effect = [_resp(500, {"error": "boom"})]
-    await _adapter(client).close(["A-in"])
-    assert _errors(caplog)
+    await _adapter(client).close(["A-in"])  # must not raise
+    assert _errors(caplog) == []
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
