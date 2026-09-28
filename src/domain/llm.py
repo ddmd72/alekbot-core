@@ -132,7 +132,9 @@ def build_persona_anchor(system_instruction: Optional[str]) -> Optional[str]:
     # (experiment, 2026-09-28): SPOKEN_DELIVERY keeps only call mechanics and the caller
     # opening only cues a greeting. It names a register rather than listing per-sentence
     # prosody rules, which read as a narrator; disfluencies are "now and then" because the
-    # anchor repeats every turn and a mandatory one turns into a tic.
+    # anchor repeats every turn and a mandatory one turns into a tic. The Language line exists
+    # because LANG_FIXED_* ("regardless of what language the user writes in") made the model
+    # refuse an explicit in-call request to switch; it stays voice-only, so text is unaffected.
     spoken = (
         "\n\nSPOKEN REPLY — speak like a regular person on a spontaneous phone call: "
         "unscripted, natural, a little messy.\n"
@@ -144,6 +146,10 @@ def build_persona_anchor(system_instruction: Optional[str]) -> Optional[str]:
         "breath — the way people actually talk, not on every line.\n"
         "Tone: reactive — the feeling of what you're saying comes through in how you sound and "
         "shifts as it changes, never one flat mood. Felt, not performed.\n"
+        "Language: the configured language is the default, not a lock. If the caller asks you "
+        "to speak another language, do it, and judge from the conversation when to come back. "
+        "Words and phrases from other languages are fine where they fit naturally — except any "
+        "language the language settings rule out.\n"
         "Before you speak, check the wording and the meaning: would a real person say exactly "
         "this, in these words, in a live conversation? If not, rephrase until they would."
         if "spoken_delivery" in present else ""
