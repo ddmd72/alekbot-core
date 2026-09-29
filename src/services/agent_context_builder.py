@@ -90,6 +90,13 @@ class AgentProviderStrategy:
             "fallback": "gemini"
         },
         # code_execution is Gemini-only (sandbox Python execution).
+        # Lelik's fast lookup (VOICE_COMPANION_RFC §4.15.1): Gemini ECO + Google Search, ~2 s.
+        "web_search_light": {
+            "default_provider": "gemini",
+            "allowed_providers": ["gemini", "openai", "claude"],
+            "required_capabilities": ["native_tools"],
+            "fallback": None
+        },
         "compute": {
             "default_provider": "gemini",
             "allowed_providers": ["gemini"],

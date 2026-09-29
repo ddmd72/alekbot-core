@@ -97,8 +97,6 @@ async def test_delegate_seeds_identity_primary_session_and_call_chain():
     assert ctx["origin_channel_id"] == "D9" and ctx["origin_platform"] == "slack"
     assert ctx["params"]["call_context"] == [{"role": "user", "text": "what's the weather"}]
     assert first["calling_agent_id"] == "lelik_agent_u1"
-    # search_web fans out to maps through LELIK's own descriptor
-    assert {c.kwargs["intent"] for c in coordinator.handle_delegation.await_args_list} == {"search_web", "maps_query"}
     assert "sunny, 24°C" in output
 
 

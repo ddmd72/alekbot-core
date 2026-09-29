@@ -33,10 +33,10 @@ every minute.
 """
 import asyncio
 import json
-import re
 from typing import TYPE_CHECKING, List, Optional
 
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
+from ..domain.delegation_timestamp import strip_delegation_timestamp
 from ..domain.llm import Message, MessagePart
 from ..domain.messaging import SmartResponse
 from ..infrastructure.agent_config import TUTOR
@@ -55,16 +55,9 @@ if TYPE_CHECKING:
     from ..services.history_summary_service import HistorySummaryService
 
 
-# AgentCoordinator.handle_delegation() prepends this exact format to every
-# delegated query (`ts = datetime.now(timezone.utc).strftime("[%b %d, %H:%M UTC]")`,
-# agent_coordinator.py:426) — the timezone is always the literal "UTC", never the
-# caller's local tz. Stripped before building retrieval phrases so the embedded
-# vector is semantic content, not a timestamp that changes every minute.
-_DELEGATION_TIMESTAMP_PREFIX = re.compile(r"^\[[A-Za-z]{3} \d{2}, \d{2}:\d{2} UTC\] ")
-
-
-def _strip_delegation_timestamp(text: str) -> str:
-    return _DELEGATION_TIMESTAMP_PREFIX.sub("", text, count=1)
+# Stripped before building retrieval phrases so the embedded vector is semantic content,
+# not a timestamp that changes every minute.
+_strip_delegation_timestamp = strip_delegation_timestamp
 
 
 class TutorAgent(BaseAgent):
