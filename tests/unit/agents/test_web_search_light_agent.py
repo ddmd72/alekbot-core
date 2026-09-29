@@ -41,6 +41,10 @@ async def test_one_grounded_call_without_the_delegation_timestamp():
     agent._call_llm.assert_awaited_once()
     assert prompt_builder.build_for_agent.await_args.kwargs["agent_type"] == "websearch_light"
     assert prompt_builder.build_for_agent.await_args.kwargs["routing_metadata"] is None
+    # UAT 2026-09-29: the biography leaked into the search model and the directives made the
+    # spoken answer chat-shaped (emojis, bold).
+    assert prompt_builder.build_for_agent.await_args.kwargs["include_biographical"] is False
+    assert prompt_builder.build_for_agent.await_args.kwargs["include_directives"] is False
 
 
 @pytest.mark.asyncio

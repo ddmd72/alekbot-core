@@ -30,6 +30,7 @@ To add a new specialist agent:
 """
 
 from ..domain.companion_config import CompanionConfig
+from ..domain.voice_errand import TELL_ALEK_INTENT
 from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
 
 
@@ -81,7 +82,7 @@ class Intent:
     # Alek as a specialist — internal, named only by LELIK's allowlist (VOICE_COMPANION_RFC §4.7)
     ASK_ALEK            = "ask_alek"
     # An errand for Alek: runs in the background, the result goes to chat (VOICE_COMPANION_RFC §4.15.2)
-    TELL_ALEK           = "tell_alek"
+    TELL_ALEK           = TELL_ALEK_INTENT
     # Image generation/editing via grok-imagine-image-2.0
     GENERATE_IMAGE      = "generate_image"
     EDIT_IMAGE          = "edit_image"

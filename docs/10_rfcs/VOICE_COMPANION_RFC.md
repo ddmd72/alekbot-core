@@ -952,6 +952,34 @@ stays unbuilt: `tell_alek` covers it.
 - The coordinator's timestamp prefix is stripped from the query inside the gateway, because Smart
   stamps the turn itself.
 
+**UAT round 1 (2026-09-29, one web call, all five scenarios).** All five paths worked end to end.
+Fixed in the same branch:
+- **Errands ran without memory.** `AgentWorkerHandler` set no `RequestContext`, so the Router's
+  memory search in a `tell_alek` Cloud Task found 0 facts ("no RequestContext set"). The worker now
+  wraps every task in `RequestContext(user_id, account_id)`.
+- **The light search's prompt was the wrong shape.** It carried the whole biography and the
+  standing directives (7.5k chars): personal facts sent to a search model, and "tables, emojis"
+  turned the spoken answer into chat markup. It now uses `include_biographical=False` and
+  `include_directives=False`; the user's location still comes through as config. The active
+  profile is `websearch_light` (blueprint `websearch_light_agent_v1`, four `WEBSEARCH_LIGHT_*`
+  tokens), not the `universal_agent_v1_SYSTEM_websearch_light` profile. Those tokens were
+  rewritten for speech.
+- **Lelik announced every errand twice.** The dispatch filler fired for an errand, then the
+  acknowledgement produced a second line. The relay now keeps errands in `state.errands`: no
+  filler, no waiting notes, no abandon at hang-up. The protocol says to call an errand without a
+  pre-line.
+
+Observed, not caused by this revision:
+- The first BigQuery write on a fresh instance spent ~5.3 s initializing the client inside the
+  first `/voice/delegate`. That made the first light search 9 s; the search itself took 2.6 s.
+  Later writes took 0.05–0.4 s. *Trigger:* warm the client at startup if it recurs off-deploy.
+- The first web call after deploy failed: Cloudflare's WebSocket adapter timed out against a cold
+  relay (scale-to-zero). The retry connected. Tracked with the relay keep-alive question (§4.14).
+- The `ask_alek` chat copy failed with Slack `uneven_table_rows_not_allowed`: Smart
+  (`gpt-5.6-luna`) returned malformed table rows. Pre-existing (`tech_debt_slack_rich_content_invalid_blocks`).
+- Errand 1 took ~97 s, because Smart's complexity override chose `grok-4.6` and its first turn
+  took 59 s. That is Smart's model routing, not the errand path (`/voice/delegate` answered in 0.24 s).
+
 ## 5. Transport — telephony, with media relayed through us
 
 **Telephony, not a browser page.** A Spanish Twilio number is already provisioned and owned; what

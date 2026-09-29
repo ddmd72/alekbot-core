@@ -71,3 +71,23 @@ async def test_a_failing_notice_does_not_mask_the_result():
     result = await handler.handle_task(_PAYLOAD)
 
     assert result["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_the_task_runs_inside_the_callers_request_context():
+    """UAT 2026-09-29: without it the Router's memory search found 0 facts for an errand."""
+    from src.domain.request_context import get_current_account_id, get_current_user_id
+
+    seen = {}
+
+    async def route(message):
+        seen.update(user=get_current_user_id(), account=get_current_account_id())
+        return AgentResponse.success(task_id="t", agent_id="alek_agent_u1", result="done")
+
+    handler, coordinator, _ = _handler()
+    coordinator.route_message = AsyncMock(side_effect=route)
+
+    await handler.handle_task(_PAYLOAD)
+
+    assert seen == {"user": "u1", "account": "a1"}
+    assert get_current_user_id() is None  # reset after the task

@@ -7,7 +7,9 @@ uses it for one fact that one search answers; anything needing several sources o
 to Alek. Resurrected from the agent deleted in 5bc5d8c (2026-05-29), when Quick's remap to it was
 switched off and nothing reached it any more.
 
-No biographical context: routing_metadata=None. The prompt is the `websearch_light` profile.
+No biography and no standing directives; only the user's location reaches the prompt. The prompt
+is the `websearch_light` profile: blueprint `websearch_light_agent_v1` over the four
+`WEBSEARCH_LIGHT_*` tokens.
 """
 import time
 from datetime import datetime, timezone
@@ -52,9 +54,13 @@ class WebSearchLightAgent(BaseAgent):
         started = time.time()
         try:
             account_id = (message.context or {}).get("account_id")
+            # A web lookup needs neither the user's biography nor their standing directives: the
+            # biography leaks personal facts into a search model, the directives ("tables, emojis")
+            # shaped the spoken answer into chat markup, and both cost latency (UAT 2026-09-29).
+            # user_location still comes through — it is user config, not biography.
             system_instruction = await self.prompt_builder.build_for_agent(
                 agent_type="websearch_light", user_id=self.user_id, account_id=account_id,
-                routing_metadata=None,
+                routing_metadata=None, include_biographical=False, include_directives=False,
             )
         except Exception as exc:
             # No fallback prompt (CLAUDE.md): a missing prompt is a failure, not a degraded call.

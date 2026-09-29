@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
 from ..domain.notification_kind import NotificationKind
+from ..domain.request_context import RequestContext
 from ..services.deep_research_delivery import (
     NotificationPort, deliver_deep_research,
 )
@@ -107,7 +108,11 @@ class AgentWorkerHandler:
         )
 
         try:
-            response = await self._coordinator.route_message(message)
+            # A Cloud Task carries no RequestContext, and multi-tenant reads (the Router's memory
+            # search, Firestore repos) resolve user and account from it: without it a tell_alek
+            # errand ran with 0 memory facts (UAT 2026-09-29).
+            async with RequestContext(user_id=user_id, account_id=context.get("account_id")):
+                response = await self._coordinator.route_message(message)
 
             if response.status == AgentStatus.SUCCESS:
                 logger.info(
