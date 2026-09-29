@@ -57,9 +57,6 @@ _DELEGATION_FAILED = "The request failed. Tell the caller in one line that it di
 # said "riff on it with your humor, a few sentences" produced a monologue per note, and "from
 # this conversation" left nothing to draw on early in a call (owner, 2026-09-28).
 _WAITING_NOTE = "[Still waiting for the answer to your request.]"
-# Fired once, right after the turn that dispatched a delegation - the watchdog's _WAITING_NOTE
-# only starts _silence_timeout_s later, and live logs showed 12 s of dead air in between.
-_DISPATCH_NOTE = "[Your request is on its way.]"
 # A barge-in cancels the response, but its function_call_arguments.done can still arrive a few ms
 # later (live, 2026-09-24 09:29:09) — the function_call item still needs an output or it is left
 # dangling for the next turn, but running it would spend ~30s of Smart on half a question.
@@ -394,20 +391,13 @@ class VoiceSessionService:
                 ))
                 if not (pending_response_text or tool_called or state.response_cancelled):
                     logger.info(f"voice call {ticket}: response done with an empty transcript")
-                # Captured now, not after: _flush_answers below awaits, and a concurrent barge-in
-                # confirmation (a separate task) could flip response_cancelled in that window,
-                # while tool_called is a local about to be reset by the next response_created.
-                dispatched_a_tool = tool_called
-                was_cancelled = state.response_cancelled
                 pending_request_text = ""
                 pending_response_text = ""
+                # No dispatch filler after a delegating turn (removed 2026-09-29, RFC §4.15): the
+                # turn's own acknowledgement ("checking") already tells the caller, and the extra
+                # reply voiced a second "it's on its way". A long wait still gets the watchdog's
+                # _WAITING_NOTE after _silence_timeout_s.
                 await self._flush_answers(session, state)
-                if (dispatched_a_tool and state.delegations and not state.response_active
-                        and not state.caller_speaking and state.answers_in_flight == 0 and not was_cancelled):
-                    # The answer isn't back yet (still delegating) and nothing else claimed the
-                    # reply slot: keep the caller company immediately instead of leaving dead air
-                    # until the watchdog's own _WAITING_NOTE, _silence_timeout_s later.
-                    await self._start_response(session, state, _DISPATCH_NOTE, "waiting")
             elif event.type == "error":
                 logger.error(f"voice call {ticket}: provider error {event.payload.get('message')}")
                 await self._alert_sink.post(f"Voice call {ticket} provider error: {event.payload.get('message')}")

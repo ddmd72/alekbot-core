@@ -1042,6 +1042,23 @@ change there without touching Smart.
   `Light_Self_Awareness` algorithm is self-commentary again.
 - Archetype and vibe stay shared with Smart. Rollback: re-upload the previous `lelik.json` (git).
 
+**Copilot register, step 4 (2026-09-29).** Step 3 removed "no ceremony" talk and most jokes. Two
+irritants were left:
+- Lelik narrated his plan ("I'll check quickly and tell you");
+- after it, a second line "the request is in progress": the relay's `_DISPATCH_NOTE`, voiced.
+
+Changes:
+- `_DISPATCH_NOTE` is removed for every delegation. The dispatching turn already carries the
+  acknowledgement, and the watchdog still covers a long wait.
+- `FEW_SHOT_EXAMPLES_LELIK` (system, English, the owner's format): nine cases, each a situation plus
+  a good and a bad reply. The bad replies are real phrases from today's calls.
+- Service lines are a few words. A result, from a lookup or from Alek, keeps its full substance:
+  that case was rewritten after the owner noted a short "good" result would teach Lelik to cut
+  Alek's answers. Two conversational cases cover a light moment (one dry joke if it fits) and a real
+  question (full depth, no joke).
+- Still in the profile, flagged for a later step: `POLICY_WITTY_ACCENTUATION` ("a single sharp
+  witty remark to accentuate the core message"), which pulls against the few-shots.
+
 ## 5. Transport — telephony, with media relayed through us
 
 **Telephony, not a browser page.** A Spanish Twilio number is already provisioned and owned; what

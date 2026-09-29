@@ -22,6 +22,10 @@
       "order": 70,
       "non_overridable": true
     },
+    "FEW_SHOT_EXAMPLES_LELIK": {
+      "order": 90,
+      "non_overridable": true
+    },
     "PROTOCOL_LELIK_DELEGATION": {
       "order": 200,
       "non_overridable": true

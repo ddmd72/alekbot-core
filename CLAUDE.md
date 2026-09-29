@@ -323,10 +323,16 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
   finishes after the relay stops waiting (timeout, or call end) is posted to the caller's chat
   instead of being discarded — both sides write a marker and whichever claims the finished result
   with an atomic `get_and_delete` posts it exactly once; see RFC §12.
-- **The dispatch filler** (`_DISPATCH_NOTE`) fires immediately after a turn that dispatches a
-  delegation, so Lelik keeps talking during the 12 s+ gap before the silence watchdog's own
-  `_WAITING_NOTE` would otherwise fire — at the cost of even a sub-second answer now waiting
-  behind the filler's own reply for the next response slot.
+- **No dispatch filler** (removed 2026-09-29, RFC §4.15). A `_DISPATCH_NOTE` used to fire right after
+  a delegating turn, and Lelik voiced a second "it's on its way" after his own "checking". The
+  dispatching turn's acknowledgement is enough. A long wait still gets the watchdog's `_WAITING_NOTE`.
+- **Lelik's register** (copilot, RFC §4.15):
+  - his profile has its own `VOICE_COPILOT`, `HUMOR_COPILOT` and `FEW_SHOT_EXAMPLES_LELIK`
+    (situation + good + bad reply), all system tokens, instead of Smart's aphoristic voice,
+    Ranevskaya humor and few-shots;
+  - archetype and vibe stay shared with Smart;
+  - the model voices any rule about the *form* of its reply ("briefly", "no ceremony", "I won't
+    make it up"). Steer with examples, not with rules about form.
 - **`mode` is stripped** from delegate arguments before dispatch (`LelikAgent.delegate`): `AgentWorkerHandler`
   delivers only generator-declared intents, so a SYNC-declared intent forced into `mode: "later"` would
   have nowhere to return its answer and silently drop it on the phone.
