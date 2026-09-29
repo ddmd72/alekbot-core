@@ -396,3 +396,31 @@ closed instead of leaking behind a bare 500.
   only egress retries were observed. Revisit if a live call ends on an ingest blip.
 - The late-answer record is written on the spoken-answer path (a Firestore set + get before the
   relay gets the answer). Revisit if delegation spans show it as a measurable share.
+
+## 14. Mobile entry (2026-09-28)
+
+The call page is the Cabinet's front door on a phone. The goal is to go from pocket to talking
+with one tap.
+
+- **Redirect.** A bare `/cabinet` on a touch device narrower than 768px `location.replace`s to
+  `/cabinet/call`. Any query string (`?tab=…`, OAuth `*_connected` / `*_error`, `joined`) keeps
+  the Cabinet. The call page's back link is `/cabinet?tab=integrations`, so the redirect cannot
+  loop.
+- **Call screen.** The layout is full-screen and one-handed. Identity and state sit at the top;
+  a 120px round button sits in the bottom third, green for Call and red for Hang up, with a call
+  timer while live. The mic picker is folded under `⚙`. Safe-area insets are respected
+  (`viewport-fit=cover`). The call logic (ringback, `callToken`, pagehide, wake lock) is
+  unchanged; only markup, CSS and `renderButton` changed.
+- **Cabinet tab bar.** The mobile nav is a full-width grid with an icon and a short label per
+  tab, so it always fits. The old `max-content` pill ran off both screen edges in Ukrainian.
+- **Home Screen.** `/cabinet/call/manifest.webmanifest` (start_url `/cabinet/call`, standalone)
+  and `/cabinet/call/icon-{180,192,512}.png` are explicit blueprint routes, public by design.
+  The main Quart app has no static folder, so `/static/*` 404s; the Cabinet header logo now uses
+  the same icon route.
+- **Siri.** There is no code for this. In the Shortcuts app, create a shortcut named e.g.
+  "Call Alek" with the single action *Open URL* → `<service URL>/cabinet/call`. "Hey Siri, Call
+  Alek" opens Safari on the call button. It does not autostart, by owner decision: iOS allows
+  the AudioContext (ringback) only inside a user gesture, and an accidental open must not place
+  a call.
+- **Session.** It is capped at 24h with no silent refresh, and an expired session goes to login
+  and back to the call page. See `decisions/cabinet_session_24h_cap.md`.

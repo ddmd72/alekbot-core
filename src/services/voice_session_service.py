@@ -9,6 +9,7 @@ from typing import AsyncIterator, Awaitable, Callable, Dict, List, NamedTuple, O
 from src.domain.llm import build_persona_anchor
 from src.domain.request_context import RequestContext
 from src.domain.voice_audio_frame import AudioFrame
+from src.domain.voice_errand import is_errand
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.ports.alert_sink import AlertSinkPort
@@ -37,7 +38,7 @@ _MULAW_BYTES_PER_S = 8000
 _CUE_REASONS = frozenset({"turn", "answer"})
 _DELEGATION_TIMEOUT_S = 90.0
 # Attached to every delegation by the relay, never left to the model's retention (RFC §4.7).
-_CALL_CONTEXT_TURNS = 6
+_CALL_CONTEXT_TURNS = 12  # the caller's own words are Alek's source of truth (RFC §4.15.4)
 _LATE_ANSWER_NOTE = "[The answer to your earlier request ({request}) just arrived: {output}]"
 # Distinct from _LATE_ANSWER_NOTE: formatting the timeout/failure sentinels into it read as
 # self-contradicting ("just arrived: No answer arrived in time...").
@@ -56,9 +57,6 @@ _DELEGATION_FAILED = "The request failed. Tell the caller in one line that it di
 # said "riff on it with your humor, a few sentences" produced a monologue per note, and "from
 # this conversation" left nothing to draw on early in a call (owner, 2026-09-28).
 _WAITING_NOTE = "[Still waiting for the answer to your request.]"
-# Fired once, right after the turn that dispatched a delegation - the watchdog's _WAITING_NOTE
-# only starts _silence_timeout_s later, and live logs showed 12 s of dead air in between.
-_DISPATCH_NOTE = "[Your request is on its way.]"
 # A barge-in cancels the response, but its function_call_arguments.done can still arrive a few ms
 # later (live, 2026-09-24 09:29:09) — the function_call item still needs an output or it is left
 # dangling for the next turn, but running it would spend ~30s of Smart on half a question.
@@ -112,6 +110,9 @@ class _CallState:
     # Delegation task -> realtime call_id, while the relay still waits for its answer. What is left
     # here when the call ends is abandoned, so the main service posts those answers to chat.
     pending_delegations: Dict[asyncio.Task, str] = field(default_factory=dict)
+    # tell_alek errands (RFC §4.15.2): tracked for teardown only. They are not "delegations" —
+    # nothing waits for them, so no dispatch filler, no waiting notes, no abandon.
+    errands: Set[asyncio.Task] = field(default_factory=set)
 
 
 class VoiceSessionService:
@@ -255,7 +256,7 @@ class VoiceSessionService:
                 logger.info(f"voice call {ticket}: call ended with {len(abandoned)} unheard answers, abandoning")
                 await asyncio.gather(*(self._abandon(ticket, call_id) for call_id in abandoned))
             # 3. In-flight delegations stop here: the abandoned ones reach chat from the main service.
-            await self._cancel_all(ticket, list(state.delegations))
+            await self._cancel_all(ticket, list(state.delegations) + list(state.errands))
             await session.close()
             await self._control_plane.submit_transcript(
                 call_id=ticket,
@@ -390,20 +391,13 @@ class VoiceSessionService:
                 ))
                 if not (pending_response_text or tool_called or state.response_cancelled):
                     logger.info(f"voice call {ticket}: response done with an empty transcript")
-                # Captured now, not after: _flush_answers below awaits, and a concurrent barge-in
-                # confirmation (a separate task) could flip response_cancelled in that window,
-                # while tool_called is a local about to be reset by the next response_created.
-                dispatched_a_tool = tool_called
-                was_cancelled = state.response_cancelled
                 pending_request_text = ""
                 pending_response_text = ""
+                # No dispatch filler after a delegating turn (removed 2026-09-29, RFC §4.15): the
+                # turn's own acknowledgement ("checking") already tells the caller, and the extra
+                # reply voiced a second "it's on its way". A long wait still gets the watchdog's
+                # _WAITING_NOTE after _silence_timeout_s.
                 await self._flush_answers(session, state)
-                if (dispatched_a_tool and state.delegations and not state.response_active
-                        and not state.caller_speaking and state.answers_in_flight == 0 and not was_cancelled):
-                    # The answer isn't back yet (still delegating) and nothing else claimed the
-                    # reply slot: keep the caller company immediately instead of leaving dead air
-                    # until the watchdog's own _WAITING_NOTE, _silence_timeout_s later.
-                    await self._start_response(session, state, _DISPATCH_NOTE, "waiting")
             elif event.type == "error":
                 logger.error(f"voice call {ticket}: provider error {event.payload.get('message')}")
                 await self._alert_sink.post(f"Voice call {ticket} provider error: {event.payload.get('message')}")
@@ -584,6 +578,13 @@ class VoiceSessionService:
             ticket, config, session, state, payload.get("call_id"),
             arguments, call_context, dispatched_at,
         ))
+        if is_errand(arguments):
+            # Only the acknowledgement comes back, in well under a second: nothing to host a wait
+            # for, and no answer to post to chat if the call ends first — the errand itself runs
+            # on as a Cloud Task either way. UAT 2026-09-29: the filler made Lelik say it twice.
+            state.errands.add(task)
+            task.add_done_callback(state.errands.discard)
+            return
         state.delegations.add(task)
         task.add_done_callback(state.delegations.discard)
         state.pending_delegations[task] = payload.get("call_id")

@@ -125,9 +125,11 @@ Dial my number from your bound phone. I say "calling you back" and hang up, then
 within seconds. The callback is what proves it is you, so there is no PIN. On the phone you talk to
 Lelik, my voice partner. He knows what I know about you, including our recent chat, and he answers
 from that. You can interrupt him the way you would a person. When you hang up, a short note about
-the call lands here, and I remember it from then on. During a call he can look things up in your
-memory and on the web, and ask me for anything else — mail, tasks, documents. Links and tables from
-those answers arrive here in chat while you talk.
+the call lands here, and I remember it from then on. During a call he checks your memory and quick
+facts on the web himself, and brings me anything bigger. A question he asks me he waits for and
+answers aloud; an errand ("remind me…", "send me the links") he hands me and carries on talking,
+and I report the outcome here. Nothing lands in chat unless you ask for it or I answer something
+for him with links or a table.
 
 You can also call from your browser instead of your phone: a one-button call page in the Cabinet
 (no dialing, no callback) reaches the same Lelik, in clearer audio, over the same summary and

@@ -89,9 +89,10 @@ class AuthConfig:
             config
         )
 
-        # Token TTLs (seconds)
-        self.access_token_ttl = int(self._get("ACCESS_TOKEN_TTL", "3600", config))  # 1 hour
-        self.refresh_token_ttl = int(self._get("REFRESH_TOKEN_TTL", "2592000", config))  # 30 days
+        # Token TTLs (seconds). Cabinet data is sensitive: one login lasts a day, no longer —
+        # the refresh token is capped at the same 24h, so it can never extend a session past it.
+        self.access_token_ttl = int(self._get("ACCESS_TOKEN_TTL", "86400", config))  # 24 hours
+        self.refresh_token_ttl = int(self._get("REFRESH_TOKEN_TTL", "86400", config))  # 24 hours
 
         # MCP (remote MCP server exposed to claude.ai custom connectors)
         # Canonical resource URI (RFC 8707) — must match public URL where /mcp is mounted.

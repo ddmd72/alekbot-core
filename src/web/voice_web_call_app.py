@@ -16,6 +16,7 @@ from src.utils.logger import logger
 from src.web.cabinet_auth import make_auth_required
 
 _TICKET_TTL_S = 300
+_ICON_SIZES = (180, 192, 512)
 
 
 def create_voice_web_call_blueprint(session_service, call_setup, media_room, ephemeral_store,
@@ -29,12 +30,27 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
             return None
         return record
 
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
     @bp.route("/cabinet/call")
     async def call_page():
-        response = await send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "call.html"))
+        response = await send_file(os.path.join(static_dir, "call.html"))
         # Revalidate on every load: send_file's 12 h max-age served a stale page after deploys.
         response.headers["Cache-Control"] = "no-cache"
         return response
+
+    # Home Screen install (the app has no static folder, so these are explicit routes). Public
+    # on purpose: iOS fetches the manifest and icons without the session cookie.
+    @bp.route("/cabinet/call/manifest.webmanifest")
+    async def call_manifest():
+        return await send_file(os.path.join(static_dir, "call.webmanifest"),
+                               mimetype="application/manifest+json")
+
+    @bp.route("/cabinet/call/icon-<int:size>.png")
+    async def call_icon(size: int):
+        if size not in _ICON_SIZES:
+            return jsonify({"error": "not found"}), 404
+        return await send_file(os.path.join(static_dir, f"call-icon-{size}.png"), mimetype="image/png")
 
     @bp.route("/api/voice/web-call", methods=["POST"])
     @auth_required

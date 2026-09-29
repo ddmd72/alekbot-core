@@ -12,17 +12,17 @@
     "VIBE_BATTLE_WEARY": {
       "order": 30
     },
-    "VOICE_APHORISTIC": {
+    "VOICE_COPILOT": {
       "order": 40
     },
-    "HUMOR_PRESET_RANEVSKAYA": {
+    "HUMOR_COPILOT": {
       "order": 60
     },
     "SPOKEN_DELIVERY": {
       "order": 70,
       "non_overridable": true
     },
-    "FEW_SHOT_EXAMPLES_RANEVSKAYA_ZHVANETSKY": {
+    "FEW_SHOT_EXAMPLES_LELIK": {
       "order": 90,
       "non_overridable": true
     },

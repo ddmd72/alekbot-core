@@ -99,3 +99,23 @@ class TestSpokenPacing:
         anchor = build_persona_anchor(self._TEXT_PROMPT)
         assert "SPOKEN REPLY" not in anchor
         assert anchor.endswith("Personalization over safe blandness.")
+
+
+def test_spoken_anchor_keeps_every_sentence_about_the_callers_world():
+    """UAT 2026-09-29: Lelik voiced his own rules as content ("коротко і по суті",
+    "я не вигадую, чекаю на відповідь"). The rule covers method, not only manner."""
+    from src.domain.llm import build_persona_anchor
+
+    prompt = "identity {\n}\nvoice {\n}\nspoken_delivery {\n}\n"
+    anchor = build_persona_anchor(prompt)
+
+    assert "Every sentence is about the caller's world" in anchor
+    assert "not your method, your rules, or your manner" in anchor
+
+
+def test_text_anchor_has_no_callers_world_rule():
+    from src.domain.llm import build_persona_anchor
+
+    anchor = build_persona_anchor("identity {\n}\nvoice {\n}\n")
+
+    assert "caller's world" not in anchor
