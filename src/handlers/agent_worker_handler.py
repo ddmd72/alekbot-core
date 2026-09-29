@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
 from ..domain.notification_kind import NotificationKind
+from ..domain.request_context import RequestContext
 from ..services.deep_research_delivery import (
     NotificationPort, deliver_deep_research,
 )
@@ -107,7 +108,11 @@ class AgentWorkerHandler:
         )
 
         try:
-            response = await self._coordinator.route_message(message)
+            # A Cloud Task carries no RequestContext, and multi-tenant reads (the Router's memory
+            # search, Firestore repos) resolve user and account from it: without it a tell_alek
+            # errand ran with 0 memory facts (UAT 2026-09-29).
+            async with RequestContext(user_id=user_id, account_id=context.get("account_id")):
+                response = await self._coordinator.route_message(message)
 
             if response.status == AgentStatus.SUCCESS:
                 logger.info(
@@ -144,6 +149,8 @@ class AgentWorkerHandler:
                     Intent.GENERATE_IMAGE, Intent.EDIT_IMAGE,
                 ):
                     await self._notify_docx_failure(context, response.error)
+                elif intent == Intent.TELL_ALEK:
+                    await self._notify_errand_failure(context, query)
 
                 return {
                     "status": "failed",
@@ -161,6 +168,9 @@ class AgentWorkerHandler:
             # Notify user of deep research failure on unexpected errors.
             if intent == Intent.EXECUTE_DEEP_RESEARCH_CLAUDE:
                 await self._notify_failure(context)
+            # An errand nobody waits for on the line must not fail silently (VOICE_COMPANION_RFC §4.15.2).
+            elif intent == Intent.TELL_ALEK:
+                await self._notify_errand_failure(context, query)
             raise
 
     async def _deliver_deep_research_result(
@@ -289,6 +299,26 @@ class AgentWorkerHandler:
             channel_id_override=context.get("origin_channel_id"),
             platform_override=context.get("origin_platform"),
         )
+
+    async def _notify_errand_failure(self, context: Dict[str, Any], query: str) -> None:
+        """A phone-call errand for Alek (tell_alek) did not complete. On success the gateway
+        posts the outcome itself; a failure is reported here, without the error text."""
+        if not self._notification:
+            return
+        try:
+            await self._notification.notify(
+                kind=NotificationKind.DOCUMENT_DELIVERY,
+                user_id=context.get("user_id", ""),
+                account_id=context.get("account_id", ""),
+                system_alert=(
+                    "An errand the user gave during a phone call with Lelik did not complete. "
+                    f"Tell them it failed and what it was: {query}"
+                ),
+                channel_id_override=context.get("origin_channel_id"),
+                platform_override=context.get("origin_platform"),
+            )
+        except Exception as exc:
+            logger.error(f"[AgentWorkerHandler] Errand failure notice failed: {exc}", exc_info=True)
 
     async def _notify_failure(self, context: Dict[str, Any]) -> None:
         """Notify user that deep research failed."""

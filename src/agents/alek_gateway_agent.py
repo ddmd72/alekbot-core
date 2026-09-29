@@ -7,17 +7,22 @@ Alek without memory. The delegation context is forwarded whole, so `_call_chain`
 Smart and the coordinator's cycle guard covers this hop. The primary session is read, never
 written: only ConversationHandler writes history.
 
-Reading-shaped answers (links, tables) are copied to chat here, the moment Alek answers
-(§4.10 rule 2); the relay never posts to chat.
+ask_alek: reading-shaped answers (links, tables) are copied to chat here, the moment Alek
+answers (§4.10 rule 2); the relay never posts to chat.
+
+tell_alek (§4.15.2): an errand the caller is not waiting for. The commission says so, and
+Alek's whole answer is posted to chat — it is the only place the caller will see the outcome.
 """
 import asyncio
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, AgentStatus
+from ..domain.delegation_timestamp import strip_delegation_timestamp
 from ..domain.llm import MessagePart
 from ..domain.messaging import SmartResponse
 from ..domain.result_links import build_link_copy
 from ..domain.retry_policy import NO_RETRY_POLICY
+from ..infrastructure.agent_manifest import Intent
 from ..utils.logger import logger
 from .base_agent import BaseAgent
 
@@ -32,11 +37,26 @@ ASK_ALEK_TIMEOUT_MS = 600_000
 
 # The spoken answer must not wait longer than this for its chat copy to land.
 _ANSWER_COPY_TIMEOUT_S = 5.0
+# An errand's chat post IS its result and nobody is waiting on the line: a slow post must not drop it.
+_ERRAND_POST_TIMEOUT_S = 30.0
 
 
-def _commission(query: str, reasoning: Optional[str], call_context: List[Dict[str, str]]) -> str:
-    lines = [query, "", "[Asked by Lelik during a phone call with the user."]
+_QUESTION_HEADER = "[Asked by Lelik during a phone call with the user."
+_ERRAND_HEADER = ("[Errand from Lelik during a phone call with the user. They are not waiting for it "
+                  "on the line: your answer goes to their chat.")
+
+
+def _commission(query: str, reasoning: Optional[str], call_context: List[Dict[str, str]],
+                errand: bool = False) -> str:
+    # The coordinator stamped the query; Smart stamps the turn itself — one timestamp, not two.
+    header = _ERRAND_HEADER if errand else _QUESTION_HEADER
+    lines = [strip_delegation_timestamp(query), "", header]
     if call_context:
+        # RFC §4.15.4: the full rule lives in Smart's PROTOCOL_VOICE_PARTNER (lelik_request_quality);
+        # this line points at it, next to the evidence it asks Alek to weigh.
+        lines.append("The request above was written by Lelik's faster, weaker model and may be imprecise. "
+                     "Infer what the user wants from their own lines below and your chat history, and "
+                     "serve that — their words win over Lelik's.")
         lines.append("The last exchanges on the call:")
         lines.extend(f"{e.get('role', 'user')}: {e.get('text', '')}" for e in call_context)
     if reasoning:
@@ -56,15 +76,18 @@ class AlekGatewayAgent(BaseAgent):
         self._notifications = notification_service
 
     async def can_handle(self, message: AgentMessage) -> bool:
-        return message.intent == AgentIntent.QUERY and bool(message.payload.get("query"))
+        # DELEGATE: a tell_alek errand arrives through the Cloud Task worker (AgentWorkerHandler).
+        return message.intent in (AgentIntent.QUERY, AgentIntent.DELEGATE) and bool(message.payload.get("query"))
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
         user_id = message.context.get("user_id")
         account_id = message.context.get("account_id")
+        errand = message.payload.get("intent") == Intent.TELL_ALEK
         text = _commission(
             message.payload.get("query", ""),
             message.payload.get("reasoning"),
             message.payload.get("call_context") or [],
+            errand=errand,
         )
         routed = AgentMessage.create(
             sender=self.agent_id,
@@ -88,14 +111,18 @@ class AlekGatewayAgent(BaseAgent):
             summary_task.cancel()
         answer = response.result
         if isinstance(answer, SmartResponse):
-            # link_list/structured_data are Smart's own reading-shaped answer; otherwise fall
-            # back to scanning the plain text for links, same shape Lelik posts for any specialist.
-            copy = answer if (answer.link_list or answer.structured_data) else build_link_copy(answer.text)
+            if errand:
+                # The chat is where the caller reads an errand's outcome: all of it, always.
+                copy = answer
+            else:
+                # link_list/structured_data are Smart's own reading-shaped answer; otherwise fall
+                # back to scanning the plain text for links.
+                copy = answer if (answer.link_list or answer.structured_data) else build_link_copy(answer.text)
             if copy is not None:
                 try:
                     await asyncio.wait_for(
                         self._notifications.notify_answer_copy(user_id, account_id, copy),
-                        timeout=_ANSWER_COPY_TIMEOUT_S,
+                        timeout=_ERRAND_POST_TIMEOUT_S if errand else _ANSWER_COPY_TIMEOUT_S,
                     )
                 except asyncio.TimeoutError:
                     logger.warning(f"[AlekGateway] chat copy timed out for {(user_id or '')[:8]}")

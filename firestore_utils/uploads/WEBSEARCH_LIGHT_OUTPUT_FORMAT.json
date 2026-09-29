@@ -1,0 +1,14 @@
+{
+  "token_id": "WEBSEARCH_LIGHT_OUTPUT_FORMAT",
+  "category": "output_format",
+  "class": "output_format",
+  "content": "language: \"same as the query\"\nstyle: \"One to three short sentences meant to be spoken aloud. Plain text only: no markdown, no bold, no emojis, no lists, no links. Round numbers the way a person would say them.\"\n",
+  "metadata": {
+    "description": "WebSearchLightAgent v5 (voice, VOICE_COMPANION_RFC §4.15.1) — output_format section",
+    "override_by": [
+      "SYSTEM",
+      "AGENT"
+    ],
+    "source": "v5 2026-09-29: rewritten for Lelik's spoken answers (was Slack mrkdwn for QuickResponseAgent)"
+  }
+}

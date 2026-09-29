@@ -134,7 +134,10 @@ def build_persona_anchor(system_instruction: Optional[str]) -> Optional[str]:
     # prosody rules, which read as a narrator; disfluencies are "now and then" because the
     # anchor repeats every turn and a mandatory one turns into a tic. No "not X" contrasts: the
     # model voiced them as content ("no pathos, no narrator theatre", "chaos") on live calls, so
-    # the text names only the target and bars commenting on its own manner. The Language line exists
+    # the text names only the target and bars commenting on its own manner. The "caller's world" line
+    # (UAT 2026-09-29) extends that from manner to method: the model kept voicing its own rules as
+    # content ("I'll be brief", "I'm not making it up, I'm waiting for the answer"). It is phrased
+    # positively on purpose — listing the phrases to avoid would prime them. The Language line exists
     # because LANG_FIXED_* ("regardless of what language the user writes in") made the model
     # refuse an explicit in-call request to switch; it stays voice-only, so text is unaffected.
     spoken = (
@@ -149,6 +152,8 @@ def build_persona_anchor(system_instruction: Optional[str]) -> Optional[str]:
         "Tone: reactive — the feeling of what you're saying comes through in how you sound and "
         "shifts as it changes, never one flat mood, genuinely felt.\n"
         "How you sound is never a topic — don't comment on your own manner, tone or style.\n"
+        "Every sentence is about the caller's world — the answer, the fact, the next step. None is "
+        "about you: not your method, your rules, or your manner.\n"
         "Language: the configured language is the default, not a lock. If the caller asks you "
         "to speak another language, do it, and judge from the conversation when to come back. "
         "Words and phrases from other languages are fine where they fit naturally — except any "

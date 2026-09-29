@@ -54,6 +54,7 @@ from ..infrastructure.agent_config import (
     PDF_GENERATOR as PDF_GENERATOR_CFG,
     HTML_PAGE_GENERATOR as HTML_PAGE_GENERATOR_CFG,
     DOMAIN_RESEARCHER as DOMAIN_RESEARCHER_CFG,
+    WEB_SEARCH_LIGHT as WEB_SEARCH_LIGHT_CFG,
     IMAGE_GENERATION as IMAGE_GENERATION_CFG,
     VIDEO_GENERATION as VIDEO_GENERATION_CFG,
     TUTOR as TUTOR_CFG,
@@ -65,6 +66,7 @@ from ..services.history_summary_service import HistorySummaryService
 from ..agents.core.router_agent import create_router_agent
 from ..agents.memory_search_agent import FactsMemoryAgent
 from ..agents.web_search_agent import WebSearchAgent
+from ..agents.web_search_light_agent import WebSearchLightAgent
 from ..agents.email_search_agent import EmailSearchAgent
 from ..agents.consolidation_agent import ConsolidationAgent
 from ..agents.maps_search_agent import MapsSearchAgent
@@ -748,6 +750,19 @@ class UserAgentFactory(AgentFactoryPort):
             anthropic_client=self.anthropic_client,
         )
 
+    def _build_web_search_light(self, user_id: str, ctx: _UserContext) -> WebSearchLightAgent:
+        return WebSearchLightAgent(
+            config=AgentConfig(
+                agent_id=f"web_search_light_agent_{user_id}",
+                agent_type="web_search_light",
+                timeout_ms=WEB_SEARCH_LIGHT_CFG.timeout_ms,
+                capabilities=["web_search"],
+            ),
+            execution_context=self.context_builder.build("web_search_light", ctx.user_profile.config),
+            prompt_builder=ctx.prompt_builder,
+            user_id=user_id,
+        )
+
     def _build_file_management(
         self, user_id: str, ctx: _UserContext,
     ) -> Optional[FileManagementAgent]:
@@ -942,6 +957,7 @@ class UserAgentFactory(AgentFactoryPort):
         "tutor": _build_tutor,
         "lelik": _build_lelik,
         "alek": _build_alek_gateway,
+        "web_search_light": _build_web_search_light,
     }
 
     _LAZY_AGENT_IDS: Dict[str, str] = {
@@ -958,6 +974,7 @@ class UserAgentFactory(AgentFactoryPort):
         "tutor": "tutor_agent",
         "lelik": "lelik_agent",
         "alek": "alek_agent",
+        "web_search_light": "web_search_light_agent",
     }
 
     # ------------------------------------------------------------------

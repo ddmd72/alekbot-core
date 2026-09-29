@@ -411,6 +411,7 @@ descriptor, like the tutor's, declares an allowlist:
 ```
 LELIK.allowed_intents = {search_memory, search_web, ask_alek}
 LELIK.intent_fanout   = {search_web: SEARCH_WEB_MAPS_FANOUT}   # the constant Smart and Quick share
+# Revised 2026-09-29 (§4.15): {search_memory, search_web_light, ask_alek, tell_alek}, no fan-out
 ```
 
 Maps arrive through the same `search_web → maps_query` fan-out Smart uses. Adding a capability to
@@ -686,7 +687,8 @@ delivered during the call is read *afterwards* anyway, and per §4.3 discretiona
 across a long conversation is the model's weakest axis.
 
 1. **During the call, nothing goes to chat by default.**
-2. **Structural exception — reading-shaped content always goes.** Generalized beyond `ask_alek`:
+2. **Structural exception — reading-shaped content always goes.** *(Withdrawn for Lelik's direct
+   specialists 2026-09-29 — §4.15.3; `ask_alek`'s own copy stays.)* Generalized beyond `ask_alek`:
    any Lelik delegation whose result contains links gets a bare-anchor chat copy, sent regardless
    of anything Lelik decided — reading a URL aloud is useless (§1), so this is a property of the
    result, not a judgment call. `LelikAgent.delegate` runs this for every specialist except
@@ -854,6 +856,213 @@ quietly.
 **No `CircuitBreaker` or retry policy on the session connection.** A human is on the line: a failed
 connect or dropped socket ends the call, alerts, and lets the user redial. Retrying into a live
 conversation produces worse artefacts than a clean failure.
+
+### 4.15 Revision 2026-09-29: fast lookups, questions vs errands, no automatic link copy
+
+Driven by the owner's review of live calls (27–29 Sep). It supersedes the parts of §4.7 and §4.10
+it names. Evidence: 8 `ask_alek` calls and the `search_web` calls of 27–29 Sep, taken from
+BigQuery `prompt_content` and the relay logs.
+
+**What the calls showed.**
+- Lelik's own `search_web` took 11–15 s (full WebSearch agent at BALANCED, plus the automatic Maps
+  fan-out at 3 turns). That is too slow for "instant" and too shallow for "thorough": one search,
+  no cross-check. On the same weather question Alek fanned out four parallel lookups and got it
+  right.
+- 2 of the 8 `ask_alek` calls were errands ("remove the 2 Oct appointment", "set a reminder to
+  meet Olena"). The caller waited 30–60 s for a confirmation they did not need.
+- Every search result's links went to chat, whether or not anyone wanted them.
+- The commission text reached Smart with the delegation timestamp twice (coordinator prefix +
+  Smart's own `_inject_timestamps`).
+
+**1. Two search depths, chosen by Lelik.**
+- `search_web_light` (new, **Lelik only**) is a single grounded call and returns 1–3 spoken
+  sentences, with no Maps fan-out and no JSON. This is the resurrected `WebSearchLightAgent`
+  (deleted as dead code in `5bc5d8c`, 2026-05-29, when Quick's remap to it was switched off). The
+  default is Gemini ECO (`gemini-3.5-flash-lite`) with Google Search grounding.
+- `search_web` leaves Lelik's allowlist. A lookup that needs several sources, comparison or
+  judgment goes to `ask_alek`: Alek already searches in parallel and cross-checks.
+- Rule in `PROTOCOL_LELIK_DELEGATION`: one fact from one search → `search_web_light`; anything else
+  → `ask_alek`; when unsure → `ask_alek`. The error cost is asymmetric: a needless Alek call is
+  slow but right.
+- Measured 2026-09-29 on the owner's weather questions plus one sports result (same system prompt):
+
+  | Candidate | Latency | Note |
+  |---|---|---|
+  | `gemini-3.5-flash-lite` + Google Search | 1.6–2.5 s | Weather and climate consistent; a fresh sports result differed between runs |
+  | `gemini-flash-latest` + Google Search | 3.6–7.6 s | Contradicted flash-lite on the same match |
+  | `gpt-5.4-nano` `web_search` (low context) | 3.5–12.3 s | Too slow |
+  | `gpt-5.4-mini` `web_search` (low context) | 3.4–9.0 s | Too slow |
+
+  Fresh events are where the light path is weakest. The protocol tells Lelik to present a light
+  answer as provisional, and to send "what happened / who won / latest" to Alek when it matters.
+
+**2. Questions and errands are two intents.**
+- `ask_alek` (SYNC, unchanged): a question whose answer the call needs. Lelik hosts the wait.
+- `tell_alek` (new): an errand; the caller does not need the result in the conversation. Lelik
+  says "handed to Alek" and carries on.
+  - `/voice/delegate` answers the relay at once with an acknowledgement and runs the delegation in
+    the background. It uses the same shielded, tracked task the route already uses so a relay
+    disconnect cannot cancel it.
+  - Alek posts his full answer (text, links, table) to chat when he finishes.
+  - A failure posts the localized `VOICE_REQUEST_FAILED` line naming the request, never the error
+    text. An errand that fails silently is worse than one never given.
+  - The relay never waits: no `_DISPATCH_NOTE`, no waiting notes, and the errand does not hold the
+    call open against the silence hang-up.
+  - Nothing is spoken on completion in v1. The result is in chat and the caller has moved on.
+    *Trigger to revisit:* the owner asks for spoken confirmations.
+- Boundary for Lelik: if deciding what to do next in the conversation depends on the result ("check
+  and, if there's a slot, book it"), it is a question.
+- Why two intents rather than `mode: "later"`: the intent name is the primary signal the model
+  matches on (`src/agents/CLAUDE.md`, Specialist delegation). `mode` is stripped on this path
+  anyway (§4.7 correction), and SYNC-declared intents have no async delivery path.
+- **Why not `ExecutionMode.ASYNC` / Cloud Tasks:** `AgentWorkerHandler` delivers only
+  generator-declared results, and the gateway's result is a Smart answer, not a `DeliveryItem`. The
+  route-level background task reuses the shielding and chat-posting that §12 of
+  `VOICE_WEB_TRANSPORT_RFC.md` already built for abandoned answers.
+- Rejected for now: separate `ask_alek`/`tell_alek` **tools** instead of intents on
+  `delegate_to_specialist`. A stronger signal for a realtime model, but two tool schemas in relay and
+  control plane. Lelik chose `ask_alek` correctly in 8 of 8 calls. *Trigger:* Lelik confuses the two.
+
+**3. §4.10 rule 2 is withdrawn for Lelik's direct specialists.** No automatic chat copy of links
+from `search_memory` / `search_web_light` results. When the caller wants something in chat, Lelik
+gives it to Alek (`tell_alek`: "send me the links about X"), who decides what is worth posting.
+That is the owner's call: Alek already does this well. Alek's own copy on `ask_alek`
+(`AlekGatewayAgent`, `link_list`/`structured_data`) is unchanged. The `send_to_chat` intent of rule 3
+stays unbuilt: `tell_alek` covers it.
+- Trade-off accepted: §4.10's "no silent loss" argument. A link from a direct lookup that nobody
+  asked for is not kept anywhere. The light search answers in prose, so it rarely carries links.
+
+**4. Lelik's request is a pointer from a weaker model; Alek serves the user's intent.**
+- Lelik runs on a faster, weaker realtime model. His `query` can be lossy, over-literal, padded
+  with his own assumptions, or slightly off target. Lelik keeps writing it freely: correcting it is
+  Alek's job, not a prompt constraint on Lelik.
+- Alek already has everything needed to correct it:
+  - the caller's own recent lines (the call excerpt in the commission block);
+  - the primary chat history (~30 messages, including earlier call notes), read-only through the
+    primary `session_id` (§4.7);
+  - his memory of the user.
+- The standing rule sits in Smart's system prompt (`PROTOCOL_VOICE_PARTNER.lelik_request_quality`):
+  - treat the request as a pointer, not a specification;
+  - infer what the user wants from their words, the history and their facts, and let their words
+    win over Lelik's;
+  - deliver the experience they would have had asking Alek directly: right depth, right action,
+    nothing unwanted.
+- The commission block repeats it in one line next to the call excerpt.
+- `_CALL_CONTEXT_TURNS` rises from 6 to 12 so that the caller's own words are actually present.
+- The coordinator's timestamp prefix is stripped from the query inside the gateway, because Smart
+  stamps the turn itself.
+
+**UAT round 1 (2026-09-29, one web call, all five scenarios).** All five paths worked end to end.
+Fixed in the same branch:
+- **Errands ran without memory.** `AgentWorkerHandler` set no `RequestContext`, so the Router's
+  memory search in a `tell_alek` Cloud Task found 0 facts ("no RequestContext set"). The worker now
+  wraps every task in `RequestContext(user_id, account_id)`.
+- **The light search's prompt was the wrong shape.** It carried the whole biography and the
+  standing directives (7.5k chars): personal facts sent to a search model, and "tables, emojis"
+  turned the spoken answer into chat markup. It now uses `include_biographical=False` and
+  `include_directives=False`; the user's location still comes through as config. The active
+  profile is `websearch_light` (blueprint `websearch_light_agent_v1`, four `WEBSEARCH_LIGHT_*`
+  tokens), not the `universal_agent_v1_SYSTEM_websearch_light` profile. Those tokens were
+  rewritten for speech.
+- **Lelik announced every errand twice.** The dispatch filler fired for an errand, then the
+  acknowledgement produced a second line. The relay now keeps errands in `state.errands`: no
+  filler, no waiting notes, no abandon at hang-up. The protocol says to call an errand without a
+  pre-line.
+
+Observed, not caused by this revision:
+- The first BigQuery write on a fresh instance spent ~5.3 s initializing the client inside the
+  first `/voice/delegate`. That made the first light search 9 s; the search itself took 2.6 s.
+  Later writes took 0.05–0.4 s. *Trigger:* warm the client at startup if it recurs off-deploy.
+- The first web call after deploy failed: Cloudflare's WebSocket adapter timed out against a cold
+  relay (scale-to-zero). The retry connected. Tracked with the relay keep-alive question (§4.14).
+- The `ask_alek` chat copy failed with Slack `uneven_table_rows_not_allowed`: Smart
+  (`gpt-5.6-luna`) returned malformed table rows. Pre-existing (`tech_debt_slack_rich_content_invalid_blocks`).
+- Errand 1 took ~97 s, because Smart's complexity override chose `grok-4.6` and its first turn
+  took 59 s. That is Smart's model routing, not the errand path (`/voice/delegate` answered in 0.24 s).
+
+**Copilot register, step 1 (2026-09-29): Smart's few-shot examples leave Lelik's profile.**
+The owner's review of the UAT call: Lelik narrated his own work, entertained through every wait,
+and put a joke in every reply. He is meant to be a copilot: acknowledge, report, stop, joke rarely
+and briefly. Four layers push the other way:
+- the `FEW_SHOT_EXAMPLES_RANEVSKAYA_ZHVANETSKY` token, in which every response is an aphorism;
+- the persona anchor, which says "few_shot_examples are exact patterns — match them", "generic
+  assistant prose means you ignored these sections" and "personalization over safe blandness";
+- the role's "fill the pause" rule plus the relay's `_DISPATCH_NOTE`/`_WAITING_NOTE`;
+- the protocol's "say one line before delegating".
+
+Step 1 changes one variable only, the owner's call: the few-shot token is removed from the `lelik`
+profile. Swapping in copilot examples was judged too risky before we know the effect. The
+assembler skips an empty class, so `few_shot_examples` disappears from Lelik's prompt, and the
+anchor stops listing it with no code change. Smart keeps the token.
+
+Measured on the next call's transcript (BigQuery `agent_type="lelik"`) against the UAT call:
+- share of replies with a joke;
+- acknowledgement length;
+- lines that narrate or justify Lelik's own work.
+
+Rollback: re-add the token to the profile. Next candidates, one at a time: a copilot line in the
+spoken anchor ("humor: rare"); a copilot role (acknowledge, report, stop; no narrating); waits as
+brief status instead of hosting (reverses `5a49944`).
+
+**Copilot register, step 2 (2026-09-29).** Step 1 (few-shot removed) barely moved the call. The
+owner named the real irritant: Lelik narrates **how** he is answering ("коротко і по суті", "без
+пафосу", "я не вигадую, чекаю на відповідь, щоб не брехати…"). This is the model voicing its own
+instructions as content. The sources are the shared character tokens (`HUMOR_PRESET_RANEVSKAYA`
+`ALWAYS_ACTIVE` with `self_deprecation: mock own AI nature`, `VOICE_APHORISTIC` "get to the point",
+the "never verbose or preachy" directive) and the protocol's "say one short line before
+delegating". Two coordinated changes aimed at that one behaviour:
+- The spoken anchor gains "Every sentence is about the caller's world — the answer, the fact, the
+  next step. None is about you: not your method, your rules, or your manner." It is phrased
+  positively on purpose; listing the phrases would prime them.
+- `PROTOCOL_LELIK_DELEGATION` now says to acknowledge like a copilot: a word or two, nothing more.
+
+The shared character tokens stay untouched (owner's "character shared with Alek" decision).
+*Next if it persists:* give Lelik his own `HUMOR_*` slot (e.g. the existing `HUMOR_PRESET_LIGHT`),
+so only his humour changes.
+
+**Relay keep-alive (2026-09-29).** A web call after idle failed: the relay's cold start (67 s
+measured) outlasted Cloudflare's ~8 s WebSocket handshake. Cloud Scheduler cannot hit the relay
+directly, because its request carries a `Content-Length`, which the relay's `websockets` 15 parser rejects
+before `process_request` runs (503 + ERROR). So Scheduler calls the main service's OIDC-protected
+`POST /voice/relay-warmup` every 10 minutes, and that route sends a plain GET to the relay and
+awaits it. Job: `alek-voice-relay-dev-keep-alive`.
+
+**Copilot register, step 3 (2026-09-29): Lelik gets his own voice and humor.** Step 2 was
+verified in place: the token was uploaded before the prompt was assembled, and the relay ran the
+new anchor. Lelik still opened with "почнемо… а не з церемоній" and waited with "озвучу… без зайвих
+церемоній, тільки суть", which are paraphrases of `VOICE_APHORISTIC` ("never open with a greeting…
+start with substance", "get to the point"). One anchor line loses to a whole voice token. The owner's
+only USER override is `LANG_FIXED_UK`, so both slots come from the `lelik` profile itself and can
+change there without touching Smart.
+- `VOICE_APHORISTIC` → `VOICE_COPILOT`: service lines ("checking", "handed to Alek", "still
+  coming") are a few plain words; real answers get the depth they need; every sentence is about
+  the caller's world. The owner rejected a first draft that capped all replies.
+- `HUMOR_PRESET_RANEVSKAYA` → `HUMOR_COPILOT`: status `RARE`, one dry line on topic, most replies
+  without a joke; `safety_override` copied verbatim. `HUMOR_PRESET_LIGHT` was rejected because its
+  `Light_Self_Awareness` algorithm is self-commentary again.
+- Archetype and vibe stay shared with Smart. Rollback: re-upload the previous `lelik.json` (git).
+
+**Copilot register, step 4 (2026-09-29).** Step 3 removed "no ceremony" talk and most jokes. Two
+irritants were left:
+- Lelik narrated his plan ("I'll check quickly and tell you");
+- after it, a second line "the request is in progress": the relay's `_DISPATCH_NOTE`, voiced.
+
+Changes:
+- `_DISPATCH_NOTE` is removed for every delegation. The dispatching turn already carries the
+  acknowledgement, and the watchdog still covers a long wait.
+- `FEW_SHOT_EXAMPLES_LELIK` (system, English, the owner's format): nine cases, each a situation plus
+  a good and a bad reply. The bad replies are real phrases from today's calls.
+- Service lines are a few words. A result, from a lookup or from Alek, keeps its full substance:
+  that case was rewritten after the owner noted a short "good" result would teach Lelik to cut
+  Alek's answers. Two conversational cases cover a light moment (one dry joke if it fits) and a real
+  question (full depth, no joke).
+- Still in the profile, flagged for a later step: `POLICY_WITTY_ACCENTUATION` ("a single sharp
+  witty remark to accentuate the core message"), which pulls against the few-shots.
+
+**Outcome (2026-09-29, owner's call after step 4):** "like he was swapped": intonation,
+phrasing, pace and jokes all changed. The lesson for this model is to steer register with
+situational good/bad examples, not with rules about the form of the reply, because such rules get
+spoken. `POLICY_WITTY_ACCENTUATION` is still in the profile; revisit only if jokes creep back.
 
 ## 5. Transport — telephony, with media relayed through us
 

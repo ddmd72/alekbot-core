@@ -406,6 +406,7 @@ _FACTORY_AGENT_TYPES = [
     "tutor",
     "image_generation",
     "video_generation",
+    "web_search_light",
 ]
 
 

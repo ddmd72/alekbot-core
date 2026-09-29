@@ -2,8 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Call Lelik</title>
+    <link rel="manifest" href="/cabinet/call/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/cabinet/call/icon-180.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Lelik" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -23,6 +31,7 @@
         --accent-hover: #0077ed;
         --accent-danger: #ff3b30;
         --accent-danger-hover: #ff453a;
+        --accent-call: #34c759;
         --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
         --shadow-lg:
           0 12px 32px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.04);
@@ -45,6 +54,7 @@
           --accent-hover: #409cff;
           --accent-danger: #ff453a;
           --accent-danger-hover: #ff6961;
+          --accent-call: #30d158;
           --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.6);
           --shadow-lg:
             0 12px 32px rgba(0, 0, 0, 0.8), 0 4px 12px rgba(0, 0, 0, 0.4);
@@ -72,17 +82,13 @@
       }
 
       body {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
         min-height: 100%;
-        padding: 16px;
+        position: relative;
       }
 
       .back-link {
-        position: fixed;
-        top: 16px;
+        position: absolute;
+        top: calc(12px + env(safe-area-inset-top));
         left: 16px;
         font-size: 15px;
         font-weight: 500;
@@ -94,23 +100,50 @@
         color: var(--text-main);
       }
 
-      .card {
+      /* One-handed layout: identity + state at the top, the call button in the bottom third
+         (thumb zone), the rarely-needed mic picker folded away under it. */
+      .screen {
         width: 100%;
         max-width: 420px;
-        background: var(--bg-panel-solid);
-        border: 1px solid var(--border-light);
-        border-radius: var(--radius-xl);
-        box-shadow: var(--shadow-lg);
-        padding: 40px 24px;
+        min-height: 100dvh;
+        margin: 0 auto;
+        padding: calc(64px + env(safe-area-inset-top)) 24px
+          calc(24px + env(safe-area-inset-bottom));
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 28px;
         text-align: center;
       }
 
+      .identity {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+      }
+
+      .avatar {
+        width: 112px;
+        height: 112px;
+        border-radius: 50%;
+        object-fit: cover;
+        box-shadow: var(--shadow-lg);
+      }
+      .avatar.live {
+        animation: pulse 2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.45); }
+        50% { box-shadow: 0 0 0 14px rgba(52, 199, 89, 0); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .avatar.live { animation: none; }
+      }
+
       h1 {
-        font-size: 22px;
+        font-size: 28px;
         font-weight: 600;
       }
 
@@ -121,22 +154,47 @@
         min-height: 24px;
       }
 
+      #timer {
+        font-size: 17px;
+        font-variant-numeric: tabular-nums;
+        color: var(--text-muted);
+        min-height: 24px;
+      }
+
+      .controls {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 32px 0 8px;
+      }
+
       .call-btn {
-        width: 100%;
-        min-height: 64px;
-        font-size: 19px;
-        font-weight: 600;
-        color: #fff;
-        background: var(--accent);
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
         border: none;
-        border-radius: var(--radius-lg);
+        color: #fff;
+        background: var(--accent-call);
+        box-shadow: var(--shadow-lg);
         cursor: pointer;
-        box-shadow: var(--shadow-md);
+        display: flex;
+        align-items: center;
+        justify-content: center;
         transition: var(--transition-fast);
         -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+      .call-btn svg {
+        width: 48px;
+        height: 48px;
+        transition: transform var(--transition-fast);
       }
       .call-btn:hover:not(:disabled) {
-        background: var(--accent-hover);
+        filter: brightness(1.08);
+      }
+      .call-btn:active:not(:disabled) {
+        transform: scale(0.94);
       }
       .call-btn:disabled {
         opacity: 0.5;
@@ -145,26 +203,43 @@
       .call-btn.danger {
         background: var(--accent-danger);
       }
-      .call-btn.danger:hover:not(:disabled) {
-        background: var(--accent-danger-hover);
+      .call-btn.danger svg {
+        transform: rotate(135deg);
       }
 
-      .mic-row {
+      #call-label {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text-main);
+      }
+
+      .mic-settings {
         width: 100%;
+        margin-top: 16px;
+        text-align: left;
+      }
+      .mic-settings summary {
+        list-style: none;
+        cursor: pointer;
+        text-align: center;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-muted);
+        padding: 8px;
+      }
+      .mic-settings summary::-webkit-details-marker {
+        display: none;
+      }
+      .mic-row {
         display: flex;
         flex-direction: column;
         gap: 8px;
-        text-align: left;
-      }
-      .mic-row label {
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--text-muted);
+        padding-top: 8px;
       }
       .mic-row select {
         width: 100%;
         padding: 10px 12px;
-        font-size: 15px;
+        font-size: 16px; /* >=16px: iOS zooms the page into smaller form controls */
         font-family: var(--font-sans);
         color: var(--text-main);
         background: var(--bg-panel-solid);
@@ -182,21 +257,38 @@
     </style>
   </head>
   <body>
-    <a class="back-link" href="/cabinet" id="back-link">← Back to Cabinet</a>
+    <a class="back-link" href="/cabinet?tab=integrations" id="back-link">← Cabinet</a>
 
-    <div class="card">
-      <h1 id="title">Call Lelik</h1>
-      <div id="state">Ready to call</div>
-      <button id="call-btn" class="call-btn">Call</button>
-      <div class="mic-row">
-        <label for="mic-select" id="mic-label">Microphone</label>
-        <select id="mic-select"></select>
-        <p class="hint" id="mic-hint">
-          Using Bluetooth headphones? Pick the built-in microphone to keep
-          full sound quality.
-        </p>
+    <main class="screen">
+      <div class="identity">
+        <img class="avatar" id="avatar" src="/cabinet/call/icon-192.png" alt="" />
+        <h1 id="title">Lelik</h1>
+        <div id="state">Ready to call</div>
+        <div id="timer"></div>
       </div>
-    </div>
+
+      <div class="controls">
+        <button id="call-btn" class="call-btn" aria-labelledby="call-label">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path
+              d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.61 21 3 13.39 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z"
+            />
+          </svg>
+        </button>
+        <div id="call-label">Call</div>
+      </div>
+
+      <details class="mic-settings">
+        <summary id="mic-summary">⚙ Microphone</summary>
+        <div class="mic-row">
+          <select id="mic-select" aria-labelledby="mic-summary"></select>
+          <p class="hint" id="mic-hint">
+            Using Bluetooth headphones? Pick the built-in microphone to keep
+            full sound quality.
+          </p>
+        </div>
+      </details>
+    </main>
 
     <audio id="remote-audio" autoplay playsinline hidden></audio>
 
@@ -205,7 +297,7 @@
       const LANG_DICT = {
         en: {
           "app.title": "Call Lelik",
-          "back.cabinet": "← Back to Cabinet",
+          "back.cabinet": "← Cabinet",
           "state.idle": "Ready to call",
           "state.connecting": "Connecting…",
           "state.live": "Live",
@@ -223,7 +315,7 @@
         },
         uk: {
           "app.title": "Дзвінок Леліку",
-          "back.cabinet": "← Назад до кабінету",
+          "back.cabinet": "← Кабінет",
           "state.idle": "Готово до дзвінка",
           "state.connecting": "З'єднання…",
           "state.live": "У розмові",
@@ -241,7 +333,7 @@
         },
         fr: {
           "app.title": "Appeler Lelik",
-          "back.cabinet": "← Retour au cabinet",
+          "back.cabinet": "← Cabinet",
           "state.idle": "Prêt à appeler",
           "state.connecting": "Connexion…",
           "state.live": "En direct",
@@ -259,7 +351,7 @@
         },
         es: {
           "app.title": "Llamar a Lelik",
-          "back.cabinet": "← Volver al panel",
+          "back.cabinet": "← Panel",
           "state.idle": "Listo para llamar",
           "state.connecting": "Conectando…",
           "state.live": "En directo",
@@ -288,9 +380,8 @@
 
       function applyTranslations() {
         document.title = t("app.title");
-        document.getElementById("title").textContent = t("app.title");
         document.getElementById("back-link").textContent = t("back.cabinet");
-        document.getElementById("mic-label").textContent = t("mic.label");
+        document.getElementById("mic-summary").textContent = `⚙ ${t("mic.label")}`;
         document.getElementById("mic-hint").textContent = t("mic.hint");
       }
 
@@ -298,6 +389,9 @@
       const $ = (id) => document.getElementById(id);
       const stateEl = $("state");
       const btn = $("call-btn");
+      const callLabel = $("call-label");
+      const timerEl = $("timer");
+      const avatar = $("avatar");
       const remoteAudio = $("remote-audio");
       const micSelect = $("mic-select");
 
@@ -321,17 +415,61 @@
         // mode: "idle" | "connecting" | "live" — while connecting the button stays enabled
         // and reads "Hang up", so a stuck connection attempt is never a dead end.
         if (mode === "idle") {
-          btn.textContent = t("button.call");
+          callLabel.textContent = t("button.call");
           btn.disabled = false;
           btn.classList.remove("danger");
         } else {
-          btn.textContent = t("button.hangup");
+          callLabel.textContent = t("button.hangup");
           btn.disabled = false;
           btn.classList.add("danger");
         }
+        avatar.classList.toggle("live", mode === "live");
+        if (mode === "live") startTimer();
+        else stopTimer();
         // The mic choice only takes effect at the getUserMedia() call that starts a call —
         // switching it mid-call has no effect, so lock it while connecting/live.
         micSelect.disabled = mode !== "idle";
+      }
+
+      /* ── Call timer ─────────────────────────────────── */
+      let timerInterval = null;
+
+      function startTimer() {
+        if (timerInterval) return;
+        const startedAt = Date.now();
+        const tick = () => {
+          const total = Math.floor((Date.now() - startedAt) / 1000);
+          const m = Math.floor(total / 60);
+          const sec = String(total % 60).padStart(2, "0");
+          timerEl.textContent = `${m}:${sec}`;
+        };
+        tick();
+        timerInterval = setInterval(tick, 1000);
+      }
+
+      function stopTimer() {
+        if (timerInterval) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+        }
+        timerEl.textContent = "";
+      }
+
+      /* ── Session ─────────────────────────────────────── */
+      // The Cabinet session is capped at 24h with no silent refresh (owner decision): an
+      // expired session goes to login and comes back here, instead of failing the call later
+      // with a bare "Could not connect".
+      function goToLogin() {
+        window.location.replace("/auth/login?next=/cabinet/call");
+      }
+
+      async function ensureSession() {
+        try {
+          const resp = await fetch("/auth/me", { credentials: "same-origin" });
+          if (resp.status === 401) goToLogin();
+        } catch (e) {
+          // Offline / transient — let the call attempt surface the error instead.
+        }
       }
 
       /* ── Microphone choice ───────────────────────────── */
@@ -747,6 +885,12 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sdp: pc.localDescription.sdp, mid: tx.mid }),
           });
+          if (startResp.status === 401) {
+            // Session expired while the page was open — release everything, then log in.
+            handledState = true;
+            goToLogin();
+            throw new Error("unauthorized");
+          }
           if (startResp.status === 409) {
             handledState = true;
             setState(t("state.busy"));
@@ -859,7 +1003,9 @@
 
       applyTranslations();
       setState(t("state.idle"));
+      renderButton("idle");
       refreshMicList();
+      ensureSession();
     </script>
   </body>
 </html>

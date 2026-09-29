@@ -105,6 +105,7 @@ def create_voice_control_plane_blueprint(
     lelik_agent_provider: Callable[[str], Awaitable[Optional["LelikAgent"]]] = None,
     one_call_ttl_s: int = 3600,
     late_answer_sink: Optional[Callable[..., Awaitable[None]]] = None,
+    relay_warmup: Optional[Callable[[], Awaitable[int]]] = None,
 ) -> Blueprint:
     """`late_answer_sink(user_id=, account_id=, request=, output=, failed=)` posts an answer the
     relay stopped waiting for to the user's chat; `failed` means the delegation failed and `output`
@@ -374,6 +375,25 @@ def create_voice_control_plane_blueprint(
             # Logged inside _run_delegation.
             return jsonify({"error": "delegation failed"}), 500
         return jsonify({"output": output}), 200
+
+    @bp.route("/voice/relay-warmup", methods=["POST"])
+    async def warm_relay():
+        """Cloud Scheduler keeps the relay warm through here. Its cold start (up to ~67 s seen on
+        2026-09-29) outlasts Cloudflare's ~8 s WebSocket handshake, so a web call after idle
+        failed. Scheduler cannot hit the relay directly: its request carries a Content-Length,
+        which the relay's websockets parser rejects before any handler runs. Awaited, not fired:
+        Cloud Run throttles the CPU once this response is sent."""
+        unauthorized = await _verify_or_401()
+        if unauthorized:
+            return unauthorized
+        if relay_warmup is None:
+            return jsonify({"warmed": False, "reason": "relay not configured"}), 200
+        try:
+            relay_status = await relay_warmup()
+        except Exception as exc:
+            logger.warning(f"voice relay warm-up failed: {exc!r}")
+            return jsonify({"warmed": False}), 502
+        return jsonify({"warmed": True, "relay_status": relay_status}), 200
 
     @bp.route("/voice/delegate/abandon", methods=["POST"])
     async def abandon_delegation():
