@@ -159,8 +159,9 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
 | ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
 | Tutor | BALANCED (OpenAI `gpt-5.6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
-| Lelik | n/a — session is OpenAI Realtime in the relay | internal; allowlist `search_memory`, `search_web`, `ask_alek` | voice companion: callback, session config, delegation via `/voice/delegate` |
-| Alek gateway | zero-LLM | `ask_alek` (internal) | Lelik's route to Router → Smart; rule-2 chat copy |
+| Lelik | n/a — session is OpenAI Realtime in the relay | internal; allowlist `search_memory`, `search_web_light`, `ask_alek`, `tell_alek` | voice companion: callback, session config, delegation via `/voice/delegate` |
+| Alek gateway | zero-LLM | `ask_alek` (SYNC), `tell_alek` (ASYNC errand) — internal | Lelik's route to Router → Smart; question: links copy to chat; errand: full outcome to chat |
+| WebSearchLight | ECO (Gemini flash-lite) | `search_web_light` (internal, Lelik only) | one grounded lookup, ~2 s, spoken answer |
 | lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills |
 
 **Remote MCP Server** — alekbot as MCP *server* exposing memory search to claude.ai Custom Connectors
@@ -286,8 +287,18 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
   were cut after ~0.4-0.8 s on live calls, cause not yet found. `create_response` is off, so
   every reply is started by the relay after appending the text path's `build_persona_anchor` as a
   `system` item. Anchors are never deleted, because a failed delete is a call-ending provider error
-  (RFC §5.2). Any Lelik delegation result with links gets a bare-anchor chat copy (a failed result
-  never does), bounded at 5 s so a slow chat delivery never holds up the spoken answer.
+  (RFC §5.2). Lelik's own lookups post nothing to chat (auto link copy withdrawn 2026-09-29).
+- **Two search depths, questions vs errands** (VOICE_COMPANION_RFC §4.15, 2026-09-29).
+  - Lelik's own lookup is `search_web_light`: one grounded Gemini ECO call, ~2 s. The full
+    `search_web` with Maps fan-out (11–15 s) left his allowlist; deeper research goes to Alek.
+  - `ask_alek` is a question: SYNC, and Lelik hosts the wait. `tell_alek` is an errand: ASYNC, so
+    it runs as a **Cloud Task**, not a background task in the route, because Cloud Run throttles the
+    CPU once a response is sent.
+    - Alek posts the errand's whole outcome to chat.
+    - `AgentWorkerHandler` reports a failed errand (`_notify_errand_failure`).
+  - Smart's `PROTOCOL_VOICE_PARTNER` (`lelik_request_quality`) tells Alek that Lelik's request comes
+    from a weaker model: infer the user's intent from their own lines (12 call turns now) and the
+    chat history, and serve that.
 - **Two agents, deliberately not one.** `LelikAgent` is a standard delegating agent (Slice 2), not a
   call-placer only: three entry points — `execute()` places the callback, `session_config()` builds
   the realtime session's instructions + tool declaration (over `LELIK.allowed_intents`, the same
