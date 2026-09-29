@@ -49,6 +49,19 @@ Both budgets were unreachable from the day they were written until 2026-08-15 â€
 
 ---
 
+### Voice Relay Keep-Alive (dev)
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `alek-voice-relay-dev-keep-alive` |
+| **Schedule** | `*/10 * * * *` (every 10 min) |
+| **HTTP** | `POST /voice/relay-warmup` on the **main** service, OIDC (worker SA), empty body |
+| **Purpose** | Keeps the voice relay warm. Its cold start (up to ~67 s) outlasts Cloudflare's ~8 s WebSocket handshake, so the first web call after idle failed. |
+| **Why not the relay directly** | Scheduler's request carries a `Content-Length`, which the relay's `websockets` parser rejects before any handler (503 + ERROR). The main route sends a plain GET instead and awaits it. |
+| **Handler** | `voice_control_plane_app.warm_relay` â†’ `main._relay_warmup` |
+
+---
+
 ### Fire Due Reminders
 
 | Field | Value |

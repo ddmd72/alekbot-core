@@ -942,6 +942,20 @@ async def main():
                         output = _localization.get_ui_string(lang, UIMessage.VOICE_REQUEST_FAILED)
                     await notification_service.notify_raw(user_id, account_id, late_answer_text(request, output))
 
+                from urllib.parse import urlsplit
+                _relay_parts = urlsplit(config.get("VOICE_RELAY_STREAM_URL", ""))
+                _relay_http_url = (
+                    f"{'https' if _relay_parts.scheme == 'wss' else 'http'}://{_relay_parts.netloc}/"
+                    if _relay_parts.netloc else ""
+                )
+
+                async def _relay_warmup() -> int:
+                    # A plain GET with no body: the relay answers it with 200 (relay_main.process_request).
+                    import httpx
+                    async with httpx.AsyncClient(timeout=120.0) as client:
+                        response = await client.get(_relay_http_url)
+                    return response.status_code
+
                 main_app.register_blueprint(
                     create_voice_control_plane_blueprint(
                         ephemeral_store=voice_ephemeral_store,
@@ -955,6 +969,7 @@ async def main():
                         alert_sink=_alert_webhook,
                         lelik_agent_provider=agent_factory.get_lelik,
                         late_answer_sink=_voice_late_answer_sink,
+                        relay_warmup=_relay_warmup if _relay_http_url else None,
                     )
                 )
                 logger.info(
