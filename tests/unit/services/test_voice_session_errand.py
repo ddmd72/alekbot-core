@@ -1,8 +1,9 @@
 """tell_alek errands in the relay (VOICE_COMPANION_RFC §4.15.2).
 
-Only an acknowledgement comes back, in well under a second. UAT 2026-09-29: the dispatch filler
-fired for it and Lelik said "handed to Alek" twice. An errand is not waited for: no filler, and
-the acknowledgement is still handed to the model as the tool call's output.
+Only an acknowledgement comes back, in well under a second. An errand is not waited for: it is
+never abandoned at hang-up, and the acknowledgement is still handed to the model as the tool
+call's output. (The dispatch filler these tests first guarded against was removed for every
+delegation on 2026-09-29.)
 """
 import asyncio
 import json
@@ -64,19 +65,12 @@ def _notes(session):
 
 
 @pytest.mark.asyncio
-async def test_an_errand_gets_no_dispatch_filler_but_its_ack_reaches_the_model():
+async def test_an_errand_ack_reaches_the_model_and_nothing_else_is_said():
     session, control = await _call("tell_alek", _slow_ack)
 
-    assert voice_module._DISPATCH_NOTE not in _notes(session)
     session.submit_tool_result.assert_awaited_once_with("c1", _ACK)
     control.abandon_delegation.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_a_question_still_gets_the_filler():
-    session, _ = await _call("ask_alek", _slow_ack)
-
-    assert voice_module._DISPATCH_NOTE in _notes(session)
+    assert voice_module._WAITING_NOTE not in _notes(session)
 
 
 @pytest.mark.asyncio

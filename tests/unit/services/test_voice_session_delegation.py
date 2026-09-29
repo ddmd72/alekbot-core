@@ -76,7 +76,7 @@ async def test_tool_call_is_forwarded_with_call_context_and_answered_as_function
     assert kwargs["arguments"] == {"intent": "search_web", "query": "weather"}
     assert kwargs["call_context"][-1] == {"role": "user", "text": "what's the weather"}
     session.submit_tool_result.assert_awaited_once_with("c1", "sunny")
-    assert session.request_response.await_count == 3  # opening line + dispatch filler + the answer
+    assert session.request_response.await_count == 2  # opening line + the answer (no dispatch filler since 2026-09-29)
 
 
 @pytest.mark.asyncio
