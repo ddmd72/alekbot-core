@@ -1004,6 +1004,29 @@ Rollback: re-add the token to the profile. Next candidates, one at a time: a cop
 spoken anchor ("humor: rare"); a copilot role (acknowledge, report, stop; no narrating); waits as
 brief status instead of hosting (reverses `5a49944`).
 
+**Copilot register, step 2 (2026-09-29).** Step 1 (few-shot removed) barely moved the call. The
+owner named the real irritant: Lelik narrates **how** he is answering ("коротко і по суті", "без
+пафосу", "я не вигадую, чекаю на відповідь, щоб не брехати…"). This is the model voicing its own
+instructions as content. The sources are the shared character tokens (`HUMOR_PRESET_RANEVSKAYA`
+`ALWAYS_ACTIVE` with `self_deprecation: mock own AI nature`, `VOICE_APHORISTIC` "get to the point",
+the "never verbose or preachy" directive) and the protocol's "say one short line before
+delegating". Two coordinated changes aimed at that one behaviour:
+- The spoken anchor gains "Every sentence is about the caller's world — the answer, the fact, the
+  next step. None is about you: not your method, your rules, or your manner." It is phrased
+  positively on purpose; listing the phrases would prime them.
+- `PROTOCOL_LELIK_DELEGATION` now says to acknowledge like a copilot: a word or two, nothing more.
+
+The shared character tokens stay untouched (owner's "character shared with Alek" decision).
+*Next if it persists:* give Lelik his own `HUMOR_*` slot (e.g. the existing `HUMOR_PRESET_LIGHT`),
+so only his humour changes.
+
+**Relay keep-alive (2026-09-29).** A web call after idle failed: the relay's cold start (67 s
+measured) outlasted Cloudflare's ~8 s WebSocket handshake. Cloud Scheduler cannot hit the relay
+directly, because its request carries a `Content-Length`, which the relay's `websockets` 15 parser rejects
+before `process_request` runs (503 + ERROR). So Scheduler calls the main service's OIDC-protected
+`POST /voice/relay-warmup` every 10 minutes, and that route sends a plain GET to the relay and
+awaits it. Job: `alek-voice-relay-dev-keep-alive`.
+
 ## 5. Transport — telephony, with media relayed through us
 
 **Telephony, not a browser page.** A Spanish Twilio number is already provisioned and owned; what
