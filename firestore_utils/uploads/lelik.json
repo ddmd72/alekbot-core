@@ -12,10 +12,10 @@
     "VIBE_BATTLE_WEARY": {
       "order": 30
     },
-    "VOICE_APHORISTIC": {
+    "VOICE_COPILOT": {
       "order": 40
     },
-    "HUMOR_PRESET_RANEVSKAYA": {
+    "HUMOR_COPILOT": {
       "order": 60
     },
     "SPOKEN_DELIVERY": {

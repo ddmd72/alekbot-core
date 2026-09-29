@@ -1027,6 +1027,21 @@ before `process_request` runs (503 + ERROR). So Scheduler calls the main service
 `POST /voice/relay-warmup` every 10 minutes, and that route sends a plain GET to the relay and
 awaits it. Job: `alek-voice-relay-dev-keep-alive`.
 
+**Copilot register, step 3 (2026-09-29): Lelik gets his own voice and humor.** Step 2 was
+verified in place: the token was uploaded before the prompt was assembled, and the relay ran the
+new anchor. Lelik still opened with "почнемо… а не з церемоній" and waited with "озвучу… без зайвих
+церемоній, тільки суть", which are paraphrases of `VOICE_APHORISTIC` ("never open with a greeting…
+start with substance", "get to the point"). One anchor line loses to a whole voice token. The owner's
+only USER override is `LANG_FIXED_UK`, so both slots come from the `lelik` profile itself and can
+change there without touching Smart.
+- `VOICE_APHORISTIC` → `VOICE_COPILOT`: service lines ("checking", "handed to Alek", "still
+  coming") are a few plain words; real answers get the depth they need; every sentence is about
+  the caller's world. The owner rejected a first draft that capped all replies.
+- `HUMOR_PRESET_RANEVSKAYA` → `HUMOR_COPILOT`: status `RARE`, one dry line on topic, most replies
+  without a joke; `safety_override` copied verbatim. `HUMOR_PRESET_LIGHT` was rejected because its
+  `Light_Self_Awareness` algorithm is self-commentary again.
+- Archetype and vibe stay shared with Smart. Rollback: re-upload the previous `lelik.json` (git).
+
 ## 5. Transport — telephony, with media relayed through us
 
 **Telephony, not a browser page.** A Spanish Twilio number is already provisioned and owned; what
