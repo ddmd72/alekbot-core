@@ -9,6 +9,7 @@ from typing import AsyncIterator, Awaitable, Callable, Dict, List, NamedTuple, O
 from src.domain.llm import build_persona_anchor
 from src.domain.request_context import RequestContext
 from src.domain.voice_audio_frame import AudioFrame
+from src.domain.voice_errand import is_errand
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.ports.alert_sink import AlertSinkPort
@@ -112,6 +113,9 @@ class _CallState:
     # Delegation task -> realtime call_id, while the relay still waits for its answer. What is left
     # here when the call ends is abandoned, so the main service posts those answers to chat.
     pending_delegations: Dict[asyncio.Task, str] = field(default_factory=dict)
+    # tell_alek errands (RFC §4.15.2): tracked for teardown only. They are not "delegations" —
+    # nothing waits for them, so no dispatch filler, no waiting notes, no abandon.
+    errands: Set[asyncio.Task] = field(default_factory=set)
 
 
 class VoiceSessionService:
@@ -255,7 +259,7 @@ class VoiceSessionService:
                 logger.info(f"voice call {ticket}: call ended with {len(abandoned)} unheard answers, abandoning")
                 await asyncio.gather(*(self._abandon(ticket, call_id) for call_id in abandoned))
             # 3. In-flight delegations stop here: the abandoned ones reach chat from the main service.
-            await self._cancel_all(ticket, list(state.delegations))
+            await self._cancel_all(ticket, list(state.delegations) + list(state.errands))
             await session.close()
             await self._control_plane.submit_transcript(
                 call_id=ticket,
@@ -584,6 +588,13 @@ class VoiceSessionService:
             ticket, config, session, state, payload.get("call_id"),
             arguments, call_context, dispatched_at,
         ))
+        if is_errand(arguments):
+            # Only the acknowledgement comes back, in well under a second: nothing to host a wait
+            # for, and no answer to post to chat if the call ends first — the errand itself runs
+            # on as a Cloud Task either way. UAT 2026-09-29: the filler made Lelik say it twice.
+            state.errands.add(task)
+            task.add_done_callback(state.errands.discard)
+            return
         state.delegations.add(task)
         task.add_done_callback(state.delegations.discard)
         state.pending_delegations[task] = payload.get("call_id")
