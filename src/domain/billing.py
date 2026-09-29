@@ -380,14 +380,27 @@ _REALTIME_PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
         "text_output_tokens": 24.0,
         "cached_tokens": 0.40,
     },
+    # xAI prices only text input per token; its audio is per second (below). Rate card
+    # "$0.08 / min + $0.004 / text input", docs.x.ai/developers/models, checked 2026-09-29.
+    "grok-voice-think-fast-2.0": {
+        "text_input_tokens": 0.004,
+    },
+}
+# Per-second realtime legs: xAI bills audio by the minute and reports the billable seconds
+# itself on every response.done (`billable_audio_seconds`, XaiRealtimeAdapter._flatten_usage).
+_REALTIME_PRICING_PER_SECOND: Dict[str, Dict[str, float]] = {
+    "grok-voice-think-fast-2.0": {
+        "billable_audio_seconds": 0.08 / 60,
+    },
 }
 
 
 def calculate_realtime_cost(model: str, usage: Dict[str, int]) -> float:
-    """Prices a realtime call's independent token legs (RFC §4.12, §6).
+    """Prices a realtime call's independent legs (RFC §4.12, §6): per-token legs,
+    plus per-second legs for providers that bill audio by time (xAI).
 
-    ``usage`` is expected in the already-flattened shape produced by
-    ``OpenAIRealtimeAdapter._flatten_usage`` — keys ``audio_input_tokens``,
+    ``usage`` is expected in the already-flattened shape produced by the realtime
+    adapter's ``_flatten_usage``. For OpenAI: keys ``audio_input_tokens``,
     ``audio_output_tokens``, ``text_input_tokens``, ``text_output_tokens``,
     ``cached_tokens`` (any subset; missing keys default to 0). Reasoning
     tokens are already folded into ``text_output_tokens`` by that flattening
@@ -397,10 +410,12 @@ def calculate_realtime_cost(model: str, usage: Dict[str, int]) -> float:
     Returns 0.0 for an unpriced model, same fail-open contract as
     ``calculate_cost``/``calculate_external_cost``.
     """
-    rates = _REALTIME_PRICING_PER_MILLION_TOKENS.get(model)
-    if rates is None:
+    token_rates = _REALTIME_PRICING_PER_MILLION_TOKENS.get(model)
+    second_rates = _REALTIME_PRICING_PER_SECOND.get(model, {})
+    if token_rates is None and not second_rates:
         return 0.0
-    total = sum(usage.get(leg, 0) * rate_per_million / 1_000_000 for leg, rate_per_million in rates.items())
+    total = sum(usage.get(leg, 0) * rate_per_million / 1_000_000 for leg, rate_per_million in (token_rates or {}).items())
+    total += sum(usage.get(leg, 0) * rate_per_second for leg, rate_per_second in second_rates.items())
     return round(total, 6)
 
 
