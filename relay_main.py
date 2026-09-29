@@ -6,6 +6,16 @@ server that speaks Twilio's Media Streams protocol and drives
 
 Environment variables (static — set at relay deploy time, Task 14):
   OPENAI_API_KEY          Secret: OpenAI API key (realtime provider).
+  XAI_API_KEY             Secret: xAI API key; read only when
+                           VOICE_REALTIME_PROVIDER=xai.
+  VOICE_REALTIME_PROVIDER Optional knob, "openai" (default) or "xai": which
+                           realtime provider both call paths use
+                           (decisions/voice_xai_protocol_probe.md).
+  VOICE_XAI_VOICE         Optional knob (default: the adapter's own voice).
+  VOICE_XAI_REASONING_EFFORT
+                           Optional knob, "high" (default) or "none" - the only
+                           two values xAI accepts. Replaces both paths' effort
+                           when the provider is xai.
   CLOUD_RUN_SERVICE_URL   Base URL of the MAIN service, as seen from the
                            relay — used to call back into
                            /voice/session-config and /voice/submit-transcript.
@@ -42,15 +52,18 @@ import asyncio
 import os
 import signal
 from pathlib import Path
+from typing import Callable
 
 import websockets
 
 from src.adapters.http_call_control_plane_adapter import HttpCallControlPlaneAdapter
 from src.adapters.openai_realtime_adapter import OpenAIRealtimeAdapter
+from src.adapters.xai_realtime_adapter import XaiRealtimeAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
-from src.domain.voice_audio_format import PCM16_24K
+from src.domain.voice_audio_format import MULAW_8K, PCM16_24K, AudioFormat
 from src.handlers.media_stream_handler import MediaStreamHandler
 from src.handlers.sfu_stream_handler import SfuStreamHandler
+from src.ports.realtime_session_port import RealtimeSessionPort
 from src.services.voice_session_service import VoiceSessionService
 from src.utils.logger import logger
 
@@ -66,6 +79,19 @@ _CALLER_OPENING = "Welcome the user in one short sentence. Do not forget to foll
 
 def _load_thinking_cue() -> bytes:
     return _THINKING_CUE_PATH.read_bytes()
+
+
+def _realtime_session_factory(provider: str, audio_format: AudioFormat) -> Callable[[], RealtimeSessionPort]:
+    if provider == "xai":
+        # The stored secret ends in "\n" (an illegal header value); see decisions/grok_revival_2026_08.md.
+        xai_api_key = os.environ["XAI_API_KEY"].strip()
+        voice = os.environ.get("VOICE_XAI_VOICE", "").strip()
+        extra = {"voice": voice} if voice else {}
+        return lambda: XaiRealtimeAdapter(api_key=xai_api_key, audio_format=audio_format, **extra)
+    if provider != "openai":
+        raise ValueError(f"VOICE_REALTIME_PROVIDER must be 'openai' or 'xai', got {provider!r}")
+    openai_api_key = os.environ["OPENAI_API_KEY"]
+    return lambda: OpenAIRealtimeAdapter(api_key=openai_api_key, audio_format=audio_format)
 
 
 def _fetch_id_token(audience: str) -> str:
@@ -84,7 +110,9 @@ def _fetch_id_token(audience: str) -> str:
 
 async def main() -> None:
     main_service_url = os.environ["CLOUD_RUN_SERVICE_URL"]
-    openai_api_key = os.environ["OPENAI_API_KEY"]
+    provider = os.environ.get("VOICE_REALTIME_PROVIDER", "openai").strip().lower()
+    xai_reasoning = os.environ.get("VOICE_XAI_REASONING_EFFORT", "high").strip().lower()
+    logger.info(f"voice relay realtime provider: {provider}")
     billing_webhook_url = os.environ["BILLING_SLACK_WEBHOOK_URL"]
 
     control_plane = HttpCallControlPlaneAdapter(
@@ -93,11 +121,11 @@ async def main() -> None:
     )
     alert_sink = SlackWebhookAdapter(webhook_url=billing_webhook_url)
     session_service = VoiceSessionService(
-        realtime_session_factory=lambda: OpenAIRealtimeAdapter(api_key=openai_api_key),
+        realtime_session_factory=_realtime_session_factory(provider, MULAW_8K),
         control_plane=control_plane,
         alert_sink=alert_sink,
         # Owner's call 2026-09-27: medium on every voice path (was high since 2026-09-23).
-        reasoning_effort="medium",
+        reasoning_effort=xai_reasoning if provider == "xai" else "medium",
         # Owner's call 2026-09-25: line noise and "uh-huh"s cut replies at ~400 ms; interrupting
         # Lelik now takes a second of speech.
         barge_in_min_speech_s=1.0,
@@ -124,10 +152,10 @@ async def main() -> None:
     # Twilio Media Stream handler. Defaults mirror the phone service so the only variable UAT sees
     # first is the transport itself; the two env knobs let UAT tune reasoning cost/latency and the
     # caller-opening line without a redeploy.
-    web_reasoning = os.environ.get("VOICE_WEB_REASONING_EFFORT", "medium")
+    web_reasoning = xai_reasoning if provider == "xai" else os.environ.get("VOICE_WEB_REASONING_EFFORT", "medium")
     web_opening = _CALLER_OPENING if os.environ.get("VOICE_WEB_CALLER_OPENING", "on").strip().lower() == "on" else None
     web_session_service = VoiceSessionService(
-        realtime_session_factory=lambda: OpenAIRealtimeAdapter(api_key=openai_api_key, audio_format=PCM16_24K),
+        realtime_session_factory=_realtime_session_factory(provider, PCM16_24K),
         control_plane=control_plane,
         alert_sink=alert_sink,
         reasoning_effort=web_reasoning,

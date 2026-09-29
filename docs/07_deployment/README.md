@@ -67,7 +67,7 @@ only by `--command`/`--args` at deploy time.
 |------|------|--------|---------|---------|-------------------|-----------------|
 | `alek-bot-dev` | Cloud Run service | us-central1 | 1800s | min=0, max=1 | ~30 (Slack, Telegram, LLM providers, OAuth, etc. — see cloudbuild-dev.yaml) | `logs`, `fetch-logs`, `logs-tail` |
 | `alek-research-job-dev` | Cloud Run Job | us-central1 | task-timeout 18000s | on-demand (no min/max-instances — Jobs run to completion) | `ANTHROPIC_API_KEY`, `SERVICE_ACCOUNT_EMAIL` | `logs-job`, `fetch-logs-job`, `list-jobs`, `logs-execution`, `cancel-job` |
-| `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL` | `logs-relay`, `fetch-logs-relay` |
+| `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL` | `logs-relay`, `fetch-logs-relay` |
 
 **`alek-voice-relay-dev`** (added for Voice Companion Slice 1, see
 [`../10_rfcs/VOICE_COMPANION_RFC.md`](../10_rfcs/VOICE_COMPANION_RFC.md) §4.14) is `relay_main.py` on
@@ -96,6 +96,14 @@ WebSocket is one long *billed* request under Cloud Run's request-based CPU/memor
 - **No `TWILIO_*` secrets** — those belong to the *main* service's webhook/telephony adapter
   (`src/web/voice_webhook_app.py`, `src/adapters/twilio_telephony_adapter.py`), not the relay;
   `relay_main.py` never imports the `twilio` package.
+- **Realtime provider switch** (VOICE_COMPANION_RFC §4.16). Set `VOICE_REALTIME_PROVIDER` to
+  `openai` (the default) or `xai`. Optional knobs: `VOICE_XAI_VOICE` and
+  `VOICE_XAI_REASONING_EFFORT` (`high`/`none`). The switch is flipped without a rebuild:
+  ```bash
+  gcloud run services update alek-voice-relay-dev --region=us-central1 --project=<PROJECT_ID> \
+    --update-env-vars VOICE_REALTIME_PROVIDER=xai
+  ```
+  `make deploy` passes `--set-env-vars` to the relay, which resets the switch to `openai`.
 
 ### Voice Relay Stream URL — two-pass first deploy
 

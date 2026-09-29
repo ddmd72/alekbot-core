@@ -346,6 +346,11 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
   text leg, never additive. RFC: `docs/10_rfcs/VOICE_COMPANION_RFC.md`. Deployment prerequisites
   (relay service, `VOICE_RELAY_STREAM_URL`'s two-pass first deploy, Twilio secrets):
   `docs/07_deployment/README.md`.
+- **Second realtime provider: `XaiRealtimeAdapter`**, chosen with the relay's
+  `VOICE_REALTIME_PROVIDER=xai`. The default is OpenAI, and `make deploy` resets the switch to it.
+  xAI replies on its own even with `create_response: false`, so the adapter cancels every reply it
+  did not tag and hides it from the service. xAI audio is billed per second. See RFC §4.16 and
+  `decisions/voice_xai_protocol_probe.md`.
 
 **Voice web transport** (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) — a second call kind, a
 Cabinet call page over WebRTC, next to the Twilio phone path, sharing the same `VoiceSessionService`

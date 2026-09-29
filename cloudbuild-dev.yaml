@@ -87,8 +87,11 @@ steps:
   # changed, which no task authorizes. So the relay deliberately runs as the
   # same (default compute) service account as alek-bot-dev and
   # alek-research-job-dev above — neither overrides --service-account either.
-  # Only two secrets: relay_main.py reads OPENAI_API_KEY and
-  # BILLING_SLACK_WEBHOOK_URL via os.environ (see its module docstring) — no
+  # Three secrets: relay_main.py reads OPENAI_API_KEY, XAI_API_KEY (only when
+  # VOICE_REALTIME_PROVIDER=xai) and BILLING_SLACK_WEBHOOK_URL via os.environ
+  # (see its module docstring). VOICE_REALTIME_PROVIDER itself is not set here:
+  # it is flipped with `gcloud run services update --update-env-vars`, and the
+  # --set-env-vars below resets it to the openai default on the next deploy. No
   # TWILIO_* secrets here; those belong to the MAIN service's own webhook/
   # telephony adapter (src/web/voice_webhook_app.py,
   # src/adapters/twilio_telephony_adapter.py), wired into the alek-bot-dev
@@ -114,7 +117,7 @@ steps:
       - "--memory=1024Mi"
       - "--cpu=2"
       - "--set-env-vars=CLOUD_RUN_SERVICE_URL=$_SERVICE_URL"
-      - "--set-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest"
+      - "--set-secrets=OPENAI_API_KEY=OPENAI_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest"
       # Cloud Run's own default TCP startup probe, spelled out. Naming only the port resets
       # the window to 3x10s, and a slow relay cold start then fails the rollout
       # (2026-09-23). An HTTP probe tried for the "opening handshake failed" noise did not
