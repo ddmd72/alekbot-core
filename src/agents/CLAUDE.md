@@ -214,8 +214,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   delegating agent**, not just a call originator: it has **no `Intent` of its own** (`capabilities={}`),
   so it is still unreachable via `delegate_to_specialist` or `AgentCoordinator` and `can_handle()`
   still returns `False` unconditionally — but its `LELIK` descriptor now carries `allowed_intents=
-  {search_memory, search_web, ask_alek}` and `intent_fanout={search_web: SEARCH_WEB_MAPS_FANOUT}`,
-  the same shape Tutor's descriptor has. Three entry points, one instance:
+  {search_memory, search_web_light, ask_alek, tell_alek}` and no fan-out (revised 2026-09-29,
+  RFC §4.15; it was `search_web` + Maps fan-out), the same shape Tutor's descriptor has. Three entry points, one instance:
   - **`execute(purpose, ticket, answer_url, to_number)`** — places the callback via
     `TelephonyPort.originate_call`. No LLM call, no tier (there is no `_DEFAULT_AGENT_TIERS["lelik"]`
     entry, and none is needed for this method).
@@ -233,16 +233,10 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     when resolvable, and **strips `mode` from the arguments** before dispatch:
     `AgentWorkerHandler` delivers only generator-declared (ASYNC) intents, so a SYNC-declared intent
     forced into `mode: "later"` has no delivery path and would silently drop the answer on the phone.
-  - **`delegate()` also runs the rule-2 chat copy for every specialist except `ask_alek`** (RFC
-    §4.10 rule 2, generalized beyond `ask_alek`'s own copy) — `domain/result_links.build_link_copy`
-    scans `result.result_str` for links and, when it finds any, posts a bare-anchor
-    `SmartResponse` via `notify_answer_copy` (`_copy_links_to_chat`), the shared builder also used by
-    `AlekGatewayAgent`'s fallback below so the two callers can't drift on the chat-copy shape. Skipped
-    when `result.failed` (`DelegationEngine.ToolResult.failed` — a rejection, exception, max retries,
-    or a fan-out whose primary section errored), since an error string can itself carry a URL (an
-    OpenAI 429 pointing at `platform.openai.com`, say). Wrapped in `asyncio.wait_for(...,
-    _ANSWER_COPY_TIMEOUT_S=5.0)` — the spoken result is already decided and returned regardless, so a
-    hung or slow chat delivery must not hold up the call.
+  - **`delegate()` posts nothing to chat** (RFC §4.15.3, 2026-09-29). The rule-2 link copy for
+    every non-Alek specialist was withdrawn: it filled the chat with every search's links. The
+    `notifications` constructor argument is now unused, kept for construction compatibility. When
+    the caller wants something in chat, Lelik hands it to Alek with `tell_alek`.
   - **Persona is a context source, not a prompt author.** `services/lelik_persona_service.py` never
     calls the LLM and never renders prompt text — it assembles facts/history (RFC §4.8); rendering is
     `LelikAgent`'s job via the shared `PromptBuilderPort`, same division as every other agent in this
@@ -282,6 +276,11 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `LELIK.allowed_intents` (see the registry rule below — an internal intent an explicit allowlist
   names). `RETRY_POLICY = NO_RETRY_POLICY`: a retry re-runs Router + Smart + specialists, so it would
   double the spend and the chat copy.
+  - **`tell_alek` — errands (RFC §4.15.2).** The same gateway declares `tell_alek` as `ExecutionMode.ASYNC`
+    (`dispatch_deadline_s=720`), so an errand runs as a Cloud Task and reaches `execute()` as
+    `AgentIntent.DELEGATE` from `AgentWorkerHandler`. `can_handle` accepts both intents. The
+    commission gets an `[Errand from Lelik…]` header, and Smart's whole answer is posted to chat,
+    links or not, with a 30 s bound. A failure is reported by `AgentWorkerHandler._notify_errand_failure`.
   - **Routes to the Router, not to Smart.** `execute()` builds an `AgentMessage` addressed to
     `router_agent_{user_id}` and calls `coordinator.route_message()` — exactly what
     `ConversationHandler` does for a normal turn, because `router_agent.py` is where `enrich_context`
