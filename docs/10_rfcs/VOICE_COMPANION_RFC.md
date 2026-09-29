@@ -980,6 +980,30 @@ Observed, not caused by this revision:
 - Errand 1 took ~97 s, because Smart's complexity override chose `grok-4.6` and its first turn
   took 59 s. That is Smart's model routing, not the errand path (`/voice/delegate` answered in 0.24 s).
 
+**Copilot register, step 1 (2026-09-29): Smart's few-shot examples leave Lelik's profile.**
+The owner's review of the UAT call: Lelik narrated his own work, entertained through every wait,
+and put a joke in every reply. He is meant to be a copilot: acknowledge, report, stop, joke rarely
+and briefly. Four layers push the other way:
+- the `FEW_SHOT_EXAMPLES_RANEVSKAYA_ZHVANETSKY` token, in which every response is an aphorism;
+- the persona anchor, which says "few_shot_examples are exact patterns — match them", "generic
+  assistant prose means you ignored these sections" and "personalization over safe blandness";
+- the role's "fill the pause" rule plus the relay's `_DISPATCH_NOTE`/`_WAITING_NOTE`;
+- the protocol's "say one line before delegating".
+
+Step 1 changes one variable only, the owner's call: the few-shot token is removed from the `lelik`
+profile. Swapping in copilot examples was judged too risky before we know the effect. The
+assembler skips an empty class, so `few_shot_examples` disappears from Lelik's prompt, and the
+anchor stops listing it with no code change. Smart keeps the token.
+
+Measured on the next call's transcript (BigQuery `agent_type="lelik"`) against the UAT call:
+- share of replies with a joke;
+- acknowledgement length;
+- lines that narrate or justify Lelik's own work.
+
+Rollback: re-add the token to the profile. Next candidates, one at a time: a copilot line in the
+spoken anchor ("humor: rare"); a copilot role (acknowledge, report, stop; no narrating); waits as
+brief status instead of hosting (reverses `5a49944`).
+
 ## 5. Transport — telephony, with media relayed through us
 
 **Telephony, not a browser page.** A Spanish Twilio number is already provisioned and owned; what
