@@ -411,6 +411,7 @@ descriptor, like the tutor's, declares an allowlist:
 ```
 LELIK.allowed_intents = {search_memory, search_web, ask_alek}
 LELIK.intent_fanout   = {search_web: SEARCH_WEB_MAPS_FANOUT}   # the constant Smart and Quick share
+# Revised 2026-09-29 (§4.15): {search_memory, search_web_light, ask_alek, tell_alek}, no fan-out
 ```
 
 Maps arrive through the same `search_web → maps_query` fan-out Smart uses. Adding a capability to
@@ -686,7 +687,8 @@ delivered during the call is read *afterwards* anyway, and per §4.3 discretiona
 across a long conversation is the model's weakest axis.
 
 1. **During the call, nothing goes to chat by default.**
-2. **Structural exception — reading-shaped content always goes.** Generalized beyond `ask_alek`:
+2. **Structural exception — reading-shaped content always goes.** *(Withdrawn for Lelik's direct
+   specialists 2026-09-29 — §4.15.3; `ask_alek`'s own copy stays.)* Generalized beyond `ask_alek`:
    any Lelik delegation whose result contains links gets a bare-anchor chat copy, sent regardless
    of anything Lelik decided — reading a URL aloud is useless (§1), so this is a property of the
    result, not a judgment call. `LelikAgent.delegate` runs this for every specialist except
@@ -854,6 +856,101 @@ quietly.
 **No `CircuitBreaker` or retry policy on the session connection.** A human is on the line: a failed
 connect or dropped socket ends the call, alerts, and lets the user redial. Retrying into a live
 conversation produces worse artefacts than a clean failure.
+
+### 4.15 Revision 2026-09-29: fast lookups, questions vs errands, no automatic link copy
+
+Driven by the owner's review of live calls (27–29 Sep). It supersedes the parts of §4.7 and §4.10
+it names. Evidence: 8 `ask_alek` calls and the `search_web` calls of 27–29 Sep, taken from
+BigQuery `prompt_content` and the relay logs.
+
+**What the calls showed.**
+- Lelik's own `search_web` took 11–15 s (full WebSearch agent at BALANCED, plus the automatic Maps
+  fan-out at 3 turns). That is too slow for "instant" and too shallow for "thorough": one search,
+  no cross-check. On the same weather question Alek fanned out four parallel lookups and got it
+  right.
+- 2 of the 8 `ask_alek` calls were errands ("remove the 2 Oct appointment", "set a reminder to
+  meet Olena"). The caller waited 30–60 s for a confirmation they did not need.
+- Every search result's links went to chat, whether or not anyone wanted them.
+- The commission text reached Smart with the delegation timestamp twice (coordinator prefix +
+  Smart's own `_inject_timestamps`).
+
+**1. Two search depths, chosen by Lelik.**
+- `search_web_light` (new, **Lelik only**) is a single grounded call and returns 1–3 spoken
+  sentences, with no Maps fan-out and no JSON. This is the resurrected `WebSearchLightAgent`
+  (deleted as dead code in `5bc5d8c`, 2026-05-29, when Quick's remap to it was switched off). The
+  default is Gemini ECO (`gemini-3.5-flash-lite`) with Google Search grounding.
+- `search_web` leaves Lelik's allowlist. A lookup that needs several sources, comparison or
+  judgment goes to `ask_alek`: Alek already searches in parallel and cross-checks.
+- Rule in `PROTOCOL_LELIK_DELEGATION`: one fact from one search → `search_web_light`; anything else
+  → `ask_alek`; when unsure → `ask_alek`. The error cost is asymmetric: a needless Alek call is
+  slow but right.
+- Measured 2026-09-29 on the owner's weather questions plus one sports result (same system prompt):
+
+  | Candidate | Latency | Note |
+  |---|---|---|
+  | `gemini-3.5-flash-lite` + Google Search | 1.6–2.5 s | Weather and climate consistent; a fresh sports result differed between runs |
+  | `gemini-flash-latest` + Google Search | 3.6–7.6 s | Contradicted flash-lite on the same match |
+  | `gpt-5.4-nano` `web_search` (low context) | 3.5–12.3 s | Too slow |
+  | `gpt-5.4-mini` `web_search` (low context) | 3.4–9.0 s | Too slow |
+
+  Fresh events are where the light path is weakest. The protocol tells Lelik to present a light
+  answer as provisional, and to send "what happened / who won / latest" to Alek when it matters.
+
+**2. Questions and errands are two intents.**
+- `ask_alek` (SYNC, unchanged): a question whose answer the call needs. Lelik hosts the wait.
+- `tell_alek` (new): an errand; the caller does not need the result in the conversation. Lelik
+  says "handed to Alek" and carries on.
+  - `/voice/delegate` answers the relay at once with an acknowledgement and runs the delegation in
+    the background. It uses the same shielded, tracked task the route already uses so a relay
+    disconnect cannot cancel it.
+  - Alek posts his full answer (text, links, table) to chat when he finishes.
+  - A failure posts the localized `VOICE_REQUEST_FAILED` line naming the request, never the error
+    text. An errand that fails silently is worse than one never given.
+  - The relay never waits: no `_DISPATCH_NOTE`, no waiting notes, and the errand does not hold the
+    call open against the silence hang-up.
+  - Nothing is spoken on completion in v1. The result is in chat and the caller has moved on.
+    *Trigger to revisit:* the owner asks for spoken confirmations.
+- Boundary for Lelik: if deciding what to do next in the conversation depends on the result ("check
+  and, if there's a slot, book it"), it is a question.
+- Why two intents rather than `mode: "later"`: the intent name is the primary signal the model
+  matches on (`src/agents/CLAUDE.md`, Specialist delegation). `mode` is stripped on this path
+  anyway (§4.7 correction), and SYNC-declared intents have no async delivery path.
+- **Why not `ExecutionMode.ASYNC` / Cloud Tasks:** `AgentWorkerHandler` delivers only
+  generator-declared results, and the gateway's result is a Smart answer, not a `DeliveryItem`. The
+  route-level background task reuses the shielding and chat-posting that §12 of
+  `VOICE_WEB_TRANSPORT_RFC.md` already built for abandoned answers.
+- Rejected for now: separate `ask_alek`/`tell_alek` **tools** instead of intents on
+  `delegate_to_specialist`. A stronger signal for a realtime model, but two tool schemas in relay and
+  control plane. Lelik chose `ask_alek` correctly in 8 of 8 calls. *Trigger:* Lelik confuses the two.
+
+**3. §4.10 rule 2 is withdrawn for Lelik's direct specialists.** No automatic chat copy of links
+from `search_memory` / `search_web_light` results. When the caller wants something in chat, Lelik
+gives it to Alek (`tell_alek`: "send me the links about X"), who decides what is worth posting.
+That is the owner's call: Alek already does this well. Alek's own copy on `ask_alek`
+(`AlekGatewayAgent`, `link_list`/`structured_data`) is unchanged. The `send_to_chat` intent of rule 3
+stays unbuilt: `tell_alek` covers it.
+- Trade-off accepted: §4.10's "no silent loss" argument. A link from a direct lookup that nobody
+  asked for is not kept anywhere. The light search answers in prose, so it rarely carries links.
+
+**4. Lelik's request is a pointer from a weaker model; Alek serves the user's intent.**
+- Lelik runs on a faster, weaker realtime model. His `query` can be lossy, over-literal, padded
+  with his own assumptions, or slightly off target. Lelik keeps writing it freely: correcting it is
+  Alek's job, not a prompt constraint on Lelik.
+- Alek already has everything needed to correct it:
+  - the caller's own recent lines (the call excerpt in the commission block);
+  - the primary chat history (~30 messages, including earlier call notes), read-only through the
+    primary `session_id` (§4.7);
+  - his memory of the user.
+- The standing rule sits in Smart's system prompt (`PROTOCOL_VOICE_PARTNER.lelik_request_quality`):
+  - treat the request as a pointer, not a specification;
+  - infer what the user wants from their words, the history and their facts, and let their words
+    win over Lelik's;
+  - deliver the experience they would have had asking Alek directly: right depth, right action,
+    nothing unwanted.
+- The commission block repeats it in one line next to the call excerpt.
+- `_CALL_CONTEXT_TURNS` rises from 6 to 12 so that the caller's own words are actually present.
+- The coordinator's timestamp prefix is stripped from the query inside the gateway, because Smart
+  stamps the turn itself.
 
 ## 5. Transport — telephony, with media relayed through us
 

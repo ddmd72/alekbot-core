@@ -37,7 +37,7 @@ _MULAW_BYTES_PER_S = 8000
 _CUE_REASONS = frozenset({"turn", "answer"})
 _DELEGATION_TIMEOUT_S = 90.0
 # Attached to every delegation by the relay, never left to the model's retention (RFC §4.7).
-_CALL_CONTEXT_TURNS = 6
+_CALL_CONTEXT_TURNS = 12  # the caller's own words are Alek's source of truth (RFC §4.15.4)
 _LATE_ANSWER_NOTE = "[The answer to your earlier request ({request}) just arrived: {output}]"
 # Distinct from _LATE_ANSWER_NOTE: formatting the timeout/failure sentinels into it read as
 # self-contradicting ("just arrived: No answer arrived in time...").

@@ -263,6 +263,17 @@ class ComputeAgentConfig:
 
 
 # ---------------------------------------------------------------------------
+# WebSearchLightAgent (src/agents/web_search_light_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class WebSearchLightAgentConfig:
+    temperature: float = 1.0
+    # One grounded call, ~2 s measured; the ceiling only guards a hung provider on a live phone call.
+    timeout_ms: int = 20_000
+
+
+# ---------------------------------------------------------------------------
 # MapsSearchAgent (src/agents/maps_search_agent.py)
 # ---------------------------------------------------------------------------
 
@@ -332,6 +343,7 @@ DEEP_RESEARCH = DeepResearchAgentConfig()
 CLAUDE_DEEP_RESEARCH_RUNNER = ClaudeDeepResearchRunnerConfig()
 MAPS_SEARCH = MapsSearchAgentConfig()
 COMPUTE = ComputeAgentConfig()
+WEB_SEARCH_LIGHT = WebSearchLightAgentConfig()
 
 
 # ---------------------------------------------------------------------------

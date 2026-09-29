@@ -38,6 +38,8 @@ class Intent:
     SEARCH_MEMORY        = "search_memory"
     SAVE_TO_MEMORY       = "save_to_memory"
     SEARCH_WEB           = "search_web"
+    # One fast grounded lookup — internal, named only by LELIK's allowlist (VOICE_COMPANION_RFC §4.15.1)
+    SEARCH_WEB_LIGHT     = "search_web_light"
     FETCH_URL            = "fetch_url"
     SEARCH_EMAILS        = "search_emails"
     GET_EMAIL_DETAILS    = "get_email_details"
@@ -78,6 +80,8 @@ class Intent:
     TUTOR_CHAT          = "tutor_chat"
     # Alek as a specialist — internal, named only by LELIK's allowlist (VOICE_COMPANION_RFC §4.7)
     ASK_ALEK            = "ask_alek"
+    # An errand for Alek: runs in the background, the result goes to chat (VOICE_COMPANION_RFC §4.15.2)
+    TELL_ALEK           = "tell_alek"
     # Image generation/editing via grok-imagine-image-2.0
     GENERATE_IMAGE      = "generate_image"
     EDIT_IMAGE          = "edit_image"
@@ -147,6 +151,24 @@ WEB_SEARCH = AgentDescriptor(
         Intent.FETCH_URL: {
             "url": "Full HTTP(S) URL to fetch and analyse (e.g. 'https://example.com/article')",
         },
+    },
+)
+
+# internal=True: offered only to allowlists that name it (Lelik). Lazy: voice-only traffic.
+WEB_SEARCH_LIGHT = AgentDescriptor(
+    agent_id="web_search_light_agent",
+    agent_type="web_search_light",
+    eager=False,
+    internal=True,
+    capabilities={Intent.SEARCH_WEB_LIGHT: ExecutionMode.SYNC},
+    description="One fast grounded web lookup, answered in a few spoken sentences",
+    capability_descriptions={
+        Intent.SEARCH_WEB_LIGHT: (
+            "Fast web lookup, about two seconds: one fact that one search answers — weather, "
+            "a price, opening hours, a date, a definition. Answers in a few sentences, no links. "
+            "Rough on very fresh events. Anything needing several sources, comparison or judgment "
+            "is for Alek, not this."
+        ),
     },
 )
 
@@ -728,8 +750,8 @@ LELIK = AgentDescriptor(
     internal=True,  # never a delegation target; the voice webhooks and /voice/delegate reach it directly
     capabilities={},
     description="Voice companion - places the callback, holds the call, delegates like any agent (VOICE_COMPANION_RFC.md)",
-    allowed_intents=frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_WEB, Intent.ASK_ALEK}),
-    intent_fanout={Intent.SEARCH_WEB: SEARCH_WEB_MAPS_FANOUT},
+    # VOICE_COMPANION_RFC §4.15: a fast lookup of his own; anything deeper — and every errand — is Alek's.
+    allowed_intents=frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_WEB_LIGHT, Intent.ASK_ALEK, Intent.TELL_ALEK}),
 )
 
 
@@ -738,7 +760,10 @@ ALEK = AgentDescriptor(
     agent_type="alek",
     eager=False,
     internal=True,  # offered only to allowlists that name it (Lelik); never to Smart/Quick
-    capabilities={Intent.ASK_ALEK: ExecutionMode.SYNC},
+    # tell_alek is ASYNC (§4.15.2): a Cloud Task, because Cloud Run throttles the CPU of anything left
+    # running after the response is sent. The gateway posts the outcome to chat itself.
+    capabilities={Intent.ASK_ALEK: ExecutionMode.SYNC, Intent.TELL_ALEK: ExecutionMode.ASYNC},
+    dispatch_deadline_s=720,  # ASK_ALEK_TIMEOUT_MS (600 s) + 2 min overhead, as the generators
     description="Alek — the user's full exocortex, through the Router",
     capability_descriptions={
         Intent.ASK_ALEK: (
@@ -746,6 +771,13 @@ ALEK = AgentDescriptor(
             "documents, tasks and reminders, calendar, memory beyond your snapshot, the web, and any "
             "action in the world. Slow: tens of seconds. He does not hear the call, so put the whole "
             "question in query."
+        ),
+        Intent.TELL_ALEK: (
+            "An errand for Alek, done in the background while you carry on: set or change a "
+            "reminder or task, save something, send the caller links or a document in the chat, "
+            "any action in the world. The caller does not wait for it; Alek reports the outcome "
+            "in the chat. Use it when nothing you say next depends on the result — otherwise it "
+            "is a question for ask_alek."
         ),
     },
 )
@@ -772,4 +804,5 @@ ALL_DESCRIPTORS = [
     VIDEO_GENERATION,
     LELIK,
     ALEK,
+    WEB_SEARCH_LIGHT,
 ]

@@ -10,24 +10,21 @@ execute() places the callback (§4.6), session_config() feeds the session at pic
 execute() does not catch originate_call failures: the webhook's own try/except releases
 the ticket and one-call marker.
 
-delegate() also carries rule 2 (VOICE_COMPANION_RFC §4.10) generalized to every delegation,
-not just ask_alek: any specialist's result may contain reading-shaped links (search_web
-findings, bare URLs in prose), and those reach chat the same way Alek's own answer does.
+delegate() posts nothing to chat (VOICE_COMPANION_RFC §4.15.3, owner decision 2026-09-29): the
+automatic link copy of §4.10 rule 2 filled the chat with every search's links. When the caller
+wants something in chat, Lelik hands it to Alek (tell_alek), who decides what is worth posting.
 """
-import asyncio
 from typing import TYPE_CHECKING, Any, Dict, List
 from urllib.parse import urlencode
 from uuid import uuid4
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.llm import ToolCall
-from ..domain.result_links import build_link_copy
 from ..domain.voice_delegation_outcome import VoiceDelegationOutcome
-from ..infrastructure.agent_manifest import LELIK, Intent
+from ..infrastructure.agent_manifest import LELIK
 from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.telephony_port import TelephonyPort
-from ..utils.logger import logger
 from .base_agent import BaseAgent
 
 if TYPE_CHECKING:
@@ -35,9 +32,6 @@ if TYPE_CHECKING:
     from ..services.user_notification_service import UserNotificationService
 
 _DELEGATE_TOOL = "delegate_to_specialist"
-# The spoken result is already decided and returned regardless of this call — it must not
-# hold up the phone conversation waiting on a slow or hung chat delivery.
-_ANSWER_COPY_TIMEOUT_S = 5.0
 
 
 class LelikAgent(BaseAgent):
@@ -144,25 +138,4 @@ class LelikAgent(BaseAgent):
             dict(self._descriptor.intent_fanout),
             self.agent_id,
         )
-        # ask_alek already copies Smart's own structured answer via notify_answer_copy
-        # (AlekGatewayAgent) — posting again here would double it. A failed result (rejection,
-        # exception, max retries, a fan-out whose primary errored) never posts either — its
-        # error string can itself contain a URL (e.g. an OpenAI 429 pointing at platform.openai.com).
-        if arguments.get("intent") != Intent.ASK_ALEK and not result.failed:
-            await self._copy_links_to_chat(user_id, account_id, result.result_str)
         return VoiceDelegationOutcome(text=result.result_str, failed=bool(result.failed))
-
-    async def _copy_links_to_chat(self, user_id: str, account_id: str, result_str: str) -> None:
-        copy = build_link_copy(result_str)
-        if copy is None:
-            return
-        try:
-            await asyncio.wait_for(
-                self._notifications.notify_answer_copy(user_id, account_id, copy),
-                timeout=_ANSWER_COPY_TIMEOUT_S,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"[Lelik] link chat copy timed out for {(user_id or '')[:8]}")
-        except Exception as exc:
-            # The spoken result_str is already decided and returned regardless of this failing.
-            logger.error(f"[Lelik] link chat copy failed for {(user_id or '')[:8]}: {exc}", exc_info=True)
