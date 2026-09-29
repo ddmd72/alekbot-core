@@ -1059,6 +1059,11 @@ Changes:
 - Still in the profile, flagged for a later step: `POLICY_WITTY_ACCENTUATION` ("a single sharp
   witty remark to accentuate the core message"), which pulls against the few-shots.
 
+**Outcome (2026-09-29, owner's call after step 4):** "like he was swapped": intonation,
+phrasing, pace and jokes all changed. The lesson for this model is to steer register with
+situational good/bad examples, not with rules about the form of the reply, because such rules get
+spoken. `POLICY_WITTY_ACCENTUATION` is still in the profile; revisit only if jokes creep back.
+
 ## 5. Transport — telephony, with media relayed through us
 
 **Telephony, not a browser page.** A Spanish Twilio number is already provisioned and owned; what
