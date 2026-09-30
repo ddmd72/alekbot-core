@@ -15,9 +15,10 @@ class VoiceProviderProfile:
 
 
 VOICE_PROVIDER_PROFILES: Dict[str, VoiceProviderProfile] = {
-    # Owner's UAT call 4, 2026-09-30 (decisions/voice_xai_protocol_probe.md).
+    # Owner's UAT call 4, 2026-09-30 (decisions/voice_xai_protocol_probe.md); its portrait split into
+    # user-overridable voice tokens (VOICE_MULTI_PROVIDER_RFC §4.5).
     "xai": VoiceProviderProfile(
-        prompt_profile="lelik_you",
+        prompt_profile="lelik_xai",
         session=VoiceSessionSpec("xai", TurnOwnership.PROVIDER, voice="castor", reasoning_effort="high"),
     ),
     # Lelik as tuned through 2026-09-29 (VOICE_COMPANION_RFC §4.15).

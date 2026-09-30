@@ -1,6 +1,6 @@
 # RFC: Voice on more than one realtime provider
 
-**Status:** Phases A+B implemented on `feat/voice-xai-realtime` (2026-09-30); C and D pending
+**Status:** A+B merged (#26); C implemented on `feat/voice-character-tokens` (2026-09-30); D gated
 **Date:** 2026-09-30
 **Owner:** Dmytro
 **Milestone:** Voice — provider choice
@@ -179,6 +179,19 @@ into overridable tokens in **voice-only categories**:
   what it is for.
 - **Heading placement is order-dependent until §4.6.** The `## Role & Persona` heading rides inside
   `VOICE_PERSONA_LELIK` and `## Voice & Communication Style` inside `VOICE_HUMOR_LELIK`.
+
+**As built (delta):** the "steady in trouble" line is a fifth token, `VOICE_CARE_LELIK`
+(`voice_care`, **not overridable**, order 25, right after the persona). It is a safety rule, so a
+user's replacement persona must not drop it by accident. The five system tokens reproduce the
+call-4 portrait verbatim; a unit test checks this against `PERSONA_LELIK_YOU`.
+
+- **Orders:** 20 persona, 25 care, 40 humour, 50 temperament, 60 call manners.
+- **Headings:** Role & Persona rides in the persona token, and Voice & Communication Style in the
+  humour token.
+- **USER catalog, one alternative per category:** `VOICE_PERSONA_CALM_MENTOR` (order 20),
+  `VOICE_HUMOR_LIGHT` (40), `VOICE_TEMPERAMENT_STEADY` (50). A USER override must repeat the
+  replaced token's order, and a replacement for persona or humour must carry its section heading.
+  §4.6 removes both constraints.
 
 ### 4.6 Blueprint format (optional phase)
 
