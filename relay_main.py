@@ -12,6 +12,10 @@ Environment variables (static — set at relay deploy time, Task 14):
                            realtime provider both call paths use
                            (decisions/voice_xai_protocol_probe.md).
   VOICE_XAI_VOICE         Optional knob (default: the adapter's own voice).
+  VOICE_XAI_BARE          Optional knob, "on"/"off" (default off), xai only: the bare-Grok
+                           experiment. Grok owns its turns, and the relay sends no persona
+                           anchor, caller opening, or silence/waiting notes. Pair it with the
+                           main service's LELIK_PROMPT_PROFILE=lelik_bare.
   VOICE_XAI_REASONING_EFFORT
                            Optional knob, "high" (default) or "none" - the only
                            two values xAI accepts. Replaces both paths' effort
@@ -81,13 +85,14 @@ def _load_thinking_cue() -> bytes:
     return _THINKING_CUE_PATH.read_bytes()
 
 
-def _realtime_session_factory(provider: str, audio_format: AudioFormat) -> Callable[[], RealtimeSessionPort]:
+def _realtime_session_factory(provider: str, audio_format: AudioFormat, bare: bool) -> Callable[[], RealtimeSessionPort]:
     if provider == "xai":
         # The stored secret ends in "\n" (an illegal header value); see decisions/grok_revival_2026_08.md.
         xai_api_key = os.environ["XAI_API_KEY"].strip()
         voice = os.environ.get("VOICE_XAI_VOICE", "").strip()
         extra = {"voice": voice} if voice else {}
-        return lambda: XaiRealtimeAdapter(api_key=xai_api_key, audio_format=audio_format, **extra)
+        return lambda: XaiRealtimeAdapter(api_key=xai_api_key, audio_format=audio_format,
+                                          provider_owns_turns=bare, **extra)
     if provider != "openai":
         raise ValueError(f"VOICE_REALTIME_PROVIDER must be 'openai' or 'xai', got {provider!r}")
     openai_api_key = os.environ["OPENAI_API_KEY"]
@@ -112,7 +117,9 @@ async def main() -> None:
     main_service_url = os.environ["CLOUD_RUN_SERVICE_URL"]
     provider = os.environ.get("VOICE_REALTIME_PROVIDER", "openai").strip().lower()
     xai_reasoning = os.environ.get("VOICE_XAI_REASONING_EFFORT", "high").strip().lower()
-    logger.info(f"voice relay realtime provider: {provider}")
+    # The bare-Grok experiment (decisions/voice_xai_protocol_probe.md): xai only.
+    bare = provider == "xai" and os.environ.get("VOICE_XAI_BARE", "off").strip().lower() == "on"
+    logger.info(f"voice relay realtime provider: {provider}{' (bare)' if bare else ''}")
     billing_webhook_url = os.environ["BILLING_SLACK_WEBHOOK_URL"]
 
     control_plane = HttpCallControlPlaneAdapter(
@@ -121,7 +128,7 @@ async def main() -> None:
     )
     alert_sink = SlackWebhookAdapter(webhook_url=billing_webhook_url)
     session_service = VoiceSessionService(
-        realtime_session_factory=_realtime_session_factory(provider, MULAW_8K),
+        realtime_session_factory=_realtime_session_factory(provider, MULAW_8K, bare),
         control_plane=control_plane,
         alert_sink=alert_sink,
         # Owner's call 2026-09-27: medium on every voice path (was high since 2026-09-23).
@@ -131,7 +138,7 @@ async def main() -> None:
         barge_in_min_speech_s=1.0,
         # After the one "still there?", this much more silence hangs up (voicemail, a phone put down).
         hangup_after_silence_s=20.0,
-        caller_opening=_CALLER_OPENING,
+        caller_opening=None if bare else _CALLER_OPENING,
         # Owner's call 2026-09-28: while a delegation is out, each "still waiting" note comes after
         # a random 8-15 s of quiet (silence_timeout_s is the floor), not on a fixed beat.
         waiting_gap_max_s=15.0,
@@ -141,6 +148,7 @@ async def main() -> None:
         # Owner's call 2026-09-28: an ask_alek took 105 s live and was lost at 90 s. What still
         # outlasts this is posted to the user's chat by the main service.
         delegation_timeout_s=300.0,
+        provider_owns_turns=bare,
         # thinking_cue deliberately not passed (off): with it on, Lelik's replies were cut
         # after ~0.4-0.8 s on the live calls of 2026-09-24 and stopped when the relay was
         # routed back to a revision without it. Cause not found yet; the clip stays shipped.
@@ -154,8 +162,10 @@ async def main() -> None:
     # caller-opening line without a redeploy.
     web_reasoning = xai_reasoning if provider == "xai" else os.environ.get("VOICE_WEB_REASONING_EFFORT", "medium")
     web_opening = _CALLER_OPENING if os.environ.get("VOICE_WEB_CALLER_OPENING", "on").strip().lower() == "on" else None
+    if bare:
+        web_opening = None
     web_session_service = VoiceSessionService(
-        realtime_session_factory=_realtime_session_factory(provider, PCM16_24K),
+        realtime_session_factory=_realtime_session_factory(provider, PCM16_24K, bare),
         control_plane=control_plane,
         alert_sink=alert_sink,
         reasoning_effort=web_reasoning,
@@ -166,6 +176,7 @@ async def main() -> None:
         greeting_guard_s=3.0,
         # Owner's call 2026-09-28: same 300 s as the phone path.
         delegation_timeout_s=300.0,
+        provider_owns_turns=bare,
     )
     sfu_handler = SfuStreamHandler(session_service=web_session_service)
 

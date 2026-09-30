@@ -25,6 +25,13 @@ _TURN_DETECTION = {
     "create_response": False,
     "interrupt_response": False,
 }
+# The bare-Grok experiment: xAI starts, and when the caller talks over it, stops its own replies.
+_PROVIDER_OWNED_TURN_DETECTION = {
+    "type": "server_vad",
+    "silence_duration_ms": _SILENCE_DURATION_MS,
+    "create_response": True,
+    "interrupt_response": True,
+}
 # Echoed back on response.created/done: the only way to tell our reply from xAI's own.
 _ORIGIN = {"origin": "relay"}
 # The errors a cancel of an unrequested reply can earn once it already ended or was superseded
@@ -80,7 +87,12 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
     """
 
     def __init__(self, api_key: str, model: str = _MODEL, voice: str = _VOICE,
-                 ws_connect: Callable = websockets.connect, audio_format: AudioFormat = MULAW_8K) -> None:
+                 ws_connect: Callable = websockets.connect, audio_format: AudioFormat = MULAW_8K,
+                 provider_owns_turns: bool = False) -> None:
+        """provider_owns_turns: the bare-Grok experiment. xAI replies and handles
+        interruptions on its own and nothing is cancelled, so the port's "the provider does
+        not reply on its own" no longer holds. Pair it with VoiceSessionService's
+        provider_owns_turns."""
         self._api_key = api_key
         self._model = model
         self._voice = voice
@@ -90,6 +102,7 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         self._suppressed: Set[str] = set()
         self._active_id: Optional[str] = None
         self._carried_usage: Dict[str, float] = {}
+        self._provider_owns_turns = provider_owns_turns
 
     async def open(self, instructions: str, reasoning_effort: str, tools: List[dict]) -> None:
         url = f"wss://api.x.ai/v1/realtime?model={self._model}"
@@ -97,7 +110,7 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         session: Dict[str, Any] = {
             "voice": self._voice,
             "instructions": _strip_cache_boundary(instructions),
-            "turn_detection": _TURN_DETECTION,
+            "turn_detection": _PROVIDER_OWNED_TURN_DETECTION if self._provider_owns_turns else _TURN_DETECTION,
             "audio": {
                 "input": {"format": _wire_format(self._audio_format)},
                 "output": {"format": _wire_format(self._audio_format)},
@@ -125,6 +138,8 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
     async def _absorb_unrequested(self, event: dict) -> bool:
         """True when the event belongs to a reply xAI started on its own (or is the
         error from cancelling one) and must not reach the service."""
+        if self._provider_owns_turns:
+            return False
         event_type = event.get("type")
         if event_type == "response.created":
             response = event.get("response") or {}

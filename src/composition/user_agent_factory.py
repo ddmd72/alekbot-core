@@ -852,6 +852,8 @@ class UserAgentFactory(AgentFactoryPort):
                 config=ctx.user_profile.config,
             ),
             notifications=self.notification_service,
+            # Optional knob (os.getenv, not load_settings): the bare-Grok experiment's lelik_bare.
+            prompt_profile=os.getenv("LELIK_PROMPT_PROFILE", "lelik").strip() or "lelik",
         )
 
     def _build_alek_gateway(self, user_id: str, ctx: _UserContext) -> Optional[AlekGatewayAgent]:

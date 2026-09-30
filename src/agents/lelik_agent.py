@@ -48,7 +48,10 @@ class LelikAgent(BaseAgent):
         prompt_builder: PromptBuilderPort,
         persona: "LelikPersonaService",
         notifications: "UserNotificationService",
+        prompt_profile: str = "lelik",
     ) -> None:
+        """prompt_profile: the prompt profile the session instructions are built from; another
+        profile for the same agent is an experiment (lelik_bare, decisions/voice_xai_protocol_probe.md)."""
         super().__init__(config)
         self._telephony = telephony
         self._from_number = from_number
@@ -56,6 +59,7 @@ class LelikAgent(BaseAgent):
         self._prompt_builder = prompt_builder
         self._persona = persona
         self._notifications = notifications
+        self._prompt_profile = prompt_profile
 
     async def can_handle(self, message: AgentMessage) -> bool:
         # Never a delegation target (internal, no capabilities); satisfies BaseAgent only.
@@ -90,7 +94,7 @@ class LelikAgent(BaseAgent):
         opens on an empty context."""
         context = await self._persona.assemble(user_id, account_id)
         instructions = await self._prompt_builder.build_for_agent(
-            agent_type="lelik",
+            agent_type=self._prompt_profile,
             user_id=user_id,
             account_id=account_id,
             biographical_facts=context.biographical_facts,
