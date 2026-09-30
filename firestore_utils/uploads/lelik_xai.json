@@ -1,0 +1,35 @@
+{
+  "agent_id": "lelik_xai",
+  "blueprint_id": "lelik_agent_v1",
+  "tokens": {
+    "COGNITIVE_PROCESS_LELIK_BARE": {
+      "order": 10,
+      "non_overridable": true
+    },
+    "VOICE_PERSONA_LELIK": {
+      "order": 20
+    },
+    "VOICE_CARE_LELIK": {
+      "order": 25,
+      "non_overridable": true
+    },
+    "VOICE_HUMOR_LELIK": {
+      "order": 40
+    },
+    "VOICE_TEMPERAMENT_LELIK": {
+      "order": 50
+    },
+    "VOICE_CALL_MANNERS": {
+      "order": 60,
+      "non_overridable": true
+    },
+    "PROTOCOL_LELIK_DELEGATION_BARE": {
+      "order": 200,
+      "non_overridable": true
+    },
+    "LANG_MIRROR": {
+      "order": 300,
+      "non_overridable": false
+    }
+  }
+}
