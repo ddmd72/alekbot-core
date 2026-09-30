@@ -172,6 +172,30 @@ class TestCreateSelfReminder:
 
         assert response.status == AgentStatus.SUCCESS
 
+    async def test_create_accepts_a_sub_hourly_rule(self):
+        """The 2026-09-30 flight-tracking request: the model's MINUTELY rule was
+        refused. It must now reach the port as given."""
+        agent, port = _make_agent()
+        port.create_note.return_value = _make_note()
+
+        with patch.object(agent, "_call_llm", return_value=_tool_response(
+            "create_self_reminder", {
+                "text": "Track flight", "due": "2026-03-10T09:00:00+00:00",
+                "recurrence": "FREQ=MINUTELY;INTERVAL=10",
+            }
+        )):
+            await agent.execute(_make_message())
+
+        call_arg: NoteCreate = port.create_note.call_args[0][0]
+        assert call_arg.recurrence == "FREQ=MINUTELY;INTERVAL=10"
+
+    def test_instruction_param_forbids_guessed_ids(self):
+        """The ID is minted by create_note — any ID in the instruction is invented."""
+        from src.agents.notes_agent import _TOOL_DECLARATIONS
+        create = next(t for t in _TOOL_DECLARATIONS if t["name"] == "create_self_reminder")
+        desc = create["parameters"]["properties"]["instruction"]["description"]
+        assert "Never write a reminder ID" in desc
+
     async def test_create_missing_due_returns_failure(self):
         agent, port = _make_agent()
 
