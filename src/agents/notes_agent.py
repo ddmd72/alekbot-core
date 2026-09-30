@@ -93,7 +93,8 @@ _TOOL_DECLARATIONS = [
                         "Full execution context. This is what runs when the reminder fires — "
                         "write it as a complete, self-contained instruction with all necessary "
                         "context: what to do, why, any relevant details from the conversation. "
-                        "No length limit."
+                        "No length limit. Never write a reminder ID into it: the ID does not "
+                        "exist until this call returns, and the fired alert carries the real one."
                     ),
                 },
                 "due": {
