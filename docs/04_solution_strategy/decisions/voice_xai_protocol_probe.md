@@ -63,3 +63,15 @@ what hurts Grok, so the test removes them all. Setup:
   plain tool list. It drops SPOKEN_DELIVERY, the few-shots, the policies and the copilot
   register.
 - **Voice:** `castor`, picked by ear from TTS samples.
+
+**Bare-Grok outcome (owner, 2026-09-30).**
+- It sounded natural and not artificial, stayed brief, and did what was asked.
+- It held no character at all.
+- The pauses during tool calls grated. The waiting notes were removed, so it sat silent through
+  24–33 s `ask_alek` calls, and a 9 s cold `search_web_light`. The caller repeated himself, which
+  triggered 3–4 duplicate `ask_alek` calls.
+- Owner: fix the pauses only if the character can be held.
+
+**Third test: character as prose.** The `lelik_prose` profile is `lelik_bare` with the structured
+ARCHETYPE/VIBE/HUMOR tokens replaced by one plain-prose portrait (`PERSONA_LELIK_PROSE`). It
+contains no quoted phrases, because Grok recites quoted lines.
