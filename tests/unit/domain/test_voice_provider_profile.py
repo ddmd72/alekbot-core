@@ -15,7 +15,7 @@ class TestVoiceProviderProfile:
     def test_default_is_the_xai_call_four_setup(self):
         profile = VOICE_PROVIDER_PROFILES[DEFAULT_VOICE_PROVIDER]
         assert DEFAULT_VOICE_PROVIDER == "xai"
-        assert profile.prompt_profile == "lelik_you"
+        assert profile.prompt_profile == "lelik_xai"
         assert profile.session == VoiceSessionSpec("xai", TurnOwnership.PROVIDER, "castor", "high")
 
     def test_openai_keeps_the_relay_owned_lelik(self):

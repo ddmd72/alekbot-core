@@ -349,7 +349,7 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
 - **Realtime provider is per user** (`docs/10_rfcs/VOICE_MULTI_PROVIDER_RFC.md`).
   - `UserBotConfig.voice_provider` picks an entry of `domain.voice_provider_profile.VOICE_PROVIDER_PROFILES`:
     the prompt profile, turn ownership, voice and effort. When unset, `DEFAULT_VOICE_PROVIDER = "xai"`
-    applies (xAI `grok-voice-think-fast-2.0`, prompt `lelik_you`, voice castor).
+    applies (xAI `grok-voice-think-fast-2.0`, prompt `lelik_xai`, voice castor).
   - `LelikAgent.session_config` puts the spec in the ticket under `"voice"`. The relay builds the
     adapter per call from it (`relay_main._ADAPTERS`). A ticket without it runs the legacy OpenAI
     session.
@@ -358,9 +358,13 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
     relay only drops queued audio and delivers the greeting and Alek's answers.
   - **Each adapter declares its turn ownership** (`supported_turn_ownership`). xAI ignores
     `create_response: false`, so it is PROVIDER-only.
-  - **Lelik's prompt differs per provider.** `lelik_you` is a second-person portrait in xAI's
+  - **Lelik's prompt differs per provider.** `lelik_xai` is a second-person portrait in xAI's
     prompting-guide format, with none of the gpt-realtime rules. See
     `decisions/voice_xai_protocol_probe.md`.
+  - **The voice character is USER-overridable per category** (RFC §4.5): `voice_persona`,
+    `voice_humor` and `voice_temperament` can be overridden; `voice_care` and
+    `voice_call_manners` cannot. These are separate from Smart's `archetype`/`vibe`/`humor_engine`,
+    so a text-persona override never reaches the voice.
   - xAI audio is billed per second.
 
 **Voice web transport** (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) — a second call kind, a
