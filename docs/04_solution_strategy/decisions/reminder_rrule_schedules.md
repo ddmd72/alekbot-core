@@ -31,8 +31,21 @@ algebra (RemindersService for the next fire, NotesAgent for validation and the c
 snap, the Cabinet for display), so it is a port rather than a helper.
 
 **3. Rules are open-ended.** `COUNT`/`UNTIL`/`DTSTART` are rejected by `normalize`, along with
-sub-hourly `FREQ` (the cron ticks every 15 min) and patterns that never occur. Every expansion
-is bounded by a 10-year horizon, so an unmatchable rule returns `None` instead of spinning.
+patterns that never occur. Every expansion is bounded by a 10-year horizon, so an unmatchable
+rule returns `None` instead of spinning.
+
+*Amended 2026-09-30.* `FREQ=MINUTELY` is accepted with `INTERVAL` ≥ 5
+(`_MIN_MINUTELY_INTERVAL`), the cadence of the `fire_due_reminders` cron (`*/5`, not the 15 min
+this record first cited). A user asked for a flight status every 10 minutes until departure;
+NotesAgent emitted the right rule with a self-deleting stop condition in `instruction`, and only
+this validator refused it. A finer step cannot be honoured — `due` would fall behind real time.
+The floor and the scheduler cadence change together.
+
+At the same time `RemindersService` stopped **replaying missed occurrences**: the next `due` is
+the rule's first occurrence after `now`, stepped along the rule from the old `due` so the grid
+(time of day) is preserved. Before, a note overdue by several occurrences fired on every cron
+tick until it caught up — tolerable for a daily rule, six fires 5 min apart for a 10-minute rule
+after a 1 h outage.
 
 **4. Both read paths carry the whole note** — rule verbatim, complexity, last fire — rendered
 only when set (the orchestrator's block sits after the cache boundary and is re-sent every request).
