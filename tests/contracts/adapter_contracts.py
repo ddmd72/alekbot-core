@@ -552,3 +552,39 @@ OPENAI_REALTIME_TRUNCATE_SHAPE = ContractRule(
         ),
     },
 )
+
+XAI_REALTIME_STRIPS_CACHE_BOUNDARY = ContractRule(
+    name="XAI_REALTIME_STRIPS_CACHE_BOUNDARY",
+    description=(
+        "XaiRealtimeAdapter.open() must never forward the prompt-caching boundary marker "
+        "into the session instructions - a session prompt is set once and the marker would "
+        "be spoken. Input: captured session.update message {type: str, session: dict}."
+    ),
+    validators={
+        "xai_realtime": lambda kw: _true(
+            "CACHE_BOUNDARY" not in kw["session"]["instructions"],
+            "xai_realtime: session.update instructions must not contain CACHE_BOUNDARY",
+        ),
+    },
+)
+
+XAI_REALTIME_TURN_DETECTION = ContractRule(
+    name="XAI_REALTIME_TURN_DETECTION",
+    description=(
+        "XaiRealtimeAdapter.open() must configure xAI's top-level server_vad with auto-reply "
+        "and auto-interrupt ON: the adapter implements PROVIDER turn ownership only - xAI starts "
+        "every reply to the caller and stops it when talked over (VOICE_MULTI_PROVIDER_RFC "
+        "§4.3/§4.4; xAI ignores create_response=false anyway, decisions/voice_xai_protocol_probe.md). "
+        "Input: captured session.update message {type: str, session: dict}."
+    ),
+    validators={
+        "xai_realtime": lambda kw: (
+            _eq(kw["session"]["turn_detection"]["type"], "server_vad",
+                "xai_realtime: turn_detection must be server_vad"),
+            _eq(kw["session"]["turn_detection"]["create_response"], True,
+                "xai_realtime: provider auto-reply must be on (provider owns turns)"),
+            _eq(kw["session"]["turn_detection"]["interrupt_response"], True,
+                "xai_realtime: provider auto-interrupt must be on (provider owns barge-in)"),
+        ),
+    },
+)

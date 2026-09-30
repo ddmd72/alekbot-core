@@ -78,3 +78,19 @@ def test_calculate_realtime_cost_matches_flattened_real_openai_shape():
         "cached_tokens": 40,
     }
     assert round(cost, 6) == 0.013696
+
+
+def test_calculate_realtime_cost_prices_xai_billable_audio_seconds_per_minute():
+    # $0.08 / min of billable audio (docs.x.ai rate card, 2026-09-29)
+    assert calculate_realtime_cost("grok-voice-think-fast-2.0", {"billable_audio_seconds": 60}) == 0.08
+
+
+def test_calculate_realtime_cost_prices_xai_text_input_and_ignores_token_legs_it_does_not_bill():
+    usage = {
+        "billable_audio_seconds": 30,
+        "text_input_tokens": 1_000_000,
+        "audio_input_tokens": 1_000_000,
+        "audio_output_tokens": 1_000_000,
+        "text_output_tokens": 1_000_000,
+    }
+    assert calculate_realtime_cost("grok-voice-think-fast-2.0", usage) == round(0.04 + 0.004, 6)

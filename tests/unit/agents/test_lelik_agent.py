@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.agent import AgentStatus
 from src.agents.lelik_agent import LelikAgent
+from src.domain.voice_provider_profile import VOICE_PROVIDER_PROFILES
 
 
 def _build_agent(telephony):
@@ -14,6 +15,7 @@ def _build_agent(telephony):
         prompt_builder=AsyncMock(),
         persona=AsyncMock(),
         notifications=AsyncMock(),
+        voice_profile=VOICE_PROVIDER_PROFILES["openai"],
     )
 
 

@@ -12,6 +12,9 @@ from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_errand import is_errand
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
 from src.domain.voice_playback_tracker import PlaybackTracker
+from src.domain.voice_provider_profile import LEGACY_VOICE_SESSION
+from src.domain.voice_session_spec import VoiceSessionSpec
+from src.domain.voice_turn_ownership import TurnOwnership
 from src.ports.alert_sink import AlertSinkPort
 from src.ports.call_control_plane_port import CallControlPlanePort
 from src.ports.realtime_session_port import RealtimeSessionPort
@@ -101,6 +104,8 @@ class _CallState:
     # Built once per call from the session instructions; None when the prompt carries
     # no persona sections to point at.
     persona_anchor: Optional[str] = None
+    # Per call (VOICE_MULTI_PROVIDER_RFC §4.3): one relay serves users on different providers.
+    turn_ownership: TurnOwnership = TurnOwnership.RELAY
     caller_turns: int = 0  # speech_started count: "did the caller speak since dispatch?"
     response_owed: bool = False
     # Answers being injected and not yet replied to: the watchdog holds off, or its note takes the slot.
@@ -121,10 +126,10 @@ class VoiceSessionService:
 
     def __init__(
         self,
-        realtime_session_factory: Callable[[], RealtimeSessionPort],
+        realtime_session_factory: Callable[[VoiceSessionSpec], RealtimeSessionPort],
         control_plane: CallControlPlanePort,
         alert_sink: AlertSinkPort,
-        reasoning_effort: str = "medium",
+        reasoning_effort: Optional[str] = None,
         silence_timeout_s: float = 8.0,
         delegation_timeout_s: float = _DELEGATION_TIMEOUT_S,
         thinking_cue: bytes = b"",
@@ -135,6 +140,14 @@ class VoiceSessionService:
         waiting_gap_max_s: Optional[float] = None,
         greeting_guard_s: float = 0.0,
     ) -> None:
+        """The provider, its turn ownership, voice and effort come per call from the session
+        config's "voice" spec (VOICE_MULTI_PROVIDER_RFC §4.2). `reasoning_effort`, when given,
+        overrides the spec's.
+
+        Under PROVIDER turn ownership the provider replies to the caller and stops when talked
+        over. The relay then places no persona anchor, sends no caller opening and no silence or
+        waiting notes, and on barge-in only drops the queued audio. It still starts the greeting
+        and delivers delegation answers."""
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
         self._alert_sink = alert_sink
@@ -177,22 +190,26 @@ class VoiceSessionService:
         """`playback` is fed by the transport (bytes sent, marks echoed back); this
         loop only reads it. `send_cue_audio` plays filler that playback never counts."""
         config = await self._control_plane.fetch_session_config(ticket)
-        state = _CallState(playback=playback, ticket=ticket, persona_anchor=build_persona_anchor(config["instructions"]))
+        spec = VoiceSessionSpec.from_dict(config["voice"]) if config.get("voice") else LEGACY_VOICE_SESSION
+        relay_owned = spec.turn_ownership is TurnOwnership.RELAY
+        state = _CallState(playback=playback, ticket=ticket, turn_ownership=spec.turn_ownership,
+                           persona_anchor=build_persona_anchor(config["instructions"]) if relay_owned else None)
         async with RequestContext(user_id=config["user_id"], account_id=config["account_id"]):
-            await self._run_call(ticket, config, inbound_audio, send_outbound_audio, clear_outbound_audio, state,
-                                 send_cue_audio)
+            await self._run_call(ticket, config, spec, inbound_audio, send_outbound_audio, clear_outbound_audio,
+                                 state, send_cue_audio)
 
     async def _run_call(
         self,
         ticket: str,
         config: dict,
+        spec: VoiceSessionSpec,
         inbound_audio: AsyncIterator[AudioFrame],
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
         clear_outbound_audio: Callable[[], Awaitable[None]],
         state: _CallState,
         send_cue_audio: Optional[Callable[[AudioFrame], Awaitable[None]]] = None,
     ) -> None:
-        session = self._session_factory()
+        session = self._session_factory(spec)
         buffer = VoiceCallBuffer(call_id=ticket)
         forward_task: Optional[asyncio.Task] = None
         consume_task: Optional[asyncio.Task] = None
@@ -206,7 +223,8 @@ class VoiceSessionService:
             # marker (RFC §3) only releases via TTL instead of immediately, and the
             # failure leaves no record on the main-service side.
             try:
-                await session.open(instructions=config["instructions"], reasoning_effort=self._reasoning_effort,
+                await session.open(instructions=config["instructions"],
+                                   reasoning_effort=self._reasoning_effort or spec.reasoning_effort,
                                    tools=config.get("tools", []))
             except Exception as exc:
                 logger.error(f"voice call {ticket}: failed to open realtime session: {exc}")
@@ -220,7 +238,7 @@ class VoiceSessionService:
             # loop exit never gives the forwarding task a chance to actually run
             # if nothing in the receive loop truly suspends the event loop first -
             # asyncio.wait() below is what forces that handoff.
-            if self._caller_opening:
+            if self._caller_opening and state.turn_ownership is TurnOwnership.RELAY:
                 # A user turn, not system text: live, the caller's own request changed how
                 # Lelik spoke where the same rule as system text did not (2026-09-25).
                 await session.submit_message("user", self._caller_opening)
@@ -233,11 +251,13 @@ class VoiceSessionService:
                 self._consume_events(ticket, config, session, buffer, send_outbound_audio, clear_outbound_audio, state)
             )
             # The watchdog never ends on its own; the call ends with the audio streams.
-            watchdog_task = asyncio.ensure_future(self._watch_silence(session, state))
+            if state.turn_ownership is TurnOwnership.RELAY:
+                watchdog_task = asyncio.ensure_future(self._watch_silence(session, state))
             if self._thinking_cue and send_cue_audio is not None:
                 cue_task = asyncio.ensure_future(self._play_cue(state, send_cue_audio))
             # The watchdog ends only to hang up after a long silence (hangup_after_silence_s).
-            await asyncio.wait({forward_task, consume_task, watchdog_task}, return_when=asyncio.FIRST_COMPLETED)
+            call_loops = {task for task in (forward_task, consume_task, watchdog_task) if task is not None}
+            await asyncio.wait(call_loops, return_when=asyncio.FIRST_COMPLETED)
         finally:
             # 1. The call's own loops first, so nothing (the watchdog, a flush) starts a response
             #    on a call that is ending.
@@ -298,6 +318,11 @@ class VoiceSessionService:
         tool_called = False  # Per response: this or a barge-in explains an empty transcript.
         async for event in session.receive_events():
             if event.type == "response_created":
+                if not state.response_active:
+                    # Only a provider that owns turns starts a reply the relay did not claim.
+                    state.response_reason = "provider"
+                    state.response_audible = False
+                    state.response_started_at = asyncio.get_running_loop().time()
                 turn_start = datetime.now(timezone.utc)
                 state.response_active = True
                 state.response_cancelled = False
@@ -317,6 +342,10 @@ class VoiceSessionService:
                 if state.response_active or not state.playback.caught_up:
                     if self._in_greeting_guard(state):
                         state.speech_in_greeting_guard = True
+                    elif state.turn_ownership is TurnOwnership.PROVIDER:
+                        # The provider stops its own reply; what it already sent is still queued here.
+                        await clear_outbound_audio()
+                        logger.info(f"voice call {ticket}: caller spoke over the reply, queued audio dropped")
                     elif self._barge_in_min_speech_s > 0:
                         # A line blip or an "uh-huh" also starts speech; only sustained speech
                         # interrupts (live, 2026-09-25: replies cut by 400 ms noises).
@@ -340,7 +369,10 @@ class VoiceSessionService:
                     state.speech_dismissed = True
                     logger.info(f"voice call {ticket}: speech too short to interrupt, Lelik keeps talking")
             elif event.type == "turn_committed":
-                if state.speech_dismissed:
+                if state.turn_ownership is TurnOwnership.PROVIDER:
+                    # The provider is already replying (it starts before the commit arrives).
+                    state.speech_dismissed = False
+                elif state.speech_dismissed:
                     # Lelik is still mid-reply; the words stay in the conversation for his next turn.
                     state.speech_dismissed = False
                     logger.info(f"voice call {ticket}: short turn over Lelik not answered")

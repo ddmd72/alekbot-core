@@ -21,6 +21,7 @@ from uuid import uuid4
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.llm import ToolCall
 from ..domain.voice_delegation_outcome import VoiceDelegationOutcome
+from ..domain.voice_provider_profile import VoiceProviderProfile
 from ..infrastructure.agent_manifest import LELIK
 from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -48,7 +49,11 @@ class LelikAgent(BaseAgent):
         prompt_builder: PromptBuilderPort,
         persona: "LelikPersonaService",
         notifications: "UserNotificationService",
+        voice_profile: VoiceProviderProfile,
     ) -> None:
+        """voice_profile: the user's realtime provider — which prompt profile the session
+        instructions are built from, and the spec the relay runs the call with
+        (VOICE_MULTI_PROVIDER_RFC §4.2)."""
         super().__init__(config)
         self._telephony = telephony
         self._from_number = from_number
@@ -56,6 +61,7 @@ class LelikAgent(BaseAgent):
         self._prompt_builder = prompt_builder
         self._persona = persona
         self._notifications = notifications
+        self._voice_profile = voice_profile
 
     async def can_handle(self, message: AgentMessage) -> bool:
         # Never a delegation target (internal, no capabilities); satisfies BaseAgent only.
@@ -90,7 +96,7 @@ class LelikAgent(BaseAgent):
         opens on an empty context."""
         context = await self._persona.assemble(user_id, account_id)
         instructions = await self._prompt_builder.build_for_agent(
-            agent_type="lelik",
+            agent_type=self._voice_profile.prompt_profile,
             user_id=user_id,
             account_id=account_id,
             biographical_facts=context.biographical_facts,
@@ -101,7 +107,7 @@ class LelikAgent(BaseAgent):
         )
         available = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
         tools = [self._build_delegate_tool_declaration(available)] if available else []
-        return {"instructions": instructions, "tools": tools}
+        return {"instructions": instructions, "tools": tools, "voice": self._voice_profile.session.to_dict()}
 
     async def delegate(
         self, user_id: str, account_id: str, arguments: Dict[str, Any], call_context: List[Dict[str, str]],

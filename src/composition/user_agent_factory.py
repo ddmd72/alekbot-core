@@ -23,6 +23,12 @@ from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
 from ..config.environment import EnvironmentConfig
 from ..domain.agent import AgentConfig
 from ..domain.user import UserProfile
+from ..domain.voice_provider_profile import (
+    DEFAULT_VOICE_PROVIDER,
+    VOICE_PROVIDER_PROFILES,
+    VoiceProviderProfile,
+    resolve_voice_profile,
+)
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
 from ..ports.embedding_service import EmbeddingService
@@ -104,6 +110,14 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from ..infrastructure.agent_coordinator import AgentCoordinator
     from ..domain.user import UserBotConfig
+
+
+def _voice_profile_for(user_id: str, config: "UserBotConfig") -> VoiceProviderProfile:
+    if config.voice_provider and config.voice_provider not in VOICE_PROVIDER_PROFILES:
+        # A stale value must not fail the user's calls; the default takes over.
+        logger.error(f"[UserAgentFactory] Unknown voice_provider {config.voice_provider!r} for user "
+                     f"{user_id}, using {DEFAULT_VOICE_PROVIDER}")
+    return resolve_voice_profile(config.voice_provider)
 
 
 @dataclass
@@ -852,6 +866,7 @@ class UserAgentFactory(AgentFactoryPort):
                 config=ctx.user_profile.config,
             ),
             notifications=self.notification_service,
+            voice_profile=_voice_profile_for(user_id, ctx.user_profile.config),
         )
 
     def _build_alek_gateway(self, user_id: str, ctx: _UserContext) -> Optional[AlekGatewayAgent]:
