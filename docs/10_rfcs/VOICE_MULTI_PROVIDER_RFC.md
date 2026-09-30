@@ -1,6 +1,6 @@
 # RFC: Voice on more than one realtime provider
 
-**Status:** A+B merged (#26); C implemented on `feat/voice-character-tokens` (2026-09-30); D gated
+**Status:** A+B merged (#26); C done (#27, UAT 2026-09-30); D dropped (owner: works as is)
 **Date:** 2026-09-30
 **Owner:** Dmytro
 **Milestone:** Voice — provider choice
@@ -204,7 +204,10 @@ produce `class X extends Agent { section { … } }`. The change:
 - tokens then lose their inline headings, which removes §4.5's ordering fragility;
 - the service stays provider-agnostic: it renders whichever blueprint the profile names.
 
-**Gated on evidence.** Call 4 already worked with an xAI-format portrait inside the Groovy
+**Dropped (owner, 2026-09-30):** the Groovy wrapper works, so there is nothing to fix. Reopen only if
+a UAT shows the wrapper hurting.
+
+**Originally gated on evidence.** Call 4 already worked with an xAI-format portrait inside the Groovy
 wrapper. Do this phase when a UAT shows the wrapper hurting, or when §4.5's heading fragility
 bites.
 
