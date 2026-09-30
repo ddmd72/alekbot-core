@@ -415,6 +415,15 @@ class TestBuildReminderAlert:
         alert = build_reminder_alert(note)
         assert _NOTE_ID in alert
 
+    def test_names_the_real_note_id_for_edits(self):
+        """2026-09-30: NotesAgent wrote a guessed ID into the instruction ("delete
+        reminder 1790845860000") before the note existed. The alert must say which ID
+        to act on, so a self-deleting reminder does not delete nothing and keep firing."""
+        note = _make_note(note_id="1790766711641")
+        alert = build_reminder_alert(note)
+        assert "use note_id 1790766711641" in alert
+        assert "any other ID in the instruction is wrong" in alert
+
     def test_one_time_schedule_label(self):
         note = _make_note(recurrence=None)
         alert = build_reminder_alert(note)
