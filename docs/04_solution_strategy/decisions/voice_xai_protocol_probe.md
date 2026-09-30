@@ -75,3 +75,16 @@ what hurts Grok, so the test removes them all. Setup:
 **Third test: character as prose.** The `lelik_prose` profile is `lelik_bare` with the structured
 ARCHETYPE/VIBE/HUMOR tokens replaced by one plain-prose portrait (`PERSONA_LELIK_PROSE`). It
 contains no quoted phrases, because Grok recites quoted lines.
+
+**Prose outcome (owner, 2026-09-30).**
+- The character was balanced and clearly present, but there was no hard humour.
+- It repeated a familiar address as a refrain: it took *old friend* into Ukrainian as «старий».
+  The address itself is fine, but between friends it is used once or twice a call.
+- xAI's voice API has no persona, emotion or safety settings. Its prompting guide asks for second
+  person and five markdown sections, and discourages humour. The model is tuned for support
+  agents, so hard humour has to come from wording alone.
+
+**Fourth test.** The `lelik_you` profile rewrites the portrait (`PERSONA_LELIK_YOU`) in the
+guide's second-person Role & Persona and Voice & Communication Style sections. It adds the
+guide's variety rule and uses the familiar address once or twice a call. The owner is open to a
+non-hexagonal xAI-format prompt if this pays off.
