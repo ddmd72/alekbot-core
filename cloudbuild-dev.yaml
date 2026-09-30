@@ -87,11 +87,10 @@ steps:
   # changed, which no task authorizes. So the relay deliberately runs as the
   # same (default compute) service account as alek-bot-dev and
   # alek-research-job-dev above — neither overrides --service-account either.
-  # Three secrets: relay_main.py reads OPENAI_API_KEY, XAI_API_KEY (only when
-  # VOICE_REALTIME_PROVIDER=xai) and BILLING_SLACK_WEBHOOK_URL via os.environ
-  # (see its module docstring). VOICE_REALTIME_PROVIDER itself is not set here:
-  # it is flipped with `gcloud run services update --update-env-vars`, and the
-  # --set-env-vars below resets it to the openai default on the next deploy. No
+  # Three secrets: relay_main.py reads OPENAI_API_KEY, XAI_API_KEY and
+  # BILLING_SLACK_WEBHOOK_URL via os.environ (see its module docstring). The provider
+  # of each call comes from the user's session config, not from env
+  # (VOICE_MULTI_PROVIDER_RFC §4.2). No
   # TWILIO_* secrets here; those belong to the MAIN service's own webhook/
   # telephony adapter (src/web/voice_webhook_app.py,
   # src/adapters/twilio_telephony_adapter.py), wired into the alek-bot-dev

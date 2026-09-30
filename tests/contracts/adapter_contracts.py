@@ -572,35 +572,19 @@ XAI_REALTIME_TURN_DETECTION = ContractRule(
     name="XAI_REALTIME_TURN_DETECTION",
     description=(
         "XaiRealtimeAdapter.open() must configure xAI's top-level server_vad with auto-reply "
-        "and auto-interrupt off. xAI accepts create_response=false but does not honour it "
-        "(decisions/voice_xai_protocol_probe.md); the flags are still sent so a provider fix "
-        "takes effect. Input: captured session.update message {type: str, session: dict}."
+        "and auto-interrupt ON: the adapter implements PROVIDER turn ownership only - xAI starts "
+        "every reply to the caller and stops it when talked over (VOICE_MULTI_PROVIDER_RFC "
+        "§4.3/§4.4; xAI ignores create_response=false anyway, decisions/voice_xai_protocol_probe.md). "
+        "Input: captured session.update message {type: str, session: dict}."
     ),
     validators={
         "xai_realtime": lambda kw: (
             _eq(kw["session"]["turn_detection"]["type"], "server_vad",
                 "xai_realtime: turn_detection must be server_vad"),
-            _eq(kw["session"]["turn_detection"]["create_response"], False,
-                "xai_realtime: provider auto-reply must be requested off"),
-            _eq(kw["session"]["turn_detection"]["interrupt_response"], False,
-                "xai_realtime: provider auto-interrupt must be off (client owns barge-in)"),
-        ),
-    },
-)
-
-XAI_REALTIME_REQUESTS_ARE_TAGGED = ContractRule(
-    name="XAI_REALTIME_REQUESTS_ARE_TAGGED",
-    description=(
-        "XaiRealtimeAdapter.request_response() must tag its response.create with the "
-        "adapter's metadata. xAI echoes it on response.created, and it is the only way to tell "
-        "the relay's reply from one xAI started on its own (which the adapter cancels). "
-        "Input: captured client event dict."
-    ),
-    validators={
-        "xai_realtime": lambda kw: (
-            _eq(kw["type"], "response.create", "xai_realtime: must send response.create"),
-            _eq(kw.get("response", {}).get("metadata"), {"origin": "relay"},
-                "xai_realtime: response.create must carry the relay origin metadata"),
+            _eq(kw["session"]["turn_detection"]["create_response"], True,
+                "xai_realtime: provider auto-reply must be on (provider owns turns)"),
+            _eq(kw["session"]["turn_detection"]["interrupt_response"], True,
+                "xai_realtime: provider auto-interrupt must be on (provider owns barge-in)"),
         ),
     },
 )

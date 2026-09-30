@@ -1066,9 +1066,13 @@ spoken. `POLICY_WITTY_ACCENTUATION` is still in the profile; revisit only if jok
 
 ### 4.16 Second provider: xAI behind a relay switch (2026-09-29)
 
+> **Superseded 2026-09-30 by `VOICE_MULTI_PROVIDER_RFC.md`.** The provider is now chosen per user,
+> and xAI is the default. The emulation described below was deleted: xAI runs with
+> provider-owned turns. This section records the first attempt.
+
 `XaiRealtimeAdapter` (`grok-voice-think-fast-2.0`) is the port's second implementation. The relay
-picks it with `VOICE_REALTIME_PROVIDER=xai` for both call paths; OpenAI stays the default.
-Nothing above the port changes: persona, tools, delegation and `VoiceSessionService` are the same.
+picked it with `VOICE_REALTIME_PROVIDER=xai` for both call paths; OpenAI stayed the default.
+Nothing above the port changed: persona, tools, delegation and `VoiceSessionService` were the same.
 
 The live probe (`decisions/voice_xai_protocol_probe.md`) found one real mismatch. xAI accepts
 `create_response: false` but replies on its own anyway, about 200 ms after the caller stops. The

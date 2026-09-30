@@ -1,6 +1,6 @@
 # RFC: Voice on more than one realtime provider
 
-**Status:** Draft, approved in direction by the owner (2026-09-30)
+**Status:** Phases A+B implemented on `feat/voice-xai-realtime` (2026-09-30); C and D pending
 **Date:** 2026-09-30
 **Owner:** Dmytro
 **Milestone:** Voice — provider choice
@@ -120,17 +120,18 @@ change applies at the next rebuild, which is acceptable for a setting changed ra
 
 ### 4.3 The port states turn ownership
 
-`RealtimeSessionPort` changes in two places:
-- `open(instructions, reasoning_effort, tools, turn_ownership)`;
-- `supported_turn_ownership: FrozenSet[TurnOwnership]`, a class-level declaration.
-
-The `receive_events` docstring changes from "the provider does not reply on its own" to "under
-RELAY ownership the provider does not reply on its own".
+`RealtimeSessionPort` gains a class-level declaration,
+`supported_turn_ownership: ClassVar[FrozenSet[TurnOwnership]]`. The `receive_events` docstring now
+says "under RELAY ownership the provider does not reply on its own".
 
 - **OpenAI** supports `{RELAY}`. Its provider-owned mode was never tested, so it is not claimed.
 - **xAI** supports `{PROVIDER}`.
-- `open()` raises on an unsupported value. A unit test checks that every entry in
-  `VOICE_PROVIDER_PROFILES` uses an ownership its adapter supports.
+
+**As built (delta from the first draft of this RFC):** `turn_ownership` is not a parameter of
+`open()`. Each adapter implements exactly one ownership, so a parameter would carry no information.
+The relay's per-call factory (`relay_main._realtime_session_factory`) refuses a spec whose
+ownership the adapter class does not declare. A unit test checks that every entry in
+`VOICE_PROVIDER_PROFILES` names an adapter that supports its ownership.
 
 `VoiceSessionService` branches on `TurnOwnership`, never on a provider name. The branch points are
 the ones the experiment already has (`provider_owns_turns`):
@@ -234,7 +235,7 @@ green and UAT'd (owner merges). C is its own step after that; D is gated (§4.6)
 | Phase | Content | Tests |
 |---|---|---|
 | **A. Profile + per-user choice** | §4.1, §4.2: domain profile + resolver, `UserBotConfig.voice_provider`, composition injection, session-config `voice` entry, relay per-call factory + registry, knobs removed | resolver (default, unknown value, each entry); composition; `session_config` carries `voice`; relay factory picks adapter per call |
-| **B. Honest port** | §4.3, §4.4: `turn_ownership` in `open()` + `supported_turn_ownership`, per-call ownership in the service, xAI emulation deleted | registry ⇄ adapter support; per-call ownership in the service |
+| **B. Honest port** | §4.3, §4.4: `supported_turn_ownership` on each adapter (checked by the relay factory), per-call ownership in the service, xAI emulation deleted | registry ⇄ adapter support; per-call ownership in the service |
 | **C. Voice character tokens** | §4.5: split tokens, voice categories, `lelik_xai` profile, one alternative per category in the USER catalog as the proof | assembly with and without a USER override (voice categories replace, `voice_call_manners` does not); owner uploads to Firestore |
 | **D. Blueprint format** | §4.6, gated | renderer unit tests per format |
 

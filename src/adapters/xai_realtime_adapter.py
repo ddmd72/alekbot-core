@@ -1,44 +1,29 @@
 import json
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 import websockets
 
 from src.domain.voice_audio_format import MULAW_8K, AudioFormat
 from src.domain.voice_audio_frame import AudioFrame
+from src.domain.voice_turn_ownership import TurnOwnership
 from src.ports.realtime_session_port import RealtimeSessionEvent, RealtimeSessionPort
 from src.utils.logger import logger
 
 _MODEL = "grok-voice-think-fast-2.0"
 _CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
-# Male, multilingual (GET /v1/tts/voices, 2026-09-29). The relay overrides it per deploy
-# (VOICE_XAI_VOICE) while the owner picks one by ear.
+# Male, multilingual (GET /v1/tts/voices, 2026-09-29). The call's VoiceSessionSpec picks the voice.
 _VOICE = "rex"
 # xAI has no semantic_vad; server_vad ends a turn on silence. 700 ms held in the probe
 # (decisions/voice_xai_protocol_probe.md); a UAT knob if mid-thought pauses cut the caller off.
 _SILENCE_DURATION_MS = 800
-# Both flags are accepted and echoed, but create_response is NOT honoured: xAI starts a reply
-# ~200 ms after speech_stopped anyway. Sent regardless so a provider fix takes effect by itself;
-# the adapter cancels the unrequested replies (see receive_events).
+# xAI replies and stops on interruption by itself, and ignores create_response=false anyway
+# (probe, 2026-09-29), so the adapter implements PROVIDER turn ownership only.
 _TURN_DETECTION = {
-    "type": "server_vad",
-    "silence_duration_ms": _SILENCE_DURATION_MS,
-    "create_response": False,
-    "interrupt_response": False,
-}
-# The bare-Grok experiment: xAI starts, and when the caller talks over it, stops its own replies.
-_PROVIDER_OWNED_TURN_DETECTION = {
     "type": "server_vad",
     "silence_duration_ms": _SILENCE_DURATION_MS,
     "create_response": True,
     "interrupt_response": True,
 }
-# Echoed back on response.created/done: the only way to tell our reply from xAI's own.
-_ORIGIN = {"origin": "relay"}
-# The errors a cancel of an unrequested reply can earn once it already ended or was superseded
-# by our own response.create (probe, 2026-09-29). Ours to absorb: the service did not send them,
-# and any error it sees ends the call.
-_NO_ACTIVE_RESPONSE = "no active response"
-_ID_MISMATCH = "does not match current response"
 
 
 def _strip_cache_boundary(instructions: str) -> str:
@@ -70,39 +55,22 @@ def _flatten_usage(usage: dict) -> Dict[str, float]:
     }
 
 
-def _merge_usage(into: Dict[str, float], usage: Dict[str, float]) -> None:
-    for key, value in usage.items():
-        into[key] = into.get(key, 0) + value
-
-
 class XaiRealtimeAdapter(RealtimeSessionPort):
     """RealtimeSessionPort against xAI's Voice Agent API (OpenAI-GA-compatible events;
-    probed live 2026-09-29, decisions/voice_xai_protocol_probe.md).
+    probed live 2026-09-29, decisions/voice_xai_protocol_probe.md). Provider-owned turns:
+    xAI starts every reply to the caller and stops it when talked over
+    (VOICE_MULTI_PROVIDER_RFC §4.3/§4.4)."""
 
-    The port promises the provider does not reply on its own; xAI does. Every reply the
-    relay did not request is cancelled by id the moment it is created and its events are
-    swallowed, so VoiceSessionService sees the same turn cycle as on OpenAI. xAI drops a
-    cancelled reply's item from the conversation itself. Its usage is still billed, so it
-    is carried into the next reply's response_done.
-    """
+    supported_turn_ownership = frozenset({TurnOwnership.PROVIDER})
 
     def __init__(self, api_key: str, model: str = _MODEL, voice: str = _VOICE,
-                 ws_connect: Callable = websockets.connect, audio_format: AudioFormat = MULAW_8K,
-                 provider_owns_turns: bool = False) -> None:
-        """provider_owns_turns: the bare-Grok experiment. xAI replies and handles
-        interruptions on its own and nothing is cancelled, so the port's "the provider does
-        not reply on its own" no longer holds. Pair it with VoiceSessionService's
-        provider_owns_turns."""
+                 ws_connect: Callable = websockets.connect, audio_format: AudioFormat = MULAW_8K) -> None:
         self._api_key = api_key
         self._model = model
         self._voice = voice
         self._connect = ws_connect
         self._audio_format = audio_format
         self._ws = None
-        self._suppressed: Set[str] = set()
-        self._active_id: Optional[str] = None
-        self._carried_usage: Dict[str, float] = {}
-        self._provider_owns_turns = provider_owns_turns
 
     async def open(self, instructions: str, reasoning_effort: str, tools: List[dict]) -> None:
         url = f"wss://api.x.ai/v1/realtime?model={self._model}"
@@ -110,7 +78,7 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         session: Dict[str, Any] = {
             "voice": self._voice,
             "instructions": _strip_cache_boundary(instructions),
-            "turn_detection": _PROVIDER_OWNED_TURN_DETECTION if self._provider_owns_turns else _TURN_DETECTION,
+            "turn_detection": _TURN_DETECTION,
             "audio": {
                 "input": {"format": _wire_format(self._audio_format)},
                 "output": {"format": _wire_format(self._audio_format)},
@@ -128,40 +96,9 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
 
     async def receive_events(self) -> AsyncIterator[RealtimeSessionEvent]:
         async for raw in self._ws:
-            event = json.loads(raw)
-            if await self._absorb_unrequested(event):
-                continue
-            normalized = self._normalize(event)
+            normalized = self._normalize(json.loads(raw))
             if normalized is not None:
                 yield normalized
-
-    async def _absorb_unrequested(self, event: dict) -> bool:
-        """True when the event belongs to a reply xAI started on its own (or is the
-        error from cancelling one) and must not reach the service."""
-        if self._provider_owns_turns:
-            return False
-        event_type = event.get("type")
-        if event_type == "response.created":
-            response = event.get("response") or {}
-            if response.get("metadata") == _ORIGIN:
-                return False
-            response_id = response.get("id")
-            self._suppressed.add(response_id)
-            logger.info(f"xAI realtime: cancelling unrequested reply {response_id}")
-            await self._ws.send(json.dumps({"type": "response.cancel", "response_id": response_id}))
-            return True
-        if event.get("response_id") in self._suppressed:
-            if event_type == "response.done":
-                _merge_usage(self._carried_usage, _flatten_usage(event.get("usage") or {}))
-            return True
-        if event_type == "error" and self._suppressed:
-            message = str((event.get("error") or {}).get("message", ""))
-            if _NO_ACTIVE_RESPONSE in message or (
-                _ID_MISMATCH in message and any(rid in message for rid in self._suppressed)
-            ):
-                logger.info(f"xAI realtime: absorbed error from cancelling an unrequested reply: {message}")
-                return True
-        return False
 
     def _normalize(self, event: dict) -> Optional[RealtimeSessionEvent]:
         event_type = event.get("type")
@@ -178,14 +115,10 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
                 payload={"call_id": event.get("call_id"), "name": event.get("name"), "arguments": event.get("arguments")},
             )
         if event_type == "response.created":
-            self._active_id = (event.get("response") or {}).get("id")
             return RealtimeSessionEvent(type="response_created", payload={})
         if event_type == "response.done":
-            self._active_id = None
             # Usage sits at the event's top level on xAI, not under `response`.
             usage = _flatten_usage(event.get("usage") or {})
-            _merge_usage(usage, self._carried_usage)
-            self._carried_usage = {}
             return RealtimeSessionEvent(type="response_done", payload={"usage": usage, "model": self._model})
         if event_type == "conversation.item.input_audio_transcription.completed":
             return RealtimeSessionEvent(type="user_transcript", payload={"text": event.get("transcript", "")})
@@ -215,15 +148,12 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         }))
 
     async def request_response(self) -> None:
-        await self._ws.send(json.dumps({"type": "response.create", "response": {"metadata": _ORIGIN}}))
+        # The greeting and delegation answers: the only replies the relay starts under PROVIDER ownership.
+        await self._ws.send(json.dumps({"type": "response.create"}))
 
     async def cancel_response(self) -> None:
-        # Addressed by id: a bare cancel could land on an unrequested reply the adapter is
-        # cancelling at the same moment.
-        cancel: Dict[str, Any] = {"type": "response.cancel"}
-        if self._active_id:
-            cancel["response_id"] = self._active_id
-        await self._ws.send(json.dumps(cancel))
+        # Not called under PROVIDER ownership (xAI stops its own reply); kept for the port contract.
+        await self._ws.send(json.dumps({"type": "response.cancel"}))
 
     async def truncate(self, item_id: str, audio_end_ms: int) -> None:
         await self._ws.send(json.dumps({
