@@ -68,8 +68,11 @@ _RECURRENCE_PARAM = {
         "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO — every other Monday; "
         "FREQ=DAILY;BYHOUR=8,20;BYMINUTE=0 — twice a day, 08:00 and 20:00; "
         "FREQ=MONTHLY;BYDAY=-1SU — the last Sunday of each month; "
-        "FREQ=MONTHLY;BYMONTHDAY=1,15 — the 1st and the 15th. "
-        "COUNT and UNTIL are rejected — end a reminder by deleting it."
+        "FREQ=MONTHLY;BYMONTHDAY=1,15 — the 1st and the 15th; "
+        "FREQ=MINUTELY;INTERVAL=10 — every 10 minutes (minimum INTERVAL is 5). "
+        "COUNT and UNTIL are rejected — end a reminder by deleting it. For 'until X "
+        "happens', write the stop condition into 'instruction': the run that sees it "
+        "met deletes the reminder."
     ),
 }
 

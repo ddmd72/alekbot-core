@@ -261,6 +261,48 @@ class TestRecurrentReminder:
             "due_at": note.due.isoformat(),
         }
 
+    async def test_missed_occurrences_are_skipped_not_replayed(
+        self, service, notes_port,
+    ):
+        """After an outage the next fire is taken after `now`, not after `due`.
+        Anchored on `due`, a 10-minute rule overdue by an hour would stay in the past
+        and fire on every cron tick until it caught up."""
+        note = _make_note(
+            recurrence="FREQ=MINUTELY;INTERVAL=10", due=_NOW - timedelta(hours=1),
+        )
+        notes_port.list_due_reminders.return_value = [note]
+
+        await service.fire_due_reminders(now_utc=_NOW)
+
+        claim_kwargs = notes_port.reschedule_if_due_at.call_args.kwargs
+        assert claim_kwargs["expected_due"] == note.due
+        assert claim_kwargs["next_due"] == _NOW + timedelta(minutes=10)
+
+    async def test_daily_rule_missed_for_days_keeps_its_time_of_day(
+        self, service, notes_port,
+    ):
+        """Three missed days fire once, and the next fire stays at 09:00 — skipping
+        must not re-anchor the schedule on the moment the cron picked it up."""
+        due = datetime(2026, 3, 12, 9, 0, tzinfo=timezone.utc)
+        note = _make_note(recurrence="FREQ=DAILY", due=due)
+        notes_port.list_due_reminders.return_value = [note]
+
+        await service.fire_due_reminders(now_utc=_NOW)  # 2026-03-15 10:00
+
+        next_due = notes_port.reschedule_if_due_at.call_args.kwargs["next_due"]
+        assert next_due == datetime(2026, 3, 16, 9, 0, tzinfo=timezone.utc)
+
+    async def test_on_time_fire_keeps_the_rule_grid(self, service, notes_port):
+        """A fire picked up a few minutes late still lands on the rule's next slot,
+        not on `now + interval`."""
+        note = _make_note(recurrence="FREQ=MINUTELY;INTERVAL=10", due=_NOW - timedelta(minutes=3))
+        notes_port.list_due_reminders.return_value = [note]
+
+        await service.fire_due_reminders(now_utc=_NOW)
+
+        next_due = notes_port.reschedule_if_due_at.call_args.kwargs["next_due"]
+        assert next_due == note.due + timedelta(minutes=10)
+
     async def test_failed_claim_skips_enqueue(
         self, service, notes_port, task_dispatch,
     ):
