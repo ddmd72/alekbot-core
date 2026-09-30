@@ -244,9 +244,9 @@ green and UAT'd (owner merges). C is its own step after that; D is gated (§4.6)
 - `test_lelik_agent_prompt_profile.py` and `test_user_agent_factory_lelik_prompt_profile.py`
   (knob → profile).
 
-Each one needs the owner's per-test approval (CLAUDE.md), requested when the phase starts. Tests
-that predate the experiment are expected to stay untouched. Any that break are reported, not
-edited.
+Under the standing reviewer rule (CLAUDE.md, 2026-09-30), a reviewer subagent decides each edit
+and justifies it per test; the owner is not asked. Tests that predate the experiment are expected
+to stay untouched, and any that break go through the same reviewer.
 
 **Docs** updated in the same phases: this RFC's status, `VOICE_COMPANION_RFC.md` §4.16, CLAUDE.md
 (voice section), `docs/07_deployment/README.md` (knobs removed, `XAI_API_KEY` stays).
@@ -256,8 +256,9 @@ edited.
 1. **Agent cache on provider change.** Is an up-to-an-hour lag acceptable, or should a
    `voice_provider` write invalidate the user's cached `LelikAgent`? Settle it when the Cabinet
    write path exists.
-2. **Phone path on xAI.** Calls 2–4 were web calls. Before the phone path defaults to xAI, it needs
-   one UAT call over Twilio: μ-law at 8 kHz, and whether the echo and VAD behave.
+2. **Phone path on xAI: last priority.** Calls 2–4 were web calls. The owner may drop Twilio
+   altogether (2026-09-30), so the phone path gets the default profile untested. The probe
+   verified that `audio/pcmu` works. A phone UAT happens only if Twilio stays.
 3. **Summary and consolidation.** Grok's transcripts feed the call summary and memory the same way.
    Watch the first summaries for quality.
 

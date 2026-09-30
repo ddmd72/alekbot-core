@@ -722,21 +722,25 @@ When in doubt: if it identifies or grants access to infrastructure, it goes in `
 
 ---
 
-## ⛔⛔⛔ Tests — ABSOLUTE RULE — READ BEFORE TOUCHING ANY TEST FILE ⛔⛔⛔
+## ⛔⛔⛔ Tests — REVIEWER RULE — READ BEFORE TOUCHING ANY TEST FILE ⛔⛔⛔
 
-**NEVER modify, delete, or rewrite any existing test without EXPLICIT per-test permission from the user.**
+**The one who writes the code never edits an existing test to make that code pass. A reviewer
+decides each edit.** Owner's standing rule since 2026-09-30, replacing per-test owner approval.
 
-This means: one test = one explicit approval. Blanket approval ("fix the tests") does NOT exist.
-You MUST name the specific test and wait for a "yes, fix that one" before touching it.
+If a code change makes an existing test fail:
+1. STOP. The implementer does not touch the test.
+2. Record EXACTLY which test failed and WHY (assertion, actual vs expected).
+3. Hand it to a **reviewer**: the task reviewer in subagent-driven work, otherwise a dedicated
+   reviewer subagent. Give it the failing test, the intended change and its spec (RFC, plan).
+4. The reviewer decides per test:
+   - **The test encodes behaviour the spec intentionally changes.** The reviewer edits it and
+     justifies that one test in its report.
+   - **Otherwise the code is wrong.** The implementer fixes the code.
+5. The owner is not asked. A test is never weakened to make code pass: no deleted assertions, no
+   loosened checks, no skips.
 
-If a code change causes a test to fail:
-1. STOP. Do not touch the test.
-2. Report EXACTLY which test failed and WHY (what assertion, what actual vs expected).
-3. Wait for explicit per-test instruction from the user.
-
-The ONLY self-authorized exceptions — no approval needed:
-- Fixing a broken import path caused by a module rename you just performed.
-- Nothing else.
+New behaviour gets NEW tests. Self-authorized without review: fixing a broken import path caused
+by a module rename you just performed.
 
 This applies to: test files (`tests/`), conftest.py, shared test helpers, fixtures.
 
