@@ -284,6 +284,10 @@ class UserBotConfig(BaseModel):
     # doc must not fail the whole config load — LelikPersonaService warns and ignores it.
     voice_excluded_fact_domains: List[str] = Field(default_factory=list)
 
+    # Realtime provider for voice calls, a key of domain.voice_provider_profile.VOICE_PROVIDER_PROFILES
+    # ("xai" | "openai"). None = DEFAULT_VOICE_PROVIDER (VOICE_MULTI_PROVIDER_RFC §4.2).
+    voice_provider: Optional[str] = None
+
     # Gmail auto-indexing schedule
     # gmail_auto_index: enable daily incremental indexing via Cloud Scheduler
     # gmail_auto_index_hour: local hour (0-23) in user's timezone when indexing fires

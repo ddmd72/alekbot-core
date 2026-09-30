@@ -5,6 +5,7 @@ import websockets
 
 from src.domain.voice_audio_format import MULAW_8K, AudioFormat
 from src.domain.voice_audio_frame import AudioFrame
+from src.domain.voice_turn_ownership import TurnOwnership
 from src.ports.realtime_session_port import RealtimeSessionEvent, RealtimeSessionPort
 from src.utils.logger import logger
 
@@ -159,8 +160,13 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
     """RealtimeSessionPort against OpenAI's Realtime API (GA session shape,
     verified live during Phase 0 spikes - see RFC §4.7 and §9)."""
 
-    def __init__(self, api_key: str, model: str = _MODEL, ws_connect: Callable = websockets.connect, audio_format: AudioFormat = MULAW_8K) -> None:
+    # Provider-owned turns were never tried on OpenAI, so they are not claimed.
+    supported_turn_ownership = frozenset({TurnOwnership.RELAY})
+
+    def __init__(self, api_key: str, model: str = _MODEL, ws_connect: Callable = websockets.connect,
+                 audio_format: AudioFormat = MULAW_8K, voice: str = _VOICE) -> None:
         self._api_key = api_key
+        self._voice = voice
         self._model = model
         self._connect = ws_connect
         self._audio_format = audio_format
@@ -184,7 +190,7 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
                     "transcription": {"model": _TRANSCRIPTION_MODEL},
                     "turn_detection": _TURN_DETECTION,
                 },
-                "output": {"format": _wire_format(self._audio_format), "voice": _VOICE, "speed": _SPEED},
+                "output": {"format": _wire_format(self._audio_format), "voice": self._voice, "speed": _SPEED},
             },
             "reasoning": {"effort": reasoning_effort},
             "instructions": _strip_cache_boundary(instructions),

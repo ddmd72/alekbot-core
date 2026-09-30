@@ -1064,6 +1064,29 @@ phrasing, pace and jokes all changed. The lesson for this model is to steer regi
 situational good/bad examples, not with rules about the form of the reply, because such rules get
 spoken. `POLICY_WITTY_ACCENTUATION` is still in the profile; revisit only if jokes creep back.
 
+### 4.16 Second provider: xAI behind a relay switch (2026-09-29)
+
+> **Superseded 2026-09-30 by `VOICE_MULTI_PROVIDER_RFC.md`.** The provider is now chosen per user,
+> and xAI is the default. The emulation described below was deleted: xAI runs with
+> provider-owned turns. This section records the first attempt.
+
+`XaiRealtimeAdapter` (`grok-voice-think-fast-2.0`) is the port's second implementation. The relay
+picked it with `VOICE_REALTIME_PROVIDER=xai` for both call paths; OpenAI stayed the default.
+Nothing above the port changed: persona, tools, delegation and `VoiceSessionService` were the same.
+
+The live probe (`decisions/voice_xai_protocol_probe.md`) found one real mismatch. xAI accepts
+`create_response: false` but replies on its own anyway, about 200 ms after the caller stops. The
+port promises the provider does not do that, so the adapter keeps the promise:
+- it tags its own `response.create` with metadata, which xAI echoes;
+- it cancels any other reply by id as soon as it is created and swallows its events;
+- it absorbs the errors from those cancels;
+- it carries the cancelled reply's usage into the next `response_done`.
+
+xAI drops a cancelled reply's item from the conversation itself. Other differences:
+- server_vad replaces semantic_vad;
+- effort is `high` or `none` only (`VOICE_XAI_REASONING_EFFORT`);
+- audio is billed per second (`billable_audio_seconds`, $0.08/min).
+
 ## 5. Transport — telephony, with media relayed through us
 
 **Telephony, not a browser page.** A Spanish Twilio number is already provisioned and owned; what
@@ -1433,6 +1456,8 @@ unit and this is genuinely optional.
    infra bugs (TwiML Bins are US1-region-only, `websockets`' HTTP parser requires GET not POST, a
    stale session schema, a local TLS proxy issue) — none about the audio format itself. **xAI's
    live audio leg was never run** — this is now the only genuinely open half.
+   **xAI half answered (2026-09-29):** `audio/pcmu` and `audio/pcm` 24 kHz both work over a real
+   speech-triggered session (no Twilio leg yet); `decisions/voice_xai_protocol_probe.md`, §4.16.
    `decisions/voice_spike_02_mulaw_e2e.md`.
 3. **Measured relay latency**, and end-to-end time-to-answer once slice 2 exists — Phase 0.3.
    **Answered, partially (2026-09-21):** echo-relay p50 681ms / p95 910ms on OpenAI, over a
