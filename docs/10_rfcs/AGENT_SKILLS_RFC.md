@@ -79,9 +79,15 @@ scripts: []        # reserved — v1 rejects a non-empty value
 - `description`: the trigger, **≤ 250 chars**, phrased "Use when …". It is the only part the model
   sees before loading, and it is re-sent on every request (§3.5), so it is short by rule.
 - body: markdown; whole `SKILL.md` ≤ 20 KB.
-- files: text-like attachments (templates, examples, reference lists) under `files/`, ≤ 1 MB each,
-  mime allowlist (`text/*`, `application/json`, `text/csv`, `text/markdown`).
+- files: text attachments (templates, examples, reference lists) under `files/`, ≤ 1 MB each,
+  stored as UTF-8 `text/plain` whatever the extension — every input path already yields text
+  (model-written `skill_file_text`, or a `file_ref` upload converted by the coordinator).
 - The owning scope is **not** a frontmatter field; it is derived from the caller (§3.4).
+- **Frontmatter subset.** `domain/` may use only stdlib + pydantic, so the parser accepts the
+  single-line subset: `key: value`, the value plain, `"double-quoted"` (JSON escapes) or
+  `'single-quoted'`, and `scripts: []`. Block scalars (`>`, `|`) and nested maps are rejected with a
+  clear error. The renderer always writes `description` double-quoted, so every file it writes
+  parses back identically and stays valid YAML for Anthropic tooling.
 
 ### 3.3 Storage — one folder layout for both origins
 
@@ -110,8 +116,10 @@ Why one layout:
 **Firestore is an index, not storage.** `{prefix}skills/{user_id}:{scope}:{name}` holds only what
 the catalog and the write path need: `user_id`, `account_id`, `scope`, `name`, `description`,
 `current` (version number or `null` when deleted), `next_version`, `updated_at`. The per-request
-catalog is one Firestore query instead of N GCS reads. The index is derived: a rebuild (list the
-user's prefix, take the highest `v<n>`, parse its `SKILL.md`) repairs any drift.
+catalog is one Firestore query instead of N GCS reads. The index is derived: GCS is always written
+before the index points at it, so the index never references missing content, and in a disaster it
+can be rebuilt by listing the user's prefix (highest `v<n>`, parse its `SKILL.md`). v1 ships no
+rebuild code — nothing produces drift that needs it.
 
 **Write protocol — immutable versions, pointer flip.** No live folder is overwritten, so no step
 needs GCS atomicity:
@@ -121,7 +129,7 @@ needs GCS atomicity:
    writes get different `n`.
 2. **Write** the complete new folder to `v<n>/` (for `attach_file` and `update`, copy the unchanged
    objects of `v<current>/` into `v<n>/` first). A failure here leaves an orphan folder that nothing
-   points to — harmless, cleaned by rebuild.
+   points to — harmless.
 3. **Flip** `current = n` (and `description`) in a second transaction, only if `current` is still
    the value read in step 1; otherwise fail with a conflict the orchestrator sees as a tool error.
 
@@ -148,7 +156,7 @@ Components (each respects REQ-ARCH-22/23):
 - Port `SkillIndexRepository` → `FirestoreSkillIndexRepository`: query by (user, scope), the two
   transactions above.
 - `SkillService` (`src/services/skill_service.py`) owns the write protocol and the rules: merges the
-  visible set, enforces the name rule, caps (§3.5), size/mime limits, versioning, restore, rebuild.
+  visible set, enforces the name rule, caps (§3.5), size limits, versioning, restore.
   When `GCS_MEDIA_BUCKET` is unset the store is `None`: system skills are still served, writes fail
   with a clear error.
 
@@ -216,9 +224,14 @@ available_skills {
 }
 ```
 
-- **Plumbing.** `PromptBuilder` cannot import `SkillService` (REQ-ARCH-22). Each orchestrator gets
-  `SkillService` from `UserAgentFactory`, fetches its visible set and passes the rendered catalog
-  as `build_for_agent(..., skills_catalog=…)` → `assemble()`. The block renders only when non-empty.
+- **Plumbing.** `PromptBuilder` receives `SkillService` by **constructor injection** (the
+  REQ-ARCH-22-sanctioned form of a cross-service dependency: `TYPE_CHECKING` import only), wired in
+  `UserAgentFactory`. Each orchestrator passes only `build_for_agent(..., skill_scope=SkillScope.X)`;
+  PromptBuilder fetches the visible set, renders it with the user's `skill_authoring` policy (it
+  already holds `UserBotConfig`), and hands the string to `assemble(skills_catalog=…)`. The block
+  renders only when non-empty. A catalog fetch failure is logged and the prompt is built without
+  the block — the catalog is an index of optional procedures, not the prompt itself, so "no
+  fallback prompts" does not apply.
 - **Validation.** The catalog goes through `SecurityPort` as `TrustZone.UNTRUSTED`, exactly like
   directives and bio (`prompt_assembly_service.py:380-400`).
 - **Caching.** Runtime blocks are appended after the 24h template lookup, so a skill edit is
@@ -329,9 +342,11 @@ propose a skill); PROTOCOL migration; Quick.
 Deliverables beyond the code in §3:
 
 - `src/utils/capabilities.py` (`get_help`) entry.
-- Orchestrator guidance, behavioural only (no duplication of `capability_descriptions`):
-  Smart's delegation-protocol token per NEW_AGENT_PLAYBOOK Phase 3; Tutor's profile; Lelik's
-  `lelik_you` / `lelik_xai` via few-shot examples, not form rules.
+- Orchestrator guidance: **no prompt-token change in v1.** The Claude Code model is enough — the
+  catalog header says when to load, and `writing-skills` (itself in every catalog) carries the
+  authoring guidance behind its own trigger. A `PROTOCOL_*` / Lelik few-shot addition is made only
+  if live use shows skills are never created or never loaded (then per NEW_AGENT_PLAYBOOK Phase 3,
+  behavioural only, Lelik via few-shot examples).
 - Docs: roster rows in root `CLAUDE.md` and `src/agents/CLAUDE.md`; amendment pointers in
   `decisions/standing_directives.md` and VOICE_COMPANION_RFC §4.15; a decision record.
 - NEW_AGENT_PLAYBOOK Phase 0 answers: zero-LLM specialist, no prompt profile (like FileManagement).
@@ -340,7 +355,7 @@ Verification:
 
 - Unit: domain parse/validate/render and path confinement; `SkillService` visible set, name rule,
   caps, write protocol (reserve → write → flip, conflict on stale `current`), tombstone, restore,
-  rebuild, store-is-None; `SkillsAgent` actions, reads from `payload`, scope from
+  store-is-None; `SkillsAgent` actions, reads from `payload`, scope from
   `_caller_agent_id`, rejection of unknown callers and of non-interactive writes, marker posted via
   notification service; `DelegationEngine` sets `_caller_agent_id` per hop and does not inherit it;
   Quick's `excluded_intents`; prompt assembly renders the block only when non-empty, validated,
