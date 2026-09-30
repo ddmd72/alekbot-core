@@ -72,6 +72,7 @@ Both budgets were unreachable from the day they were written until 2026-08-15 â€
 | **Payload** | `{"task_type": "fire_due_reminders"}` |
 | **Purpose** | Fires proactive self-reminders whose `due <= now`. Idempotency guard: skips notes fired within the last 4 min. |
 | **Handler** | `WorkerHandler._handle_fire_due_reminders()` |
+| **Cadence is a contract** | The 5-min cadence is the floor for sub-hourly rules (`FREQ=MINUTELY;INTERVALâ‰¥5`, `_MIN_MINUTELY_INTERVAL` in `dateutil_recurrence_adapter.py`). Change both together. Missed occurrences are skipped, not replayed. |
 | **Env** | dev + prod |
 
 ---

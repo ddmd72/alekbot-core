@@ -40,6 +40,11 @@ if TYPE_CHECKING:
     from .task_dispatch_service import TaskDispatchService
 
 
+# Bound on skipping missed occurrences: a week of a 5-minute rule is ~2000 steps.
+# Past it the note is left untouched (logged), like any rule with no next occurrence.
+_MAX_CATCH_UP_STEPS = 5000
+
+
 class RemindersService:
     """Cron-side reminder dispatcher.
 
@@ -114,9 +119,7 @@ class RemindersService:
 
             # Step 1 — atomic claim of this fire-time.
             if note.recurrence:
-                next_due = self._recurrence.next_occurrence(
-                    note.recurrence, after=note.due, tz=user_tz
-                )
+                next_due = self._next_due_after_now(note, now, user_tz)
                 if next_due is None:
                     # Rules are validated as open-ended, so this means a corrupted or
                     # hand-edited rule. Leaving the note untouched is the safe outcome:
@@ -190,6 +193,31 @@ class RemindersService:
             "claim_lost": claim_lost,
             "skipped": skipped,
         }, 200
+
+    def _next_due_after_now(
+        self, note: AgentNote, now: datetime, user_tz: str
+    ) -> Optional[datetime]:
+        """The rule's first occurrence after ``now``, stepped from ``due``.
+
+        Occurrences missed during an outage are skipped, not replayed: stopping at the
+        first occurrence after ``due`` would leave the note in the past, firing on every
+        cron tick until it caught up (a 10-minute rule an hour late → six fires 5 min
+        apart). Stepping rather than asking for "next after now" keeps the rule's grid —
+        the port anchors expansion on ``after``, so a daily 09:00 reminder claimed at
+        09:03 would otherwise move to 09:03.
+        """
+        next_due = self._recurrence.next_occurrence(note.recurrence, after=note.due, tz=user_tz)
+        for _ in range(_MAX_CATCH_UP_STEPS):
+            if next_due is None or next_due > now:
+                return next_due
+            next_due = self._recurrence.next_occurrence(
+                note.recurrence, after=next_due, tz=user_tz
+            )
+        logger.error(
+            "[Reminders] %s is more than %d occurrences behind (rule %r) — not rescheduled.",
+            note.note_id, _MAX_CATCH_UP_STEPS, note.recurrence,
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------

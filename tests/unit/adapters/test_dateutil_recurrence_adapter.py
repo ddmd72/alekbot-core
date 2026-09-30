@@ -54,6 +54,22 @@ class TestNormalize:
         with pytest.raises(ValueError, match="FREQ"):
             adapter.normalize("FREQ=MINUTELY")
 
+    @pytest.mark.parametrize("rule", ["FREQ=MINUTELY;INTERVAL=5", "FREQ=MINUTELY;INTERVAL=10"])
+    def test_accepts_minutely_at_or_above_the_cron_cadence(self, adapter, rule):
+        """"Every 10 minutes until the flight departs" (2026-09-30) was refused although
+        the firing cron ticks every 5 min — the floor is the cadence, not an hour."""
+        assert adapter.normalize(rule) == rule
+
+    @pytest.mark.parametrize("rule", ["FREQ=MINUTELY;INTERVAL=4", "FREQ=MINUTELY;INTERVAL=1"])
+    def test_rejects_minutely_below_the_cron_cadence(self, adapter, rule):
+        """The error names the minimum so the model can fix the rule and retry."""
+        with pytest.raises(ValueError, match="at least 5"):
+            adapter.normalize(rule)
+
+    def test_rejects_a_non_integer_interval(self, adapter):
+        with pytest.raises(ValueError, match="INTERVAL"):
+            adapter.normalize("FREQ=MINUTELY;INTERVAL=ten")
+
     def test_rejects_unknown_freq(self, adapter):
         """Replaces the old 'unknown type silently means daily' behaviour: a rule the
         evaluator does not understand is refused at the door, not guessed at."""
@@ -96,6 +112,11 @@ class TestNextOccurrenceParity:
 
     def test_hourly_interval_2(self, adapter):
         assert adapter.next_occurrence("FREQ=HOURLY;INTERVAL=2", _BASE, _UTC) == _BASE + timedelta(hours=2)
+
+    def test_minutely_interval_10(self, adapter):
+        assert adapter.next_occurrence(
+            "FREQ=MINUTELY;INTERVAL=10", _BASE, _UTC
+        ) == _BASE + timedelta(minutes=10)
 
     def test_daily(self, adapter):
         assert adapter.next_occurrence("FREQ=DAILY", _BASE, _UTC) == _BASE + timedelta(days=1)
@@ -211,6 +232,7 @@ class TestFirstOccurrence:
 class TestDescribe:
 
     @pytest.mark.parametrize("rule,expected", [
+        ("FREQ=MINUTELY;INTERVAL=10", "every 10 minutes"),
         ("FREQ=DAILY", "every day"),
         ("FREQ=DAILY;INTERVAL=2", "every 2 days"),
         ("FREQ=WEEKLY;BYDAY=TU,FR", "every week on Tue, Fri"),
