@@ -51,3 +51,15 @@ hears clipped starts: a reply cancelled after its first audio chunk left the pro
   that does not carry over.
 - Grok is not viable without its own prompt profile for Lelik. The mechanics held: no provider
   errors, delegation worked, and the reply was not cut.
+
+**Second test (owner, 2026-09-30): bare Grok.** Idea: the rules tuned for gpt-realtime may be
+what hurts Grok, so the test removes them all. Setup:
+- **Relay:** `VOICE_XAI_BARE=on`. Grok owns its turns: `create_response` and `interrupt_response`
+  are on and nothing is cancelled. The relay sends no persona anchor, no caller opening and no
+  silence or waiting notes. On barge-in it only drops audio it has already queued. It still
+  starts the greeting (the pickup note) and delivers delegation answers.
+- **Main service:** `LELIK_PROMPT_PROFILE=lelik_bare`. That profile carries character (archetype,
+  vibe, Smart's shared Ranevskaya humor), language, memory, a role with no behaviour rules and a
+  plain tool list. It drops SPOKEN_DELIVERY, the few-shots, the policies and the copilot
+  register.
+- **Voice:** `castor`, picked by ear from TTS samples.

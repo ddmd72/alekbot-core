@@ -104,6 +104,8 @@ WebSocket is one long *billed* request under Cloud Run's request-based CPU/memor
     --update-env-vars VOICE_REALTIME_PROVIDER=xai
   ```
   `make deploy` passes `--set-env-vars` to the relay, which resets the switch to `openai`.
+  The bare-Grok experiment adds two knobs, `VOICE_XAI_BARE=on` on the relay and
+  `LELIK_PROMPT_PROFILE=lelik_bare` on the main service (`decisions/voice_xai_protocol_probe.md`).
 
 ### Voice Relay Stream URL — two-pass first deploy
 

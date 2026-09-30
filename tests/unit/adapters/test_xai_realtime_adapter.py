@@ -312,3 +312,30 @@ def test_flatten_usage_maps_legs_and_tolerates_missing_details():
         "audio_input_tokens": 0, "audio_output_tokens": 0, "text_input_tokens": 0,
         "text_output_tokens": 0, "billable_audio_seconds": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_provider_owned_turns_lets_xai_reply_and_interrupt_on_its_own():
+    ws = FakeWebSocket(incoming=[])
+    adapter = XaiRealtimeAdapter(api_key="k", ws_connect=AsyncMock(return_value=ws), provider_owns_turns=True)
+    await adapter.open(instructions="hi", reasoning_effort="high", tools=[])
+
+    turn_detection = ws.sent[0]["session"]["turn_detection"]
+    assert turn_detection["type"] == "server_vad"
+    assert turn_detection["create_response"] is True
+    assert turn_detection["interrupt_response"] is True
+
+
+@pytest.mark.asyncio
+async def test_provider_owned_turns_passes_untagged_replies_through_uncancelled():
+    adapter, ws = await _opened([
+        _created("auto1"),
+        {"type": "response.output_audio.delta", "response_id": "auto1", "item_id": "a", "delta": "x"},
+        _done("auto1", _USAGE),
+    ], provider_owns_turns=True)
+
+    events = await _events(adapter)
+
+    assert [e.type for e in events] == ["response_created", "audio_delta", "response_done"]
+    assert events[2].payload["usage"] == _flatten_usage(_USAGE)
+    assert ws.sent == []
