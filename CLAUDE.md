@@ -346,11 +346,22 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
   text leg, never additive. RFC: `docs/10_rfcs/VOICE_COMPANION_RFC.md`. Deployment prerequisites
   (relay service, `VOICE_RELAY_STREAM_URL`'s two-pass first deploy, Twilio secrets):
   `docs/07_deployment/README.md`.
-- **Second realtime provider: `XaiRealtimeAdapter`**, chosen with the relay's
-  `VOICE_REALTIME_PROVIDER=xai`. The default is OpenAI, and `make deploy` resets the switch to it.
-  xAI replies on its own even with `create_response: false`, so the adapter cancels every reply it
-  did not tag and hides it from the service. xAI audio is billed per second. See RFC §4.16 and
-  `decisions/voice_xai_protocol_probe.md`.
+- **Realtime provider is per user** (`docs/10_rfcs/VOICE_MULTI_PROVIDER_RFC.md`).
+  - `UserBotConfig.voice_provider` picks an entry of `domain.voice_provider_profile.VOICE_PROVIDER_PROFILES`:
+    the prompt profile, turn ownership, voice and effort. When unset, `DEFAULT_VOICE_PROVIDER = "xai"`
+    applies (xAI `grok-voice-think-fast-2.0`, prompt `lelik_you`, voice castor).
+  - `LelikAgent.session_config` puts the spec in the ticket under `"voice"`. The relay builds the
+    adapter per call from it (`relay_main._ADAPTERS`). A ticket without it runs the legacy OpenAI
+    session.
+  - **Turn ownership is per call.** `RELAY` (OpenAI): anchor, relay-started replies, the relay's
+    barge-in and silence notes. `PROVIDER` (xAI): the provider replies and stops itself, and the
+    relay only drops queued audio and delivers the greeting and Alek's answers.
+  - **Each adapter declares its turn ownership** (`supported_turn_ownership`). xAI ignores
+    `create_response: false`, so it is PROVIDER-only.
+  - **Lelik's prompt differs per provider.** `lelik_you` is a second-person portrait in xAI's
+    prompting-guide format, with none of the gpt-realtime rules. See
+    `decisions/voice_xai_protocol_probe.md`.
+  - xAI audio is billed per second.
 
 **Voice web transport** (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) — a second call kind, a
 Cabinet call page over WebRTC, next to the Twilio phone path, sharing the same `VoiceSessionService`

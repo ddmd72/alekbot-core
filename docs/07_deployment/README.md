@@ -96,16 +96,11 @@ WebSocket is one long *billed* request under Cloud Run's request-based CPU/memor
 - **No `TWILIO_*` secrets** — those belong to the *main* service's webhook/telephony adapter
   (`src/web/voice_webhook_app.py`, `src/adapters/twilio_telephony_adapter.py`), not the relay;
   `relay_main.py` never imports the `twilio` package.
-- **Realtime provider switch** (VOICE_COMPANION_RFC §4.16). Set `VOICE_REALTIME_PROVIDER` to
-  `openai` (the default) or `xai`. Optional knobs: `VOICE_XAI_VOICE` and
-  `VOICE_XAI_REASONING_EFFORT` (`high`/`none`). The switch is flipped without a rebuild:
-  ```bash
-  gcloud run services update alek-voice-relay-dev --region=us-central1 --project=<PROJECT_ID> \
-    --update-env-vars VOICE_REALTIME_PROVIDER=xai
-  ```
-  `make deploy` passes `--set-env-vars` to the relay, which resets the switch to `openai`.
-  The bare-Grok experiment adds two knobs, `VOICE_XAI_BARE=on` on the relay and
-  `LELIK_PROMPT_PROFILE=lelik_bare` on the main service (`decisions/voice_xai_protocol_probe.md`).
+- **Realtime provider is per user, not an env setting** (`VOICE_MULTI_PROVIDER_RFC.md`). The relay
+  holds both provider keys (`OPENAI_API_KEY`, `XAI_API_KEY`) and builds each call's adapter from
+  the call's session config. To switch a user, set `voice_provider` in their `UserBotConfig`
+  (`"xai"` / `"openai"`). The system default is `DEFAULT_VOICE_PROVIDER` in
+  `src/domain/voice_provider_profile.py`.
 
 ### Voice Relay Stream URL — two-pass first deploy
 

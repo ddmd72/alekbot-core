@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, ClassVar, Dict, FrozenSet
 
 from src.domain.voice_audio_frame import AudioFrame
+from src.domain.voice_turn_ownership import TurnOwnership
 
 
 @dataclass(frozen=True)
@@ -18,7 +19,14 @@ class RealtimeSessionPort(ABC):
     """One live speech-to-speech session with a realtime provider.
     PROMPT_CACHE_BOUNDARY must be stripped from `instructions` before open()
     (RFC §4.4 - an Anthropic-only cut point with no meaning in a realtime
-    session prompt set once)."""
+    session prompt set once).
+
+    Each adapter declares the turn ownership it implements (VOICE_MULTI_PROVIDER_RFC §4.3).
+    Under RELAY the provider never replies on its own, and the caller of this port starts every
+    reply and owns barge-in. Under PROVIDER the provider replies and handles interruptions
+    itself."""
+
+    supported_turn_ownership: ClassVar[FrozenSet[TurnOwnership]]
 
     @abstractmethod
     async def open(self, instructions: str, reasoning_effort: str, tools: list) -> None:
@@ -36,8 +44,8 @@ class RealtimeSessionPort(ABC):
         needed to truncate it on barge-in),
         tool_call (payload: call_id, name, arguments), speech_started,
         speech_stopped, turn_committed (payload: item_id - the caller's turn is
-        now a conversation item; the provider does not reply on its own, the
-        caller of this port starts the reply), response_created, response_done (payload: usage -
+        now a conversation item; under RELAY ownership the provider does not reply
+        on its own and the caller of this port starts the reply), response_created, response_done (payload: usage -
         provider-native token usage dict, model - the provider's own model
         id, so callers can label usage without hardcoding a provider-specific
         model string), user_transcript (payload: text - final transcript of

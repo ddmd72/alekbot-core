@@ -7,7 +7,6 @@ from src.adapters.xai_realtime_adapter import XaiRealtimeAdapter, _flatten_usage
 from src.domain.voice_audio_format import PCM16_24K
 from src.domain.voice_audio_frame import AudioFrame
 from tests.contracts.adapter_contracts import (
-    XAI_REALTIME_REQUESTS_ARE_TAGGED,
     XAI_REALTIME_STRIPS_CACHE_BOUNDARY,
     XAI_REALTIME_TURN_DETECTION,
 )
@@ -121,14 +120,6 @@ async def test_send_audio_forwards_base64_payload_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_request_response_is_tagged_with_origin_metadata():
-    adapter, ws = await _opened([])
-    await adapter.request_response()
-    assert ws.sent == [{"type": "response.create", "response": {"metadata": _OURS}}]
-    XAI_REALTIME_REQUESTS_ARE_TAGGED.validate("xai_realtime", ws.sent[0])
-
-
-@pytest.mark.asyncio
 async def test_requested_reply_passes_through_with_flat_usage_and_model_label():
     adapter, _ = await _opened([
         _created("r1", _OURS),
@@ -148,76 +139,17 @@ async def test_requested_reply_passes_through_with_flat_usage_and_model_label():
 
 
 @pytest.mark.asyncio
-async def test_unrequested_reply_is_cancelled_by_id_and_its_events_swallowed():
-    adapter, ws = await _opened([
-        _created("auto1"),
-        {"type": "response.output_audio.delta", "response_id": "auto1", "item_id": "a", "delta": "x"},
-        {"type": "response.output_audio_transcript.done", "response_id": "auto1", "item_id": "a", "transcript": "He"},
-        {"type": "response.function_call_arguments.done", "response_id": "auto1", "call_id": "c", "name": "n", "arguments": "{}"},
-        _done("auto1", _USAGE),
-    ])
-
-    events = await _events(adapter)
-
-    assert events == []
-    assert ws.sent == [{"type": "response.cancel", "response_id": "auto1"}]
-
-
-@pytest.mark.asyncio
-async def test_unrequested_reply_usage_is_carried_into_the_next_requested_reply():
-    small = {"input_token_details": {"text_tokens": 2, "audio_tokens": 3},
-             "output_token_details": {"text_tokens": 4, "audio_tokens": 5}, "billable_audio_seconds": 1}
-    adapter, _ = await _opened([_created("auto1"), _done("auto1", small), _created("r1", _OURS), _done("r1", _USAGE)])
-
-    events = await _events(adapter)
-
-    assert [e.type for e in events] == ["response_created", "response_done"]
-    assert events[1].payload["usage"] == {
-        "audio_input_tokens": 376 + 3,
-        "audio_output_tokens": 994 + 5,
-        "text_input_tokens": 18 + 2,
-        "text_output_tokens": 83 + 4,
-        "billable_audio_seconds": 15 + 1,
-    }
-
-
-@pytest.mark.asyncio
-async def test_carried_usage_is_billed_once():
-    small = {"billable_audio_seconds": 1}
-    adapter, _ = await _opened([
-        _created("auto1"), _done("auto1", small),
-        _created("r1", _OURS), _done("r1", {"billable_audio_seconds": 10}),
-        _created("r2", _OURS), _done("r2", {"billable_audio_seconds": 20}),
-    ])
-
-    done = [e for e in await _events(adapter) if e.type == "response_done"]
-
-    assert [e.payload["usage"]["billable_audio_seconds"] for e in done] == [11, 20]
-
-
-@pytest.mark.asyncio
-async def test_errors_from_cancelling_an_unrequested_reply_are_absorbed():
-    adapter, _ = await _opened([
-        _created("auto1"),
-        {"type": "error", "error": {"message": "Response ID 'auto1' does not match current response"}},
-        {"type": "error", "error": {"message": "Cancellation failed: no active response found"}},
-    ])
-
-    assert await _events(adapter) == []
-
-
-@pytest.mark.asyncio
-async def test_other_errors_still_reach_the_service():
+async def test_errors_during_xais_own_reply_all_reach_the_service():
     adapter, _ = await _opened([
         _created("auto1"),
         {"type": "error", "error": {"message": "Response ID 'r9' does not match current response"}},
-        {"type": "error", "error": {"message": "Item not found: x"}},
+        {"type": "error", "error": {"message": "Cancellation failed: no active response found"}},
     ])
 
     events = await _events(adapter)
 
-    assert [e.type for e in events] == ["error", "error"]
-    assert "r9" in events[0].payload["message"]
+    assert [e.type for e in events] == ["response_created", "error", "error"]
+    assert "r9" in events[1].payload["message"]
 
 
 @pytest.mark.asyncio
@@ -230,13 +162,13 @@ async def test_no_active_response_error_reaches_the_service_when_nothing_was_sel
 
 
 @pytest.mark.asyncio
-async def test_cancel_response_is_addressed_to_the_active_requested_reply():
-    adapter, ws = await _opened([_created("r1", _OURS)])
+async def test_cancel_response_is_unaddressed_even_during_an_active_reply():
+    adapter, ws = await _opened([_created("r1")])
     await _events(adapter)
 
     await adapter.cancel_response()
 
-    assert ws.sent[-1] == {"type": "response.cancel", "response_id": "r1"}
+    assert ws.sent[-1] == {"type": "response.cancel"}
 
 
 @pytest.mark.asyncio
@@ -317,7 +249,7 @@ def test_flatten_usage_maps_legs_and_tolerates_missing_details():
 @pytest.mark.asyncio
 async def test_provider_owned_turns_lets_xai_reply_and_interrupt_on_its_own():
     ws = FakeWebSocket(incoming=[])
-    adapter = XaiRealtimeAdapter(api_key="k", ws_connect=AsyncMock(return_value=ws), provider_owns_turns=True)
+    adapter = XaiRealtimeAdapter(api_key="k", ws_connect=AsyncMock(return_value=ws))
     await adapter.open(instructions="hi", reasoning_effort="high", tools=[])
 
     turn_detection = ws.sent[0]["session"]["turn_detection"]
@@ -332,7 +264,7 @@ async def test_provider_owned_turns_passes_untagged_replies_through_uncancelled(
         _created("auto1"),
         {"type": "response.output_audio.delta", "response_id": "auto1", "item_id": "a", "delta": "x"},
         _done("auto1", _USAGE),
-    ], provider_owns_turns=True)
+    ])
 
     events = await _events(adapter)
 

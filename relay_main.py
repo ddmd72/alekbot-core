@@ -6,20 +6,9 @@ server that speaks Twilio's Media Streams protocol and drives
 
 Environment variables (static — set at relay deploy time, Task 14):
   OPENAI_API_KEY          Secret: OpenAI API key (realtime provider).
-  XAI_API_KEY             Secret: xAI API key; read only when
-                           VOICE_REALTIME_PROVIDER=xai.
-  VOICE_REALTIME_PROVIDER Optional knob, "openai" (default) or "xai": which
-                           realtime provider both call paths use
-                           (decisions/voice_xai_protocol_probe.md).
-  VOICE_XAI_VOICE         Optional knob (default: the adapter's own voice).
-  VOICE_XAI_BARE          Optional knob, "on"/"off" (default off), xai only: the bare-Grok
-                           experiment. Grok owns its turns, and the relay sends no persona
-                           anchor, caller opening, or silence/waiting notes. Pair it with the
-                           main service's LELIK_PROMPT_PROFILE=lelik_bare.
-  VOICE_XAI_REASONING_EFFORT
-                           Optional knob, "high" (default) or "none" - the only
-                           two values xAI accepts. Replaces both paths' effort
-                           when the provider is xai.
+  XAI_API_KEY             Secret: xAI API key (realtime provider). Which provider a call
+                           runs on, and with which voice, effort and turn ownership, comes
+                           per call from the session config (VOICE_MULTI_PROVIDER_RFC §4.2).
   CLOUD_RUN_SERVICE_URL   Base URL of the MAIN service, as seen from the
                            relay — used to call back into
                            /voice/session-config and /voice/submit-transcript.
@@ -37,7 +26,7 @@ Environment variables (static — set at relay deploy time, Task 14):
                            provider error event with no None-guard — passing
                            None would crash the call instead of alerting.
   VOICE_WEB_REASONING_EFFORT
-                           Optional knob (default "medium") for the web-call
+                           Optional knob (unset = each call's own spec) for the web-call
                            VoiceSessionService only (VOICE_WEB_TRANSPORT_RFC
                            §5.4) — read with os.environ.get, not load_settings
                            (CLAUDE.md: optional knobs, not secrets/required
@@ -56,7 +45,7 @@ import asyncio
 import os
 import signal
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Dict, Type
 
 import websockets
 
@@ -65,6 +54,7 @@ from src.adapters.openai_realtime_adapter import OpenAIRealtimeAdapter
 from src.adapters.xai_realtime_adapter import XaiRealtimeAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.domain.voice_audio_format import MULAW_8K, PCM16_24K, AudioFormat
+from src.domain.voice_session_spec import VoiceSessionSpec
 from src.handlers.media_stream_handler import MediaStreamHandler
 from src.handlers.sfu_stream_handler import SfuStreamHandler
 from src.ports.realtime_session_port import RealtimeSessionPort
@@ -85,18 +75,22 @@ def _load_thinking_cue() -> bytes:
     return _THINKING_CUE_PATH.read_bytes()
 
 
-def _realtime_session_factory(provider: str, audio_format: AudioFormat, bare: bool) -> Callable[[], RealtimeSessionPort]:
-    if provider == "xai":
-        # The stored secret ends in "\n" (an illegal header value); see decisions/grok_revival_2026_08.md.
-        xai_api_key = os.environ["XAI_API_KEY"].strip()
-        voice = os.environ.get("VOICE_XAI_VOICE", "").strip()
-        extra = {"voice": voice} if voice else {}
-        return lambda: XaiRealtimeAdapter(api_key=xai_api_key, audio_format=audio_format,
-                                          provider_owns_turns=bare, **extra)
-    if provider != "openai":
-        raise ValueError(f"VOICE_REALTIME_PROVIDER must be 'openai' or 'xai', got {provider!r}")
-    openai_api_key = os.environ["OPENAI_API_KEY"]
-    return lambda: OpenAIRealtimeAdapter(api_key=openai_api_key, audio_format=audio_format)
+# Provider name (VoiceSessionSpec.provider) -> adapter; the keys of VOICE_PROVIDER_PROFILES.
+_ADAPTERS: Dict[str, Type[RealtimeSessionPort]] = {
+    "openai": OpenAIRealtimeAdapter,
+    "xai": XaiRealtimeAdapter,
+}
+
+
+def _realtime_session_factory(api_keys: Dict[str, str],
+                              audio_format: AudioFormat) -> Callable[[VoiceSessionSpec], RealtimeSessionPort]:
+    """One adapter per call, for the provider the call's spec names (VOICE_MULTI_PROVIDER_RFC §4.2)."""
+    def build(spec: VoiceSessionSpec) -> RealtimeSessionPort:
+        adapter_cls = _ADAPTERS[spec.provider]
+        if spec.turn_ownership not in adapter_cls.supported_turn_ownership:
+            raise ValueError(f"{adapter_cls.__name__} does not implement {spec.turn_ownership.value} turn ownership")
+        return adapter_cls(api_key=api_keys[spec.provider], audio_format=audio_format, voice=spec.voice)
+    return build
 
 
 def _fetch_id_token(audience: str) -> str:
@@ -115,11 +109,11 @@ def _fetch_id_token(audience: str) -> str:
 
 async def main() -> None:
     main_service_url = os.environ["CLOUD_RUN_SERVICE_URL"]
-    provider = os.environ.get("VOICE_REALTIME_PROVIDER", "openai").strip().lower()
-    xai_reasoning = os.environ.get("VOICE_XAI_REASONING_EFFORT", "high").strip().lower()
-    # The bare-Grok experiment (decisions/voice_xai_protocol_probe.md): xai only.
-    bare = provider == "xai" and os.environ.get("VOICE_XAI_BARE", "off").strip().lower() == "on"
-    logger.info(f"voice relay realtime provider: {provider}{' (bare)' if bare else ''}")
+    api_keys = {
+        "openai": os.environ["OPENAI_API_KEY"],
+        # The stored secret ends in "\n" (an illegal header value); see decisions/grok_revival_2026_08.md.
+        "xai": os.environ["XAI_API_KEY"].strip(),
+    }
     billing_webhook_url = os.environ["BILLING_SLACK_WEBHOOK_URL"]
 
     control_plane = HttpCallControlPlaneAdapter(
@@ -128,17 +122,15 @@ async def main() -> None:
     )
     alert_sink = SlackWebhookAdapter(webhook_url=billing_webhook_url)
     session_service = VoiceSessionService(
-        realtime_session_factory=_realtime_session_factory(provider, MULAW_8K, bare),
+        realtime_session_factory=_realtime_session_factory(api_keys, MULAW_8K),
         control_plane=control_plane,
         alert_sink=alert_sink,
-        # Owner's call 2026-09-27: medium on every voice path (was high since 2026-09-23).
-        reasoning_effort=xai_reasoning if provider == "xai" else "medium",
         # Owner's call 2026-09-25: line noise and "uh-huh"s cut replies at ~400 ms; interrupting
         # Lelik now takes a second of speech.
         barge_in_min_speech_s=1.0,
         # After the one "still there?", this much more silence hangs up (voicemail, a phone put down).
         hangup_after_silence_s=20.0,
-        caller_opening=None if bare else _CALLER_OPENING,
+        caller_opening=_CALLER_OPENING,
         # Owner's call 2026-09-28: while a delegation is out, each "still waiting" note comes after
         # a random 8-15 s of quiet (silence_timeout_s is the floor), not on a fixed beat.
         waiting_gap_max_s=15.0,
@@ -148,7 +140,6 @@ async def main() -> None:
         # Owner's call 2026-09-28: an ask_alek took 105 s live and was lost at 90 s. What still
         # outlasts this is posted to the user's chat by the main service.
         delegation_timeout_s=300.0,
-        provider_owns_turns=bare,
         # thinking_cue deliberately not passed (off): with it on, Lelik's replies were cut
         # after ~0.4-0.8 s on the live calls of 2026-09-24 and stopped when the relay was
         # routed back to a revision without it. Cause not found yet; the clip stays shipped.
@@ -160,12 +151,12 @@ async def main() -> None:
     # Twilio Media Stream handler. Defaults mirror the phone service so the only variable UAT sees
     # first is the transport itself; the two env knobs let UAT tune reasoning cost/latency and the
     # caller-opening line without a redeploy.
-    web_reasoning = xai_reasoning if provider == "xai" else os.environ.get("VOICE_WEB_REASONING_EFFORT", "medium")
+    # Unset = the call's own spec. Set, it overrides the effort of every web call, whichever
+    # provider it runs on, and must be a value that provider accepts.
+    web_reasoning = os.environ.get("VOICE_WEB_REASONING_EFFORT") or None
     web_opening = _CALLER_OPENING if os.environ.get("VOICE_WEB_CALLER_OPENING", "on").strip().lower() == "on" else None
-    if bare:
-        web_opening = None
     web_session_service = VoiceSessionService(
-        realtime_session_factory=_realtime_session_factory(provider, PCM16_24K, bare),
+        realtime_session_factory=_realtime_session_factory(api_keys, PCM16_24K),
         control_plane=control_plane,
         alert_sink=alert_sink,
         reasoning_effort=web_reasoning,
@@ -176,7 +167,6 @@ async def main() -> None:
         greeting_guard_s=3.0,
         # Owner's call 2026-09-28: same 300 s as the phone path.
         delegation_timeout_s=300.0,
-        provider_owns_turns=bare,
     )
     sfu_handler = SfuStreamHandler(session_service=web_session_service)
 

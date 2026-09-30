@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.agents.lelik_agent import LelikAgent
+from src.domain.voice_provider_profile import VOICE_PROVIDER_PROFILES
 from src.domain.agent import AgentResponse
 from src.infrastructure.agent_coordinator import AgentCoordinator
 
@@ -23,6 +24,7 @@ def _agent():
         config=MagicMock(agent_id="lelik_agent_u1"), telephony=AsyncMock(),
         from_number="+1", status_callback_url="https://x/voice/status",
         prompt_builder=AsyncMock(), persona=persona, notifications=notifications,
+        voice_profile=VOICE_PROVIDER_PROFILES["openai"],
     )
     coordinator = MagicMock()
     coordinator.CALL_CHAIN_KEY = AgentCoordinator.CALL_CHAIN_KEY
