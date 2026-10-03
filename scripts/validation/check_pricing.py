@@ -252,13 +252,20 @@ def _load_billing_entries() -> dict[str, dict]:
 # OpenRouter doesn't expose cache pricing, so we validate against known values.
 _EXPECTED_CACHE: dict[str, dict[str, float]] = {
     "claude-":         {"cache_read": 0.10, "cache_write": 1.25},
-    "gemini-":         {"cache_read": 0.25},
+    # Opus 5.5 reads cache at 5% of input, not 10%.
+    "claude-opus-5-5": {"cache_read": 0.05, "cache_write": 1.25},
+    "claude-fable-5-1": {"cache_read": 0.025, "cache_write": 1.25},
+    # Current Gemini generation (3.x) caches at 10% of input; it was 25% before.
+    # The preview/legacy entries below keep their own expectations.
+    "gemini-":         {"cache_read": 0.10},
     "models/gemini-":  {"cache_read": 0.25},
     "deep-research-":  {"cache_read": 0.25},
     # GPT-5.6 bills cache WRITES at 1.25x uncached input (the 5.4/5.5 families do not).
     # OpenAI: "Cache writes cost 1.25x the uncached input rate, with a 30-minute minimum
     # cache life." Longest prefix wins, so this beats the generic "gpt-" entry below.
     "gpt-5.6-":        {"cache_read": 0.10, "cache_write": 1.25},
+    "gpt-6":           {"cache_read": 0.10, "cache_write": 1.25},
+    "gpt-6.1-sol":     {"cache_read": 0.05, "cache_write": 1.25},
     "gpt-":            {"cache_read": 0.10},
     "o3-":             {"cache_read": 0.10},
     "o4-":             {"cache_read": 0.10},
@@ -278,7 +285,7 @@ def _get_expected_cache(key: str) -> dict[str, float] | None:
 _BILLING_TO_OR: dict[str, str] = {
     # Gemini aliases → resolved via generate call (model_version field)
     "gemini-flash-lite-latest":          "google/gemini-2.5-flash-lite",
-    "gemini-flash-latest":               "google/gemini-3.5-flash",  # live alias → gemini-3.5-flash
+    "gemini-flash-latest":               "google/gemini-3.8-flash",  # live alias → gemini-3.8-flash
     "gemini-pro-latest":                 "google/gemini-3.1-pro-preview",
     "gemini-3-flash-preview":            "google/gemini-3-flash-preview",
     "models/gemini-3-pro-preview":       "google/gemini-3.1-pro-preview",

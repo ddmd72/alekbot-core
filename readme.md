@@ -113,31 +113,36 @@ crashing the request.
 |---|---|---|---|
 | Router | Gemini | sync | LLM triage on every request: complexity, tone, semantic lens, search intent; triggers memory/web enrichment. Always routes to Smart |
 | Smart | provider-agnostic (Gemini) | sync | Primary path for every request; multi-turn reasoning, re-evaluates after tool results; complexity → model tier |
-| Quick | Gemini | sync | Not on the primary path. Emergency fallback when Smart fails/times out, and formatter for system notifications |
+| Quick | Claude (ECO) | sync | Not on the primary path. Emergency fallback when Smart fails/times out, and formatter for system notifications |
 | Memory | Gemini (ECO) | sync | LLM formulates search keys → multi-vector RRF retrieval; also handles explicit `save_to_memory` |
-| WebSearch | provider-native | sync | Provider-native grounded web search; called by Smart. Intents: `search_web`, `fetch_url` |
+| WebSearch | OpenAI (BALANCED; `fetch_url` ECO) | sync | Provider-native grounded web search; called by Smart. Intents: `search_web`, `fetch_url` |
 | EmailSearch | Gemini (BALANCED) | sync | Email archive specialist: semantic search, full-body fetch, attachment parsing |
 | EmailClassification | — | sync | Classifies raw emails during indexing; extracts fact sentences — not user-facing |
 | FileManagement | — (zero-LLM) | sync | `open_file` (GCS download + text/vision conversion) and `delete_file` — direct port operations |
 | Tasks | Gemini | sync | Microsoft To Do CRUD (list/search/create/update/delete); search-before-mutate via short IDs |
 | Notes | OpenAI (PERFORMANCE) | sync | Proactive self-reminders: deferred instructions that fire autonomously as new conversations |
-| MapsSearch | Gemini (BALANCED) | sync, internal | Place search, route computation, weather via Google Maps AI Grounding (MCP); auto-triggered alongside web search |
+| MapsSearch | OpenAI (BALANCED) | sync, internal | Place search, route computation, weather via Google Maps AI Grounding (MCP); auto-triggered alongside web search |
 | Compute | Gemini (ECO) | sync | Math, datetime, finance via Gemini code-execution sandbox |
 | Help | Gemini | sync | User-facing capabilities guide (`get_help`) |
 | DocPlanner | Claude | async | DOCX creation entry point: LLM → JSON layout spec → delegates to DocGenerator |
 | DocGenerator | Claude | async | Writes Node.js script → subprocess → DOCX bytes; internal (not exposed to LLM) |
 | PdfGenerator | Gemini | async | One LLM call → HTML+CSS → Puppeteer renders PDF; delivers GCS link + Slack upload |
-| HtmlPageGenerator | Gemini | async | One LLM call → full HTML+CSS+JS page with Unsplash image integration; delivers GCS link |
+| HtmlPageGenerator | Grok (PERFORMANCE) | async | One LLM call → full HTML+CSS+JS page with Unsplash image integration; delivers GCS link |
 | DeepResearch | Claude | async | Long-running research jobs; Claude Cloud Run Job (default) or OpenAI webhook |
-| DomainResearcher | Gemini | sync, internal | Interactive domain-competency research for agent construction (bound channels only, experimental) |
+| DomainResearcher | OpenAI | sync, internal | Interactive domain-competency research for agent construction (bound channels only, experimental) |
 | Consolidation | Claude (PERFORMANCE) | async | Background long-term memory formation ("Life Chronicler") via Cloud Tasks |
+| ImageGeneration | Grok | async | Image generation and editing (`generate_image`, `edit_image`); delivered as a document |
+| VideoGeneration | Grok | async | Video generation (`generate_video`, `edit_video`) |
+| Tutor | OpenAI (BALANCED) | sync, internal | Bound-channel language-tutor companion with session-scoped memory |
 
 **Cost control is complexity-driven tier selection within Smart:** the Router's complexity score
 resolves a cheaper model tier (ECO/BALANCED) for simple requests and reserves top-tier models for
 complex ones — instead of routing everything to a single expensive model. (Earlier this was a
 Quick-vs-Smart path split; the primary path is now Smart-only.)
 
-Providers are user-configurable per agent. Defaults listed above reflect the production baseline.
+Providers are user-configurable per agent. Defaults listed above reflect the production baseline
+(`src/services/agent_context_builder.py`); the concrete model per tier is in
+[`COMPLEXITY_EXECUTION_SETTINGS.md`](docs/05_building_blocks/smart_agent_execution/COMPLEXITY_EXECUTION_SETTINGS.md).
 
 Adding a new specialist requires a registry entry in `agent_manifest.py` — no changes to orchestrators.
 Also update [`src/utils/capabilities.py`](src/utils/capabilities.py) — the user-facing capabilities
