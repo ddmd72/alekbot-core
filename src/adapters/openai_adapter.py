@@ -68,31 +68,27 @@ class OpenAIAdapter(LLMPort):
     """
 
     # ========================================================================
-    # Tier-to-model mapping — GPT-5.6 family (Luna/Terra/Sol) from 2026-07.
-    # ECO:         gpt-5.4-nano   ($0.20/$1.25; NO 5.6 sub-Luna tier exists, kept on 5.4)
-    # BALANCED:    gpt-5.6-luna   ($0.20/$1.20; replaces gpt-5.4-mini, API shutdown 2026-12-11)
-    # PERFORMANCE: gpt-5.6-terra  ($2/$12; "GPT-5.5-class at half price")
-    # ULTRA:       gpt-5.6-sol    ($5/$30; agentic-tool SOTA, ~1/6 the cost of gpt-5.5-pro)
-    # TIERx:       gpt-5.4-nano   (reserved slots, default to ECO)
-    # Prices per 1M after OpenAI's 2026-07-30 cut (luna -80%, terra -20%, sol unchanged).
-    # NOTE: the cut erased the ECO/BALANCED price gap — nano was ~5x cheaper than Luna, it is now
-    # the same input price and marginally dearer on output. ECO stays on nano for LATENCY, and it
-    # is measured, not assumed: on the router workload nano is 2.3x faster (p50 1.7s vs 3.9s),
-    # because Luna spends ~183 hidden reasoning tokens per triage at its default effort — which
-    # also overruns the router's max_tokens=300 and truncates its JSON. Re-run
-    # scripts/validation/ab_router_latency_nano_vs_luna.py before revisiting.
-    # Migration: docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md. Effort floors live-probed 2026-07-13 —
-    # all three 5.6 tiers accept none/low/medium (no floor, unlike gpt-5.5-pro).
+    # Tier-to-model mapping — GPT-6 family since 2026-10-03 (5.6 Luna/Terra/Sol before).
+    # ECO:         gpt-6-luna   ($0.10/$0.50) — fetch_url A/B vs gpt-5.4-nano: 4:4, -56% cost
+    # BALANCED:    gpt-6-luna   — Smart dry-run A/B vs gpt-5.6-luna 7:1 (-37%), search_web 6:2 (-40%),
+    #                             maps geo suite on par, no fabrication
+    # PERFORMANCE: gpt-6.1-sol  ($2/$10, cache read 0.05x) — terra has no GPT-6 successor
+    # ULTRA:       gpt-6-astra  ($10/$50) — top of the family; ULTRA saw no traffic in 14 days
+    # TIERx:       gpt-6-luna   (reserved slots, default to ECO)
+    # gpt-6-luna reasons when `reasoning` is omitted, so a no-thinking caller gets effort "none"
+    # (_THINKING_OFF_EFFORT) — the default-reasoning latency that kept gpt-5.6-luna off ECO.
+    # Instant rollback without a redeploy: OPENAI_TIER_OVERRIDES / `make openai-rollback`.
+    # Stand: scripts/validation/ab_agent_models.py; record: decisions/model_refresh_2026_10.md.
     # Verify model IDs at https://platform.openai.com/docs/models
     # ========================================================================
     MODEL_TIERS = {
-        PerformanceTier.ECO:         "gpt-5.4-nano",
-        PerformanceTier.BALANCED:    "gpt-5.6-luna",
-        PerformanceTier.PERFORMANCE: "gpt-5.6-terra",
-        PerformanceTier.ULTRA:       "gpt-5.6-sol",
-        PerformanceTier.TIER1:       "gpt-5.4-nano",
-        PerformanceTier.TIER2:       "gpt-5.4-nano",
-        PerformanceTier.TIER3:       "gpt-5.4-nano",
+        PerformanceTier.ECO:         "gpt-6-luna",
+        PerformanceTier.BALANCED:    "gpt-6-luna",
+        PerformanceTier.PERFORMANCE: "gpt-6.1-sol",
+        PerformanceTier.ULTRA:       "gpt-6-astra",
+        PerformanceTier.TIER1:       "gpt-6-luna",
+        PerformanceTier.TIER2:       "gpt-6-luna",
+        PerformanceTier.TIER3:       "gpt-6-luna",
     }
 
     # Models that do not support sampling parameters (temperature, top_p, etc.):

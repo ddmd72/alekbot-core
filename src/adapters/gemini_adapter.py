@@ -70,7 +70,9 @@ class GeminiAdapter(LLMPort):
         # scripts/validation/ab_router_gemini_vs_openai.py. Price must be added to
         # billing.py at the same time: calculate_cost returns 0.0 for an unknown id.
         PerformanceTier.ECO:         "gemini-3.5-flash-lite",
-        PerformanceTier.BALANCED:    "gemini-flash-latest",
+        # Pinned like ECO (2026-10-03): the alias moved 3.6 → 3.8-flash on 2026-09-02 with no
+        # decision behind it. gemini-3.8-flash is on a promo until 2026-12-31 (billing holds $1.50/$7.50).
+        PerformanceTier.BALANCED:    "gemini-3.8-flash",
         PerformanceTier.PERFORMANCE: "gemini-pro-latest",
         PerformanceTier.ULTRA:       "gemini-pro-latest",   # no Gemini Ultra available yet
         PerformanceTier.TIER1:       "gemini-flash-lite-latest",

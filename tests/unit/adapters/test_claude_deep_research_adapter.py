@@ -94,10 +94,11 @@ def test_resolve_model_performance():
 
 
 def test_resolve_model_ultra():
-    # Regression guard: ULTRA is Opus (Opus 5.5 since the 2026-10-03 model refresh), distinct
-    # from the Sonnet BALANCED/PERFORMANCE tiers; ECO stays Haiku (see test_resolve_model_eco).
+    # Regression guard: ULTRA is the top Claude model (Fable 5.1 since the 2026-10-03 model
+    # refresh), distinct from the Sonnet BALANCED/PERFORMANCE tiers; ECO stays Haiku (see
+    # test_resolve_model_eco).
     adapter, _ = _make_adapter()
-    assert adapter._resolve_model(PerformanceTier.ULTRA) == "claude-opus-5-5"
+    assert adapter._resolve_model(PerformanceTier.ULTRA) == "claude-fable-5-1"
 
 
 def test_model_override_wins_over_eco():

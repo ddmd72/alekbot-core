@@ -79,21 +79,21 @@ def test_openai_capabilities():
 def test_openai_model_for_tier():
     adapter = OpenAIAdapter(api_key="test-key")
 
-    # GPT-5.6 migration (docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md): ECO stays 5.4-nano
-    # (no 5.6 sub-Luna tier); BALANCED/PERFORMANCE move to Luna/Terra.
-    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gpt-5.4-nano"
-    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gpt-5.6-luna"
-    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-5.6-terra"
+    # GPT-6 model refresh 2026-10-03 (decisions/model_refresh_2026_10.md): ECO and BALANCED
+    # both on gpt-6-luna; PERFORMANCE on gpt-6.1-sol (terra has no GPT-6 successor).
+    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gpt-6-luna"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gpt-6-luna"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-6.1-sol"
 
 
 def test_openai_model_for_tier_ultra():
-    """ULTRA tier maps to gpt-5.6-sol (GPT-5.6 migration 2026-07, from gpt-5.5-pro).
+    """ULTRA tier maps to gpt-6-astra (GPT-6 model refresh 2026-10-03, from gpt-5.6-sol).
 
-    Agentic-tool SOTA at ~1/6 the cost of gpt-5.5-pro.
-    See docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md.
+    ULTRA is the top model of each provider's family.
+    See docs/04_solution_strategy/decisions/model_refresh_2026_10.md.
     """
     adapter = OpenAIAdapter(api_key="test-key")
-    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "gpt-5.6-sol"
+    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "gpt-6-astra"
 
 
 def test_openai_unsupported_tier_raises():

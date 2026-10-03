@@ -134,7 +134,7 @@ class ClaudeAdapter(LLMPort):
         PerformanceTier.ECO:         "claude-haiku-4-5-20251001",
         PerformanceTier.BALANCED:    "claude-haiku-4-5-20251001",
         PerformanceTier.PERFORMANCE: "claude-sonnet-5-5",
-        PerformanceTier.ULTRA:       "claude-opus-5-5",
+        PerformanceTier.ULTRA:       "claude-fable-5-1",
         PerformanceTier.TIER1:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER2:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER3:       "claude-haiku-4-5-20251001",
@@ -501,6 +501,21 @@ class ClaudeAdapter(LLMPort):
             params["tool_choice"] = {"type": "any" if forced_ok else "auto"}
         return params
 
+    @staticmethod
+    def _raise_on_refusal(response: Any) -> None:
+        """A safety-classifier decline arrives as HTTP 200 with stop_reason="refusal" and an
+        empty or partial body (Sonnet 5.5 / Opus 5.5 / Fable). Surface it as the content-policy
+        LLMClientError the exception taxonomy already defines — deterministic, no failover,
+        alerted — instead of passing an empty answer on as a success."""
+        if getattr(response, "stop_reason", None) != "refusal":
+            return
+        details = getattr(response, "stop_details", None)
+        category = getattr(details, "category", None)
+        explanation = getattr(details, "explanation", None)
+        logger.error("[ClaudeAdapter] model %s declined: category=%s explanation=%s",
+                     getattr(response, "model", "?"), category, explanation)
+        raise LLMClientError(f"refusal (category={category}): {explanation or 'no explanation'}")
+
     def _thinking_off_param(self, model_name: str) -> Optional[dict]:
         """Lowest thinking setting for a model that thinks by default (longest prefix wins)."""
         matches = [(len(p), v) for p, v in self._THINKING_OFF.items() if model_name.startswith(p)]
@@ -573,6 +588,7 @@ class ClaudeAdapter(LLMPort):
                 total_cache_read += getattr(response.usage, "cache_read_input_tokens", 0)
                 total_cache_creation += getattr(response.usage, "cache_creation_input_tokens", 0)
 
+            self._raise_on_refusal(response)
             accumulated_content.extend(response.content)
 
             if response.stop_reason == "end_turn":
@@ -1079,6 +1095,7 @@ class ClaudeAdapter(LLMPort):
         return claude_tools
 
     def _parse_response(self, response: types.Message) -> LLMResponse:
+        self._raise_on_refusal(response)
         text = ""
         tool_calls = []
 

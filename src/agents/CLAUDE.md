@@ -62,7 +62,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   mandatory; design enforced by `COGNITIVE_PROCESS_HTML_PAGE`. **Unsplash:** LLM writes
   `source.unsplash.com/WxH/?keywords` placeholders → `_resolve_unsplash_placeholders` swaps real photos
   via `UnsplashAdapter` (`ImageSearchPort`); needs `UNSPLASH_ACCESS_KEY`, graceful no-op when absent.
-  - **Default provider is `grok` (grok-4.6) since 2026-08-15**, fallback `gemini`. Owner judgement on
+  - **Default provider is `grok` since 2026-08-15** (grok-4.6; grok-4.7 since 2026-10-03, on par in
+    a 2-run HTML probe), fallback `gemini`. Owner judgement on
     output quality, measured on the same input by `scripts/html_page/ab_grok.py`: $0.1332 / 229s vs
     gemini-pro-latest's $0.1999 / 120s. The latency is affordable *because the intent is ASYNC* —
     do not copy this trade-off to a synchronous agent.
@@ -123,7 +124,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `CloudRunJobsAdapter`; OpenAI backend = webhook. Gemini backend removed 2026-05-29. Two-pass critic via
   `UserBotConfig.deep_research_second_pass`. Job logs: `make logs-job` / `make fetch-logs-job [K]` →
   `alek_debug_job.log`; single run: `make logs-execution EXECUTION=<name>`.
-- MapsSearch (SYNC, BALANCED, OpenAI `gpt-5.6-luna` default, intent `maps_query`, **`internal=True`**) — place
+- MapsSearch (SYNC, BALANCED, OpenAI `gpt-6-luna` default (5.6-luna until 2026-10-03), intent `maps_query`, **`internal=True`**) — place
   search, routes, weather via Google Maps AI Grounding (MCP, `MapsToolsPort`). Not shown to LLMs;
   auto-triggered via `intent_fanout` when the orchestrator dispatches `search_web`, results merged
   under labeled sections. Latency-tuned: `thinking="low"` on every turn (all allowed providers reason
@@ -158,7 +159,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   - **No retry, anywhere.** `RETRY_POLICY = NO_RETRY_POLICY` on the agent and `max_retries=0` on the
     adapter's `AsyncOpenAI` client — a transient 5xx after xAI has already rendered (and billed for)
     an image must not trigger a second paid render.
-- Tutor (SYNC, BALANCED, OpenAI `gpt-5.6-luna` default, intent `tutor_chat`, **`internal=True`**) —
+- Tutor (SYNC, BALANCED, OpenAI `gpt-6-luna` default, intent `tutor_chat`, **`internal=True`**) —
   the pilot companion agent (`docs/10_rfcs/COMPANION_AGENTS_RFC.md`, Phases A-G): bound-channel-only,
   never reachable from normal conversation — a channel must be explicitly bound via `$agent tutor`.
   Structural mirror of DomainResearcherAgent: reads history from `message.context["history"]`, but
@@ -171,7 +172,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   assembler otherwise enforces). Injects `CompanionContextAssemblerService`'s read-side output (this
   session's own `CompanionRecord`s + cached summary) as a static `companion_context {}` prompt block
   via the same `extra_static_blocks` mechanism SmartResponseAgent uses for email-triage payloads.
-  **Provider:** default OpenAI (BALANCED → `gpt-5.6-luna`) since 2026-08-31 — owner judgement that
+  **Provider:** default OpenAI (BALANCED → `gpt-5.6-luna`, `gpt-6-luna` since 2026-10-03) since 2026-08-31 — owner judgement that
   Claude Haiku 4.5 (BALANCED's Claude default) felt too weak for live tutoring conversation
   (`agent_context_builder.py` STRATEGIES["tutor"]).
   **Write path:** `$agent tutor` auto-attaches `AgentDescriptor.companion_default_config`

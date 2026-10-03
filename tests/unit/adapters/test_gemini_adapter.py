@@ -50,8 +50,9 @@ def test_gemini_model_for_tier():
     # ECO is pinned to an explicit generation, not the `-latest` alias: the router runs
     # here and its triage calibration is tuned to a specific model's judgement, so an
     # alias moving under it would change task_complexity — and Smart's tier — silently.
+    # BALANCED is pinned for the same reason since 2026-10-03: a model change is a decision.
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gemini-3.5-flash-lite"
-    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gemini-flash-latest"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gemini-3.8-flash"
     assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gemini-pro-latest"
 
 

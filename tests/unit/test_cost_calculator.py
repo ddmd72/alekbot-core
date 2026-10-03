@@ -150,3 +150,11 @@ def test_calculate_cost_gpt6_family():
     assert calculate_cost("gpt-6-astra", 1_000_000, 1_000_000) == 60.0
     # 6.1-sol reads cache at 5% of input.
     assert calculate_cost("gpt-6.1-sol", 0, 0, cache_read_tokens=1_000_000) == 0.10
+
+
+def test_calculate_cost_fable_5_1_and_gemini_3_8_pin():
+    assert calculate_cost("claude-fable-5-1", 1_000_000, 1_000_000) == 60.0
+    assert calculate_cost("claude-fable-5-1", 0, 0, cache_read_tokens=1_000_000) == 0.25
+    # The explicit BALANCED pin is priced like the alias that resolved to it (post-promo hold).
+    assert calculate_cost("gemini-3.8-flash", 1_000_000, 1_000_000) == calculate_cost(
+        "gemini-flash-latest", 1_000_000, 1_000_000)
