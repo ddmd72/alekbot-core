@@ -88,7 +88,8 @@ CANDIDATES: Dict[str, Tuple[str, str]] = {
     "flash-3.6":  ("gemini", "gemini-3.6-flash"),           # $1.50/$7.50 — newest, DEARER than luna
     "nano":       ("openai", "gpt-5.4-nano"),               # $0.20/$1.25 — OpenAI ECO
     "mini":       ("openai", "gpt-5.4-mini"),               # $0.75/$4.50 — pre-2026-07-13 default
-    "luna":       ("openai", "gpt-5.6-luna"),               # billing.py $1.00/$6.00 — CURRENT
+    "luna":       ("openai", "gpt-5.6-luna"),               # $0.20/$1.20 since the 2026-07-30 cut — CURRENT
+    "luna-6":     ("openai", "gpt-6-luna"),                 # $0.10/$0.50 — GPT-6 candidate (2026-10-03)
 }
 
 # NOTE ON COST FIGURES: they come from src/domain/billing.py, which `make check-pricing`

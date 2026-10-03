@@ -152,7 +152,7 @@ class WebSearchAgentConfig:
     #
     # HOW IT IS APPLIED: this is a TIER, not a model. WebSearchAgent hands it to
     # LLMPort.get_model_for_tier(), so each provider maps it to its own cheap model
-    # (OpenAI → gpt-5.4-nano, Gemini → flash-lite, Claude → haiku). The agent never names
+    # (OpenAI → gpt-6-luna, Gemini → flash-lite, Claude → haiku). The agent never names
     # a model — see the CLAUDE.md rule "the agent does not select the model itself".
     # Only OpenAI (the web_search default provider) was measured; the others are reached
     # on failover only.

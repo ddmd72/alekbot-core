@@ -22,17 +22,31 @@ mocks cannot detect translation regressions) + contract validators in
   When picking a default tier for a new agent, verify the resolved model accepts every
   parameter the agent sends. Concrete trap: `BALANCED` on Claude → `claude-haiku-4-5-20251001`,
   which rejects `output_config.effort` (HTTP 400). ConsolidationAgent default is therefore
-  `PERFORMANCE` → **`claude-sonnet-5`** in `ClaudeAdapter.MODEL_TIERS` (was `claude-sonnet-4-6`
-  until 2026-07; env-overridable via `CLAUDE_PERFORMANCE_MODEL` for instant rollback). See
-  `docs/05_building_blocks/provider_resolution/README.md` §2.1, §2.4 and the Sonnet 5 gates below.
-- **Sonnet 5 sampling / thinking gates** — Sonnet 5 (and Opus 4.7/4.8, Fable 5) **400 on a
-  non-default `temperature`/`top_p`/`top_k`**, so `ClaudeAdapter._NO_SAMPLING_MODELS` omits the
-  sampling param entirely for them (Sonnet 4.6 / Opus 4.6 / Haiku keep it). Sonnet 5 also runs
-  **adaptive thinking by default** when `thinking` is omitted (unlike 4.6) — `_ADAPTIVE_DEFAULT_ON_MODELS`
-  sends `thinking:{type:"disabled"}` when no effort is requested, to honour the caller's intent.
-  New tokenizer (~30% more tokens) — keep `max_tokens` headroom. Transient-error rollback:
-  `_MODEL_FALLBACK` retries `claude-sonnet-5`→`claude-sonnet-4-6` once on 529/503/5xx (not 4xx).
-  Decision: `docs/04_solution_strategy/decisions/claude_sonnet_5_adoption.md`.
+  `PERFORMANCE` → **`claude-sonnet-5-5`** in `ClaudeAdapter.MODEL_TIERS` (Sonnet 5 from 2026-07,
+  5.5 since 2026-10-03; env-overridable via `CLAUDE_PERFORMANCE_MODEL` for instant rollback —
+  `make claude-rollback` → Sonnet 5). ULTRA → `claude-fable-5-1` (top model, for consistency). See
+  `docs/05_building_blocks/provider_resolution/README.md` §2.1, §2.4 and the gates below.
+- **Claude sampling / thinking / tool-choice gates — substring traps.** Model ids nest
+  (`claude-sonnet-5` is a prefix of `claude-sonnet-5-5`), so every gate is either a deliberate
+  family prefix or an exact id; read each one before adding a model.
+  - `_NO_SAMPLING_MODELS` — Sonnet 5+, Opus 4.7+/5+, Fable **400 on a non-default
+    `temperature`/`top_p`/`top_k`**; the param is omitted (Sonnet 4.6 / Opus 4.6 / Haiku keep it).
+  - `_THINKING_OFF` (longest prefix wins) — what to send when the caller asks for **no** thinking on
+    a model that thinks by default: Sonnet 5 → `disabled`; **Sonnet 5.5 → `between_tools`**
+    (`disabled` is a 400 there). Opus 5.5 / Fable cannot turn thinking off — the field is omitted
+    and they run adaptive at their default effort (Opus 5.5 default = `medium`).
+  - `_NO_FORCED_TOOL_MODELS` — Sonnet 5.5 / Opus 5.5 / Fable 5.1 **400 on `tool_choice` any/tool**;
+    a forced request is sent as `auto`.
+  - All three are computed in `_model_dependent_params`, which runs again for the same-provider
+    fallback model (`_MODEL_FALLBACK`: 5.5 → 5 → 4.6 on 529/503/5xx, never 4xx) — Sonnet 5 does not
+    know `between_tools`. Each trap was reproduced as a live 400 before it was fixed (2026-10-03).
+  - **Refusals** — the 5.5 / Fable generation runs safety classifiers; a decline is HTTP 200 with
+    `stop_reason:"refusal"` and an empty or partial body. `_raise_on_refusal` turns it into
+    `LLMClientError` (content-policy class: no failover, Slack-alerted) on both the plain and the
+    grounded path; the DR runner raises instead of returning a "partial report".
+  - `_NO_XHIGH_MODELS` — the 4.6 generation's effort scale stops at `high`; `xhigh` is clamped.
+  New tokenizer (~30% more tokens) — keep `max_tokens` headroom.
+  Decisions: `decisions/claude_sonnet_5_adoption.md`, `decisions/model_refresh_2026_10.md`.
 - **ProviderRegistry** — runtime LLM provider selection (gemini/claude/grok).
 - **Adapter capability gates** — each adapter silently drops/clamps parameters the resolved model
   doesn't accept instead of forwarding and crashing on 400. ClaudeAdapter gates `thinking`,

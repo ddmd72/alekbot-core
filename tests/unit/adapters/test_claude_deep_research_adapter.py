@@ -85,19 +85,20 @@ def test_resolve_model_eco():
 
 def test_resolve_model_balanced():
     adapter, _ = _make_adapter()
-    assert adapter._resolve_model(PerformanceTier.BALANCED) == "claude-sonnet-5"
+    assert adapter._resolve_model(PerformanceTier.BALANCED) == "claude-sonnet-5-5"
 
 
 def test_resolve_model_performance():
     adapter, _ = _make_adapter()
-    assert adapter._resolve_model(PerformanceTier.PERFORMANCE) == "claude-sonnet-5"
+    assert adapter._resolve_model(PerformanceTier.PERFORMANCE) == "claude-sonnet-5-5"
 
 
 def test_resolve_model_ultra():
-    # Regression guard: the 2026-07-02 Sonnet 5 flip touched BALANCED/PERFORMANCE only —
-    # ULTRA must still resolve to Opus 4.8, ECO to Haiku (see test_resolve_model_eco).
+    # Regression guard: ULTRA is the top Claude model (Fable 5.1 since the 2026-10-03 model
+    # refresh), distinct from the Sonnet BALANCED/PERFORMANCE tiers; ECO stays Haiku (see
+    # test_resolve_model_eco).
     adapter, _ = _make_adapter()
-    assert adapter._resolve_model(PerformanceTier.ULTRA) == "claude-opus-4-8"
+    assert adapter._resolve_model(PerformanceTier.ULTRA) == "claude-fable-5-1"
 
 
 def test_model_override_wins_over_eco():
@@ -194,13 +195,13 @@ async def test_context_carries_session_id():
 async def test_context_carries_resolved_model_for_balanced():
     adapter, runner = _make_adapter()
     await _call_create(adapter, tier=PerformanceTier.BALANCED)
-    assert _get_context(runner)["model"] == "claude-sonnet-5"
+    assert _get_context(runner)["model"] == "claude-sonnet-5-5"
 
 
 async def test_context_carries_resolved_model_for_performance():
     adapter, runner = _make_adapter()
     await _call_create(adapter, tier=PerformanceTier.PERFORMANCE)
-    assert _get_context(runner)["model"] == "claude-sonnet-5"
+    assert _get_context(runner)["model"] == "claude-sonnet-5-5"
 
 
 async def test_context_carries_model_override():
