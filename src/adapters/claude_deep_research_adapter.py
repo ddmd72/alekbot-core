@@ -10,9 +10,9 @@ and result delivery (DocPlanner Cloud Task → DOCX → user notification).
 
 Tier → model mapping:
   ECO / TIER1-3 → claude-haiku-4-5-20251001  (fast + cheap debugging / light tasks)
-  BALANCED      → claude-sonnet-5             (research quality/cost sweet spot; from 4-6 2026-07-02)
-  PERFORMANCE   → claude-sonnet-5             (same as BALANCED for deep research)
-  ULTRA         → claude-opus-4-8             (maximum quality; upgraded from 4-7 2026-05-30)
+  BALANCED      → claude-sonnet-5-5           (research quality/cost sweet spot; 5.5 since 2026-10-03)
+  PERFORMANCE   → claude-sonnet-5-5           (same as BALANCED for deep research)
+  ULTRA         → claude-fable-5-1            (maximum quality; Fable 5.1 since 2026-10-03, $10/$50)
 
 Sonnet 5 note: the resolved model name is consumed by ClaudeDeepResearchRunnerAgent, whose
 native-SDK call omits `temperature` and raises `max_tokens` for the new-generation models
@@ -43,9 +43,9 @@ class ClaudeDeepResearchAdapter(DeepResearchPort):
 
     MODEL_TIERS = {
         PerformanceTier.ECO:         "claude-haiku-4-5-20251001",
-        PerformanceTier.BALANCED:    "claude-sonnet-5",
-        PerformanceTier.PERFORMANCE: "claude-sonnet-5",
-        PerformanceTier.ULTRA:       "claude-opus-4-8",
+        PerformanceTier.BALANCED:    "claude-sonnet-5-5",
+        PerformanceTier.PERFORMANCE: "claude-sonnet-5-5",
+        PerformanceTier.ULTRA:       "claude-fable-5-1",
         PerformanceTier.TIER1:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER2:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER3:       "claude-haiku-4-5-20251001",

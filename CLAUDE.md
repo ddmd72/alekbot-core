@@ -158,7 +158,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | MapsSearch | BALANCED (OpenAI) | `maps_query` (internal) | auto fan-out from `search_web` |
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
 | ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
-| Tutor | BALANCED (OpenAI `gpt-5.6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
+| Tutor | BALANCED (OpenAI `gpt-6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
 | Lelik | n/a — session is OpenAI Realtime in the relay | internal; allowlist `search_memory`, `search_web_light`, `ask_alek`, `tell_alek` | voice companion: callback, session config, delegation via `/voice/delegate` |
 | Alek gateway | zero-LLM | `ask_alek` (SYNC), `tell_alek` (ASYNC errand) — internal | Lelik's route to Router → Smart; question: links copy to chat; errand: full outcome to chat |
 | WebSearchLight | ECO (Gemini flash-lite) | `search_web_light` (internal, Lelik only) | one grounded lookup, ~2 s, spoken answer |
@@ -201,7 +201,7 @@ stale `running` jobs.
   `notify_raw()`: direct text, no reformatting. `prompt_tokens` in `UsageMetadata` always = uncached input
   (OpenAI/Gemini subtract cached from total).
 - **Billing daily summary** — Scheduler 09:00 Europe/Madrid → `billing_daily_summary`: posts yesterday's
-  `prev_daily_tokens/cost` snapshot to Slack. Per-provider cache pricing Claude 0.1×/OpenAI 0.1×/Gemini 0.25×.
+  `prev_daily_tokens/cost` snapshot to Slack. Per-provider cache pricing Claude 0.1× (Opus 5.5: 0.05×)/OpenAI 0.1×/Gemini 0.1× (3.x generation; was 0.25×).
 - **Token accounting is per-execution, NOT per-instance.** `TokenLedger` (`domain/billing.py`) lives in a
   `ContextVar` opened by `BaseAgent._execution_billing_scope()`; `_call_llm` accumulates into it,
   `_flush_billing` reads it. Agent instances are per-user singletons and `DelegationEngine` fans a tool

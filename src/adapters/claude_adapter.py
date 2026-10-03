@@ -133,8 +133,8 @@ class ClaudeAdapter(LLMPort):
     MODEL_TIERS = {
         PerformanceTier.ECO:         "claude-haiku-4-5-20251001",
         PerformanceTier.BALANCED:    "claude-haiku-4-5-20251001",
-        PerformanceTier.PERFORMANCE: "claude-sonnet-5",
-        PerformanceTier.ULTRA:       "claude-opus-4-8",
+        PerformanceTier.PERFORMANCE: "claude-sonnet-5-5",
+        PerformanceTier.ULTRA:       "claude-fable-5-1",
         PerformanceTier.TIER1:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER2:       "claude-haiku-4-5-20251001",
         PerformanceTier.TIER3:       "claude-haiku-4-5-20251001",
@@ -155,7 +155,18 @@ class ClaudeAdapter(LLMPort):
     # parameter entirely for these (Anthropic's recommended migration path). Sonnet 4.6 /
     # Opus 4.6 / Haiku keep accepting temperature. Substrings are exact enough to exclude the
     # 4.6 line (`sonnet-5` ≠ `sonnet-4-6`, `opus-4-8` ≠ `opus-4-6`).
-    _NO_SAMPLING_MODELS = ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-fable")
+    # `claude-opus-5` covers Opus 5 and Opus 5.5; `claude-sonnet-5` covers Sonnet 5 and 5.5.
+    _NO_SAMPLING_MODELS = (
+        "claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-fable",
+    )
+
+    # Models whose effort scale stops at `high` (`xhigh` arrived with Opus 4.7). Reached only via
+    # the Sonnet 5 → 4.6 fallback today; an `xhigh` request is clamped to `high` instead of a 400.
+    _NO_XHIGH_MODELS = ("claude-sonnet-4-6", "claude-opus-4-6")
+
+    # Models that reject forced tool use (`tool_choice` any/tool → 400). For these a forced
+    # request degrades to `auto`, the provider's documented replacement.
+    _NO_FORCED_TOOL_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1")
 
     # Same-provider model fallback: a brand-new model that flakes on a transient/capacity
     # error (529/503/5xx) retries once on the previous Sonnet before the request propagates
@@ -163,14 +174,22 @@ class ClaudeAdapter(LLMPort):
     # during a Sonnet 5 capacity blip. NOT applied to 4xx (a 400 is a real incompatibility we
     # must surface, not mask). The instant rollback kill-switch is the CLAUDE_PERFORMANCE_MODEL
     # env var (see __init__).
-    _MODEL_FALLBACK = {"claude-sonnet-5": "claude-sonnet-4-6"}
+    _MODEL_FALLBACK = {
+        "claude-sonnet-5-5": "claude-sonnet-5",
+        "claude-sonnet-5": "claude-sonnet-4-6",
+    }
 
-    # Models that run adaptive thinking BY DEFAULT when the `thinking` field is omitted
-    # (Sonnet 5 — unlike Sonnet 4.6 / Opus 4.7+, which stay off when omitted). When no effort
-    # is requested, the adapter sends thinking={"type":"disabled"} for these so the caller's
-    # "no thinking" intent (e.g. ConsolidationAgent with thinking_effort=None) is preserved and
-    # there's no surprise thinking-token cost. Fable 5 is excluded — its thinking can't be disabled.
-    _ADAPTIVE_DEFAULT_ON_MODELS = ("claude-sonnet-5",)
+    # The lowest thinking setting to send when the caller requests NO thinking effort, for
+    # models that think by default when `thinking` is omitted. Keeps the caller's "no thinking"
+    # intent (e.g. ConsolidationAgent with thinking_effort=None) without a surprise token cost.
+    # LONGEST prefix wins: Sonnet 5.5 rejects `disabled` with a 400 — its floor is
+    # `between_tools` (no up-front thinking; valid at effort high or below, i.e. the default).
+    # Absent on purpose: Opus 5.5 / Fable — thinking cannot be turned off; omitted, they run
+    # adaptive at their default effort.
+    _THINKING_OFF = {
+        "claude-sonnet-5-5": {"type": "between_tools"},
+        "claude-sonnet-5": {"type": "disabled"},
+    }
 
     # ========================================================================
     # NEW Provider Refactor Session 7: Provider capability declaration
@@ -194,8 +213,8 @@ class ClaudeAdapter(LLMPort):
             api_key=api_key,
             timeout=anthropic.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
         )
-        # PERFORMANCE-tier model is env-overridable (CLAUDE_PERFORMANCE_MODEL) so a Sonnet 5
-        # rollout can be rolled back to Sonnet 4.6 instantly, without a redeploy. Other tiers
+        # PERFORMANCE-tier model is env-overridable (CLAUDE_PERFORMANCE_MODEL) so a Sonnet 5.5
+        # rollout can be rolled back to Sonnet 5 instantly, without a redeploy. Other tiers
         # keep the class-level defaults. Explicit constructor arg wins over the env var.
         override = performance_model or os.getenv("CLAUDE_PERFORMANCE_MODEL")
         if override:
@@ -295,27 +314,6 @@ class ClaudeAdapter(LLMPort):
         if use_grounding and not _use_dynamic_search:
             beta_headers.append("web-search-2025-03-05")
 
-        # Adaptive thinking + effort dispatch — model-based, provider-internal.
-        # Sonnet 4.6 / Opus 4.6: thinking={"type":"adaptive"} enables adaptive thinking.
-        # effort → output_config={"effort": "..."} (separate from thinking, no beta header needed).
-        # Haiku: no thinking support — silently skipped regardless of thinking_effort param.
-        # Claude API hard requirement: temperature must be 1.0 when thinking is enabled.
-        thinking_param: Optional[dict] = None
-        effort = thinking_effort or None
-        if effort and any(m in model_name for m in self._THINKING_MODELS):
-            thinking_param = {"type": "adaptive"}
-            temperature = 1.0
-            logger.info(
-                f"[ClaudeAdapter] Adaptive thinking enabled, effort={effort}, model={model_name}"
-            )
-        elif not effort and any(m in model_name for m in self._ADAPTIVE_DEFAULT_ON_MODELS):
-            # Sonnet 5 thinks by default when `thinking` is omitted — disable it explicitly to
-            # honour a "no thinking effort" request and keep parity with Sonnet 4.6.
-            thinking_param = {"type": "disabled"}
-            logger.info(
-                f"[ClaudeAdapter] Thinking disabled (no effort requested), model={model_name}"
-            )
-
         create_kwargs: dict = dict(
             model=model_name,
             extra_headers={"anthropic-beta": ",".join(beta_headers)},
@@ -324,22 +322,10 @@ class ClaudeAdapter(LLMPort):
             messages=claude_messages,
             tools=claude_tools if claude_tools else [],
         )
-        # Sampling gate: Sonnet 5 / Opus 4.7+ / Fable reject a non-default temperature with a
-        # 400 — omit it entirely for those. Older models (Sonnet 4.6, Opus 4.6, Haiku) keep
-        # receiving it (including the forced 1.0 when thinking is on, set above).
-        if not any(m in model_name for m in self._NO_SAMPLING_MODELS):
-            create_kwargs["temperature"] = temperature
-        if thinking_param:
-            create_kwargs["thinking"] = thinking_param
-        # Only attach output_config.effort when the model supports it.
-        # Per Anthropic capabilities (verified 2026-04-25 against models.retrieve):
-        #   Sonnet 4.6 / Opus 4.7 → effort.supported = True
-        #   Haiku 4.5            → effort.supported = False  → API returns 400
-        # We gate by the same _THINKING_MODELS substring used for adaptive thinking,
-        # since the two go together: only Sonnet/Opus accept both. Haiku silently
-        # drops effort here instead of crashing the request.
-        if effort and any(m in model_name for m in self._THINKING_MODELS):
-            create_kwargs["output_config"] = {"effort": effort}
+        create_kwargs.update(self._model_dependent_params(
+            model_name, thinking_effort or None, temperature,
+            force_tool_use=bool(force_tool_use and claude_tools),
+        ))
 
         # Native structured output on Claude — mirrors Gemini's response_json_schema. Forward
         # response_schema via output_config.format so the model emits schema-valid JSON as TEXT.
@@ -355,9 +341,6 @@ class ClaudeAdapter(LLMPort):
             }
             create_kwargs["output_config"] = _oc
 
-        if force_tool_use and claude_tools:
-            # thinking is incompatible with tool_choice="any" — fall back to "auto"
-            create_kwargs["tool_choice"] = {"type": "auto" if thinking_param else "any"}
         # Always stream: Anthropic SDK requires streaming for requests >10 min
         # (multi-turn tool loops like consolidation regularly exceed this threshold).
         # Grounding path uses a pause_turn loop — code_execution_20250825 (auto-injected by
@@ -449,14 +432,94 @@ class ClaudeAdapter(LLMPort):
                     model_name, e, fallback_model,
                 )
                 create_kwargs["model"] = fallback_model
-                # The fallback model may accept a sampling param the primary rejected —
-                # re-add temperature when the fallback isn't itself sampling-restricted.
-                if not any(m in fallback_model for m in self._NO_SAMPLING_MODELS):
-                    create_kwargs["temperature"] = temperature
+                # Thinking, sampling and tool_choice are model-dependent — recompute them for
+                # the fallback (Sonnet 5 rejects 5.5's `between_tools`; Sonnet 4.6 accepts the
+                # temperature Sonnet 5 rejected). output_config.format stays as built.
+                for key in ("thinking", "temperature", "tool_choice"):
+                    create_kwargs.pop(key, None)
+                fallback_params = self._model_dependent_params(
+                    fallback_model, thinking_effort or None, temperature,
+                    force_tool_use=bool(force_tool_use and claude_tools),
+                )
+                # Merge, not replace: keep the primary's output_config.format, take the
+                # fallback's (possibly clamped) effort.
+                output_config = {k: v for k, v in (create_kwargs.get("output_config") or {}).items()
+                                 if k != "effort"}
+                output_config.update(fallback_params.pop("output_config", {}))
+                if output_config:
+                    create_kwargs["output_config"] = output_config
+                else:
+                    create_kwargs.pop("output_config", None)
+                create_kwargs.update(fallback_params)
                 response = await _attempt(create_kwargs)
             llm_response = self._parse_response(response)
 
         return llm_response
+
+    def _model_dependent_params(
+        self,
+        model_name: str,
+        effort: Optional[str],
+        temperature: Optional[float],
+        force_tool_use: bool,
+    ) -> dict:
+        """Request fields whose valid values depend on the model: thinking, temperature,
+        output_config.effort and tool_choice. Called for the primary model and again for a
+        same-provider fallback model, so each request carries values its model accepts."""
+        params: dict = {}
+        thinking_param: Optional[dict] = None
+        if effort == "xhigh" and model_name.startswith(self._NO_XHIGH_MODELS):
+            effort = "high"
+        if effort and any(m in model_name for m in self._THINKING_MODELS):
+            # Adaptive thinking + effort. Claude API hard requirement: temperature must be 1.0
+            # while thinking is enabled (only sent to models that still accept sampling).
+            thinking_param = {"type": "adaptive"}
+            temperature = 1.0
+            params["output_config"] = {"effort": effort}
+            logger.info(
+                f"[ClaudeAdapter] Adaptive thinking enabled, effort={effort}, model={model_name}"
+            )
+        elif not effort:
+            thinking_param = self._thinking_off_param(model_name)
+            if thinking_param:
+                logger.info(
+                    f"[ClaudeAdapter] Thinking {thinking_param['type']} "
+                    f"(no effort requested), model={model_name}"
+                )
+        if thinking_param:
+            params["thinking"] = thinking_param
+        # Sampling gate: Sonnet 5+ / Opus 4.7+ / Fable reject a non-default temperature with a
+        # 400 — omit it entirely for those.
+        if not any(m in model_name for m in self._NO_SAMPLING_MODELS):
+            params["temperature"] = temperature
+        if force_tool_use:
+            # Forced tool use is incompatible with thinking, and rejected outright by the
+            # 5.5 / Fable 5.1 generation — `auto` is the documented fallback for both.
+            forced_ok = not thinking_param and not any(
+                m in model_name for m in self._NO_FORCED_TOOL_MODELS
+            )
+            params["tool_choice"] = {"type": "any" if forced_ok else "auto"}
+        return params
+
+    @staticmethod
+    def _raise_on_refusal(response: Any) -> None:
+        """A safety-classifier decline arrives as HTTP 200 with stop_reason="refusal" and an
+        empty or partial body (Sonnet 5.5 / Opus 5.5 / Fable). Surface it as the content-policy
+        LLMClientError the exception taxonomy already defines — deterministic, no failover,
+        alerted — instead of passing an empty answer on as a success."""
+        if getattr(response, "stop_reason", None) != "refusal":
+            return
+        details = getattr(response, "stop_details", None)
+        category = getattr(details, "category", None)
+        explanation = getattr(details, "explanation", None)
+        logger.error("[ClaudeAdapter] model %s declined: category=%s explanation=%s",
+                     getattr(response, "model", "?"), category, explanation)
+        raise LLMClientError(f"refusal (category={category}): {explanation or 'no explanation'}")
+
+    def _thinking_off_param(self, model_name: str) -> Optional[dict]:
+        """Lowest thinking setting for a model that thinks by default (longest prefix wins)."""
+        matches = [(len(p), v) for p, v in self._THINKING_OFF.items() if model_name.startswith(p)]
+        return dict(max(matches, key=lambda m: m[0])[1]) if matches else None
 
     async def _grounded_stream_loop(self, create_kwargs: dict) -> LLMResponse:
         """
@@ -525,6 +588,7 @@ class ClaudeAdapter(LLMPort):
                 total_cache_read += getattr(response.usage, "cache_read_input_tokens", 0)
                 total_cache_creation += getattr(response.usage, "cache_creation_input_tokens", 0)
 
+            self._raise_on_refusal(response)
             accumulated_content.extend(response.content)
 
             if response.stop_reason == "end_turn":
@@ -1031,6 +1095,7 @@ class ClaudeAdapter(LLMPort):
         return claude_tools
 
     def _parse_response(self, response: types.Message) -> LLMResponse:
+        self._raise_on_refusal(response)
         text = ""
         tool_calls = []
 
