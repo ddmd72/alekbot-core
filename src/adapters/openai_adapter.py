@@ -98,20 +98,33 @@ class OpenAIAdapter(LLMPort):
     # - gpt-5 family: confirmed via 400 error on temperature!=default (empirically verified)
     # - o1, o3 families: OpenAI reasoning models, documented restriction
     # Detected by model name prefix.
-    _REASONING_PREFIXES = ("gpt-5", "o1", "o3")
+    # - gpt-6 family: 400 "Unsupported parameter: 'temperature'" (probed 2026-10-03)
+    _REASONING_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3")
 
     # Reasoning models whose minimum `reasoning.effort` is "medium": they 400 on
     # "low" ("Unsupported value: 'low' ... Supported: 'medium', 'high', 'xhigh'").
     # Pro-tier reasoning models (gpt-5.5-pro) floor at medium; the mini / nano / 5.4
     # models accept "low". Matched by name prefix; low is clamped up to medium.
     _MIN_MEDIUM_EFFORT_PREFIXES = ("gpt-5.5-pro",)
+    # Models whose minimum is "low": gpt-6.1-sol 400s on "none" (probed 2026-10-03). A "none"
+    # request is clamped up to "low".
+    _MIN_LOW_EFFORT_PREFIXES = ("gpt-6.1-sol",)
+
+    # Effort to send when the caller requests NO thinking, for models that reason when
+    # `reasoning` is omitted. gpt-6-luna spends reasoning tokens by default (probed 2026-10-03);
+    # gpt-5.6-luna's unrequested reasoning is what made it 2.3x slower than nano on the router.
+    # Exact ids, not prefixes: each entry is a probed fact about one model.
+    _THINKING_OFF_EFFORT = {"gpt-6-luna": "none"}
+
+    # Efforts forwarded as-is. "minimal" is rejected by the whole gpt-6 family, so it is not here.
+    _EFFORTS = ("none", "low", "medium", "high", "xhigh")
 
     # Models that DEPRECATED `prompt_cache_retention` (GPT-5.6 and later families). On these,
     # the 24h retention param is accepted-but-ignored (probed 2026-07-13 — no 400); retention is
     # 30m-only. Implicit caching stays automatic (no breakpoints), but OpenAI recommends setting
     # `prompt_cache_key` for reliable prefix matching. Extend when 5.7+ ships. See
     # decisions / GPT_5_6_MIGRATION_RFC.md §3.3.
-    _DEPRECATED_RETENTION_PREFIXES = ("gpt-5.6",)
+    _DEPRECATED_RETENTION_PREFIXES = ("gpt-5.6", "gpt-6")
 
     # ========================================================================
     # Provider capability declaration
@@ -297,23 +310,28 @@ class OpenAIAdapter(LLMPort):
         reasoning_effort: Optional[str] = None
         if self._is_reasoning_model(model_name):
             if thinking:
-                reasoning_effort = {"low": "low", "medium": "medium", "high": "high"}.get(
-                    thinking, "medium"
-                )
+                reasoning_effort = thinking if thinking in self._EFFORTS else "medium"
             elif use_grounding:
                 reasoning_effort = "low"
+            else:
+                reasoning_effort = self._THINKING_OFF_EFFORT.get(model_name)
+        if reasoning_effort == "none" and any(
+            model_name.startswith(p) for p in self._MIN_LOW_EFFORT_PREFIXES
+        ):
+            reasoning_effort = "low"
         # Capability gate: some reasoning models reject "low" (min "medium"). Clamp
         # instead of forwarding → avoids HTTP 400 (2026-07-13: gpt-5.5-pro + a "low"
         # thinking value or grounding-forced "low"). Covers both sources above.
-        if reasoning_effort == "low" and any(
+        if reasoning_effort in ("none", "low") and any(
             model_name.startswith(p) for p in self._MIN_MEDIUM_EFFORT_PREFIXES
         ):
             reasoning_effort = "medium"
         if reasoning_effort:
             reasoning_config: Dict[str, Any] = {"effort": reasoning_effort}
-            # Gate reasoning.summary to PERFORMANCE/ULTRA for observability (bounds extra tokens).
-            # PERFORMANCE/ULTRA are gpt-5.6-terra and gpt-5.6-sol.
-            if model_name in ("gpt-5.6-terra", "gpt-5.6-sol"):
+            # Gate reasoning.summary to the PERFORMANCE/ULTRA models for observability (bounds
+            # extra tokens). Read from the tier map so it follows a tier flip.
+            if model_name in (self.MODEL_TIERS[PerformanceTier.PERFORMANCE],
+                              self.MODEL_TIERS[PerformanceTier.ULTRA]):
                 reasoning_config["summary"] = "concise"
             create_kwargs["reasoning"] = reasoning_config
 

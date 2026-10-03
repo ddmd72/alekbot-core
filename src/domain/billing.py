@@ -208,6 +208,12 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # Sol is on a $4/$20 promo through 2026-11-21; we hold the standard $5/$30 (HOLD_FINAL_PRICE).
     # GPT-5.6 also has a long-context tariff (2x input) that this single-price table does not model.
     "gpt-5.6-sol":                       {"input": 5.00,  "output": 30.00, "cache_read": 0.10, "cache_write": 1.25},
+    # --- OpenAI GPT-6 family (Sept 2026) — verified 2026-10-03 on developers.openai.com pricing
+    # + LiteLLM. gpt-6.1-sol reads cache at 5% ($0.10 on $2). Long-context tier (2x input) not modelled.
+    "gpt-6-luna":                        {"input": 0.10,  "output": 0.50,  "cache_read": 0.10, "cache_write": 1.25},
+    "gpt-6-sol":                         {"input": 2.00,  "output": 10.00, "cache_read": 0.10, "cache_write": 1.25},
+    "gpt-6.1-sol":                       {"input": 2.00,  "output": 10.00, "cache_read": 0.05, "cache_write": 1.25},
+    "gpt-6-astra":                       {"input": 10.00, "output": 50.00, "cache_read": 0.10, "cache_write": 1.25},
     # --- OpenAI (gpt-5.4 family, Mar 2026; gpt-5.5-pro retained for rollback/history) ---
     "gpt-5.4-nano":                      {"input": 0.20,  "output": 1.25,  "cache_read": 0.10},
     "gpt-5.4-mini":                      {"input": 0.75,  "output": 4.50,  "cache_read": 0.10},
