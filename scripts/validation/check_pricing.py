@@ -254,6 +254,7 @@ _EXPECTED_CACHE: dict[str, dict[str, float]] = {
     "claude-":         {"cache_read": 0.10, "cache_write": 1.25},
     # Opus 5.5 reads cache at 5% of input, not 10%.
     "claude-opus-5-5": {"cache_read": 0.05, "cache_write": 1.25},
+    "claude-fable-5-1": {"cache_read": 0.025, "cache_write": 1.25},
     # Current Gemini generation (3.x) caches at 10% of input; it was 25% before.
     # The preview/legacy entries below keep their own expectations.
     "gemini-":         {"cache_read": 0.10},

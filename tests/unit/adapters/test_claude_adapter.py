@@ -41,7 +41,7 @@ def test_claude_model_for_tier():
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "claude-haiku-4-5-20251001"
     assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-haiku-4-5-20251001"
     assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-5-5"
-    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-opus-5-5"
+    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-1"
 
 
 def test_claude_performance_tier_env_override(monkeypatch):
@@ -56,7 +56,7 @@ def test_claude_performance_tier_env_override(monkeypatch):
     monkeypatch.setenv("CLAUDE_PERFORMANCE_MODEL", "claude-sonnet-4-6")
     env_adapter = ClaudeAdapter(api_key="k")
     assert env_adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-4-6"
-    assert env_adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-opus-5-5"
+    assert env_adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-1"
 
 
 def test_claude_unsupported_tier_raises():
@@ -1960,3 +1960,62 @@ async def test_xhigh_clamped_to_high_on_the_sonnet_4_6_fallback():
     assert calls[0]["output_config"] == {"effort": "xhigh"}
     assert calls[1]["model"] == "claude-sonnet-4-6"
     assert calls[1]["output_config"] == {"effort": "high"}
+
+
+# ============================================================================
+# Safety-classifier refusals (stop_reason="refusal", HTTP 200)
+# ============================================================================
+
+
+def _refusal_response(category="cyber"):
+    response = _make_sdk_response(text="")
+    response.content = []
+    response.stop_reason = "refusal"
+    response.stop_details = MagicMock(category=category, explanation="declined")
+    return response
+
+
+@pytest.mark.parametrize("use_grounding", [False, True])
+@pytest.mark.asyncio
+async def test_refusal_raises_client_error_instead_of_empty_success(use_grounding):
+    """A decline is a content-policy failure (LLMClientError: deterministic, alerted), never an
+    empty answer passed on as a success — on both the plain and the grounded path."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    adapter.client.messages.stream = _capturing_stream({}, _make_claude_cm(_refusal_response("bio")))
+    with pytest.raises(LLMClientError, match="category=bio"):
+        await adapter.generate_content(
+            request=LLMRequest(model_name="claude-sonnet-5-5", messages=_MESSAGES,
+                               use_grounding=use_grounding)
+        )
+
+
+@pytest.mark.asyncio
+async def test_refusal_does_not_trigger_same_provider_fallback():
+    adapter = ClaudeAdapter(api_key="test-key")
+    models = []
+
+    def stream(**kwargs):
+        models.append(kwargs["model"])
+        return _make_claude_cm(_refusal_response())
+
+    adapter.client.messages.stream = stream
+    with pytest.raises(LLMClientError):
+        await adapter.generate_content(
+            request=LLMRequest(model_name="claude-sonnet-5-5", messages=_MESSAGES))
+    assert models == ["claude-sonnet-5-5"]
+
+
+@pytest.mark.asyncio
+async def test_fable_5_1_request_shape():
+    """ULTRA model: no sampling, no thinking off-switch, forced tools degrade to auto."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    adapter.client.messages.stream = _capturing_stream(
+        captured, _make_claude_cm(_make_sdk_tool_response("search_memory", {"q": "x"})))
+    await adapter.generate_content(
+        request=LLMRequest(model_name="claude-fable-5-1", messages=_MESSAGES, temperature=0.4,
+                           tools=_TOOLS, force_tool_use=True)
+    )
+    assert "temperature" not in captured
+    assert "thinking" not in captured
+    assert captured["tool_choice"] == {"type": "auto"}

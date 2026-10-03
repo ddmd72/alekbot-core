@@ -53,10 +53,11 @@ src/config/settings.py                  # OPENAI_API_KEY loading
 
 ```python
 MODEL_TIERS = {
-    PerformanceTier.ECO: "gpt-5.4-nano",      # Cheapest/fastest
-    PerformanceTier.BALANCED: "gpt-5.4-mini",  # Mid-tier quality
-    PerformanceTier.PERFORMANCE: "gpt-5.4",    # Frontier (5.4 kept; 5.5 is 2× the cost)
-    PerformanceTier.ULTRA: "gpt-5.5-pro",      # Highest quality (upgraded 2026-05-30; same price as 5.4-pro)
+    PerformanceTier.ECO: "gpt-6-luna",          # $0.10/$0.50 — effort "none" when no thinking is requested
+    PerformanceTier.BALANCED: "gpt-6-luna",     # Smart / web_search / maps / tutor
+    PerformanceTier.PERFORMANCE: "gpt-6.1-sol", # $2/$10, cache read 0.05x
+    PerformanceTier.ULTRA: "gpt-6-astra",       # $10/$50 — top of the GPT-6 family
+    # since 2026-10-03; rollback without redeploy: OPENAI_TIER_OVERRIDES / make openai-rollback
 }
 ```
 

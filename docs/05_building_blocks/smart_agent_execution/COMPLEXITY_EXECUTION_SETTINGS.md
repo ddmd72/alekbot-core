@@ -30,13 +30,15 @@ agent_tiers["smart"]           (UserBotConfig, per user)
 
 ## Tier → Model Reference
 
+> Current as of 2026-10-03 (`decisions/model_refresh_2026_10.md`). `MODEL_TIERS` in each adapter is the source of truth.
+
 | Tier          | Claude                       | OpenAI            | Gemini                          | Grok                          |
 |---------------|------------------------------|-------------------|---------------------------------|-------------------------------|
-| `ECO`         | claude-haiku-4-5-20251001    | gpt-5.4-nano      | gemini-2.5-flash-lite-preview   | grok-4.3                      |
-| `BALANCED`    | claude-haiku-4-5-20251001    | gpt-5.4-mini      | gemini-2.5-flash-preview-05-20  | grok-4.3                      |
-| `PERFORMANCE` | claude-sonnet-4-6            | gpt-5.4           | gemini-2.5-pro-preview-06-05    | grok-4.6                      |
-| `ULTRA`       | claude-opus-4-8              | gpt-5.5-pro       | gemini-pro-latest               | grok-4.6                      |
-| `TIER1/2/3`   | claude-haiku-4-5-20251001    | gpt-5.4-nano      | gemini-2.5-flash-lite-preview   | grok-4.3                      |
+| `ECO`         | claude-haiku-4-5-20251001    | gpt-6-luna        | gemini-3.5-flash-lite           | grok-4.3                      |
+| `BALANCED`    | claude-haiku-4-5-20251001    | gpt-6-luna        | gemini-3.8-flash                | grok-4.3                      |
+| `PERFORMANCE` | claude-sonnet-5-5            | gpt-6.1-sol       | gemini-pro-latest (3.1-pro)     | grok-4.7                      |
+| `ULTRA`       | claude-fable-5-1             | gpt-6-astra       | gemini-pro-latest (3.1-pro)     | grok-4.7                      |
+| `TIER1/2/3`   | claude-haiku-4-5-20251001    | gpt-6-luna        | gemini-flash-lite-latest        | grok-4.3                      |
 
 > **TIER1/2/3** are reserved slots — default to ECO models. Override via
 > `complexity_settings_overrides` or `agent_tiers` when you need a custom model

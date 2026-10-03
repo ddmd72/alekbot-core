@@ -900,3 +900,13 @@ class TestFiveFiveGeneration:
         assert "temperature" not in kwargs
         assert kwargs["thinking"] == {"type": "adaptive"}
         assert kwargs["max_tokens"] == 96_000
+
+
+class TestRefusal:
+
+    async def test_refusal_is_a_failure_not_a_partial_report(self):
+        msg = _api_message("refusal", [])
+        msg.stop_details = MagicMock(category="cyber")
+        agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
+        with pytest.raises(RuntimeError, match="declined"):
+            await agent._research_loop("query", "", "claude-fable-5-1")

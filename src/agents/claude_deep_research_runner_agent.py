@@ -491,6 +491,14 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
                 )
                 continue
 
+            if response.stop_reason == "refusal":
+                # Safety-classifier decline (5.5 / Fable generation): not a partial report.
+                details = getattr(response, "stop_details", None)
+                raise RuntimeError(
+                    f"model declined the research request "
+                    f"(category={getattr(details, 'category', None)})"
+                )
+
             # max_tokens or unexpected stop reason — return partial text if available.
             logger.warning(
                 "[DeepResearchRunner] Unexpected stop_reason=%s — returning partial text",

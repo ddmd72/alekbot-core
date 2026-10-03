@@ -92,7 +92,9 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # with a 79s outlier against a 90s agent timeout. The cheap tier is applied only to the
     # mechanical `fetch_url` intent — see WebSearchAgentConfig.fetch_url_tier.
     "web_search": PerformanceTier.BALANCED,
-    # BALANCED → gpt-5.6-luna on OpenAI (maps_search default provider). Was gpt-5.4-mini
+    # BALANCED → gpt-6-luna on OpenAI since 2026-10-03 (scripts/websearch/ab_maps_models.py --fresh:
+    # on par with gpt-5.6-luna, no fabrication; it called tools on 5/5 geo queries vs luna's 2/5).
+    # The history below is about gpt-5.6-luna. Was gpt-5.4-mini
     # until the GPT-5.6 tier remap on 2026-07-13 — maps moved model as a side effect of
     # that remap, not by decision. Latency stays bounded by thinking="low" + turn count,
     # not model size.
