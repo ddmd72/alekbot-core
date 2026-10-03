@@ -1,6 +1,6 @@
 # Model refresh 2026-10-03: Claude 5.5, GPT-6, Grok 4.7, top model on ULTRA
 
-**Status:** accepted and deployed 2026-10-03. Prices are recorded in `price_refresh_2026_10.md`.
+**Status:** accepted and deployed 2026-10-03 (revision alek-bot-dev-00355; previous 00354). Prices are recorded in `price_refresh_2026_10.md`.
 
 ## Decision
 
@@ -27,6 +27,8 @@ ULTRA is the top model of each provider. Nothing used ULTRA in the 14 days befor
   - Maps geo suite (`ab_maps_models.py --fresh`): on par, no fabrication.
   - Smart PERFORMANCE, gpt-6.1-sol vs 5.6-terra: 5:3 in sol's favour, but p50 56s vs 35s and a
     544s worst case, at 32% more cost.
+- Smart ULTRA, gpt-6-astra vs gpt-6.1-sol (6 queries): 2:3 with 1 tie, p50 37s vs 39s, **5.2× the cost**.
+  Astra is on ULTRA by owner choice (top model per provider, for consistency), not because it won.
 - **Grok 4.7** at effort medium on tool turns: p50 1.6s vs 3.8s, and 2–3× fewer output tokens.
 - **Gemini:** the only change was the BALANCED alias moving to 3.8-flash on 2026-09-02, which
   nobody decided. That tier is now pinned.
