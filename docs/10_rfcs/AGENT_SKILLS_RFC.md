@@ -1,228 +1,246 @@
-# RFC: Agent Skills — provider-agnostic procedures, loaded on demand
+# RFC: Agent Skills — named procedures for Smart, loaded on demand, saved by the user
 
-**Status:** Phase 1 approved for planning (2026-09-30). Phase 2 is specified separately in `SKILL_AUTHORING_RFC.md` (draft, gated by reviews).
-**Date:** 2026-09-30
+**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Next: the implementation plan and G2.
+**Date:** 2026-10-04 (first draft 2026-09-30)
 **Owner decisions:**
-- System skills live in git and are read-only.
-- Custom skills are kept per user × orchestrator (phase 2).
-- Every orchestrator (Smart, Tutor, Lelik) gets its own skill set.
-- Text and files in v1; scripts are reserved.
-- One folder layout for both origins.
-- **One skill handler: reads are zero-LLM and verbatim; writes are done by an async LLM author (phase 2).**
-- **Delivered in phases: read path first, authoring only behind a full security design.**
+- Skills are named procedures in Anthropic's `SKILL.md` format, run by our own layer (Smart is multi-provider).
+- **v1 is Smart only.** Tutor and Lelik later, on demand.
+- Skills are **their own tools** (`use_skill`, `draft_skill`), not intents of `delegate_to_specialist`: a procedure is not a specialist, and a separate tool gives the model a distinct semantic cue.
+- **Two deliveries, one RFC** (§10): (A) reading the user's own skills, tested on the owner's real `flight-status` skill; (B) authoring in chat plus system skills. A answers the question B depends on — does Smart load and follow skills at all.
+- **Personal procedures are custom skills, never system skills.** The repo is public and system skills are visible to every user.
+- **No migration** of existing protocols (`EmailReviewService.build_alert`, `PROTOCOL_*`).
+- **A loaded skill lives in history until tiering compresses it**, then leaves a stub (§7). No lifecycle machinery.
+- **Authoring follows Anthropic's skill-creator:** Smart drafts in chat and *offers* to save procedures it was taught; a draft becomes active only by the user pasting `$skill save <code>` (§8).
+- Fable reviews the RFC, the plan and each branch as a **critique of the idea and its implementation** (§11).
 
 ## 1. Problem
 
-In the middle of a conversation the orchestrator recognises "this is a procedure we will repeat". Examples: a review routine, a report format for a particular reader, a debugging protocol the owner walked it through. It has nowhere to put it. Each of the three existing persistence kinds loses it:
+The owner explains a procedure to Smart, and Smart has nowhere to keep it. **The motivating case:** checking a flight's status means going to specific web pages and parsing them with a few simple rules. Smart can follow this once explained; next time it has to be explained again.
+
+The existing persistence kinds each lose such a procedure:
 
 | Container | Why a procedure does not survive there |
 |-----------|----------------------------------------|
-| Facts (`save_to_memory`, consolidation) | Consolidation splits multi-concept text into atomic facts and rewrites facts in place (TD-4). Retrieval is by similarity to the current query, so a procedure appears only when the wording happens to match, and then only in fragments. |
-| Standing directives | Always injected, hard cap 15, one terse imperative line each. The SCOPE test (`decisions/directive_applicability_gate.md`) demotes situational rules by design, and a procedure is situational. |
-| Self-reminders | Fire on a schedule as a new conversation. They carry an obligation, not knowledge. |
+| Facts (`save_to_memory`, consolidation) | Consolidation splits multi-concept text into atomic facts and rewrites them (TD-4). Retrieval is by similarity, so a procedure appears only when the wording matches, and then in fragments. |
+| Standing directives | Always injected, hard cap 15, one terse line each. The SCOPE test (`decisions/directive_applicability_gate.md`) demotes situational rules, and a procedure is situational. |
+| Self-reminders | Fire on a schedule. They carry an obligation, not knowledge. |
 
-The system's own procedures have the same problem the other way round. Situational protocols live either in `PROTOCOL_*` tokens, which are rendered into every Smart prompt whether the situation arises or not, or hardcoded in a service (the daily email review protocol is a string in `email_review_service.py`).
-
-A **skill** is the missing fourth kind: a named, situational procedure. Its *trigger* is always visible; its *body* is loaded only when the trigger matches.
+A **skill** is the missing kind: a named, situational procedure. Its *trigger* is always visible; its *body* is loaded only when the trigger matches.
 
 | Kind | Home | Property |
 |------|------|----------|
 | Facts about the user | `knowledge_base` | retrieved by relevance |
-| Rules for the agent, always in force | `standing_directives` | always injected, binding |
+| Rules always in force | `standing_directives` | always injected, binding |
 | Deferred obligation | `active_reminders` | fires later |
 | **Procedure for a kind of task** | **`available_skills` + `use_skill`** | **trigger always visible, body on demand** |
 
-## 2. Prior art and why we rebuild it
+## 2. Prior art
 
-Anthropic Skills (Claude Code, Claude API) implement exactly this:
-- a `SKILL.md` with YAML frontmatter (`name`, `description`), a markdown body, optional bundled files and scripts;
-- only `name + description` sit in context;
-- the body is read when the model decides the skill applies (progressive disclosure).
+**Anthropic Skills:** `SKILL.md` with frontmatter (`name`, `description`) and a markdown body; only `name + description` sit in context; the body is read through a dedicated `Skill` tool when the model decides it applies. After compaction Claude Code re-injects invoked skills' bodies (5k tokens each, 25k total); losing them was a reported bug.
 
-That mechanism is native to Anthropic's runtime. alekbot runs Smart on OpenAI, Gemini, Claude or Grok per user, and Lelik on OpenAI Realtime or xAI, so the mechanism has to live in our own layer. We copy the **format and the disclosure model**, not the runtime.
+**Anthropic's `skill-creator`:** capture the procedure from the current conversation first, ask about gaps, draft with a deliberately "pushy" description (models under-trigger skills), try it on realistic prompts with the user judging *outputs*, revise; **the user installs the result** — the model never installs a skill into itself. Its own Claude.ai variant notes that testing in the same context is weaker than a fresh run.
 
-## 3. Phases
+We copy the format, the dedicated tool, the disclosure model and the authoring model; the runtime is ours.
 
-The feature grew into three concerns with very different risk profiles. They ship in order of risk, and each phase answers the question the next one depends on.
+## 3. Origins and the visible set
 
-| Phase | Scope | Risk | Question it answers |
-|-------|-------|------|---------------------|
-| **1 — Read path** (this RFC) | Skill format, system skills in git, catalog in the prompt, `use_skill`, first migrations, trigger-reliability eval | No new attack surface: nothing is written at runtime | **Do our models actually load a skill when its trigger matches?** If they do not, authoring is pointless. |
-| **2 — Authoring** (`SKILL_AUTHORING_RFC.md`) | Custom skills in GCS + Firestore index, async LLM author, the six security layers, security reviewer agent | Persistent prompt-injection channel — the highest-risk thing in the system | Can model-authored procedures be made safe enough? |
-| **3 — Scope and operations** | Per-binding / per-session scopes (Tutor), owner purge, rate limits, Lelik post-call authoring | Operational | — |
+| Origin | Where | Written by | Delivery |
+|--------|-------|-----------|----------|
+| **Custom** (per user) | Firestore (§8) | A: a seeding script run by the developer; B: the user, by `$skill save` | A |
+| **System** (all users) | git, `src/skills/smart/<name>/SKILL.md` | developers, via PR | B |
 
-Phase 2 and 3 designs are **not** approved by this RFC.
+- One port, `SkillRepository`, two adapters: `FirestoreSkillRepository` (custom; delivery A) and `FileSystemSkillRepository` (system; loaded at startup, a malformed skill fails startup; delivery B). A port with two real implementations is justified.
+- **System skills must be generic.** The repo is public and every user sees them. The only planned system skill is `skill-creator`.
+- **Visible set** for a user = system skills ∪ that user's custom skills.
+- **Name collisions:** saving a custom skill under a system name is rejected. If a later release ships a system skill whose name a user already has, the custom one shadows it for that user and a warning is logged.
 
-## 4. Phase 1 — decision
-
-### 4.1 Scopes
-
-System skills ship in git under `src/skills/<scope>/<name>/`.
-- `<scope>` is an orchestrator scope (`smart`, `tutor`, `lelik`) or `_shared` (every orchestrator).
-- Loaded once at startup by `FileSystemSkillSource`; a malformed skill fails startup.
-- Reviewed in PRs, versioned by git, read-only at runtime.
-
-**Visible set for an orchestrator** = `_shared` ∪ own scope. A name may not appear in both `_shared` and a scope (startup error).
-
-Scope names map from agent types: `smart_response → smart`, `tutor → tutor`, `lelik → lelik`. Any other caller has no scope (§4.4).
-
-### 4.2 Format
-
-`SKILL.md`, Anthropic-compatible:
+## 4. Format
 
 ```markdown
 ---
-name: daily-email-review
-description: Use when a [DAILY EMAIL REVIEW] alert arrives with email_for_triage data.
-scripts: []        # reserved — v1 rejects a non-empty value
+name: flight-status
+description: "Use when the owner asks about a flight's status, delay, gate or arrival, or gives a flight number."
 ---
 1. …
 ```
 
-- `name`: kebab-case `[a-z0-9-]`, ≤ 64 chars, equal to the folder name.
-- `description`: the trigger, **≤ 250 chars**, one line, phrased "Use when …". It is the only part the model sees before loading, and it is re-sent on every request.
-- body: markdown. The whole `SKILL.md` is ≤ 20 KB.
-- files: text attachments under `files/`, read by path relative to the skill folder.
+- `name`: kebab-case `[a-z0-9-]`, ≤ 64 chars.
+- `description`: the trigger, ≤ 250 chars, one line, "Use when …". Re-sent on every request.
+- body: markdown; the whole `SKILL.md` ≤ 20 KB.
+- **No files and no scripts in v1.** Reference material goes in the body. Executing scripts needs a sandbox and its own RFC.
 
-**Frontmatter subset.** `domain/` may use only stdlib + pydantic, so the parser accepts a single-line subset:
-- `key: value`, where the value is plain, `"double-quoted"` (JSON escapes) or `'single-quoted'`;
-- `scripts: []`.
+**Parsing.** Frontmatter is read with `yaml.safe_load` (PyYAML is already a dependency) in the adapters; `domain/` holds a pydantic `Skill` model that validates the result.
 
-Block scalars and nested maps are rejected with a clear error. The renderer always writes `description` double-quoted, so its output parses back identically and stays valid YAML for Anthropic tooling.
+## 5. The skill tools
 
-### 4.3 Folder layout
+Smart gets skill tools next to `delegate_to_specialist`. They are zero-LLM and handled **locally**, not through `AgentCoordinator`.
 
-```
-src/skills/<scope>/<name>/
-  SKILL.md        frontmatter + body
-  files/…         attachments
-  scripts/…       reserved (§6); rejected at startup
-```
+| Tool | Delivery | Arguments | Result to the model |
+|------|----------|-----------|---------------------|
+| `use_skill` | A | `name` | the skill body, verbatim — or "already in your context above" (below) |
+| `draft_skill` | B | `name`, `description`, `body` | "preview delivered to the owner" (§8) |
 
-Phase 2 stores custom skills in the same shape (one immutable folder per version). So there is one parser and one read path, and a useful custom skill can be promoted to a system skill by copying its folder in a PR.
+**Engine change.** `DelegationEngine` today treats every non-terminal tool call as a delegation and reads `intent` from its arguments (`delegation_engine.py:468-483`). It gains `local_tools: Mapping[str, LocalToolHandler]`: a call whose name is in the map goes to its handler. Its result string, `delivery_items` and `history_context` flow into `DelegationResult` exactly as a delegation's do. One Logfire span per local call. A stray `delegate_to_specialist(intent="use_skill")` fails cleanly at the coordinator (`agent_coordinator.py:389-397`).
 
-**Path confinement.** A file path from model arguments is normalised and must resolve under the skill's `files/`:
-- `..`, absolute paths and backslashes are rejected;
-- the resolved path must satisfy `is_relative_to(<skill>/files)`, which catches symlink escapes too.
+**Handler per execution.** Smart builds the handlers for each execution as closures over:
+- `visible`: names whose body is in the **tiered** history Smart is about to send — computed after `_apply_history_tier` (`smart_response_agent.py:575`), from **model** messages only, by the `[Skill "<name>" v<n>]` marker (§7). Raw session history keeps `full_text` forever, so scanning it would mark long-compressed skills as visible; scanning user messages would let pasted text fake the marker.
+- `loaded_now`: names loaded earlier in this execution.
 
-Without this, `use_skill` would read arbitrary files from the container.
+The marker is matched strictly — `^\[Skill "([a-z0-9-]+)" v\d+\]$` at a line start — so the stub (`[Skill "<name>" was applied here…]`) never counts as a visible body. The closures are built inside each execution attempt and never stored on `self`: Smart is a per-user singleton with concurrent executions, and a cross-provider retry (`TranscriptLockedError`) starts a fresh transcript whose `loaded_now` must be empty.
 
-### 4.4 The skill handler — read path
+A `use_skill` for a name in either set returns "the text of skill X is already in your context above; follow it" instead of a second copy. If the visible copy is an older version, it is still followed — a reload happens after compression anyway.
 
-`SkillsAgent` is the only door to skills. In phase 1 it has one intent:
+**Terminal siblings.** On Grok the answer is a real `deliver_response` tool, and calls co-emitted with it are dispatched without their results being read (`delegation_engine.py:263-284`). A `use_skill` there contributes **no** `history_context`: nobody followed that body.
 
-| Intent | Mode | LLM | Purpose |
-|--------|------|-----|---------|
-| `use_skill` | SYNC | none | Return a skill's body and file list, or one file's text — **verbatim** |
+**Parallel batches.** `use_skill` can share a batch with other calls (`asyncio.gather`, `delegation_engine.py:441-450`), which then run before the skill is read. Accepted; the catalog's "call use_skill BEFORE acting" is the only guard.
 
-- **No LLM on reads.** A skill is loaded to be *followed*. An LLM between the store and the orchestrator adds a model call and 5–20 s to every use, and it paraphrases: the procedure would drift a little on every read.
-- **Arguments:** `skill_name` → body and file list; with `skill_file` → that file's text. Field names are prefixed `skill_` because `_build_delegate_tool_declaration` merges every intent's context fields into one flat object, and the first definition of a name wins (`base_agent.py:772-780`).
-- **`mode` is ignored:** a forced `later` would turn the call into a Cloud Task whose result is never delivered.
+**Cost of a load:** one extra Smart loop turn (latency plus one round-trip, prompt mostly cached; within `max_delegation_turns=15`).
 
-**Scope comes from the caller, never from arguments.**
-- Today every SYNC delegation reaches the specialist with `sender="coordinator"` (`agent_coordinator.py:538`).
-- `_call_chain` is inherited across hops: Smart running for Lelik's `ask_alek` starts with `lelik_agent`.
-- So `DelegationEngine.dispatch` sets a **per-hop** key on every call, `_caller_agent_id = calling_agent_id`. It is overwritten, never inherited.
-- The handler strips the `_{user_id}` suffix and maps the base id to a scope. Any other caller (Quick, `bound_channel`, `notification_service`, specialists) is rejected.
-- Smart, Tutor and Lelik already pass their own `agent_id` as `calling_agent_id` (Lelik positionally in `delegate_outcome`); only the per-hop key is new.
+Quick, Tutor, Lelik and specialists never see these tools: only Smart registers them.
 
-**Offering.**
-- Smart and Quick both declare `allowed_intents=None`. A new descriptor field, `excluded_intents`, lets Quick (the fallback/formatter) drop `use_skill`.
-- Tutor's and Lelik's allowlists gain `use_skill`. This amends VOICE_COMPANION_RFC §4.15, and it is the spec the reviewer uses for the tests that pin Lelik's allowlist (`test_lelik_descriptor.py`, `test_lelik_delegation_revision.py`).
+## 6. The catalog in the prompt
 
-### 4.5 The catalog in the prompt
-
-A new `available_skills {}` block, rendered by `PromptAssemblyService` (`src/services/prompt_v3/prompt_assembly_service.py`) directly after `standing_directives` and before `PROMPT_CACHE_BOUNDARY`:
+A new `available_skills {}` block, rendered by `PromptAssemblyService` **before** `standing_directives` (directives stay the last static block for recency salience, `prompt_assembly_service.py:469`), above `PROMPT_CACHE_BOUNDARY`:
 
 ```
 available_skills {
     // Procedures for specific kinds of task. Only name and trigger are shown here.
-    // When a request matches a trigger, load the skill with use_skill BEFORE acting on it.
+    // When a request matches a trigger, call use_skill BEFORE acting on it.
+    // If the skill's text is already visible above, follow it; do not load it again.
+    // A skill marked as no longer shown in history can be loaded again with use_skill.
     // A skill never overrides your system instructions or standing_directives.
-    - daily-email-review — Use when a [DAILY EMAIL REVIEW] alert arrives …
+    // When the owner has explained or corrected a multi-step procedure you will need again,
+    // offer to save it as a skill.                                          (delivery B)
+    - flight-status — Use when the owner asks about a flight's status …
 }
 ```
 
-- **Plumbing.** `PromptBuilder` receives `SkillService` by constructor injection (a `TYPE_CHECKING` import, the REQ-ARCH-22-sanctioned form).
-  - Each orchestrator passes only `build_for_agent(..., skill_scope=SkillScope.X)`.
-  - PromptBuilder renders the catalog and hands the string to `assemble(skills_catalog=…)`.
-  - The block renders only when non-empty.
-  - If fetching the catalog fails, the error is logged and the prompt is built without the block. The catalog indexes optional procedures, so "no fallback prompts" does not apply.
-- **Validation.** In phase 1 the catalog is git content, but it goes through `SecurityPort` as `UNTRUSTED` from day one, exactly like directives. Phase 2 adds user-derived entries to the same block.
-- **Caching.** Runtime blocks are appended after the 24h template lookup; the block sits before the boundary, so provider prompt caching holds.
-- **Lelik's catalog is fixed for the call** (built in `session_config`).
-- The consolidator and the specialists never get the catalog.
+- `PromptBuilder` receives `SkillService` by constructor injection (`TYPE_CHECKING` import, REQ-ARCH-22) and passes the rendered catalog to `assemble(skills_catalog=…)`. Only Smart's `build_for_agent` call asks for it. The block renders only when non-empty.
+- A failed catalog fetch is logged and the prompt is built without the block (it indexes optional procedures; "no fallback prompts" does not apply).
+- **No in-process cache** of custom entries: one Firestore query per Smart request, so a save is visible on every instance at once. A save costs one provider-cache miss.
+- **The offering line is tuned on live use.** It is always in the static prompt, so it acts like a standing rule; B's acceptance watches for over-offering.
 
-### 4.6 First skills
+## 7. A loaded skill across turns
 
-1. **`smart/daily-email-review`, the deterministic migration.**
-   - The protocol text hardcoded in `EmailReviewService.build_alert` moves into a skill.
-   - The alert keeps the data description and says: load `daily-email-review` with `use_skill` first.
-   - This proves the whole pipeline in production (catalog, `use_skill`, verbatim body, a background run) without depending on trigger reliability, because the alert names the skill.
-2. **`smart/deep-research-prep`, the trigger-reliability candidate.**
-   - The text of `PROTOCOL_DEEP_RESEARCH_PREP`, a situational two-stage clarify → confirm → dispatch procedure in Smart's profile.
-   - It ships **only to the eval** (§4.7) at first: it is not placed in `src/skills/smart/` and the token stays in the profile until the eval passes.
-   - It also tests a known gap: a skill body is a tool result, and tool results do not persist into the next turn. The confirmation turn must load the skill again or rely on the brief in history.
+The model is stateless; "I am following skill X" exists only as the skill text plus visible progress in the prompt. That is all Anthropic's runtime relies on as well.
 
-### 4.7 Trigger-reliability eval
+**One part, no new history shape.** `use_skill` returns its body as a `history_context` under the key `skill_context`. In `ConversationHandler`'s `*_context` loop (`conversation_handler.py:844-855`) this key is handled differently from the others:
+- the body is appended to `full_text` as a **raw labelled block** (`[Skill "<name>" v<n>]\n<body>`), not `json.dumps` (which would escape the markdown);
+- one stub line per loaded skill is appended to `history_text`: `[Skill "<name>" was applied here; its text is no longer shown]`. The wording is neutral on purpose: Lelik's warm context reads model `p.text` (`lelik_persona_service.py:83`) and must not be told to call a tool he lacks. The reload instruction lives in Smart's catalog (§6).
+- The loop runs **after** the async summary has resolved (`conversation_handler.py:797-818`), so the summary cannot overwrite the stub. Appending earlier would be silently lost.
 
-This is a script (`scripts/eval/skill_trigger_eval.py`), not a test. Per provider/model in Smart's configured set, it builds Smart's real system prompt with a catalog that contains the candidate skill plus a few decoys, sends each case once, and records whether the first tool call is `use_skill` with the expected name.
+The model message stays a single part (`conversation_handler.py:936`). A second text part would be sent by `OpenAIAdapter`/`GrokAdapter` as a list of `input_text` items in an assistant message (`openai_adapter.py:594-596`), a shape the Responses API rejects; and it would buy nothing, since `_apply_history_tier` decides full-or-summary per message (`base_agent.py:422`).
 
-- **Cases:**
-  - ~15 prompts that match the candidate's trigger, in the user's languages;
-  - ~15 near-misses (quick factual questions that mention research, "search the web for …");
-  - ~10 unrelated prompts.
-- **Metrics:** load recall on matching prompts; false-load rate on the rest; cost per case.
-- **Proposed pass bar** (owner may change it): recall ≥ 0.8 and false loads ≤ 0.1 on the provider/model the user actually runs.
-- **Outcome:**
-  - Pass → migrate `PROTOCOL_DEEP_RESEARCH_PREP` into a system skill and remove the token from the profile.
-  - Fail → phase 2 is re-evaluated before any design work continues.
+**Window.** The tier counts model messages and keeps `N+1` of them full (`model_turns_from_end <= N`). Smart's `N` resolves USER → ACCOUNT → `SearchConfig.DEFAULT_HISTORY_RECENT_FULL_TURNS = 2`; the owner's live value is 2, so the last **3 exchanges** carry the body. More is a config change.
 
-## 5. Why not reuse prompt tokens as storage
+**Paths that do not persist.** Only `ConversationHandler` writes history. A skill loaded on the `notify()` path or via `ask_alek` is used for that run only — acceptable, those runs are single-turn. The stub reaches consolidation (model `p.text` is serialized); it is one neutral line.
 
-- A token is one per category: the category is the dedup key during override resolution. Skills are open-ended in number.
-- A token is rendered in full; a skill is rendered as a one-line trigger and loaded on demand.
-- Tokens live in the static template cached 24h in memory.
-- Tokens have no files and no version history.
+**Trade-offs accepted.** The body rides in the prompt for up to three turns after use. A reload may return a newer version. If the model does not reload after compression, a long procedure stalls; `skill-creator` itself exceeds three turns, so reload-after-compression is an explicit acceptance check in B.
 
-What *is* shared: the prompt rendering seam, and the migration path where a `PROTOCOL_*` token becomes a system skill.
+## 8. Authoring (delivery B)
 
-## 6. Scripts (reserved)
+The boundary is **authorization by the user**: a custom skill becomes active only through a command the user types. The command authorizes **the exact content the user was shown**, the preview comes from code, and the code that binds them is unknowable in advance.
 
-The `scripts` frontmatter field is parsed and must be empty; a `scripts/` folder fails startup. Executing skill scripts needs a real sandbox; a future RFC decides it. Storage and format need no change.
+1. A system skill `smart/skill-creator` (our adaptation of Anthropic's) is in the catalog. It fires when the owner asks to keep a procedure, and when Smart offers (§6) and the owner agrees.
+2. Following it, Smart captures the procedure from the conversation, asks only about gaps, and calls `draft_skill(name, description, body)`.
+3. The handler runs the checks below, renders `SKILL.md`, draws a **random save code** (`secrets.token_hex(2)`, lowercase, redrawn on collision with the user's pending drafts), stores an **immutable** draft keyed by that code, and returns a `DeliveryItem(type="skill_preview")`. The tool result the model receives says only "preview delivered".
+4. `skill_preview` is a new delivery type, handled **only** by `ConversationHandler._deliver_item`, in two posts:
+   - the stored `SKILL.md`, **verbatim, as a file** via `response_channel.send_file` (Slack `slack/response_channel.py:522`, Telegram `telegram/response_channel.py:561`). Text posts are truncated (Slack 2,500 chars, Telegram ~2,867) and reformatted, so they cannot show the stored content;
+   - a separate short message holding only the command, e.g. `$skill save 7f3a`, as monospace (tap-to-copy on Telegram; MarkdownV2 escaping must leave it intact), ready to copy and paste back (Slack offers no partial selection of a message).
 
-## 7. Alternatives rejected
+   Delivery items are dispatched after the main reply, so the order is reply → file → command, and the command is the last message. Keep it that way. Telegram's `send_file` gains `message_thread_id` so both posts land in the same forum topic.
 
-- **A `procedure` fact domain.** Consolidation would split and rewrite it, and similarity retrieval cannot guarantee the procedure appears when needed.
-- **Situational directives.** Contradicts the SCOPE gate and bloats the always-injected block.
-- **Provider-native Skills on Claude only.** Smart is multi-provider per user; Lelik is realtime.
-- **An LLM on reads.** Adds a model call to every use and paraphrases the procedure a little on each read.
-- **Caller identity from `_call_chain`.** It is inherited across hops.
-- **Authoring in the same release as reads.** It would put the highest-risk part (a persistent injection channel) in front of the unanswered question it depends on (do models load skills at all).
+   No other path delivers `skill_preview`: `AgentWorkerHandler` handles only `file_upload`/`document` (`agent_worker_handler.py:216, 250`), and `notify()` ignores delivery items. A draft made on a background path is never shown, so it can never be saved. `file_upload`/`document` are deliberately not reused for that reason.
+5. The user pastes `$skill save 7f3a`. Both adapters route `$…` to `ConversationHandler.handle_command` before any LLM (Slack `http_adapter.py:320`, Telegram `webhook_adapter.py:195`; commands are lowercased). Telegram messages with `forward_origin` are not treated as commands.
+6. One Firestore transaction: read the draft by code, re-run the checks, count the user's skills against the cap, write the next version, flip `current`, delete **every** pending draft with that name. Then a chat reply and a user/model **pair** in the session history (`[System: skill "<name>" v<n> saved]`), following `notify_call_summary` (`user_notification_service.py:233-285`), so the next turn knows.
 
-## 8. Deliverables and verification (phase 1)
+A stale code (an older draft of the same name) still saves exactly the content it was shown with — that is the authorization. Content cannot be swapped under a code, because drafts are immutable.
 
-Deliverables:
-- Code per §4.
-- The two skills of §4.6.
-- The eval script and its report.
-- `src/utils/capabilities.py` needs no entry: phase 1 has no user-facing capability.
-- Docs:
-  - roster row in the root `CLAUDE.md` and `src/agents/CLAUDE.md`;
-  - Key Mechanisms paragraph;
-  - VOICE_COMPANION_RFC §4.15 amendment pointer;
-  - decision record `decisions/agent_skills.md`.
-- **No orchestrator prompt-token change**: the catalog header says when to load.
+**Recommended trial** (in `skill-creator`): save, then try the skill in a **new thread**, then revise. A same-context trial is weak: the model still sees the conversation the skill came from. Trying a procedure can cause real side effects (tasks, reminders, errands); the skill says so.
 
-Verification:
-- **Unit:** domain parse, validate and render; path confinement (including a symlink escape); visible set; handler scope from `_caller_agent_id` and rejection of unknown callers; `_caller_agent_id` set per hop; Quick's `excluded_intents`; the prompt block renders only when non-empty, validated, before the boundary; each orchestrator passes its scope; every repo skill parses. Plus `make check`.
-- **Live (dev):**
-  - Trigger `daily_email_review`. Expect `use_skill(daily-email-review)` in the Logfire trace and a report equivalent to the previous day's structure (all four tags, next steps for [ACTION]).
-  - The catalog in BigQuery `prompt_content.request_text` for a normal Smart turn.
-- **Eval report** per §4.7, attached to the PR.
+**Commands** (the requesting user, own skills only): `$skill save <code>`, `$skill list`, `$skill delete <name>`. Delete removes the index document **and** its `versions/*` documents. Editing is a new draft plus `save`.
 
-## 9. Open questions (carried to later phases)
+**Checks** (at draft and at save): name format, no collision with a system skill, pydantic validation, size caps, `SecurityPort` — a flagged description or body is **rejected**, never stored sanitized (a skill is followed verbatim). These are hygiene; the security boundary is the command.
 
-- **Q-scope (phase 3).** Should skills be per agent *and* per session/binding? Example: a Spanish tutor and a French tutor of the same user. The owner leans towards "both". Separate design.
-- **Q-multi-turn.** A loaded body lives for one turn (tool results are not persisted). For procedures spanning several messages, should a loaded skill be pinned to the session? This relates to a general "recall full turn / pin to session" history mechanism. The deep-research-prep eval (§4.6) shows how much it matters.
-- **Q-turns (engine-wide, separate).** `DelegationEngine` could warn the model two turns before `max_turns` instead of ending in `max_turns_exhausted` with no answer.
+**Storage** (`FirestoreSkillRepository`):
+- `{prefix}skills/{user_id}:{name}` — `user_id`, `name`, `description`, `current`, `account_id`, `updated_at`; versions in a subcollection `versions/v<n>` (`SKILL.md` text, `saved_at`).
+- `{prefix}skill_drafts/{user_id}:{code}` — immutable; `user_id`, `name`, `SKILL.md` text, `created_at`. No TTL policy: a stale draft is inert.
+- Queries filter by equality on `user_id` (and `name` for drafts) — never by document-id prefix.
+- **One write method:** `save_version(user_id, skill, consume_drafts_named: Optional[str])` — one transaction that runs the cap count, assigns the next version, writes it, flips `current`, and, when `consume_drafts_named` is set, deletes every pending draft of that name. `$skill save` calls it with the draft's name; delivery A's seeding script calls it without. Both run the same checks first.
+- Cap: 20 custom skills per user.
+
+**Residual risk, accepted:** the user saves a code-delivered preview carrying text injected earlier in the conversation, without reading it. No autonomous write exists, so nothing self-propagates. `decisions/standing_directives.md` ("autonomous self-notes rejected permanently") is unaffected.
+
+## 9. Why not prompt tokens
+
+A token is one per category (the dedup key in override resolution), rendered in full, lives in the 24 h template cache, and has no versions. Skills are open-ended in number and render as a one-line trigger.
+
+## 10. Deliveries and acceptance
+
+**Delivery A — reading custom skills, on the owner's `flight-status`.**
+- Code: `Skill` model and parsing, `SkillRepository` + `FirestoreSkillRepository` (read, plus the transactional write the seeding script uses), `local_tools` in `DelegationEngine`, `use_skill` with the visibility sets, the catalog, §7 persistence.
+- Seeding: `scripts/skills/seed_custom_skill.py --user <id> --file <path>` runs the save checks (pydantic, size, `SecurityPort` reject) and calls `save_version(..., consume_drafts_named=None)`. It resolves the collection prefix through `EnvironmentConfig`, never hardcoded. The script is tracked; the skill text lives in gitignored `scripts/memory/` — it is personal.
+- Content: `flight-status`, drafted with the owner in chat.
+- **Gate to B**, both required:
+  1. the infra-free trigger eval: Smart's real system prompt, a catalog with `flight-status` plus a few decoys, ~15 matching, ~15 near-miss, ~10 unrelated prompts, per provider/model Smart runs; pass bar recall ≥ 0.8, false loads ≤ 0.1 (owner may change it);
+  2. real use: Logfire shows `use_skill("flight-status")` on flight questions, and the answer follows the skill's pages and rules. **Load-and-follow is logged separately from fetch success** — a bot-blocked or JS-rendered page is not a skill failure.
+  If either fails, B is reconsidered before any work on it.
+
+**Delivery B — authoring and system skills.**
+- Code: `FileSystemSkillRepository`, `draft_skill`, `skill_preview`, `$skill` commands, the offering line, `smart/skill-creator`.
+- Acceptance: the owner creates a second real skill with Smart in chat, saves it, uses it in a new thread; the `skill-creator` run itself survives compression via reload; offering frequency observed and tuned.
+
+**Unit:** parsing and validation; visible set and collisions; `local_tools` dispatch, results, spans; `visible` computed from tiered model messages only and `loaded_now`; no `history_context` on terminal siblings; catalog renders only when non-empty, before directives; `skill_context` persisted as a raw block with a neutral stub, after the summary; save code random, never in the model's tool result; `skill_preview` delivered only by `ConversationHandler`; save transaction (cap, version flip, draft cleanup); stale code saves its own content; forwarded Telegram command ignored; delete removes versions; every repo skill parses. **Adapter wire tests:** a request with three tools on each provider (Gemini emits one `types.Tool` per function, `gemini_adapter.py:374-391`). Plus `make check`.
+
+## 11. Review gates — Fable
+
+Fable (`claude-fable-5-1`), briefed as a **skeptical architect**: is it worth building, is it the simplest design, what is wrong or missing, do the code claims hold.
+
+| Gate | Artefact | Blocks |
+|------|----------|--------|
+| G1 | this RFC (ran on rev 5 and rev 6; targeted check on rev 7) | the plan |
+| G2 | the plan (covers A and B) | implementation |
+| G3 | each delivery's branch | that merge |
+
+Findings are resolved in the artefact; a gate re-runs when a finding changed the design.
+
+## 12. Open questions
+
+- **Q1 — Consolidation duplication.** The conversation that produced a skill is also consolidated into facts. Proposal: accept and observe.
+- **Q2 — Tutor/Lelik.** Out of v1; revisit when a concrete procedure needs them.
+
+## 13. Alternatives rejected
+
+- **Skills as intents of `delegate_to_specialist`** (revisions 1–5). Needed a `SkillsAgent`, caller identity and a `mode` override, and told the model a procedure is a specialist.
+- **A background LLM author with six defence layers** (revision 4). Detection after the fact is unreliable; authorization by a typed command removes the need.
+- **A command authorizing a name** (rev 5) and **a code derived from the content hash** (rev 6). The first let the model show one text and save another; the second let whoever wrote the content compute the code in advance.
+- **A text preview** (rev 6). Channels truncate and reformat it, so it is neither complete nor verbatim.
+- **A separate history part for the skill** (rev 5). Invalid for OpenAI/Grok assistant messages; no gain over one part.
+- **GCS version folders** (revisions 2–5). A draft cannot carry files; Firestore holds 20 KB and writes in one transaction.
+- **The owner's procedures as system skills.** The repo is public and system skills are shared by all users.
+- **Lifecycle machinery** (TTL, `release_skill`, `active_skills`, pinning). Tiering plus a stub does the same with no state.
+- **Addressable history** (`expand_history(ids)`). Deferred until a logged case of Smart redoing expensive, non-reproducible work within the window.
+- **Migrating `build_alert` / `PROTOCOL_*`; a `procedure` fact domain; situational directives; provider-native Skills on Claude only; an LLM on reads.**
+
+## 14. Resolution of G1 findings
+
+**Revision 5 review** — resolved in revision 6: separate tools (removed SkillsAgent, caller identity, `mode`), one history part, Firestore storage, Smart only, catalog before directives, `yaml.safe_load`, no in-process catalog cache, user/model note pair, Telegram forwards, the real case in §1.
+
+**Revision 6 review:**
+
+| Finding | Resolution |
+|---------|------------|
+| B1′ text preview truncated and reformatted | `skill_preview`: verbatim file + separate command message, `ConversationHandler` only (§8 step 4) |
+| M1′ code computable from content | Random code (§8 step 3) |
+| M2′ draft spec inconsistent | Immutable drafts keyed by code; save deletes all drafts of the name (§8 step 6) |
+| M3′ already-visible unspecified | `visible` from tiered model messages + `loaded_now`, handler closures per execution (§5) |
+| Terminal-sibling phantom bodies | No `history_context` on terminal siblings (§5) |
+| Parallel batch before reading | Stated and accepted (§5) |
+| Gemini multi-tool | Wire tests for three tools per provider (§10) |
+| Stub leaks to Lelik | Neutral stub; reload instruction in Smart's catalog (§6, §7) |
+| Stub placement vs async summary | Appended in the loop after the summary resolves (§7) |
+| System skills public | Personal skills are custom; A reads custom skills and seeds `flight-status` (§3, §10) |
+| A's gate weak | Trigger eval required; load-and-follow logged apart from fetch success (§10) |
+| Delete and cap | Versions deleted explicitly; count inside the save transaction (§8) |
+| SecurityPort sanitize vs reject | Reject (§8) |
+| Offering line always on | Tuned on live use (§6, §10) |
