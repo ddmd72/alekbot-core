@@ -188,6 +188,9 @@ class GeminiAdapter(LLMPort):
             thinking_config=(
                 # Map unified thinking level to Gemini ThinkingConfig.
                 # "low" → LOW (Flash-safe), "medium" → MEDIUM, "high" → HIGH (Pro-grade).
+                # "xhigh" → HIGH: Gemini has no level above HIGH. An unknown value is MEDIUM,
+                # as on the other adapters — it used to fall to LOW, so asking for the
+                # maximum silently got the minimum.
                 # thinking_budget deprecated in Gemini 3+; using thinking_level only.
                 # include_thoughts=True surfaces thought text for observability (no extra cost).
                 types.ThinkingConfig(
@@ -195,7 +198,8 @@ class GeminiAdapter(LLMPort):
                         "low": types.ThinkingLevel.LOW,
                         "medium": types.ThinkingLevel.MEDIUM,
                         "high": types.ThinkingLevel.HIGH,
-                    }.get(thinking, types.ThinkingLevel.LOW),
+                        "xhigh": types.ThinkingLevel.HIGH,
+                    }.get(thinking, types.ThinkingLevel.MEDIUM),
                     include_thoughts=True,
                 )
                 if thinking else None

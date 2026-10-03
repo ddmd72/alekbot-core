@@ -123,7 +123,8 @@ class GrokAdapter(LLMPort):
     # Anything else is normalised to "medium", mirroring OpenAIAdapter — the value
     # originates in user config (`agent_thinking`, `complexity_settings_overrides`),
     # so an unexpected string must not become an HTTP 400 mid-conversation.
-    _EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high"}
+    # xhigh: listed in the live capabilities of grok-4.3/4.6/4.7 (GET /v1/language-models, 2026-10-03).
+    _EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh"}
     _EFFORT_NONE_MODELS = ("grok-4.3",)
 
 

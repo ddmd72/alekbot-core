@@ -1225,3 +1225,18 @@ class TestAnchorExtractionAcrossTurns:
         )
         assert blob.count("System anchors.") == 1
         assert "newer question" in blob
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["grok-4.7", "grok-4.6", "grok-4.3"])
+async def test_xhigh_passes_through(model):
+    """xhigh is in the live capabilities of every tiered Grok model — it must not collapse to medium."""
+    adapter = GrokAdapter(api_key="test-key")
+    captured = {}
+    _install(adapter, captured=captured)
+
+    await adapter.generate_content(
+        request=LLMRequest(model_name=model, messages=MESSAGES, thinking="xhigh"),
+    )
+
+    assert captured["reasoning"] == {"effort": "xhigh"}

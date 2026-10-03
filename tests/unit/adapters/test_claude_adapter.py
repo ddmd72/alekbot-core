@@ -1927,3 +1927,36 @@ async def test_fallback_keeps_structured_output_format():
     assert calls[1]["output_config"]["format"]["type"] == "json_schema"
     assert calls[1]["output_config"]["effort"] == "low"
     assert calls[1]["thinking"] == {"type": "adaptive"}
+
+
+@pytest.mark.asyncio
+async def test_xhigh_forwarded_on_models_that_support_it():
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
+    await adapter.generate_content(
+        request=LLMRequest(model_name="claude-sonnet-5-5", messages=_MESSAGES, thinking="xhigh")
+    )
+    assert captured["output_config"] == {"effort": "xhigh"}
+
+
+@pytest.mark.asyncio
+async def test_xhigh_clamped_to_high_on_the_sonnet_4_6_fallback():
+    """Sonnet 5 → 4.6 fallback: 4.6's effort scale stops at high, xhigh would be a 400."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    calls = []
+    exc = _FakeAPIStatusError("server error", status_code=500)
+
+    def stream(**kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("model") == "claude-sonnet-5":
+            return _make_raising_cm(exc)
+        return _make_claude_cm(_make_sdk_response("recovered"))
+
+    adapter.client.messages.stream = stream
+    await adapter.generate_content(
+        request=LLMRequest(model_name="claude-sonnet-5", messages=_MESSAGES, thinking="xhigh")
+    )
+    assert calls[0]["output_config"] == {"effort": "xhigh"}
+    assert calls[1]["model"] == "claude-sonnet-4-6"
+    assert calls[1]["output_config"] == {"effort": "high"}
