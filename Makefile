@@ -64,7 +64,7 @@ K ?= 300
 .PHONY: logs-relay fetch-logs-relay
 .PHONY: services status
 .PHONY: claude-model claude-rollback claude-forward dr-model dr-rollback dr-forward
-.PHONY: check-models check-pricing
+.PHONY: check-models check-pricing openai-model openai-rollback openai-forward
 .PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
 .PHONY: delete
 
@@ -254,6 +254,23 @@ claude-forward: ## Flip PERFORMANCE tier live -> Sonnet 5.5 (no redeploy)
 	@echo "⏩ Rolling Claude PERFORMANCE tier forward to claude-sonnet-5-5 (live)..."
 	gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
 		--update-env-vars CLAUDE_PERFORMANCE_MODEL=claude-sonnet-5-5
+	@echo "✅ Live env flipped."
+
+# --- OpenAI tier kill-switch (GPT-6 rollout, 2026-10) -------------------------
+# OPENAI_TIER_OVERRIDES="tier=model,..." remaps OpenAIAdapter.MODEL_TIERS live, no rebuild.
+# `make deploy` drops it (not in cloudbuild-dev.yaml) → the GPT-6 tier map in code governs.
+openai-model: ## Show the live OPENAI_TIER_OVERRIDES (unset => GPT-6 tier map in code)
+	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format=export 2>/dev/null \
+		| grep -A1 "name: OPENAI_TIER_OVERRIDES" || echo "  OPENAI_TIER_OVERRIDES unset => tier map in openai_adapter.py"
+
+openai-rollback: ## KILL-SWITCH: OpenAI tiers live -> GPT-5.x map (no redeploy)
+	@echo "⏪ Rolling OpenAI tiers back to the GPT-5.x map (live)..."
+	gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
+		--update-env-vars "^@^OPENAI_TIER_OVERRIDES=eco=gpt-5.4-nano,balanced=gpt-5.6-luna,performance=gpt-5.6-terra,ultra=gpt-5.6-sol"
+	@echo "✅ Live env flipped. Run 'make openai-forward' to return to the GPT-6 map."
+
+openai-forward: ## Remove OPENAI_TIER_OVERRIDES -> code tier map governs (live)
+	gcloud run services update $(SERVICE_NAME) --region=$(REGION) --remove-env-vars OPENAI_TIER_OVERRIDES
 	@echo "✅ Live env flipped."
 
 # Deep Research model levers. NOTE: CLAUDE_DEEP_RESEARCH_MODEL (model_override) pins EVERY

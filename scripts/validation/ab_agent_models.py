@@ -10,6 +10,11 @@ Legs:
   search_web — WebSearchAgent, grounded search (BALANCED tier in production)
   fetch_url  — WebSearchAgent, one known page (ECO downgrade in production); queries need a URL
   maps       — MapsSearchAgent, Maps tool loop (BALANCED)
+  smart      — SmartResponseAgent, its full delegation loop, in DRY-RUN: read-only delegations
+               (memory/web/mail/maps/compute/open_file) run for real on their own unchanged
+               models; anything that writes (save_to_memory, reminders, tasks, documents, media,
+               deep research, ...) is answered "accepted, not executed". Isolated session.
+               Only Smart's own model differs between the legs.
 
 Queries are the user's real recent delegations, pulled from BigQuery `prompt_content`.
 Calls alternate A/B per query (A,B then B,A) so API latency drift hits both models evenly.
@@ -29,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import copy
 import asyncio
 import json
 import os
@@ -60,11 +66,23 @@ from src.domain.agent import AgentIntent, AgentMessage
 from src.domain.billing import calculate_cost
 from src.domain.request_context import RequestContext
 from src.infrastructure.agent_coordinator import AgentCoordinator
+from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
+from src.infrastructure.agent_registry import AgentRegistry
+from src.infrastructure.delegation_engine import DelegationEngine, ToolResult
+from src.domain.llm import USER_TURN_SYSTEM_ANCHOR
 from src.ports.llm_port import LLMRequest, Message, MessagePart
 
 _OUT_DIR = Path("scripts/memory/ab_agents")
-_LEG_SOURCE = {"search_web": "web_search", "fetch_url": "web_search", "maps": "maps_search"}
-_LEG_AGENT = {"search_web": "web_search_agent", "fetch_url": "web_search_agent", "maps": "maps_search_agent"}
+_LEG_SOURCE = {"search_web": "web_search", "fetch_url": "web_search", "maps": "maps_search",
+               "smart": "smart_response"}
+_LEG_AGENT = {"search_web": "web_agent", "fetch_url": "web_agent", "maps": "maps_agent",
+              "smart": "smart_agent"}
+# Smart dry run: delegations that only READ. Everything else is stubbed.
+_READ_ONLY_INTENTS = {
+    "search_memory", "search_web", "search_web_light", "fetch_url", "search_emails",
+    "get_email_details", "get_email_attachment", "maps_query", "compute", "compute_math",
+    "compute_datetime", "compute_finance", "user_guide", "open_file",
+}
 _JUDGE_MODEL = "claude-sonnet-5-5"
 _URL = re.compile(r"https?://\S+")
 
@@ -89,11 +107,15 @@ def load_queries(leg: str, n: int, days: int) -> List[str]:
             continue
         q = text[i + len("\nuser: "):].strip()
         q = re.sub(r"^current_date_time:[^\n]*\n+", "", q)
+        if q.startswith(USER_TURN_SYSTEM_ANCHOR[:40]):
+            q = q[len(USER_TURN_SYSTEM_ANCHOR):].strip()  # Smart injects the anchor into the user turn
         q = re.sub(r"^\[[^\]]*UTC\]\s*", "", q).strip()
         if leg == "fetch_url" and not _URL.search(q):
             continue
         if leg == "search_web" and _URL.search(q):
             continue
+        if leg == "smart" and len(q) < 60:
+            continue  # the dry-run session has no history; a short reply makes no sense without it
         key = q[:120]
         if q and key not in seen:
             seen.add(key)
@@ -108,8 +130,8 @@ async def run_one(agent, leg: str, model: str, query: str, user_id: str, account
     models_ran: List[str] = []
     orig = agent._call_llm
 
-    async def capturing(request, turn=None):
-        resp = await orig(request, turn=turn) if turn is not None else await orig(request)
+    async def capturing(request, *args, **kwargs):
+        resp = await orig(request, *args, **kwargs)
         u = getattr(resp, "usage_metadata", None)
         ran = request.model_name
         models_ran.append(ran)
@@ -128,13 +150,24 @@ async def run_one(agent, leg: str, model: str, query: str, user_id: str, account
     agent.model_name = model
     if leg == "fetch_url":
         agent._fetch_model_name = lambda: model
-    payload: Dict[str, Any] = {"query": query}
+    orig_resolve = getattr(agent, "_resolve_effective", None)
+    if leg == "smart":
+        def pinned_resolve(msg):
+            eff = orig_resolve(msg)
+            ctx = copy.copy(eff.ctx)
+            ctx.model_name = model
+            return type(eff)(ctx=ctx, thinking_effort=eff.thinking_effort)
+        agent._resolve_effective = pinned_resolve
+    payload: Dict[str, Any] = {"text": query} if leg == "smart" else {"query": query}
     if leg == "fetch_url":
         url = _URL.search(query).group(0).rstrip(").,]")
         payload = {"url": url, "query": query.replace(url, "").strip()}
     message = AgentMessage.create(
         sender="ab_agent_models", recipient=agent.agent_id, intent=AgentIntent.QUERY,
-        payload=payload, context={"user_id": user_id, "account_id": account_id, "session_id": "ab_agents"},
+        payload=payload, context={"user_id": user_id, "account_id": account_id,
+                                  "session_id": f"{user_id}:ab_agents_dry_run",
+                                  # Smart reads the current turn from here, not from payload.text.
+                                  "current_message_parts": [MessagePart(text=query)]},
     )
     t0 = time.time()
     try:
@@ -147,8 +180,25 @@ async def run_one(agent, leg: str, model: str, query: str, user_id: str, account
         ok, answer = False, f"[EXCEPTION] {type(e).__name__}: {e}"
     finally:
         agent._call_llm = orig
+        if orig_resolve is not None:
+            agent._resolve_effective = orig_resolve
     return {"model": model, "models_ran": sorted(set(models_ran)), "ok": ok,
             "elapsed_s": round(time.time() - t0, 2), "answer": answer, **usage}
+
+
+def _install_dry_run_dispatch() -> None:
+    """Let read-only delegations through; answer every writing one without executing it."""
+    real_dispatch = DelegationEngine.dispatch
+
+    async def guarded(self, tool_call, context, *args, **kwargs):
+        intent = (tool_call.args or {}).get("intent", "")
+        if intent in _READ_ONLY_INTENTS:
+            return await real_dispatch(self, tool_call, context, *args, **kwargs)
+        print(f"      (dry run: stubbed '{intent}')")
+        return ToolResult(name=tool_call.name,
+                          result_str=f"Done: '{intent}' accepted and completed successfully.")
+
+    DelegationEngine.dispatch = guarded
 
 
 _JUDGE_SCHEMA = {"type": "object", "properties": {
@@ -161,10 +211,11 @@ async def judge(claude: ClaudeAdapter, query: str, a: str, b: str) -> Dict[str, 
     swap = random.random() < 0.5
     first, second = (b, a) if swap else (a, b)
     prompt = (
-        "You compare two answers a research assistant gave to the same request. Judge them as "
+        "You compare two answers an assistant gave to the same request. Judge them as "
         "the person who sent the request would: does it answer what was asked, is it accurate and "
         "specific (dates, places, numbers, sources), is it free of filler, does it admit what it "
-        "could not find instead of inventing it. Length is not quality.\n\n"
+        "could not find instead of inventing it. Length is not quality. Neither assistant saw "
+        "the earlier conversation, so do not penalise a missing reference to it.\n\n"
         f"<request>\n{query}\n</request>\n\n<answer_1>\n{first[:12000]}\n</answer_1>\n\n"
         f"<answer_2>\n{second[:12000]}\n</answer_2>\n\n"
         "Return which answer is better (\"1\", \"2\" or \"tie\") and a one-sentence reason.")
@@ -204,9 +255,15 @@ async def main(args) -> None:
     account_repo = FirestoreAccountRepository(db_client=db, collection_name=env_config.account_collection_name)
     user_repo = FirestoreUserRepository(db, env_config, account_repo)
     container = ServiceContainer(config=settings, db_client=db, env_config=env_config, account_repo=account_repo)
-    factory = UserAgentFactory(config=settings, env_config=env_config, coordinator=AgentCoordinator(),
+    registry = AgentRegistry()  # as main.py wires it — without it Smart is offered no intents
+    for descriptor in ALL_DESCRIPTORS:
+        registry.register(descriptor)
+    factory = UserAgentFactory(config=settings, env_config=env_config,
+                               coordinator=AgentCoordinator(registry=registry),
                                user_repo=user_repo, account_repo=account_repo, **container.agent_services())
     agent = (await factory.ensure_agents_for_user(user_id))[_LEG_AGENT[args.leg]]
+    if args.leg == "smart":
+        _install_dry_run_dispatch()
     claude = ClaudeAdapter(api_key=os.environ["ANTHROPIC_API_KEY"].strip())
 
     rows: List[Dict[str, Any]] = []

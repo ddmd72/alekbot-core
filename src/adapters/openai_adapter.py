@@ -33,6 +33,7 @@ Migration from Chat Completions to Responses API (2026-04):
 import asyncio
 import hashlib
 import json
+import os
 import openai
 from typing import List, Any, Optional, Set, Dict
 from openai import AsyncOpenAI
@@ -148,6 +149,28 @@ class OpenAIAdapter(LLMPort):
             max_retries=2,
         )
         logger.info("✅ [OpenAIAdapter] Initialized: base_url=api.openai.com, timeout=300s")
+        # Rollback lever (no redeploy): OPENAI_TIER_OVERRIDES="balanced=gpt-5.6-luna,eco=gpt-5.4-nano"
+        # remaps tiers live — `make openai-rollback`. Optional knob → os.getenv, not load_settings().
+        overrides = self._parse_tier_overrides(os.getenv("OPENAI_TIER_OVERRIDES", ""))
+        if overrides:
+            self.MODEL_TIERS = {**self.MODEL_TIERS, **overrides}
+            logger.warning("⚠️ [OpenAIAdapter] tier overrides active: %s",
+                           {t.value: m for t, m in overrides.items()})
+
+    @staticmethod
+    def _parse_tier_overrides(raw: str) -> Dict["PerformanceTier", str]:
+        """`tier=model,tier=model` → {PerformanceTier: model}. A malformed pair is logged and
+        skipped — a typo in a rollback switch must not take the adapter down."""
+        overrides: Dict[PerformanceTier, str] = {}
+        for pair in filter(None, (p.strip() for p in raw.split(","))):
+            tier, sep, model = pair.partition("=")
+            try:
+                if not sep or not model.strip():
+                    raise ValueError(pair)
+                overrides[PerformanceTier(tier.strip().lower())] = model.strip()
+            except ValueError:
+                logger.error("❌ [OpenAIAdapter] ignoring malformed OPENAI_TIER_OVERRIDES pair %r", pair)
+        return overrides
 
     async def generate_content(self, request: LLMRequest) -> LLMResponse:
         """Generate content using OpenAI Responses API."""

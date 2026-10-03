@@ -1140,3 +1140,35 @@ async def test_gpt6_uses_prompt_cache_key_not_retention():
     )
     assert "prompt_cache_retention" not in captured
     assert captured["extra_body"]["prompt_cache_key"].startswith("alek-")
+
+
+# ---------------------------------------------------------------------------
+# OPENAI_TIER_OVERRIDES rollback lever
+# ---------------------------------------------------------------------------
+
+
+def test_tier_overrides_env_remaps_only_named_tiers(monkeypatch):
+    monkeypatch.setenv("OPENAI_TIER_OVERRIDES", "balanced=gpt-5.6-luna, ECO=gpt-5.4-nano")
+    adapter = OpenAIAdapter(api_key="test-key")
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gpt-5.6-luna"
+    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gpt-5.4-nano"
+    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == OpenAIAdapter.MODEL_TIERS[PerformanceTier.ULTRA]
+
+
+def test_tier_overrides_do_not_leak_into_the_class(monkeypatch):
+    monkeypatch.setenv("OPENAI_TIER_OVERRIDES", "balanced=some-model")
+    OpenAIAdapter(api_key="test-key")
+    assert OpenAIAdapter.MODEL_TIERS[PerformanceTier.BALANCED] != "some-model"
+
+
+def test_malformed_override_pairs_are_skipped(monkeypatch):
+    monkeypatch.setenv("OPENAI_TIER_OVERRIDES", "bogus=x,balanced,=y,performance=gpt-5.6-terra")
+    adapter = OpenAIAdapter(api_key="test-key")
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-5.6-terra"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == OpenAIAdapter.MODEL_TIERS[PerformanceTier.BALANCED]
+
+
+def test_no_override_env_keeps_class_tiers(monkeypatch):
+    monkeypatch.delenv("OPENAI_TIER_OVERRIDES", raising=False)
+    adapter = OpenAIAdapter(api_key="test-key")
+    assert adapter.MODEL_TIERS is OpenAIAdapter.MODEL_TIERS
