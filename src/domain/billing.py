@@ -155,15 +155,23 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     #   gemini-flash-lite-latest → gemini-3.5-flash-lite  ($0.10/$0.40 → $0.30/$2.50)
     #   gemini-flash-latest      → gemini-3.6-flash       ($1.50/$9.00 → $1.50/$7.50)
     # Re-run the audit after any Gemini generation bump; it compares the RESOLVED id.
-    "gemini-flash-lite-latest":          {"input": 0.30,  "output": 2.50,  "cache_read": 0.25},
-    "gemini-flash-latest":               {"input": 1.50,  "output": 7.50,  "cache_read": 0.25},
+    # gemini-flash-latest → gemini-3.8-flash since 2026-09: $0.75/$3.75 is PROMOTIONAL until
+    # 2026-12-31, then $1.50/$7.50. We deliberately hold the post-promo price so spend is never
+    # under-reported (reads 2x high until 2027) — price_consensus.HOLD_FINAL_PRICE.
+    # cache_read 0.10: the current Gemini generation bills cached input at 10% of input
+    # (3.8-flash $0.075, 3.5-flash-lite $0.03, 3.1-pro $0.20 — verified 2026-10-03 on
+    # ai.google.dev pricing + LiteLLM). It was 0.25 for earlier generations.
+    "gemini-flash-lite-latest":          {"input": 0.30,  "output": 2.50,  "cache_read": 0.10},
+    "gemini-flash-latest":               {"input": 1.50,  "output": 7.50,  "cache_read": 0.10},
     # Explicit generation, priced the same as the alias that currently resolves to it.
     # Needed because `calculate_cost` returns 0.0 for an unknown model — SILENTLY. Pinning
     # a tier to an explicit id without adding it here makes that traffic free on the books,
     # the same defect class as the retired grok-4-1-fast-* ids (grok_revival_2026_08.md).
-    "gemini-3.5-flash-lite":             {"input": 0.30,  "output": 2.50,  "cache_read": 0.25},
-    "gemini-pro-latest":                 {"input": 2.00,  "output": 12.00, "cache_read": 0.25},
-    "gemini-3-flash-preview":            {"input": 0.50,  "output": 3.00,  "cache_read": 0.25},
+    "gemini-3.5-flash-lite":             {"input": 0.30,  "output": 2.50,  "cache_read": 0.10},
+    # BALANCED pin since 2026-10-03; same hold-final-price policy as the alias that resolves to it.
+    "gemini-3.8-flash":                  {"input": 1.50,  "output": 7.50,  "cache_read": 0.10},
+    "gemini-pro-latest":                 {"input": 2.00,  "output": 12.00, "cache_read": 0.10},
+    "gemini-3-flash-preview":            {"input": 0.50,  "output": 3.00,  "cache_read": 0.10},
     "deep-research-pro-preview-12-2025": {"input": 1.25,  "output": 10.00, "cache_read": 0.25},
     "models/gemini-3-pro-preview":       {"input": 2.00,  "output": 12.00, "cache_read": 0.25},
     # --- Claude (Opus 4.8 for ULTRA tier from 2026-05-30; same pricing as 4.7) ---
@@ -182,6 +190,12 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "claude-sonnet-5":                   {"input": 2.00,  "output": 10.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-6":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-8":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
+    # Sonnet 5.5 (2026-09-28): same rates as Sonnet 5. Opus 5.5 (2026-09-22): $4/$20 with cache
+    # reads at 5% of input ($0.20), not the usual 10%. Verified 2026-10-03 on the live model overview.
+    "claude-sonnet-5-5":                 {"input": 2.00,  "output": 10.00, "cache_read": 0.10, "cache_write": 1.25},
+    # Fable 5.1 (ULTRA since 2026-10-03): $10/$50, cache reads at 2.5% of input ($0.25).
+    "claude-fable-5-1":                  {"input": 10.00, "output": 50.00, "cache_read": 0.025, "cache_write": 1.25},
+    "claude-opus-5-5":                   {"input": 4.00,  "output": 20.00, "cache_read": 0.05, "cache_write": 1.25},
     # --- OpenAI GPT-5.6 family (Luna/Terra/Sol, GA 2026-07-09) — active tier defaults ---
     # cache_write 1.25: GPT-5.6 bills cache writes at 1.25x uncached input (new vs 5.4/5.5 = free).
     # NOTE: only charged if usage surfaces cache-write tokens — verify extraction (RFC §3.4).
@@ -195,7 +209,15 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # Cost recorded for 2026-07-30..31 is over-reported for luna/terra (BALANCED/PERFORMANCE tiers).
     "gpt-5.6-luna":                      {"input": 0.20,  "output": 1.20,  "cache_read": 0.10, "cache_write": 1.25},
     "gpt-5.6-terra":                     {"input": 2.00,  "output": 12.00, "cache_read": 0.10, "cache_write": 1.25},
+    # Sol is on a $4/$20 promo through 2026-11-21; we hold the standard $5/$30 (HOLD_FINAL_PRICE).
+    # GPT-5.6 also has a long-context tariff (2x input) that this single-price table does not model.
     "gpt-5.6-sol":                       {"input": 5.00,  "output": 30.00, "cache_read": 0.10, "cache_write": 1.25},
+    # --- OpenAI GPT-6 family (Sept 2026) — verified 2026-10-03 on developers.openai.com pricing
+    # + LiteLLM. gpt-6.1-sol reads cache at 5% ($0.10 on $2). Long-context tier (2x input) not modelled.
+    "gpt-6-luna":                        {"input": 0.10,  "output": 0.50,  "cache_read": 0.10, "cache_write": 1.25},
+    "gpt-6-sol":                         {"input": 2.00,  "output": 10.00, "cache_read": 0.10, "cache_write": 1.25},
+    "gpt-6.1-sol":                       {"input": 2.00,  "output": 10.00, "cache_read": 0.05, "cache_write": 1.25},
+    "gpt-6-astra":                       {"input": 10.00, "output": 50.00, "cache_read": 0.10, "cache_write": 1.25},
     # --- OpenAI (gpt-5.4 family, Mar 2026; gpt-5.5-pro retained for rollback/history) ---
     "gpt-5.4-nano":                      {"input": 0.20,  "output": 1.25,  "cache_read": 0.10},
     "gpt-5.4-mini":                      {"input": 0.75,  "output": 4.50,  "cache_read": 0.10},
@@ -215,6 +237,7 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # NOT modelled: xAI doubles BOTH input and output once a prompt reaches 200k tokens.
     # Long-context Grok requests are therefore under-costed by 2x. Acceptable while
     # Grok is not a default provider; revisit if it starts carrying real traffic.
+    "grok-4.7":                          {"input": 2.00,  "output": 6.00,  "cache_read": 0.25},
     "grok-4.6":                          {"input": 2.00,  "output": 6.00,  "cache_read": 0.25},
     "grok-4.5":                          {"input": 2.00,  "output": 6.00,  "cache_read": 0.15},
     "grok-4.3":                          {"input": 1.25,  "output": 2.50,  "cache_read": 0.16},

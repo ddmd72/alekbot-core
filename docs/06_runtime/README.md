@@ -234,7 +234,7 @@ HTTP endpoints: [API_REFERENCE.md](./API_REFERENCE.md).
     
     
     
-    "metadata": {"model": "gemini-2.0-flash-thinking", "tokens": 1234}
+    
 }
 ```
 

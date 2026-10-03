@@ -24,11 +24,15 @@ from ..utils.logger import logger
 # ("every year on 1 Jan") while keeping an unmatchable rule terminating.
 _HORIZON_YEARS = 10
 
-_ALLOWED_FREQ = {"HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
-# Sub-hourly frequencies are meaningless here: the firing cron ticks every 15 min.
+_ALLOWED_FREQ = {"MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
+# The firing cron (`fire_due_reminders`, docs/07_deployment/SCHEDULERS.md) ticks every
+# 5 min, so a finer step cannot be honoured: the note's due would fall behind real time
+# and fire on every tick. Change this together with the scheduler cadence.
+_MIN_MINUTELY_INTERVAL = 5
 _REJECTED_PARTS = ("DTSTART", "EXDATE", "RDATE")
 
 _FREQ_UNIT = {
+    "MINUTELY": "minute",
     "HOURLY": "hour",
     "DAILY": "day",
     "WEEKLY": "week",
@@ -56,6 +60,11 @@ class DateutilRecurrenceAdapter(RecurrencePort):
             raise ValueError(
                 f"FREQ must be one of {', '.join(sorted(_ALLOWED_FREQ))} "
                 f"(got {freq or 'nothing'})."
+            )
+        if freq == "MINUTELY" and self._interval(parts) < _MIN_MINUTELY_INTERVAL:
+            raise ValueError(
+                f"FREQ=MINUTELY needs INTERVAL of at least {_MIN_MINUTELY_INTERVAL} "
+                f"(reminders are checked every {_MIN_MINUTELY_INTERVAL} minutes)."
             )
         if "COUNT" in parts or "UNTIL" in parts:
             raise ValueError(
@@ -197,6 +206,15 @@ class DateutilRecurrenceAdapter(RecurrencePort):
             key, value = chunk.split("=", 1)
             parts[key.strip()] = value.strip()
         return parts
+
+    @staticmethod
+    def _interval(parts: Dict[str, str]) -> int:
+        """RRULE ``INTERVAL`` (default 1). Raises ValueError on a non-integer."""
+        raw = parts.get("INTERVAL", "1")
+        try:
+            return int(raw)
+        except ValueError:
+            raise ValueError(f"INTERVAL must be a positive integer (got {raw!r}).") from None
 
     @staticmethod
     def _zone(tz: str) -> ZoneInfo:

@@ -79,21 +79,21 @@ def test_openai_capabilities():
 def test_openai_model_for_tier():
     adapter = OpenAIAdapter(api_key="test-key")
 
-    # GPT-5.6 migration (docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md): ECO stays 5.4-nano
-    # (no 5.6 sub-Luna tier); BALANCED/PERFORMANCE move to Luna/Terra.
-    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gpt-5.4-nano"
-    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gpt-5.6-luna"
-    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-5.6-terra"
+    # GPT-6 model refresh 2026-10-03 (decisions/model_refresh_2026_10.md): ECO and BALANCED
+    # both on gpt-6-luna; PERFORMANCE on gpt-6.1-sol (terra has no GPT-6 successor).
+    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gpt-6-luna"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gpt-6-luna"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-6.1-sol"
 
 
 def test_openai_model_for_tier_ultra():
-    """ULTRA tier maps to gpt-5.6-sol (GPT-5.6 migration 2026-07, from gpt-5.5-pro).
+    """ULTRA tier maps to gpt-6-astra (GPT-6 model refresh 2026-10-03, from gpt-5.6-sol).
 
-    Agentic-tool SOTA at ~1/6 the cost of gpt-5.5-pro.
-    See docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md.
+    ULTRA is the top model of each provider's family.
+    See docs/04_solution_strategy/decisions/model_refresh_2026_10.md.
     """
     adapter = OpenAIAdapter(api_key="test-key")
-    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "gpt-5.6-sol"
+    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "gpt-6-astra"
 
 
 def test_openai_unsupported_tier_raises():
@@ -1053,3 +1053,122 @@ async def test_usage_metadata_handles_missing_details():
     assert result.usage_metadata.completion_tokens == 200
     assert result.usage_metadata.cache_read_tokens == 0
     assert result.usage_metadata.cache_creation_tokens == 0
+
+
+# ---------------------------------------------------------------------------
+# GPT-6 family (probed live 2026-10-03)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra"])
+def test_gpt6_is_reasoning_model(model):
+    """The whole gpt-6 family 400s on temperature — it must be classed as a reasoning model."""
+    assert OpenAIAdapter(api_key="test-key")._is_reasoning_model(model)
+
+
+@pytest.mark.asyncio
+async def test_gpt6_luna_gets_effort_none_when_no_thinking_requested():
+    """gpt-6-luna reasons when `reasoning` is omitted — a no-thinking caller must stay off."""
+    captured = await _capture_reasoning("gpt-6-luna")
+    assert captured["reasoning"] == {"effort": "none"}
+    assert "temperature" not in captured
+
+
+@pytest.mark.asyncio
+async def test_gpt6_luna_grounding_still_forces_low():
+    """Grounding without thinking keeps the agentic-search floor, not the off-setting."""
+    captured = await _capture_reasoning("gpt-6-luna", use_grounding=True)
+    assert captured["reasoning"] == {"effort": "low"}
+
+
+@pytest.mark.asyncio
+async def test_models_without_thinking_off_entry_send_no_reasoning():
+    """gpt-5.4-nano does not reason by default — no reasoning block is added for it."""
+    captured = await _capture_reasoning("gpt-5.4-nano")
+    assert "reasoning" not in captured
+
+
+@pytest.mark.asyncio
+async def test_effort_none_is_expressible():
+    """'none' used to collapse to 'medium' — the opposite of the intent."""
+    captured = await _capture_reasoning("gpt-6-luna", thinking="none")
+    assert captured["reasoning"] == {"effort": "none"}
+
+
+@pytest.mark.asyncio
+async def test_effort_none_clamped_to_low_for_gpt61_sol():
+    """gpt-6.1-sol rejects 'none' (min 'low')."""
+    captured = await _capture_reasoning("gpt-6.1-sol", thinking="none")
+    assert captured["reasoning"]["effort"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_effort_none_clamped_to_medium_for_gpt55_pro():
+    captured = await _capture_reasoning("gpt-5.5-pro", thinking="none")
+    assert captured["reasoning"] == {"effort": "medium"}
+
+
+@pytest.mark.asyncio
+async def test_effort_xhigh_forwarded():
+    captured = await _capture_reasoning("gpt-6-sol", thinking="xhigh")
+    assert captured["reasoning"]["effort"] == "xhigh"
+
+
+@pytest.mark.asyncio
+async def test_unknown_effort_still_falls_back_to_medium():
+    captured = await _capture_reasoning("gpt-6-sol", thinking="minimal")
+    assert captured["reasoning"]["effort"] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_gpt6_uses_prompt_cache_key_not_retention():
+    adapter = OpenAIAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_create(**kwargs):
+        captured.update(kwargs)
+        return _make_response(text="OK")
+
+    adapter.client.responses.create = mock_create
+    await adapter.generate_content(
+        request=LLMRequest(
+            model_name="gpt-6-sol",
+            system_instruction=f"You are helpful.\n\n{PROMPT_CACHE_BOUNDARY}\nnow",
+            messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+            cache_config=PromptCacheConfig(enabled=True),
+        )
+    )
+    assert "prompt_cache_retention" not in captured
+    assert captured["extra_body"]["prompt_cache_key"].startswith("alek-")
+
+
+# ---------------------------------------------------------------------------
+# OPENAI_TIER_OVERRIDES rollback lever
+# ---------------------------------------------------------------------------
+
+
+def test_tier_overrides_env_remaps_only_named_tiers(monkeypatch):
+    monkeypatch.setenv("OPENAI_TIER_OVERRIDES", "balanced=gpt-5.6-luna, ECO=gpt-5.4-nano")
+    adapter = OpenAIAdapter(api_key="test-key")
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gpt-5.6-luna"
+    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gpt-5.4-nano"
+    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == OpenAIAdapter.MODEL_TIERS[PerformanceTier.ULTRA]
+
+
+def test_tier_overrides_do_not_leak_into_the_class(monkeypatch):
+    monkeypatch.setenv("OPENAI_TIER_OVERRIDES", "balanced=some-model")
+    OpenAIAdapter(api_key="test-key")
+    assert OpenAIAdapter.MODEL_TIERS[PerformanceTier.BALANCED] != "some-model"
+
+
+def test_malformed_override_pairs_are_skipped(monkeypatch):
+    monkeypatch.setenv("OPENAI_TIER_OVERRIDES", "bogus=x,balanced,=y,performance=gpt-5.6-terra")
+    adapter = OpenAIAdapter(api_key="test-key")
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gpt-5.6-terra"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == OpenAIAdapter.MODEL_TIERS[PerformanceTier.BALANCED]
+
+
+def test_no_override_env_keeps_class_tiers(monkeypatch):
+    monkeypatch.delenv("OPENAI_TIER_OVERRIDES", raising=False)
+    adapter = OpenAIAdapter(api_key="test-key")
+    assert adapter.MODEL_TIERS is OpenAIAdapter.MODEL_TIERS

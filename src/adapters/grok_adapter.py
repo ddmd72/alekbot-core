@@ -79,8 +79,11 @@ class GrokAdapter(LLMPort):
         # not; it does. Only grok-4.3 can be told to stop (`effort="none"`).
         PerformanceTier.ECO:         "grok-4.3",   # cheapest live
         PerformanceTier.BALANCED:    "grok-4.3",
-        PerformanceTier.PERFORMANCE: "grok-4.6",   # flagship, reasons by default
-        PerformanceTier.ULTRA:       "grok-4.6",   # no separate ultra model yet
+        # grok-4.7 (2026-09-21, same $2/$6 as 4.6). Probed 2026-10-03 at effort=medium on
+        # Smart-like tool turns: p50 1.6s vs 3.8s, 2-3x fewer output tokens. Without an effort
+        # it showed sporadic 12-60s tails (its default effort is "high", same as 4.6).
+        PerformanceTier.PERFORMANCE: "grok-4.7",   # flagship, reasons by default
+        PerformanceTier.ULTRA:       "grok-4.7",   # no separate ultra model yet
         PerformanceTier.TIER1:       "grok-4.3",
         PerformanceTier.TIER2:       "grok-4.3",
         PerformanceTier.TIER3:       "grok-4.3",
@@ -99,7 +102,7 @@ class GrokAdapter(LLMPort):
         # False means "no controllable caching", not "no caching"; the cached tokens
         # are still measured and priced in _parse_response / billing.py.
         context_caching=False,
-        vision=True,  # verified: input_image accepted on grok-4.6 and grok-4.3 (min 8x8 px)
+        vision=True,  # verified: input_image accepted on grok-4.6 and grok-4.3 (min 8x8 px); 4.7 lists image input
         # Per-model: grok-4.6 = 500k, grok-4.3 = 1M. Conservative value so this never
         # over-promises for the flagship. Declarative only — nothing reads it today.
         max_context_window=500000,
@@ -120,7 +123,8 @@ class GrokAdapter(LLMPort):
     # Anything else is normalised to "medium", mirroring OpenAIAdapter — the value
     # originates in user config (`agent_thinking`, `complexity_settings_overrides`),
     # so an unexpected string must not become an HTTP 400 mid-conversation.
-    _EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high"}
+    # xhigh: listed in the live capabilities of grok-4.3/4.6/4.7 (GET /v1/language-models, 2026-10-03).
+    _EFFORT_MAP = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh"}
     _EFFORT_NONE_MODELS = ("grok-4.3",)
 
 

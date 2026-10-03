@@ -883,3 +883,30 @@ class TestRun:
         # Only one research loop call
         assert client.messages.stream.call_count == 1
         assert response.status == AgentStatus.SUCCESS
+
+
+class TestFiveFiveGeneration:
+    """Sonnet 5.5 / Opus 5.5 are new-gen: no sampling param, adaptive thinking, 96K budget."""
+
+    @pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-opus-5-5"])
+    async def test_new_gen_request_shape(self, model):
+        msg = _api_message("end_turn", [_text_block("Final report")])
+        client = _client_with_streams(_FakeStream([], msg))
+        agent = _make_agent(client)
+
+        await agent._research_loop("query", "", model)
+
+        kwargs = client.messages.stream.call_args.kwargs
+        assert "temperature" not in kwargs
+        assert kwargs["thinking"] == {"type": "adaptive"}
+        assert kwargs["max_tokens"] == 96_000
+
+
+class TestRefusal:
+
+    async def test_refusal_is_a_failure_not_a_partial_report(self):
+        msg = _api_message("refusal", [])
+        msg.stop_details = MagicMock(category="cyber")
+        agent = _make_agent(_client_with_streams(_FakeStream([], msg)))
+        with pytest.raises(RuntimeError, match="declined"):
+            await agent._research_loop("query", "", "claude-fable-5-1")

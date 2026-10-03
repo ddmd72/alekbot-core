@@ -23,7 +23,7 @@ transport moved off Chat Completions.
 - Server-side search: `{"type": "web_search"}` (and `x_search`) — **Responses API only**
 - `instructions` as the system prompt, `temperature`, `reasoning.effort`
 - `response_schema` forwarded natively as `text.format.json_schema` (strict=False)
-- **Image input** — `input_image` accepted on grok-4.6 and grok-4.3 (minimum 8x8 px)
+- **Image input** — `input_image` accepted on grok-4.6 and grok-4.3 (minimum 8x8 px); grok-4.7 lists image input
 - `url_citation` annotations on grounded answers → appended as a `*Sources:*` block
 - `store` and `prompt_cache_key`
 - Automatic prompt caching, reported via `usage.input_tokens_details.cached_tokens`
@@ -63,7 +63,13 @@ Defined in `GrokAdapter.MODEL_TIERS` — the single source of truth (no env over
 | Tier | Model | Notes |
 |------|-------|-------|
 | `ECO`, `BALANCED`, `TIER1/2/3` | `grok-4.3` | $1.25/$2.50 per 1M, 1M context, reasons by default |
-| `PERFORMANCE`, `ULTRA` | `grok-4.6` | $2/$6 per 1M, 500k context, reasons by default |
+| `PERFORMANCE`, `ULTRA` | `grok-4.7` | $2/$6 per 1M, default effort `high` (same as 4.6); 4.6 until 2026-10-03 |
+
+**grok-4.7 (2026-10-03).** Same price as 4.6. Live probe at `reasoning.effort=medium` on
+Smart-like tool turns: p50 1.6s vs 3.8s, max 3.2s vs 5.4s, 2-3x fewer output tokens. With no effort
+it runs at its API default `high` and showed sporadic 12-60s tails and one odd refusal of a
+trivial "reply with exactly OK". Long-context pricing (2x) applies above 200k prompt tokens.
+It wraps HTML output in a markdown fence (the HTML page agent strips it).
 
 **Both models reason by default** — probed 2026-08-15, a bare request with no `reasoning`
 block still returns a `reasoning` item (4.3: 83 tokens, 4.6: 66). Earlier docs said 4.3 did
@@ -75,7 +81,7 @@ not; it does.
 > that `GET /v1/models` actually lists.
 >
 > xAI has also retired the sub-$1 tier: the cheapest live model is now $1.25/$2.50, which is
-> *more* expensive than `gpt-5.6-luna` ($0.20/$1.20) or `gemini-flash-lite` ($0.30/$2.50).
+> *more* expensive than `gpt-6-luna` ($0.10/$0.50) or `gemini-3.5-flash-lite` ($0.30/$2.50).
 
 Pricing lives in `src/domain/billing.py`. `cache_read` is a multiplier of input price
 (4.6 → 0.25, 4.5 → 0.15, 4.3 → 0.16). **Not modelled:** xAI doubles both input and output once a

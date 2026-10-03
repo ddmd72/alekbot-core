@@ -158,7 +158,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | MapsSearch | BALANCED (OpenAI) | `maps_query` (internal) | auto fan-out from `search_web` |
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
 | ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
-| Tutor | BALANCED (OpenAI `gpt-5.6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
+| Tutor | BALANCED (OpenAI `gpt-6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
 | Lelik | n/a — session is OpenAI Realtime in the relay | internal; allowlist `search_memory`, `search_web_light`, `ask_alek`, `tell_alek` | voice companion: callback, session config, delegation via `/voice/delegate` |
 | Alek gateway | zero-LLM | `ask_alek` (SYNC), `tell_alek` (ASYNC errand) — internal | Lelik's route to Router → Smart; question: links copy to chat; errand: full outcome to chat |
 | WebSearchLight | ECO (Gemini flash-lite) | `search_web_light` (internal, Lelik only) | one grounded lookup, ~2 s, spoken answer |
@@ -201,7 +201,7 @@ stale `running` jobs.
   `notify_raw()`: direct text, no reformatting. `prompt_tokens` in `UsageMetadata` always = uncached input
   (OpenAI/Gemini subtract cached from total).
 - **Billing daily summary** — Scheduler 09:00 Europe/Madrid → `billing_daily_summary`: posts yesterday's
-  `prev_daily_tokens/cost` snapshot to Slack. Per-provider cache pricing Claude 0.1×/OpenAI 0.1×/Gemini 0.25×.
+  `prev_daily_tokens/cost` snapshot to Slack. Per-provider cache pricing Claude 0.1× (Opus 5.5: 0.05×)/OpenAI 0.1×/Gemini 0.1× (3.x generation; was 0.25×).
 - **Token accounting is per-execution, NOT per-instance.** `TokenLedger` (`domain/billing.py`) lives in a
   `ContextVar` opened by `BaseAgent._execution_billing_scope()`; `_call_llm` accumulates into it,
   `_flush_billing` reads it. Agent instances are per-user singletons and `DelegationEngine` fans a tool
@@ -349,7 +349,7 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
 - **Realtime provider is per user** (`docs/10_rfcs/VOICE_MULTI_PROVIDER_RFC.md`).
   - `UserBotConfig.voice_provider` picks an entry of `domain.voice_provider_profile.VOICE_PROVIDER_PROFILES`:
     the prompt profile, turn ownership, voice and effort. When unset, `DEFAULT_VOICE_PROVIDER = "xai"`
-    applies (xAI `grok-voice-think-fast-2.0`, prompt `lelik_you`, voice castor).
+    applies (xAI `grok-voice-think-fast-2.0`, prompt `lelik_xai`, voice castor).
   - `LelikAgent.session_config` puts the spec in the ticket under `"voice"`. The relay builds the
     adapter per call from it (`relay_main._ADAPTERS`). A ticket without it runs the legacy OpenAI
     session.
@@ -358,9 +358,13 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
     relay only drops queued audio and delivers the greeting and Alek's answers.
   - **Each adapter declares its turn ownership** (`supported_turn_ownership`). xAI ignores
     `create_response: false`, so it is PROVIDER-only.
-  - **Lelik's prompt differs per provider.** `lelik_you` is a second-person portrait in xAI's
+  - **Lelik's prompt differs per provider.** `lelik_xai` is a second-person portrait in xAI's
     prompting-guide format, with none of the gpt-realtime rules. See
     `decisions/voice_xai_protocol_probe.md`.
+  - **The voice character is USER-overridable per category** (RFC §4.5): `voice_persona`,
+    `voice_humor` and `voice_temperament` can be overridden; `voice_care` and
+    `voice_call_manners` cannot. These are separate from Smart's `archetype`/`vibe`/`humor_engine`,
+    so a text-persona override never reaches the voice.
   - xAI audio is billed per second.
 
 **Voice web transport** (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) — a second call kind, a
@@ -492,10 +496,11 @@ One search per request, result reused by all agents.
   / `schedule_drift`; everything else is a lead to verify at the provider. See
   `decisions/openai_gpt56_price_cut.md`.
 - Solo-dev — maintainability beats architectural elegance
-- **Smart cost sweet spot (eval 2026-04-12):** `gpt-5.4-mini` + `reasoning_effort: medium` matched
-  flagship (sonnet-4-6 / gpt-5.4) quality on Smart's multi-step delegation, beat haiku/flash, ~3–5×
-  cheaper. Configure via `UserBotConfig.agent_thinking={"smart":"medium"}` + provider
-  `openai`/`gpt-5.4-mini`. Reasoning compensates for smaller model size on multi-step tasks.
+- **Smart cost sweet spot:** a small model with reasoning effort `medium` matches flagships on Smart's
+  multi-step delegation (eval 2026-04-12, gpt-5.4-mini). As of 2026-10-03 that model is **`gpt-6-luna`**
+  (OpenAI BALANCED): it beat gpt-5.6-luna 7:1 on a dry-run Smart A/B at 37% lower cost
+  (`scripts/validation/ab_agent_models.py`, `decisions/model_refresh_2026_10.md`). Configure via
+  `UserBotConfig.agent_thinking={"smart":"medium"}` + provider `openai` at BALANCED.
 
 ## Architecture
 

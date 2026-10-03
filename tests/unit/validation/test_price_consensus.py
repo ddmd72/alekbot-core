@@ -216,3 +216,38 @@ class TestReviewClassification:
     def test_confirmed_is_the_only_clean_status(self):
         assert not pc.Verdict(pc.CONFIRMED, "x").needs_review
         assert pc.CONFIRMED not in pc.NEEDS_REVIEW
+
+
+class TestLivePromos20261003:
+    """The two promos verified at the providers on 2026-10-03, both under HOLD_FINAL_PRICE.
+
+    These pin the PRODUCTION schedule (unlike the mechanism tests above, which use a synthetic
+    model): if a provider moves an end date, the schedule must be edited and these with it.
+    """
+
+    TODAY = date(2026, 10, 3)
+
+    @pytest.mark.parametrize("model", ["gpt-5.6-sol", "gemini-3.8-flash"])
+    def test_promo_models_are_held_at_the_final_price(self, model):
+        assert model in pc.HOLD_FINAL_PRICE
+        assert model in pc.PRICE_SCHEDULE
+
+    def test_sol_holding_standard_price_during_promo_is_confirmed(self):
+        v = verdict((5.0, 30.0), (4.0, 20.0), (4.0, 20.0), model="gpt-5.6-sol", today=self.TODAY)
+        assert v.status == pc.CONFIRMED
+        assert "1.50x high" in v.detail
+
+    def test_gemini_holding_post_promo_price_is_confirmed(self):
+        v = verdict((1.5, 7.5), (0.75, 3.75), (0.75, 3.75),
+                    model="gemini-3.8-flash", today=self.TODAY)
+        assert v.status == pc.CONFIRMED
+        assert "2.00x high" in v.detail
+
+    def test_billing_moved_onto_the_promo_is_drift(self):
+        v = verdict((0.75, 3.75), (0.75, 3.75), (0.75, 3.75),
+                    model="gemini-3.8-flash", today=self.TODAY)
+        assert v.status == pc.SCHEDULE_DRIFT
+
+    def test_promos_end_on_the_published_dates(self):
+        assert pc.next_scheduled_change("gpt-5.6-sol", self.TODAY) == (date(2026, 11, 22), (5.0, 30.0))
+        assert pc.next_scheduled_change("gemini-3.8-flash", self.TODAY) == (date(2027, 1, 1), (1.5, 7.5))

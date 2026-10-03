@@ -20,8 +20,8 @@ Two scenarios (choose with --mode):
              scripts/memory/last_chat_messages.json) → fact extraction.
   • both   — run dedup then chat (default).
 
-Models: PERFORMANCE tier → claude-sonnet-5 / gpt-5.6-terra. CLAUDE_PERFORMANCE_MODEL
-is pinned to claude-sonnet-5 so the Claude leg is deterministic regardless of env.
+Models: every Claude leg pins its model explicitly (see _CLAUDE_MODEL), so the result does not
+depend on CLAUDE_PERFORMANCE_MODEL or on the current tier map.
 
 Pre-conditions:
     .env with DEV_USER_ID, DEV_ACCOUNT_ID, FIRESTORE_DATABASE, ANTHROPIC + OPENAI keys.
@@ -49,15 +49,13 @@ from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Pin the Claude PERFORMANCE model BEFORE any adapter is constructed.
-os.environ.setdefault("CLAUDE_PERFORMANCE_MODEL", "claude-sonnet-5")
-
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from google.cloud import firestore
 
+from src.domain.billing import calculate_cost
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.composition.service_container import ServiceContainer
@@ -89,9 +87,14 @@ _OPENAI_TIER = {
 }
 
 
+# (tier, label, model override). Every leg pins its model: the tier map moves (2026-10-03:
+# PERFORMANCE → Sonnet 5.5, ULTRA → Opus 5.5) and an env-pinned default once silently turned a
+# "Sonnet 5.5" leg into Sonnet 5.
 _CLAUDE_MODEL = {
-    "sonnet5": (PerformanceTier.PERFORMANCE, "claude-sonnet-5", None),
-    "opus": (PerformanceTier.ULTRA, "claude-opus-4-8", None),
+    "sonnet55": (PerformanceTier.PERFORMANCE, "claude-sonnet-5-5", "claude-sonnet-5-5"),
+    "sonnet5": (PerformanceTier.PERFORMANCE, "claude-sonnet-5", "claude-sonnet-5"),
+    "opus55": (PerformanceTier.ULTRA, "claude-opus-5-5", "claude-opus-5-5"),
+    "opus": (PerformanceTier.ULTRA, "claude-opus-4-8", "claude-opus-4-8"),
     "fable": (PerformanceTier.PERFORMANCE, "claude-fable-5", "claude-fable-5"),
 }
 
@@ -201,21 +204,11 @@ async def run_chat(
 
     agent._call_llm = _orig
 
-    # Per-1M-token pricing (USD, ABSOLUTE $/M): input, output, cache_read, cache_write.
-    # Claude cache is 0.1x input (read) / 1.25x input (5-min write) — folded in here.
-    _PRICE = {
-        "claude-sonnet-5": (3.00, 15.00, 0.30, 3.75),
-        "claude-opus-4-8": (5.00, 25.00, 0.50, 6.25),
-        "claude-fable-5": (10.00, 50.00, 1.00, 12.50),
-        "gpt-5.6-terra": (1.25, 10.00, 0.125, 0.0),
-        "gpt-5.6-sol": (2.50, 20.00, 0.25, 0.0),
-        "gemini-pro-latest": (2.00, 12.00, 0.50, 0.0),
-        # From src/domain/billing.py PRICE_SCHEDULE (the authority), not re-derived here.
-        "grok-4.6": (2.00, 6.00, 0.25, 0.0),
-    }
-    pin, pout, prd, pwr = _PRICE.get(agent.model_name, (0, 0, 0, 0))
-    cost = (usage["prompt"] * pin + usage["completion"] * pout
-            + usage["cache_read"] * prd + usage["cache_write"] * pwr) / 1_000_000
+    # Priced by src/domain/billing.py — the authority. A private copy of the rates here went
+    # stale (it still billed Sonnet 5 at $3/$15 after the $2/$10 rate became permanent).
+    cost = calculate_cost(agent.model_name, usage["prompt"], usage["completion"],
+                          cache_read_tokens=usage["cache_read"],
+                          cache_creation_tokens=usage["cache_write"])
     print(f"    💰 [{agent.model_name}] calls={usage['calls']}  in={usage['prompt']}  "
           f"cache_read={usage['cache_read']}  cache_write={usage['cache_write']}  "
           f"out={usage['completion']}  →  ${cost:.4f}")
@@ -352,8 +345,9 @@ if __name__ == "__main__":
     ap.add_argument("--only", choices=["both", "claude", "openai", "gemini", "grok",
                                        "claude+grok"], default="both",
                     help="Run only one provider leg (default both = claude+openai)")
-    ap.add_argument("--claude-model", choices=["sonnet5", "opus", "fable"], default="sonnet5",
-                    help="Claude leg: sonnet5 (PERFORMANCE), opus (ULTRA→opus-4-8), fable (claude-fable-5)")
+    ap.add_argument("--claude-model", choices=sorted(_CLAUDE_MODEL), default="sonnet55",
+                    help="Claude leg: sonnet55 (PERFORMANCE default), sonnet5, opus55 (ULTRA default), "
+                         "opus (opus-4-8), fable (claude-fable-5)")
     ap.add_argument("--user-id", default=os.getenv("DEV_USER_ID"))
     ap.add_argument("--account-id", default=os.getenv("DEV_ACCOUNT_ID"))
     a = ap.parse_args()

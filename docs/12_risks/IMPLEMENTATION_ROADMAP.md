@@ -412,7 +412,7 @@ mandatory before team/multi-user rollout.
 - **Why it matters more here than for most deps:** `ClaudeAdapter` is the most heavily
   version-gated adapter in the codebase — `output_config.format` for structured output,
   `_THINKING_MODELS` / `_DYNAMIC_SEARCH_MODELS` capability gates, `_NO_SAMPLING_MODELS`,
-  `_ADAPTIVE_DEFAULT_ON_MODELS`, `_MODEL_FALLBACK`. That is precisely the surface an SDK release
+  `_THINKING_OFF`, `_NO_FORCED_TOOL_MODELS`, `_MODEL_FALLBACK`. That is precisely the surface an SDK release
   reshapes (required fields, renamed params, changed defaults), and `make check` cannot see it:
   the wire tests mock at the SDK boundary, so they assert against **0.97.0's** types while prod
   answers on 0.121.0.
