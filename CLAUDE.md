@@ -201,7 +201,7 @@ stale `running` jobs.
   `notify_raw()`: direct text, no reformatting. `prompt_tokens` in `UsageMetadata` always = uncached input
   (OpenAI/Gemini subtract cached from total).
 - **Billing daily summary** — Scheduler 09:00 Europe/Madrid → `billing_daily_summary`: posts yesterday's
-  `prev_daily_tokens/cost` snapshot to Slack. Per-provider cache pricing Claude 0.1×/OpenAI 0.1×/Gemini 0.25×.
+  `prev_daily_tokens/cost` snapshot to Slack. Per-provider cache pricing Claude 0.1× (Opus 5.5: 0.05×)/OpenAI 0.1×/Gemini 0.1× (3.x generation; was 0.25×).
 - **Token accounting is per-execution, NOT per-instance.** `TokenLedger` (`domain/billing.py`) lives in a
   `ContextVar` opened by `BaseAgent._execution_billing_scope()`; `_call_llm` accumulates into it,
   `_flush_billing` reads it. Agent instances are per-user singletons and `DelegationEngine` fans a tool

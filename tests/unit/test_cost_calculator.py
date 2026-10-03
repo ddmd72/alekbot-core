@@ -110,3 +110,35 @@ def test_unknown_model_is_free_which_is_why_the_invariant_exists():
     """Documents the trap the test above guards: no exception, no warning, just 0."""
     assert calculate_cost("model-that-does-not-exist",
                           prompt_tokens=1_000_000, completion_tokens=1_000_000) == 0.0
+
+
+# --- 2026-10-03 price refresh -------------------------------------------------------------
+
+def test_calculate_cost_claude_5_5_generation():
+    assert calculate_cost("claude-sonnet-5-5", 1_000_000, 1_000_000) == 12.0
+    assert calculate_cost("claude-opus-5-5", 1_000_000, 1_000_000) == 24.0
+
+
+def test_opus_5_5_cache_read_is_5_percent_of_input():
+    # Opus 5.5 reads cache at $0.20 on a $4 input — 5%, not the usual Claude 10%.
+    assert calculate_cost("claude-opus-5-5", 0, 0, cache_read_tokens=1_000_000) == 0.20
+    assert calculate_cost("claude-opus-5-5", 0, 0, cache_creation_tokens=1_000_000) == 5.0
+
+
+def test_gemini_current_generation_cache_read_is_10_percent_of_input():
+    # 3.x Gemini bills cached input at 10% (3.5-flash-lite $0.03 on $0.30); it used to be 25%.
+    assert calculate_cost("gemini-3.5-flash-lite", 0, 0, cache_read_tokens=1_000_000) == 0.03
+
+
+def test_gemini_flash_latest_holds_the_post_promo_price():
+    # gemini-3.8-flash is $0.75/$3.75 until 2026-12-31; we hold the $1.50/$7.50 that follows.
+    assert calculate_cost("gemini-flash-latest", 1_000_000, 1_000_000) == 9.0
+
+
+def test_gpt_5_6_sol_holds_the_standard_price_through_its_promo():
+    assert calculate_cost("gpt-5.6-sol", 1_000_000, 1_000_000) == 35.0
+
+
+def test_calculate_cost_grok_4_7():
+    assert calculate_cost("grok-4.7", 1_000_000, 1_000_000) == 8.0
+    assert calculate_cost("grok-4.7", 0, 0, cache_read_tokens=1_000_000) == 0.50
