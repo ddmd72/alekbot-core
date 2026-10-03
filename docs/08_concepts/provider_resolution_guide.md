@@ -1,4 +1,4 @@
-make
+
 
   
 
@@ -34,9 +34,9 @@ config = UserBotConfig(
 )
 
 
-# router → gemini-flash-lite-latest (ECO)
-# quick → gemini-3-flash-preview (BALANCED - agent default)
-# smart → claude-opus-4-20250514 (PERFORMANCE - agent default)
+
+
+
 ```
 
 
@@ -52,9 +52,9 @@ config = UserBotConfig(
 )
 
 # Result:
-# smart → claude-opus-4-20250514 (best reasoning)
-# quick → gemini-3-flash-preview (balanced)
-# router → gemini-flash-lite-latest (fast)
+
+
+
 ```
 
 
@@ -65,9 +65,9 @@ config = UserBotConfig(
 )
 
 
-# smart → gemini-3-pro-preview (PERFORMANCE tier)
-# quick → gemini-3-flash-preview (BALANCED tier)
-# router → gemini-flash-lite-latest (ECO tier)
+
+
+
 ```
 
 ---
@@ -84,34 +84,20 @@ config = UserBotConfig(
 
 
 
-**Gemini (Google):**
 
-```python
-{
-    PerformanceTier.ECO: "gemini-flash-lite-latest",
-    PerformanceTier.BALANCED: "gemini-3-flash-preview",
-    PerformanceTier.PERFORMANCE: "gemini-3-pro-preview"
-}
-```
 
-**Claude (Anthropic):**
 
-```python
-{
-    PerformanceTier.ECO: "claude-3-haiku-20240307",
-    PerformanceTier.BALANCED: "claude-sonnet-4-5-20250929",
-    PerformanceTier.PERFORMANCE: "claude-opus-4-20250514"
-}
-```
 
-**Cost Comparison (per 1M tokens):**
+| ----------- | ------------------------- | ----------- | ---------------------------- | -------- |
 
-| Provider | ECO    | BALANCED | PERFORMANCE |
-| -------- | ------ | -------- | ----------- |
-| Gemini   | $0.075 | $0.075   | $2.50       |
-| Claude   | $0.25  | $3.00    | $15.00      |
 
-**Recommendation:** Use Claude for reasoning tasks, Gemini for speed/cost efficiency.
+
+
+
+
+
+
+
 
 
 
@@ -120,7 +106,7 @@ config = UserBotConfig(
 ```python
 
     
-    "quick": PerformanceTier.BALANCED,    # Quick responses
+    
     
     "consolidation": PerformanceTier.PERFORMANCE,
     "web_search": PerformanceTier.BALANCED,
@@ -224,9 +210,9 @@ config = UserBotConfig(
 
 ```python
 
-# 1. Primary: claude-opus-4-20250514 (PERFORMANCE)
-# 2. Fallback 1: claude-sonnet-4-5-20250929 (BALANCED)
-# 3. Fallback 2: gemini-3-pro-preview (alternative provider)
+
+
+
 ```
 
 ---
@@ -241,13 +227,6 @@ config = UserBotConfig(
 ┌───────────────────────────────────────────────────────────┐
 
 
-│ Example: {"smart": "claude-opus-4-20250514"}              │
-
-└───────────────────────────────────────────────────────────┘
-                          ↓
-┌───────────────────────────────────────────────────────────┐
-
-
 
 
 └───────────────────────────────────────────────────────────┘
@@ -255,7 +234,14 @@ config = UserBotConfig(
 ┌───────────────────────────────────────────────────────────┐
 
 
-│ Example: {"smart": "claude-sonnet-4-5-20250929"}          │
+
+
+└───────────────────────────────────────────────────────────┘
+                          ↓
+┌───────────────────────────────────────────────────────────┐
+
+
+
 
 └───────────────────────────────────────────────────────────┘
                           ↓
@@ -318,10 +304,10 @@ account = BillingAccount(
 
     account_id=account.account_id,
     config=UserBotConfig(
-        model_overrides={"smart": "claude-opus-4-20250514"}
+        
     )
 )
-# Result: smart → claude-opus-4-20250514 (USER Level 1 wins)
+
 ```
 
 
@@ -387,8 +373,8 @@ config = UserBotConfig(
 ```python
 config = UserBotConfig(
     model_overrides={
-        "smart": "claude-opus-4-20250514",  # Exact version
-        "quick": "gemini-2.0-flash"         # Specific model
+        
+        
     }
 )
 ```
@@ -421,7 +407,7 @@ config = UserBotConfig(
 
     
     model_overrides={
-        "web_search": "gemini-2.0-flash"  # Force specific model
+        
     },
 
     
@@ -432,11 +418,11 @@ config = UserBotConfig(
 
 
 
-- `smart` → claude + PERFORMANCE → `claude-sonnet-4-6`
-- `consolidation` → claude + PERFORMANCE → `claude-sonnet-4-6`
 
-- `web_search` → gemini (enforced) + override → `gemini-2.0-flash`
-- `router` → gemini (strategy default) + ECO → `gemini-2.0-flash`
+
+
+
+
 
 ---
 
@@ -448,10 +434,10 @@ config = UserBotConfig(
 
 
 | --------------- | -------- | ------------------------- | ------ |
-| All ECO         | Gemini   | gemini-2.0-flash          | $0.075 |
-| All BALANCED    | Gemini   | gemini-2.0-flash-thinking | $0.075 |
-| All PERFORMANCE | Claude   | claude-opus-4-20250514    | $15.00 |
-| Smart only PERF | Mixed    | Smart=Opus, others=Flash  | $3.00  |
+
+
+
+
 
 
 
@@ -467,7 +453,7 @@ config = UserBotConfig(
     }
 )
 
-# Estimated cost: ~$0.10 per 100 requests (vs $15 with all PERFORMANCE)
+
 ```
 
 
@@ -483,7 +469,7 @@ config = UserBotConfig(
     }
 )
 
-# Estimated cost: ~$10 per 100 requests (high quality)
+
 ```
 
 
@@ -499,7 +485,7 @@ config = UserBotConfig(
     }
 )
 
-# Estimated cost: ~$3 per 100 requests (balanced)
+
 ```
 
 ---
@@ -533,7 +519,7 @@ from src.services.agent_context_builder import AgentContextBuilder
 
 # Output:
 
-# Model: claude-opus-4-20250514
+
 
 
 ```
@@ -589,8 +575,8 @@ import logging
 
 
 
-DEBUG: Model from tier mapping: claude-opus-4-20250514
-DEBUG: Context built: model=claude-opus-4-20250514, tier=PERFORMANCE
+
+
 ```
 
 ---
@@ -655,33 +641,11 @@ class AgentContextBuilder:
 
 
 
-```python
-# src/adapters/gemini_adapter.py
-class GeminiAdapter(LLMPort):
-    MODEL_TIERS = {
-        PerformanceTier.ECO: "gemini-flash-lite-latest",
-        PerformanceTier.BALANCED: "gemini-3-flash-preview",
-        PerformanceTier.PERFORMANCE: "gemini-3-pro-preview"
-    }
-
-    def get_model_for_tier(self, tier: PerformanceTier) -> str:
-        return self.MODEL_TIERS[tier]
-```
 
 
 
-```python
-# src/adapters/llm/claude_adapter.py
-class ClaudeAdapter(LLMPort):
-    MODEL_TIERS = {
-        PerformanceTier.ECO: "claude-3-haiku-20240307",
-        PerformanceTier.BALANCED: "claude-sonnet-4-5-20250929",
-        PerformanceTier.PERFORMANCE: "claude-opus-4-20250514"
-    }
 
-    def get_model_for_tier(self, tier: PerformanceTier) -> str:
-        return self.MODEL_TIERS[tier]
-```
+
 
 
 

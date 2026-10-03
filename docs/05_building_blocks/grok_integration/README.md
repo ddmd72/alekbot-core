@@ -81,7 +81,7 @@ not; it does.
 > that `GET /v1/models` actually lists.
 >
 > xAI has also retired the sub-$1 tier: the cheapest live model is now $1.25/$2.50, which is
-> *more* expensive than `gpt-5.6-luna` ($0.20/$1.20) or `gemini-flash-lite` ($0.30/$2.50).
+> *more* expensive than `gpt-6-luna` ($0.10/$0.50) or `gemini-3.5-flash-lite` ($0.30/$2.50).
 
 Pricing lives in `src/domain/billing.py`. `cache_read` is a multiplier of input price
 (4.6 → 0.25, 4.5 → 0.15, 4.3 → 0.16). **Not modelled:** xAI doubles both input and output once a
