@@ -245,8 +245,34 @@ class UserAgentFactory(AgentFactoryPort):
             self.assembly_service.invalidate_cache()
 
     def invalidate_user_cache(self, user_id: str) -> None:
-        """Drop a user's cached profile + agents, forcing a fresh Firestore read next request."""
-        self._cache.pop(user_id, None)
+        """Drop a user's cached profile + agents, forcing a fresh Firestore read next request.
+
+        Unregisters the agents too: the coordinator routes by agent_id, so an agent left
+        registered keeps serving with the old config snapshot while its replacement is refused
+        registration ("already registered") — which made `$admin_cache_reset` a no-op until restart.
+        """
+        self._evict_user(user_id)
+
+    # Eagerly-built agents a cache entry holds; lazy ones are tracked in "_lazy_agent_ids".
+    _EAGER_AGENT_KEYS = (
+        "router_agent", "quick_agent", "smart_agent", "memory_agent", "web_agent",
+        "email_search_agent", "maps_agent", "compute_agent", "tasks_agent", "notes_agent",
+        "consolidation_agent", "help_agent",
+    )
+
+    def _evict_user(self, user_id: str) -> bool:
+        """Remove a user's cache entry and unregister every agent it built (eager and lazy).
+        THE single eviction path — used by the TTL sweep and by invalidate_user_cache."""
+        entry = self._cache.pop(user_id, None)
+        if entry is None:
+            return False
+        for key in self._EAGER_AGENT_KEYS:
+            agent = entry.get(key)
+            if agent is not None and hasattr(agent, "agent_id"):
+                self.coordinator.unregister_agent(agent.agent_id)
+        for agent_id in entry.get("_lazy_agent_ids", []):
+            self.coordinator.unregister_agent(agent_id)
+        return True
 
     async def ensure_agents_for_user(self, user_id: str) -> Dict[str, object]:
         # Fast path: check cache without acquiring a lock
@@ -602,7 +628,12 @@ class UserAgentFactory(AgentFactoryPort):
             try:
                 self.coordinator.register_agent(agent)
             except ValueError:
-                continue
+                # Every eviction unregisters, so a duplicate means a stale instance survived
+                # somewhere — and it, not this new agent, is what the coordinator will route to.
+                logger.error(
+                    "❌ [AgentFactory] %s already registered — the existing (possibly stale) "
+                    "instance stays in service", getattr(agent, "agent_id", agent),
+                )
 
     # ------------------------------------------------------------------
     # Lazy agent instantiation (AgentFactoryPort implementation)
@@ -1019,21 +1050,8 @@ class UserAgentFactory(AgentFactoryPort):
                 if now - c["last_used"] > self._cache_ttl
             ]
             for uid in expired:
-                entry = self._cache.pop(uid, None)
-                if entry is None:
-                    continue
-                for key in ("router_agent", "quick_agent", "smart_agent",
-                            "memory_agent", "web_agent",
-                            "email_search_agent", "maps_agent", "compute_agent",
-                            "tasks_agent", "notes_agent",
-                            "consolidation_agent", "help_agent"):
-                    agent = entry.get(key)
-                    if agent and hasattr(agent, "agent_id"):
-                        self.coordinator.unregister_agent(agent.agent_id)
-                # Evict any lazy agents that were created on demand
-                for agent_id in entry.get("_lazy_agent_ids", []):
-                    self.coordinator.unregister_agent(agent_id)
-                logger.info("♻️ [AgentFactory] Evicted expired cache for user %s", uid[:8])
+                if self._evict_user(uid):
+                    logger.info("♻️ [AgentFactory] Evicted expired cache for user %s", uid[:8])
 
     # ------------------------------------------------------------------
     # Provider validation

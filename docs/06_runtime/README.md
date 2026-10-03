@@ -234,7 +234,7 @@ All agents communicate using standardized `AgentMessage` and `AgentResponse` str
     "status": "SUCCESS",  # SUCCESS, PARTIAL, FAILED, TIMEOUT, CANNOT_HANDLE
     "result": {"text": "...", "structured_data": {...}},
     "confidence": 0.95,
-    "metadata": {"model": "gemini-2.0-flash-thinking", "tokens": 1234}
+    "metadata": {"model": "gpt-6-luna", "tokens": 1234}
 }
 ```
 
