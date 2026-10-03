@@ -116,6 +116,12 @@ map verified via live API probe 2026-07-13 — `gpt-5.4-nano/mini` and `gpt-5.4`
 question → ULTRA tier; on a claude 529 the rotation rebuilds Smart on OpenAI at the same tier →
 `gpt-5.5-pro` + `low`). See `decisions/cross_provider_execution_retry.md`.
 
+**GPT-6 (live probe 2026-10-03).** The family rejects `temperature` (`_REASONING_PREFIXES` includes
+`gpt-6`) and `minimal`. Accepted efforts: `gpt-6-luna` / `gpt-6-sol` / `gpt-6-astra`
+`none`…`xhigh`; **`gpt-6.1-sol` floors at `low`** (`_MIN_LOW_EFFORT_PREFIXES`, `none` → `low`).
+`gpt-6-luna` reasons when `reasoning` is omitted, so a caller with no `thinking` gets `effort: none`
+(`_THINKING_OFF_EFFORT`). `none` and `xhigh` are forwarded as-is (they used to collapse to `medium`).
+
 ### Default Provider Strategy
 
 OpenAI is added to `allowed_providers` in `AgentProviderStrategy` for Router, Quick, and Smart.

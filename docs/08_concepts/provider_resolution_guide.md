@@ -1,4 +1,4 @@
-make# Provider Resolution — Complete Guide
+# Provider Resolution — Complete Guide
 
 **Purpose:** Practical reference for configuring models and tiers in Alek-Core.  
 **Audience:** Developers and power users customizing agent performance.
@@ -34,9 +34,9 @@ config = UserBotConfig(
 )
 
 # Agents will use:
-# router → gemini-flash-lite-latest (ECO)
-# quick → gemini-3-flash-preview (BALANCED - agent default)
-# smart → claude-opus-4-20250514 (PERFORMANCE - agent default)
+# router → gemini-3.5-flash-lite (ECO)
+# quick → claude-haiku-4-5-20251001 (ECO - agent default, claude)
+# smart → gemini-pro-latest (PERFORMANCE - agent default, gemini)
 ```
 
 **Key Point:** Each agent has strategy defaults that override `default_tier` unless you explicitly configure `agent_tiers`.
@@ -52,9 +52,9 @@ config = UserBotConfig(
 )
 
 # Result:
-# smart → claude-opus-4-20250514 (best reasoning)
-# quick → gemini-3-flash-preview (balanced)
-# router → gemini-flash-lite-latest (fast)
+# smart → gemini-pro-latest (PERFORMANCE)
+# quick → claude-haiku-4-5-20251001 (eco)
+# router → gemini-3.5-flash-lite (fast)
 ```
 
 ### 1.3 Switch All Agents to Gemini
@@ -65,9 +65,9 @@ config = UserBotConfig(
 )
 
 # Result: All agents use Gemini models
-# smart → gemini-3-pro-preview (PERFORMANCE tier)
-# quick → gemini-3-flash-preview (BALANCED tier)
-# router → gemini-flash-lite-latest (ECO tier)
+# smart → gemini-pro-latest → gemini-3.1-pro-preview (PERFORMANCE tier)
+# quick → gemini-3.5-flash-lite (ECO tier)
+# router → gemini-3.5-flash-lite (ECO tier)
 ```
 
 ---
@@ -84,34 +84,20 @@ config = UserBotConfig(
 
 ### 2.2 Tier-to-Model Mapping
 
-**Gemini (Google):**
+Source of truth: `MODEL_TIERS` in each adapter (`src/adapters/*_adapter.py`). Current as of
+2026-10-03 (`decisions/model_refresh_2026_10.md`):
 
-```python
-{
-    PerformanceTier.ECO: "gemini-flash-lite-latest",
-    PerformanceTier.BALANCED: "gemini-3-flash-preview",
-    PerformanceTier.PERFORMANCE: "gemini-3-pro-preview"
-}
-```
+| Tier        | Claude                    | OpenAI      | Gemini                       | Grok     |
+| ----------- | ------------------------- | ----------- | ---------------------------- | -------- |
+| ECO         | claude-haiku-4-5-20251001 | gpt-6-luna  | gemini-3.5-flash-lite        | grok-4.3 |
+| BALANCED    | claude-haiku-4-5-20251001 | gpt-6-luna  | gemini-3.8-flash             | grok-4.3 |
+| PERFORMANCE | claude-sonnet-5-5         | gpt-6.1-sol | gemini-pro-latest (3.1-pro)  | grok-4.7 |
+| ULTRA       | claude-fable-5-1          | gpt-6-astra | gemini-pro-latest (3.1-pro)  | grok-4.7 |
 
-**Claude (Anthropic):**
-
-```python
-{
-    PerformanceTier.ECO: "claude-3-haiku-20240307",
-    PerformanceTier.BALANCED: "claude-sonnet-4-5-20250929",
-    PerformanceTier.PERFORMANCE: "claude-opus-4-20250514"
-}
-```
-
-**Cost Comparison (per 1M tokens):**
-
-| Provider | ECO    | BALANCED | PERFORMANCE |
-| -------- | ------ | -------- | ----------- |
-| Gemini   | $0.075 | $0.075   | $2.50       |
-| Claude   | $0.25  | $3.00    | $15.00      |
-
-**Recommendation:** Use Claude for reasoning tasks, Gemini for speed/cost efficiency.
+**Prices (per 1M input / output):** haiku $1/$5, sonnet-5-5 $2/$10, fable-5-1 $10/$50;
+gpt-6-luna $0.10/$0.50, gpt-6.1-sol $2/$10, gpt-6-astra $10/$50; gemini-3.5-flash-lite $0.30/$2.50,
+gemini-3.8-flash $1.50/$7.50 (promo $0.75/$3.75 until 2026-12-31), 3.1-pro $2/$12; grok-4.3
+$1.25/$2.50, grok-4.7 $2/$6. Authoritative rates: `src/domain/billing.py`.
 
 ### 2.3 Agent Default Tiers
 
@@ -120,7 +106,7 @@ Each agent has strategy defaults:
 ```python
 AGENT_DEFAULTS = {
     "router": PerformanceTier.ECO,        # Fast classification
-    "quick": PerformanceTier.BALANCED,    # Quick responses
+    "quick": PerformanceTier.ECO,         # Fallback + notification formatter
     "smart": PerformanceTier.PERFORMANCE, # Deep analysis
     "consolidation": PerformanceTier.PERFORMANCE,
     "web_search": PerformanceTier.BALANCED,
@@ -224,9 +210,9 @@ If provider fails:
 
 ```python
 # Example fallback chain for smart agent:
-# 1. Primary: claude-opus-4-20250514 (PERFORMANCE)
-# 2. Fallback 1: claude-sonnet-4-5-20250929 (BALANCED)
-# 3. Fallback 2: gemini-3-pro-preview (alternative provider)
+# 1. Primary: claude-sonnet-5-5 (PERFORMANCE)
+# 2. Fallback 1: claude-sonnet-5 (same-provider model fallback, 5xx only)
+# 3. Fallback 2: gemini-pro-latest (alternative provider)
 ```
 
 ---
@@ -241,7 +227,7 @@ Understanding override priority helps avoid confusion when "wrong" model is sele
 ┌───────────────────────────────────────────────────────────┐
 │ LEVEL 1: USER Model Override                             │  ← HIGHEST
 │ Where: UserProfile.config.model_overrides                 │
-│ Example: {"smart": "claude-opus-4-20250514"}              │
+│ Example: {"smart": "claude-fable-5-1"}              │
 │ Use: Power user wants exact model                         │
 └───────────────────────────────────────────────────────────┘
                           ↓
@@ -255,7 +241,7 @@ Understanding override priority helps avoid confusion when "wrong" model is sele
 ┌───────────────────────────────────────────────────────────┐
 │ LEVEL 3: ACCOUNT Model Override                          │
 │ Where: BillingAccount.account_defaults.model_overrides    │
-│ Example: {"smart": "claude-sonnet-4-5-20250929"}          │
+│ Example: {"smart": "claude-sonnet-5-5"}          │
 │ Use: Family/Enterprise mandates model                     │
 └───────────────────────────────────────────────────────────┘
                           ↓
@@ -318,10 +304,10 @@ user2 = UserProfile(
 user3 = UserProfile(
     account_id=account.account_id,
     config=UserBotConfig(
-        model_overrides={"smart": "claude-opus-4-20250514"}
+        model_overrides={"smart": "claude-fable-5-1"}
     )
 )
-# Result: smart → claude-opus-4-20250514 (USER Level 1 wins)
+# Result: smart → claude-fable-5-1 (USER Level 1 wins)
 ```
 
 **Key Insight:** 99% of family members use ACCOUNT defaults. Only 1% override at USER level.
@@ -387,8 +373,8 @@ Bypass tier mapping with exact model strings:
 ```python
 config = UserBotConfig(
     model_overrides={
-        "smart": "claude-opus-4-20250514",  # Exact version
-        "quick": "gemini-2.0-flash"         # Specific model
+        "smart": "claude-fable-5-1",  # Exact version
+        "quick": "gemini-3.8-flash"         # Specific model
     }
 )
 ```
@@ -421,7 +407,7 @@ config = UserBotConfig(
 
     # Power user overrides
     model_overrides={
-        "web_search": "gemini-2.0-flash"  # Force specific model
+        "web_search": "gpt-6.1-sol"  # Force specific model
     },
 
     # Other settings
@@ -432,11 +418,11 @@ config = UserBotConfig(
 
 **Resolution Result:**
 
-- `smart` → claude + PERFORMANCE → `claude-sonnet-4-6`
-- `consolidation` → claude + PERFORMANCE → `claude-sonnet-4-6`
+- `smart` → claude + PERFORMANCE → `claude-sonnet-5-5`
+- `consolidation` → claude + PERFORMANCE → `claude-sonnet-5-5`
 - `quick` → claude + ECO → `claude-haiku-4-5-20251001`
-- `web_search` → gemini (enforced) + override → `gemini-2.0-flash`
-- `router` → gemini (strategy default) + ECO → `gemini-2.0-flash`
+- `web_search` → openai (strategy default) + override → `gpt-6.1-sol`
+- `router` → gemini (strategy default) + ECO → `gemini-3.5-flash-lite`
 
 ---
 
@@ -448,10 +434,10 @@ config = UserBotConfig(
 
 | Configuration   | Provider | Model                     | Cost   |
 | --------------- | -------- | ------------------------- | ------ |
-| All ECO         | Gemini   | gemini-2.0-flash          | $0.075 |
-| All BALANCED    | Gemini   | gemini-2.0-flash-thinking | $0.075 |
-| All PERFORMANCE | Claude   | claude-opus-4-20250514    | $15.00 |
-| Smart only PERF | Mixed    | Smart=Opus, others=Flash  | $3.00  |
+| All ECO         | Gemini   | gemini-3.5-flash-lite     | $0.30 / $2.50 |
+| All BALANCED    | OpenAI   | gpt-6-luna                | $0.10 / $0.50 |
+| All PERFORMANCE | Claude   | claude-sonnet-5-5         | $2 / $10 |
+| Smart only PERF | Mixed    | Smart=Sonnet 5.5, others=ECO | mixed |
 
 **Recommendation:** Use PERFORMANCE tier only for `smart` agent. Keep others at ECO/BALANCED.
 
@@ -467,7 +453,7 @@ config = UserBotConfig(
     }
 )
 
-# Estimated cost: ~$0.10 per 100 requests (vs $15 with all PERFORMANCE)
+# Cost: priced per model that ran — rates in src/domain/billing.py
 ```
 
 ### 5.3 Quality-Optimized Configuration
@@ -483,7 +469,7 @@ config = UserBotConfig(
     }
 )
 
-# Estimated cost: ~$10 per 100 requests (high quality)
+# Cost: priced per model that ran — rates in src/domain/billing.py
 ```
 
 ### 5.4 Balanced Configuration (Recommended)
@@ -499,7 +485,7 @@ config = UserBotConfig(
     }
 )
 
-# Estimated cost: ~$3 per 100 requests (balanced)
+# Cost: priced per model that ran — rates in src/domain/billing.py
 ```
 
 ---
@@ -533,7 +519,7 @@ print(f"Capabilities: {context.capabilities}")
 
 # Output:
 # Provider: ClaudeAdapter
-# Model: claude-opus-4-20250514
+# Model: claude-fable-5-1
 # Tier: PerformanceTier.PERFORMANCE
 # Capabilities: ProviderCapabilities(native_tools=True, ...)
 ```
@@ -589,8 +575,8 @@ DEBUG: Strategy default: provider=claude, tier=PERFORMANCE
 DEBUG: User preference: provider=None
 DEBUG: Resolved provider: claude
 DEBUG: Tier from agent_tiers: PERFORMANCE
-DEBUG: Model from tier mapping: claude-opus-4-20250514
-DEBUG: Context built: model=claude-opus-4-20250514, tier=PERFORMANCE
+DEBUG: Model from tier mapping: claude-fable-5-1
+DEBUG: Context built: model=claude-fable-5-1, tier=PERFORMANCE
 ```
 
 ---
@@ -655,33 +641,11 @@ class ProviderRegistry:
 
 **GeminiAdapter:**
 
-```python
-# src/adapters/gemini_adapter.py
-class GeminiAdapter(LLMPort):
-    MODEL_TIERS = {
-        PerformanceTier.ECO: "gemini-flash-lite-latest",
-        PerformanceTier.BALANCED: "gemini-3-flash-preview",
-        PerformanceTier.PERFORMANCE: "gemini-3-pro-preview"
-    }
-
-    def get_model_for_tier(self, tier: PerformanceTier) -> str:
-        return self.MODEL_TIERS[tier]
-```
+`GeminiAdapter.MODEL_TIERS` in `src/adapters/gemini_adapter.py` — see the table in §2.2.
 
 **ClaudeAdapter:**
 
-```python
-# src/adapters/llm/claude_adapter.py
-class ClaudeAdapter(LLMPort):
-    MODEL_TIERS = {
-        PerformanceTier.ECO: "claude-3-haiku-20240307",
-        PerformanceTier.BALANCED: "claude-sonnet-4-5-20250929",
-        PerformanceTier.PERFORMANCE: "claude-opus-4-20250514"
-    }
-
-    def get_model_for_tier(self, tier: PerformanceTier) -> str:
-        return self.MODEL_TIERS[tier]
-```
+`ClaudeAdapter.MODEL_TIERS` in `src/adapters/claude_adapter.py` — see the table in §2.2.
 
 ### 7.4 Tests
 

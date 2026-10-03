@@ -202,8 +202,9 @@ SYSTEM: This query was automatically dispatched to multiple specialists in paral
 The orchestrator LLM synthesizes both into a single response. The hint instructs it which source
 to trust for which data type (geodata → Maps, reviews → Web).
 
-MapsSearchAgent routes to `MapsSearchAgent` (shared with Smart path). Model pinned to
-`gemini-2.5-flash` (Maps grounding not supported on Gemini 3.x). Multi-turn MCP tool loop
+MapsSearchAgent routes to `MapsSearchAgent` (shared with Smart path). Default provider OpenAI,
+BALANCED tier (`gpt-6-luna` since 2026-10-03); Maps data comes from the Google Maps AI Grounding
+MCP tools, not from provider-native grounding. Multi-turn MCP tool loop
 with cognitive process triage: FULL_MATCH (deep search), PARTIAL (enrichment), NO_MATCH
 (responds "no relevant geographic data").
 
