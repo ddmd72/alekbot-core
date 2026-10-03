@@ -142,3 +142,11 @@ def test_gpt_5_6_sol_holds_the_standard_price_through_its_promo():
 def test_calculate_cost_grok_4_7():
     assert calculate_cost("grok-4.7", 1_000_000, 1_000_000) == 8.0
     assert calculate_cost("grok-4.7", 0, 0, cache_read_tokens=1_000_000) == 0.50
+
+
+def test_calculate_cost_gpt6_family():
+    assert calculate_cost("gpt-6-luna", 1_000_000, 1_000_000) == 0.60
+    assert calculate_cost("gpt-6-sol", 1_000_000, 1_000_000) == 12.0
+    assert calculate_cost("gpt-6-astra", 1_000_000, 1_000_000) == 60.0
+    # 6.1-sol reads cache at 5% of input.
+    assert calculate_cost("gpt-6.1-sol", 0, 0, cache_read_tokens=1_000_000) == 0.10

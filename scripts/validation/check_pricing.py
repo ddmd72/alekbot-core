@@ -263,6 +263,8 @@ _EXPECTED_CACHE: dict[str, dict[str, float]] = {
     # OpenAI: "Cache writes cost 1.25x the uncached input rate, with a 30-minute minimum
     # cache life." Longest prefix wins, so this beats the generic "gpt-" entry below.
     "gpt-5.6-":        {"cache_read": 0.10, "cache_write": 1.25},
+    "gpt-6":           {"cache_read": 0.10, "cache_write": 1.25},
+    "gpt-6.1-sol":     {"cache_read": 0.05, "cache_write": 1.25},
     "gpt-":            {"cache_read": 0.10},
     "o3-":             {"cache_read": 0.10},
     "o4-":             {"cache_read": 0.10},

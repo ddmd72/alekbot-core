@@ -1053,3 +1053,90 @@ async def test_usage_metadata_handles_missing_details():
     assert result.usage_metadata.completion_tokens == 200
     assert result.usage_metadata.cache_read_tokens == 0
     assert result.usage_metadata.cache_creation_tokens == 0
+
+
+# ---------------------------------------------------------------------------
+# GPT-6 family (probed live 2026-10-03)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra"])
+def test_gpt6_is_reasoning_model(model):
+    """The whole gpt-6 family 400s on temperature — it must be classed as a reasoning model."""
+    assert OpenAIAdapter(api_key="test-key")._is_reasoning_model(model)
+
+
+@pytest.mark.asyncio
+async def test_gpt6_luna_gets_effort_none_when_no_thinking_requested():
+    """gpt-6-luna reasons when `reasoning` is omitted — a no-thinking caller must stay off."""
+    captured = await _capture_reasoning("gpt-6-luna")
+    assert captured["reasoning"] == {"effort": "none"}
+    assert "temperature" not in captured
+
+
+@pytest.mark.asyncio
+async def test_gpt6_luna_grounding_still_forces_low():
+    """Grounding without thinking keeps the agentic-search floor, not the off-setting."""
+    captured = await _capture_reasoning("gpt-6-luna", use_grounding=True)
+    assert captured["reasoning"] == {"effort": "low"}
+
+
+@pytest.mark.asyncio
+async def test_models_without_thinking_off_entry_send_no_reasoning():
+    """gpt-5.4-nano does not reason by default — no reasoning block is added for it."""
+    captured = await _capture_reasoning("gpt-5.4-nano")
+    assert "reasoning" not in captured
+
+
+@pytest.mark.asyncio
+async def test_effort_none_is_expressible():
+    """'none' used to collapse to 'medium' — the opposite of the intent."""
+    captured = await _capture_reasoning("gpt-6-luna", thinking="none")
+    assert captured["reasoning"] == {"effort": "none"}
+
+
+@pytest.mark.asyncio
+async def test_effort_none_clamped_to_low_for_gpt61_sol():
+    """gpt-6.1-sol rejects 'none' (min 'low')."""
+    captured = await _capture_reasoning("gpt-6.1-sol", thinking="none")
+    assert captured["reasoning"]["effort"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_effort_none_clamped_to_medium_for_gpt55_pro():
+    captured = await _capture_reasoning("gpt-5.5-pro", thinking="none")
+    assert captured["reasoning"] == {"effort": "medium"}
+
+
+@pytest.mark.asyncio
+async def test_effort_xhigh_forwarded():
+    captured = await _capture_reasoning("gpt-6-sol", thinking="xhigh")
+    assert captured["reasoning"]["effort"] == "xhigh"
+
+
+@pytest.mark.asyncio
+async def test_unknown_effort_still_falls_back_to_medium():
+    captured = await _capture_reasoning("gpt-6-sol", thinking="minimal")
+    assert captured["reasoning"]["effort"] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_gpt6_uses_prompt_cache_key_not_retention():
+    adapter = OpenAIAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_create(**kwargs):
+        captured.update(kwargs)
+        return _make_response(text="OK")
+
+    adapter.client.responses.create = mock_create
+    await adapter.generate_content(
+        request=LLMRequest(
+            model_name="gpt-6-sol",
+            system_instruction=f"You are helpful.\n\n{PROMPT_CACHE_BOUNDARY}\nnow",
+            messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+            cache_config=PromptCacheConfig(enabled=True),
+        )
+    )
+    assert "prompt_cache_retention" not in captured
+    assert captured["extra_body"]["prompt_cache_key"].startswith("alek-")
