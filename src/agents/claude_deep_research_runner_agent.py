@@ -99,7 +99,9 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
     # home: REQ-ARCH-12 bars these Claude model-name strings from domain/ (and config/), and an
     # agent may not import an adapter — so this set is duplicated across the two provider-bound
     # Claude files BY DESIGN (this file is whitelisted in arch_tech_debt.py). Keep the two in sync.
-    _NO_SAMPLING_MODELS = ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-fable")
+    _NO_SAMPLING_MODELS = (
+        "claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-fable",
+    )
 
     # Dynamic filtering enabled (no allowed_callers restriction).
     # code_execution_20250825 is auto-injected by the API — do NOT declare it explicitly.
