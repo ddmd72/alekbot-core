@@ -92,6 +92,13 @@ PRICE_SCHEDULE: Dict[str, List[Tuple[date, Price]]] = {
     # catalogs carry the cut (the verdict becomes plain `confirmed` either way).
     "gpt-5.6-luna": [(date(2026, 7, 30), (0.20, 1.20))],
     "gpt-5.6-terra": [(date(2026, 7, 30), (2.00, 12.00))],
+    # Promotional rates with a published end date (verified 2026-10-03 on the provider pricing
+    # pages). Both are HOLD_FINAL_PRICE members: billing.py keeps the standard price.
+    # gpt-5.6-sol: $4/$20 "through November 21, 2026"; the standard $5/$30 is assumed to return.
+    "gpt-5.6-sol": [(date(2026, 8, 21), (4.00, 20.00)), (date(2026, 11, 22), (5.00, 30.00))],
+    # gemini-3.8-flash (what gemini-flash-latest resolves to): $0.75/$3.75 through 2026-12-31,
+    # $1.50/$7.50 from 2027-01-01.
+    "gemini-3.8-flash": [(date(2026, 9, 2), (0.75, 3.75)), (date(2027, 1, 1), (1.50, 7.50))],
 }
 
 # Models where billing.py DELIBERATELY holds the final scheduled price rather than the one
@@ -101,12 +108,11 @@ PRICE_SCHEDULE: Dict[str, List[Tuple[date, Price]]] = {
 # and invite someone to "fix" a decision that was made on purpose; the trade-off is stated in
 # the verdict instead, so the over-reporting stays visible.
 #
-# Empty since 2026-08-12: `claude-sonnet-5` was the only member, and its reversion was
-# cancelled when the introductory rate became permanent. The mechanism is kept — an
-# introductory rate with a dated reversion is a recurring pattern, and the next one wants it.
+# `claude-sonnet-5` was the first member (removed 2026-08-12, when its introductory rate became
+# permanent). Since 2026-10-03: the gpt-5.6-sol and gemini-3.8-flash promos.
 # A member here MUST also have a PRICE_SCHEDULE entry: the verdict path indexes
 # PRICE_SCHEDULE[model] directly.
-HOLD_FINAL_PRICE: frozenset = frozenset()
+HOLD_FINAL_PRICE: frozenset = frozenset({"gpt-5.6-sol", "gemini-3.8-flash"})
 
 
 def scheduled_price(model: str, today: date) -> Optional[Price]:

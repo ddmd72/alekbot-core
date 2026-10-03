@@ -50,8 +50,9 @@ def test_gemini_model_for_tier():
     # ECO is pinned to an explicit generation, not the `-latest` alias: the router runs
     # here and its triage calibration is tuned to a specific model's judgement, so an
     # alias moving under it would change task_complexity — and Smart's tier — silently.
+    # BALANCED is pinned for the same reason since 2026-10-03: a model change is a decision.
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "gemini-3.5-flash-lite"
-    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gemini-flash-latest"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "gemini-3.8-flash"
     assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "gemini-pro-latest"
 
 
@@ -735,3 +736,30 @@ async def test_no_candidates_reports_no_finish_reason():
     result = await _parse_via_adapter(response)
 
     assert result.finish_reason is None
+
+
+async def _capture_thinking_level(thinking):
+    adapter = GeminiAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_generate(model=None, contents=None, config=None):
+        captured["config"] = config
+        return _make_gemini_response()
+
+    adapter.client = MagicMock()
+    adapter.client.aio.models.generate_content = mock_generate
+    await adapter.generate_content(
+        request=LLMRequest(model_name="gemini-flash-latest", messages=_MESSAGES, thinking=thinking)
+    )
+    return captured["config"].thinking_config.thinking_level
+
+
+@pytest.mark.asyncio
+async def test_thinking_xhigh_maps_to_highest_level():
+    """Gemini has no level above HIGH — xhigh must not fall through to LOW."""
+    assert await _capture_thinking_level("xhigh") == gemini_types.ThinkingLevel.HIGH
+
+
+@pytest.mark.asyncio
+async def test_unknown_thinking_value_maps_to_medium_not_low():
+    assert await _capture_thinking_level("extreme") == gemini_types.ThinkingLevel.MEDIUM

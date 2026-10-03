@@ -70,7 +70,9 @@ class GeminiAdapter(LLMPort):
         # scripts/validation/ab_router_gemini_vs_openai.py. Price must be added to
         # billing.py at the same time: calculate_cost returns 0.0 for an unknown id.
         PerformanceTier.ECO:         "gemini-3.5-flash-lite",
-        PerformanceTier.BALANCED:    "gemini-flash-latest",
+        # Pinned like ECO (2026-10-03): the alias moved 3.6 → 3.8-flash on 2026-09-02 with no
+        # decision behind it. gemini-3.8-flash is on a promo until 2026-12-31 (billing holds $1.50/$7.50).
+        PerformanceTier.BALANCED:    "gemini-3.8-flash",
         PerformanceTier.PERFORMANCE: "gemini-pro-latest",
         PerformanceTier.ULTRA:       "gemini-pro-latest",   # no Gemini Ultra available yet
         PerformanceTier.TIER1:       "gemini-flash-lite-latest",
@@ -188,6 +190,9 @@ class GeminiAdapter(LLMPort):
             thinking_config=(
                 # Map unified thinking level to Gemini ThinkingConfig.
                 # "low" → LOW (Flash-safe), "medium" → MEDIUM, "high" → HIGH (Pro-grade).
+                # "xhigh" → HIGH: Gemini has no level above HIGH. An unknown value is MEDIUM,
+                # as on the other adapters — it used to fall to LOW, so asking for the
+                # maximum silently got the minimum.
                 # thinking_budget deprecated in Gemini 3+; using thinking_level only.
                 # include_thoughts=True surfaces thought text for observability (no extra cost).
                 types.ThinkingConfig(
@@ -195,7 +200,8 @@ class GeminiAdapter(LLMPort):
                         "low": types.ThinkingLevel.LOW,
                         "medium": types.ThinkingLevel.MEDIUM,
                         "high": types.ThinkingLevel.HIGH,
-                    }.get(thinking, types.ThinkingLevel.LOW),
+                        "xhigh": types.ThinkingLevel.HIGH,
+                    }.get(thinking, types.ThinkingLevel.MEDIUM),
                     include_thoughts=True,
                 )
                 if thinking else None
