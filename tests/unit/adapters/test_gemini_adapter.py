@@ -735,3 +735,30 @@ async def test_no_candidates_reports_no_finish_reason():
     result = await _parse_via_adapter(response)
 
     assert result.finish_reason is None
+
+
+async def _capture_thinking_level(thinking):
+    adapter = GeminiAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_generate(model=None, contents=None, config=None):
+        captured["config"] = config
+        return _make_gemini_response()
+
+    adapter.client = MagicMock()
+    adapter.client.aio.models.generate_content = mock_generate
+    await adapter.generate_content(
+        request=LLMRequest(model_name="gemini-flash-latest", messages=_MESSAGES, thinking=thinking)
+    )
+    return captured["config"].thinking_config.thinking_level
+
+
+@pytest.mark.asyncio
+async def test_thinking_xhigh_maps_to_highest_level():
+    """Gemini has no level above HIGH — xhigh must not fall through to LOW."""
+    assert await _capture_thinking_level("xhigh") == gemini_types.ThinkingLevel.HIGH
+
+
+@pytest.mark.asyncio
+async def test_unknown_thinking_value_maps_to_medium_not_low():
+    assert await _capture_thinking_level("extreme") == gemini_types.ThinkingLevel.MEDIUM

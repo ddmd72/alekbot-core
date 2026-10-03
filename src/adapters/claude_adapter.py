@@ -160,6 +160,10 @@ class ClaudeAdapter(LLMPort):
         "claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-fable",
     )
 
+    # Models whose effort scale stops at `high` (`xhigh` arrived with Opus 4.7). Reached only via
+    # the Sonnet 5 → 4.6 fallback today; an `xhigh` request is clamped to `high` instead of a 400.
+    _NO_XHIGH_MODELS = ("claude-sonnet-4-6", "claude-opus-4-6")
+
     # Models that reject forced tool use (`tool_choice` any/tool → 400). For these a forced
     # request degrades to `auto`, the provider's documented replacement.
     _NO_FORCED_TOOL_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1")
@@ -437,7 +441,15 @@ class ClaudeAdapter(LLMPort):
                     fallback_model, thinking_effort or None, temperature,
                     force_tool_use=bool(force_tool_use and claude_tools),
                 )
-                fallback_params.pop("output_config", None)
+                # Merge, not replace: keep the primary's output_config.format, take the
+                # fallback's (possibly clamped) effort.
+                output_config = {k: v for k, v in (create_kwargs.get("output_config") or {}).items()
+                                 if k != "effort"}
+                output_config.update(fallback_params.pop("output_config", {}))
+                if output_config:
+                    create_kwargs["output_config"] = output_config
+                else:
+                    create_kwargs.pop("output_config", None)
                 create_kwargs.update(fallback_params)
                 response = await _attempt(create_kwargs)
             llm_response = self._parse_response(response)
@@ -456,6 +468,8 @@ class ClaudeAdapter(LLMPort):
         same-provider fallback model, so each request carries values its model accepts."""
         params: dict = {}
         thinking_param: Optional[dict] = None
+        if effort == "xhigh" and model_name.startswith(self._NO_XHIGH_MODELS):
+            effort = "high"
         if effort and any(m in model_name for m in self._THINKING_MODELS):
             # Adaptive thinking + effort. Claude API hard requirement: temperature must be 1.0
             # while thinking is enabled (only sent to models that still accept sampling).

@@ -195,7 +195,9 @@ class UserBotConfig(BaseModel):
     # Purpose: Allow different providers for different agents (e.g., Gemini for router, Claude for smart)
     # ========================================================================
     agent_providers: Optional[Dict[str, str]] = None  # agent_type -> provider_name
-    agent_thinking: Optional[Dict[str, str]] = None   # agent_type -> thinking effort ("low"/"medium"/"high")
+    # agent_type -> thinking effort: "none"/"low"/"medium"/"high"/"xhigh". Each adapter maps it to
+    # what its model accepts (e.g. Gemini xhigh → HIGH, gpt-6.1-sol none → low, Sonnet 4.6 xhigh → high).
+    agent_thinking: Optional[Dict[str, str]] = None
 
     model_overrides: Dict[str, str] = Field(default_factory=dict)  # agent_type -> model name
 
