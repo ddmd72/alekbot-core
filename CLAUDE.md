@@ -496,10 +496,11 @@ One search per request, result reused by all agents.
   / `schedule_drift`; everything else is a lead to verify at the provider. See
   `decisions/openai_gpt56_price_cut.md`.
 - Solo-dev — maintainability beats architectural elegance
-- **Smart cost sweet spot (eval 2026-04-12):** `gpt-5.4-mini` + `reasoning_effort: medium` matched
-  flagship (sonnet-4-6 / gpt-5.4) quality on Smart's multi-step delegation, beat haiku/flash, ~3–5×
-  cheaper. Configure via `UserBotConfig.agent_thinking={"smart":"medium"}` + provider
-  `openai`/`gpt-5.4-mini`. Reasoning compensates for smaller model size on multi-step tasks.
+- **Smart cost sweet spot:** a small model with reasoning effort `medium` matches flagships on Smart's
+  multi-step delegation (eval 2026-04-12, gpt-5.4-mini). As of 2026-10-03 that model is **`gpt-6-luna`**
+  (OpenAI BALANCED): it beat gpt-5.6-luna 7:1 on a dry-run Smart A/B at 37% lower cost
+  (`scripts/validation/ab_agent_models.py`, `decisions/model_refresh_2026_10.md`). Configure via
+  `UserBotConfig.agent_thinking={"smart":"medium"}` + provider `openai` at BALANCED.
 
 ## Architecture
 
