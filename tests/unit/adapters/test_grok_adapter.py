@@ -151,7 +151,7 @@ def test_grok_model_for_tier():
     # xAI serves grok-4.3 for them and we mis-bill.
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "grok-4.3"
     assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "grok-4.3"
-    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "grok-4.6"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "grok-4.7"
 
 
 def test_grok_unsupported_tier_raises():
