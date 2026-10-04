@@ -36,6 +36,7 @@ class PromptBuilderPort(ABC):
         agent_notes: Optional[List[dict]] = None,
         extra_static_blocks: Optional[List[str]] = None,
         include_datetime: bool = False,
+        skills_catalog: Optional[str] = None,
     ) -> str:
         """
         Build complete system prompt string for the given agent type.
