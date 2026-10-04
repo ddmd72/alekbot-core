@@ -123,6 +123,15 @@ class TestServiceContainerWiring:
         """No DEBUG_PROMPTS + no dataset → capture off → store is None."""
         assert container.prompt_content_store is None
 
+    def test_skill_service_is_wired(self, container):
+        from src.adapters.firestore_skill_repository import FirestoreSkillRepository
+        from src.services.skill_service import SkillService
+
+        assert isinstance(container.skill_service, SkillService)
+        assert isinstance(container.skill_service._repo, FirestoreSkillRepository)
+        assert container.skill_service._security is not None
+        assert container.agent_services()["skill_service"] is container.skill_service
+
 
 class TestPromptCaptureFlag:
     """DEBUG_PROMPTS is the global capture switch; it gates whether the store is
