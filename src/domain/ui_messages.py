@@ -40,3 +40,7 @@ class UIMessage(Enum):
     SKILL_NOT_FOUND = "skill_not_found"
     SKILL_BUILT_IN = "skill_built_in"
     SKILL_UNAVAILABLE = "skill_unavailable"
+    # skill_preview delivery (ConversationHandler._deliver_item) — no MessageContext there,
+    # language comes from the response_channel instead (see _ui_string_for_language).
+    SKILL_PREVIEW_FILE_TITLE = "skill_preview_file_title"
+    SKILL_PREVIEW_DELIVERY_FAILED = "skill_preview_delivery_failed"

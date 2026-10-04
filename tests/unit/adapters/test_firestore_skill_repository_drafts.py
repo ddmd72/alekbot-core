@@ -234,6 +234,48 @@ class TestDeleteSkill:
         v2.reference.delete.assert_awaited_once()
         doc_ref.delete.assert_awaited_once()
 
+    def _setup_batch(self, db):
+        batch = MagicMock()
+        batch.commit = AsyncMock()
+        db.batch.return_value = batch
+        return batch
+
+    async def test_deletes_versions_and_index_doc_in_one_batch(self, repo, db, col):
+        """Versions + the index doc are deleted via one WriteBatch, not per-doc `.delete()`
+        calls — a delete that fails midway must not leave the index doc orphaned with
+        some versions still present, or vice versa."""
+        batch = self._setup_batch(db)
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_snap({"name": "flight-status"}, exists=True))
+        v1, v2 = MagicMock(), MagicMock()
+        versions_query = MagicMock()
+        versions_query.get = AsyncMock(return_value=[v1, v2])
+        doc_ref.collection.return_value = versions_query
+        col.document.return_value = doc_ref
+
+        result = await repo.delete_skill("u1", "flight-status")
+
+        assert result is True
+        col.document.assert_called_with("u1:flight-status")
+        doc_ref.collection.assert_called_with("versions")
+        batch.delete.assert_any_call(v1.reference)
+        batch.delete.assert_any_call(v2.reference)
+        batch.delete.assert_any_call(doc_ref)
+        batch.commit.assert_awaited_once()
+
+    async def test_missing_index_doc_commits_no_batch(self, repo, db, col):
+        """No index doc → return False before even opening a batch — nothing to delete."""
+        batch = self._setup_batch(db)
+        doc_ref = MagicMock()
+        doc_ref.get = AsyncMock(return_value=_snap(None, exists=False))
+        col.document.return_value = doc_ref
+
+        result = await repo.delete_skill("u1", "flight-status")
+
+        assert result is False
+        db.batch.assert_not_called()
+        batch.commit.assert_not_awaited()
+
     async def test_missing_index_doc_returns_false_and_deletes_nothing(self, repo, col):
         doc_ref = MagicMock()
         doc_ref.get = AsyncMock(return_value=_snap(None, exists=False))

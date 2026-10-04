@@ -31,8 +31,7 @@ class FirestoreSkillRepository(SkillRepository):
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
         self._db = db_client
-        # Created before _col so the collections-created-last assertion in the existing
-        # skills-collection test (test_firestore_skill_repository.py:50) stays accurate.
+        # Drafts collection is resolved before the skills collection.
         self._drafts = db_client.collection(env_config.skill_drafts_collection)
         self._col = db_client.collection(env_config.skills_collection)
 
@@ -140,7 +139,9 @@ class FirestoreSkillRepository(SkillRepository):
         snapshot = await doc_ref.get()
         if not snapshot.exists:
             return False
+        batch = self._db.batch()
         for version_doc in await doc_ref.collection("versions").get():
-            await version_doc.reference.delete()
-        await doc_ref.delete()
+            batch.delete(version_doc.reference)
+        batch.delete(doc_ref)
+        await batch.commit()
         return True

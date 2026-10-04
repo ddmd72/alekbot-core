@@ -136,4 +136,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SKILL_NOT_FOUND.value: "❌ No skill named `{name}`.",
     UIMessage.SKILL_BUILT_IN.value: "`{name}` is built in and cannot be deleted.",
     UIMessage.SKILL_UNAVAILABLE.value: "Skills are not available right now.",
+    UIMessage.SKILL_PREVIEW_FILE_TITLE.value: "Skill draft: {name}",
+    UIMessage.SKILL_PREVIEW_DELIVERY_FAILED.value: "⚠️ The skill draft could not be delivered. Ask me to draft it again.",
 }

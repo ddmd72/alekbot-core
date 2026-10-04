@@ -112,4 +112,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SKILL_NOT_FOUND.value: "❌ No hay ninguna habilidad llamada `{name}`.",
     UIMessage.SKILL_BUILT_IN.value: "`{name}` es una habilidad integrada y no se puede eliminar.",
     UIMessage.SKILL_UNAVAILABLE.value: "Las habilidades no están disponibles en este momento.",
+    UIMessage.SKILL_PREVIEW_FILE_TITLE.value: "Borrador de habilidad: {name}",
+    UIMessage.SKILL_PREVIEW_DELIVERY_FAILED.value: "⚠️ No se pudo entregar el borrador de la habilidad. Pídeme que lo redacte otra vez.",
 }

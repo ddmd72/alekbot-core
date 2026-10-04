@@ -141,4 +141,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SKILL_NOT_FOUND.value: "❌ Немає навички з назвою `{name}`.",
     UIMessage.SKILL_BUILT_IN.value: "`{name}` — вбудована навичка, її не можна видалити.",
     UIMessage.SKILL_UNAVAILABLE.value: "Навички зараз недоступні.",
+    UIMessage.SKILL_PREVIEW_FILE_TITLE.value: "Чернетка навички: {name}",
+    UIMessage.SKILL_PREVIEW_DELIVERY_FAILED.value: "⚠️ Чернетку навички не вдалося доставити. Попросіть мене скласти її ще раз.",
 }

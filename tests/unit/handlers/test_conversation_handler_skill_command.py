@@ -252,6 +252,28 @@ class TestSkillList:
         text = channel.send_message.call_args.args[0]
         assert _ui(UIMessage.SKILL_LIST_EMPTY) in text
 
+    async def test_system_skill_shadowed_by_custom_copy_not_listed_under_built_in(self):
+        """A custom skill with the same name as a system one shadows it (SkillService
+        merges them this way for `use_skill`) — it must appear once, under the owner's
+        own skills, not a second time under Built-in."""
+        service = _make_skill_service()
+        custom = [Skill(name="skill-creator", description="My own version", body="x", version=1)]
+        system = [
+            Skill(name="skill-creator", description="Builds skills", body="y", version=0),
+            Skill(name="domain-competency-research", description="Maps a domain", body="z", version=0),
+        ]
+        service.list_owned.return_value = (custom, system)
+        handler = _make_handler(skill_service=service)
+        channel = _make_channel()
+
+        await handler.handle_command("skill list", _make_context(), channel)
+
+        text = channel.send_message.call_args.args[0]
+        assert "- skill-creator — My own version" in text
+        assert "- domain-competency-research" in text
+        # Only the custom line for "skill-creator" — not a second, Built-in one.
+        assert text.count("skill-creator") == 1
+
 
 # ---------------------------------------------------------------------------
 # $skill delete NAME

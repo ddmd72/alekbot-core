@@ -1,7 +1,7 @@
-# Decision: Agent Skills — delivery A, skills as Smart-local tools
+# Decision: Agent Skills — skills as Smart-local tools (delivery A + B)
 
 **Date:** 2026-10-04
-**Status:** Shipped (delivery A, read path). Full design: `docs/10_rfcs/AGENT_SKILLS_RFC.md`.
+**Status:** Shipped (delivery A, read path, AND delivery B, authoring + system skills). Full design: `docs/10_rfcs/AGENT_SKILLS_RFC.md`.
 
 ## Decision
 

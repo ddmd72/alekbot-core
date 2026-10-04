@@ -1,6 +1,6 @@
 # RFC: Agent Skills — named procedures for Smart, loaded on demand, saved by the user
 
-**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; see Deviations in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` for the two planning rulings this revision does not yet reflect inline (no `FileSystemSkillRepository` — a loader instead, §3; `domain-competency-research` as a second system skill, §3).
+**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary.
 **Date:** 2026-10-04 (first draft 2026-09-30)
 **Owner decisions:**
 - Skills are named procedures in Anthropic's `SKILL.md` format, run by our own layer (Smart is multi-provider).
@@ -160,7 +160,7 @@ The boundary is **authorization by the user**: a custom skill becomes active onl
 
    No other path delivers `skill_preview`: `AgentWorkerHandler` handles only `file_upload`/`document` (`agent_worker_handler.py:216, 250`), and `notify()` ignores delivery items. A draft made on a background path is never shown, so it can never be saved. `file_upload`/`document` are deliberately not reused for that reason.
 5. The user pastes `$skill save 7f3a`. Both adapters route `$…` to `ConversationHandler.handle_command` before any LLM (Slack `http_adapter.py:320`, Telegram `webhook_adapter.py:195`; commands are lowercased). Telegram messages with `forward_origin` are not treated as commands.
-6. One Firestore transaction: read the draft by code, re-run the checks, count the user's skills against the cap, write the next version, flip `current`, delete **every** pending draft with that name. Then a chat reply and a user/model **pair** in the session history (`[System: skill "<name>" v<n> saved]`), following `notify_call_summary` (`user_notification_service.py:233-285`), so the next turn knows.
+6. The draft is read by code and the checks are re-run **before** the save: `SkillService.save_draft` calls `repository.get_draft(code)`, then `_check`, outside any transaction. Only then does one Firestore transaction run: count the user's skills against the cap, write the next version, flip `current`, delete **every** pending draft with that name. A concurrent double-paste of the same code can therefore run this read-then-transact sequence twice and write two identical versions — harmless, since drafts are immutable and the content was authorized once. Then a chat reply and a user/model **pair** in the session history (`[System: skill "<name>" v<n> saved]`), following `notify_call_summary` (`user_notification_service.py:233-285`), so the next turn knows.
 
 A stale code (an older draft of the same name) still saves exactly the content it was shown with — that is the authorization. Content cannot be swapped under a code, because drafts are immutable.
 
@@ -195,7 +195,7 @@ A token is one per category (the dedup key in override resolution), rendered in 
   If either fails, B is reconsidered before any work on it.
 
 **Delivery B — authoring and system skills.**
-- Code: `FileSystemSkillRepository`, `draft_skill`, `skill_preview`, `$skill` commands, the offering line, `smart/skill-creator`.
+- Code: `load_system_skills`, `draft_skill`, `skill_preview`, `$skill` commands, the offering line, `smart/skill-creator`.
 - Acceptance: the owner creates a second real skill with Smart in chat, saves it, uses it in a new thread; the `skill-creator` run itself survives compression via reload; offering frequency observed and tuned.
 
 **Unit:** parsing and validation; visible set and collisions; `local_tools` dispatch, results, spans; `visible` computed from tiered model messages only and `loaded_now`; no `history_context` on terminal siblings; catalog renders only when non-empty, before directives; `skill_context` persisted as a raw block with a neutral stub, after the summary; save code random, never in the model's tool result; `skill_preview` delivered only by `ConversationHandler`; save transaction (cap, version flip, draft cleanup); stale code saves its own content; forwarded Telegram command ignored; delete removes versions; every repo skill parses. **Adapter wire tests:** a request with three tools on each provider (Gemini emits one `types.Tool` per function, `gemini_adapter.py:374-391`). Plus `make check`.
