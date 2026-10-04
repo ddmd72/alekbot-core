@@ -55,6 +55,7 @@ class TelegramAdapterFactory:
         file_conversion_service=None,
         fallback_service=None,
         short_link_service=None,
+        skill_service=None,
     ) -> TelegramWebhookAdapter:
         """
         Create TelegramWebhookAdapter with RichContentService wired in.
@@ -103,6 +104,7 @@ class TelegramAdapterFactory:
             file_conversion_service=file_conversion_service,
             fallback_service=fallback_service,
             short_link_service=short_link_service,
+            skill_service=skill_service,
         )
 
         logger.info("TelegramAdapterFactory: wiring complete (html_renderer=%s)", html_renderer is not None)

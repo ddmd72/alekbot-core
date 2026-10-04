@@ -132,6 +132,15 @@ class TestServiceContainerWiring:
         assert container.skill_service._security is not None
         assert container.agent_services()["skill_service"] is container.skill_service
 
+    def test_skill_service_has_system_skills_loaded(self, container):
+        """System skills are read from the repo's src/skills/smart/ tree at startup
+        (filesystem_skill_loader.load_system_skills) and must be visible via is_system()
+        — otherwise $skill save would silently let a user shadow a real system skill
+        that SkillService never learned about.
+        """
+        assert container.skill_service.is_system("skill-creator") is True
+        assert container.skill_service.is_system("not-a-real-skill") is False
+
 
 class TestPromptCaptureFlag:
     """DEBUG_PROMPTS is the global capture switch; it gates whether the store is
