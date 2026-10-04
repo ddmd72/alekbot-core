@@ -2,10 +2,10 @@
 
 from typing import Any, Dict, Sequence, Set
 
-from ...domain.llm import ToolCall
-from ...domain.skill import SKILL_CONTEXT_KEY, USE_SKILL_TOOL, Skill, body_marker
-from ...infrastructure.delegation_engine import LocalToolHandler, ToolResult
-from ...utils.logger import logger
+from ..domain.llm import ToolCall
+from ..domain.skill import SKILL_CONTEXT_KEY, USE_SKILL_TOOL, Skill, body_marker
+from .delegation_engine import LocalToolHandler, ToolResult
+from ..utils.logger import logger
 
 
 def build_use_skill_tool_declaration() -> Dict[str, Any]:

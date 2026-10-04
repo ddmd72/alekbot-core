@@ -39,7 +39,7 @@ from ...ports.llm_port import AgentExecutionContext
 from ...infrastructure.task_execution_resolver import ExecutionOverride
 from ...utils.logger import logger
 from ...utils.llm_response_parser import extract_structured_response
-from .skill_tools import build_use_skill_tool_declaration, make_use_skill_handler
+from ...infrastructure.skill_tools import build_use_skill_tool_declaration, make_use_skill_handler
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
