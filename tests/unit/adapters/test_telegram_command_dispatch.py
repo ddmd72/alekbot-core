@@ -35,6 +35,10 @@ def _make_message(text):
     message.message_thread_id = None
     message.photo = None
     message.document = None
+    # Real python-telegram-bot Message.forward_origin is None for a non-forwarded
+    # message; an unset MagicMock attribute auto-vivifies truthy, which the
+    # forwarded-message guard in webhook_adapter.py then misreads as "forwarded".
+    message.forward_origin = None
     return message
 
 
