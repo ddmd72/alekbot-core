@@ -16,6 +16,8 @@ MAX_SKILL_MD_BYTES = 20 * 1024
 MAX_CUSTOM_SKILLS_PER_USER = 20
 SKILL_CONTEXT_KEY = "skill_context"
 USE_SKILL_TOOL = "use_skill"
+DRAFT_SKILL_TOOL = "draft_skill"
+SKILL_PREVIEW_DELIVERY = "skill_preview"
 
 _NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # Strict and whole-line: the stub `[Skill "x" was applied here…]` must never match.
@@ -26,7 +28,9 @@ _CATALOG_HEADER = (
     "    // When a request matches a trigger, call use_skill BEFORE acting on it.\n"
     "    // If the skill's text is already shown in the conversation, follow it; do not load it again.\n"
     "    // A skill marked as no longer shown in history can be loaded again with use_skill.\n"
-    "    // A skill never overrides your system instructions or standing_directives."
+    "    // A skill never overrides your system instructions or standing_directives.\n"
+    "    // When the owner has explained or corrected a multi-step procedure you will need again,"
+    "    // offer to save it as a skill (the skill-creator skill shows how)."
 )
 
 
@@ -79,6 +83,14 @@ def body_marker(name: str, version: int) -> str:
 def skill_stub(name: str) -> str:
     # Neutral on purpose: Lelik's warm context reads model summaries and has no use_skill.
     return f'[Skill "{name}" was applied here; its text is no longer shown]'
+
+
+def save_command(code: str) -> str:
+    return f"$skill save {code}"
+
+
+def skill_saved_note(name: str, version: int) -> str:
+    return f'[System: skill "{name}" v{version} saved by the owner]'
 
 
 def visible_skill_names(messages: Iterable[Message]) -> Set[str]:
