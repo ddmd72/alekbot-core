@@ -380,16 +380,27 @@ class SmartResponseAgent(BaseAgent):
 
         try:
             enriched_context = message.context.get("enriched_context")
+            agent_notes = message.context.get("agent_notes") or []
+            prompt_user_id = self.user_id or user_id
 
-            cached_biographical = []
-            if account_id and self.repository:
+            # Biographical and skills are two independent reads — fetch concurrently.
+            # Each keeps its own failure handling: biographical warns and degrades to [],
+            # _load_skills already degrades to [] internally.
+            async def _load_biographical() -> list:
+                if not (account_id and self.repository):
+                    return []
                 try:
-                    cached_biographical = await self.repository.get_biographical_context_cached(
+                    return await self.repository.get_biographical_context_cached(
                         owner_id=account_id,
                         limit=100
                     )
                 except Exception as e:
                     logger.warning(f"🧠 [SmartResponseAgent] Failed to load biographical: {e}")
+                    return []
+
+            cached_biographical, skills = await asyncio.gather(
+                _load_biographical(), self._load_skills(prompt_user_id)
+            )
 
             biographical_facts = self.prompt_builder.merge_enriched_context_with_biographical(
                 enriched_context=enriched_context,
@@ -403,10 +414,6 @@ class SmartResponseAgent(BaseAgent):
                     len(enriched_context.get("facts", [])),
                     len(biographical_facts)
                 )
-
-            agent_notes = message.context.get("agent_notes") or []
-            prompt_user_id = self.user_id or user_id
-            skills = await self._load_skills(prompt_user_id)
 
             email_for_triage = message.context.get("email_for_triage")
             extra_static_blocks = None

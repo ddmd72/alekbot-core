@@ -435,8 +435,8 @@ A user's custom skills live in Firestore (`{prefix}skills/{user_id}:{name}`, `ve
 fetches them once per request (`SkillService.list_skills`), renders `available_skills {}` before
 `standing_directives`, and serves its own `use_skill` tool through `DelegationEngine(local_tools=)` —
 not via `delegate_to_specialist`. A loaded body is persisted as a raw `[Skill "<name>" v<n>]` block in
-`full_text` and a neutral stub in the summary, so it lives until history tiering, then the model
-reloads it. Delivery A (read path) only: skills are seeded with `scripts/skills/seed_custom_skill.py`;
+`full_text` and a neutral stub in the summary, so it lives until history tiering; after that the
+model can reload it with `use_skill`. Delivery A (read path) only: skills are seeded with `scripts/skills/seed_custom_skill.py`;
 chat authoring (`$skill save <code>`) is delivery B, gated on `scripts/skills/skill_trigger_eval.py`.
 Personal skills are never system skills — the repo is public.
 

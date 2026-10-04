@@ -42,7 +42,10 @@ class FirestoreSkillRepository(SkillRepository):
                     version=data["current"],
                 ))
             except (KeyError, ValidationError) as e:
-                logger.error("❌ [Skills] Skipping corrupt skill doc %s: %s", getattr(doc, "id", "?"), e)
+                # Truncate the user_id half of "{user_id}:{name}" — PII, never log it in full.
+                doc_id = getattr(doc, "id", "?")
+                name_part = doc_id.split(":", 1)[1] if ":" in doc_id else "?"
+                logger.error("❌ [Skills] Skipping corrupt skill doc %s…:%s: %s", doc_id[:8], name_part, e)
         return sorted(skills, key=lambda s: s.name)
 
     async def save_version(self, user_id: str, account_id: str, skill: Skill, cap: int) -> int:

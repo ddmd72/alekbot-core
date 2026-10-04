@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from typing import List
 from unittest.mock import AsyncMock, MagicMock
@@ -110,6 +111,44 @@ async def test_use_skill_loads_body_and_surfaces_skill_context():
     assert response.metadata["skill_context"] == [{"name": "flight-status", "version": 1, "body": "1. Open."}]
     second = llm.generate_content.await_args_list[1].kwargs["request"]
     assert "1. Open." in str(second.messages[-1].parts[-1].tool_response)
+
+
+async def test_biographical_and_skills_load_concurrently():
+    """Both independent reads must be in flight at once (asyncio.gather), not sequential awaits.
+
+    Each coroutine signals its own start, then waits for the OTHER's start signal before
+    returning. Under asyncio.gather both are scheduled immediately and the mutual wait
+    resolves at once. Under a sequential `await bio(); await skills()` the skills coroutine
+    is never created until bio() returns, so bio's wait on skills_started never resolves —
+    the whole call hangs and the surrounding asyncio.wait_for times out. This is a
+    deadlock-or-not check, not a timing race.
+    """
+    bio_started = asyncio.Event()
+    skills_started = asyncio.Event()
+
+    async def _bio(owner_id, limit):
+        bio_started.set()
+        await asyncio.wait_for(skills_started.wait(), timeout=1.0)
+        return []
+
+    async def _skills(user_id):
+        skills_started.set()
+        await asyncio.wait_for(bio_started.wait(), timeout=1.0)
+        return [SKILL]
+
+    repository = MagicMock()
+    repository.get_biographical_context_cached = AsyncMock(side_effect=_bio)
+    service = _service([SKILL])
+    service.list_skills = AsyncMock(side_effect=_skills)
+    agent, llm, builder = _agent(service)
+    agent.repository = repository
+    llm.generate_content = AsyncMock(return_value=_resp("answer"))
+
+    response = await asyncio.wait_for(agent.execute(_message()), timeout=2.0)
+
+    assert response.status == AgentStatus.SUCCESS
+    assert bio_started.is_set() and skills_started.is_set()
+    assert builder.build_for_agent.await_args.kwargs["skills_catalog"] is not None
 
 
 async def test_body_visible_in_recent_history_is_not_reloaded():

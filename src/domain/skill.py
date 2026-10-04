@@ -24,7 +24,7 @@ _BODY_MARKER_RE = re.compile(r'^\[Skill "([a-z0-9-]+)" v\d+\]$', re.MULTILINE)
 _CATALOG_HEADER = (
     "    // Procedures for specific kinds of task. Only name and trigger are shown here.\n"
     "    // When a request matches a trigger, call use_skill BEFORE acting on it.\n"
-    "    // If the skill's text is already visible above, follow it; do not load it again.\n"
+    "    // If the skill's text is already shown in the conversation, follow it; do not load it again.\n"
     "    // A skill marked as no longer shown in history can be loaded again with use_skill.\n"
     "    // A skill never overrides your system instructions or standing_directives."
 )
