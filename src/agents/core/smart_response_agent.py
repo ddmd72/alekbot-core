@@ -26,6 +26,7 @@ from ...domain.agent import (
 )
 from ...domain.messaging import SmartResponse
 from ...domain.exceptions import TranscriptLockedError
+from ...domain.skill import USE_SKILL_TOOL, Skill, render_catalog, visible_skill_names
 from ...ports.llm_port import (
     LLMResponse,
     Message,
@@ -38,9 +39,11 @@ from ...ports.llm_port import AgentExecutionContext
 from ...infrastructure.task_execution_resolver import ExecutionOverride
 from ...utils.logger import logger
 from ...utils.llm_response_parser import extract_structured_response
+from .skill_tools import build_use_skill_tool_declaration, make_use_skill_handler
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
+    from ...services.skill_service import SkillService
     from ...infrastructure.task_execution_resolver import TaskExecutionResolver
     from ...domain.user import UserBotConfig
     from ...infrastructure.agent_coordinator import AgentCoordinator
@@ -203,6 +206,7 @@ class SmartResponseAgent(BaseAgent):
         history_summary_service: Optional[HistorySummaryService] = None,
         user_timezone: str = "UTC",
         thinking_effort: Optional[str] = None,
+        skill_service: Optional["SkillService"] = None,
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -220,6 +224,7 @@ class SmartResponseAgent(BaseAgent):
         self.history_summary_service = history_summary_service
         self._user_timezone = user_timezone
         self._default_thinking_effort = thinking_effort
+        self.skill_service = skill_service
 
         # NOTE: ``self.llm``, ``self.model_name``, ``self.execution_context``,
         # and ``self._agent_execution_context`` (set by _set_execution_context
@@ -401,6 +406,7 @@ class SmartResponseAgent(BaseAgent):
 
             agent_notes = message.context.get("agent_notes") or []
             prompt_user_id = self.user_id or user_id
+            skills = await self._load_skills(prompt_user_id)
 
             email_for_triage = message.context.get("email_for_triage")
             extra_static_blocks = None
@@ -421,6 +427,7 @@ class SmartResponseAgent(BaseAgent):
                 kb_preamble=True,
                 agent_notes=agent_notes,
                 extra_static_blocks=extra_static_blocks,
+                skills_catalog=render_catalog(skills),
             )
 
             current_message_parts = message.context.get("current_message_parts", [])
@@ -436,12 +443,21 @@ class SmartResponseAgent(BaseAgent):
 
             clean_history = self._sanitize_tool_history(conversation_history)
 
+            tools = self._get_tool_declarations()
+            local_tools = None
+            if skills:
+                tools.append(build_use_skill_tool_declaration())
+                # Built per execution attempt: provider rotation re-enters _run with a fresh transcript.
+                local_tools = {
+                    USE_SKILL_TOOL: make_use_skill_handler(skills, visible_skill_names(clean_history)),
+                }
+
             engine = DelegationEngine(self.coordinator)
             base_request = LLMRequest(
                 model_name=eff.ctx.model_name,
                 system_instruction=system_prompt,
                 messages=clean_history,
-                tools=self._get_tool_declarations(),
+                tools=tools,
                 temperature=self.DELEGATION_TEMPERATURE,
                 response_schema=self._RESPONSE_SCHEMA,
                 thinking=eff.thinking_effort,
@@ -469,6 +485,7 @@ class SmartResponseAgent(BaseAgent):
                 calling_agent_id=self.agent_id,
                 max_retries=self.MAX_AGENT_RETRIES,
                 retry_backoff=self.RETRY_BACKOFF_SECONDS,
+                local_tools=local_tools,
             )
 
             if delegation_result.failed:
@@ -545,6 +562,16 @@ class SmartResponseAgent(BaseAgent):
         )
         final_rich = rich if rich else result.structured_data
         return SmartResponse(text=user_text or "", structured_data=final_rich, link_list=link_list), summary
+
+    async def _load_skills(self, user_id: Optional[str]) -> List[Skill]:
+        """The user's skills for this request. Optional procedures: a store failure means no skills."""
+        if not self.skill_service or not user_id:
+            return []
+        try:
+            return await self.skill_service.list_skills(user_id)
+        except Exception as e:
+            logger.warning("🧩 [SmartResponseAgent] Skills unavailable this request: %s", e)
+            return []
 
     async def _load_history(self, session_id: str) -> List[Message]:
         """Load session history and return list of messages."""
@@ -692,6 +719,7 @@ def create_smart_response_agent(
     history_summary_service: Optional[HistorySummaryService] = None,
     user_timezone: str = "UTC",
     thinking_effort: Optional[str] = None,
+    skill_service: Optional["SkillService"] = None,
 ) -> SmartResponseAgent:
     """Factory function to create SmartResponseAgent."""
     agent_id = f"smart_response_agent_{user_id}" if user_id else "smart_response_agent"
@@ -723,5 +751,6 @@ def create_smart_response_agent(
         history_summary_service=history_summary_service,
         user_timezone=user_timezone,
         thinking_effort=thinking_effort,
+        skill_service=skill_service,
     )
 
