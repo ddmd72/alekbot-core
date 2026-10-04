@@ -190,3 +190,11 @@ class SkillCapExceeded(Exception):
 class SkillRejected(Exception):
     """A skill's text was flagged by the security check."""
 
+
+class SkillDraftNotFound(Exception):
+    """No pending draft with that save code for this user."""
+
+
+class SkillNameReserved(Exception):
+    """The name belongs to a system skill."""
+
