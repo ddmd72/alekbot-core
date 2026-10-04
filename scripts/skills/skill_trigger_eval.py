@@ -33,7 +33,10 @@ from google.cloud import firestore  # noqa: E402
 
 from src.adapters.firestore_account_repo import FirestoreAccountRepository  # noqa: E402
 from src.adapters.firestore_user_repo import FirestoreUserRepository  # noqa: E402
-from src.infrastructure.skill_tools import build_use_skill_tool_declaration  # noqa: E402
+from src.infrastructure.skill_tools import (  # noqa: E402
+    build_draft_skill_tool_declaration,
+    build_use_skill_tool_declaration,
+)
 from src.composition.service_container import ServiceContainer  # noqa: E402
 from src.composition.user_agent_factory import UserAgentFactory  # noqa: E402
 from src.config.settings import load_settings  # noqa: E402
@@ -94,7 +97,10 @@ async def main(cases_path: Path, complexity: str | None) -> None:
             agent_type="smart", user_id=user_id, account_id=account_id, kb_preamble=True,
             capabilities=eff.ctx.capabilities, skills_catalog=render_catalog(skills),
         )
-    tools = smart._get_tool_declarations() + [build_use_skill_tool_declaration()]
+    tools = smart._get_tool_declarations() + [
+        build_use_skill_tool_declaration(),
+        build_draft_skill_tool_declaration(),
+    ]
 
     rows = []
     for case in cases:
