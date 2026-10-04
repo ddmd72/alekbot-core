@@ -213,13 +213,14 @@ class TestSaveVersionConsumesDrafts:
 
 
 class TestDeleteSkill:
-    async def test_deletes_versions_and_index_doc(self, repo, col):
+    async def test_deletes_versions_and_index_doc(self, repo, db, col):
+        """Delete goes through one WriteBatch, not per-document `.delete()` calls (so a
+        failure midway never leaves some versions deleted and others, or the index doc,
+        intact) — updated from the old per-doc-call assertions to match."""
+        batch = self._setup_batch(db)
         doc_ref = MagicMock()
         doc_ref.get = AsyncMock(return_value=_snap({"name": "flight-status"}, exists=True))
-        doc_ref.delete = AsyncMock()
         v1, v2 = MagicMock(), MagicMock()
-        v1.reference.delete = AsyncMock()
-        v2.reference.delete = AsyncMock()
         versions_query = MagicMock()
         versions_query.get = AsyncMock(return_value=[v1, v2])
         doc_ref.collection.return_value = versions_query
@@ -230,9 +231,10 @@ class TestDeleteSkill:
         assert result is True
         col.document.assert_called_with("u1:flight-status")
         doc_ref.collection.assert_called_with("versions")
-        v1.reference.delete.assert_awaited_once()
-        v2.reference.delete.assert_awaited_once()
-        doc_ref.delete.assert_awaited_once()
+        batch.delete.assert_any_call(v1.reference)
+        batch.delete.assert_any_call(v2.reference)
+        batch.delete.assert_any_call(doc_ref)
+        batch.commit.assert_awaited_once()
 
     def _setup_batch(self, db):
         batch = MagicMock()
