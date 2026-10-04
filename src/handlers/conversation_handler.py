@@ -17,6 +17,7 @@ from ..domain.language import LanguageCode
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus, DeliveryItem
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
+from ..domain.skill import SKILL_CONTEXT_KEY, fold_skill_contexts
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..services.localization_service import LocalizationService
@@ -842,6 +843,8 @@ class ConversationHandler(ConversationHandlerPort):
             # Append *_context blocks to full_text for tiered history loading.
             # Any metadata key ending in "_context" is persisted — orchestrators control what they expose.
             for ctx_key, ctx_value in (response.metadata or {}).items():
+                if ctx_key == SKILL_CONTEXT_KEY:
+                    continue  # raw block + stub, below
                 if ctx_key.endswith("_context") and ctx_value:
                     context_block = json.dumps(
                         {ctx_key: ctx_value},
@@ -853,6 +856,13 @@ class ConversationHandler(ConversationHandlerPort):
                         "💾 [History] %s appended to full_text: %d chars",
                         ctx_key, len(context_block)
                     )
+
+            # Skill bodies: raw block in full_text (json.dumps would escape the markdown), one
+            # neutral stub per skill in the summary. Runs after the async summary has resolved,
+            # so the summary cannot overwrite the stub.
+            skill_contexts = (response.metadata or {}).get(SKILL_CONTEXT_KEY)
+            if skill_contexts:
+                response_text, history_text = fold_skill_contexts(response_text, history_text, skill_contexts)
 
             # Append rich_content to full_text so LLM sees delivered structured data in history.
             # Only in full_text (not history_text/summary) — subject to HISTORY_FULL_TURNS tiering.
