@@ -56,6 +56,10 @@ from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_media_adapter import GcsMediaAdapter
 from ..adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
+from ..adapters.firestore_skill_repository import FirestoreSkillRepository
+from ..adapters.security.composite_adapter import CompositeAdapter
+from ..adapters.security.regex_adapter import RegexSecurityAdapter
+from ..services.skill_service import SkillService
 from ..services.file_conversion_service import FileConversionService
 from ..agents.email_classification_agent import EmailClassificationAgent
 from ..domain.agent import AgentConfig
@@ -151,6 +155,15 @@ class ServiceContainer:
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
         self.recurrence_adapter = DateutilRecurrenceAdapter()
+
+        # A second stateless CompositeAdapter instance is deliberate here: the assembly
+        # service's own CompositeAdapter is a local inside _init_assembly_service and that
+        # method may return None — widening its return for skills would couple two
+        # unrelated features.
+        self.skill_service = SkillService(
+            repository=FirestoreSkillRepository(db_client, env_config),
+            security_port=CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case"),
+        )
 
         # ------------------------------------------------------------------
         # Config + biographical context (shared; per-user limits resolved later)
@@ -342,6 +355,7 @@ class ServiceContainer:
             "file_conversion_service": self.file_conversion_service,
             "file_storage": self.file_storage,
             "prompt_content_store": self.prompt_content_store,
+            "skill_service": self.skill_service,
         }
 
     def create_fact_management_adapter(
