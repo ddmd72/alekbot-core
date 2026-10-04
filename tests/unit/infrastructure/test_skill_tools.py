@@ -1,4 +1,4 @@
-from src.agents.core.skill_tools import build_use_skill_tool_declaration, make_use_skill_handler
+from src.infrastructure.skill_tools import build_use_skill_tool_declaration, make_use_skill_handler
 from src.domain.llm import ToolCall
 from src.domain.skill import Skill
 
