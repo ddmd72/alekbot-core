@@ -57,6 +57,7 @@ from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_media_adapter import GcsMediaAdapter
 from ..adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
 from ..adapters.firestore_skill_repository import FirestoreSkillRepository
+from ..adapters.filesystem_skill_loader import load_system_skills, SYSTEM_SKILLS_ROOT
 from ..adapters.security.composite_adapter import CompositeAdapter
 from ..adapters.security.regex_adapter import RegexSecurityAdapter
 from ..services.skill_service import SkillService
@@ -160,9 +161,13 @@ class ServiceContainer:
         # service's own CompositeAdapter is a local inside _init_assembly_service and that
         # method may return None — widening its return for skills would couple two
         # unrelated features.
+        # System skills are read from git (src/skills/smart/) once at startup.
+        # Deliberately NOT wrapped in try/except: a malformed SKILL.md is a packaging
+        # bug that must fail the deploy, not silently vanish from is_system() checks.
         self.skill_service = SkillService(
             repository=FirestoreSkillRepository(db_client, env_config),
             security_port=CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case"),
+            system_skills=load_system_skills(SYSTEM_SKILLS_ROOT),
         )
 
         # ------------------------------------------------------------------

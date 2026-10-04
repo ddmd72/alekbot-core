@@ -67,6 +67,7 @@ class SlackAdapterFactory:
         channel_binding_service: Optional[ChannelBindingService] = None,
         fallback_service=None,
         short_link_service=None,
+        skill_service=None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -127,6 +128,7 @@ class SlackAdapterFactory:
             channel_history_source=channel_history_source,
             fallback_service=fallback_service,
             short_link_service=short_link_service,
+            skill_service=skill_service,
         )
 
         if not db_client:
