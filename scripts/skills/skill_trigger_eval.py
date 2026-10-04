@@ -66,8 +66,11 @@ async def main(cases_path: Path, complexity: str | None) -> None:
     user_id, account_id = os.environ["DEV_USER_ID"], os.environ["DEV_ACCOUNT_ID"]
     cases = json.loads(cases_path.read_text(encoding="utf-8"))
 
-    db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
     settings = load_settings()
+    db = firestore.AsyncClient(
+        project=settings["GOOGLE_CLOUD_PROJECT"],
+        database=os.getenv("FIRESTORE_DATABASE", "us-production"),
+    )
     env_config = settings["ENVIRONMENT_CONFIG"]
     account_repo = FirestoreAccountRepository(db_client=db, collection_name=env_config.account_collection_name)
     user_repo = FirestoreUserRepository(db, env_config, account_repo)

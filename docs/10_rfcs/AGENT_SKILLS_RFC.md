@@ -69,7 +69,7 @@ description: "Use when the owner asks about a flight's status, delay, gate or ar
 - body: markdown; the whole `SKILL.md` ≤ 20 KB.
 - **No files and no scripts in v1.** Reference material goes in the body. Executing scripts needs a sandbox and its own RFC.
 
-**Parsing.** Frontmatter is read with `yaml.safe_load` (PyYAML is already a dependency) in the adapters; `domain/` holds a pydantic `Skill` model that validates the result.
+**Parsing.** Frontmatter is read with `yaml.safe_load` (PyYAML is already a dependency) in `src/utils/skill_md.py`, shared by the seeding script and delivery B's filesystem adapter; `domain/` holds a pydantic `Skill` model that validates the result.
 
 ## 5. The skill tools
 
