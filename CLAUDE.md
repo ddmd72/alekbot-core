@@ -430,14 +430,27 @@ agent must output/match), terse, one rule each, no overlap — *convergence not 
   demotions on two consecutive production runs. Do not read one pass as evidence that the rule
   changed. See `decisions/directive_applicability_gate.md` § Variance.
 
-**Agent Skills** — named procedures for Smart, loaded on demand (`docs/10_rfcs/AGENT_SKILLS_RFC.md`).
-A user's custom skills live in Firestore (`{prefix}skills/{user_id}:{name}`, `versions/v<n>`); Smart
-fetches them once per request (`SkillService.list_skills`), renders `available_skills {}` before
-`standing_directives`, and serves its own `use_skill` tool through `DelegationEngine(local_tools=)` —
-not via `delegate_to_specialist`. A loaded body is persisted as a raw `[Skill "<name>" v<n>]` block in
-`full_text` and a neutral stub in the summary, so it lives until history tiering; after that the
-model can reload it with `use_skill`. Delivery A (read path) only: skills are seeded with `scripts/skills/seed_custom_skill.py`;
-chat authoring (`$skill save <code>`) is delivery B, gated on `scripts/skills/skill_trigger_eval.py`.
+**Agent Skills** — named procedures for Smart, loaded on demand (`docs/10_rfcs/AGENT_SKILLS_RFC.md`,
+delivery A + B both live). A user's custom skills live in Firestore (`{prefix}skills/{user_id}:{name}`,
+`versions/v<n>`); system skills ship in git (`src/skills/smart/<name>/SKILL.md`, currently
+`skill-creator` + `domain-competency-research`) and are loaded once at startup by
+`load_system_skills` (`src/adapters/filesystem_skill_loader.py`) — a malformed one fails startup.
+`SkillService` merges system ∪ the user's custom skills; Smart fetches the merged catalog once per
+request (`SkillService.list_skills`), renders `available_skills {}` before `standing_directives`,
+and serves `use_skill` through `DelegationEngine(local_tools=)` — not via `delegate_to_specialist`.
+A loaded body is persisted as a raw `[Skill "<name>" v<n>]` block in `full_text` and a neutral stub
+in the summary, so it lives until history tiering; after that the model can reload it with
+`use_skill`.
+**Authoring (delivery B):** on interactive turns only (`ConversationHandler` sets
+`agent_context["interactive_delivery"]`; background paths — `notify`, `ask_alek`, `tell_alek`,
+`/worker` — never set it), Smart also gets `draft_skill`: it stores an immutable draft and returns
+a `skill_preview` delivery, which `ConversationHandler` alone delivers as two posts — the verbatim
+`SKILL.md` as a file, then a separate message with only `$skill save <code>`. Pasting that code is
+the save authorization; nothing is active before it. Commands, handled in `ConversationHandler`
+before any LLM call (own skills only): `$skill save <code>`, `$skill list`, `$skill delete <name>`
+(bare `$skill` prints usage). Both adapters strip a whole-text backtick wrapper before the `$` check
+so a copied command still dispatches; Telegram never treats a forwarded message as a command.
+Drafts live in `EnvironmentConfig.skill_drafts_collection`.
 Personal skills are never system skills — the repo is public.
 
 **Prompt Builder (Token System)** — assembly, not hardcoded prompts: verified Tokens (humor, voice,

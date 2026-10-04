@@ -25,6 +25,14 @@ is delivery B, gated on `scripts/skills/skill_trigger_eval.py`.
 - GCS version folders — no files in v1; Firestore's one-transaction 20 KB write suffices.
 - Personal skills as system skills — repo is public; a personal procedure must never ship to everyone.
 
+## Delivery B (authoring + system skills)
+
+Owner authoring is a `draft_skill` local tool (interactive turns only) delivering a `skill_preview`
+(verbatim `SKILL.md` file + `$skill save <code>` command); only the pasted code saves it. System
+skills (`skill-creator`, `domain-competency-research`) ship in git and load via a plain
+`load_system_skills` function rather than a second `SkillRepository` adapter — they are read-only,
+so implementing the write port's drafts/delete on them would be a Liskov violation.
+
 ## Notes
 
 - Index doc denormalizes `body` (plus `user_id, account_id, name, description, current, updated_at`)

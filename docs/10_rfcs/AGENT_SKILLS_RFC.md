@@ -1,6 +1,6 @@
 # RFC: Agent Skills — named procedures for Smart, loaded on demand, saved by the user
 
-**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Next: the implementation plan and G2.
+**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; see Deviations in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` for the two planning rulings this revision does not yet reflect inline (no `FileSystemSkillRepository` — a loader instead, §3; `domain-competency-research` as a second system skill, §3).
 **Date:** 2026-10-04 (first draft 2026-09-30)
 **Owner decisions:**
 - Skills are named procedures in Anthropic's `SKILL.md` format, run by our own layer (Smart is multi-provider).
@@ -49,8 +49,8 @@ We copy the format, the dedicated tool, the disclosure model and the authoring m
 | **Custom** (per user) | Firestore (§8) | A: a seeding script run by the developer; B: the user, by `$skill save` | A |
 | **System** (all users) | git, `src/skills/smart/<name>/SKILL.md` | developers, via PR | B |
 
-- One port, `SkillRepository`, two adapters: `FirestoreSkillRepository` (custom; delivery A) and `FileSystemSkillRepository` (system; loaded at startup, a malformed skill fails startup; delivery B). A port with two real implementations is justified.
-- **System skills must be generic.** The repo is public and every user sees them. The only planned system skill is `skill-creator`.
+- One port, `SkillRepository`, one adapter: `FirestoreSkillRepository` (custom; delivery A). System skills are read-only, so a second port implementation was dropped in planning: a `FileSystemSkillRepository` would have to implement the write port's `save_version`/drafts/delete over immutable git content, a Liskov violation. Instead a plain loader, `load_system_skills(root) -> List[Skill]` (`src/adapters/filesystem_skill_loader.py`), runs once in composition at startup — a malformed skill fails startup — and `SkillService` receives the resulting list by constructor injection (delivery B).
+- **System skills must be generic.** The repo is public and every user sees them. Two ship in git: `skill-creator` and `domain-competency-research` — the latter was added in delivery B (beyond this revision's original plan of `skill-creator` alone) because the procedure is generic, already proven live, and closes roadmap TD-10's prerequisite of having it in git before `DomainResearcherAgent` is retired.
 - **Visible set** for a user = system skills ∪ that user's custom skills.
 - **Name collisions:** saving a custom skill under a system name is rejected. If a later release ships a system skill whose name a user already has, the custom one shadows it for that user and a warning is logged.
 
@@ -126,6 +126,7 @@ available_skills {
 - A failed catalog fetch is logged and the prompt is built without the block (it indexes optional procedures; "no fallback prompts" does not apply).
 - **No in-process cache** of custom entries: one Firestore query per Smart request, so a save is visible on every instance at once. A save costs one provider-cache miss.
 - **The offering line is tuned on live use.** It is always in the static prompt, so it acts like a standing rule; B's acceptance watches for over-offering.
+- **System skills in this catalog are not run through `SecurityPort`.** The §8 checks (including the `SecurityPort` reject) run only on `SkillService.draft`/`save`/`save_draft`, which custom skills always pass through; system skills reach the catalog straight from `load_system_skills` at startup and never call those methods. They are trusted instead because they arrive only via a git PR review — the same trust boundary the rest of `src/` already relies on, not a gap specific to skills.
 
 ## 7. A loaded skill across turns
 
