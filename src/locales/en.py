@@ -122,4 +122,18 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SOURCES_HEADING.value: "Sources:",
     UIMessage.CONSOLIDATION_STARTED.value: "🧠 Memory consolidation started…",
     UIMessage.VOICE_REQUEST_FAILED.value: "The request did not go through.",
+    UIMessage.SKILL_USAGE.value: (
+        "Skills: `$skill list` — your skills · `$skill save CODE` — save a draft · "
+        "`$skill delete NAME` — delete one of your skills"
+    ),
+    UIMessage.SKILL_SAVED.value: "✅ Skill `{name}` saved (v{version}). It is available from your next message.",
+    UIMessage.SKILL_DRAFT_NOT_FOUND.value: "❌ No draft with code `{code}`. Ask me to draft the skill again.",
+    UIMessage.SKILL_NOT_SAVED.value: "❌ Not saved: {reason}",
+    UIMessage.SKILL_LIST_HEADER.value: "Your skills:",
+    UIMessage.SKILL_LIST_EMPTY.value: "You have no skills of your own yet.",
+    UIMessage.SKILL_SYSTEM_HEADER.value: "Built-in:",
+    UIMessage.SKILL_DELETED.value: "🗑️ Skill `{name}` deleted.",
+    UIMessage.SKILL_NOT_FOUND.value: "❌ No skill named `{name}`.",
+    UIMessage.SKILL_BUILT_IN.value: "`{name}` is built in and cannot be deleted.",
+    UIMessage.SKILL_UNAVAILABLE.value: "Skills are not available right now.",
 }

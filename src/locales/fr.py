@@ -98,4 +98,18 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SOURCES_HEADING.value: "Sources :",
     UIMessage.CONSOLIDATION_STARTED.value: "🧠 Consolidation de la mémoire lancée…",
     UIMessage.VOICE_REQUEST_FAILED.value: "La demande n'a pas abouti.",
+    UIMessage.SKILL_USAGE.value: (
+        "Compétences : `$skill list` — vos compétences · `$skill save CODE` — enregistrer un brouillon · "
+        "`$skill delete NAME` — supprimer une de vos compétences"
+    ),
+    UIMessage.SKILL_SAVED.value: "✅ Compétence `{name}` enregistrée (v{version}). Elle est disponible dès votre prochain message.",
+    UIMessage.SKILL_DRAFT_NOT_FOUND.value: "❌ Aucun brouillon avec le code `{code}`. Demandez-moi de rédiger la compétence à nouveau.",
+    UIMessage.SKILL_NOT_SAVED.value: "❌ Non enregistrée : {reason}",
+    UIMessage.SKILL_LIST_HEADER.value: "Vos compétences :",
+    UIMessage.SKILL_LIST_EMPTY.value: "Vous n'avez encore aucune compétence personnelle.",
+    UIMessage.SKILL_SYSTEM_HEADER.value: "Intégrées :",
+    UIMessage.SKILL_DELETED.value: "🗑️ Compétence `{name}` supprimée.",
+    UIMessage.SKILL_NOT_FOUND.value: "❌ Aucune compétence nommée `{name}`.",
+    UIMessage.SKILL_BUILT_IN.value: "`{name}` est une compétence intégrée et ne peut pas être supprimée.",
+    UIMessage.SKILL_UNAVAILABLE.value: "Les compétences ne sont pas disponibles pour le moment.",
 }
