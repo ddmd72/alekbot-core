@@ -127,4 +127,18 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SOURCES_HEADING.value: "Джерела:",
     UIMessage.CONSOLIDATION_STARTED.value: "🧠 Розпочато консолідацію пам'яті…",
     UIMessage.VOICE_REQUEST_FAILED.value: "Запит не вдалося виконати.",
+    UIMessage.SKILL_USAGE.value: (
+        "Навички: `$skill list` — ваші навички · `$skill save CODE` — зберегти чернетку · "
+        "`$skill delete NAME` — видалити одну з ваших навичок"
+    ),
+    UIMessage.SKILL_SAVED.value: "✅ Навичку `{name}` збережено (v{version}). Вона доступна з наступного повідомлення.",
+    UIMessage.SKILL_DRAFT_NOT_FOUND.value: "❌ Немає чернетки з кодом `{code}`. Попросіть мене скласти навичку ще раз.",
+    UIMessage.SKILL_NOT_SAVED.value: "❌ Не збережено: {reason}",
+    UIMessage.SKILL_LIST_HEADER.value: "Ваші навички:",
+    UIMessage.SKILL_LIST_EMPTY.value: "У вас ще немає власних навичок.",
+    UIMessage.SKILL_SYSTEM_HEADER.value: "Вбудовані:",
+    UIMessage.SKILL_DELETED.value: "🗑️ Навичку `{name}` видалено.",
+    UIMessage.SKILL_NOT_FOUND.value: "❌ Немає навички з назвою `{name}`.",
+    UIMessage.SKILL_BUILT_IN.value: "`{name}` — вбудована навичка, її не можна видалити.",
+    UIMessage.SKILL_UNAVAILABLE.value: "Навички зараз недоступні.",
 }

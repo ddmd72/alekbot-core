@@ -317,8 +317,14 @@ class HTTPModeAdapter(SlackAdapter):
                 localization=self._localization,
             )
 
-            if text.startswith("$"):
-                command = text.lstrip("$").strip().lower()
+            # A copied `` `$skill save CODE` `` must still dispatch as a command — strip
+            # surrounding backticks only when they wrap the ENTIRE trimmed text, so a normal
+            # sentence like "`$HOME` is wrong" (backticks around a substring) is untouched.
+            t = text.strip()
+            stripped = t[1:-1].strip() if len(t) > 1 and t.startswith("`") and t.endswith("`") else t
+
+            if stripped.startswith("$"):
+                command = stripped.lstrip("$").strip().lower()
                 context = MessageContext(
                     text=text,
                     session_id=session_id,

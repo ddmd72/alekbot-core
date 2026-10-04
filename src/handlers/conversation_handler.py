@@ -17,7 +17,8 @@ from ..domain.language import LanguageCode
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus, DeliveryItem
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
-from ..domain.skill import SKILL_CONTEXT_KEY, SKILL_PREVIEW_DELIVERY, fold_skill_contexts
+from ..domain.exceptions import SkillCapExceeded, SkillDraftNotFound, SkillNameReserved, SkillRejected
+from ..domain.skill import SKILL_CONTEXT_KEY, SKILL_PREVIEW_DELIVERY, fold_skill_contexts, skill_saved_note
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..services.localization_service import LocalizationService
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from ..ports.audio_transcription_port import AudioTranscriptionPort
     from ..services.file_conversion_service import FileConversionService
     from ..services.short_link_service import ShortLinkService
+    from ..services.skill_service import SkillService
 from ..utils.file_conversion import (
     convert_file_to_text, download_alert, is_native_binary, make_history_stub,
     transcription_alert,
@@ -107,6 +109,7 @@ class ConversationHandler(ConversationHandlerPort):
         channel_history_source: Optional[Any] = None,
         short_link_service: Optional["ShortLinkService"] = None,
         fallback_service: Optional[Any] = None,
+        skill_service: Optional["SkillService"] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -127,6 +130,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._channel_binding = channel_binding_service
         self._channel_history = channel_history_source
         self._short_link_service = short_link_service
+        self._skill_service = skill_service
         # Strong refs for fire-and-forget tasks (e.g. notification-channel save below) —
         # asyncio only holds a weak ref to a Task, so an untracked one can be GC'd mid-flight.
         self._background_tasks: set[asyncio.Task] = set()
@@ -1123,6 +1127,9 @@ class ConversationHandler(ConversationHandlerPort):
             elif command.startswith("agent"):
                 await self._handle_agent_command(command, context, response_channel)
 
+            elif command.startswith("skill"):
+                await self._handle_skill_command(command, context, response_channel)
+
             elif command == "primary":
                 await self._handle_primary_command(context, response_channel)
 
@@ -1263,6 +1270,159 @@ class ConversationHandler(ConversationHandlerPort):
             f"Use `$agent off` to unbind.",
             thread_id=context.thread_id,
         )
+
+    # ------------------------------------------------------------------
+    # Skill commands
+    # ------------------------------------------------------------------
+
+    async def _handle_skill_command(
+        self, command: str, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        """Handle `$skill save CODE` / `$skill list` / `$skill delete NAME` (and bare
+        `$skill` / an unknown sub-command, both of which print usage).
+
+        Every branch past the "no service" check runs under one broad try/except: the
+        typed domain exceptions (`SkillDraftNotFound`, `SkillRejected`,
+        `SkillNameReserved`, `SkillCapExceeded`) are caught close to their call site and
+        turned into a specific reply, but `SkillService`/`SkillRepository` calls can also
+        raise plain, untyped errors (e.g. a Firestore failure) — those must never escape
+        this method, so the outer catch-all logs them and replies `SKILL_UNAVAILABLE`.
+        """
+        if not self._skill_service:
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.SKILL_UNAVAILABLE), thread_id=context.thread_id,
+            )
+            return
+
+        parts = command.split()
+        sub = parts[1] if len(parts) > 1 else None
+
+        try:
+            if sub not in ("save", "list", "delete"):
+                await response_channel.send_message(
+                    self._ui_string(context, UIMessage.SKILL_USAGE), thread_id=context.thread_id,
+                )
+                return
+
+            if sub == "save":
+                if len(parts) != 3:
+                    await response_channel.send_message(
+                        self._ui_string(context, UIMessage.SKILL_USAGE), thread_id=context.thread_id,
+                    )
+                    return
+                await self._handle_skill_save(parts[2], context, response_channel)
+
+            elif sub == "list":
+                if len(parts) != 2:
+                    await response_channel.send_message(
+                        self._ui_string(context, UIMessage.SKILL_USAGE), thread_id=context.thread_id,
+                    )
+                    return
+                await self._handle_skill_list(context, response_channel)
+
+            else:  # delete
+                if len(parts) != 3:
+                    await response_channel.send_message(
+                        self._ui_string(context, UIMessage.SKILL_USAGE), thread_id=context.thread_id,
+                    )
+                    return
+                await self._handle_skill_delete(parts[2], context, response_channel)
+
+        except Exception as e:
+            logger.error(
+                "❌ [ConversationHandler] Unexpected error handling skill command %r for user %s: %s",
+                command, context.user_id[:8], e, exc_info=True,
+            )
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.SKILL_UNAVAILABLE), thread_id=context.thread_id,
+            )
+
+    async def _handle_skill_save(
+        self, code: str, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        try:
+            name, version = await self._skill_service.save_draft(context.user_id, context.account_id, code)
+        except SkillDraftNotFound as e:
+            logger.info("ℹ️ [ConversationHandler] Skill save: no draft %r for user %s: %s",
+                        code, context.user_id[:8], e)
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.SKILL_DRAFT_NOT_FOUND, code=code),
+                thread_id=context.thread_id,
+            )
+            return
+        except (SkillRejected, SkillNameReserved, SkillCapExceeded) as e:
+            logger.warning("⚠️ [ConversationHandler] Skill save %r rejected for user %s: %s",
+                           code, context.user_id[:8], e)
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.SKILL_NOT_SAVED, reason=str(e)),
+                thread_id=context.thread_id,
+            )
+            return
+
+        await response_channel.send_message(
+            self._ui_string(context, UIMessage.SKILL_SAVED, name=name, version=version),
+            thread_id=context.thread_id,
+        )
+
+        # The skill is already saved — a history-append failure is logged, never raised.
+        try:
+            note = skill_saved_note(name, version)
+            model_text = f"Saved skill {name} v{version}."
+            session_store = self.agent_factory.get_session_store()
+            await session_store.append_messages_batch(
+                session_id=context.session_id,
+                owner_id=context.user_id,
+                messages=[
+                    Message(role="user", parts=[MessagePart(text=note)]),
+                    Message(role="model", parts=[MessagePart(text=model_text, full_text=model_text)]),
+                ],
+            )
+        except Exception as e:
+            logger.error(
+                "❌ [ConversationHandler] Failed to append skill-save history pair for %s v%s (user %s): %s",
+                name, version, context.user_id[:8], e, exc_info=True,
+            )
+
+    async def _handle_skill_list(
+        self, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        custom, system = await self._skill_service.list_owned(context.user_id)
+
+        lines = [self._ui_string(context, UIMessage.SKILL_LIST_HEADER)]
+        if custom:
+            lines.extend(f"- {s.name} — {s.description}" for s in custom)
+        else:
+            lines.append(self._ui_string(context, UIMessage.SKILL_LIST_EMPTY))
+        lines.append("")
+        lines.append(self._ui_string(context, UIMessage.SKILL_SYSTEM_HEADER))
+        lines.extend(f"- {s.name}" for s in system)
+
+        await response_channel.send_message("\n".join(lines), thread_id=context.thread_id)
+
+    async def _handle_skill_delete(
+        self, name: str, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        try:
+            deleted = await self._skill_service.delete(context.user_id, name)
+        except SkillNameReserved as e:
+            logger.info("ℹ️ [ConversationHandler] Skill delete %r blocked (built-in) for user %s: %s",
+                        name, context.user_id[:8], e)
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.SKILL_BUILT_IN, name=name),
+                thread_id=context.thread_id,
+            )
+            return
+
+        if deleted:
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.SKILL_DELETED, name=name),
+                thread_id=context.thread_id,
+            )
+        else:
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.SKILL_NOT_FOUND, name=name),
+                thread_id=context.thread_id,
+            )
 
     async def _handle_primary_command(
         self, context: MessageContext, response_channel: ResponseChannel,

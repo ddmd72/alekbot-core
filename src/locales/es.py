@@ -98,4 +98,18 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SOURCES_HEADING.value: "Fuentes:",
     UIMessage.CONSOLIDATION_STARTED.value: "🧠 Consolidación de memoria iniciada…",
     UIMessage.VOICE_REQUEST_FAILED.value: "La solicitud no se pudo completar.",
+    UIMessage.SKILL_USAGE.value: (
+        "Habilidades: `$skill list` — tus habilidades · `$skill save CODE` — guardar un borrador · "
+        "`$skill delete NAME` — eliminar una de tus habilidades"
+    ),
+    UIMessage.SKILL_SAVED.value: "✅ Habilidad `{name}` guardada (v{version}). Está disponible desde tu próximo mensaje.",
+    UIMessage.SKILL_DRAFT_NOT_FOUND.value: "❌ No hay ningún borrador con el código `{code}`. Pídeme que redacte la habilidad otra vez.",
+    UIMessage.SKILL_NOT_SAVED.value: "❌ No guardada: {reason}",
+    UIMessage.SKILL_LIST_HEADER.value: "Tus habilidades:",
+    UIMessage.SKILL_LIST_EMPTY.value: "Todavía no tienes habilidades propias.",
+    UIMessage.SKILL_SYSTEM_HEADER.value: "Integradas:",
+    UIMessage.SKILL_DELETED.value: "🗑️ Habilidad `{name}` eliminada.",
+    UIMessage.SKILL_NOT_FOUND.value: "❌ No hay ninguna habilidad llamada `{name}`.",
+    UIMessage.SKILL_BUILT_IN.value: "`{name}` es una habilidad integrada y no se puede eliminar.",
+    UIMessage.SKILL_UNAVAILABLE.value: "Las habilidades no están disponibles en este momento.",
 }
