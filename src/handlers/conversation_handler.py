@@ -679,6 +679,7 @@ class ConversationHandler(ConversationHandlerPort):
                     "current_message_parts": message_parts,
                     "origin_channel_id": channel_id,
                     "origin_platform": getattr(response_channel, "platform", "slack"),
+                    "interactive_delivery": True,
                 }
                 if history_messages:
                     agent_context["history"] = [m.model_dump() for m in history_messages]

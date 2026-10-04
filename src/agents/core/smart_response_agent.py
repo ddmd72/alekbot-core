@@ -26,7 +26,7 @@ from ...domain.agent import (
 )
 from ...domain.messaging import SmartResponse
 from ...domain.exceptions import TranscriptLockedError
-from ...domain.skill import USE_SKILL_TOOL, Skill, render_catalog, visible_skill_names
+from ...domain.skill import DRAFT_SKILL_TOOL, USE_SKILL_TOOL, Skill, render_catalog, visible_skill_names
 from ...ports.llm_port import (
     LLMResponse,
     Message,
@@ -39,7 +39,12 @@ from ...ports.llm_port import AgentExecutionContext
 from ...infrastructure.task_execution_resolver import ExecutionOverride
 from ...utils.logger import logger
 from ...utils.llm_response_parser import extract_structured_response
-from ...infrastructure.skill_tools import build_use_skill_tool_declaration, make_use_skill_handler
+from ...infrastructure.skill_tools import (
+    build_draft_skill_tool_declaration,
+    build_use_skill_tool_declaration,
+    make_draft_skill_handler,
+    make_use_skill_handler,
+)
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
@@ -458,6 +463,11 @@ class SmartResponseAgent(BaseAgent):
                 local_tools = {
                     USE_SKILL_TOOL: make_use_skill_handler(skills, visible_skill_names(clean_history)),
                 }
+                if self.skill_service and message.context.get("interactive_delivery"):
+                    tools.append(build_draft_skill_tool_declaration())
+                    local_tools[DRAFT_SKILL_TOOL] = make_draft_skill_handler(
+                        lambda s: self.skill_service.draft(prompt_user_id, s)
+                    )
 
             engine = DelegationEngine(self.coordinator)
             base_request = LLMRequest(
