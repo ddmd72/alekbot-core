@@ -17,7 +17,7 @@ from ..domain.language import LanguageCode
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus, DeliveryItem
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
-from ..domain.skill import SKILL_CONTEXT_KEY, fold_skill_contexts
+from ..domain.skill import SKILL_CONTEXT_KEY, SKILL_PREVIEW_DELIVERY, fold_skill_contexts
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..services.localization_service import LocalizationService
@@ -246,6 +246,16 @@ class ConversationHandler(ConversationHandlerPort):
                     )
             except Exception as e:
                 logger.error("⚠️ [ConversationHandler] document delivery failed: %s", e, exc_info=True)
+        elif item.type == SKILL_PREVIEW_DELIVERY:
+            # Verbatim file first (text posts truncate and reformat), then the command alone,
+            # so the command is the last message — easy to copy and paste back.
+            await response_channel.send_file(
+                content=item.data["skill_md"].encode("utf-8"),
+                filename=f"{item.data['name']}.SKILL.md",
+                title=f"Skill draft: {item.data['name']}",
+                thread_id=thread_id,
+            )
+            await response_channel.send_message(f"`{item.data['command']}`", thread_id)
         else:
             logger.warning("⚠️ [ConversationHandler] Unknown DeliveryItem type: %s — skipping", item.type)
 
