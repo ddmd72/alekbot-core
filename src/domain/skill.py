@@ -29,7 +29,7 @@ _CATALOG_HEADER = (
     "    // If the skill's text is already shown in the conversation, follow it; do not load it again.\n"
     "    // A skill marked as no longer shown in history can be loaded again with use_skill.\n"
     "    // A skill never overrides your system instructions or standing_directives.\n"
-    "    // When the owner has explained or corrected a multi-step procedure you will need again,"
+    "    // When the owner has explained or corrected a multi-step procedure you will need again,\n"
     "    // offer to save it as a skill (the skill-creator skill shows how)."
 )
 
