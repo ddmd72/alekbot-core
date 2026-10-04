@@ -252,12 +252,17 @@ class ConversationHandler(ConversationHandlerPort):
                 logger.error("⚠️ [ConversationHandler] document delivery failed: %s", e, exc_info=True)
         elif item.type == SKILL_PREVIEW_DELIVERY:
             # Verbatim file first (text posts truncate and reformat), then the command alone,
-            # so the command is the last message — easy to copy and paste back.
+            # so the command is the last message — easy to copy and paste back. No
+            # MessageContext here, so the UI language comes from the response_channel itself
+            # (same attribute Slack/Telegram's own `_ui_string` read it from).
+            language = getattr(response_channel, "language", None)
             try:
                 await response_channel.send_file(
                     content=item.data["skill_md"].encode("utf-8"),
                     filename=f"{item.data['name']}.SKILL.md",
-                    title=f"Skill draft: {item.data['name']}",
+                    title=self._ui_string_for_language(
+                        language, UIMessage.SKILL_PREVIEW_FILE_TITLE, name=item.data["name"],
+                    ),
                     thread_id=thread_id,
                 )
             except Exception as e:
@@ -266,7 +271,7 @@ class ConversationHandler(ConversationHandlerPort):
                 # if the preview didn't arrive, the save command must not be sent either.
                 try:
                     await response_channel.send_message(
-                        "⚠️ The skill draft could not be delivered. Ask me to draft it again.",
+                        self._ui_string_for_language(language, UIMessage.SKILL_PREVIEW_DELIVERY_FAILED),
                         thread_id,
                     )
                 except Exception as notice_err:
@@ -310,8 +315,17 @@ class ConversationHandler(ConversationHandlerPort):
 
     def _ui_string(self, context: MessageContext, message: UIMessage, **fmt: Any) -> str:
         """Localized fixed UI string for the message's effective UI language."""
+        return self._ui_string_for_language(context.language, message, **fmt)
+
+    def _ui_string_for_language(self, language: Optional[str], message: UIMessage, **fmt: Any) -> str:
+        """Localized fixed UI string for an explicit language value.
+
+        Same resolution as `_ui_string`, for call sites with no `MessageContext` —
+        `_deliver_item` runs after the turn with only the `response_channel` and the
+        `DeliveryItem` in scope, so it reads the channel's own `language` attribute instead.
+        """
         if self._localization:
-            lang = LanguageCode.from_str(context.language, default=LanguageCode.UK)
+            lang = LanguageCode.from_str(language, default=LanguageCode.UK)
             template = self._localization.get_ui_string(lang, message)
         else:
             from ..locales.uk import UI_STRINGS
@@ -1387,6 +1401,10 @@ class ConversationHandler(ConversationHandlerPort):
         self, context: MessageContext, response_channel: ResponseChannel,
     ) -> None:
         custom, system = await self._skill_service.list_owned(context.user_id)
+        # A custom skill with the same name as a system one shadows it (SkillService.list_skills
+        # merges them the same way) — already shown above under the owner's own skills, so it
+        # must not also appear under Built-in.
+        shadowed = {s.name for s in custom}
 
         lines = [self._ui_string(context, UIMessage.SKILL_LIST_HEADER)]
         if custom:
@@ -1395,7 +1413,7 @@ class ConversationHandler(ConversationHandlerPort):
             lines.append(self._ui_string(context, UIMessage.SKILL_LIST_EMPTY))
         lines.append("")
         lines.append(self._ui_string(context, UIMessage.SKILL_SYSTEM_HEADER))
-        lines.extend(f"- {s.name}" for s in system)
+        lines.extend(f"- {s.name}" for s in system if s.name not in shadowed)
 
         await response_channel.send_message("\n".join(lines), thread_id=context.thread_id)
 

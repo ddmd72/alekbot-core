@@ -33,6 +33,31 @@ def test_ignores_non_directories(tmp_path):
     assert load_system_skills(tmp_path) == []
 
 
+def test_root_missing_raises(tmp_path):
+    with pytest.raises(SkillValidationError):
+        load_system_skills(tmp_path / "does-not-exist")
+
+
+def test_root_not_a_directory_raises(tmp_path):
+    f = tmp_path / "not-a-dir"
+    f.write_text("x")
+    with pytest.raises(SkillValidationError):
+        load_system_skills(f)
+
+
+def test_subfolder_without_skill_md_raises(tmp_path):
+    (tmp_path / "empty-folder").mkdir()
+    with pytest.raises(SkillValidationError):
+        load_system_skills(tmp_path)
+
+
+def test_nothing_loaded_raises(tmp_path):
+    # Root exists and is a directory, but holds only a plain file — zero skills.
+    (tmp_path / "README.md").write_text("x")
+    with pytest.raises(SkillValidationError):
+        load_system_skills(tmp_path)
+
+
 def test_every_repo_system_skill_parses():
     names = {s.name for s in load_system_skills(SYSTEM_SKILLS_ROOT)}
     assert {"skill-creator", "domain-competency-research"} <= names

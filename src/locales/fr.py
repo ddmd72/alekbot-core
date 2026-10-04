@@ -112,4 +112,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SKILL_NOT_FOUND.value: "❌ Aucune compétence nommée `{name}`.",
     UIMessage.SKILL_BUILT_IN.value: "`{name}` est une compétence intégrée et ne peut pas être supprimée.",
     UIMessage.SKILL_UNAVAILABLE.value: "Les compétences ne sont pas disponibles pour le moment.",
+    UIMessage.SKILL_PREVIEW_FILE_TITLE.value: "Brouillon de compétence : {name}",
+    UIMessage.SKILL_PREVIEW_DELIVERY_FAILED.value: "⚠️ Le brouillon de la compétence n'a pas pu être livré. Demandez-moi de le rédiger à nouveau.",
 }

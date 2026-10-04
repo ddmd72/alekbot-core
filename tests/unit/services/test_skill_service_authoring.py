@@ -196,6 +196,26 @@ async def test_save_draft_happy_path_consumes_drafts_and_returns_name_version(re
     )
 
 
+async def test_save_draft_of_older_code_saves_that_drafts_own_content(repo, service):
+    """Two drafts of the same name exist; the owner pastes the OLDER code. `save_draft` must
+    pass exactly the content stored under THAT code to `save_version` (never the newer draft's)
+    — that is the authorization the owner gave. Deleting the sibling (newer) draft by name is
+    the repository's job inside `save_version`'s transaction, not SkillService's; this only
+    asserts the `consume_drafts_named` argument SkillService hands it."""
+    older_draft = Skill(name="flight-status", description="Use when x.", body="older body")
+    repo.get_draft.return_value = older_draft
+    repo.save_version.return_value = 1
+
+    name, version = await service.save_draft("u1", "a1", "older-code")
+
+    repo.get_draft.assert_awaited_once_with("u1", "older-code")
+    repo.save_version.assert_awaited_once_with(
+        "u1", "a1", older_draft, cap=MAX_CUSTOM_SKILLS_PER_USER, consume_drafts_named=older_draft.name,
+    )
+    assert name == older_draft.name
+    assert version == 1
+
+
 async def test_save_draft_flagged_at_save_raises_rejected_nothing_saved(repo, security, service):
     repo.get_draft.return_value = SKILL
     security.validate.side_effect = lambda text, context, zone=TrustZone.UNTRUSTED: _result(text, "sanitized")
