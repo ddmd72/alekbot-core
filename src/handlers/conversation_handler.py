@@ -249,13 +249,32 @@ class ConversationHandler(ConversationHandlerPort):
         elif item.type == SKILL_PREVIEW_DELIVERY:
             # Verbatim file first (text posts truncate and reformat), then the command alone,
             # so the command is the last message — easy to copy and paste back.
-            await response_channel.send_file(
-                content=item.data["skill_md"].encode("utf-8"),
-                filename=f"{item.data['name']}.SKILL.md",
-                title=f"Skill draft: {item.data['name']}",
-                thread_id=thread_id,
-            )
-            await response_channel.send_message(f"`{item.data['command']}`", thread_id)
+            try:
+                await response_channel.send_file(
+                    content=item.data["skill_md"].encode("utf-8"),
+                    filename=f"{item.data['name']}.SKILL.md",
+                    title=f"Skill draft: {item.data['name']}",
+                    thread_id=thread_id,
+                )
+            except Exception as e:
+                logger.error("⚠️ [ConversationHandler] skill_preview send_file failed: %s", e, exc_info=True)
+                # The owner must never be able to save content they were not shown —
+                # if the preview didn't arrive, the save command must not be sent either.
+                try:
+                    await response_channel.send_message(
+                        "⚠️ The skill draft could not be delivered. Ask me to draft it again.",
+                        thread_id,
+                    )
+                except Exception as notice_err:
+                    logger.error(
+                        "⚠️ [ConversationHandler] skill_preview failure notice also failed: %s",
+                        notice_err, exc_info=True,
+                    )
+                return
+            try:
+                await response_channel.send_message(f"`{item.data['command']}`", thread_id)
+            except Exception as e:
+                logger.error("⚠️ [ConversationHandler] skill_preview command send failed: %s", e, exc_info=True)
         else:
             logger.warning("⚠️ [ConversationHandler] Unknown DeliveryItem type: %s — skipping", item.type)
 
