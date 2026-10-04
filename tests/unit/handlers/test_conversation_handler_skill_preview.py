@@ -171,3 +171,91 @@ class TestSkillPreviewEndToEnd:
             < call_names.index("send_file")
             < call_names.index("send_message")
         )
+
+
+class TestSkillPreviewDeliveryFailureHandling:
+    """Fix round 1: a send_file/send_message failure in the skill_preview branch must never
+    propagate, and the save command must never be sent when the preview wasn't delivered —
+    the owner must never be able to save content they were not shown."""
+
+    async def test_send_file_failure_skips_command_sends_notice_no_raise(self):
+        handler = _make_handler(MagicMock())
+        channel = _make_channel()
+        channel.send_file = AsyncMock(side_effect=RuntimeError("upload failed"))
+        item = _make_item()
+
+        # Must not raise.
+        await handler._deliver_item(item, channel, thread_id="T1", user_id=_USER_ID)
+
+        channel.send_message.assert_awaited_once_with(
+            "⚠️ The skill draft could not be delivered. Ask me to draft it again.", "T1"
+        )
+        for call_args in channel.send_message.call_args_list:
+            assert "$skill save" not in call_args.args[0]
+
+    async def test_send_file_failure_and_notice_failure_both_swallowed(self):
+        handler = _make_handler(MagicMock())
+        channel = _make_channel()
+        channel.send_file = AsyncMock(side_effect=RuntimeError("upload failed"))
+        channel.send_message = AsyncMock(side_effect=RuntimeError("notice also failed"))
+        item = _make_item()
+
+        # Must not raise even though both the file AND the failure notice fail.
+        await handler._deliver_item(item, channel, thread_id=None, user_id=_USER_ID)
+
+    async def test_command_send_failure_swallowed_after_successful_file(self):
+        handler = _make_handler(MagicMock())
+        channel = _make_channel()
+        channel.send_message = AsyncMock(side_effect=RuntimeError("command send failed"))
+        item = _make_item()
+
+        # send_file succeeds; the command send (send_message) raises — must be swallowed.
+        await handler._deliver_item(item, channel, thread_id=None, user_id=_USER_ID)
+        channel.send_file.assert_awaited_once()
+
+
+class TestSkillPreviewEndToEndFailureHandling:
+    """handle_message-level: a skill_preview delivery failure must not break the turn — the
+    turn's history still saves, and the user does not see the unrelated generic error."""
+
+    async def test_send_file_failure_still_saves_history_no_generic_error(self):
+        item = _make_item()
+        response = _make_success(SmartResponse(text="Here's the draft."))
+        response.delivery_items.append(item)
+
+        coord = _simple_coordinator(response)
+        handler = _make_handler(coord)
+        channel = _make_channel()
+        channel.send_file = AsyncMock(side_effect=RuntimeError("upload failed"))
+
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
+            await handler.handle_message(_make_context(), channel)
+
+        session_store = handler.agent_factory.get_session_store()
+        session_store.append_messages_batch.assert_awaited_once()
+
+        texts = [c.args[0] for c in channel.send_message.call_args_list]
+        assert any("could not be delivered" in t for t in texts)
+        assert not any("$skill save" in t for t in texts)
+        assert not any("wrong" in t.lower() or "Something" in t for t in texts)
+        channel.send_status.assert_not_awaited()  # no generic ERROR-status path triggered
+
+    async def test_command_send_failure_still_saves_history_no_raise(self):
+        item = _make_item()
+        response = _make_success(SmartResponse(text="Here's the draft."))
+        response.delivery_items.append(item)
+
+        coord = _simple_coordinator(response)
+        handler = _make_handler(coord)
+        channel = _make_channel()
+        # send_chunked_message (main reply) is separate from send_message (the command) —
+        # only the command send fails here.
+        channel.send_message = AsyncMock(side_effect=RuntimeError("command send failed"))
+
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
+            await handler.handle_message(_make_context(), channel)
+
+        channel.send_file.assert_awaited_once()
+        session_store = handler.agent_factory.get_session_store()
+        session_store.append_messages_batch.assert_awaited_once()
+        channel.send_status.assert_not_awaited()
