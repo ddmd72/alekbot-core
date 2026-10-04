@@ -430,6 +430,16 @@ agent must output/match), terse, one rule each, no overlap — *convergence not 
   demotions on two consecutive production runs. Do not read one pass as evidence that the rule
   changed. See `decisions/directive_applicability_gate.md` § Variance.
 
+**Agent Skills** — named procedures for Smart, loaded on demand (`docs/10_rfcs/AGENT_SKILLS_RFC.md`).
+A user's custom skills live in Firestore (`{prefix}skills/{user_id}:{name}`, `versions/v<n>`); Smart
+fetches them once per request (`SkillService.list_skills`), renders `available_skills {}` before
+`standing_directives`, and serves its own `use_skill` tool through `DelegationEngine(local_tools=)` —
+not via `delegate_to_specialist`. A loaded body is persisted as a raw `[Skill "<name>" v<n>]` block in
+`full_text` and a neutral stub in the summary, so it lives until history tiering, then the model
+reloads it. Delivery A (read path) only: skills are seeded with `scripts/skills/seed_custom_skill.py`;
+chat authoring (`$skill save <code>`) is delivery B, gated on `scripts/skills/skill_trigger_eval.py`.
+Personal skills are never system skills — the repo is public.
+
 **Prompt Builder (Token System)** — assembly, not hardcoded prompts: verified Tokens (humor, voice,
 cognitive process…) + static Blueprints with `{{CLASS_NAME}}` slots; 4 priority levels
 USER > ACCOUNT > AGENT > SYSTEM; static template cached in-memory (24h TTL, 5ms vs 110ms cold). Runtime

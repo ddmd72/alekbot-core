@@ -82,7 +82,10 @@ Smart gets skill tools next to `delegate_to_specialist`. They are zero-LLM and h
 
 **Engine change.** `DelegationEngine` today treats every non-terminal tool call as a delegation and reads `intent` from its arguments (`delegation_engine.py:468-483`). It gains `local_tools: Mapping[str, LocalToolHandler]`: a call whose name is in the map goes to its handler. Its result string, `delivery_items` and `history_context` flow into `DelegationResult` exactly as a delegation's do. One Logfire span per local call. A stray `delegate_to_specialist(intent="use_skill")` fails cleanly at the coordinator (`agent_coordinator.py:389-397`).
 
-**Handler per execution.** Smart builds the handlers for each execution as closures over:
+**Handler per execution.** The handler factory is `src/infrastructure/skill_tools.py::make_use_skill_handler`
+(moved out of `agents/core/` — REQ-ARCH-24 forbids an agent importing a sibling `agents/` module, and
+`use_skill`'s handler has no agent-specific logic). Smart builds the handlers for each execution as
+closures over:
 - `visible`: names whose body is in the **tiered** history Smart is about to send — computed after `_apply_history_tier` (`smart_response_agent.py:575`), from **model** messages only, by the `[Skill "<name>" v<n>]` marker (§7). Raw session history keeps `full_text` forever, so scanning it would mark long-compressed skills as visible; scanning user messages would let pasted text fake the marker.
 - `loaded_now`: names loaded earlier in this execution.
 
@@ -115,7 +118,11 @@ available_skills {
 }
 ```
 
-- `PromptBuilder` receives `SkillService` by constructor injection (`TYPE_CHECKING` import, REQ-ARCH-22) and passes the rendered catalog to `assemble(skills_catalog=…)`. Only Smart's `build_for_agent` call asks for it. The block renders only when non-empty.
+- **Smart** holds `SkillService` by constructor injection — not `PromptBuilder` (REQ-ARCH-22: services
+  do not import concrete adapters, and `PromptBuilder` has no need to know skills exist). Smart calls
+  `SkillService.list_skills`, pre-renders the catalog itself, and passes the string to
+  `build_for_agent(skills_catalog=…)`; `PromptAssemblyService` only places the already-rendered string.
+  The block renders only when non-empty.
 - A failed catalog fetch is logged and the prompt is built without the block (it indexes optional procedures; "no fallback prompts" does not apply).
 - **No in-process cache** of custom entries: one Firestore query per Smart request, so a save is visible on every instance at once. A save costs one provider-cache miss.
 - **The offering line is tuned on live use.** It is always in the static prompt, so it acts like a standing rule; B's acceptance watches for over-offering.
@@ -163,7 +170,7 @@ A stale code (an older draft of the same name) still saves exactly the content i
 **Checks** (at draft and at save): name format, no collision with a system skill, pydantic validation, size caps, `SecurityPort` — a flagged description or body is **rejected**, never stored sanitized (a skill is followed verbatim). These are hygiene; the security boundary is the command.
 
 **Storage** (`FirestoreSkillRepository`):
-- `{prefix}skills/{user_id}:{name}` — `user_id`, `name`, `description`, `current`, `account_id`, `updated_at`; versions in a subcollection `versions/v<n>` (`SKILL.md` text, `saved_at`).
+- `{prefix}skills/{user_id}:{name}` — `user_id`, `name`, `description`, `body`, `current`, `account_id`, `updated_at` (the index doc denormalizes the current body, so a request reads it without a second query); versions in a subcollection `versions/v<n>` (`SKILL.md` text, `saved_at`).
 - `{prefix}skill_drafts/{user_id}:{code}` — immutable; `user_id`, `name`, `SKILL.md` text, `created_at`. No TTL policy: a stale draft is inert.
 - Queries filter by equality on `user_id` (and `name` for drafts) — never by document-id prefix.
 - **One write method:** `save_version(user_id, skill, consume_drafts_named: Optional[str])` — one transaction that runs the cap count, assigns the next version, writes it, flips `current`, and, when `consume_drafts_named` is set, deletes every pending draft of that name. `$skill save` calls it with the draft's name; delivery A's seeding script calls it without. Both run the same checks first.
@@ -199,7 +206,7 @@ Fable (`claude-fable-5-1`), briefed as a **skeptical architect**: is it worth bu
 | Gate | Artefact | Blocks |
 |------|----------|--------|
 | G1 | this RFC (ran on rev 5 and rev 6; targeted check on rev 7) | the plan |
-| G2 | the plan (covers A and B) | implementation |
+| G2 | the plan for delivery A; delivery B's plan after A's gate | implementation |
 | G3 | each delivery's branch | that merge |
 
 Findings are resolved in the artefact; a gate re-runs when a finding changed the design.
