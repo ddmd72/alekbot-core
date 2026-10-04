@@ -29,8 +29,13 @@ def test_malformed_fails(tmp_path):
 
 
 def test_ignores_non_directories(tmp_path):
+    """A plain file at root (e.g. README.md) is not a candidate skill and must not affect
+    loading — proven by loading successfully alongside a real skill folder. (A root with
+    ONLY stray files and zero loadable skills is the separate `test_nothing_loaded_raises`
+    case below: that root is a packaging bug, this one is normal.)"""
+    _write(tmp_path, "a-one", "---\nname: a-one\ndescription: Use when a.\n---\nbody a\n")
     (tmp_path / "README.md").write_text("x")
-    assert load_system_skills(tmp_path) == []
+    assert [s.name for s in load_system_skills(tmp_path)] == ["a-one"]
 
 
 def test_root_missing_raises(tmp_path):

@@ -19,12 +19,22 @@ from src.domain.agent import AgentResponse, DeliveryItem
 from src.domain.messaging import MessageContext, SmartResponse
 from src.domain.settings import ConsolidationSettings
 from src.domain.skill import SKILL_PREVIEW_DELIVERY
+from src.domain.ui_messages import UIMessage
 from src.handlers.conversation_handler import ConversationHandler
+from src.locales import uk as uk_locale
 
 _USER_ID = "user-test"
 _ACCOUNT_ID = "acc-test"
 _SESSION_ID = "sess-test"
 _STATUS_MSG_ID = "msg-status-001"
+
+
+def _ui(message: UIMessage, **fmt) -> str:
+    """Expected localized string — handler falls back to the uk locale when no
+    LocalizationService is wired (mirrors test_conversation_handler_skill_command.py's
+    own `_ui()` helper; `_make_handler` here wires no `localization=` either)."""
+    template = uk_locale.UI_STRINGS[message.value]
+    return template.format(**fmt) if fmt else template
 
 
 def _make_context(text: str = "hello") -> MessageContext:
@@ -116,7 +126,7 @@ class TestSkillPreviewDeliverItem:
         channel.send_file.assert_awaited_once_with(
             content=_SKILL_MD.encode("utf-8"),
             filename="my-skill.SKILL.md",
-            title="Skill draft: my-skill",
+            title=_ui(UIMessage.SKILL_PREVIEW_FILE_TITLE, name="my-skill"),
             thread_id="T1",
         )
         channel.send_message.assert_awaited_once_with("`$skill save 7f3a`", "T1")
@@ -160,7 +170,7 @@ class TestSkillPreviewEndToEnd:
         channel.send_file.assert_awaited_once_with(
             content=_SKILL_MD.encode("utf-8"),
             filename="my-skill.SKILL.md",
-            title="Skill draft: my-skill",
+            title=_ui(UIMessage.SKILL_PREVIEW_FILE_TITLE, name="my-skill"),
             thread_id=None,
         )
         channel.send_message.assert_awaited_once_with("`$skill save 7f3a`", None)
@@ -188,7 +198,7 @@ class TestSkillPreviewDeliveryFailureHandling:
         await handler._deliver_item(item, channel, thread_id="T1", user_id=_USER_ID)
 
         channel.send_message.assert_awaited_once_with(
-            "⚠️ The skill draft could not be delivered. Ask me to draft it again.", "T1"
+            _ui(UIMessage.SKILL_PREVIEW_DELIVERY_FAILED), "T1"
         )
         for call_args in channel.send_message.call_args_list:
             assert "$skill save" not in call_args.args[0]
@@ -235,7 +245,7 @@ class TestSkillPreviewEndToEndFailureHandling:
         session_store.append_messages_batch.assert_awaited_once()
 
         texts = [c.args[0] for c in channel.send_message.call_args_list]
-        assert any("could not be delivered" in t for t in texts)
+        assert any(t == _ui(UIMessage.SKILL_PREVIEW_DELIVERY_FAILED) for t in texts)
         assert not any("$skill save" in t for t in texts)
         assert not any("wrong" in t.lower() or "Something" in t for t in texts)
         channel.send_status.assert_not_awaited()  # no generic ERROR-status path triggered
