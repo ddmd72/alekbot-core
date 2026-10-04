@@ -474,6 +474,10 @@ mandatory before team/multi-user rollout.
   procedure now runs as an Agent Skill in Smart (`docs/10_rfcs/AGENT_SKILLS_RFC.md`), which also has
   `search_web` and memory. Verified live 2026-10-04: a strong first answer, and the multi-turn
   draft → feedback → APPROVE loop survived history compression (Smart reloaded the skill itself).
+  **Prerequisite met (delivery B, 2026-10-04):** the skill is in git —
+  `src/skills/smart/domain-competency-research/SKILL.md`, a system skill loaded by
+  `load_system_skills`. TD-10 stays OPEN — the agent, its descriptor/intent, config, provider
+  strategy, factory wiring and the one live channel binding are still unremoved.
 - **Scope:** `src/agents/domain_researcher_agent.py`; `DOMAIN_RESEARCHER` descriptor + `Intent.DOMAIN_RESEARCH`
   (`agent_manifest.py`); `DomainResearcherAgentConfig` (`agent_config.py`); the `domain_researcher`
   provider strategy (`agent_context_builder.py`) and tier entry (`domain/user.py`); the factory builder

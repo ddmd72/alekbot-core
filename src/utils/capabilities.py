@@ -163,6 +163,29 @@ Note: this takes time — plan accordingly and don't use it for quick factual qu
 
 ---
 
+*Skills*
+A skill is a saved procedure — a set of steps I follow every time a particular kind of request
+comes up, instead of being re-explained from scratch. A few generic ones come built in; the rest
+are yours, built from how you actually work.
+
+How to get one:
+- Just ask: "remember how to do this" or "turn that into a skill"
+- I'll also offer on my own, when you've walked me through a multi-step procedure I'll need again
+
+How saving works: I draft the skill and send it to you as a file (so you can read exactly what
+you're approving), plus a short command below it. Paste that command back to me and it's saved —
+nothing is active until you do that.
+
+Commands (type these to me directly):
+- `$skill list` — see your saved skills
+- `$skill save <code>` — confirm a skill I just drafted (the code comes with the draft)
+- `$skill delete <name>` — remove one of your skills
+
+Built-in skills everyone has: one that walks you through creating your own skill, and one for
+researching a topic or domain in depth before acting on it.
+
+---
+
 *Cabinet — what you can configure at your personal dashboard*
 
 *Integrations tab*
