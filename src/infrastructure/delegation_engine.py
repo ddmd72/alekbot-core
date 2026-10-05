@@ -176,6 +176,7 @@ class DelegationEngine:
         max_retries: int = 1,
         retry_backoff: float = 1.0,
         local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
+        use_turn_clock: bool = False,
     ) -> DelegationResult:
         """Run the delegation loop, wrapped in a ``delegation.loop`` tracing span.
 
@@ -200,6 +201,7 @@ class DelegationEngine:
                 max_retries=max_retries,
                 retry_backoff=retry_backoff,
                 local_tools=local_tools,
+                use_turn_clock=use_turn_clock,
             )
 
     async def _execute_loop(
@@ -215,6 +217,7 @@ class DelegationEngine:
         max_retries: int = 1,
         retry_backoff: float = 1.0,
         local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
+        use_turn_clock: bool = False,
     ) -> DelegationResult:
         """Run the delegation loop.
 
@@ -240,6 +243,14 @@ class DelegationEngine:
                          serves itself (e.g. Smart's use_skill). A call whose
                          name is in this map goes straight to its handler and
                          never reaches the coordinator.
+            use_turn_clock: Opt-in to the shared ``CURRENT_TURN_CLOCK`` (wrap-up
+                            turn, step tracking). The ContextVar is ambient and
+                            would otherwise leak into a specialist's own nested
+                            DelegationEngine (e.g. DomainResearcherAgent run
+                            SYNC from Smart) — that engine would wrap up early
+                            on the orchestrator's reserve and stomp its
+                            ``clock.step``. Only the orchestrator that owns the
+                            clock (SmartResponseAgent) passes True.
         """
         history = list(base_request.messages)
         total_tokens = 0
@@ -249,7 +260,7 @@ class DelegationEngine:
         remap = intent_remap or {}
         fanout = intent_fanout or {}
         local = dict(local_tools or {})
-        clock = CURRENT_TURN_CLOCK.get()
+        clock = CURRENT_TURN_CLOCK.get() if use_turn_clock else None
 
         for turn in range(max_turns):
             wrap_up = clock is not None and (clock.in_reserve() or turn == max_turns - 1)

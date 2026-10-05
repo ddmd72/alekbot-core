@@ -27,7 +27,7 @@ async def _run(engine, call_llm, clock, **kw):
     try:
         return await engine.execute(call_llm=call_llm, base_request=_req(), context={},
                                     max_turns=kw.pop("max_turns", 5),
-                                    terminal_tool="deliver_response", **kw)
+                                    terminal_tool="deliver_response", use_turn_clock=True, **kw)
     finally:
         CURRENT_TURN_CLOCK.reset(token)
 
@@ -98,3 +98,37 @@ async def test_step_is_tracked():
 
     await _run(DelegationEngine(MagicMock()), call_llm, clock)
     assert steps == ["thinking"]
+
+
+async def test_without_use_turn_clock_an_in_reserve_clock_is_ignored():
+    """A nested engine (e.g. a specialist's own DelegationEngine run SYNC from Smart)
+    must not inherit the ambient clock: no wrap-up note, normal dispatch, clock.step
+    untouched — only the orchestrator that owns the clock opts in."""
+    clock = TurnClock.start(budget_s=100, wrap_up_reserve_s=200)  # already in reserve
+    assert clock.in_reserve()
+    clock.step = "untouched"
+    coordinator = MagicMock()
+    engine = DelegationEngine(coordinator)
+    engine.dispatch = AsyncMock(return_value=MagicMock(
+        name="tr", result_str="r", file_data=None, structured_data=None,
+        history_context=None, delivery_items=[], failed=False,
+    ))
+    seen = []
+
+    async def call_llm(req, turn):
+        seen.append(req)
+        if turn == 1:
+            return LLMResponse(text="", tool_calls=[_tool()])
+        return LLMResponse(text="final")
+
+    token = CURRENT_TURN_CLOCK.set(clock)
+    try:
+        result = await engine.execute(call_llm=call_llm, base_request=_req(), context={},
+                                      max_turns=5, terminal_tool="deliver_response")
+    finally:
+        CURRENT_TURN_CLOCK.reset(token)
+
+    assert result.text == "final"
+    engine.dispatch.assert_awaited()
+    assert all(not any(p.text == WRAP_UP_NOTE for p in r.messages[-1].parts) for r in seen)
+    assert clock.step == "untouched"
