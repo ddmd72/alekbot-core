@@ -338,3 +338,206 @@ async def test_watcher_crash_is_logged_and_the_answer_still_late(lt, monkeypatch
     await lt.handle()
     assert lt.channel.send_late_answer.call_args.args[0] == "late"
     assert any("watcher failed" in e for e in errors)
+
+
+# --- Final review fix wave ------------------------------------------------------------
+
+
+class _FakeRegistry:
+    """In-memory LongTurnRegistry: enough for retry classification end to end."""
+
+    def __init__(self, records=None):
+        self.records = dict(records or {})
+        self.finished = []
+
+    async def start(self, record):
+        self.records[record.turn_id] = record
+
+    async def get(self, turn_id):
+        return self.records.get(turn_id)
+
+    async def heartbeat(self, turn_id, step):
+        rec = self.records.get(turn_id)
+        if rec is not None:
+            self.records[turn_id] = rec.model_copy(update={"heartbeat_at": __import__("time").time()})
+        return False
+
+    async def finish(self, turn_id, status):
+        self.finished.append((turn_id, status))
+        rec = self.records.get(turn_id)
+        if rec is not None:
+            self.records[turn_id] = rec.model_copy(update={"status": status})
+
+    async def list_running(self, user_id):
+        return []
+
+    async def request_cancel(self, user_id, turn_id):
+        return False
+
+
+def _real_service(lt, registry):
+    service = LongTurnService(registry=registry, session_store=lt.store)
+    service.notice_after_s, service.heartbeat_s = 0.05, 0.02
+    lt.handler._long_turns = service
+    return service
+
+
+def _fresh_running(turn_id):
+    import time as _t
+    from src.domain.long_turn import LongTurnRecord
+    return LongTurnRecord(turn_id=turn_id, user_id="u", session_id="u:D1", title="t",
+                          started_at=_t.time() - 120, heartbeat_at=_t.time())
+
+
+# C1 ---------------------------------------------------------------------------------
+
+
+async def test_retry_with_fresh_heartbeat_not_live_here_reports_lost(lt):
+    registry = _FakeRegistry({lt.turn_id: _fresh_running(lt.turn_id)})
+    _real_service(lt, registry)
+    await lt.handle()
+    lt.coordinator.route_message.assert_not_awaited()
+    assert lt.channel.send_late_answer.call_args.args[0] == lt.ui("long_turn_lost")
+    assert registry.finished == [(lt.turn_id, LongTurnStatus.FAILED)]
+    # Posted once: a further retry sees FINISHED and stays silent.
+    lt.channel.send_late_answer.reset_mock()
+    await lt.handle()
+    lt.channel.send_late_answer.assert_not_awaited()
+
+
+async def test_duplicate_delivery_while_the_turn_is_live_here_is_silent(lt):
+    registry = _FakeRegistry()
+    _real_service(lt, registry)
+    lt.route(result=SmartResponse(text="the long answer"), delay=0.3)
+    first = asyncio.create_task(lt.handle())
+    await asyncio.sleep(0.15)                       # past the mark: the record exists
+    assert lt.turn_id in registry.records
+    await lt.handle()                               # the duplicate
+    assert lt.channel.send_late_answer.await_count == 0
+    await first
+    assert lt.coordinator.route_message.await_count == 1
+    assert [c.args[0] for c in lt.channel.send_late_answer.call_args_list] == ["the long answer"]
+    assert registry.finished == [(lt.turn_id, LongTurnStatus.DONE)]
+
+
+async def test_entry_passes_whether_the_turn_is_live_here(lt):
+    await lt.handle()
+    assert lt.service.check_retry.call_args.kwargs["live_in_process"] is False
+
+
+async def test_live_set_is_emptied_after_short_long_and_failed_turns(lt):
+    lt.route(result=SmartResponse(text="quick"), delay=0.0)
+    await lt.handle()
+    assert not lt.handler._live_turns
+    lt.route(result=SmartResponse(text="late"), delay=0.2)
+    await lt.handle()
+    assert not lt.handler._live_turns
+
+    async def boom(message):
+        raise RuntimeError("boom before the mark")
+    lt.coordinator.route_message.side_effect = boom
+    await lt.handle()
+    assert not lt.handler._live_turns
+
+
+# I4 ---------------------------------------------------------------------------------
+
+
+async def test_check_retry_error_treats_the_event_as_new(lt):
+    lt.service.check_retry.side_effect = RuntimeError("firestore down")
+    lt.route(result=SmartResponse(text="still answered"), delay=0.0)
+    await lt.handle()
+    lt.coordinator.route_message.assert_awaited_once()
+    lt.channel.send_chunked_message.assert_awaited()
+    lt.channel.send_message.assert_not_awaited()
+
+
+# I5 ---------------------------------------------------------------------------------
+
+
+async def test_failed_long_turn_closes_the_question_in_history(lt):
+    lt.route(status=AgentStatus.FAILED, delay=0.2)
+    await lt.handle()
+    kw = lt.service.save_late_answer.call_args.kwargs
+    assert kw["history_text"] == lt.ui("long_turn_failed")
+    assert "find me flights" in kw["note_text"]
+    assert kw["session_id"] == "u:D1" and kw["owner_id"] == "u"
+
+
+async def test_cancelled_long_turn_closes_the_question_in_history(lt):
+    lt.service.heartbeat.return_value = True
+    lt.route(result=SmartResponse(text="never"), delay=5.0)
+    await lt.handle()
+    kw = lt.service.save_late_answer.call_args.kwargs
+    assert kw["history_text"] == lt.ui("long_turn_cancelled")
+    assert "find me flights" in kw["note_text"]
+
+
+async def test_lost_long_turn_closes_the_question_in_history(lt):
+    lt.service.check_retry.return_value = RetryVerdict.STALE
+    await lt.handle()
+    kw = lt.service.save_late_answer.call_args.kwargs
+    assert kw["history_text"] == lt.ui("long_turn_lost")
+    assert "find me flights" in kw["note_text"]
+
+
+async def test_closing_pair_save_failure_still_posts_the_line(lt):
+    lt.service.save_late_answer.side_effect = RuntimeError("firestore down")
+    lt.route(status=AgentStatus.FAILED, delay=0.2)
+    await lt.handle()
+    assert lt.channel.send_late_answer.call_args.args[0] == lt.ui("long_turn_failed")
+    lt.service.finish.assert_awaited_with(lt.turn_id, LongTurnStatus.FAILED)
+    lt.channel.send_message.assert_not_awaited()
+
+
+# I6 ---------------------------------------------------------------------------------
+
+
+async def test_delivery_failure_keeps_the_answer_in_history_and_posts_the_failure_line(lt):
+    order = []
+    lt.service.save_late_answer.side_effect = lambda **kw: order.append("save")
+
+    async def send(text, *a, **k):
+        order.append(("send", text))
+        if text == "the long answer":
+            raise RuntimeError("slack down")
+    lt.channel.send_late_answer.side_effect = send
+    lt.route(result=SmartResponse(text="the long answer"), delay=0.2)
+    await lt.handle()
+    assert order[0] == "save"                                     # persisted before delivery
+    assert lt.service.save_late_answer.call_args.kwargs["history_text"] == "the long answer"
+    assert ("send", lt.ui("long_turn_failed")) in order
+    lt.service.finish.assert_awaited_with(lt.turn_id, LongTurnStatus.FAILED)
+    lt.channel.send_message.assert_not_awaited()                  # no generic in-thread error
+
+
+async def test_delivery_and_failure_line_both_failing_still_closes_the_record(lt):
+    lt.channel.send_late_answer.side_effect = RuntimeError("slack down")
+    lt.route(result=SmartResponse(text="the long answer"), delay=0.2)
+    await lt.handle()
+    lt.service.save_late_answer.assert_awaited_once()
+    lt.service.finish.assert_awaited_with(lt.turn_id, LongTurnStatus.FAILED)
+    assert not lt.handler._live_turns
+
+
+# M4 ---------------------------------------------------------------------------------
+
+
+async def test_mark_gets_the_turn_start_time(lt):
+    import time as _t
+    before = _t.time()
+    lt.route(result=SmartResponse(text="late"), delay=0.2)
+    await lt.handle()
+    started_at = lt.service.mark.call_args.kwargs["started_at"]
+    assert before <= started_at <= before + 0.05   # the turn's start, not the 50 ms mark
+
+
+# M5 ---------------------------------------------------------------------------------
+
+
+async def test_late_answer_link_is_fetched_once_and_passed_in(lt):
+    lt.route(result=SmartResponse(text="ans"), delay=0.2)
+    await lt.handle()
+    lt.channel.message_link.assert_awaited_once()
+    assert lt.channel.send_late_answer.call_args.kwargs["link"] == "https://example.invalid/msg"
+    assert "https://example.invalid/msg" in lt.service.save_late_answer.call_args.kwargs["note_text"]

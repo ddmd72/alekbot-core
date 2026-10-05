@@ -624,8 +624,12 @@ class TelegramResponseChannel(ResponseChannel):
         prefix: str,
         origin_message_id: Optional[str],
         link_list: Optional[list] = None,
+        link: Optional[str] = None,
     ) -> None:
-        """Post a long turn's answer as a new message, replying to the message it answers."""
+        """Post a long turn's answer as a new message, replying to the message it answers.
+
+        `link` is accepted for the protocol and unused: the reply is the tie to the origin.
+        """
         kwargs: Dict[str, Any] = {"chat_id": self.chat_id, "text": prefix}
         if origin_message_id and str(origin_message_id).isdigit():
             kwargs["reply_to_message_id"] = int(origin_message_id)
