@@ -193,6 +193,31 @@ above (they are independent transports sharing one `VoiceSessionService`/persona
 
 ---
 
+## Long-Running Turns
+
+`docs/10_rfcs/LONG_RUNNING_TURNS_RFC.md` / `decisions/long_running_turns.md`. Three owner steps,
+none of which block a deploy (the registry and service default to working with no token loaded —
+chat turns simply run without the clock's prompt guidance until step 2 is done):
+
+1. **TTL policy on the long-turns collection** (one-time, per database). Long-turn records
+   (registry document per clocked turn: status, heartbeat, late-answer payload) live in
+   `{prefix}long_turns` with a Timestamp `expires_at`; without the policy, finished records are
+   never deleted:
+   ```bash
+   gcloud firestore fields ttls update expires_at --collection-group=<prefix>long_turns \
+     --enable-ttl --database=us-production --project=<PROJECT_ID>
+   ```
+2. **Upload the `PROTOCOL_LONG_TURNS` prompt token and add it to Smart's profile.** The token
+   files live in `firestore_utils/uploads/` — those scripts are owner-only (never run
+   `upload.py`/`download.py` from an agent session). Without this token loaded on Smart's profile,
+   the model has no behavioural guidance for the notice / wrap-up / late-answer / chat-since
+   marker notes it will see in history; the mechanics (clock, registry, delivery) work regardless.
+3. **No Cloud Tasks queue change needed.** `dispatch_deadline` is set per task
+   (`gcp_task_queue.enqueue_slack_event` / the Telegram `telegram_update` task), not on the queue
+   itself, so the existing `alek-bot-tasks-{dev,prod}` queues already accept the longer deadline.
+
+---
+
 ## Cost Optimization
 
 | Strategy             | Cost/Month | Pros        | Cons                      |

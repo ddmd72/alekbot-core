@@ -1,6 +1,6 @@
 # RFC: Long-running turns — a chat turn may run long, and says so
 
-**Status:** Draft, revision 5 — two independent reviews applied (Fable, 2026-10-05; §11). Ready for implementation planning unless the owner calls another review.
+**Status:** Implemented (branch `feat/long-running-turns`), see `decisions/long_running_turns.md`. §7's deadline + wrap-up for `ask_alek`/`tell_alek`/background notifications is deferred, not in this branch.
 **Date:** 2026-10-05 (first draft 2026-10-04)
 **Owner decisions:**
 - **Universal, not skill-specific.** Agent Skills exposed the problem; it belongs to every turn that does many tool calls or one long reasoning call.

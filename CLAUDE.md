@@ -164,6 +164,19 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | WebSearchLight | ECO (Gemini flash-lite) | `search_web_light` (internal, Lelik only) | one grounded lookup, ~2 s, spoken answer |
 | lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills |
 
+**Long-running turns** — one absolute 25-min clock per chat turn (`domain/turn_clock.py`,
+`TurnClock` in a `ContextVar`; `use_turn_clock=True` only on Smart's top-level engine). At 90 s
+unanswered: a status note + `[user, notice]` pair, so a second message sent meanwhile is answered
+normally. Same-provider retries clamp to the remaining clock; no whole-turn retry after the mark.
+`LongTurnService` (registry + heartbeat + cancel, `retry_store_write`) over
+`FirestoreLongTurnRegistry` (`{prefix}long_turns`) persists it. A finished run posts a `[late
+answer]` + permalink to the main feed (Slack: top-level, incl. overflow); history gets a wrap-up
+note and a chat-since note on the next turn. Telegram updates go via `/worker`
+`task_type=telegram_update` (dedup at intake), not inline; Slack's lock releases at the mark.
+Smart sees its running jobs and can cancel one, per `PROTOCOL_LONG_TURNS`. The two-phase timeout
+path is retired. Not in scope: `ask_alek`/`tell_alek`/notifications stay unclocked (RFC §7
+deferred; see `decisions/long_running_turns.md`).
+
 **Remote MCP Server** — alekbot as MCP *server* exposing memory search to claude.ai Custom Connectors
 (inverse of its Maps MCP *client*). One tool `get_user_context(query, …)` → `SearchEnrichmentService.enrich_context`
 directly (bypasses the agent stack). Full in-process OAuth 2.1 AS (DCR, PKCE S256, RFC 8707, refresh
@@ -195,6 +208,8 @@ stale `running` jobs.
   `execute_reminder`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
   `renew_all_task_subscriptions`, `start_daily_email_review`, `daily_email_review`,
   `billing_daily_summary`, `repair_email_embeddings`. Full reference: `docs/07_deployment/SCHEDULERS.md`.
+  `task_type=telegram_update` is intercepted in `/worker` **before** reaching `WorkerHandler` (routed
+  straight to the Telegram adapter, main.py) — it is not in the dispatch list above.
 - **`UserNotificationService`** — background notifications to the user's last active channel
   (`user_notification_state`). `notify()` routes `system_alert` through a formatter agent (Quick by
   default; `agent_id_override` → Smart for reminders/daily-review) → formatted delivery + session history.
