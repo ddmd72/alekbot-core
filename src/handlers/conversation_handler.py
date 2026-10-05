@@ -41,6 +41,7 @@ from ..utils.file_conversion import (
     transcription_alert,
 )
 from ..utils.logger import logger
+from ..utils.retry import retry_store_write
 from ..utils.telemetry import start_span
 from ..utils.logging_context import set_log_context
 from ..domain.settings import ConsolidationSettings
@@ -816,12 +817,14 @@ class ConversationHandler(ConversationHandlerPort):
                             file_part_stubs,
                         )
 
-            await stop_status_updates()
-
             if long_turn is not None:
+                # The watcher already stopped the status animation at the mark (and absorbed
+                # any error it died with), so the late path does not stop it again.
                 await self._finish_long_turn(long_turn, response, context, response_channel,
                                              long_turns)
                 return
+
+            await stop_status_updates()
 
             if response.status != AgentStatus.SUCCESS:
                 await response_channel.send_status(StatusType.ERROR, thread_id=thread_id_for_reply)
@@ -983,6 +986,7 @@ class ConversationHandler(ConversationHandlerPort):
             lt, long_turns, context, response_channel, status_message_id,
             stop_status_updates, message_parts, file_part_stubs,
         ))
+        watcher.add_done_callback(self._log_watcher_exit)
         error: Optional[Exception] = None
         try:
             try:
@@ -1012,6 +1016,15 @@ class ConversationHandler(ConversationHandlerPort):
             )
         return response, (lt if lt.marked else None)
 
+    @staticmethod
+    def _log_watcher_exit(task: "asyncio.Task") -> None:
+        """Retrieve and log an exception the watcher died with (otherwise never retrieved)."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("❌ [LongTurn] watcher failed: %s", exc, exc_info=exc)
+
     async def _watch_long_turn(self, lt, long_turns, context, response_channel,
                                status_message_id, stop_status_updates, message_parts,
                                file_part_stubs):
@@ -1021,7 +1034,11 @@ class ConversationHandler(ConversationHandlerPort):
             if lt.agent_task.done():
                 return
             lt.marked = lt.clock.marked = True
-            await stop_status_updates()
+            try:
+                await stop_status_updates()
+            except Exception as e:
+                # The animation task died with an error; it is stopped either way.
+                logger.warning("⚠️ [LongTurn] status animation ended with an error: %s", e)
             notice = self._ui_string(context, UIMessage.LONG_TURN_NOTICE)
             try:
                 await response_channel.update_message(status_message_id, notice)
@@ -1091,8 +1108,10 @@ class ConversationHandler(ConversationHandlerPort):
             for item in response.delivery_items:
                 await self._deliver_item(item, response_channel, None, user_id=context.user_id)
 
+            # full_text starts from the sanitised text, as on the normal path — the raw text
+            # must not reach history, where it is re-injected into later prompts.
             history_text, full_text, consolidation_texts = await self._prepare_history_texts(
-                response, text, history_text, structured, context)
+                response, shown, history_text, structured, context)
             link = await response_channel.message_link(origin)
             asked_at = time.strftime(
                 "%H:%M", time.localtime(context.metadata.get("event_time") or time.time()))
@@ -1231,28 +1250,14 @@ class ConversationHandler(ConversationHandlerPort):
         max_attempts: int = 3,
     ) -> None:
         """Append conversation turn to history with retry for transient gRPC errors."""
-        _TRANSIENT = ("RST_STREAM", "UNAVAILABLE", "INTERNAL")
         messages = [
             Message(role="user", parts=user_parts),
             Message(role="model", parts=[MessagePart(text=history_text, full_text=response_text)]),
         ]
-        last_exc: Exception | None = None
-        for attempt in range(1, max_attempts + 1):
-            try:
-                await session_store.append_messages_batch(session_id, messages, owner_id=owner_id)
-                if attempt > 1:
-                    logger.info(f"✅ History saved after {attempt} attempts")
-                return
-            except Exception as exc:
-                last_exc = exc
-                if attempt < max_attempts and any(t in str(exc) for t in _TRANSIENT):
-                    delay = 0.5 * attempt
-                    logger.warning(f"⚠️ History save attempt {attempt} failed ({exc}), retrying in {delay}s…")
-                    await asyncio.sleep(delay)
-                else:
-                    raise
-
-        raise last_exc  # unreachable, but satisfies type checker
+        await retry_store_write(
+            lambda: session_store.append_messages_batch(session_id, messages, owner_id=owner_id),
+            label="History save", max_attempts=max_attempts,
+        )
 
     async def handle_command(
         self,
