@@ -1119,6 +1119,19 @@ class BaseAgent(ABC):
                         primary_cause=e,
                     ) from e
 
+                clock = CURRENT_TURN_CLOCK.get()
+                if clock is not None and clock.in_reserve():
+                    # A failover started in the wrap-up reserve would eat the wrap-up's time.
+                    logger.warning(
+                        "llm_fallback skipped: turn budget in wrap-up reserve (%s→%s)",
+                        primary_name, fallback_name,
+                    )
+                    raise BothProvidersUnavailableError(
+                        primary_name=primary_name,
+                        fallback_name=fallback_name,
+                        primary_cause=e,
+                    ) from e
+
                 logger.warning(
                     # Cause folded into the message (extra fields don't reach Cloud Logging).
                     "llm_fallback %s→%s cause=%s http=%s: %s",
@@ -1133,9 +1146,16 @@ class BaseAgent(ABC):
                         "http_status": e.http_status,
                     },
                 )
-                fallback_request = request.model_copy(
-                    update={"model_name": ctx.fallback_model_name}
-                )
+                fallback_update: Dict[str, Any] = {"model_name": ctx.fallback_model_name}
+                if clock is not None:
+                    # Same shape as the same-provider retry: the budget only shrinks, so
+                    # the fallback call is re-clamped to what is left now.
+                    fallback_update["timeout"] = (
+                        clock.call_timeout()
+                        if request.timeout is None
+                        else min(request.timeout, clock.call_timeout())
+                    )
+                fallback_request = request.model_copy(update=fallback_update)
                 try:
                     response = await fallback_provider.generate_content(
                         request=fallback_request
