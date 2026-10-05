@@ -66,7 +66,7 @@ description: "Use when the owner asks about a flight's status, delay, gate or ar
 
 - `name`: kebab-case `[a-z0-9-]`, ≤ 64 chars.
 - `description`: the trigger, ≤ 250 chars, one line, "Use when …". Re-sent on every request.
-- body: markdown; the whole `SKILL.md` ≤ 20 KB.
+- body: markdown; the whole `SKILL.md` is capped just under the Firestore document limit (1 MiB, `MAX_SKILL_MD_BYTES` = 1 MiB − 32 KB). The cap is a storage bound, not a style limit (owner, 2026-10-05: an earlier 20 KB cap had no basis and rejected real drafts). Concision is guidance for the author.
 - **No files and no scripts in v1.** Reference material goes in the body. Executing scripts needs a sandbox and its own RFC.
 
 **Parsing.** Frontmatter is read with `yaml.safe_load` (PyYAML is already a dependency) in `src/utils/skill_md.py`, shared by the seeding script and delivery B's filesystem adapter; `domain/` holds a pydantic `Skill` model that validates the result.
@@ -224,7 +224,7 @@ Findings are resolved in the artefact; a gate re-runs when a finding changed the
 - **A command authorizing a name** (rev 5) and **a code derived from the content hash** (rev 6). The first let the model show one text and save another; the second let whoever wrote the content compute the code in advance.
 - **A text preview** (rev 6). Channels truncate and reformat it, so it is neither complete nor verbatim.
 - **A separate history part for the skill** (rev 5). Invalid for OpenAI/Grok assistant messages; no gain over one part.
-- **GCS version folders** (revisions 2–5). A draft cannot carry files; Firestore holds 20 KB and writes in one transaction.
+- **GCS version folders** (revisions 2–5). A draft cannot carry files; a Firestore document holds up to 1 MiB and the version is written in one transaction.
 - **The owner's procedures as system skills.** The repo is public and system skills are shared by all users.
 - **Lifecycle machinery** (TTL, `release_skill`, `active_skills`, pinning). Tiering plus a stub does the same with no state.
 - **Addressable history** (`expand_history(ids)`). Deferred until a logged case of Smart redoing expensive, non-reproducible work within the window.

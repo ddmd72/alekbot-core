@@ -12,7 +12,11 @@ from .llm import Message
 
 MAX_NAME_LEN = 64
 MAX_DESCRIPTION_LEN = 250
-MAX_SKILL_MD_BYTES = 20 * 1024
+# Storage bound, not a style limit: a Firestore document holds at most 1 MiB, and the body is
+# stored once per document (version, index and draft docs) next to a few short fields. The
+# headroom covers those fields. Keeping a skill concise is guidance for the author, not a gate.
+FIRESTORE_DOC_LIMIT_BYTES = 1024 * 1024
+MAX_SKILL_MD_BYTES = FIRESTORE_DOC_LIMIT_BYTES - 32 * 1024
 MAX_CUSTOM_SKILLS_PER_USER = 20
 SKILL_CONTEXT_KEY = "skill_context"
 USE_SKILL_TOOL = "use_skill"
@@ -66,7 +70,7 @@ class Skill(BaseModel):
     @model_validator(mode="after")
     def _size(self) -> "Skill":
         if len(render_skill_md(self).encode("utf-8")) > MAX_SKILL_MD_BYTES:
-            raise ValueError("SKILL.md must be at most 20 KB")
+            raise ValueError(f"SKILL.md must be at most {MAX_SKILL_MD_BYTES // 1024} KB")
         return self
 
 

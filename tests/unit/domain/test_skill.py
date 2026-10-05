@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from src.domain.llm import Message, MessagePart
 from src.domain.skill import (
+    MAX_SKILL_MD_BYTES,
     Skill,
     body_marker,
     fold_skill_contexts,
@@ -42,9 +43,11 @@ class TestSkillValidation:
         with pytest.raises(ValidationError):
             _skill(body="   ")
 
-    def test_rendered_size_capped_at_20kb(self):
+    def test_rendered_size_capped(self):
+        # Cap is the Firestore document bound (MAX_SKILL_MD_BYTES), not a 20 KB style limit
+        # (owner, 2026-10-05) — see tests/unit/domain/test_skill_size_cap.py for the boundary.
         with pytest.raises(ValidationError):
-            _skill(body="я" * 11000)  # 2 bytes per char in UTF-8 → over 20 KB
+            _skill(body="x" * (MAX_SKILL_MD_BYTES + 1000))
 
 
 class TestRender:
