@@ -840,98 +840,18 @@ class ConversationHandler(ConversationHandlerPort):
                         structured_data, response_channel, thread_id_for_reply
                     )
 
-            # Resolve history_summary after Slack delivery (task was running concurrently)
-            # SESSION_2026-02-18: Async postprocessing — summary generates while Slack delivers
-            if response.metadata:
-                summary_task = response.metadata.get("response_summary_task")
-                if summary_task:
-                    try:
-                        summary = await asyncio.wait_for(asyncio.shield(summary_task), timeout=10.0)
-                        if summary:
-                            history_text = summary
-                            logger.debug("💾 [History] Async summary ready (%d chars)", len(history_text))
-                        else:
-                            logger.warning("💾 [History] Summary empty, using full text")
-                    except asyncio.TimeoutError:
-                        logger.warning("💾 [History] Summary task timed out, using full text")
-                    except Exception as e:
-                        logger.warning("💾 [History] Summary task failed: %s, using full text", e)
-                elif "response_summary" in response.metadata:
-                    history_text = response.metadata["response_summary"] or response_text
-                    logger.debug("💾 [History] Using pre-computed summary")
-
-            # Validate History Output
-            history_text = await self.validate_model_output(history_text, context.user_id)
+            history_text, response_text, consolidation_texts = await self._prepare_history_texts(
+                response, response_text, history_text, structured_data, context,
+            )
 
             # Clean up temporary file paths before saving to history
-            # Files with "path" are temporary and will be deleted in finally block
-            # Adapter already processed them during request (uploaded to API or encoded)
-            clean_message_parts = []
-            for part in message_parts:
-                if part.file_data and "ref" in part.file_data and "path" in part.file_data:
-                    # GCS-backed file: strip temp path, keep reference
-                    clean_file_data = {k: v for k, v in part.file_data.items() if k != "path"}
-                    clean_message_parts.append(MessagePart(
-                        text=part.text,
-                        file_data=clean_file_data,
-                    ))
-                elif part.file_data and "path" in part.file_data:
-                    # Legacy: temporary file without GCS ref — skip entirely
-                    logger.debug(f"Skipping temporary file from history: {part.file_data.get('path')}")
-                    continue
-                elif id(part) in file_part_stubs:
-                    # Legacy: converted text files — text=stub, full_text=full
-                    clean_message_parts.append(MessagePart(
-                        text=file_part_stubs[id(part)],
-                        full_text=part.text,
-                    ))
-                else:
-                    clean_message_parts.append(part)
-
-            # Append *_context blocks to full_text for tiered history loading.
-            # Any metadata key ending in "_context" is persisted — orchestrators control what they expose.
-            for ctx_key, ctx_value in (response.metadata or {}).items():
-                if ctx_key == SKILL_CONTEXT_KEY:
-                    continue  # raw block + stub, below
-                if ctx_key.endswith("_context") and ctx_value:
-                    context_block = json.dumps(
-                        {ctx_key: ctx_value},
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                    response_text = response_text + "\n\n" + context_block
-                    logger.info(
-                        "💾 [History] %s appended to full_text: %d chars",
-                        ctx_key, len(context_block)
-                    )
-
-            # Skill bodies: raw block in full_text (json.dumps would escape the markdown), one
-            # neutral stub per skill in the summary. Runs after the async summary has resolved,
-            # so the summary cannot overwrite the stub.
-            skill_contexts = (response.metadata or {}).get(SKILL_CONTEXT_KEY)
-            if skill_contexts:
-                response_text, history_text = fold_skill_contexts(response_text, history_text, skill_contexts)
-
-            # Append rich_content to full_text so LLM sees delivered structured data in history.
-            # Only in full_text (not history_text/summary) — subject to HISTORY_FULL_TURNS tiering.
-            if structured_data:
-                rich_block = json.dumps(
-                    {"rich_content": {"type": structured_data.content_type, "data": structured_data.data}},
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-                response_text = response_text + "\n\n" + rich_block
-                logger.info(
-                    "💾 [History] rich_content appended to full_text: type=%s, %d chars",
-                    structured_data.content_type, len(rich_block)
-                )
+            clean_message_parts = self._clean_user_parts(message_parts, file_part_stubs)
 
             # Attach consolidation_text from save_to_memory delegations to the user message.
             # consolidation_text is invisible to agents/adapters; only the consolidation
             # serializer reads it (p.consolidation_text or p.text for user parts).
-            consolidation_texts = (response.metadata or {}).get("consolidation_text", [])
             if consolidation_texts:
-                combined = "\n".join(consolidation_texts) if isinstance(consolidation_texts, list) else str(consolidation_texts)
+                combined = "\n".join(consolidation_texts)
                 clean_message_parts.append(MessagePart(consolidation_text="\n\n" + combined))
                 logger.info(
                     "💾 [History] consolidation_text attached to user message (%d chars)", len(combined)
@@ -976,6 +896,117 @@ class ConversationHandler(ConversationHandlerPort):
                     os.remove(path)
                 except Exception:
                     logger.debug("Failed to remove temp file %s", path)
+
+    async def _prepare_history_texts(
+        self, response, response_text: str, history_text: str, structured_data, context,
+    ) -> tuple[str, str, List[str]]:
+        """(history_text, full_text, consolidation_texts) for the session pair.
+
+        Shared by the normal and the late-answer path, so both persist the same shape.
+        `response_text` is the delivered text; the returned full_text extends it with the
+        `*_context` blocks, skill bodies and the rich_content block.
+        """
+        # Resolve history_summary after Slack delivery (task was running concurrently)
+        # SESSION_2026-02-18: Async postprocessing — summary generates while Slack delivers
+        if response.metadata:
+            summary_task = response.metadata.get("response_summary_task")
+            if summary_task:
+                try:
+                    summary = await asyncio.wait_for(asyncio.shield(summary_task), timeout=10.0)
+                    if summary:
+                        history_text = summary
+                        logger.debug("💾 [History] Async summary ready (%d chars)", len(history_text))
+                    else:
+                        logger.warning("💾 [History] Summary empty, using full text")
+                except asyncio.TimeoutError:
+                    logger.warning("💾 [History] Summary task timed out, using full text")
+                except Exception as e:
+                    logger.warning("💾 [History] Summary task failed: %s, using full text", e)
+            elif "response_summary" in response.metadata:
+                history_text = response.metadata["response_summary"] or response_text
+                logger.debug("💾 [History] Using pre-computed summary")
+
+        # Validate History Output
+        history_text = await self.validate_model_output(history_text, context.user_id)
+
+        # Append *_context blocks to full_text for tiered history loading.
+        # Any metadata key ending in "_context" is persisted — orchestrators control what they expose.
+        for ctx_key, ctx_value in (response.metadata or {}).items():
+            if ctx_key == SKILL_CONTEXT_KEY:
+                continue  # raw block + stub, below
+            if ctx_key.endswith("_context") and ctx_value:
+                context_block = json.dumps(
+                    {ctx_key: ctx_value},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                response_text = response_text + "\n\n" + context_block
+                logger.info(
+                    "💾 [History] %s appended to full_text: %d chars",
+                    ctx_key, len(context_block)
+                )
+
+        # Skill bodies: raw block in full_text (json.dumps would escape the markdown), one
+        # neutral stub per skill in the summary. Runs after the async summary has resolved,
+        # so the summary cannot overwrite the stub.
+        skill_contexts = (response.metadata or {}).get(SKILL_CONTEXT_KEY)
+        if skill_contexts:
+            response_text, history_text = fold_skill_contexts(response_text, history_text, skill_contexts)
+
+        # Append rich_content to full_text so LLM sees delivered structured data in history.
+        # Only in full_text (not history_text/summary) — subject to HISTORY_FULL_TURNS tiering.
+        if structured_data:
+            rich_block = json.dumps(
+                {"rich_content": {"type": structured_data.content_type, "data": structured_data.data}},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            response_text = response_text + "\n\n" + rich_block
+            logger.info(
+                "💾 [History] rich_content appended to full_text: type=%s, %d chars",
+                structured_data.content_type, len(rich_block)
+            )
+
+        # consolidation_text from save_to_memory delegations, normalised to a list.
+        raw_consolidation = (response.metadata or {}).get("consolidation_text", [])
+        if not raw_consolidation:
+            consolidation_texts: List[str] = []
+        elif isinstance(raw_consolidation, list):
+            consolidation_texts = raw_consolidation
+        else:
+            consolidation_texts = [str(raw_consolidation)]
+        return history_text, response_text, consolidation_texts
+
+    def _clean_user_parts(
+        self, message_parts: List[MessagePart], file_part_stubs: dict,
+    ) -> List[MessagePart]:
+        """The user's parts as they are persisted: temp paths stripped, converted files stubbed.
+
+        Files with "path" are temporary and are deleted in handle_message's finally block;
+        the adapter already processed them during the request (uploaded to API or encoded).
+        """
+        clean_message_parts = []
+        for part in message_parts:
+            if part.file_data and "ref" in part.file_data and "path" in part.file_data:
+                # GCS-backed file: strip temp path, keep reference
+                clean_file_data = {k: v for k, v in part.file_data.items() if k != "path"}
+                clean_message_parts.append(MessagePart(
+                    text=part.text,
+                    file_data=clean_file_data,
+                ))
+            elif part.file_data and "path" in part.file_data:
+                # Legacy: temporary file without GCS ref — skip entirely
+                logger.debug(f"Skipping temporary file from history: {part.file_data.get('path')}")
+                continue
+            elif id(part) in file_part_stubs:
+                # Legacy: converted text files — text=stub, full_text=full
+                clean_message_parts.append(MessagePart(
+                    text=file_part_stubs[id(part)],
+                    full_text=part.text,
+                ))
+            else:
+                clean_message_parts.append(part)
+        return clean_message_parts
 
     async def _save_history_with_retry(
         self,
