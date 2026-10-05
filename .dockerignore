@@ -1,6 +1,7 @@
 .git
 .env
 memory/
+scripts/memory/
 __pycache__
 *.pyc
 .DS_Store

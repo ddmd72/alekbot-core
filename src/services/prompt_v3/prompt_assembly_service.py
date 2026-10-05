@@ -73,6 +73,7 @@ class PromptAssemblyService:
         user_location: Optional[str] = None,
         extra_static_blocks: Optional[List[str]] = None,
         include_datetime: bool = False,
+        skills_catalog: Optional[str] = None,
     ) -> str:
         """Full prompt assembly with class-collection model + caching.
 
@@ -136,6 +137,7 @@ class PromptAssemblyService:
             user_location=user_location,
             extra_static_blocks=extra_static_blocks,
             include_datetime=include_datetime,
+            skills_catalog=skills_catalog,
         )
 
         logger.info(f"✅ Assembled prompt: {len(final_prompt)} chars")
@@ -361,6 +363,7 @@ class PromptAssemblyService:
         user_location: Optional[str] = None,
         extra_static_blocks: Optional[List[str]] = None,
         include_datetime: bool = False,
+        skills_catalog: Optional[str] = None,
     ) -> str:
         """Inject RUNTIME data with SecurityPort validation.
 
@@ -465,6 +468,11 @@ class PromptAssemblyService:
                 prompt = prompt + "\n\n" + kb_block + extra
         elif extra_static_blocks and kb_preamble:
             prompt = "\n\n".join(extra_static_blocks) + "\n\n" + prompt
+
+        # Skills catalog — before directives so directives keep the last static slot (recency).
+        # Pre-rendered by the orchestrator; descriptions were validated when saved.
+        if skills_catalog:
+            prompt = prompt + "\n\n" + skills_catalog
 
         # Standing directives — last static block: binding rules, highest recency salience.
         # Changes only on consolidation (bio cache refresh), so provider caching is preserved.

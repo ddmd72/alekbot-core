@@ -573,6 +573,7 @@ class TelegramResponseChannel(ResponseChannel):
                 document=io.BytesIO(content),
                 filename=filename,
                 caption=title,
+                message_thread_id=int(thread_id) if thread_id else None,
             )
         except Exception as e:
             logger.error("❌ [TelegramResponseChannel] send_file failed: %s", e)

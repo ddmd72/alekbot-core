@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional
 
 from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.messaging import SmartResponse
@@ -51,6 +51,10 @@ class ToolResult:
     # primary section errored). Additive: existing callers don't read it, so their behaviour
     # is unchanged; LelikAgent reads it to skip posting a chat copy of a link found in an error string.
     failed: bool = False
+
+
+# A tool the calling agent serves itself (e.g. Smart's use_skill) — never goes to the coordinator.
+LocalToolHandler = Callable[[ToolCall], Awaitable[ToolResult]]
 
 
 @dataclass
@@ -155,6 +159,7 @@ class DelegationEngine:
         calling_agent_id: str = "delegation_engine",
         max_retries: int = 1,
         retry_backoff: float = 1.0,
+        local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
     ) -> DelegationResult:
         """Run the delegation loop, wrapped in a ``delegation.loop`` tracing span.
 
@@ -178,6 +183,7 @@ class DelegationEngine:
                 calling_agent_id=calling_agent_id,
                 max_retries=max_retries,
                 retry_backoff=retry_backoff,
+                local_tools=local_tools,
             )
 
     async def _execute_loop(
@@ -192,6 +198,7 @@ class DelegationEngine:
         calling_agent_id: str = "delegation_engine",
         max_retries: int = 1,
         retry_backoff: float = 1.0,
+        local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
     ) -> DelegationResult:
         """Run the delegation loop.
 
@@ -213,6 +220,10 @@ class DelegationEngine:
             calling_agent_id: For coordinator logging.
             max_retries: Retries per individual tool dispatch.
             retry_backoff: Seconds between retries.
+            local_tools: Optional name → handler map for tools the calling agent
+                         serves itself (e.g. Smart's use_skill). A call whose
+                         name is in this map goes straight to its handler and
+                         never reaches the coordinator.
         """
         history = list(base_request.messages)
         total_tokens = 0
@@ -221,6 +232,7 @@ class DelegationEngine:
         accumulated_structured: Any = None
         remap = intent_remap or {}
         fanout = intent_fanout or {}
+        local = dict(local_tools or {})
 
         for turn in range(max_turns):
             # Build request with current history
@@ -292,7 +304,14 @@ class DelegationEngine:
                             calling_agent_id=calling_agent_id,
                             max_retries=max_retries,
                             retry_backoff=retry_backoff,
+                            local_tools=local,
                         )
+                        # Nobody reads a sibling's result: the answer is already written.
+                        # A local tool (use_skill) must not leave a body in history that was never followed.
+                        sibling_results = [
+                            replace(r, history_context=None) if r.name in local else r
+                            for r in sibling_results
+                        ]
                         accumulated_structured = self._accumulate_tool_metadata(
                             sibling_results,
                             accumulated_contexts,
@@ -337,6 +356,7 @@ class DelegationEngine:
                 calling_agent_id=calling_agent_id,
                 max_retries=max_retries,
                 retry_backoff=retry_backoff,
+                local_tools=local,
             )
 
             # --- Accumulate metadata ---
@@ -425,6 +445,7 @@ class DelegationEngine:
         calling_agent_id: str,
         max_retries: int,
         retry_backoff: float,
+        local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
     ) -> List[ToolResult]:
         """Dispatch all tool calls in one parallel batch via asyncio.gather.
 
@@ -435,12 +456,14 @@ class DelegationEngine:
         if not tool_calls:
             return []
 
+        local_tools = local_tools or {}
         logger.info(
             "⚡ [DelegationEngine] Parallel execution: %s call(s)",
             len(tool_calls),
         )
         tasks = [
-            self.dispatch(
+            self._dispatch_local(tc, local_tools[tc.name]) if tc.name in local_tools
+            else self.dispatch(
                 tc, context, intent_remap, intent_fanout, calling_agent_id,
                 max_retries, retry_backoff,
             )
@@ -460,6 +483,14 @@ class DelegationEngine:
             else:
                 results.append(result)
         return results
+
+    async def _dispatch_local(self, tool_call: ToolCall, handler: LocalToolHandler) -> ToolResult:
+        # tool_arg_name: what Logfire needs to tell use_skill("flight-status") from a near-miss.
+        with start_span("delegation.local_tool", {
+            "delegation.tool_name": tool_call.name,
+            "delegation.tool_arg_name": str((tool_call.args or {}).get("name", "")),
+        }):
+            return await handler(tool_call)
 
     # ------------------------------------------------------------------ #
     # Single tool dispatch                                                #

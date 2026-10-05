@@ -178,3 +178,23 @@ _ERROR_TYPE_LOG_LABEL: Dict[Type[LLMError], str] = {
     ProviderBreakerOpenError: "breaker_open",
 }
 
+
+class SkillValidationError(ValueError):
+    """A skill's text does not satisfy the format rules."""
+
+
+class SkillCapExceeded(Exception):
+    """The user already has the maximum number of custom skills."""
+
+
+class SkillRejected(Exception):
+    """A skill's text was flagged by the security check."""
+
+
+class SkillDraftNotFound(Exception):
+    """No pending draft with that save code for this user."""
+
+
+class SkillNameReserved(Exception):
+    """The name belongs to a system skill."""
+

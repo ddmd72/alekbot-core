@@ -332,6 +332,20 @@ class EnvironmentConfig:
         prefix = self.firestore_collection_prefix
         return f"{prefix}orchestrator_notes"
 
+    @property
+    def skills_collection(self) -> str:
+        """
+        Custom agent skills. Dev: development_skills
+        """
+        return f"{self.firestore_collection_prefix}skills"
+
+    @property
+    def skill_drafts_collection(self) -> str:
+        """
+        Draft skills awaiting the owner's `$skill save` confirmation. Dev: development_skill_drafts
+        """
+        return f"{self.firestore_collection_prefix}skill_drafts"
+
     # --- Infrastructure Collections (Stable) ---
 
     @property
