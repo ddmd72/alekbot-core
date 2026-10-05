@@ -200,7 +200,8 @@ none of which block a deploy (the registry and service default to working with n
 chat turns simply run without the clock's prompt guidance until step 2 is done):
 
 1. **TTL policy on the long-turns collection** (one-time, per database). Long-turn records
-   (registry document per clocked turn: status, heartbeat, late-answer payload) live in
+   (one registry document per turn that passed the 90 s mark, created at the mark: status,
+   heartbeat, step, cancel flag — no late-answer payload; the answer goes to the session) live in
    `{prefix}long_turns` with a Timestamp `expires_at`; without the policy, finished records are
    never deleted:
    ```bash
@@ -214,7 +215,10 @@ chat turns simply run without the clock's prompt guidance until step 2 is done):
    marker notes it will see in history; the mechanics (clock, registry, delivery) work regardless.
 3. **No Cloud Tasks queue change needed.** `dispatch_deadline` is set per task
    (`gcp_task_queue.enqueue_slack_event` / the Telegram `telegram_update` task), not on the queue
-   itself, so the existing `alek-bot-tasks-{dev,prod}` queues already accept the longer deadline.
+   itself. Slack events go to the `alek-bot-tasks-{env}` queue; Telegram updates go to the
+   `agent-tasks-{env}` queue (us-central1), the same queue as `tell_alek` errands and other agent
+   tasks, so they share its 5 concurrent dispatch slots — a few long Telegram turns can hold
+   errands back.
 
 ---
 

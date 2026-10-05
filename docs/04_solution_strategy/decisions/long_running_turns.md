@@ -20,8 +20,9 @@ Full design: `docs/10_rfcs/LONG_RUNNING_TURNS_RFC.md`.
 
 Give each chat turn one absolute wall-clock deadline (1500 s budget, 120 s wrap-up
 reserve, 40 loop turns) instead of a short hard timeout. A `TurnClock`
-(`domain/turn_clock.py`) carried in a `ContextVar` is visible to the LLM adapters and
-the delegation engine for the lifetime of the turn. At 90 s unanswered, the run posts a
+(`domain/turn_clock.py`) carried in a `ContextVar` is read by the delegation engine and
+`BaseAgent`/`SmartResponseAgent` for the lifetime of the turn; the LLM adapters never read
+the clock — they receive its remaining budget as `LLMRequest.timeout`. At 90 s unanswered, the run posts a
 status note and a `[user, notice]` history pair so a second message sent in the
 meantime is answered normally, not queued behind the first. When the run finishes, it
 posts `[late answer]` plus a permalink to the main feed itself — the run that did the
@@ -78,8 +79,18 @@ clocks chat turns only (`SmartResponseAgent`'s top-level engine via
 the gateway/notification paths their own `TurnClock` and budget is an explicit owner
 decision for a follow-up task, not assumed here.
 
+Bound and companion channels get no clock in v1 either. RFC §7 gives them deadline +
+wrap-up ("Yes") while excluding only notice + late answer; this branch gates the whole
+long-turn flow (clock included) on the orchestrator path with a session store
+(`not mode.is_bound and mode.write_session`), so a bound-channel turn keeps today's
+timeouts. Clocking them is part of the same follow-up.
+
 ## Consequences
 
+- A Cloud Tasks retry arrives only after a failed attempt, and the service runs one
+  instance, so a retry of a turn that is `running` but not in the handler's in-process
+  set of live turns is reported lost at once (heartbeat freshness is not waited out);
+  `list_running` returns only records with a fresh heartbeat.
 - Smart and the clocked chat path gain a `cancel_long_turn` tool and a running-jobs
   note so the model can see and stop its own long work.
 - Both platform adapter factories and `UserAgentFactory` take an extra, optional

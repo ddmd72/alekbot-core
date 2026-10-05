@@ -77,7 +77,7 @@ When the deadline minus the reserve is reached, or loop turns run out, the loop 
 
 A timer started with the turn fires at ~90 s, beside the loop. It:
 1. swaps the status line for the notice (§3.2);
-2. appends the pair `[user message, notice]` to the session. The notice is the **model** message, as shown in chat — not a `[System:]` line in the model's mouth, which the model would learn to imitate. The user message keeps the platform event time as `created_at`, not save time, so it sorts before messages sent after it;
+2. appends the pair `[user message, notice]` to the session. The notice is the **model** message, as shown in chat — not a `[System:]` line in the model's mouth, which the model would learn to imitate. The user message keeps the platform event time as `created_at`, not save time. History is append-order, so this changes no ordering; it keeps chat-since (§5.5) from listing the run's own question, since chat-since selects by `created_at` after the run's snapshot;
 3. builds the user parts (cleaned text, file stubs) **before** this write — the end-of-turn path no longer writes them;
 4. creates the job record (§5.4);
 5. **releases the Slack thread lock**, so replies in the same thread are processed now, not 5–10 min later out of order.
