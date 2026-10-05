@@ -385,6 +385,13 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   error to chat. `delegate()` is kept as a thin wrapper (`(await delegate_outcome(...)).text`) — no
   production caller uses it any more (`/voice/delegate` calls `delegate_outcome` directly), but it
   stays for anything that only needs the text and not the failure flag.
+  **Local tools** (`local_tools: Mapping[str, LocalToolHandler]`) — a tool the agent serves itself
+  (Smart's `use_skill`, built by `src/infrastructure/skill_tools.py` — not `agents/core/`, since
+  REQ-ARCH-24 forbids an agent importing a sibling `agents/` module). Dispatched to the handler,
+  never the coordinator; results, `delivery_items` and `history_context` fold exactly like a
+  delegation's; one `delegation.local_tool` span each. On the terminal-sibling path a local tool's
+  `history_context` is dropped (nobody read it). Handlers are built per execution — never stored on
+  the agent (concurrent executions, provider rotation).
 - **Cycle guard** (`AgentCoordinator._refuse_if_looping`, 2026-08-25) — `context["_call_chain"]`
   accumulates the agent ids already entered; re-entering one is refused with the path named
   (`tutor → smart → tutor`), and `MAX_DELEGATION_DEPTH=8` additionally caps runaway chains of

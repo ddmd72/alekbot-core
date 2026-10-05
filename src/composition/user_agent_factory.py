@@ -110,6 +110,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from ..infrastructure.agent_coordinator import AgentCoordinator
     from ..domain.user import UserBotConfig
+    from ..services.skill_service import SkillService
 
 
 def _voice_profile_for(user_id: str, config: "UserBotConfig") -> VoiceProviderProfile:
@@ -177,6 +178,7 @@ class UserAgentFactory(AgentFactoryPort):
         file_storage: Optional[object] = None,
         prompt_content_store: Optional[object] = None,
         quota_service: Optional[object] = None,
+        skill_service: Optional["SkillService"] = None,
     ) -> None:
         self.config = config
         self.env_config = env_config
@@ -215,6 +217,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.file_storage = file_storage
         self.prompt_content_store = prompt_content_store
         self.quota_service = quota_service
+        self.skill_service = skill_service
 
         unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
         self._image_search = UnsplashAdapter(unsplash_key) if unsplash_key else None
@@ -390,6 +393,7 @@ class UserAgentFactory(AgentFactoryPort):
             history_summary_service=history_summary_service,
             user_timezone=user_timezone,
             thinking_effort=user_profile.config.get_thinking_for_agent("smart"),
+            skill_service=self.skill_service,
         )
 
         notes_agent = None

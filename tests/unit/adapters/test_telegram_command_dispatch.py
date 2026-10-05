@@ -35,6 +35,10 @@ def _make_message(text):
     message.message_thread_id = None
     message.photo = None
     message.document = None
+    # Real python-telegram-bot Message.forward_origin is None for a non-forwarded
+    # message; an unset MagicMock attribute auto-vivifies truthy, which the
+    # forwarded-message guard in webhook_adapter.py then misreads as "forwarded".
+    message.forward_origin = None
     return message
 
 
@@ -88,6 +92,52 @@ async def test_command_context_carries_channel_for_binding():
     assert context.metadata["channel"] == "987654"
     assert context.metadata["platform"] == "telegram"
     assert context.session_id == "user-1:987654"
+
+
+@pytest.mark.asyncio
+async def test_backtick_wrapped_command_still_dispatches():
+    """A copied `` `$skill save CODE` `` must still dispatch as a command."""
+    conversation_handler = AsyncMock()
+    iam_service = AsyncMock()
+    iam_service.authorize.return_value = _authorized_decision()
+    adapter = _make_adapter(conversation_handler, iam_service)
+
+    await adapter._process_message(_make_message("`$skill save 7f3a`"))
+
+    conversation_handler.handle_command.assert_awaited_once()
+    args, _ = conversation_handler.handle_command.call_args
+    assert args[0] == "skill save 7f3a"
+    conversation_handler.handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_triple_backtick_wrapped_command_still_dispatches():
+    """A code-block paste (any number of wrapping backticks), not just a single pair."""
+    conversation_handler = AsyncMock()
+    iam_service = AsyncMock()
+    iam_service.authorize.return_value = _authorized_decision()
+    adapter = _make_adapter(conversation_handler, iam_service)
+
+    await adapter._process_message(_make_message("```$skill save 7f3a```"))
+
+    conversation_handler.handle_command.assert_awaited_once()
+    args, _ = conversation_handler.handle_command.call_args
+    assert args[0] == "skill save 7f3a"
+    conversation_handler.handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_backticks_around_a_substring_stay_a_normal_message():
+    """"`$HOME` is wrong" — backticks around a substring, not the whole text, is untouched."""
+    conversation_handler = AsyncMock()
+    iam_service = AsyncMock()
+    iam_service.authorize.return_value = _authorized_decision()
+    adapter = _make_adapter(conversation_handler, iam_service)
+
+    await adapter._process_message(_make_message("`$HOME` is wrong"))
+
+    conversation_handler.handle_message.assert_awaited_once()
+    conversation_handler.handle_command.assert_not_called()
 
 
 @pytest.mark.asyncio

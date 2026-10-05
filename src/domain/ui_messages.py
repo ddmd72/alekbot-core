@@ -28,3 +28,19 @@ class UIMessage(Enum):
     CONSOLIDATION_STARTED = "consolidation_started"
     # A request Lelik sent during a call failed after the call stopped waiting for it.
     VOICE_REQUEST_FAILED = "voice_request_failed"
+    # $skill command family (save/list/delete a custom skill).
+    SKILL_USAGE = "skill_usage"
+    SKILL_SAVED = "skill_saved"
+    SKILL_DRAFT_NOT_FOUND = "skill_draft_not_found"
+    SKILL_NOT_SAVED = "skill_not_saved"
+    SKILL_LIST_HEADER = "skill_list_header"
+    SKILL_LIST_EMPTY = "skill_list_empty"
+    SKILL_SYSTEM_HEADER = "skill_system_header"
+    SKILL_DELETED = "skill_deleted"
+    SKILL_NOT_FOUND = "skill_not_found"
+    SKILL_BUILT_IN = "skill_built_in"
+    SKILL_UNAVAILABLE = "skill_unavailable"
+    # skill_preview delivery (ConversationHandler._deliver_item) — no MessageContext there,
+    # language comes from the response_channel instead (see _ui_string_for_language).
+    SKILL_PREVIEW_FILE_TITLE = "skill_preview_file_title"
+    SKILL_PREVIEW_DELIVERY_FAILED = "skill_preview_delivery_failed"

@@ -1,7 +1,8 @@
 import pytest
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import Mock, MagicMock, AsyncMock
 from src.composition.user_agent_factory import UserAgentFactory
 from src.domain.user import UserProfile, UserBotConfig, PerformanceTier
+from src.domain.settings import ConsolidationSettings
 from src.services.agent_context_builder import AgentExecutionContext
 from src.ports.llm_port import ProviderCapabilities, LLMPort
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
@@ -228,3 +229,41 @@ def test_build_video_generation_resolves_max_duration_from_config_service(mock_d
 def test_video_generation_registered_in_lazy_dispatch_tables():
     assert "video_generation" in UserAgentFactory._LAZY_BUILDERS
     assert UserAgentFactory._LAZY_AGENT_IDS["video_generation"] == "video_generation_agent"
+
+
+@pytest.mark.asyncio
+async def test_smart_agent_built_with_injected_skill_service(mock_dependencies):
+    """UserAgentFactory must thread its skill_service into Smart (and only Smart) when
+    building agents for a user through _create_and_cache_agents."""
+    sentinel = MagicMock(name="skill_service_sentinel")
+
+    user_profile = UserProfile(user_id="user123", account_id="acc1", config=UserBotConfig())
+
+    mock_dependencies["config"] = {
+        **mock_dependencies["config"],
+        "CONSOLIDATION": ConsolidationSettings(),
+    }
+    mock_dependencies["user_repo"] = AsyncMock()
+    mock_dependencies["user_repo"].get_user = AsyncMock(return_value=user_profile)
+    mock_dependencies["account_repo"] = AsyncMock()
+    mock_dependencies["account_repo"].get_account = AsyncMock(return_value=None)
+    mock_dependencies["repository"] = AsyncMock()
+    mock_dependencies["repository"].initialize = AsyncMock(return_value=None)
+    mock_dependencies["repository"].get_active_facts = AsyncMock(return_value=[])
+    mock_dependencies["context_builder"] = Mock()
+    mock_dependencies["context_builder"].build = Mock(
+        side_effect=lambda agent_type, cfg: _make_context(agent_type, "gemini-2.0-flash")
+    )
+    mock_dependencies["config_service"] = Mock()
+    mock_dependencies["config_service"].get_semantic_search_limit = Mock(return_value=10)
+    mock_dependencies["config_service"].get_biographical_cache_limit = Mock(return_value=10)
+    mock_dependencies["config_service"].get_principles_cache_limit = Mock(return_value=10)
+    mock_dependencies["config_service"].get_history_recent_full_turns = Mock(return_value=2)
+
+    factory_with_skills = UserAgentFactory(**mock_dependencies, skill_service=sentinel)
+
+    cached = await factory_with_skills._create_and_cache_agents("user123")
+
+    assert cached["smart_agent"].skill_service is sentinel
+    # Only Smart receives skill_service — Quick has no such attribute at all.
+    assert not hasattr(cached["quick_agent"], "skill_service")

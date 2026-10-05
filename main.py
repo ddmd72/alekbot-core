@@ -792,6 +792,7 @@ async def main():
             channel_binding_service=channel_binding_service,
             fallback_service=_fallback_service,
             short_link_service=short_link_service,
+            skill_service=container.skill_service,
         )
         notification_channel_factory.register_factory(
             "slack",
@@ -1079,6 +1080,7 @@ async def main():
                             file_conversion_service=container.file_conversion_service,
                             fallback_service=_fallback_service,
                             short_link_service=short_link_service,
+                            skill_service=container.skill_service,
                         )
                         def _make_telegram_channel(adapter, channel_id):
                             try:

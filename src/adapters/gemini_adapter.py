@@ -370,25 +370,25 @@ class GeminiAdapter(LLMPort):
         if not tools:
             return []
 
-        tool_declarations = []
+        # All function declarations go in ONE Tool — the documented shape for several
+        # functions; pre-built Tools (google_search, code_execution) stay separate.
+        prebuilt: List[types.Tool] = []
+        functions: List[types.FunctionDeclaration] = []
         for tool in tools:
             if isinstance(tool, types.Tool):
-                tool_declarations.append(tool)
+                prebuilt.append(tool)
                 continue
-
-            tool_declarations.append(
-                types.Tool(
-                    function_declarations=[
-                        types.FunctionDeclaration(
-                            name=tool["name"],
-                            description=tool.get("description", ""),
-                            parameters=types.Schema(**tool.get("parameters", {}))
-                        )
-                    ]
+            functions.append(
+                types.FunctionDeclaration(
+                    name=tool["name"],
+                    description=tool.get("description", ""),
+                    parameters=types.Schema(**tool.get("parameters", {})),
                 )
             )
 
-        return tool_declarations
+        if functions:
+            prebuilt.append(types.Tool(function_declarations=functions))
+        return prebuilt
 
     def _to_json_schema(self, schema: Any) -> Any:
         """Recursively lowercase type names for standard JSON Schema (response_json_schema)."""

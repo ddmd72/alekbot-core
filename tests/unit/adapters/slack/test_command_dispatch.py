@@ -62,3 +62,71 @@ async def test_normal_message_not_treated_as_command():
 
     conversation_handler.handle_message.assert_awaited_once()
     conversation_handler.handle_command.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Backtick strip — a copied `` `$skill save CODE` `` must still dispatch as a
+# command, but backticks around only part of the text (a normal sentence
+# quoting a command-looking token) must not.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_whole_text_wrapped_in_backticks_still_dispatches_as_command():
+    conversation_handler = AsyncMock()
+    iam_service = AsyncMock()
+    iam_service.authorize.return_value = _authorized_decision()
+    adapter = _make_adapter(conversation_handler, iam_service)
+
+    event = {"text": "`$skill save 7f3a`", "channel": "C0ORIGIN", "user": "U0SLACK"}
+    await adapter._process_message_event(event, session_id="ignored")
+
+    conversation_handler.handle_command.assert_awaited_once()
+    args, _ = conversation_handler.handle_command.call_args
+    assert args[0] == "skill save 7f3a"
+    conversation_handler.handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_backticks_around_a_substring_stay_a_normal_message():
+    conversation_handler = AsyncMock()
+    iam_service = AsyncMock()
+    iam_service.authorize.return_value = _authorized_decision()
+    adapter = _make_adapter(conversation_handler, iam_service)
+
+    event = {"text": "`$HOME` is wrong", "channel": "C0ORIGIN", "user": "U0SLACK"}
+    await adapter._process_message_event(event, session_id="ignored")
+
+    conversation_handler.handle_message.assert_awaited_once()
+    conversation_handler.handle_command.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_triple_backtick_wrapped_text_still_dispatches_as_command():
+    """A code-block paste (any number of wrapping backticks), not just a single pair."""
+    conversation_handler = AsyncMock()
+    iam_service = AsyncMock()
+    iam_service.authorize.return_value = _authorized_decision()
+    adapter = _make_adapter(conversation_handler, iam_service)
+
+    event = {"text": "```$skill save 7f3a```", "channel": "C0ORIGIN", "user": "U0SLACK"}
+    await adapter._process_message_event(event, session_id="ignored")
+
+    conversation_handler.handle_command.assert_awaited_once()
+    args, _ = conversation_handler.handle_command.call_args
+    assert args[0] == "skill save 7f3a"
+    conversation_handler.handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unclosed_backtick_stays_a_normal_message():
+    """Only a leading backtick, no closing one — the whole text is NOT wrapped."""
+    conversation_handler = AsyncMock()
+    iam_service = AsyncMock()
+    iam_service.authorize.return_value = _authorized_decision()
+    adapter = _make_adapter(conversation_handler, iam_service)
+
+    event = {"text": "`$skill list", "channel": "C0ORIGIN", "user": "U0SLACK"}
+    await adapter._process_message_event(event, session_id="ignored")
+
+    conversation_handler.handle_message.assert_awaited_once()
+    conversation_handler.handle_command.assert_not_called()

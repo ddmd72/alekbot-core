@@ -467,6 +467,30 @@ mandatory before team/multi-user rollout.
   whichever operation actually ran instead of hardcoding `VIDEO_GENERATE_MODEL`.
 - **Deferred deliberately** (owner, 2026-09-20): not worth a code+deploy cycle right now.
 
+### TD-10: Retire `DomainResearcherAgent` — replaced by the `domain-competency-research` skill [P3] — 🔲 OPEN
+
+- **Why:** the agent is a thin LLM loop around one prompt token
+  (`COGNITIVE_PROCESS_DOMAIN_RESEARCHER`) and only reachable through a bound channel. The same
+  procedure now runs as an Agent Skill in Smart (`docs/10_rfcs/AGENT_SKILLS_RFC.md`), which also has
+  `search_web` and memory. Verified live 2026-10-04: a strong first answer, and the multi-turn
+  draft → feedback → APPROVE loop survived history compression (Smart reloaded the skill itself).
+  **Prerequisite met (delivery B, 2026-10-04):** the skill is in git —
+  `src/skills/smart/domain-competency-research/SKILL.md`, a system skill loaded by
+  `load_system_skills`. TD-10 stays OPEN — the agent, its descriptor/intent, config, provider
+  strategy, factory wiring and the one live channel binding are still unremoved.
+- **Scope:** `src/agents/domain_researcher_agent.py`; `DOMAIN_RESEARCHER` descriptor + `Intent.DOMAIN_RESEARCH`
+  (`agent_manifest.py`); `DomainResearcherAgentConfig` (`agent_config.py`); the `domain_researcher`
+  provider strategy (`agent_context_builder.py`) and tier entry (`domain/user.py`); the factory builder
+  (`user_agent_factory.py`); the Firestore prompt profile + token; the one live channel binding to
+  `domain_researcher` (unbind first). Docs: `src/agents/CLAUDE.md`, `NEW_AGENT_PLAYBOOK.md` examples.
+- **Tests:** several tests use `domain_researcher` as the example of a non-companion binding
+  (`test_conversation_handler_agent_command.py`, `test_conversation_handler_session_mode.py`,
+  `test_overflow_routing_service.py`, `test_agent_context_builder_per_agent_provider.py`) — reviewer
+  decides each edit, per the test rule.
+- **Prerequisite:** the skill moves into git as a system skill (delivery B) first, so the procedure is
+  versioned in the repo before the agent's prompt is deleted.
+- **Deferred deliberately** (owner, 2026-10-04): do it after Agent Skills delivery B.
+
 ---
 
 ## 🏢 Planned Milestones (Phase 3: Enterprise)
