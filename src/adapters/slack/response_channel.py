@@ -6,7 +6,7 @@ import re
 import random
 import tempfile
 import aiohttp
-from typing import Any, Optional, Dict, List
+from typing import Any, Callable, Optional, Dict, List
 from ...domain.messaging import ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType, UIMessage
 from ...domain.language import LanguageCode
@@ -35,6 +35,7 @@ class SlackResponseChannel(ResponseChannel):
         bot_token: str,
         language: LanguageCode = LanguageCode.UK,
         localization: Optional[LocalizationPort] = None,
+        on_long_turn: Optional[Callable[[], None]] = None,
     ):
         """
         Initialize Slack response channel.
@@ -45,6 +46,8 @@ class SlackResponseChannel(ResponseChannel):
             bot_token: Slack bot token for file downloads
             language: Effective UI language for this request
             localization: Localization adapter for UI phrases
+            on_long_turn: Optional callback invoked once when the turn passes the
+                long-turn threshold (e.g. to release a thread lock).
         """
         self.client = app_client
         self.channel_id = channel_id
@@ -52,6 +55,7 @@ class SlackResponseChannel(ResponseChannel):
         self.platform = "slack"
         self.language = language
         self._localization = localization
+        self._on_long_turn = on_long_turn
     
     @property
     def max_message_length(self) -> int:
@@ -581,3 +585,35 @@ class SlackResponseChannel(ResponseChannel):
         except Exception as e:
             logger.error(f"❌ [SlackResponseChannel] Error downloading file: {e}")
             return None
+
+    async def message_link(self, message_id: Optional[str]) -> Optional[str]:
+        """Resolve a Slack permalink for one of this channel's messages."""
+        if not message_id:
+            return None
+        try:
+            resp = await self.client.chat_getPermalink(channel=self.channel_id, message_ts=message_id)
+            return resp.get("permalink")
+        except Exception as e:
+            logger.warning("⚠️ [SlackResponseChannel] permalink lookup failed: %s", e)
+            return None
+
+    async def send_late_answer(
+        self,
+        text: str,
+        prefix: str,
+        origin_message_id: Optional[str],
+        link_list: Optional[list] = None,
+    ) -> None:
+        """Post a long turn's answer to the main feed (never a thread), tied to its origin message."""
+        link = await self.message_link(origin_message_id)
+        header = f"{prefix} <{link}|↩>" if link else prefix
+        posted = await self.client.chat_postMessage(channel=self.channel_id, text=header)
+        await self.send_chunked_message(
+            f"{header}\n\n{text}", posted["ts"], thread_id=None, link_list=link_list,
+        )
+
+    async def on_long_turn(self) -> None:
+        """Fire the long-turn hook (once) — e.g. release a held thread lock."""
+        hook, self._on_long_turn = self._on_long_turn, None
+        if hook is not None:
+            hook()
