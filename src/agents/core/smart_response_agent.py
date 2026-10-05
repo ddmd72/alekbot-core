@@ -29,6 +29,13 @@ from ...domain.messaging import SmartResponse
 from ...domain.exceptions import TranscriptLockedError
 from ...domain.turn_clock import CURRENT_TURN_CLOCK
 from ...domain.skill import DRAFT_SKILL_TOOL, USE_SKILL_TOOL, Skill, render_catalog, visible_skill_names
+from ...ports.long_turn_registry import LongTurnRegistry
+from ...infrastructure.long_turn_tools import (
+    CANCEL_LONG_TURN_TOOL,
+    build_cancel_long_turn_tool_declaration,
+    make_cancel_long_turn_handler,
+    render_running_jobs,
+)
 from ...ports.llm_port import (
     LLMResponse,
     Message,
@@ -214,6 +221,7 @@ class SmartResponseAgent(BaseAgent):
         user_timezone: str = "UTC",
         thinking_effort: Optional[str] = None,
         skill_service: Optional["SkillService"] = None,
+        long_turn_registry: Optional[LongTurnRegistry] = None,
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -232,6 +240,7 @@ class SmartResponseAgent(BaseAgent):
         self._user_timezone = user_timezone
         self._default_thinking_effort = thinking_effort
         self.skill_service = skill_service
+        self.long_turn_registry = long_turn_registry
 
         # NOTE: ``self.llm``, ``self.model_name``, ``self.execution_context``,
         # and ``self._agent_execution_context`` (set by _set_execution_context
@@ -484,6 +493,16 @@ class SmartResponseAgent(BaseAgent):
                         lambda s: self.skill_service.draft(prompt_user_id, s)
                     )
 
+            running = await self._load_running_jobs(prompt_user_id, message)
+            if running:
+                note = MessagePart(text=render_running_jobs(running, time.time()))
+                last = clean_history[-1]
+                clean_history[-1] = last.model_copy(update={"parts": [*last.parts, note]})
+                tools.append(build_cancel_long_turn_tool_declaration())
+                local_tools = dict(local_tools or {})
+                local_tools[CANCEL_LONG_TURN_TOOL] = make_cancel_long_turn_handler(
+                    self.long_turn_registry, prompt_user_id, running)
+
             engine = DelegationEngine(self.coordinator)
             base_request = LLMRequest(
                 model_name=eff.ctx.model_name,
@@ -598,6 +617,18 @@ class SmartResponseAgent(BaseAgent):
         )
         final_rich = rich if rich else result.structured_data
         return SmartResponse(text=user_text or "", structured_data=final_rich, link_list=link_list), summary
+
+    async def _load_running_jobs(self, user_id: Optional[str], message: AgentMessage) -> list:
+        """The user's other long turns still running. A registry failure means none."""
+        if not self.long_turn_registry or not user_id:
+            return []
+        own = (message.context.get("metadata") or {}).get("turn_id")
+        try:
+            running = await self.long_turn_registry.list_running(user_id)
+        except Exception as e:
+            logger.warning("⏳ [SmartResponseAgent] running jobs unavailable: %s", e)
+            return []
+        return [r for r in running if r.turn_id != own]
 
     async def _load_skills(self, user_id: Optional[str]) -> List[Skill]:
         """The user's skills for this request. Optional procedures: a store failure means no skills."""
@@ -756,6 +787,7 @@ def create_smart_response_agent(
     user_timezone: str = "UTC",
     thinking_effort: Optional[str] = None,
     skill_service: Optional["SkillService"] = None,
+    long_turn_registry: Optional[LongTurnRegistry] = None,
 ) -> SmartResponseAgent:
     """Factory function to create SmartResponseAgent."""
     agent_id = f"smart_response_agent_{user_id}" if user_id else "smart_response_agent"
@@ -788,5 +820,6 @@ def create_smart_response_agent(
         user_timezone=user_timezone,
         thinking_effort=thinking_effort,
         skill_service=skill_service,
+        long_turn_registry=long_turn_registry,
     )
 

@@ -7,6 +7,7 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 from src.agents.core.smart_response_agent import SmartResponseAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.domain.exceptions import TranscriptLockedError
+from src.domain.long_turn import LongTurnRecord
 from src.domain.turn_clock import CURRENT_TURN_CLOCK, TurnClock
 from src.domain.user import PerformanceTier, UserBotConfig
 from src.infrastructure.delegation_engine import DelegationEngine, DelegationResult
@@ -81,7 +82,12 @@ def _make_message() -> AgentMessage:
         recipient="smart_response_agent",
         intent=AgentIntent.QUERY,
         payload={"text": "hi"},
-        context={"session_id": "s", "user_id": "user-123", "account_id": "acc-123"},
+        context={
+            "session_id": "s",
+            "user_id": "user-123",
+            "account_id": "acc-123",
+            "metadata": {"turn_id": "slack:Own1"},
+        },
     )
 
 
@@ -127,6 +133,7 @@ def smart_agent_with_engine_spy():
 
     async def _execute_spy(self, *, call_llm, base_request, **kwargs):
         engine_kwargs.update(kwargs)
+        engine_kwargs["base_request"] = base_request
         await call_llm(base_request, 1)
         return DelegationResult(text="ok", total_tokens=0)
 
@@ -188,3 +195,25 @@ async def test_no_provider_rotation_after_the_mark(smart_agent_failing_with_tran
         CURRENT_TURN_CLOCK.reset(token)
     assert response.status.value == "failed"
     agent.resolver.next_provider_override.assert_not_called()
+
+
+async def test_running_jobs_note_and_cancel_tool_when_jobs_exist(smart_agent_with_engine_spy):
+    agent, engine_kwargs, _ = smart_agent_with_engine_spy
+    agent.long_turn_registry = AsyncMock()
+    agent.long_turn_registry.list_running.return_value = [LongTurnRecord(
+        turn_id="slack:Ev999999", user_id="u1", session_id="s", title="old job",
+        started_at=0.0, heartbeat_at=0.0)]
+    await agent.execute(smart_agent_with_engine_spy.message)
+    last_user = engine_kwargs["base_request"].messages[-1]
+    assert any("old job" in (p.text or "") for p in last_user.parts)
+    assert "cancel_long_turn" in engine_kwargs["local_tools"]
+
+
+async def test_own_turn_is_not_listed(smart_agent_with_engine_spy):
+    agent, engine_kwargs, _ = smart_agent_with_engine_spy
+    agent.long_turn_registry = AsyncMock()
+    own = smart_agent_with_engine_spy.message.context["metadata"]["turn_id"]
+    agent.long_turn_registry.list_running.return_value = [LongTurnRecord(
+        turn_id=own, user_id="u1", session_id="s", title="me", started_at=0.0, heartbeat_at=0.0)]
+    await agent.execute(smart_agent_with_engine_spy.message)
+    assert not (engine_kwargs.get("local_tools") or {}).get("cancel_long_turn")
