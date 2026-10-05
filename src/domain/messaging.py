@@ -336,9 +336,13 @@ class ResponseChannel(Protocol):
     @abstractmethod
     async def send_late_answer(
         self, text: str, prefix: str, origin_message_id: Optional[str],
-        link_list: Optional[list] = None,
+        link_list: Optional[list] = None, link: Optional[str] = None,
     ) -> None:
-        """Post a long turn's answer in the main feed, marked and tied to the message it answers."""
+        """Post a long turn's answer in the main feed, marked and tied to the message it answers.
+
+        `link`: the origin's link (from `message_link`) when the caller already has it, so
+        the channel does not fetch it a second time.
+        """
         ...
 
     @abstractmethod

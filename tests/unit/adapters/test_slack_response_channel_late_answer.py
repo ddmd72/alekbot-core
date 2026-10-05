@@ -85,3 +85,20 @@ async def test_on_long_turn_calls_the_hook_once():
     await ch.on_long_turn()
     await ch.on_long_turn()
     hook.assert_called_once()
+
+
+# --- Final review M5: a link fetched by the caller is not fetched again -------------
+
+
+async def test_late_answer_with_a_given_link_does_not_refetch_the_permalink():
+    ch, client = _channel()
+    await ch.send_late_answer("the answer", "[late answer]", "100.1", link="https://s/given")
+    client.chat_getPermalink.assert_not_awaited()
+    updated_text = client.chat_update.call_args.kwargs["text"]
+    assert "https://s/given" in updated_text and "the answer" in updated_text
+
+
+async def test_late_answer_without_a_given_link_still_fetches_it():
+    ch, client = _channel()
+    await ch.send_late_answer("the answer", "[late answer]", "100.1", link=None)
+    client.chat_getPermalink.assert_awaited_once()

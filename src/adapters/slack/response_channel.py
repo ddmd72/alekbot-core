@@ -628,9 +628,15 @@ class SlackResponseChannel(ResponseChannel):
         prefix: str,
         origin_message_id: Optional[str],
         link_list: Optional[list] = None,
+        link: Optional[str] = None,
     ) -> None:
-        """Post a long turn's answer to the main feed (never a thread), tied to its origin message."""
-        link = await self.message_link(origin_message_id)
+        """Post a long turn's answer to the main feed (never a thread), tied to its origin message.
+
+        `link` is the origin's permalink when the caller already fetched it; only when it
+        is None is it looked up here.
+        """
+        if link is None:
+            link = await self.message_link(origin_message_id)
         header = f"{prefix} <{link}|↩>" if link else prefix
         posted = await self.client.chat_postMessage(channel=self.channel_id, text=header)
         await self._send_flat_chunks(
