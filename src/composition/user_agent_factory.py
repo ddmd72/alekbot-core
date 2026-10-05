@@ -105,6 +105,7 @@ from ..services.email_search_service import EmailSearchService
 from ..services.task_indexing_service import TaskIndexingService
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.agent_factory_port import AgentFactoryPort
+from ..ports.long_turn_registry import LongTurnRegistry
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -179,6 +180,7 @@ class UserAgentFactory(AgentFactoryPort):
         prompt_content_store: Optional[object] = None,
         quota_service: Optional[object] = None,
         skill_service: Optional["SkillService"] = None,
+        long_turn_registry: Optional[LongTurnRegistry] = None,
     ) -> None:
         self.config = config
         self.env_config = env_config
@@ -218,6 +220,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.prompt_content_store = prompt_content_store
         self.quota_service = quota_service
         self.skill_service = skill_service
+        self.long_turn_registry = long_turn_registry
 
         unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
         self._image_search = UnsplashAdapter(unsplash_key) if unsplash_key else None
@@ -394,6 +397,7 @@ class UserAgentFactory(AgentFactoryPort):
             user_timezone=user_timezone,
             thinking_effort=user_profile.config.get_thinking_for_agent("smart"),
             skill_service=self.skill_service,
+            long_turn_registry=self.long_turn_registry,
         )
 
         notes_agent = None

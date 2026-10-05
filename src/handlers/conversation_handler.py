@@ -9,12 +9,17 @@ import os
 import json
 import asyncio
 import time
+from dataclasses import dataclass, field
 from typing import Callable, Coroutine, List, Optional, Any, TYPE_CHECKING
 
 from ..domain.messaging import MessageContext, ResponseChannel, SmartResponse, RichContent
 from ..domain.ui_messages import StatusType, UIMessage
 from ..domain.language import LanguageCode
-from ..domain.agent import AgentMessage, AgentIntent, AgentStatus, DeliveryItem
+from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus, DeliveryItem
+from ..domain.long_turn import LongTurnStatus, RetryVerdict
+from ..domain.turn_clock import (
+    CURRENT_TURN_CLOCK, HARD_STOP_MARGIN_S, LONG_TURN_BUDGET_S, TurnClock, render_late_answer_note,
+)
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
 from ..domain.exceptions import SkillCapExceeded, SkillDraftNotFound, SkillNameReserved, SkillRejected
@@ -30,11 +35,13 @@ if TYPE_CHECKING:
     from ..services.file_conversion_service import FileConversionService
     from ..services.short_link_service import ShortLinkService
     from ..services.skill_service import SkillService
+    from ..services.long_turn_service import LongTurnService
 from ..utils.file_conversion import (
     convert_file_to_text, download_alert, is_native_binary, make_history_stub,
     transcription_alert,
 )
 from ..utils.logger import logger
+from ..utils.retry import retry_store_write
 from ..utils.telemetry import start_span
 from ..utils.logging_context import set_log_context
 from ..domain.settings import ConsolidationSettings
@@ -47,6 +54,22 @@ from ..domain.session_mode import SessionMode
 
 # Content types that require external fetch + platform upload (not Block Kit)
 _MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file", "widget"})
+
+
+@dataclass
+class _LongTurn:
+    """One chat turn's long-turn state, shared by the agent child task and its watcher.
+
+    `lock` serialises the 90 s mark against the agent finishing: whichever side takes it
+    first decides whether the answer goes the normal way or as a late answer.
+    """
+    turn_id: str
+    clock: TurnClock
+    agent_task: "asyncio.Task"
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    marked: bool = False
+    cancelled: bool = False
+    started_at: float = field(default_factory=time.time)   # wall time the turn began
 
 
 def strtobool(val: str) -> bool:
@@ -110,6 +133,7 @@ class ConversationHandler(ConversationHandlerPort):
         short_link_service: Optional["ShortLinkService"] = None,
         fallback_service: Optional[Any] = None,
         skill_service: Optional["SkillService"] = None,
+        long_turn_service: Optional["LongTurnService"] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -131,6 +155,11 @@ class ConversationHandler(ConversationHandlerPort):
         self._channel_history = channel_history_source
         self._short_link_service = short_link_service
         self._skill_service = skill_service
+        self._long_turns = long_turn_service
+        # turn_ids whose long-turn flow runs in this process (final review C1). With one
+        # instance, a RUNNING record not in here belongs to an attempt that died. Plain
+        # set ops with no await between test and change, so no lock is needed.
+        self._live_turns: set[str] = set()
         # Strong refs for fire-and-forget tasks (e.g. notification-channel save below) —
         # asyncio only holds a weak ref to a Task, so an untracked one can be GC'd mid-flight.
         self._background_tasks: set[asyncio.Task] = set()
@@ -478,6 +507,35 @@ class ConversationHandler(ConversationHandlerPort):
             binding = await self._channel_binding.get(channel_id)
         platform = getattr(response_channel, "platform", "slack")
         mode = self._resolve_session_mode(channel_id, binding, platform)
+
+        # Long-running turns (RFC §5.3–5.7): only the orchestrator flow of a platform event
+        # with an identity. Bound channels and companion bindings keep today's behaviour.
+        turn_id = context.metadata.get("turn_id")
+        long_turns = self._long_turns if (turn_id and not mode.is_bound and mode.write_session) else None
+        if long_turns is not None:
+            try:
+                verdict = await long_turns.check_retry(
+                    turn_id, live_in_process=turn_id in self._live_turns)
+            except Exception as e:
+                # The registry is an aid, not a gate: a short turn must not be dropped
+                # because Firestore blinked.
+                logger.warning("⚠️ [LongTurn] retry check for %s failed, treating as new: %s",
+                               turn_id, e)
+                verdict = RetryVerdict.NEW
+            if verdict is RetryVerdict.STALE:
+                origin = context.metadata.get("origin_message_id")
+                line = self._ui_string(context, UIMessage.LONG_TURN_LOST)
+                link = await self._origin_link(response_channel, origin)
+                await self._close_long_turn_in_session(context, long_turns, link, line)
+                await response_channel.send_late_answer(
+                    line, self._ui_string(context, UIMessage.LATE_ANSWER_PREFIX), origin,
+                    link=link,
+                )
+                return
+            if verdict is not RetryVerdict.NEW:
+                logger.info("⏭️ [LongTurn] %s already %s — retry ignored", turn_id, verdict.value)
+                return
+
         if mode.is_bound:
             logger.info(
                 "🔗 [BoundChannel] channel=%s → intent=%s",
@@ -733,6 +791,7 @@ class ConversationHandler(ConversationHandlerPort):
                 if mode.history_recent_full_turns is not None:
                     agent_context["history_recent_full_turns"] = mode.history_recent_full_turns
 
+                long_turn: Optional[_LongTurn] = None
                 if mode.is_bound:
                     # Direct delegation — bypass Router
                     with start_span("conversation.bound_agent_response"):
@@ -760,16 +819,26 @@ class ConversationHandler(ConversationHandlerPort):
                             ]
                         },
                         context=agent_context,
-                        timeout_ms=None
+                        # A long turn's hard stop: the budget plus a margin for the wrap-up.
+                        timeout_ms=(
+                            (LONG_TURN_BUDGET_S + HARD_STOP_MARGIN_S) * 1000
+                            if long_turns is not None else None
+                        ),
                     )
 
                     with start_span("conversation.agent_response"):
-                        response = await self.coordinator.route_message(message)
-                        if self._fallback_service is not None:
-                            response = await self._fallback_service.try_quick_fallback(
-                                response, context, message_parts,
-                                origin_platform=agent_context["origin_platform"],
-                            )
+                        response, long_turn = await self._run_agent_turn(
+                            message, context, message_parts, agent_context, long_turns,
+                            response_channel, status_message_id, stop_status_updates,
+                            file_part_stubs, turn_started_at=start_time,
+                        )
+
+            if long_turn is not None:
+                # The watcher already stopped the status animation at the mark (and absorbed
+                # any error it died with), so the late path does not stop it again.
+                await self._finish_long_turn(long_turn, response, context, response_channel,
+                                             long_turns)
+                return
 
             await stop_status_updates()
 
@@ -840,98 +909,18 @@ class ConversationHandler(ConversationHandlerPort):
                         structured_data, response_channel, thread_id_for_reply
                     )
 
-            # Resolve history_summary after Slack delivery (task was running concurrently)
-            # SESSION_2026-02-18: Async postprocessing — summary generates while Slack delivers
-            if response.metadata:
-                summary_task = response.metadata.get("response_summary_task")
-                if summary_task:
-                    try:
-                        summary = await asyncio.wait_for(asyncio.shield(summary_task), timeout=10.0)
-                        if summary:
-                            history_text = summary
-                            logger.debug("💾 [History] Async summary ready (%d chars)", len(history_text))
-                        else:
-                            logger.warning("💾 [History] Summary empty, using full text")
-                    except asyncio.TimeoutError:
-                        logger.warning("💾 [History] Summary task timed out, using full text")
-                    except Exception as e:
-                        logger.warning("💾 [History] Summary task failed: %s, using full text", e)
-                elif "response_summary" in response.metadata:
-                    history_text = response.metadata["response_summary"] or response_text
-                    logger.debug("💾 [History] Using pre-computed summary")
-
-            # Validate History Output
-            history_text = await self.validate_model_output(history_text, context.user_id)
+            history_text, response_text, consolidation_texts = await self._prepare_history_texts(
+                response, response_text, history_text, structured_data, context,
+            )
 
             # Clean up temporary file paths before saving to history
-            # Files with "path" are temporary and will be deleted in finally block
-            # Adapter already processed them during request (uploaded to API or encoded)
-            clean_message_parts = []
-            for part in message_parts:
-                if part.file_data and "ref" in part.file_data and "path" in part.file_data:
-                    # GCS-backed file: strip temp path, keep reference
-                    clean_file_data = {k: v for k, v in part.file_data.items() if k != "path"}
-                    clean_message_parts.append(MessagePart(
-                        text=part.text,
-                        file_data=clean_file_data,
-                    ))
-                elif part.file_data and "path" in part.file_data:
-                    # Legacy: temporary file without GCS ref — skip entirely
-                    logger.debug(f"Skipping temporary file from history: {part.file_data.get('path')}")
-                    continue
-                elif id(part) in file_part_stubs:
-                    # Legacy: converted text files — text=stub, full_text=full
-                    clean_message_parts.append(MessagePart(
-                        text=file_part_stubs[id(part)],
-                        full_text=part.text,
-                    ))
-                else:
-                    clean_message_parts.append(part)
-
-            # Append *_context blocks to full_text for tiered history loading.
-            # Any metadata key ending in "_context" is persisted — orchestrators control what they expose.
-            for ctx_key, ctx_value in (response.metadata or {}).items():
-                if ctx_key == SKILL_CONTEXT_KEY:
-                    continue  # raw block + stub, below
-                if ctx_key.endswith("_context") and ctx_value:
-                    context_block = json.dumps(
-                        {ctx_key: ctx_value},
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                    response_text = response_text + "\n\n" + context_block
-                    logger.info(
-                        "💾 [History] %s appended to full_text: %d chars",
-                        ctx_key, len(context_block)
-                    )
-
-            # Skill bodies: raw block in full_text (json.dumps would escape the markdown), one
-            # neutral stub per skill in the summary. Runs after the async summary has resolved,
-            # so the summary cannot overwrite the stub.
-            skill_contexts = (response.metadata or {}).get(SKILL_CONTEXT_KEY)
-            if skill_contexts:
-                response_text, history_text = fold_skill_contexts(response_text, history_text, skill_contexts)
-
-            # Append rich_content to full_text so LLM sees delivered structured data in history.
-            # Only in full_text (not history_text/summary) — subject to HISTORY_FULL_TURNS tiering.
-            if structured_data:
-                rich_block = json.dumps(
-                    {"rich_content": {"type": structured_data.content_type, "data": structured_data.data}},
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-                response_text = response_text + "\n\n" + rich_block
-                logger.info(
-                    "💾 [History] rich_content appended to full_text: type=%s, %d chars",
-                    structured_data.content_type, len(rich_block)
-                )
+            clean_message_parts = self._clean_user_parts(message_parts, file_part_stubs)
 
             # Attach consolidation_text from save_to_memory delegations to the user message.
             # consolidation_text is invisible to agents/adapters; only the consolidation
             # serializer reads it (p.consolidation_text or p.text for user parts).
-            consolidation_texts = (response.metadata or {}).get("consolidation_text", [])
             if consolidation_texts:
-                combined = "\n".join(consolidation_texts) if isinstance(consolidation_texts, list) else str(consolidation_texts)
+                combined = "\n".join(consolidation_texts)
                 clean_message_parts.append(MessagePart(consolidation_text="\n\n" + combined))
                 logger.info(
                     "💾 [History] consolidation_text attached to user message (%d chars)", len(combined)
@@ -977,6 +966,362 @@ class ConversationHandler(ConversationHandlerPort):
                 except Exception:
                     logger.debug("Failed to remove temp file %s", path)
 
+    async def _route_with_fallback(self, message, context, message_parts, origin_platform):
+        """Route the turn; Quick fallback only before the 90 s mark (RFC §5.7, §5.9)."""
+        response = await self.coordinator.route_message(message)
+        clock = CURRENT_TURN_CLOCK.get()
+        if self._fallback_service is not None and not (clock is not None and clock.marked):
+            response = await self._fallback_service.try_quick_fallback(
+                response, context, message_parts, origin_platform=origin_platform,
+            )
+        return response
+
+    async def _run_agent_turn(self, message, context, message_parts, agent_context, long_turns,
+                              response_channel, status_message_id, stop_status_updates,
+                              file_part_stubs, turn_started_at: Optional[float] = None):
+        """Run the agent; with long turns enabled, as a child task beside the 90 s watcher.
+
+        Returns (response, long_turn): long_turn is set only when the turn passed the mark,
+        and then the answer must go out as a late answer. Cancel and the hard stop cancel
+        the child only — the handler survives and the worker still returns 200 (RFC §5.4).
+        """
+        origin_platform = agent_context["origin_platform"]
+        if long_turns is None:
+            return await self._route_with_fallback(message, context, message_parts, origin_platform), None
+
+        clock = long_turns.new_clock(context.session_id)
+        token = CURRENT_TURN_CLOCK.set(clock)
+        try:
+            agent_task = asyncio.create_task(
+                self._route_with_fallback(message, context, message_parts, origin_platform)
+            )
+        finally:
+            CURRENT_TURN_CLOCK.reset(token)   # the task already holds its own copy
+        lt = _LongTurn(turn_id=context.metadata["turn_id"], clock=clock, agent_task=agent_task)
+        if turn_started_at is not None:
+            lt.started_at = turn_started_at
+        # Live from here; a marked turn leaves the set when _finish_long_turn closes it.
+        self._live_turns.add(lt.turn_id)
+        try:
+            response = await self._await_agent_turn(lt, long_turns, message, context,
+                                                    response_channel, status_message_id,
+                                                    stop_status_updates, message_parts,
+                                                    file_part_stubs)
+        except BaseException:
+            self._live_turns.discard(lt.turn_id)
+            raise
+        if not lt.marked:
+            self._live_turns.discard(lt.turn_id)
+        return response, (lt if lt.marked else None)
+
+    async def _await_agent_turn(self, lt, long_turns, message, context, response_channel,
+                                status_message_id, stop_status_updates, message_parts,
+                                file_part_stubs):
+        """Await the agent beside its watcher; after the mark an error becomes a failure."""
+        agent_task = lt.agent_task
+        watcher = asyncio.create_task(self._watch_long_turn(
+            lt, long_turns, context, response_channel, status_message_id,
+            stop_status_updates, message_parts, file_part_stubs,
+        ))
+        watcher.add_done_callback(self._log_watcher_exit)
+        error: Optional[Exception] = None
+        try:
+            try:
+                response = await agent_task
+            except asyncio.CancelledError:
+                if not lt.cancelled:
+                    raise
+                response = AgentResponse.failure(
+                    task_id=message.task_id, agent_id="conversation_handler",
+                    error="cancelled_by_user",
+                )
+            except Exception as e:
+                error = e
+        finally:
+            async with lt.lock:   # let an in-progress mark finish before deciding the path
+                pass
+            watcher.cancel()
+        if error is not None:
+            if not lt.marked:
+                raise error
+            # After the mark an application error is the failure line, not the generic
+            # in-thread error (RFC §5.7).
+            logger.error("❌ [LongTurn] %s agent raised after the mark: %s", lt.turn_id, error,
+                         exc_info=error)
+            response = AgentResponse.failure(
+                task_id=message.task_id, agent_id="conversation_handler", error=str(error),
+            )
+        return response
+
+    @staticmethod
+    def _log_watcher_exit(task: "asyncio.Task") -> None:
+        """Retrieve and log an exception the watcher died with (otherwise never retrieved)."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("❌ [LongTurn] watcher failed: %s", exc, exc_info=exc)
+
+    async def _watch_long_turn(self, lt, long_turns, context, response_channel,
+                               status_message_id, stop_status_updates, message_parts,
+                               file_part_stubs):
+        """The 90 s mark (RFC §5.3), then heartbeat + cancel poll every ~30 s (§5.4)."""
+        await asyncio.sleep(long_turns.notice_after_s)
+        async with lt.lock:
+            if lt.agent_task.done():
+                return
+            lt.marked = lt.clock.marked = True
+            try:
+                await stop_status_updates()
+            except Exception as e:
+                # The animation task died with an error; it is stopped either way.
+                logger.warning("⚠️ [LongTurn] status animation ended with an error: %s", e)
+            notice = self._ui_string(context, UIMessage.LONG_TURN_NOTICE)
+            try:
+                await response_channel.update_message(status_message_id, notice)
+            except Exception as e:
+                logger.warning("⚠️ [LongTurn] notice update failed: %s", e)
+            try:
+                await long_turns.mark(
+                    turn_id=lt.turn_id, user_id=context.user_id, session_id=context.session_id,
+                    title=context.text or "",
+                    user_parts=self._clean_user_parts(message_parts, file_part_stubs),
+                    event_time=context.metadata.get("event_time") or time.time(),
+                    notice_text=notice, clock=lt.clock, started_at=lt.started_at,
+                )
+            except Exception as e:
+                # The notice is already shown, so the answer must still come as a late answer.
+                logger.error("❌ [LongTurn] mark(%s) failed: %s", lt.turn_id, e, exc_info=True)
+            try:
+                await response_channel.on_long_turn()
+            except Exception as e:
+                logger.warning("⚠️ [LongTurn] on_long_turn hook failed: %s", e)
+            logger.info("⏳ [LongTurn] %s passed the mark", lt.turn_id)
+        while not lt.agent_task.done():
+            await asyncio.sleep(long_turns.heartbeat_s)
+            try:
+                cancel = await long_turns.heartbeat(lt.turn_id, lt.clock.step)
+            except Exception as e:
+                logger.warning("⚠️ [LongTurn] heartbeat failed: %s", e)
+                continue
+            if cancel and not lt.agent_task.done():
+                logger.info("🛑 [LongTurn] %s cancel requested — cancelling the agent", lt.turn_id)
+                lt.cancelled = True
+                lt.agent_task.cancel()
+                return
+
+    async def _finish_long_turn(self, lt, response, context, response_channel, long_turns):
+        """Deliver a marked turn's outcome as a late answer and close its record (RFC §5.6).
+
+        Every outcome also closes the question in the session (a late-answer pair), and the
+        pair is written before delivery, so a failed post never loses the answer from history.
+        """
+        prefix = self._ui_string(context, UIMessage.LATE_ANSWER_PREFIX)
+        origin = context.metadata.get("origin_message_id")
+        status = LongTurnStatus.FAILED
+        try:
+            link = await self._origin_link(response_channel, origin)
+            if lt.cancelled:
+                line = self._ui_string(context, UIMessage.LONG_TURN_CANCELLED)
+                await self._close_long_turn_in_session(context, long_turns, link, line)
+                await response_channel.send_late_answer(line, prefix, origin, link=link)
+                status = LongTurnStatus.CANCELLED
+                return
+            if response.status != AgentStatus.SUCCESS:
+                logger.warning("⚠️ [LongTurn] %s ended %s: %s", lt.turn_id,
+                               response.status.value, response.error)
+                line = self._ui_string(context, UIMessage.LONG_TURN_FAILED)
+                await self._close_long_turn_in_session(context, long_turns, link, line)
+                await response_channel.send_late_answer(line, prefix, origin, link=link)
+                return
+
+            payload = response.result
+            if isinstance(payload, SmartResponse):
+                text, structured, link_list = payload.text, payload.structured_data, payload.link_list or []
+            else:
+                text, structured, link_list = (str(payload) if payload is not None else ""), None, []
+            text = self._append_unanchored_sources(text, link_list, context)
+            history_text = text or (structured.fallback_text if structured else "")
+            shown = text if text.strip() else (
+                "" if structured else self._ui_string(context, UIMessage.EMPTY_MODEL_RESPONSE))
+            shown = await self.validate_model_output(shown, context.user_id)
+
+            # full_text starts from the sanitised text, as on the normal path — the raw text
+            # must not reach history, where it is re-injected into later prompts.
+            history_text, full_text, consolidation_texts = await self._prepare_history_texts(
+                response, shown, history_text, structured, context)
+            await self._close_long_turn_in_session(
+                context, long_turns, link, history_text,
+                full_text=full_text, consolidation_texts=consolidation_texts,
+            )
+            try:
+                await response_channel.send_late_answer(
+                    shown, prefix, origin, link_list=link_list or None, link=link)
+                if structured:
+                    await self._deliver_rich_content(structured, response_channel, None)
+                for item in response.delivery_items:
+                    await self._deliver_item(item, response_channel, None, user_id=context.user_id)
+            except Exception as e:
+                logger.error("❌ [LongTurn] %s late answer delivery failed: %s", lt.turn_id, e,
+                             exc_info=True)
+                try:
+                    await response_channel.send_late_answer(
+                        self._ui_string(context, UIMessage.LONG_TURN_FAILED), prefix, origin,
+                        link=link)
+                except Exception as line_err:
+                    logger.error("❌ [LongTurn] %s failure line not delivered either: %s",
+                                 lt.turn_id, line_err)
+                return
+            status = LongTurnStatus.DONE
+            logger.info("🏁 [LongTurn] %s late answer delivered", lt.turn_id)
+        finally:
+            # Always close the record, even when delivery raised — a record left `running`
+            # would read as live until its heartbeat goes stale.
+            await long_turns.finish(lt.turn_id, status)
+            self._live_turns.discard(lt.turn_id)
+
+    @staticmethod
+    async def _origin_link(response_channel, origin: Optional[str]) -> Optional[str]:
+        """The origin message's link, fetched once per late path. None where there is none."""
+        try:
+            return await response_channel.message_link(origin)
+        except Exception as e:
+            logger.warning("⚠️ [LongTurn] origin link lookup failed: %s", e)
+            return None
+
+    async def _close_long_turn_in_session(self, context, long_turns, link: Optional[str],
+                                          model_text: str, *, full_text: Optional[str] = None,
+                                          consolidation_texts: Optional[List[str]] = None) -> None:
+        """Append the late-answer pair that closes a long turn's question in the session.
+
+        Used for every outcome — answer, failure, cancel, lost — so history never ends on an
+        open question. Best effort: a failed write is logged, the user still gets the post.
+        """
+        asked_at = time.strftime(
+            "%H:%M", time.localtime(context.metadata.get("event_time") or time.time()))
+        try:
+            await long_turns.save_late_answer(
+                session_id=context.session_id, owner_id=context.user_id,
+                note_text=render_late_answer_note(context.text or "", asked_at, link),
+                consolidation_texts=consolidation_texts or [],
+                history_text=model_text,
+                full_text=full_text if full_text is not None else model_text,
+            )
+        except Exception as e:
+            logger.error("❌ [LongTurn] closing the turn in session %s failed: %s",
+                         context.session_id, e, exc_info=True)
+
+    async def _prepare_history_texts(
+        self, response, response_text: str, history_text: str, structured_data, context,
+    ) -> tuple[str, str, List[str]]:
+        """(history_text, full_text, consolidation_texts) for the session pair.
+
+        Shared by the normal and the late-answer path, so both persist the same shape.
+        `response_text` is the delivered text; the returned full_text extends it with the
+        `*_context` blocks, skill bodies and the rich_content block.
+        """
+        # Resolve history_summary after Slack delivery (task was running concurrently)
+        # SESSION_2026-02-18: Async postprocessing — summary generates while Slack delivers
+        if response.metadata:
+            summary_task = response.metadata.get("response_summary_task")
+            if summary_task:
+                try:
+                    summary = await asyncio.wait_for(asyncio.shield(summary_task), timeout=10.0)
+                    if summary:
+                        history_text = summary
+                        logger.debug("💾 [History] Async summary ready (%d chars)", len(history_text))
+                    else:
+                        logger.warning("💾 [History] Summary empty, using full text")
+                except asyncio.TimeoutError:
+                    logger.warning("💾 [History] Summary task timed out, using full text")
+                except Exception as e:
+                    logger.warning("💾 [History] Summary task failed: %s, using full text", e)
+            elif "response_summary" in response.metadata:
+                history_text = response.metadata["response_summary"] or response_text
+                logger.debug("💾 [History] Using pre-computed summary")
+
+        # Validate History Output
+        history_text = await self.validate_model_output(history_text, context.user_id)
+
+        # Append *_context blocks to full_text for tiered history loading.
+        # Any metadata key ending in "_context" is persisted — orchestrators control what they expose.
+        for ctx_key, ctx_value in (response.metadata or {}).items():
+            if ctx_key == SKILL_CONTEXT_KEY:
+                continue  # raw block + stub, below
+            if ctx_key.endswith("_context") and ctx_value:
+                context_block = json.dumps(
+                    {ctx_key: ctx_value},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                response_text = response_text + "\n\n" + context_block
+                logger.info(
+                    "💾 [History] %s appended to full_text: %d chars",
+                    ctx_key, len(context_block)
+                )
+
+        # Skill bodies: raw block in full_text (json.dumps would escape the markdown), one
+        # neutral stub per skill in the summary. Runs after the async summary has resolved,
+        # so the summary cannot overwrite the stub.
+        skill_contexts = (response.metadata or {}).get(SKILL_CONTEXT_KEY)
+        if skill_contexts:
+            response_text, history_text = fold_skill_contexts(response_text, history_text, skill_contexts)
+
+        # Append rich_content to full_text so LLM sees delivered structured data in history.
+        # Only in full_text (not history_text/summary) — subject to HISTORY_FULL_TURNS tiering.
+        if structured_data:
+            rich_block = json.dumps(
+                {"rich_content": {"type": structured_data.content_type, "data": structured_data.data}},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            response_text = response_text + "\n\n" + rich_block
+            logger.info(
+                "💾 [History] rich_content appended to full_text: type=%s, %d chars",
+                structured_data.content_type, len(rich_block)
+            )
+
+        # consolidation_text from save_to_memory delegations, normalised to a list.
+        raw_consolidation = (response.metadata or {}).get("consolidation_text", [])
+        if not raw_consolidation:
+            consolidation_texts: List[str] = []
+        elif isinstance(raw_consolidation, list):
+            consolidation_texts = raw_consolidation
+        else:
+            consolidation_texts = [str(raw_consolidation)]
+        return history_text, response_text, consolidation_texts
+
+    def _clean_user_parts(
+        self, message_parts: List[MessagePart], file_part_stubs: dict,
+    ) -> List[MessagePart]:
+        """The user's parts as they are persisted: temp paths stripped, converted files stubbed.
+
+        Files with "path" are temporary and are deleted in handle_message's finally block;
+        the adapter already processed them during the request (uploaded to API or encoded).
+        """
+        clean_message_parts = []
+        for part in message_parts:
+            if part.file_data and "ref" in part.file_data and "path" in part.file_data:
+                # GCS-backed file: strip temp path, keep reference
+                clean_file_data = {k: v for k, v in part.file_data.items() if k != "path"}
+                clean_message_parts.append(MessagePart(
+                    text=part.text,
+                    file_data=clean_file_data,
+                ))
+            elif part.file_data and "path" in part.file_data:
+                # Legacy: temporary file without GCS ref — skip entirely
+                logger.debug(f"Skipping temporary file from history: {part.file_data.get('path')}")
+                continue
+            elif id(part) in file_part_stubs:
+                # Legacy: converted text files — text=stub, full_text=full
+                clean_message_parts.append(MessagePart(
+                    text=file_part_stubs[id(part)],
+                    full_text=part.text,
+                ))
+            else:
+                clean_message_parts.append(part)
+        return clean_message_parts
+
     async def _save_history_with_retry(
         self,
         session_store,
@@ -988,28 +1333,14 @@ class ConversationHandler(ConversationHandlerPort):
         max_attempts: int = 3,
     ) -> None:
         """Append conversation turn to history with retry for transient gRPC errors."""
-        _TRANSIENT = ("RST_STREAM", "UNAVAILABLE", "INTERNAL")
         messages = [
             Message(role="user", parts=user_parts),
             Message(role="model", parts=[MessagePart(text=history_text, full_text=response_text)]),
         ]
-        last_exc: Exception | None = None
-        for attempt in range(1, max_attempts + 1):
-            try:
-                await session_store.append_messages_batch(session_id, messages, owner_id=owner_id)
-                if attempt > 1:
-                    logger.info(f"✅ History saved after {attempt} attempts")
-                return
-            except Exception as exc:
-                last_exc = exc
-                if attempt < max_attempts and any(t in str(exc) for t in _TRANSIENT):
-                    delay = 0.5 * attempt
-                    logger.warning(f"⚠️ History save attempt {attempt} failed ({exc}), retrying in {delay}s…")
-                    await asyncio.sleep(delay)
-                else:
-                    raise
-
-        raise last_exc  # unreachable, but satisfies type checker
+        await retry_store_write(
+            lambda: session_store.append_messages_batch(session_id, messages, owner_id=owner_id),
+            label="History save", max_attempts=max_attempts,
+        )
 
     async def handle_command(
         self,

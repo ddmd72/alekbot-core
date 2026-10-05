@@ -38,6 +38,7 @@ class TelegramWebhookAdapter(PlatformPort):
         audio_service=None,
         language_service: Optional[LanguageServicePort] = None,
         localization: Optional[LocalizationPort] = None,
+        task_queue=None,
     ):
         """
         Initialize Telegram webhook adapter.
@@ -52,6 +53,11 @@ class TelegramWebhookAdapter(PlatformPort):
             audio_service: Optional audio transcription port
             language_service: Optional language preference resolver
             localization: Optional localization adapter for UI phrases
+            task_queue: Optional TaskQueue — when set, the webhook hands an update
+                off to a Cloud Task instead of processing it inline (a chat turn may
+                run ~25 min, and an inline webhook loses its CPU once Telegram drops
+                the connection; LONG_RUNNING_TURNS_RFC §5.8). None keeps local dev
+                processing inline.
         """
         self.conversation_handler = conversation_handler
         self.iam_service = iam_service
@@ -67,7 +73,8 @@ class TelegramWebhookAdapter(PlatformPort):
         self.session_store = session_store
         self._language_service = language_service
         self._localization = localization
-        
+        self._task_queue = task_queue
+
         # Create Quart Blueprint for webhook endpoint
         self.blueprint = Blueprint('telegram', __name__)
         self._setup_routes()
@@ -131,16 +138,32 @@ class TelegramWebhookAdapter(PlatformPort):
                 logger.info(f"⏭️ Duplicate update {update_id} skipped")
                 return jsonify({"ok": True}), 200
 
-            # 4. Process message
-            await self._process_message(message)
-
+            # 4. Hand off to a Cloud Task: a chat turn may run ~25 min, and an inline
+            # webhook loses its CPU once Telegram drops the connection (LONG_RUNNING_TURNS_RFC §5.8).
+            if self._task_queue is not None:
+                await self._task_queue.enqueue_worker_task(
+                    task_type="telegram_update", payload={"update": body}, deadline_seconds=1800,
+                )
+                return jsonify({"ok": True}), 200
+            await self._process_message(message, update_id=update_id)
             return jsonify({"ok": True}), 200
 
         except Exception as e:
             logger.error(f"❌ Error handling Telegram update: {e}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
-    async def _process_message(self, message):
+    async def handle_queued_update(self, payload: dict) -> tuple:
+        """Worker side of the hand-off. Dedup already ran at intake."""
+        try:
+            update = Update.de_json(payload.get("update") or {}, self.bot)
+            if update and update.message:
+                await self._process_message(update.message, update_id=update.update_id)
+            return {"ok": True}, 200
+        except Exception as e:
+            logger.error(f"❌ Error processing queued Telegram update: {e}", exc_info=True)
+            return {"ok": True}, 200  # never 5xx: a retry would re-run a turn already written
+
+    async def _process_message(self, message, update_id: Optional[int] = None):
         """Process Telegram message with IAM authorization."""
         try:
             telegram_user_id = str(message.from_user.id)
@@ -258,6 +281,9 @@ class TelegramWebhookAdapter(PlatformPort):
                     "telegram_user_id": telegram_user_id,
                     "preferred_language": preferred_language,
                     "agent_mirror": agent_mirror,
+                    "turn_id": f"telegram:{update_id}" if update_id is not None else None,
+                    "origin_message_id": str(message.message_id),
+                    "event_time": message.date.timestamp() if message.date else None,
                 }
             )
 

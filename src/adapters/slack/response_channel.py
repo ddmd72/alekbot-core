@@ -6,7 +6,7 @@ import re
 import random
 import tempfile
 import aiohttp
-from typing import Any, Optional, Dict, List
+from typing import Any, Callable, Optional, Dict, List
 from ...domain.messaging import ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType, UIMessage
 from ...domain.language import LanguageCode
@@ -35,6 +35,7 @@ class SlackResponseChannel(ResponseChannel):
         bot_token: str,
         language: LanguageCode = LanguageCode.UK,
         localization: Optional[LocalizationPort] = None,
+        on_long_turn: Optional[Callable[[], None]] = None,
     ):
         """
         Initialize Slack response channel.
@@ -45,6 +46,8 @@ class SlackResponseChannel(ResponseChannel):
             bot_token: Slack bot token for file downloads
             language: Effective UI language for this request
             localization: Localization adapter for UI phrases
+            on_long_turn: Optional callback invoked once when the turn passes the
+                long-turn threshold (e.g. to release a thread lock).
         """
         self.client = app_client
         self.channel_id = channel_id
@@ -52,6 +55,7 @@ class SlackResponseChannel(ResponseChannel):
         self.platform = "slack"
         self.language = language
         self._localization = localization
+        self._on_long_turn = on_long_turn
     
     @property
     def max_message_length(self) -> int:
@@ -204,6 +208,15 @@ class SlackResponseChannel(ResponseChannel):
             logger.error(f"❌ [SlackResponseChannel] Failed to update message: {e}")
             raise
 
+    def _resolve_and_split(self, text: str, link_list: Optional[list]) -> List[str]:
+        """Resolve [N] link anchors, then split into SLACK_CHUNK_SIZE-bounded chunks.
+
+        Shared by send_chunked_message (threaded overflow) and the main-feed overflow
+        path used by send_late_answer, so link resolution behaves identically either way.
+        """
+        text = self._resolve_links_slack(text, link_list)
+        return self._split_into_chunks(text, SLACK_CHUNK_SIZE)
+
     async def send_chunked_message(self, text: str, message_id: str, thread_id: Optional[str] = None, link_list: Optional[list] = None) -> None:
         """
         Send a long message by updating the first message and posting the rest as thread replies.
@@ -214,8 +227,7 @@ class SlackResponseChannel(ResponseChannel):
             thread_id: Optional thread timestamp
             link_list: Optional [{anchor, title, url}] — [N] anchors resolved to <url|title>
         """
-        text = self._resolve_links_slack(text, link_list)
-        chunks = self._split_into_chunks(text, SLACK_CHUNK_SIZE)
+        chunks = self._resolve_and_split(text, link_list)
         if not chunks:
             return
 
@@ -228,6 +240,23 @@ class SlackResponseChannel(ResponseChannel):
         thread_ts = thread_id if thread_id else message_id
         for chunk in chunks:
             await self.send_message(chunk, thread_ts)
+
+    async def _send_flat_chunks(self, text: str, message_id: str, link_list: Optional[list] = None) -> None:
+        """Deliver text as top-level messages only — no thread, ever.
+
+        First chunk replaces message_id (the already-posted header); overflow chunks are
+        posted as new top-level messages (no thread_ts), same shape as send_flat_response.
+        Used by send_late_answer: the owner decision is the late answer stays in the main
+        feed, so overflow must NOT fall back to send_chunked_message's thread_ts=message_id
+        threading.
+        """
+        chunks = self._resolve_and_split(text, link_list)
+        if not chunks:
+            return
+
+        await self.update_message(message_id, chunks[0])
+        for chunk in chunks[1:]:
+            await self.send_message(chunk)  # no thread_id → top-level, stays in main feed
 
     async def send_long_text(
         self, text: str, link_list: Optional[list] = None, thread_id: Optional[str] = None
@@ -581,3 +610,41 @@ class SlackResponseChannel(ResponseChannel):
         except Exception as e:
             logger.error(f"❌ [SlackResponseChannel] Error downloading file: {e}")
             return None
+
+    async def message_link(self, message_id: Optional[str]) -> Optional[str]:
+        """Resolve a Slack permalink for one of this channel's messages."""
+        if not message_id:
+            return None
+        try:
+            resp = await self.client.chat_getPermalink(channel=self.channel_id, message_ts=message_id)
+            return resp.get("permalink")
+        except Exception as e:
+            logger.warning("⚠️ [SlackResponseChannel] permalink lookup failed: %s", e)
+            return None
+
+    async def send_late_answer(
+        self,
+        text: str,
+        prefix: str,
+        origin_message_id: Optional[str],
+        link_list: Optional[list] = None,
+        link: Optional[str] = None,
+    ) -> None:
+        """Post a long turn's answer to the main feed (never a thread), tied to its origin message.
+
+        `link` is the origin's permalink when the caller already fetched it; only when it
+        is None is it looked up here.
+        """
+        if link is None:
+            link = await self.message_link(origin_message_id)
+        header = f"{prefix} <{link}|↩>" if link else prefix
+        posted = await self.client.chat_postMessage(channel=self.channel_id, text=header)
+        await self._send_flat_chunks(
+            f"{header}\n\n{text}", posted["ts"], link_list=link_list,
+        )
+
+    async def on_long_turn(self) -> None:
+        """Fire the long-turn hook (once) — e.g. release a held thread lock."""
+        hook, self._on_long_turn = self._on_long_turn, None
+        if hook is not None:
+            hook()

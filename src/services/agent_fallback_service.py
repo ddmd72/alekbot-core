@@ -3,7 +3,7 @@ AgentFallbackService — graceful degradation for failed agent responses.
 
 Degradation chain: Smart (FAILED/TIMEOUT) → Quick → synthetic apology text.
 
-Why Quick and not a Smart retry (for genuine FAILED, not TIMEOUT):
+Why Quick and not a Smart retry:
 - Smart's provider/model is dynamically assembled by the Router. If that assembly
   produced a bad combination, retrying Smart likely fails again for the same reason.
 - Quick has a fixed, conservative provider/model config — its failure surface is
@@ -12,15 +12,14 @@ Why Quick and not a Smart retry (for genuine FAILED, not TIMEOUT):
   (a system note is injected so the model knows to apologize gracefully, not expose
   technical details). A raw retry or static string cannot do this.
 
-Why TIMEOUT gets a background Smart retry anyway (2026-08-20, see SmartRetryService):
-- A timeout is not a deterministic misconfiguration — it is Smart genuinely still
-  working when the fixed request budget ran out (root-caused: SmartAgentConfig.timeout_ms
-  bounds the WHOLE delegation loop cumulatively, so a multi-hop research turn can burn
-  most of its budget on tool calls before the final synthesis call). Retrying the exact
-  same request off the synchronous critical path, with a fresh full budget, is likely to
-  succeed — timeouts do not reliably repeat back-to-back.
-- Scheduling and running the retry is owned entirely by SmartRetryService — this class
-  only decides WHETHER to call it, on AgentStatus.TIMEOUT specifically.
+TIMEOUT is reported like any other failure (2026-10-05, retiring the two-phase
+timeout path — LONG_RUNNING_TURNS_RFC §5.9). Under the long-running-turns budget
+(~25 min wall clock) a Smart call only times out after the long-turn mark, where
+the run's own failure/retry handling (RFC §5.2, §5.7) owns the outcome — a
+synchronous background Smart retry scheduled from here would fire after the turn
+has already been reported, promising a follow-up that never arrives. Before the
+mark, a TIMEOUT is simply a FAILED-shaped response and gets the same apology note
+as any other failure.
 """
 from typing import Any, List, Optional, Protocol
 
@@ -31,53 +30,16 @@ from ..utils.logger import logger
 
 
 # ARCHITECTURE FIX: services/ must not import from infrastructure/ or other services/.
-# Replaced with structural Protocols (duck-typed at runtime) — same pattern for both
-# AgentCoordinator (infrastructure/) and SmartRetryService (services/).
+# Replaced with a structural Protocol (duck-typed at runtime) — same pattern used for
+# AgentCoordinator (infrastructure/).
 class MessageRouter(Protocol):
     """Protocol for routing agent messages. Implemented by AgentCoordinator."""
 
     async def route_message(self, message: AgentMessage) -> AgentResponse: ...
 
 
-class SmartRetrySchedulerPort(Protocol):
-    """Protocol for scheduling a background Smart retry. Implemented by SmartRetryService."""
-
-    async def schedule(
-        self,
-        context: MessageContext,
-        message_parts: List[MessagePart],
-        origin_platform: Optional[str] = None,
-    ) -> bool: ...
-
-
 class AgentFallbackService:
     """Graceful degradation chain: primary failure → QuickAgent → synthetic apology."""
-
-    # Used when smart_retry.schedule() actually put a retry in flight (returned True) —
-    # only then is it honest to let Quick tell the user a fuller answer may follow.
-    _TIMEOUT_NOTE = (
-        "[System: The primary assistant is still deep in extended reasoning on this "
-        "exact request and has not finished within its time budget — this is not a "
-        "failure. Open your reply by naturally telling the user, in your own voice, "
-        "that another part of you is still thinking it through and you'll give a fast "
-        "answer now; you may add that a fuller answer could follow shortly. Do NOT "
-        "say you're sorry, and do NOT mention timeouts, errors, or technical details. Then "
-        "answer the user's question as well as you can.]"
-    )
-
-    # Same fast-lane framing as _TIMEOUT_NOTE, minus the follow-up promise. Used when
-    # smart_retry.schedule() returned False (not configured, or Cloud Tasks deduped
-    # this against an already in-flight retry for the same session) — nothing is
-    # actually going to arrive later, so Quick must not set that expectation.
-    _TIMEOUT_NOTE_NO_FOLLOWUP = (
-        "[System: The primary assistant is still deep in extended reasoning on this "
-        "exact request and has not finished within its time budget — this is not a "
-        "failure. Open your reply by naturally telling the user, in your own voice, "
-        "that another part of you is still thinking it through and you'll give a fast "
-        "answer now. Do NOT say a fuller answer may follow, do NOT say you're sorry, "
-        "and do NOT mention timeouts, errors, or technical details. Then answer the "
-        "user's question as well as you can.]"
-    )
 
     _FAILURE_NOTE = (
         "[System: The assistant ran into a problem and could not finish this request. "
@@ -98,17 +60,12 @@ class AgentFallbackService:
         self,
         coordinator: MessageRouter,
         alert_webhook: Optional[Any] = None,
-        smart_retry: Optional[SmartRetrySchedulerPort] = None,
     ) -> None:
         self._coordinator = coordinator
         # Optional ops webhook (SlackWebhookAdapter.post — async, text). When set, a primary
         # (Smart) failure fires an alert so the silent Quick fallback doesn't mask systematic
         # Smart outages (e.g. a bad provider/model config). See composition wiring (main.py).
         self._alert_webhook = alert_webhook
-        # Optional — when set, a TIMEOUT (not generic FAILED) additionally schedules one
-        # background Smart retry via SmartRetryService. None in any composition path that
-        # hasn't wired it yet; scheduling is skipped gracefully (Quick fallback still runs).
-        self._smart_retry = smart_retry
 
     async def try_quick_fallback(
         self,
@@ -121,23 +78,18 @@ class AgentFallbackService:
         Attempt QuickAgent fallback for a failed primary response.
 
         Returns the original response unchanged if status is SUCCESS.
-        On TIMEOUT: injects a "fast lane" system note (not an apology) into Quick's
-        call, and calls smart_retry.schedule() for one background Smart retry with a
-        fresh budget. Which fast-lane note is used depends on schedule()'s return —
-        _TIMEOUT_NOTE (may promise a follow-up) if a retry was genuinely put in
-        flight, _TIMEOUT_NOTE_NO_FOLLOWUP (no such promise) if scheduling was a
-        no-op (not configured, or Cloud Tasks deduped it against one already in
-        flight for this session) — Quick must never promise a follow-up that isn't
-        actually coming. On other FAILED reasons: injects the apology note, no retry.
+        Any other status — FAILED or TIMEOUT alike — gets the same apology note
+        injected into Quick's call (LONG_RUNNING_TURNS_RFC §5.9: under the
+        long-running-turns budget a Smart call only times out after the long-turn
+        mark, where the run's own outcome handling owns it; before the mark a
+        TIMEOUT is just a failure like any other, with no follow-up to promise).
         If QuickAgent also fails: returns a synthetic SUCCESS with an apology so the
         caller always receives a displayable response.
 
-        origin_platform: passed through to smart_retry.schedule() so a delivered
-        retry answer lands on the SAME channel the original request came from.
-        Sourced by the caller from response_channel.platform (see
-        ConversationHandler) — NOT context.metadata.get("platform"), which is only
-        populated on Slack's "$command" path, not the regular message/app_mention
-        path a Smart timeout actually happens on.
+        origin_platform: accepted for call-site signature stability (callers source
+        it from response_channel.platform — see ConversationHandler) but currently
+        unused inside this method; kept so a future per-platform fallback need does
+        not require touching every call site again.
         """
         if failed_response.status == AgentStatus.SUCCESS:
             return failed_response
@@ -146,8 +98,6 @@ class AgentFallbackService:
             "[AgentFallbackService] Primary agent failed (%s), attempting QuickAgent fallback",
             failed_response.status,
         )
-
-        is_timeout = failed_response.status == AgentStatus.TIMEOUT
 
         # Surface primary (Smart) failures to ops — otherwise the Quick fallback masks them and
         # all traffic silently looks like it's on Quick (incident 2026-07-13: a mis-cased provider
@@ -162,19 +112,7 @@ class AgentFallbackService:
             except Exception as exc:
                 logger.warning("[AgentFallbackService] primary-failure alert failed: %s", exc)
 
-        retry_scheduled = False
-        if is_timeout and self._smart_retry is not None:
-            retry_scheduled = await self._smart_retry.schedule(
-                context, message_parts, origin_platform=origin_platform,
-            )
-
-        if not is_timeout:
-            note_text = self._FAILURE_NOTE
-        elif retry_scheduled:
-            note_text = self._TIMEOUT_NOTE
-        else:
-            note_text = self._TIMEOUT_NOTE_NO_FOLLOWUP
-        system_note = MessagePart(text=note_text)
+        system_note = MessagePart(text=self._FAILURE_NOTE)
         fallback_message = AgentMessage.create(
             sender="agent_fallback_service",
             recipient=f"quick_response_agent_{context.user_id}",
