@@ -668,24 +668,16 @@ async def main():
             embedding=container.embedding_service,
         ) if (indexed_email_repo and container.embedding_service) else None
 
-        # Smart-timeout two-phase fallback: SmartRetryService owns the background retry
-        # capability end to end (schedule() called from AgentFallbackService on TIMEOUT,
-        # execute() called from WorkerHandler on task_type="smart_timeout_retry").
-        # AgentFallbackService is built once here (composition root) and injected into
-        # ConversationHandler — it no longer assembles its own fallback service from raw
-        # parts (that was a handlers/ layer doing composition/'s job).
-        from src.services.smart_retry_service import SmartRetryService
+        # AgentFallbackService: Smart (FAILED/TIMEOUT) → Quick → synthetic apology.
+        # Built once here (composition root) and injected into ConversationHandler —
+        # it no longer assembles its own fallback service from raw parts (that was a
+        # handlers/ layer doing composition/'s job). The two-phase timeout retry
+        # (SmartRetryService) was retired 2026-10-05 — see LONG_RUNNING_TURNS_RFC §5.9.
         from src.services.agent_fallback_service import AgentFallbackService
 
-        _smart_retry_service = SmartRetryService(
-            task_dispatch=_task_dispatch_service,
-            coordinator=coordinator,
-            notification=notification_service,
-        )
         _fallback_service = AgentFallbackService(
             coordinator=coordinator,
             alert_webhook=_alert_webhook,
-            smart_retry=_smart_retry_service,
         )
 
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
@@ -699,7 +691,6 @@ async def main():
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
             task_dispatch=_task_dispatch_service,
-            smart_retry_service=_smart_retry_service,
             job_registry=job_registry,
             video_registry=video_registry,
             quota_service=quota_service,
