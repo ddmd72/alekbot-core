@@ -22,7 +22,7 @@ is delivery B, gated on `scripts/skills/skill_trigger_eval.py`.
 - Lifecycle machinery (TTL/`release_skill`/pinning) — tiering plus a stub gets the same reload with
   no extra state.
 - Addressable history (`expand_history(ids)`) — deferred; no logged case needs it yet.
-- GCS version folders — no files in v1; Firestore's one-transaction 20 KB write suffices.
+- GCS version folders — no files in v1; Firestore's one-transaction write of a document up to 1 MiB suffices.
 - Personal skills as system skills — repo is public; a personal procedure must never ship to everyone.
 
 ## Delivery B (authoring + system skills)
@@ -36,7 +36,7 @@ so implementing the write port's drafts/delete on them would be a Liskov violati
 ## Notes
 
 - Index doc denormalizes `body` (plus `user_id, account_id, name, description, current, updated_at`)
-  so every Smart request (incl. `notify()`/daily email review) reads up to 20×20 KB; revisit with a
+  so every Smart request (incl. `notify()`/daily email review) reads up to 20 skill bodies (each up to ~1 MiB since 2026-10-05; Firestore bills per document read, so the cost is latency, not money); revisit with a
   `select()` projection + an on-use body read if the catalog grows.
 - `src/utils/capabilities.py` (`get_help`) is unchanged in A — nothing user-creatable yet; update it
   in delivery B.
