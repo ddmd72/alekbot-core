@@ -327,3 +327,21 @@ class ResponseChannel(Protocol):
             Local file path or None if download failed
         """
         ...
+
+    @abstractmethod
+    async def message_link(self, message_id: Optional[str]) -> Optional[str]:
+        """A link to one of this channel's messages, or None where the platform has none."""
+        ...
+
+    @abstractmethod
+    async def send_late_answer(
+        self, text: str, prefix: str, origin_message_id: Optional[str],
+        link_list: Optional[list] = None,
+    ) -> None:
+        """Post a long turn's answer in the main feed, marked and tied to the message it answers."""
+        ...
+
+    @abstractmethod
+    async def on_long_turn(self) -> None:
+        """Called once when the turn passes the 90 s mark (Slack: release the thread lock)."""
+        ...

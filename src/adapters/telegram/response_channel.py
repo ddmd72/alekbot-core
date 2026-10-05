@@ -5,7 +5,7 @@ import re
 import random
 import tempfile
 import aiohttp
-from typing import Any, Optional, List
+from typing import Any, Dict, Optional, List
 from telegram import Bot
 from ...domain.messaging import ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType, UIMessage
@@ -613,3 +613,27 @@ class TelegramResponseChannel(ResponseChannel):
         except Exception as e:
             logger.error(f"❌ [TelegramResponseChannel] Error downloading file: {e}")
             return None
+
+    async def message_link(self, message_id: Optional[str]) -> Optional[str]:
+        """Telegram private chats have no message links; the late answer replies instead."""
+        return None
+
+    async def send_late_answer(
+        self,
+        text: str,
+        prefix: str,
+        origin_message_id: Optional[str],
+        link_list: Optional[list] = None,
+    ) -> None:
+        """Post a long turn's answer as a new message, replying to the message it answers."""
+        kwargs: Dict[str, Any] = {"chat_id": self.chat_id, "text": prefix}
+        if origin_message_id and str(origin_message_id).isdigit():
+            kwargs["reply_to_message_id"] = int(origin_message_id)
+        posted = await self.bot.send_message(**kwargs)
+        await self.send_chunked_message(
+            f"{prefix}\n\n{text}", str(posted.message_id), link_list=link_list,
+        )
+
+    async def on_long_turn(self) -> None:
+        """No-op: Telegram has no thread lock to release."""
+        return None
