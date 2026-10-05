@@ -334,9 +334,19 @@ class GeminiAdapter(LLMPort):
                         )
                     ))
                 elif p.tool_response:
+                    # FunctionResponse.response is typed as a dict by the Gemini SDK — a
+                    # caller that stored a bare string/list (e.g. tasks_agent.py's
+                    # {"response": result} with result not guaranteed to be a dict) crashed
+                    # the whole conversion with a pydantic ValidationError, silently losing
+                    # any part appended after it in the same user turn (plan delta D6).
+                    raw_response = p.tool_response["response"]
+                    response_payload = (
+                        raw_response if isinstance(raw_response, dict)
+                        else {"result": raw_response}
+                    )
                     parts.append(types.Part(function_response=types.FunctionResponse(
                         name=p.tool_response["name"],
-                        response=p.tool_response["response"]
+                        response=response_payload
                     )))
                 elif p.file_data:
                     # 🆕 HEXAGONAL: Adapter handles provider-specific file preparation
