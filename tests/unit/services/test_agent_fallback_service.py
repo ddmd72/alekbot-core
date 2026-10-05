@@ -82,19 +82,6 @@ def _timed_out(error="Agent failed. Last error: Task execution timeout"):
 
 
 @pytest.mark.asyncio
-async def test_timeout_injects_fast_lane_note_not_apology():
-    svc = AgentFallbackService(_coordinator_returns_quick_ok())
-
-    await svc.try_quick_fallback(_timed_out(), _ctx(), [])
-
-    sent_message = svc._coordinator.route_message.await_args.args[0]
-    notes = [p.text for p in sent_message.context["current_message_parts"] if p.text]
-    joined = " ".join(notes)
-    assert "still thinking" in joined or "thinking it through" in joined
-    assert "apolog" not in joined.lower()
-
-
-@pytest.mark.asyncio
 async def test_non_timeout_failure_keeps_apology_note():
     svc = AgentFallbackService(_coordinator_returns_quick_ok())
 
@@ -106,31 +93,8 @@ async def test_non_timeout_failure_keeps_apology_note():
 
 
 @pytest.mark.asyncio
-async def test_timeout_calls_smart_retry_schedule():
-    smart_retry = MagicMock()
-    smart_retry.schedule = AsyncMock(return_value=True)
-    svc = AgentFallbackService(_coordinator_returns_quick_ok(), smart_retry=smart_retry)
-    ctx = _ctx()
-
-    await svc.try_quick_fallback(_timed_out(), ctx, [], origin_platform="slack")
-
-    smart_retry.schedule.assert_awaited_once_with(ctx, [], origin_platform="slack")
-
-
-@pytest.mark.asyncio
-async def test_non_timeout_failure_does_not_call_smart_retry():
-    smart_retry = MagicMock()
-    smart_retry.schedule = AsyncMock()
-    svc = AgentFallbackService(_coordinator_returns_quick_ok(), smart_retry=smart_retry)
-
-    await svc.try_quick_fallback(_failed(), _ctx(), [])
-
-    smart_retry.schedule.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_no_smart_retry_configured_does_not_raise():
-    svc = AgentFallbackService(_coordinator_returns_quick_ok(), smart_retry=None)
+async def test_timeout_still_falls_back_to_quick():
+    svc = AgentFallbackService(_coordinator_returns_quick_ok())
 
     response = await svc.try_quick_fallback(_timed_out(), _ctx(), [])
 
@@ -138,48 +102,15 @@ async def test_no_smart_retry_configured_does_not_raise():
 
 
 @pytest.mark.asyncio
-async def test_timeout_with_retry_scheduled_uses_may_follow_note():
-    """schedule() returning True means a retry is genuinely in flight — Quick may
-    honestly tell the user a fuller answer could follow."""
-    smart_retry = MagicMock()
-    smart_retry.schedule = AsyncMock(return_value=True)
-    svc = AgentFallbackService(_coordinator_returns_quick_ok(), smart_retry=smart_retry)
+async def test_timeout_note_does_not_promise_a_follow_up():
+    """Nothing runs after the fallback (LONG_RUNNING_TURNS_RFC §5.9), so Quick must
+    not promise that a fuller answer will follow."""
+    svc = AgentFallbackService(_coordinator_returns_quick_ok())
 
     await svc.try_quick_fallback(_timed_out(), _ctx(), [])
 
     sent_message = svc._coordinator.route_message.await_args.args[0]
     notes = [p.text for p in sent_message.context["current_message_parts"] if p.text]
     joined = " ".join(notes)
-    assert "could follow" in joined.lower()  # _TIMEOUT_NOTE's follow-up promise
-
-
-@pytest.mark.asyncio
-async def test_timeout_with_retry_not_scheduled_uses_no_follow_up_note():
-    """schedule() returning False (not configured, or Cloud Tasks deduped this
-    against a retry already in flight for the same session) means nothing new
-    is actually going to arrive later — Quick must not promise a follow-up, even
-    though this is still the fast-lane (not apology) framing."""
-    smart_retry = MagicMock()
-    smart_retry.schedule = AsyncMock(return_value=False)
-    svc = AgentFallbackService(_coordinator_returns_quick_ok(), smart_retry=smart_retry)
-
-    await svc.try_quick_fallback(_timed_out(), _ctx(), [])
-
-    sent_message = svc._coordinator.route_message.await_args.args[0]
-    notes = [p.text for p in sent_message.context["current_message_parts"] if p.text]
-    joined = " ".join(notes)
-    assert "still thinking" in joined or "thinking it through" in joined  # fast-lane framing kept
-    assert "could follow" not in joined.lower()  # but no follow-up promised
-    assert "apolog" not in joined.lower()
-
-
-@pytest.mark.asyncio
-async def test_origin_platform_passed_through_to_schedule():
-    smart_retry = MagicMock()
-    smart_retry.schedule = AsyncMock(return_value=True)
-    svc = AgentFallbackService(_coordinator_returns_quick_ok(), smart_retry=smart_retry)
-    ctx = _ctx()
-
-    await svc.try_quick_fallback(_timed_out(), ctx, [], origin_platform="telegram")
-
-    smart_retry.schedule.assert_awaited_once_with(ctx, [], origin_platform="telegram")
+    assert "could follow" not in joined.lower()
+    assert "may follow" not in joined.lower()

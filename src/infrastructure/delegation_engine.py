@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping,
 from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.messaging import SmartResponse
 from ..ports.llm_port import LLMRequest, LLMResponse, Message, ToolCall
-from ..domain.llm import build_tool_turn
+from ..domain.llm import MessagePart, build_tool_turn
+from ..domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE, render_chat_since
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 
@@ -97,6 +98,24 @@ def _format_result(intent: str, result: Any) -> str:
     return str(result)
 
 
+_BUDGET_ENDED_RESULT = "not finished: turn budget ended"
+
+
+def _append_user_note(history: List[Message], text: str) -> None:
+    """Add a marker note without creating two user messages in a row.
+
+    After a tool turn the history ends in a user message carrying tool results; the note
+    becomes a text part of that message (plan delta D6). The last message is replaced,
+    never mutated — it may be shared with the agent's base request.
+    """
+    note = MessagePart(text=text)
+    if history and history[-1].role == "user":
+        last = history[-1]
+        history[-1] = last.model_copy(update={"parts": [*last.parts, note]})
+    else:
+        history.append(Message(role="user", parts=[note]))
+
+
 def normalize_delegate_context(raw: Any) -> Dict[str, Any]:
     """The model may send `context` as free text; it becomes {"reasoning": text}."""
     if isinstance(raw, str) and raw:
@@ -160,6 +179,7 @@ class DelegationEngine:
         max_retries: int = 1,
         retry_backoff: float = 1.0,
         local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
+        use_turn_clock: bool = False,
     ) -> DelegationResult:
         """Run the delegation loop, wrapped in a ``delegation.loop`` tracing span.
 
@@ -184,6 +204,7 @@ class DelegationEngine:
                 max_retries=max_retries,
                 retry_backoff=retry_backoff,
                 local_tools=local_tools,
+                use_turn_clock=use_turn_clock,
             )
 
     async def _execute_loop(
@@ -199,6 +220,7 @@ class DelegationEngine:
         max_retries: int = 1,
         retry_backoff: float = 1.0,
         local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
+        use_turn_clock: bool = False,
     ) -> DelegationResult:
         """Run the delegation loop.
 
@@ -224,6 +246,14 @@ class DelegationEngine:
                          serves itself (e.g. Smart's use_skill). A call whose
                          name is in this map goes straight to its handler and
                          never reaches the coordinator.
+            use_turn_clock: Opt-in to the shared ``CURRENT_TURN_CLOCK`` (wrap-up
+                            turn, step tracking). The ContextVar is ambient and
+                            would otherwise leak into a specialist's own nested
+                            DelegationEngine (e.g. DomainResearcherAgent run
+                            SYNC from Smart) — that engine would wrap up early
+                            on the orchestrator's reserve and stomp its
+                            ``clock.step``. Only the orchestrator that owns the
+                            clock (SmartResponseAgent) passes True.
         """
         history = list(base_request.messages)
         total_tokens = 0
@@ -233,10 +263,25 @@ class DelegationEngine:
         remap = intent_remap or {}
         fanout = intent_fanout or {}
         local = dict(local_tools or {})
+        clock = CURRENT_TURN_CLOCK.get() if use_turn_clock else None
+        # Set when a tool batch ran out of budget: the next call is the wrap-up even if
+        # the clock's integer rounding still leaves it a hair outside the reserve.
+        budget_out = False
 
         for turn in range(max_turns):
+            if clock is not None and clock.marked:
+                await self._append_chat_since(clock, history)
+            wrap_up = clock is not None and (
+                budget_out or clock.in_reserve() or turn == max_turns - 1
+            )
+            if wrap_up:
+                _append_user_note(history, WRAP_UP_NOTE)
             # Build request with current history
             request = base_request.model_copy(update={"messages": history})
+            if wrap_up:
+                request = request.model_copy(update={"timeout": clock.wrap_up_timeout()})
+            if clock is not None:
+                clock.step = "thinking"
 
             logger.info(
                 "🔄 [DelegationEngine] Turn %s/%s (history=%s msgs, caller=%s)",
@@ -257,6 +302,11 @@ class DelegationEngine:
 
             if response.usage_metadata:
                 total_tokens += response.usage_metadata.total_tokens
+
+            if wrap_up:
+                return self._wrap_up_result(response, terminal_tool, total_tokens,
+                                            all_delivery_items, accumulated_contexts,
+                                            accumulated_structured, history)
 
             # --- Terminal tool check ---
             if terminal_tool and response.tool_calls:
@@ -348,7 +398,9 @@ class DelegationEngine:
                 "🔄 [DelegationEngine] Turn %s — dispatching %s tool call(s)",
                 turn + 1, len(response.tool_calls),
             )
-            tool_results = await self._execute_tool_calls(
+            if clock is not None:
+                clock.step = "tool: " + ", ".join(sorted({tc.name for tc in response.tool_calls}))
+            batch = self._execute_tool_calls(
                 tool_calls=response.tool_calls,
                 context=context,
                 intent_remap=remap,
@@ -358,6 +410,23 @@ class DelegationEngine:
                 retry_backoff=retry_backoff,
                 local_tools=local,
             )
+            if clock is None:
+                tool_results = await batch
+            else:
+                # A batch started just before the reserve must not eat the wrap-up's time.
+                try:
+                    tool_results = await asyncio.wait_for(batch, timeout=clock.call_timeout())
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "⏳ [DelegationEngine] Turn %s — tool batch %s cut at the turn budget; "
+                        "wrap-up next",
+                        turn + 1, [tc.name for tc in response.tool_calls],
+                    )
+                    tool_results = [
+                        ToolResult(name=tc.name, result_str=_BUDGET_ENDED_RESULT, failed=True)
+                        for tc in response.tool_calls
+                    ]
+                    budget_out = True
 
             # --- Accumulate metadata ---
             accumulated_structured = self._accumulate_tool_metadata(
@@ -400,6 +469,66 @@ class DelegationEngine:
             messages=history,
             failed=True,
         )
+
+    @staticmethod
+    async def _append_chat_since(clock, history: List[Message]) -> None:
+        """RFC §5.5: what was said in this session since the run's snapshot."""
+        if clock.fetch_since is None:
+            return
+        since = max(clock.snapshot_at, clock.seen_until)
+        try:
+            fresh = await clock.fetch_since(since)
+        except Exception as e:  # a missed note must not end a long turn
+            logger.warning("⚠️ [DelegationEngine] chat-since fetch failed: %s", e)
+            return
+        fresh = [m for m in fresh if m.created_at > since and m.created_at not in clock.own_created_ats]
+        if not fresh:
+            return
+        clock.seen_until = max(m.created_at for m in fresh)
+        _append_user_note(history, render_chat_since(fresh))
+
+    @staticmethod
+    def _wrap_up_result(response, terminal_tool, total_tokens, delivery_items,
+                        contexts, structured, history) -> DelegationResult:
+        """The budget's last call: take the answer it gave, dispatch nothing (plan delta D3).
+
+        A terminal call wins; otherwise any text is the answer, even when the model also
+        asked for tools. Only a call with neither is a failure.
+        """
+        calls = list(response.tool_calls or [])
+        terminal_call = next(
+            (tc for tc in calls if tc.name == terminal_tool), None,
+        ) if terminal_tool else None
+        if terminal_call is not None:
+            dropped = [tc.name for tc in calls if tc is not terminal_call]
+            if dropped:
+                logger.warning(
+                    "⚠️ [DelegationEngine] wrap-up: %s co-emitted with %s not dispatched",
+                    dropped, terminal_tool,
+                )
+            return DelegationResult(text="", total_tokens=total_tokens,
+                                    terminal_tool_args=terminal_call.args or {},
+                                    delivery_items=delivery_items,
+                                    history_contexts=contexts or None,
+                                    structured_data=structured, messages=history)
+        if response.text and response.text.strip():
+            if calls:
+                logger.warning(
+                    "⚠️ [DelegationEngine] wrap-up: answering with its text; tool calls %s "
+                    "not dispatched", [tc.name for tc in calls],
+                )
+            return DelegationResult(text=response.text, total_tokens=total_tokens,
+                                    delivery_items=delivery_items,
+                                    history_contexts=contexts or None,
+                                    structured_data=structured, messages=history)
+        logger.warning(
+            "⚠️ [DelegationEngine] wrap-up call gave no answer (no text, no %s); "
+            "tool calls not dispatched: %s", terminal_tool, [tc.name for tc in calls],
+        )
+        return DelegationResult(text="", total_tokens=total_tokens,
+                                delivery_items=delivery_items,
+                                history_contexts=contexts or None,
+                                structured_data=structured, messages=history, failed=True)
 
     # ------------------------------------------------------------------ #
     # Metadata accumulation                                               #

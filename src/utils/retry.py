@@ -18,6 +18,7 @@ import random
 from typing import Awaitable, Callable, Optional, Tuple, Type, TypeVar
 
 from ..domain.retry_policy import RetryPolicy
+from .logger import logger
 
 T = TypeVar("T")
 
@@ -55,3 +56,38 @@ async def retry_async(
             await asyncio.sleep(backoff)
     # Unreachable: the loop either returns or raises on the final attempt.
     raise AssertionError("retry_async: exhausted loop without return or raise")
+
+
+# gRPC status markers a Firestore session write raises on a transient failure.
+TRANSIENT_STORE_MARKERS = ("RST_STREAM", "UNAVAILABLE", "INTERNAL")
+
+
+async def retry_store_write(
+    fn: Callable[[], Awaitable[T]],
+    *,
+    label: str,
+    max_attempts: int = 3,
+) -> T:
+    """Run one session-store write, retrying transient gRPC errors (linear 0.5 s backoff).
+
+    Classification is by message marker (``TRANSIENT_STORE_MARKERS``), not by type: the
+    Firestore client surfaces these as assorted exception classes. Every chat-turn session
+    write goes through here — the normal turn pair, the 90 s mark pair and the late-answer
+    pair — so they share one retry behaviour. Non-transient errors and the last failed
+    attempt raise.
+    """
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = await fn()
+            if attempt > 1:
+                logger.info(f"✅ {label} succeeded after {attempt} attempts")
+            return result
+        except Exception as exc:
+            if attempt < max_attempts and any(t in str(exc) for t in TRANSIENT_STORE_MARKERS):
+                delay = 0.5 * attempt
+                logger.warning(f"⚠️ {label} attempt {attempt} failed ({exc}), retrying in {delay}s…")
+                await asyncio.sleep(delay)
+            else:
+                raise
+    # Unreachable: the loop either returns or raises on the final attempt.
+    raise AssertionError("retry_store_write: exhausted loop without return or raise")

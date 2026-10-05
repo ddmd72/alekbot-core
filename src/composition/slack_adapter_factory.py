@@ -68,6 +68,7 @@ class SlackAdapterFactory:
         fallback_service=None,
         short_link_service=None,
         skill_service=None,
+        long_turn_service=None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -129,6 +130,7 @@ class SlackAdapterFactory:
             fallback_service=fallback_service,
             short_link_service=short_link_service,
             skill_service=skill_service,
+            long_turn_service=long_turn_service,
         )
 
         if not db_client:

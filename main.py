@@ -287,6 +287,14 @@ async def main():
         file_service = FileUploadService(container.llm_port)
         session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
 
+        # Long-running turns (LONG_RUNNING_TURNS_RFC) — registry + service shared by both
+        # platform adapters (status/late-answer delivery) and UserAgentFactory (Smart's
+        # running-jobs note + cancel_long_turn tool).
+        from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
+        from src.services.long_turn_service import LongTurnService
+        long_turn_registry = FirestoreLongTurnRegistry(db_client, env_config.long_turns_collection)
+        long_turn_service = LongTurnService(registry=long_turn_registry, session_store=session_store)
+
         # Wire file ref resolver into coordinator for specialist delegation
         if container.file_conversion_service:
             coordinator._file_ref_resolver = container.file_conversion_service.resolve_content
@@ -491,6 +499,7 @@ async def main():
             quota_service=quota_service,
             companion_context_assembler=companion_context_assembler,
             notification_service=notification_service,
+            long_turn_registry=long_turn_registry,
         )
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
         _language_service._ensure_agents = agent_factory.ensure_agents_for_user
@@ -668,24 +677,16 @@ async def main():
             embedding=container.embedding_service,
         ) if (indexed_email_repo and container.embedding_service) else None
 
-        # Smart-timeout two-phase fallback: SmartRetryService owns the background retry
-        # capability end to end (schedule() called from AgentFallbackService on TIMEOUT,
-        # execute() called from WorkerHandler on task_type="smart_timeout_retry").
-        # AgentFallbackService is built once here (composition root) and injected into
-        # ConversationHandler — it no longer assembles its own fallback service from raw
-        # parts (that was a handlers/ layer doing composition/'s job).
-        from src.services.smart_retry_service import SmartRetryService
+        # AgentFallbackService: Smart (FAILED/TIMEOUT) → Quick → synthetic apology.
+        # Built once here (composition root) and injected into ConversationHandler —
+        # it no longer assembles its own fallback service from raw parts (that was a
+        # handlers/ layer doing composition/'s job). The two-phase timeout retry
+        # (SmartRetryService) was retired 2026-10-05 — see LONG_RUNNING_TURNS_RFC §5.9.
         from src.services.agent_fallback_service import AgentFallbackService
 
-        _smart_retry_service = SmartRetryService(
-            task_dispatch=_task_dispatch_service,
-            coordinator=coordinator,
-            notification=notification_service,
-        )
         _fallback_service = AgentFallbackService(
             coordinator=coordinator,
             alert_webhook=_alert_webhook,
-            smart_retry=_smart_retry_service,
         )
 
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
@@ -699,7 +700,6 @@ async def main():
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
             task_dispatch=_task_dispatch_service,
-            smart_retry_service=_smart_retry_service,
             job_registry=job_registry,
             video_registry=video_registry,
             quota_service=quota_service,
@@ -793,6 +793,7 @@ async def main():
             fallback_service=_fallback_service,
             short_link_service=short_link_service,
             skill_service=container.skill_service,
+            long_turn_service=long_turn_service,
         )
         notification_channel_factory.register_factory(
             "slack",
@@ -1044,7 +1045,8 @@ async def main():
                 # ====================================================================
                 from src.config.environment import validate_telegram_config
                 telegram_config = validate_telegram_config()
-                
+                telegram_adapter = None
+
                 if telegram_config:
                     logger.info("🤖 Initializing Telegram adapter...")
                     try:
@@ -1081,6 +1083,8 @@ async def main():
                             fallback_service=_fallback_service,
                             short_link_service=short_link_service,
                             skill_service=container.skill_service,
+                            task_queue=agent_task_queue,
+                            long_turn_service=long_turn_service,
                         )
                         def _make_telegram_channel(adapter, channel_id):
                             try:
@@ -1182,6 +1186,9 @@ async def main():
                             logger.warning("Rejected unauthenticated /worker request")
                             return jsonify({"error": "unauthorized"}), 401
                     payload = await request.get_json(silent=True) or {}
+                    if payload.get("task_type") == "telegram_update" and telegram_adapter is not None:
+                        body, status = await telegram_adapter.handle_queued_update(payload)
+                        return jsonify(body), status
                     result = await worker_handler.handle(payload)
                     if result is not None:
                         body, status = result

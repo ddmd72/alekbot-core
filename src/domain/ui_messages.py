@@ -44,3 +44,9 @@ class UIMessage(Enum):
     # language comes from the response_channel instead (see _ui_string_for_language).
     SKILL_PREVIEW_FILE_TITLE = "skill_preview_file_title"
     SKILL_PREVIEW_DELIVERY_FAILED = "skill_preview_delivery_failed"
+    # Long-running turns (LONG_RUNNING_TURNS_RFC §3, §5.3–5.7).
+    LONG_TURN_NOTICE = "long_turn_notice"
+    LATE_ANSWER_PREFIX = "late_answer_prefix"
+    LONG_TURN_FAILED = "long_turn_failed"
+    LONG_TURN_CANCELLED = "long_turn_cancelled"
+    LONG_TURN_LOST = "long_turn_lost"

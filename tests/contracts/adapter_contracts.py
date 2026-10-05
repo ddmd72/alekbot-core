@@ -588,3 +588,73 @@ XAI_REALTIME_TURN_DETECTION = ContractRule(
         ),
     },
 )
+
+
+def _text_follows_function_output(items) -> bool:
+    """OpenAI/Grok Responses API: items are a flat list, not nested message blocks.
+    True iff a user-role item with non-empty text content appears after the first
+    function_call_output item."""
+    try:
+        i_out = next(i for i, it in enumerate(items) if it.get("type") == "function_call_output")
+    except StopIteration:
+        return False
+    return any(
+        it.get("role") == "user" and str(it.get("content") or "").strip()
+        for it in items[i_out + 1:]
+    )
+
+
+NOTE_AFTER_TOOL_RESULT_SURVIVES_CONVERSION = ContractRule(
+    name="NOTE_AFTER_TOOL_RESULT_SURVIVES_CONVERSION",
+    description=(
+        "LONG_RUNNING_TURNS_RFC plan delta D6: DelegationEngine appends a short marker "
+        "note (e.g. the meanwhile-chat note, or the wrap-up note) as a text part on the "
+        "SAME user message that carries a tool result, rather than opening a second user "
+        "message. Every adapter's converter must preserve that text part — never drop it, "
+        "never reorder it before the tool result. "
+        "Claude: the user message's content blocks include a tool_result block, and the "
+        "LAST block is a non-empty text block. "
+        "Gemini: the last Content (role='user') has both a function_response part and a "
+        "non-empty text part. "
+        "OpenAI/Grok: a user-role item with non-empty text content appears after the "
+        "function_call_output item in the flat `input` list. "
+        "Input — Claude: {'messages': <converted messages list>}. Gemini: "
+        "{'contents': <converted contents list>}. OpenAI/Grok: {'input': <converted input "
+        "list>}. Each is exactly what `_convert_messages`/`_convert_input` returns — the "
+        "same object the adapter passes to the SDK as `messages=`/`contents=`/`input=`."
+    ),
+    validators={
+        "claude": lambda kw: _true(
+            any(
+                isinstance(msg.get("content"), list)
+                and any(b.get("type") == "tool_result" for b in msg["content"])
+                and msg["content"][-1].get("type") == "text"
+                and (msg["content"][-1].get("text") or "").strip()
+                for msg in (kw.get("messages") or [])
+                if msg.get("role") == "user"
+            ),
+            "Claude: no user message found with a tool_result block followed by a "
+            "non-empty trailing text block",
+        ),
+        "gemini": lambda kw: _true(
+            any(
+                getattr(content, "role", None) == "user"
+                and any(getattr(p, "function_response", None) for p in content.parts)
+                and any(getattr(p, "text", None) for p in content.parts)
+                for content in (kw.get("contents") or [])
+            ),
+            "Gemini: no user Content found with both a function_response part and a "
+            "text part",
+        ),
+        "openai": lambda kw: _true(
+            _text_follows_function_output(kw.get("input") or []),
+            "OpenAI: no user-role item with non-empty text found after a "
+            "function_call_output item",
+        ),
+        "grok": lambda kw: _true(
+            _text_follows_function_output(kw.get("input") or []),
+            "Grok: no user-role item with non-empty text found after a "
+            "function_call_output item",
+        ),
+    },
+)

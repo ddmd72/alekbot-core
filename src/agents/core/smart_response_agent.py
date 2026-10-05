@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
@@ -26,7 +27,15 @@ from ...domain.agent import (
 )
 from ...domain.messaging import SmartResponse
 from ...domain.exceptions import TranscriptLockedError
+from ...domain.turn_clock import CURRENT_TURN_CLOCK
 from ...domain.skill import DRAFT_SKILL_TOOL, USE_SKILL_TOOL, Skill, render_catalog, visible_skill_names
+from ...ports.long_turn_registry import LongTurnRegistry
+from ...infrastructure.long_turn_tools import (
+    CANCEL_LONG_TURN_TOOL,
+    build_cancel_long_turn_tool_declaration,
+    make_cancel_long_turn_handler,
+    render_running_jobs,
+)
 from ...ports.llm_port import (
     LLMResponse,
     Message,
@@ -212,6 +221,7 @@ class SmartResponseAgent(BaseAgent):
         user_timezone: str = "UTC",
         thinking_effort: Optional[str] = None,
         skill_service: Optional["SkillService"] = None,
+        long_turn_registry: Optional[LongTurnRegistry] = None,
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -230,6 +240,7 @@ class SmartResponseAgent(BaseAgent):
         self._user_timezone = user_timezone
         self._default_thinking_effort = thinking_effort
         self.skill_service = skill_service
+        self.long_turn_registry = long_turn_registry
 
         # NOTE: ``self.llm``, ``self.model_name``, ``self.execution_context``,
         # and ``self._agent_execution_context`` (set by _set_execution_context
@@ -283,6 +294,15 @@ class SmartResponseAgent(BaseAgent):
             try:
                 return await self._run(message, eff)
             except TranscriptLockedError as e:
+                clock = CURRENT_TURN_CLOCK.get()
+                if clock is not None and clock.marked:
+                    # A long turn's budget is one clock; a rotation restarts the whole run on it.
+                    self._on_agent_error(e)
+                    return AgentResponse.failure(
+                        task_id=message.task_id,
+                        agent_id=self.agent_id,
+                        error=f"Smart response failed: {str(e)}",
+                    )
                 attempted.add(eff.ctx.provider_name)
                 override = self.resolver.next_provider_override(
                     agent_type="smart",
@@ -442,6 +462,10 @@ class SmartResponseAgent(BaseAgent):
                 skills_catalog=render_catalog(skills),
             )
 
+            clock = CURRENT_TURN_CLOCK.get()
+            if clock is not None:
+                clock.snapshot_at = time.time()
+
             current_message_parts = message.context.get("current_message_parts", [])
             conversation_history = await self._load_conversation_context(
                 session_store=self.session_store,
@@ -469,6 +493,16 @@ class SmartResponseAgent(BaseAgent):
                         lambda s: self.skill_service.draft(prompt_user_id, s)
                     )
 
+            running = await self._load_running_jobs(prompt_user_id, message)
+            if running:
+                note = MessagePart(text=render_running_jobs(running, time.time()))
+                last = clean_history[-1]
+                clean_history[-1] = last.model_copy(update={"parts": [*last.parts, note]})
+                tools.append(build_cancel_long_turn_tool_declaration())
+                local_tools = dict(local_tools or {})
+                local_tools[CANCEL_LONG_TURN_TOOL] = make_cancel_long_turn_handler(
+                    self.long_turn_registry, prompt_user_id, running)
+
             engine = DelegationEngine(self.coordinator)
             base_request = LLMRequest(
                 model_name=eff.ctx.model_name,
@@ -485,6 +519,9 @@ class SmartResponseAgent(BaseAgent):
             # per-call provider in eff.ctx, with eff.ctx as the fallback ctx.
             # No mutation of self.llm / self._agent_execution_context.
             async def call_llm_for_engine(req: "LLMRequest", turn: int = 0) -> "LLMResponse":
+                clock = CURRENT_TURN_CLOCK.get()
+                if clock is not None and req.timeout is None:
+                    req = req.model_copy(update={"timeout": clock.call_timeout()})
                 return await self._call_llm(
                     req,
                     turn,
@@ -496,13 +533,14 @@ class SmartResponseAgent(BaseAgent):
                 call_llm=call_llm_for_engine,
                 base_request=base_request,
                 context=message.context,
-                max_turns=self.MAX_DELEGATION_TURNS,
+                max_turns=clock.max_loop_turns if clock is not None else self.MAX_DELEGATION_TURNS,
                 terminal_tool="deliver_response",
                 intent_fanout=dict(self._descriptor.intent_fanout),
                 calling_agent_id=self.agent_id,
                 max_retries=self.MAX_AGENT_RETRIES,
                 retry_backoff=self.RETRY_BACKOFF_SECONDS,
                 local_tools=local_tools,
+                use_turn_clock=True,
             )
 
             if delegation_result.failed:
@@ -579,6 +617,18 @@ class SmartResponseAgent(BaseAgent):
         )
         final_rich = rich if rich else result.structured_data
         return SmartResponse(text=user_text or "", structured_data=final_rich, link_list=link_list), summary
+
+    async def _load_running_jobs(self, user_id: Optional[str], message: AgentMessage) -> list:
+        """The user's other long turns still running. A registry failure means none."""
+        if not self.long_turn_registry or not user_id:
+            return []
+        own = (message.context.get("metadata") or {}).get("turn_id")
+        try:
+            running = await self.long_turn_registry.list_running(user_id)
+        except Exception as e:
+            logger.warning("⏳ [SmartResponseAgent] running jobs unavailable: %s", e)
+            return []
+        return [r for r in running if r.turn_id != own]
 
     async def _load_skills(self, user_id: Optional[str]) -> List[Skill]:
         """The user's skills for this request. Optional procedures: a store failure means no skills."""
@@ -737,6 +787,7 @@ def create_smart_response_agent(
     user_timezone: str = "UTC",
     thinking_effort: Optional[str] = None,
     skill_service: Optional["SkillService"] = None,
+    long_turn_registry: Optional[LongTurnRegistry] = None,
 ) -> SmartResponseAgent:
     """Factory function to create SmartResponseAgent."""
     agent_id = f"smart_response_agent_{user_id}" if user_id else "smart_response_agent"
@@ -769,5 +820,6 @@ def create_smart_response_agent(
         user_timezone=user_timezone,
         thinking_effort=thinking_effort,
         skill_service=skill_service,
+        long_turn_registry=long_turn_registry,
     )
 

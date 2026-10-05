@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from abc import ABC, abstractmethod
-from typing import ClassVar, Dict, Iterator, Optional, List, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, Iterator, Optional, List, TYPE_CHECKING
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig
 from ..domain.billing import TokenLedger
 from ..domain.exceptions import (
@@ -26,6 +26,7 @@ from ..domain.exceptions import (
     TRANSIENT_RETRY_TYPES,
 )
 from ..domain.retry_policy import DEFAULT_RETRY_POLICY, NO_RETRY_POLICY, RetryPolicy
+from ..domain.turn_clock import CURRENT_TURN_CLOCK
 from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
@@ -547,6 +548,21 @@ class BaseAgent(ABC):
         finally:
             _EXECUTION_LEDGER.reset(token)
 
+    def _effective_retry_policy(self, context: Dict[str, Any]):
+        """Whole-execution transient retry policy for this message.
+
+        Off when an outer layer already retries (suppress_transient_retry), and off for
+        the orchestrator of a clocked chat turn: re-running a long turn re-does every tool
+        call, and the per-call retry in _call_llm already covers the 429/503 blip
+        (LONG_RUNNING_TURNS plan, delta D2). Specialists inside that turn keep theirs.
+        """
+        if context.get("suppress_transient_retry"):
+            return NO_RETRY_POLICY
+        clock = CURRENT_TURN_CLOCK.get()
+        if clock is not None and clock.orchestrator_agent_type == self.config.agent_type:
+            return NO_RETRY_POLICY
+        return self.retry_policy
+
     async def _run_retry_loop(self, message: AgentMessage) -> AgentResponse:
         """Retry loop + terminal-outcome handling for one execution.
 
@@ -567,11 +583,7 @@ class BaseAgent(ABC):
         # context["suppress_transient_retry"] so the same agent that retries on the
         # interactive path stays single-attempt under a Cloud Task. See
         # docs/04_solution_strategy/decisions/typed_retry_policy.md.
-        policy = (
-            NO_RETRY_POLICY
-            if message.context.get("suppress_transient_retry")
-            else self.retry_policy
-        )
+        policy = self._effective_retry_policy(message.context)
         last_error: Optional[str] = None
         is_timeout: bool = False
 
@@ -998,6 +1010,13 @@ class BaseAgent(ABC):
                 if not isinstance(e, ProviderBreakerOpenError):
                     policy = self.retry_policy
                     for attempt in range(1, self._SAME_PROVIDER_RETRY_ATTEMPTS + 1):
+                        clock = CURRENT_TURN_CLOCK.get()
+                        if clock is not None and not clock.can_retry():
+                            logger.warning(
+                                "llm_same_provider_retry skipped: turn budget in wrap-up reserve (%s)",
+                                primary_name,
+                            )
+                            break
                         backoff = policy.transient_backoff_base_seconds * (
                             2 ** (attempt - 1)
                         )
@@ -1018,8 +1037,21 @@ class BaseAgent(ABC):
                             },
                         )
                         await asyncio.sleep(backoff)
+                        retry_request = request
+                        if clock is not None:
+                            # The original request's timeout (if any) was computed when the
+                            # call started; a clock's remaining budget only shrinks, so re-clamp
+                            # at retry time rather than reusing the stale value (a call that
+                            # started with T=1380s and failed after 1000s must not retry with
+                            # T=1380s again — it could run past the wrap-up reserve / hard stop).
+                            retry_timeout = (
+                                clock.call_timeout()
+                                if request.timeout is None
+                                else min(request.timeout, clock.call_timeout())
+                            )
+                            retry_request = request.model_copy(update={"timeout": retry_timeout})
                         try:
-                            response = await llm.generate_content(request=request)
+                            response = await llm.generate_content(request=retry_request)
                             if resilience and primary_name:
                                 resilience.record_success(primary_name)
                             retried_ok = True
@@ -1087,6 +1119,19 @@ class BaseAgent(ABC):
                         primary_cause=e,
                     ) from e
 
+                clock = CURRENT_TURN_CLOCK.get()
+                if clock is not None and clock.in_reserve():
+                    # A failover started in the wrap-up reserve would eat the wrap-up's time.
+                    logger.warning(
+                        "llm_fallback skipped: turn budget in wrap-up reserve (%s→%s)",
+                        primary_name, fallback_name,
+                    )
+                    raise BothProvidersUnavailableError(
+                        primary_name=primary_name,
+                        fallback_name=fallback_name,
+                        primary_cause=e,
+                    ) from e
+
                 logger.warning(
                     # Cause folded into the message (extra fields don't reach Cloud Logging).
                     "llm_fallback %s→%s cause=%s http=%s: %s",
@@ -1101,9 +1146,16 @@ class BaseAgent(ABC):
                         "http_status": e.http_status,
                     },
                 )
-                fallback_request = request.model_copy(
-                    update={"model_name": ctx.fallback_model_name}
-                )
+                fallback_update: Dict[str, Any] = {"model_name": ctx.fallback_model_name}
+                if clock is not None:
+                    # Same shape as the same-provider retry: the budget only shrinks, so
+                    # the fallback call is re-clamped to what is left now.
+                    fallback_update["timeout"] = (
+                        clock.call_timeout()
+                        if request.timeout is None
+                        else min(request.timeout, clock.call_timeout())
+                    )
+                fallback_request = request.model_copy(update=fallback_update)
                 try:
                     response = await fallback_provider.generate_content(
                         request=fallback_request
