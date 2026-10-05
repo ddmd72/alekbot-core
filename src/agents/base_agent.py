@@ -616,8 +616,10 @@ class BaseAgent(ABC):
             return response
 
         except asyncio.CancelledError:
-            # External cancellation — never swallow, never retry.
-            self.circuit_breaker.record_failure(self.agent_id)
+            # External cancellation — never swallow, never retry, and never count it as a
+            # failure: the caller stopped us (a user cancelling a long turn, a parent's budget,
+            # shutdown). Counting it let a few cancels in a row open the breaker and disable
+            # the agent for every later request.
             await self._flush_billing()
             raise
 
