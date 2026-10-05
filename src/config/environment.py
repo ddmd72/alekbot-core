@@ -391,6 +391,14 @@ class EnvironmentConfig:
         return f"{prefix}event_dedup"
 
     @property
+    def long_turns_collection(self) -> str:
+        """
+        Long chat turns (LONG_RUNNING_TURNS_RFC §5.4). Dev: development_long_turns
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}long_turns"
+
+    @property
     def user_context_collection(self) -> str:
         """
         Get user context cache collection (infrastructure).
