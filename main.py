@@ -1044,7 +1044,8 @@ async def main():
                 # ====================================================================
                 from src.config.environment import validate_telegram_config
                 telegram_config = validate_telegram_config()
-                
+                telegram_adapter = None
+
                 if telegram_config:
                     logger.info("🤖 Initializing Telegram adapter...")
                     try:
@@ -1081,6 +1082,7 @@ async def main():
                             fallback_service=_fallback_service,
                             short_link_service=short_link_service,
                             skill_service=container.skill_service,
+                            task_queue=agent_task_queue,
                         )
                         def _make_telegram_channel(adapter, channel_id):
                             try:
@@ -1182,6 +1184,9 @@ async def main():
                             logger.warning("Rejected unauthenticated /worker request")
                             return jsonify({"error": "unauthorized"}), 401
                     payload = await request.get_json(silent=True) or {}
+                    if payload.get("task_type") == "telegram_update" and telegram_adapter is not None:
+                        body, status = await telegram_adapter.handle_queued_update(payload)
+                        return jsonify(body), status
                     result = await worker_handler.handle(payload)
                     if result is not None:
                         body, status = result

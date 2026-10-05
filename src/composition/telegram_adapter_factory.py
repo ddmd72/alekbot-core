@@ -56,6 +56,7 @@ class TelegramAdapterFactory:
         fallback_service=None,
         short_link_service=None,
         skill_service=None,
+        task_queue=None,
     ) -> TelegramWebhookAdapter:
         """
         Create TelegramWebhookAdapter with RichContentService wired in.
@@ -73,6 +74,9 @@ class TelegramAdapterFactory:
             consolidation_config: Optional consolidation config
             audio_service:       Optional audio transcription port
             html_renderer:       Optional HtmlRendererPort for widget → PNG
+            task_queue:          Optional TaskQueue — set, updates are handed off to a
+                                 Cloud Task instead of processed inline (see
+                                 TelegramWebhookAdapter.__init__)
 
         Returns:
             TelegramWebhookAdapter ready to handle webhook requests
@@ -119,4 +123,5 @@ class TelegramAdapterFactory:
             audio_service=audio_service,
             language_service=language_service,
             localization=localization,
+            task_queue=task_queue,
         )
