@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
@@ -26,6 +27,7 @@ from ...domain.agent import (
 )
 from ...domain.messaging import SmartResponse
 from ...domain.exceptions import TranscriptLockedError
+from ...domain.turn_clock import CURRENT_TURN_CLOCK
 from ...domain.skill import DRAFT_SKILL_TOOL, USE_SKILL_TOOL, Skill, render_catalog, visible_skill_names
 from ...ports.llm_port import (
     LLMResponse,
@@ -283,6 +285,15 @@ class SmartResponseAgent(BaseAgent):
             try:
                 return await self._run(message, eff)
             except TranscriptLockedError as e:
+                clock = CURRENT_TURN_CLOCK.get()
+                if clock is not None and clock.marked:
+                    # A long turn's budget is one clock; a rotation restarts the whole run on it.
+                    self._on_agent_error(e)
+                    return AgentResponse.failure(
+                        task_id=message.task_id,
+                        agent_id=self.agent_id,
+                        error=f"Smart response failed: {str(e)}",
+                    )
                 attempted.add(eff.ctx.provider_name)
                 override = self.resolver.next_provider_override(
                     agent_type="smart",
@@ -442,6 +453,10 @@ class SmartResponseAgent(BaseAgent):
                 skills_catalog=render_catalog(skills),
             )
 
+            clock = CURRENT_TURN_CLOCK.get()
+            if clock is not None:
+                clock.snapshot_at = time.time()
+
             current_message_parts = message.context.get("current_message_parts", [])
             conversation_history = await self._load_conversation_context(
                 session_store=self.session_store,
@@ -485,6 +500,9 @@ class SmartResponseAgent(BaseAgent):
             # per-call provider in eff.ctx, with eff.ctx as the fallback ctx.
             # No mutation of self.llm / self._agent_execution_context.
             async def call_llm_for_engine(req: "LLMRequest", turn: int = 0) -> "LLMResponse":
+                clock = CURRENT_TURN_CLOCK.get()
+                if clock is not None and req.timeout is None:
+                    req = req.model_copy(update={"timeout": clock.call_timeout()})
                 return await self._call_llm(
                     req,
                     turn,
@@ -496,7 +514,7 @@ class SmartResponseAgent(BaseAgent):
                 call_llm=call_llm_for_engine,
                 base_request=base_request,
                 context=message.context,
-                max_turns=self.MAX_DELEGATION_TURNS,
+                max_turns=clock.max_loop_turns if clock is not None else self.MAX_DELEGATION_TURNS,
                 terminal_tool="deliver_response",
                 intent_fanout=dict(self._descriptor.intent_fanout),
                 calling_agent_id=self.agent_id,
