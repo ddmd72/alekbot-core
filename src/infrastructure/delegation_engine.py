@@ -98,6 +98,9 @@ def _format_result(intent: str, result: Any) -> str:
     return str(result)
 
 
+_BUDGET_ENDED_RESULT = "not finished: turn budget ended"
+
+
 def _append_user_note(history: List[Message], text: str) -> None:
     """Add a marker note without creating two user messages in a row.
 
@@ -261,11 +264,16 @@ class DelegationEngine:
         fanout = intent_fanout or {}
         local = dict(local_tools or {})
         clock = CURRENT_TURN_CLOCK.get() if use_turn_clock else None
+        # Set when a tool batch ran out of budget: the next call is the wrap-up even if
+        # the clock's integer rounding still leaves it a hair outside the reserve.
+        budget_out = False
 
         for turn in range(max_turns):
             if clock is not None and clock.marked:
                 await self._append_chat_since(clock, history)
-            wrap_up = clock is not None and (clock.in_reserve() or turn == max_turns - 1)
+            wrap_up = clock is not None and (
+                budget_out or clock.in_reserve() or turn == max_turns - 1
+            )
             if wrap_up:
                 _append_user_note(history, WRAP_UP_NOTE)
             # Build request with current history
@@ -392,7 +400,7 @@ class DelegationEngine:
             )
             if clock is not None:
                 clock.step = "tool: " + ", ".join(sorted({tc.name for tc in response.tool_calls}))
-            tool_results = await self._execute_tool_calls(
+            batch = self._execute_tool_calls(
                 tool_calls=response.tool_calls,
                 context=context,
                 intent_remap=remap,
@@ -402,6 +410,23 @@ class DelegationEngine:
                 retry_backoff=retry_backoff,
                 local_tools=local,
             )
+            if clock is None:
+                tool_results = await batch
+            else:
+                # A batch started just before the reserve must not eat the wrap-up's time.
+                try:
+                    tool_results = await asyncio.wait_for(batch, timeout=clock.call_timeout())
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "⏳ [DelegationEngine] Turn %s — tool batch %s cut at the turn budget; "
+                        "wrap-up next",
+                        turn + 1, [tc.name for tc in response.tool_calls],
+                    )
+                    tool_results = [
+                        ToolResult(name=tc.name, result_str=_BUDGET_ENDED_RESULT, failed=True)
+                        for tc in response.tool_calls
+                    ]
+                    budget_out = True
 
             # --- Accumulate metadata ---
             accumulated_structured = self._accumulate_tool_metadata(
@@ -465,23 +490,42 @@ class DelegationEngine:
     @staticmethod
     def _wrap_up_result(response, terminal_tool, total_tokens, delivery_items,
                         contexts, structured, history) -> DelegationResult:
-        """The budget's last call: take the answer it gave, dispatch nothing (plan delta D3)."""
+        """The budget's last call: take the answer it gave, dispatch nothing (plan delta D3).
+
+        A terminal call wins; otherwise any text is the answer, even when the model also
+        asked for tools. Only a call with neither is a failure.
+        """
+        calls = list(response.tool_calls or [])
         terminal_call = next(
-            (tc for tc in (response.tool_calls or []) if tc.name == terminal_tool), None,
+            (tc for tc in calls if tc.name == terminal_tool), None,
         ) if terminal_tool else None
         if terminal_call is not None:
+            dropped = [tc.name for tc in calls if tc is not terminal_call]
+            if dropped:
+                logger.warning(
+                    "⚠️ [DelegationEngine] wrap-up: %s co-emitted with %s not dispatched",
+                    dropped, terminal_tool,
+                )
             return DelegationResult(text="", total_tokens=total_tokens,
                                     terminal_tool_args=terminal_call.args or {},
                                     delivery_items=delivery_items,
                                     history_contexts=contexts or None,
                                     structured_data=structured, messages=history)
-        if response.text and not response.tool_calls:
+        if response.text and response.text.strip():
+            if calls:
+                logger.warning(
+                    "⚠️ [DelegationEngine] wrap-up: answering with its text; tool calls %s "
+                    "not dispatched", [tc.name for tc in calls],
+                )
             return DelegationResult(text=response.text, total_tokens=total_tokens,
                                     delivery_items=delivery_items,
                                     history_contexts=contexts or None,
                                     structured_data=structured, messages=history)
-        logger.warning("⚠️ [DelegationEngine] wrap-up call asked for tools; nothing dispatched")
-        return DelegationResult(text=response.text or "", total_tokens=total_tokens,
+        logger.warning(
+            "⚠️ [DelegationEngine] wrap-up call gave no answer (no text, no %s); "
+            "tool calls not dispatched: %s", terminal_tool, [tc.name for tc in calls],
+        )
+        return DelegationResult(text="", total_tokens=total_tokens,
                                 delivery_items=delivery_items,
                                 history_contexts=contexts or None,
                                 structured_data=structured, messages=history, failed=True)
