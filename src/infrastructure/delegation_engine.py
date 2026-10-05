@@ -22,7 +22,7 @@ from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.messaging import SmartResponse
 from ..ports.llm_port import LLMRequest, LLMResponse, Message, ToolCall
 from ..domain.llm import MessagePart, build_tool_turn
-from ..domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE
+from ..domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE, render_chat_since
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 
@@ -263,6 +263,8 @@ class DelegationEngine:
         clock = CURRENT_TURN_CLOCK.get() if use_turn_clock else None
 
         for turn in range(max_turns):
+            if clock is not None and clock.marked:
+                await self._append_chat_since(clock, history)
             wrap_up = clock is not None and (clock.in_reserve() or turn == max_turns - 1)
             if wrap_up:
                 _append_user_note(history, WRAP_UP_NOTE)
@@ -442,6 +444,23 @@ class DelegationEngine:
             messages=history,
             failed=True,
         )
+
+    @staticmethod
+    async def _append_chat_since(clock, history: List[Message]) -> None:
+        """RFC §5.5: what was said in this session since the run's snapshot."""
+        if clock.fetch_since is None:
+            return
+        since = max(clock.snapshot_at, clock.seen_until)
+        try:
+            fresh = await clock.fetch_since(since)
+        except Exception as e:  # a missed note must not end a long turn
+            logger.warning("⚠️ [DelegationEngine] chat-since fetch failed: %s", e)
+            return
+        fresh = [m for m in fresh if m.created_at > since and m.created_at not in clock.own_created_ats]
+        if not fresh:
+            return
+        clock.seen_until = max(m.created_at for m in fresh)
+        _append_user_note(history, render_chat_since(fresh))
 
     @staticmethod
     def _wrap_up_result(response, terminal_tool, total_tokens, delivery_items,
