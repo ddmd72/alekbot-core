@@ -25,20 +25,58 @@ async def test_message_link_survives_api_error():
 
 async def test_late_answer_goes_to_main_feed_with_prefix_and_link():
     ch, client = _channel()
-    ch.send_chunked_message = AsyncMock()
     await ch.send_late_answer("the answer", "[late answer]", "100.1")
     first = client.chat_postMessage.call_args.kwargs
     assert first.get("thread_ts") is None
-    text = ch.send_chunked_message.call_args.args[0]
-    assert text.startswith("[late answer]") and "https://s/p1" in text and "the answer" in text
+    # Single chunk: delivered via chat_update (update_message), not a thread reply.
+    updated_text = client.chat_update.call_args.kwargs["text"]
+    assert updated_text.startswith("[late answer]") and "https://s/p1" in updated_text and "the answer" in updated_text
 
 
 async def test_late_answer_without_link_still_delivered():
     ch, client = _channel()
     client.chat_getPermalink.side_effect = RuntimeError("x")
-    ch.send_chunked_message = AsyncMock()
     await ch.send_late_answer("the answer", "[late answer]", "100.1")
-    assert "the answer" in ch.send_chunked_message.call_args.args[0]
+    updated_text = client.chat_update.call_args.kwargs["text"]
+    assert "the answer" in updated_text
+
+
+async def test_late_answer_overflow_stays_in_main_feed_not_threaded():
+    """Owner decision: the late answer never moves to a thread, even on overflow.
+
+    Exercises the REAL chunking path (send_chunked_message / _send_flat_chunks are
+    NOT mocked) — regression guard for the bug where overflow fell back to
+    send_chunked_message's thread_ts=message_id threading.
+    """
+    ch, client = _channel()
+    long_answer = "A" * 2500  # exceeds SLACK_CHUNK_SIZE (2000) — forces multi-chunk delivery
+    await ch.send_late_answer(long_answer, "[late answer]", "100.1")
+
+    # Every chat_postMessage call (header + any overflow chunks) must carry no thread_ts.
+    assert client.chat_postMessage.await_count >= 1
+    for call in client.chat_postMessage.call_args_list:
+        assert call.kwargs.get("thread_ts") is None
+
+    # The first chunk (delivered via chat_update, replacing the header message)
+    # starts with the prefix.
+    first_update_text = client.chat_update.call_args_list[0].kwargs["text"]
+    assert first_update_text.startswith("[late answer]")
+
+    # All of the answer's content is delivered across the update + any follow-up
+    # chat_postMessage chunks (order-independent: just verify nothing was dropped).
+    delivered = first_update_text + "".join(
+        call.kwargs["text"] for call in client.chat_postMessage.call_args_list[1:]
+    )
+    assert delivered.count("A") == 2500
+
+
+async def test_late_answer_resolves_link_list_anchors():
+    """link_list anchors are resolved in the late answer body, same as a normal answer."""
+    ch, client = _channel()
+    link_list = [{"anchor": "1", "title": "Example", "url": "https://ex.com"}]
+    await ch.send_late_answer("see [1] for details", "[late answer]", "100.1", link_list=link_list)
+    updated_text = client.chat_update.call_args.kwargs["text"]
+    assert "<https://ex.com|Example>" in updated_text
 
 
 async def test_on_long_turn_calls_the_hook_once():
