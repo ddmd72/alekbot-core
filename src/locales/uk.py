@@ -143,4 +143,9 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SKILL_UNAVAILABLE.value: "Навички зараз недоступні.",
     UIMessage.SKILL_PREVIEW_FILE_TITLE.value: "Чернетка навички: {name}",
     UIMessage.SKILL_PREVIEW_DELIVERY_FAILED.value: "⚠️ Чернетку навички не вдалося доставити. Попросіть мене скласти її ще раз.",
+    UIMessage.LONG_TURN_NOTICE.value: "⏳ Працюю — це надовше. Відповім, коли закінчу; можна писати далі.",
+    UIMessage.LATE_ANSWER_PREFIX.value: "[відкладена відповідь]",
+    UIMessage.LONG_TURN_FAILED.value: "Не вдалося завершити — щось зламалося по дорозі.",
+    UIMessage.LONG_TURN_CANCELLED.value: "Зупинив, як ти просив.",
+    UIMessage.LONG_TURN_LOST.value: "Я втратив цю задачу посеред роботи (сервіс перезапустився). Спитай ще раз, будь ласка.",
 }

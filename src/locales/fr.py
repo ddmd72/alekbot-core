@@ -114,4 +114,9 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SKILL_UNAVAILABLE.value: "Les compétences ne sont pas disponibles pour le moment.",
     UIMessage.SKILL_PREVIEW_FILE_TITLE.value: "Brouillon de compétence : {name}",
     UIMessage.SKILL_PREVIEW_DELIVERY_FAILED.value: "⚠️ Le brouillon de la compétence n'a pas pu être livré. Demandez-moi de le rédiger à nouveau.",
+    UIMessage.LONG_TURN_NOTICE.value: "⏳ J'y travaille — c'est plus long. Je réponds dès que c'est fini ; vous pouvez continuer à écrire.",
+    UIMessage.LATE_ANSWER_PREFIX.value: "[réponse différée]",
+    UIMessage.LONG_TURN_FAILED.value: "Je n'ai pas pu terminer — quelque chose a cassé en route.",
+    UIMessage.LONG_TURN_CANCELLED.value: "Arrêté, comme demandé.",
+    UIMessage.LONG_TURN_LOST.value: "J'ai perdu cette tâche en cours de route (le service a redémarré). Redemandez, s'il vous plaît.",
 }

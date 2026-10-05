@@ -114,4 +114,9 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.SKILL_UNAVAILABLE.value: "Las habilidades no están disponibles en este momento.",
     UIMessage.SKILL_PREVIEW_FILE_TITLE.value: "Borrador de habilidad: {name}",
     UIMessage.SKILL_PREVIEW_DELIVERY_FAILED.value: "⚠️ No se pudo entregar el borrador de la habilidad. Pídeme que lo redacte otra vez.",
+    UIMessage.LONG_TURN_NOTICE.value: "⏳ Estoy en ello — tardará más. Responderé al terminar; puedes seguir escribiendo.",
+    UIMessage.LATE_ANSWER_PREFIX.value: "[respuesta diferida]",
+    UIMessage.LONG_TURN_FAILED.value: "No pude terminarlo: algo falló por el camino.",
+    UIMessage.LONG_TURN_CANCELLED.value: "Detenido, como pediste.",
+    UIMessage.LONG_TURN_LOST.value: "Perdí esta tarea a mitad de camino (el servicio se reinició). Pregunta de nuevo, por favor.",
 }
