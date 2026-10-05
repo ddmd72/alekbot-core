@@ -204,3 +204,100 @@ async def test_same_provider_retry_clamps_stale_timeout_to_remaining_budget(cloc
     retry_request: LLMRequest = clock_primary_llm.generate_content.call_args_list[1].kwargs["request"]
     assert retry_request.timeout <= ceiling_before_call
     assert retry_request.timeout < stale_request.timeout
+
+
+# --------------------------------------------------------------------------- #
+# Final review I3 — cross-provider failover respects the clock: skipped in the
+# wrap-up reserve, otherwise the fallback request's timeout is clamped.
+# --------------------------------------------------------------------------- #
+
+
+def _make_failover_context(primary_llm: LLMPort, fallback_llm: LLMPort) -> AgentExecutionContext:
+    return AgentExecutionContext(
+        agent_type="quick",
+        provider=primary_llm,
+        model_name="gemini-flash",
+        tier=PerformanceTier.BALANCED,
+        capabilities=ProviderCapabilities(),
+        provider_name="gemini",
+        fallback_provider=fallback_llm,
+        fallback_model_name="claude-sonnet",
+        fallback_provider_name="claude",
+        resilience_port=InMemoryProviderResilience(),
+    )
+
+
+def _make_fresh_request(timeout: Optional[int] = None) -> LLMRequest:
+    """Not transcript-locked: a primary failure goes to cross-provider failover."""
+    return LLMRequest(
+        model_name="gemini-flash",
+        system_instruction="test",
+        messages=[Message(role="user", parts=[MessagePart(text="hi")])],
+        timeout=timeout,
+    )
+
+
+@pytest.fixture
+def failover_llms():
+    from src.domain.exceptions import LLMUnavailableError
+    primary = MagicMock(spec=LLMPort)
+    primary.generate_content = AsyncMock(
+        side_effect=LLMUnavailableError("unavailable", http_status=503))
+    fallback = MagicMock(spec=LLMPort)
+    fallback.generate_content = AsyncMock(return_value=_make_llm_response("fallback ok"))
+    return primary, fallback
+
+
+async def test_failover_skipped_when_clock_in_reserve(failover_llms):
+    from src.domain.exceptions import BothProvidersUnavailableError
+    primary, fallback = failover_llms
+    agent = _ClockMinimalAgent(config=_make_clock_test_config(), llm=primary)
+    agent._set_execution_context(_make_failover_context(primary, fallback))
+    clock = TurnClock.start(budget_s=50, wrap_up_reserve_s=100)   # in reserve at once
+    token = CURRENT_TURN_CLOCK.set(clock)
+    try:
+        with pytest.raises(BothProvidersUnavailableError):
+            await agent._call_llm(_make_fresh_request())
+    finally:
+        CURRENT_TURN_CLOCK.reset(token)
+    fallback.generate_content.assert_not_awaited()
+
+
+async def test_failover_clamps_a_stale_timeout_to_the_clock(failover_llms):
+    primary, fallback = failover_llms
+    agent = _ClockMinimalAgent(config=_make_clock_test_config(), llm=primary)
+    agent._set_execution_context(_make_failover_context(primary, fallback))
+    clock = TurnClock.start(budget_s=600, wrap_up_reserve_s=100)
+    ceiling = clock.call_timeout()
+    token = CURRENT_TURN_CLOCK.set(clock)
+    try:
+        response = await agent._call_llm(_make_fresh_request(timeout=1380))
+    finally:
+        CURRENT_TURN_CLOCK.reset(token)
+    assert response.text == "fallback ok"
+    sent: LLMRequest = fallback.generate_content.call_args.kwargs["request"]
+    assert sent.timeout <= ceiling and sent.model_name == "claude-sonnet"
+
+
+async def test_failover_without_a_timeout_gets_the_clock_timeout(failover_llms):
+    primary, fallback = failover_llms
+    agent = _ClockMinimalAgent(config=_make_clock_test_config(), llm=primary)
+    agent._set_execution_context(_make_failover_context(primary, fallback))
+    clock = TurnClock.start(budget_s=600, wrap_up_reserve_s=100)
+    ceiling = clock.call_timeout()
+    token = CURRENT_TURN_CLOCK.set(clock)
+    try:
+        await agent._call_llm(_make_fresh_request(timeout=None))
+    finally:
+        CURRENT_TURN_CLOCK.reset(token)
+    sent: LLMRequest = fallback.generate_content.call_args.kwargs["request"]
+    assert sent.timeout is not None and 1 <= sent.timeout <= ceiling
+
+
+async def test_failover_without_a_clock_keeps_the_request_timeout(failover_llms):
+    primary, fallback = failover_llms
+    agent = _ClockMinimalAgent(config=_make_clock_test_config(), llm=primary)
+    agent._set_execution_context(_make_failover_context(primary, fallback))
+    await agent._call_llm(_make_fresh_request(timeout=1380))
+    sent: LLMRequest = fallback.generate_content.call_args.kwargs["request"]
+    assert sent.timeout == 1380
