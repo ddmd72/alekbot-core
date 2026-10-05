@@ -9,7 +9,7 @@ import hmac
 import json
 import time
 import weakref
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 from slack_bolt.async_app import AsyncApp
 from quart import Blueprint, request, jsonify
 
@@ -232,7 +232,19 @@ class HTTPModeAdapter(SlackAdapter):
                 logger.info(f"⏭️ Session {session_id[:8]} busy, returning 429 for Cloud Tasks retry")
                 return jsonify({"ok": False, "error": "session_busy"}), 429
 
-            async with lock:
+            await lock.acquire()
+            released = False
+
+            def release_lock() -> None:
+                # Called at the long-turn mark (LONG_RUNNING_TURNS_RFC §5.3.5) and in
+                # finally below; idempotent so either order is safe.
+                nonlocal released
+                if not released:
+                    released = True
+                    lock.release()
+
+            try:
+                turn_id = f"slack:{event_data.get('event_id')}" if event_data.get("event_id") else None
                 with start_span("worker.process_event", {
                     "session_id": session_id,
                     "trace_id": get_trace_ids().get("trace_id")
@@ -248,13 +260,17 @@ class HTTPModeAdapter(SlackAdapter):
                         return jsonify({"ok": True}), 200
 
                     if event_type == "message":
-                        await self._process_message_event(event, session_id)
+                        await self._process_message_event(event, session_id, turn_id=turn_id,
+                                                           release_lock=release_lock)
                     elif event_type == "app_mention":
-                        await self._process_mention_event(event, session_id)
+                        await self._process_mention_event(event, session_id, turn_id=turn_id,
+                                                           release_lock=release_lock)
                     else:
                         logger.info(f"⏭️ Skipping unsupported event type: {event_type}")
 
                     return jsonify({"ok": True}), 200
+            finally:
+                release_lock()
 
         except Exception as e:
             logger.error(f"❌ Error in worker task: {e}", exc_info=True)
@@ -263,7 +279,13 @@ class HTTPModeAdapter(SlackAdapter):
     def _resolve_session_id(self, user_id: str, channel_id: str) -> str:
         return f"{user_id}:{channel_id}"
 
-    async def _process_message_event(self, event: Dict[str, Any], session_id: str):
+    async def _process_message_event(
+        self,
+        event: Dict[str, Any],
+        session_id: str,
+        turn_id: Optional[str] = None,
+        release_lock: Optional[Callable[[], None]] = None,
+    ):
         try:
             subtype = event.get("subtype")
             if subtype and subtype != "file_share":
@@ -315,6 +337,7 @@ class HTTPModeAdapter(SlackAdapter):
                 self.slack_bot_token,
                 language=ui_lang,
                 localization=self._localization,
+                on_long_turn=release_lock,
             )
 
             # A copied `` `$skill save CODE` `` (any number of wrapping backticks, e.g. a
@@ -352,6 +375,9 @@ class HTTPModeAdapter(SlackAdapter):
                     "slack_user_id": slack_user_id,
                     "preferred_language": preferred_language,
                     "agent_mirror": agent_mirror,
+                    "turn_id": turn_id,
+                    "origin_message_id": event.get("ts"),
+                    "event_time": float(event["ts"]) if event.get("ts") else None,
                 }
             )
 
@@ -360,7 +386,13 @@ class HTTPModeAdapter(SlackAdapter):
         except Exception as e:
             logger.error(f"❌ Error processing message: {e}", exc_info=True)
 
-    async def _process_mention_event(self, event: Dict[str, Any], session_id: str):
+    async def _process_mention_event(
+        self,
+        event: Dict[str, Any],
+        session_id: str,
+        turn_id: Optional[str] = None,
+        release_lock: Optional[Callable[[], None]] = None,
+    ):
         try:
             text = event.get("text", "").split(">", 1)[-1].strip()
             channel = event.get("channel")
@@ -404,6 +436,9 @@ class HTTPModeAdapter(SlackAdapter):
                     "slack_user_id": slack_user_id,
                     "preferred_language": preferred_language,
                     "agent_mirror": agent_mirror,
+                    "turn_id": turn_id,
+                    "origin_message_id": event.get("ts"),
+                    "event_time": float(event["ts"]) if event.get("ts") else None,
                 }
             )
 
@@ -413,6 +448,7 @@ class HTTPModeAdapter(SlackAdapter):
                 self.slack_bot_token,
                 language=ui_lang,
                 localization=self._localization,
+                on_long_turn=release_lock,
             )
 
             await self.conversation_handler.handle_message(context, response_channel)

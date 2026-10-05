@@ -70,6 +70,9 @@ class GcpTaskQueue(TaskQueue):
                 headers.update(trace_headers)
 
             task = {
+                # A chat turn may run ~25 min (LONG_RUNNING_TURNS_RFC §5.8); Cloud Tasks' 600 s
+                # default would retry a still-running turn.
+                "dispatch_deadline": duration_pb2.Duration(seconds=1800),
                 "http_request": {
                     "http_method": tasks_v2.HttpMethod.POST,
                     "url": f"{self.service_url}/worker",
