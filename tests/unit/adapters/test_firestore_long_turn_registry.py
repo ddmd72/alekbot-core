@@ -60,3 +60,39 @@ async def test_request_cancel_only_for_own_running_turn():
     assert await reg.request_cancel("u1", "slack:Ev1") is True
     assert doc.update.call_args.args[0] == {"cancel_requested": True}
     assert await reg.request_cancel("someone-else", "slack:Ev1") is False
+
+
+# --- Final review I7: list_running drops stale records ------------------------------
+
+
+def _streaming_db(records):
+    db = MagicMock()
+    snaps = []
+    for rec in records:
+        snap = MagicMock()
+        snap.to_dict.return_value = {**rec, "expires_at": "ignored"}
+        snaps.append(snap)
+
+    async def stream():
+        for snap in snaps:
+            yield snap
+    query = MagicMock()
+    query.where.return_value = query
+    query.stream = stream
+    db.collection.return_value.where.return_value = query
+    return db
+
+
+def _row(turn_id, heartbeat_at):
+    return {"turn_id": turn_id, "user_id": "u1", "session_id": "u1:D1", "title": "t",
+            "started_at": 0.0, "heartbeat_at": heartbeat_at, "step": "thinking",
+            "status": "running", "cancel_requested": False}
+
+
+async def test_list_running_returns_only_records_with_a_fresh_heartbeat():
+    import time
+    from src.domain.turn_clock import STALE_AFTER_S
+    now = time.time()
+    db = _streaming_db([_row("fresh", now - 5), _row("dead", now - STALE_AFTER_S - 60)])
+    out = await FirestoreLongTurnRegistry(db, "c").list_running("u1")
+    assert [r.turn_id for r in out] == ["fresh"]

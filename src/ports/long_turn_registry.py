@@ -20,7 +20,8 @@ class LongTurnRegistry(ABC):
     async def finish(self, turn_id: str, status: LongTurnStatus) -> None: ...
 
     @abstractmethod
-    async def list_running(self, user_id: str) -> List[LongTurnRecord]: ...
+    async def list_running(self, user_id: str) -> List[LongTurnRecord]:
+        """The user's turns that are running and live (heartbeat not stale)."""
 
     @abstractmethod
     async def request_cancel(self, user_id: str, turn_id: str) -> bool:

@@ -5,7 +5,8 @@ from typing import List, Optional
 
 from google.cloud.firestore import FieldFilter
 
-from ..domain.long_turn import LongTurnRecord, LongTurnStatus
+from ..domain.long_turn import LongTurnRecord, LongTurnStatus, RetryVerdict
+from ..domain.turn_clock import STALE_AFTER_S
 from ..ports.long_turn_registry import LongTurnRegistry
 from ..utils.logger import logger
 
@@ -47,10 +48,15 @@ class FirestoreLongTurnRegistry(LongTurnRegistry):
             .where(filter=FieldFilter("user_id", "==", user_id))
             .where(filter=FieldFilter("status", "==", LongTurnStatus.RUNNING.value))
         )
+        # `status == running` alone includes turns whose instance died: their record
+        # stays `running` until a retry or the TTL. Only a fresh heartbeat is live.
+        now = time.time()
         out: List[LongTurnRecord] = []
         async for snap in query.stream():
             data = {k: v for k, v in snap.to_dict().items() if k != "expires_at"}
-            out.append(LongTurnRecord(**data))
+            record = LongTurnRecord(**data)
+            if record.verdict(now=now, stale_after_s=STALE_AFTER_S) is RetryVerdict.RUNNING:
+                out.append(record)
         return out
 
     async def request_cancel(self, user_id: str, turn_id: str) -> bool:
