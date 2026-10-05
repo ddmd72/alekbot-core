@@ -1037,8 +1037,21 @@ class BaseAgent(ABC):
                             },
                         )
                         await asyncio.sleep(backoff)
+                        retry_request = request
+                        if clock is not None:
+                            # The original request's timeout (if any) was computed when the
+                            # call started; a clock's remaining budget only shrinks, so re-clamp
+                            # at retry time rather than reusing the stale value (a call that
+                            # started with T=1380s and failed after 1000s must not retry with
+                            # T=1380s again — it could run past the wrap-up reserve / hard stop).
+                            retry_timeout = (
+                                clock.call_timeout()
+                                if request.timeout is None
+                                else min(request.timeout, clock.call_timeout())
+                            )
+                            retry_request = request.model_copy(update={"timeout": retry_timeout})
                         try:
-                            response = await llm.generate_content(request=request)
+                            response = await llm.generate_content(request=retry_request)
                             if resilience and primary_name:
                                 resilience.record_success(primary_name)
                             retried_ok = True
