@@ -287,6 +287,14 @@ async def main():
         file_service = FileUploadService(container.llm_port)
         session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
 
+        # Long-running turns (LONG_RUNNING_TURNS_RFC) — registry + service shared by both
+        # platform adapters (status/late-answer delivery) and UserAgentFactory (Smart's
+        # running-jobs note + cancel_long_turn tool).
+        from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
+        from src.services.long_turn_service import LongTurnService
+        long_turn_registry = FirestoreLongTurnRegistry(db_client, env_config.long_turns_collection)
+        long_turn_service = LongTurnService(registry=long_turn_registry, session_store=session_store)
+
         # Wire file ref resolver into coordinator for specialist delegation
         if container.file_conversion_service:
             coordinator._file_ref_resolver = container.file_conversion_service.resolve_content
@@ -491,6 +499,7 @@ async def main():
             quota_service=quota_service,
             companion_context_assembler=companion_context_assembler,
             notification_service=notification_service,
+            long_turn_registry=long_turn_registry,
         )
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
         _language_service._ensure_agents = agent_factory.ensure_agents_for_user
@@ -784,6 +793,7 @@ async def main():
             fallback_service=_fallback_service,
             short_link_service=short_link_service,
             skill_service=container.skill_service,
+            long_turn_service=long_turn_service,
         )
         notification_channel_factory.register_factory(
             "slack",
@@ -1074,6 +1084,7 @@ async def main():
                             short_link_service=short_link_service,
                             skill_service=container.skill_service,
                             task_queue=agent_task_queue,
+                            long_turn_service=long_turn_service,
                         )
                         def _make_telegram_channel(adapter, channel_id):
                             try:
