@@ -25,6 +25,9 @@ NOTICE_AFTER_S = 90
 HEARTBEAT_S = 30
 STALE_AFTER_S = 90
 HARD_STOP_MARGIN_S = 60
+# The wrap-up call always gets at least this long, even when a tool batch ate into the
+# reserve. It stays inside HARD_STOP_MARGIN_S, so the hard stop still lands after it.
+WRAP_UP_FLOOR_S = 30
 
 WRAP_UP_NOTE = "[System: turn budget ending — final answer now]"
 MEANWHILE_HEADER = "[System: meanwhile in chat]"
@@ -76,7 +79,8 @@ class TurnClock:
         return max(1, int(self.remaining(now) - self.wrap_up_reserve_s))
 
     def wrap_up_timeout(self, now: Optional[float] = None) -> int:
-        return max(1, int(self.remaining(now)))
+        """The wrap-up call's timeout: what is left, but never below WRAP_UP_FLOOR_S."""
+        return int(max(self.remaining(now), WRAP_UP_FLOOR_S))
 
     def in_reserve(self, now: Optional[float] = None) -> bool:
         return self.remaining(now) <= self.wrap_up_reserve_s

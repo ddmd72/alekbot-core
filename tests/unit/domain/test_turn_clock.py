@@ -35,8 +35,9 @@ def test_call_timeout_never_below_one_second():
 
 
 def test_wrap_up_timeout_uses_the_whole_remainder():
+    # Final review I2: the remainder (5 s here) is raised to the 30 s wrap-up floor.
     clock = TurnClock.start(budget_s=100, wrap_up_reserve_s=10, now=0.0)
-    assert clock.wrap_up_timeout(now=95.0) == 5
+    assert clock.wrap_up_timeout(now=95.0) == 30
 
 
 def test_in_reserve_and_can_retry_are_complements():
@@ -70,3 +71,24 @@ def test_render_late_answer_note_without_link_and_long_question():
     note = render_late_answer_note("q" * 300, "14:02", None)
     assert "no link" in note
     assert len(note) < 260
+
+
+# --- Final review I2: the wrap-up call gets a floor --------------------------------
+
+
+def test_wrap_up_floor_constant_fits_inside_the_hard_stop_margin():
+    from src.domain.turn_clock import HARD_STOP_MARGIN_S, WRAP_UP_FLOOR_S
+    assert WRAP_UP_FLOOR_S == 30
+    assert WRAP_UP_FLOOR_S < HARD_STOP_MARGIN_S
+
+
+def test_wrap_up_timeout_never_below_the_floor():
+    from src.domain.turn_clock import WRAP_UP_FLOOR_S
+    clock = TurnClock.start(budget_s=100, wrap_up_reserve_s=10, now=0.0)
+    assert clock.wrap_up_timeout(now=99.0) == WRAP_UP_FLOOR_S
+    assert clock.wrap_up_timeout(now=500.0) == WRAP_UP_FLOOR_S   # deadline already passed
+
+
+def test_wrap_up_timeout_above_the_floor_uses_the_remainder():
+    clock = TurnClock.start(budget_s=100, wrap_up_reserve_s=10, now=0.0)
+    assert clock.wrap_up_timeout(now=20.0) == 80
