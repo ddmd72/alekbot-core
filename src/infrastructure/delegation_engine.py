@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping,
 from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.messaging import SmartResponse
 from ..ports.llm_port import LLMRequest, LLMResponse, Message, ToolCall
-from ..domain.llm import build_tool_turn
+from ..domain.llm import MessagePart, build_tool_turn
+from ..domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 
@@ -95,6 +96,21 @@ def _format_result(intent: str, result: Any) -> str:
     if isinstance(result, list):
         return "\n".join(str(item) for item in result)
     return str(result)
+
+
+def _append_user_note(history: List[Message], text: str) -> None:
+    """Add a marker note without creating two user messages in a row.
+
+    After a tool turn the history ends in a user message carrying tool results; the note
+    becomes a text part of that message (plan delta D6). The last message is replaced,
+    never mutated — it may be shared with the agent's base request.
+    """
+    note = MessagePart(text=text)
+    if history and history[-1].role == "user":
+        last = history[-1]
+        history[-1] = last.model_copy(update={"parts": [*last.parts, note]})
+    else:
+        history.append(Message(role="user", parts=[note]))
 
 
 def normalize_delegate_context(raw: Any) -> Dict[str, Any]:
@@ -233,10 +249,18 @@ class DelegationEngine:
         remap = intent_remap or {}
         fanout = intent_fanout or {}
         local = dict(local_tools or {})
+        clock = CURRENT_TURN_CLOCK.get()
 
         for turn in range(max_turns):
+            wrap_up = clock is not None and (clock.in_reserve() or turn == max_turns - 1)
+            if wrap_up:
+                _append_user_note(history, WRAP_UP_NOTE)
             # Build request with current history
             request = base_request.model_copy(update={"messages": history})
+            if wrap_up:
+                request = request.model_copy(update={"timeout": clock.wrap_up_timeout()})
+            if clock is not None:
+                clock.step = "thinking"
 
             logger.info(
                 "🔄 [DelegationEngine] Turn %s/%s (history=%s msgs, caller=%s)",
@@ -257,6 +281,11 @@ class DelegationEngine:
 
             if response.usage_metadata:
                 total_tokens += response.usage_metadata.total_tokens
+
+            if wrap_up:
+                return self._wrap_up_result(response, terminal_tool, total_tokens,
+                                            all_delivery_items, accumulated_contexts,
+                                            accumulated_structured, history)
 
             # --- Terminal tool check ---
             if terminal_tool and response.tool_calls:
@@ -348,6 +377,8 @@ class DelegationEngine:
                 "🔄 [DelegationEngine] Turn %s — dispatching %s tool call(s)",
                 turn + 1, len(response.tool_calls),
             )
+            if clock is not None:
+                clock.step = "tool: " + ", ".join(sorted({tc.name for tc in response.tool_calls}))
             tool_results = await self._execute_tool_calls(
                 tool_calls=response.tool_calls,
                 context=context,
@@ -400,6 +431,30 @@ class DelegationEngine:
             messages=history,
             failed=True,
         )
+
+    @staticmethod
+    def _wrap_up_result(response, terminal_tool, total_tokens, delivery_items,
+                        contexts, structured, history) -> DelegationResult:
+        """The budget's last call: take the answer it gave, dispatch nothing (plan delta D3)."""
+        terminal_call = next(
+            (tc for tc in (response.tool_calls or []) if tc.name == terminal_tool), None,
+        ) if terminal_tool else None
+        if terminal_call is not None:
+            return DelegationResult(text="", total_tokens=total_tokens,
+                                    terminal_tool_args=terminal_call.args or {},
+                                    delivery_items=delivery_items,
+                                    history_contexts=contexts or None,
+                                    structured_data=structured, messages=history)
+        if response.text and not response.tool_calls:
+            return DelegationResult(text=response.text, total_tokens=total_tokens,
+                                    delivery_items=delivery_items,
+                                    history_contexts=contexts or None,
+                                    structured_data=structured, messages=history)
+        logger.warning("⚠️ [DelegationEngine] wrap-up call asked for tools; nothing dispatched")
+        return DelegationResult(text=response.text or "", total_tokens=total_tokens,
+                                delivery_items=delivery_items,
+                                history_contexts=contexts or None,
+                                structured_data=structured, messages=history, failed=True)
 
     # ------------------------------------------------------------------ #
     # Metadata accumulation                                               #
