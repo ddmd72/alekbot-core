@@ -168,6 +168,15 @@ async def test_no_clock_leaves_timeout_unset_and_max_turns_default(smart_agent_w
     assert engine_kwargs["max_turns"] == agent.MAX_DELEGATION_TURNS
 
 
+async def test_smart_opts_into_the_turn_clock(smart_agent_with_engine_spy):
+    """Only the orchestrator that owns the clock passes use_turn_clock=True — a nested
+    DelegationEngine (e.g. a specialist's own, run SYNC from Smart) must not inherit the
+    ambient CURRENT_TURN_CLOCK by default (fix round 1, Task 4)."""
+    agent, engine_kwargs, llm_requests = smart_agent_with_engine_spy
+    await agent.execute(smart_agent_with_engine_spy.message)
+    assert engine_kwargs["use_turn_clock"] is True
+
+
 async def test_no_provider_rotation_after_the_mark(smart_agent_failing_with_transcript_lock):
     agent = smart_agent_failing_with_transcript_lock
     clock = TurnClock.start()

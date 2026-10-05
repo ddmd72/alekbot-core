@@ -521,6 +521,7 @@ class SmartResponseAgent(BaseAgent):
                 max_retries=self.MAX_AGENT_RETRIES,
                 retry_backoff=self.RETRY_BACKOFF_SECONDS,
                 local_tools=local_tools,
+                use_turn_clock=True,
             )
 
             if delegation_result.failed:
