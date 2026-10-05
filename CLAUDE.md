@@ -167,11 +167,15 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 **Long-running turns** — one absolute 25-min clock per chat turn (`domain/turn_clock.py`,
 `TurnClock` in a `ContextVar`; `use_turn_clock=True` only on Smart's top-level engine). At 90 s
 unanswered: a status note + `[user, notice]` pair, so a second message sent meanwhile is answered
-normally. Same-provider retries clamp to the remaining clock; no whole-turn retry after the mark.
-`LongTurnService` (registry + heartbeat + cancel, `retry_store_write`) over
-`FirestoreLongTurnRegistry` (`{prefix}long_turns`) persists it. A finished run posts a `[late
-answer]` + permalink to the main feed (Slack: top-level, incl. overflow); history gets a wrap-up
-note and a chat-since note on the next turn. Telegram updates go via `/worker`
+normally. Same-provider retries and cross-provider failover clamp to the remaining clock (none in
+the wrap-up reserve); a tool batch is cut at the budget. The clocked orchestrator never gets a
+whole-turn retry, before or after the mark (plan delta D2). `LongTurnService` (registry +
+heartbeat + cancel, `retry_store_write`) over `FirestoreLongTurnRegistry` (`{prefix}long_turns`,
+record created at the mark) persists it. A finished run posts a `[late answer]` + permalink to the
+main feed (Slack: top-level, incl. overflow) and appends a `[System: late answer to …]` pair to
+history; a failed, cancelled or lost turn closes its question with the same pair. The wrap-up and
+chat-since notes live only in the run's own transcript, never in history. A retry of a turn that
+is `running` but not live in this process is reported lost. Telegram updates go via `/worker`
 `task_type=telegram_update` (dedup at intake), not inline; Slack's lock releases at the mark.
 Smart sees its running jobs and can cancel one, per `PROTOCOL_LONG_TURNS`. The two-phase timeout
 path is retired. Not in scope: `ask_alek`/`tell_alek`/notifications stay unclocked (RFC §7
