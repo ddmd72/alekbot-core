@@ -268,7 +268,7 @@ class TestBaseAgent:
     @pytest.mark.asyncio
     async def test_cancelled_error_propagates_without_retry(self, config, message):
         """asyncio.CancelledError is honored — never swallowed, never
-        retried. Records failure on the circuit breaker on the way out."""
+        retried, and never counted as a circuit breaker failure."""
         agent = MockAgent(config)
         agent.execute_error = asyncio.CancelledError()
 
