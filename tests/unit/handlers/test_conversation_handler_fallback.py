@@ -59,7 +59,7 @@ def make_handler():
     coordinator = MagicMock()
     coordinator.route_message = AsyncMock()
 
-    fallback_service = AgentFallbackService(coordinator, alert_webhook=None, smart_retry=None)
+    fallback_service = AgentFallbackService(coordinator, alert_webhook=None)
 
     handler = ConversationHandler(
         coordinator=coordinator,
@@ -196,11 +196,8 @@ class TestGracefulDegradationFallback:
     async def test_system_note_does_not_mention_technical_details(self):
         """[System: ...] note instructs LLM not to expose error details.
 
-        Uses make_agent_failed() (not timeout) — since AgentFallbackService split
-        into two notes (fast-lane for TIMEOUT, apology for other FAILED reasons),
-        "apologize without leaking technical details" is specifically the FAILED
-        branch's job. See test_agent_fallback_service.py's
-        test_timeout_injects_fast_lane_note_not_apology for the TIMEOUT branch.
+        Uses make_agent_failed(); since LONG_RUNNING_TURNS_RFC §5.9 a TIMEOUT gets
+        the same _FAILURE_NOTE (see test_agent_fallback_service_timeout.py).
         """
         handler, coordinator, session_store = make_handler()
         channel = make_channel()
