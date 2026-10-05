@@ -12,6 +12,7 @@ from ..domain.turn_clock import HEARTBEAT_S, NOTICE_AFTER_S, STALE_AFTER_S, Turn
 from ..ports.long_turn_registry import LongTurnRegistry
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
+from ..utils.retry import retry_store_write
 
 
 class LongTurnService:
@@ -47,9 +48,12 @@ class LongTurnService:
                    clock: TurnClock) -> None:
         notice = Message(role="model", parts=[MessagePart(text=notice_text, full_text=notice_text)])
         clock.own_created_ats.add(notice.created_at)
-        await self._sessions.append_messages_batch(
-            session_id=session_id, owner_id=user_id,
-            messages=[Message(role="user", parts=user_parts, created_at=event_time), notice],
+        messages = [Message(role="user", parts=user_parts, created_at=event_time), notice]
+        await retry_store_write(
+            lambda: self._sessions.append_messages_batch(
+                session_id=session_id, owner_id=user_id, messages=messages,
+            ),
+            label="Long-turn mark save",
         )
         now = time.time()
         await self._registry.start(LongTurnRecord(
@@ -72,10 +76,13 @@ class LongTurnService:
         user_parts = [MessagePart(text=note_text)]
         if consolidation_texts:
             user_parts.append(MessagePart(consolidation_text="\n\n" + "\n".join(consolidation_texts)))
-        await self._sessions.append_messages_batch(
-            session_id=session_id, owner_id=owner_id,
-            messages=[
-                Message(role="user", parts=user_parts),
-                Message(role="model", parts=[MessagePart(text=history_text, full_text=full_text)]),
-            ],
+        messages = [
+            Message(role="user", parts=user_parts),
+            Message(role="model", parts=[MessagePart(text=history_text, full_text=full_text)]),
+        ]
+        await retry_store_write(
+            lambda: self._sessions.append_messages_batch(
+                session_id=session_id, owner_id=owner_id, messages=messages,
+            ),
+            label="Late answer save",
         )
