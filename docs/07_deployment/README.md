@@ -222,6 +222,29 @@ chat turns simply run without the clock's prompt guidance until step 2 is done):
 
 ---
 
+## Agent Skills — skill files (delivery C)
+
+`docs/10_rfcs/AGENT_SKILLS_RFC.md` §15. One owner step, which does not block a deploy (without it,
+unsaved drafts are simply never deleted):
+
+1. **TTL policies on unsaved skill drafts** (one-time, per database). A draft and its staged file
+   contents carry a Timestamp `expires_at` 30 days after creation. Drafts live in
+   `{prefix}skill_drafts`; their file contents in each draft's `draft_files` subcollection:
+   ```bash
+   gcloud firestore fields ttls update expires_at --collection-group=<prefix>skill_drafts \
+     --enable-ttl --database=us-production --project=<PROJECT_ID>
+   gcloud firestore fields ttls update expires_at --collection-group=draft_files \
+     --enable-ttl --database=us-production --project=<PROJECT_ID>
+   ```
+   **Why the subcollection is `draft_files` and never `files`:** a TTL policy is keyed by
+   collection-group ID across the whole database, not by path. A saved skill's own file documents
+   live in a subcollection named `files` (`{prefix}skills/{user_id}:{name}/files/{sha256}`); a
+   policy on a draft subcollection also named `files` would cover every skill's files too. Skill
+   files never carry `expires_at`, but the distinct name keeps the policy unable to reach them at
+   all, rather than relying on that field staying absent.
+
+---
+
 ## Cost Optimization
 
 | Strategy             | Cost/Month | Pros        | Cons                      |

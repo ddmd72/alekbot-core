@@ -1,6 +1,6 @@
 # RFC: Agent Skills — named procedures for Smart, loaded on demand, saved by the user
 
-**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary. **Delivery C (text files in a skill, §15) — revision 2, G1 passed 2026-10-06; next: owner review, then the plan (G2).**
+**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary. **Delivery C (text files in a skill, §15) — revision 2, G1 passed 2026-10-06. Delivery C implemented on `feat/skill-files`; G3 pending.** Planning rulings (2026-10-06, Deviations section of `docs/superpowers/plans/2026-10-06-agent-skills-delivery-c.md`): `from_file` never copies from a system skill; empty files are rejected; the change summary is structured in the domain and localized in `ConversationHandler`; `$skill list` shows file counts for custom skills only.
 **Date:** 2026-10-04 (first draft 2026-09-30)
 **Owner decisions:**
 - Skills are named procedures in Anthropic's `SKILL.md` format, run by our own layer (Smart is multi-provider).
@@ -255,7 +255,7 @@ Findings are resolved in the artefact; a gate re-runs when a finding changed the
 
 ## 15. Delivery C — text files in a skill
 
-**Status:** revision 2. The design was agreed with the owner in chat on 2026-10-06. G1 on revision 1 returned "needs revision"; its findings are resolved below (§15.11). Revision 2 changes the design: files are text only and stored in Firestore. Scripts stay out of scope (§4).
+**Status:** revision 2, implemented on `feat/skill-files`; G3 pending. The design was agreed with the owner in chat on 2026-10-06. G1 on revision 1 returned "needs revision"; its findings are resolved below (§15.11). Revision 2 changes the design: files are text only and stored in Firestore. Scripts stay out of scope (§4).
 
 ### 15.1 Why
 
