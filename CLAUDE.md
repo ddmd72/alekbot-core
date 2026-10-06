@@ -453,7 +453,7 @@ agent must output/match), terse, one rule each, no overlap — *convergence not 
 delivery A + B both live). A user's custom skills live in Firestore (`{prefix}skills/{user_id}:{name}`,
 `versions/v<n>`); system skills ship in git (`src/skills/smart/<name>/SKILL.md`, currently
 `skill-creator` + `domain-competency-research`) and are loaded once at startup by
-`load_system_skills` (`src/adapters/filesystem_skill_loader.py`) — a malformed one fails startup.
+`load_system_skill_bundle` (`src/adapters/filesystem_skill_loader.py`, with their text files) — a malformed one fails startup.
 `SkillService` merges system ∪ the user's custom skills; Smart fetches the merged catalog once per
 request (`SkillService.list_skills`), renders `available_skills {}` before `standing_directives`,
 and serves `use_skill` through `DelegationEngine(local_tools=)` — not via `delegate_to_specialist`.
@@ -470,6 +470,10 @@ before any LLM call (own skills only): `$skill save <code>`, `$skill list`, `$sk
 (bare `$skill` prints usage). Both adapters strip a whole-text backtick wrapper before the `$` check
 so a copied command still dispatches; Telegram never treats a forwarded message as a command.
 Drafts live in `EnvironmentConfig.skill_drafts_collection`.
+**Files (delivery C, RFC §15):** a skill carries text files as `files/{sha256}` docs under its index
+doc, read as `skill:<name>/<path>` refs through `open_file`; a draft lists only file changes
+(unlisted files carry over), and the preview posts each model-written file as its own file plus a
+change summary between `SKILL.md` and the save command.
 Personal skills are never system skills — the repo is public.
 
 **Prompt Builder (Token System)** — assembly, not hardcoded prompts: verified Tokens (humor, voice,
