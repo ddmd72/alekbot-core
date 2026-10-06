@@ -40,6 +40,9 @@ class FileStoragePort(ABC):
 
         Returns:
             Raw file bytes.
+
+        Raises:
+            FileNotFoundError: if the file does not exist.
         """
 
     @abstractmethod

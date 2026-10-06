@@ -61,7 +61,13 @@ class GcsFileStorageAdapter(FileStoragePort):
         filename = unicodedata.normalize("NFC", filename)
         key = self._key(filename, user_id)
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(self._download_sync, key))
+        from google.api_core.exceptions import NotFound
+        try:
+            return await loop.run_in_executor(None, partial(self._download_sync, key))
+        except NotFound as e:
+            # Port contract: a missing file is FileNotFoundError, distinct from a storage outage.
+            logger.warning("GcsFileStorageAdapter: '%s' not found for user %s", filename, user_id[:8])
+            raise FileNotFoundError(filename) from e
 
     async def delete(self, filename: str, user_id: str) -> None:
         key = self._key(filename, user_id)

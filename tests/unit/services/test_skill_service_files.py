@@ -230,6 +230,39 @@ async def test_from_file_label_not_found_rejected_cleanly(svc, repo, conversion)
     repo.create_draft.assert_not_awaited()
 
 
+async def test_from_file_bare_name_not_found_gives_bare_filename_hint(svc, repo, conversion):
+    conversion.resolve_bytes.side_effect = FileNotFoundError("rates.csv")
+
+    with pytest.raises(SkillRejected) as e:
+        await svc.draft("u1", NEW, [SkillFileChange(path="r.csv", from_file="rates.csv")])
+
+    assert "pass the bare filename from the file label" in str(e.value)
+
+
+async def test_from_file_skill_ref_not_found_keeps_resolver_message(svc, repo, conversion):
+    other = Skill(name="other", description="Use when y.", body="o", version=1, files=[_file("r.md", "RRR")])
+    repo.list_current.return_value = [other]
+    msg = "Skill 'other' has no file 'missing.md'. Its files: r.md"
+    conversion.resolve_bytes.side_effect = FileNotFoundError(msg)
+
+    with pytest.raises(SkillRejected) as e:
+        await svc.draft("u1", NEW, [SkillFileChange(path="x.md", from_file="skill:other/missing.md")])
+
+    assert str(e.value) == msg
+    assert "bare filename" not in str(e.value)
+    repo.create_draft.assert_not_awaited()
+
+
+async def test_from_file_invalid_utf8_logs_warning(svc, repo, conversion, caplog):
+    conversion.resolve_bytes.return_value = b"\xff\xfebad"
+
+    with caplog.at_level("WARNING"):
+        with pytest.raises(SkillRejected):
+            await svc.draft("u1", NEW, [SkillFileChange(path="r.txt", from_file="r.txt")])
+
+    assert any("not UTF-8" in r.getMessage() for r in caplog.records)
+
+
 async def test_from_file_permission_error_rejected_cleanly(svc, repo, conversion):
     conversion.resolve_bytes.side_effect = PermissionError("not yours")
 

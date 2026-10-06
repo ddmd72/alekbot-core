@@ -173,7 +173,8 @@ class SkillService:
         """Read a `from_file` source verbatim as UTF-8 text (BOM and line endings kept)."""
         if is_delivered_ref(ref):
             raise SkillRejected("bot-delivered documents cannot be re-saved; write the needed part as a file")
-        if ref.startswith(SKILL_REF_PREFIX):
+        is_skill_ref = ref.startswith(SKILL_REF_PREFIX)
+        if is_skill_ref:
             parsed = parse_skill_ref(ref)
             # Built-in skills are written only in git; only the owner's custom skills are copyable.
             if parsed is None or parsed[0] not in {s.name for s in owned}:
@@ -188,12 +189,15 @@ class SkillService:
             data = await self._file_conversion.resolve_bytes(ref, user_id)
         except (FileNotFoundError, PermissionError) as e:
             logger.warning("⚠️ [Skills] from_file %r not readable for user %s: %s", ref, user_id[:8], e)
+            if is_skill_ref:  # the resolver's message lists the skill's actual files
+                raise SkillRejected(str(e)) from e
             raise SkillRejected(f"file {ref!r} not found — pass the bare filename from the file label") from e
         if len(data) > MAX_SKILL_FILE_BYTES:
             raise SkillRejected(f"file {ref!r} is over {MAX_SKILL_FILE_BYTES // 1024} KB")
         try:
             return data.decode("utf-8")
         except UnicodeDecodeError as e:
+            logger.warning("⚠️ [Skills] from_file %r is not UTF-8 for user %s: %s", ref, user_id[:8], e)
             raise SkillRejected(f"file {ref!r} is not UTF-8 text") from e
 
     async def save_draft(self, user_id: str, account_id: str, code: str) -> Tuple[str, int]:
