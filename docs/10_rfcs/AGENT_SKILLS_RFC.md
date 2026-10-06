@@ -1,6 +1,6 @@
 # RFC: Agent Skills — named procedures for Smart, loaded on demand, saved by the user
 
-**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary. **Delivery C (text files in a skill, §15) — revision 2, G1 passed 2026-10-06. Delivery C implemented on `feat/skill-files`; G3 pending.** Planning rulings (2026-10-06, Deviations section of `docs/superpowers/plans/2026-10-06-agent-skills-delivery-c.md`): `from_file` never copies from a system skill; empty files are rejected; the change summary is structured in the domain and localized in `ConversationHandler`; `$skill list` shows file counts for custom skills only.
+**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary. **Delivery C (text files in a skill, §15) — revision 2, G1 passed 2026-10-06. Delivery C implemented on `feat/skill-files`; G3 passed 2026-10-06; deploy + live acceptance pending.** Planning rulings (2026-10-06, Deviations section of `docs/superpowers/plans/2026-10-06-agent-skills-delivery-c.md`): `from_file` never copies from a system skill; empty files are rejected; the change summary is structured in the domain and localized in `ConversationHandler`; `$skill list` shows file counts for custom skills only.
 **Date:** 2026-10-04 (first draft 2026-09-30)
 **Owner decisions:**
 - Skills are named procedures in Anthropic's `SKILL.md` format, run by our own layer (Smart is multi-provider).
@@ -255,7 +255,7 @@ Findings are resolved in the artefact; a gate re-runs when a finding changed the
 
 ## 15. Delivery C — text files in a skill
 
-**Status:** revision 2, implemented on `feat/skill-files`; G3 pending. The design was agreed with the owner in chat on 2026-10-06. G1 on revision 1 returned "needs revision"; its findings are resolved below (§15.11). Revision 2 changes the design: files are text only and stored in Firestore. Scripts stay out of scope (§4).
+**Status:** revision 2, implemented on `feat/skill-files`; G3 passed 2026-10-06; deploy + live acceptance pending. The design was agreed with the owner in chat on 2026-10-06. G1 on revision 1 returned "needs revision"; its findings are resolved below (§15.11). Revision 2 changes the design: files are text only and stored in Firestore. Scripts stay out of scope (§4).
 
 ### 15.1 Why
 
@@ -304,6 +304,8 @@ Why: editing one line of the body must not make the model regenerate a 50 KB ref
 
 Inheritance is resolved **at draft time**, against the version that is current then, and the draft stores the full resulting manifest. A stale code saves exactly the manifest it was shown with, which matches §8 ("a stale code saves its own content"). Inherited entries point at file documents that already exist, because they are kept until the skill is deleted. If the skill was deleted in between, the save finds a missing hash, aborts, and asks for a new draft.
 
+The owner's direct save (`SkillService.save`, used by `scripts/skills/seed_custom_skill.py`) follows the same rule. A seed is a bare `SKILL.md` with no files, so it inherits the current version's manifest instead of saving an empty one (G3 finding, 2026-10-06).
+
 ### 15.4 Reading: `skill:` refs through the existing file pipeline
 
 There is no new read tool. A skill file is addressed as **`skill:<name>/<path>`** and read with **`open_file`**. This is the existing zero-LLM `FileManagementAgent` path.
@@ -314,7 +316,7 @@ There is no new read tool. A skill file is addressed as **`skill:<name>/<path>`*
 - **Reading as text.** A `skill:` ref skips mime guessing and is decoded as UTF-8 directly: its content is text by construction. Mime guessing would send `.json`/`.yaml` (and `.md` on some Python versions) to markitdown, because `_is_plain_text` checks `text/*` only (`utils/file_conversion.py:185-187`). Uploads keep their current behaviour.
 - **`SkillFileResolver`** lives in `services/` and is read-only. It is built over:
   - `SkillRepository`, which gains `get_current(user_id, name)` and `get_file(user_id, name, sha256)`. Listing all skills on every `open_file` would read twenty bodies.
-  - the system skills, whose file contents `load_system_skills` puts in memory at startup. `services/` never reads disk.
+  - the system skills, whose file contents `load_system_skill_bundle` (`adapters/filesystem_skill_loader.py`) puts in memory at startup and composition hands to the resolver. `services/` never reads disk.
 - **Shadowing in one place.** The rule (custom over system) is moved into one domain function used by both `SkillService.list_skills` and the resolver, so it is not written twice.
 - **Errors.** A missing skill or path raises `FileNotFoundError` with skill-specific text. It must not say "re-upload" (`file_management_agent.py:121-125`) and must not show as a conversion error.
 - **Dependency direction.** The chain is `SkillService → FileConversionService → SkillFileResolver`, by constructor injection (REQ-ARCH-22). `SkillService` moves below `FileConversionService` in `service_container.py`.
@@ -401,7 +403,7 @@ The file texts travel in `DeliveryItem.data`; there are at most 5 of them, each 
 ### 15.8 System skills
 
 A system skill's files live next to its `SKILL.md` in git, for example `src/skills/smart/<name>/references/…`.
-- `load_system_skills` reads the files into memory and builds each skill's manifest.
+- `load_system_skill_bundle` reads the files into memory and builds each skill's manifest; it returns the skills and their file contents, and `load_system_skills` is the skills-only wrapper.
 - Each of the following fails startup, like a malformed `SKILL.md`: a path that breaks §15.2, a symlink, a non-UTF-8 file, a file over the limits.
 - System files skip `SecurityPort`, for the reason given in §6.
 

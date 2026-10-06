@@ -1,7 +1,7 @@
 # Decision: Agent Skills — skills as Smart-local tools (delivery A + B)
 
 **Date:** 2026-10-04
-**Status:** Shipped (delivery A, read path, AND delivery B, authoring + system skills); delivery C (text files) implemented on `feat/skill-files`, G3 pending. Full design: `docs/10_rfcs/AGENT_SKILLS_RFC.md`.
+**Status:** Shipped (delivery A, read path, AND delivery B, authoring + system skills); delivery C (text files) implemented on `feat/skill-files`, G3 passed 2026-10-06; deploy + live acceptance pending. Full design: `docs/10_rfcs/AGENT_SKILLS_RFC.md`.
 
 ## Decision
 
