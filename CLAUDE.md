@@ -463,8 +463,10 @@ in the summary, so it lives until history tiering; after that the model can relo
 **Authoring (delivery B):** on interactive turns only (`ConversationHandler` sets
 `agent_context["interactive_delivery"]`; background paths — `notify`, `ask_alek`, `tell_alek`,
 `/worker` — never set it), Smart also gets `draft_skill`: it stores an immutable draft and returns
-a `skill_preview` delivery, which `ConversationHandler` alone delivers as two posts — the verbatim
-`SKILL.md` as a file, then a separate message with only `$skill save <code>`. Pasting that code is
+a `skill_preview` delivery, which `ConversationHandler` alone delivers in order — the verbatim
+`SKILL.md` as a file, each file the model wrote as its own file (at most 5, delivery C), a change
+summary when the skill has files, then a separate message with only `$skill save <code>` (not
+posted if any earlier post fails). Pasting that code is
 the save authorization; nothing is active before it. Commands, handled in `ConversationHandler`
 before any LLM call (own skills only): `$skill save <code>`, `$skill list`, `$skill delete <name>`
 (bare `$skill` prints usage). Both adapters strip a whole-text backtick wrapper before the `$` check
