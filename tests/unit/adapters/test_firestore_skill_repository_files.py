@@ -618,3 +618,76 @@ async def test_delete_skill_small_is_one_batch(repo, db, col):
     batch.delete.assert_any_call(f1)
     batch.delete.assert_any_call(doc_ref)
     batch.commit.assert_awaited_once()
+
+
+# --- G3: owner-facing messages and concurrent staging ---------------------------------------
+
+class TestMissingInheritedFileNamesPath:
+    @pytest.fixture(autouse=True)
+    def passthrough_transaction(self):
+        with patch(
+            "src.adapters.firestore_skill_repository.firestore.async_transactional",
+            side_effect=lambda fn: fn,
+        ):
+            yield
+
+    def _setup(self, db, col, col_drafts, presence_snaps):
+        doc_ref = _ref("skill")
+        doc_ref.get = AsyncMock(return_value=_snap(_index(current=1)))
+        col.document.return_value = doc_ref
+        db.get_all = MagicMock(side_effect=lambda *a, **k: _aiter(presence_snaps)())
+        txn = MagicMock()
+        db.transaction.return_value = txn
+        return txn
+
+    async def test_missing_snapshot_message_names_path_not_hash(self, repo, db, col, col_drafts):
+        skill = Skill(name="s", description="Use when x.", body="b2", files=[_file("refs/old.md", "alpha")])
+        txn = self._setup(db, col, col_drafts, [_snap(None, exists=False, id=SHA_A)])
+
+        with pytest.raises(SkillFileMissing) as e:
+            await repo.save_version("u1", "a1", skill, cap=20)
+
+        assert "refs/old.md" in str(e.value)
+        assert SHA_A[:8] not in str(e.value)
+        txn.set.assert_not_called()
+
+    async def test_absent_from_get_all_message_names_path_not_hash(self, repo, db, col, col_drafts):
+        skill = Skill(name="s", description="Use when x.", body="b2", files=[_file("refs/old.md", "alpha")])
+        txn = self._setup(db, col, col_drafts, [])
+
+        with pytest.raises(SkillFileMissing) as e:
+            await repo.save_version("u1", "a1", skill, cap=20)
+
+        assert "refs/old.md" in str(e.value)
+        assert SHA_A[:8] not in str(e.value)
+        txn.set.assert_not_called()
+
+
+async def test_create_draft_writes_staged_files_concurrently_then_draft(repo, col_drafts):
+    import asyncio
+
+    draft_ref = _ref("draft")
+    col_drafts.document.return_value = draft_ref
+    events = []
+    both_started = asyncio.Event()
+
+    def _file_set(sha):
+        async def _set(*a, **k):
+            events.append(f"start {sha[:4]}")
+            if sum(e.startswith("start") for e in events) == 2:
+                both_started.set()
+            # A sequential writer would wait here forever: the second write never starts.
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            events.append(f"end {sha[:4]}")
+        return _set
+
+    for sha in (SHA_A, SHA_B):
+        draft_ref.collection("draft_files").document(sha).set = AsyncMock(side_effect=_file_set(sha))
+    draft_ref.create = AsyncMock(side_effect=lambda *a, **k: events.append("draft"))
+    skill = Skill(name="s", description="Use when x.", body="b",
+                  files=[_file("a.md", "alpha"), _file("b.md", "beta")])
+
+    assert await repo.create_draft("u1", "ab12", skill, staged={SHA_A: "alpha", SHA_B: "beta"}) is True
+
+    assert events[-1] == "draft"
+    assert sorted(events[:2]) == sorted([f"start {SHA_A[:4]}", f"start {SHA_B[:4]}"])

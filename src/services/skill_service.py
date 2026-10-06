@@ -101,7 +101,17 @@ class SkillService:
             raise SkillRejected(f"{field} flagged by the security check: {result.patterns_detected}")
 
     async def save(self, user_id: str, account_id: str, skill: Skill) -> int:
+        """Save `skill` directly (owner seed). A skill given without files inherits the current
+        version's files (RFC §15.3): re-seeding a bare SKILL.md must not drop them."""
         await self._check(user_id, skill)
+        if not skill.files:
+            # list_current, like draft(): the one read of the user's skills this service makes.
+            owned = await self._repo.list_current(user_id)
+            current = next((s for s in owned if s.name == skill.name), None)
+            if current is not None and current.files:
+                skill = skill.model_copy(update={"files": list(current.files)})
+                logger.info("📎 [Skills] %s inherits %d files from v%s for user %s",
+                            skill.name, len(current.files), current.version, user_id[:8])
         version = await self._repo.save_version(user_id, account_id, skill, cap=MAX_CUSTOM_SKILLS_PER_USER)
         logger.info("💾 [Skills] Saved %s v%s for user %s", skill.name, version, user_id[:8])
         return version
