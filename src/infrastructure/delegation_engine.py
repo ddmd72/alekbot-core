@@ -26,10 +26,7 @@ from ..domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE, render_chat_si
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 
-from .agent_registry import ExecutionMode, FanoutSpec
-
-# The delegate tool speaks "now"/"later"; the coordinator dispatches SYNC/ASYNC.
-_MODE_WORDS = {"now": ExecutionMode.SYNC, "later": ExecutionMode.ASYNC}
+from .agent_registry import FanoutSpec
 
 if TYPE_CHECKING:
     from .agent_coordinator import AgentCoordinator
@@ -664,11 +661,6 @@ class DelegationEngine:
             "params": context_params,
         }
 
-        # "now"/"later" rather than SYNC/ASYNC: the model reasons about the wait, not
-        # about our dispatch modes. Anything else it invents is ignored — an unknown
-        # word must fall back to the intent's declared mode, never break the call.
-        mode_override = _MODE_WORDS.get(str(args.get("mode", "")).strip().lower())
-
         # Fan-out: dispatch primary + secondary intents in parallel
         fanout_spec = intent_fanout.get(intent)
         if fanout_spec and fanout_spec.intents:
@@ -677,12 +669,9 @@ class DelegationEngine:
                 delegation_context, calling_agent_id,
             )
 
-        # Fan-out deliberately ignores the override: it dispatches several intents in
-        # parallel and merges their results into one tool response, and an async leg
-        # returns an ack rather than a result — there would be nothing to merge.
         return await self._dispatch_to_coordinator(
             tool_call, intent, query, delegation_context,
-            calling_agent_id, max_retries, mode_override,
+            calling_agent_id, max_retries,
         )
 
     async def _dispatch_to_coordinator(
@@ -693,7 +682,6 @@ class DelegationEngine:
         delegation_context: Dict[str, Any],
         calling_agent_id: str,
         max_retries: int,
-        mode_override: Optional[ExecutionMode] = None,
     ) -> ToolResult:
         """Dispatch a single intent to the coordinator and return a ToolResult."""
         for attempt in range(max_retries + 1):
@@ -702,7 +690,6 @@ class DelegationEngine:
                 query=query,
                 context=delegation_context,
                 calling_agent_id=calling_agent_id,
-                mode_override=mode_override,
             )
 
             if response.status == AgentStatus.SUCCESS:

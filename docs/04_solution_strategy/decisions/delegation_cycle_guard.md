@@ -70,6 +70,10 @@ case (forcing `now` on a 720s document intent) blocks the orchestrator until its
 Loud rather than silent, by design. The point of the logging change is that it is also
 diagnosable.
 
+**Superseded 2026-10-06:** the per-call `mode` was removed — the divergence marker did its job
+(it flagged the lost morning-briefing page), and the investigation showed the switch itself was
+wrong. The cycle guard and depth logging stay. See `delegate_mode_parameter_removed.md`.
+
 ## Revisit if
 
 A legitimate chain ever reaches depth 8 — raise the cap rather than removing it, and record why the
