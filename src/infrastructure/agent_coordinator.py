@@ -347,7 +347,6 @@ class AgentCoordinator:
         query: str,
         context: Dict[str, Any],
         calling_agent_id: str = "unknown",
-        mode_override: Optional[ExecutionMode] = None,
     ) -> AgentResponse:
         """
         Handle a delegate_to_specialist call from SmartResponseAgent.
@@ -359,8 +358,8 @@ class AgentCoordinator:
         ``infrastructure/agent_manifest.py`` — each descriptor's ``capabilities``
         dict declares the intents that agent owns. ``agent_manifest.py`` is the
         single source of truth for which agent handles which intent; this method
-        hardcodes no mapping. Then routes by ``mode_override`` when the caller gave
-        one, otherwise by the descriptor's ExecutionMode:
+        hardcodes no mapping. Then routes by the intent's declared ExecutionMode —
+        the caller cannot choose it (see decisions/delegate_mode_parameter_removed.md):
         - SYNC  → _execute_sync (immediate, returns result)
         - ASYNC → _execute_async (enqueue Cloud Tasks, returns ack)
 
@@ -372,11 +371,6 @@ class AgentCoordinator:
             context:          Must contain user_id. May contain extra params
                               under "params" key that are spread into AgentMessage.payload.
             calling_agent_id: For logging only.
-            mode_override:    Caller's choice of SYNC/ASYNC for THIS call, overriding
-                              the intent's declared mode. None (the default) keeps the
-                              manifest's value, so callers that pass nothing are
-                              unaffected. Exists because "answer me now" vs "get back
-                              to me" is a property of the request, not of the intent.
         """
         if self._registry is None:
             logger.error("handle_delegation called but no AgentRegistry configured")
@@ -404,16 +398,9 @@ class AgentCoordinator:
         # asyncio.gather, and a shared list would let siblings write each other's chain.
         context = {**context, self.CALL_CHAIN_KEY: [*chain, manifest.agent_id]}
 
-        declared = manifest.capabilities[intent]
-        mode = mode_override or declared
-        # Flag the override only when it DIVERGES from the manifest. Observed on the
-        # first day live: the model sets `mode` on nearly every call even though the
-        # schema says to omit it, so marking every override would bury the one case
-        # that actually changes behaviour — which is also the one that can time out.
-        divergent = mode_override is not None and mode_override != declared
+        mode = manifest.capabilities[intent]
         logger.info(
-            f"Delegating intent='{intent}' to agent='{manifest.agent_id}' mode={mode}"
-            f"{f' (OVERRIDE, declared {declared.value})' if divergent else ''} "
+            f"Delegating intent='{intent}' to agent='{manifest.agent_id}' mode={mode} "
             f"depth={len(chain) + 1} (from {calling_agent_id})"
         )
 

@@ -543,6 +543,10 @@ always runs synchronously regardless of what the model requests. "Send me the fu
 phone therefore still resolves through `resolve_late_answer` (the *provider's* async mechanism
 above), not through `ExecutionMode.ASYNC`.
 
+**Update 2026-10-06:** the `mode` parameter is gone from `delegate_to_specialist` altogether
+(`decisions/delegate_mode_parameter_removed.md`), so the stripping above is no longer needed — every
+intent runs in its declared mode. References to `mode: "later"` below are historical.
+
 **Corner cases — requirements, not commentary.**
 
 | Case | Required behaviour |

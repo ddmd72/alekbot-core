@@ -491,6 +491,18 @@ mandatory before team/multi-user rollout.
   versioned in the repo before the agent's prompt is deleted.
 - **Deferred deliberately** (owner, 2026-10-04): do it after Agent Skills delivery B.
 
+### TD-11: No async delegation whose result returns to the orchestrator [P3] — 🔲 OPEN (needs RFC)
+
+- **Why:** ASYNC today means "the result goes to the user" — `AgentWorkerHandler` delivers it, nothing
+  hands it back to the caller. The per-call `mode: "now" | "later"` that pretended otherwise was
+  removed 2026-10-06 (`decisions/delegate_mode_parameter_removed.md`). A multi-step task that must
+  continue after a slow specialist (e.g. use a generated page's link) has no mechanism.
+- **Open questions for the RFC:** where the pending task's state lives; how the orchestrator is woken
+  (a new turn, or the long-turn machinery); what the user sees meanwhile; the 25-min turn clock; what
+  the orchestrator receives (a reference — key + link — never document content).
+- **To be designed separately** (owner, 2026-10-06) — an orchestrator sync/async switch is about the
+  call mode, distinct from the removed recipient-in-disguise flag.
+
 ---
 
 ## 🏢 Planned Milestones (Phase 3: Enterprise)

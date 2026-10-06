@@ -170,6 +170,19 @@ class TestDepthCap:
 
         assert result.status == AgentStatus.SUCCESS
 
+    async def test_depth_is_logged(self, caplog):
+        """Without it the guard's state is invisible in production — ironic for a
+        feature whose point is making an invisible failure visible."""
+        coord, _, _ = _coordinator()
+        with caplog.at_level("INFO"):
+            await coord.handle_delegation(
+                intent="search_memory", query="q",
+                context={"user_id": "u1", "_call_chain": ["smart_agent", "notes_agent"]},
+                calling_agent_id="notes_agent",
+            )
+
+        assert "depth=3" in caplog.text
+
 
 class TestChainPropagation:
 

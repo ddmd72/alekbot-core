@@ -197,6 +197,13 @@ What is genuinely missing in the call layer, and must ship before the first comp
 Both shipped 2026-08-25: per-call `mode_override` on `handle_delegation`, and a `_call_chain`
 cycle guard with `MAX_DELEGATION_DEPTH=8` (`decisions/delegation_cycle_guard.md`).
 
+**Update 2026-10-06 — item 1 was implemented wrong and removed.** The override never gave
+"get back to me": an ASYNC result is delivered to the user, not returned to the caller, so it
+only chose the result's recipient — and dropped SYNC answers or lost generator documents. No
+companion ever used it (Lelik stripped it). Sync/async is the intent's declared mode again; a
+real async-with-return for an orchestrator needs its own design. See
+`decisions/delegate_mode_parameter_removed.md`.
+
 ## 8. Scope: conversational channels only
 
 The axis governs the memory policy of a **conversation**. Email indexing is not an instance of

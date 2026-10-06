@@ -352,9 +352,9 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
   - archetype and vibe stay shared with Smart;
   - the model voices any rule about the *form* of its reply ("briefly", "no ceremony", "I won't
     make it up"). Steer with examples, not with rules about form.
-- **`mode` is stripped** from delegate arguments before dispatch (`LelikAgent.delegate`): `AgentWorkerHandler`
-  delivers only generator-declared intents, so a SYNC-declared intent forced into `mode: "later"` would
-  have nowhere to return its answer and silently drop it on the phone.
+- **No caller picks sync/async** — every intent runs in its manifest-declared mode. The per-call
+  `mode: "now" | "later"` on `delegate_to_specialist` was removed 2026-10-06 (Lelik used to strip
+  it: "later" on a SYNC intent dropped the answer). See `decisions/delegate_mode_parameter_removed.md`.
 - Per-user config (prompt builder, persona service, …) is cached with the agent, same ≈1 h TTL as
   Smart and Tutor. `get_lelik` calls `ensure_agents_for_user` on every use, refreshing that TTL — which
   also keeps the user's Router warm for `ask_alek`, the same mechanism every other entry point relies on.
