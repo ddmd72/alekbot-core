@@ -392,7 +392,7 @@ The file texts travel in `DeliveryItem.data`; there are at most 5 of them, each 
   - `current` is flipped;
   - consumed drafts are deleted, together with their `draft_files/` docs, addressed by reference from each draft's `staged` list (no extra reads).
 
-  The worst case is about 3.4 MB (5 new files of 256 KB plus the version and index docs, up to ~1 MiB each), under Firestore's 10 MiB request bound. Save stays atomic.
+  The worst case is about 7 MB (up to 20 staged files of 256 KB — `from_file` re-saves are not bound by the 5-written-files cap — plus the version and index docs, up to ~1 MiB each), under Firestore's 10 MiB request bound. Save stays atomic.
 - **Skill file docs never carry `expires_at`.** The copy writes `content`, `size`, `created_at` only; a test asserts it.
 - **`$skill delete`** removes the index document, `versions/*` and `files/*`. Nothing outside the skill references its files. References are gathered with `list_documents()` (refs only, no content) and deleted in chunked batches.
 - **Unsaved drafts** get a Firestore TTL on a new `expires_at` field, set 30 days ahead, on the drafts collection and on the `draft_files` collection group. TTL policies are keyed by collection-group ID across the whole database, so the draft subcollection has its own name: a policy on `files` would also cover every skill's own files. A code older than that gets the existing "no pending draft" reply. This replaces §8's "no TTL: a stale draft is inert": drafts now carry content beyond one document.
