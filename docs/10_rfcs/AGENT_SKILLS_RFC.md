@@ -1,6 +1,6 @@
 # RFC: Agent Skills — named procedures for Smart, loaded on demand, saved by the user
 
-**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary. **Delivery C (text files in a skill, §15) — revision 2 after G1, re-check pending.**
+**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary. **Delivery C (text files in a skill, §15) — revision 2, G1 passed 2026-10-06; next: owner review, then the plan (G2).**
 **Date:** 2026-10-04 (first draft 2026-09-30)
 **Owner decisions:**
 - Skills are named procedures in Anthropic's `SKILL.md` format, run by our own layer (Smart is multi-provider).
@@ -311,7 +311,7 @@ There is no new read tool. A skill file is addressed as **`skill:<name>/<path>`*
 - **Ref resolution.** `FileConversionService._download_by_ref` already dispatches by ref shape (`file_conversion_service.py:67`). It gains a third shape, `skill:`.
   - Resolution follows the requesting user's **visible set** (§3): the user's custom skill at its current version, or else a system skill.
   - The user comes from the request context (`message.context["user_id"]`), never from the ref. Another user's skill cannot be addressed.
-- **Reading as text.** Files are text, so `resolve_content` reads them as UTF-8. The plan makes sure every allowlisted extension takes the plain-text branch, not markitdown.
+- **Reading as text.** A `skill:` ref skips mime guessing and is decoded as UTF-8 directly: its content is text by construction. Mime guessing would send `.json`/`.yaml` (and `.md` on some Python versions) to markitdown, because `_is_plain_text` checks `text/*` only (`utils/file_conversion.py:185-187`). Uploads keep their current behaviour.
 - **`SkillFileResolver`** lives in `services/` and is read-only. It is built over:
   - `SkillRepository`, which gains `get_current(user_id, name)` and `get_file(user_id, name, sha256)`. Listing all skills on every `open_file` would read twenty bodies.
   - the system skills, whose file contents `load_system_skills` puts in memory at startup. `services/` never reads disk.
@@ -347,7 +347,9 @@ An upload is re-saved **as stored**. It must have an allowlisted extension and d
 2. Read `from_file` bytes through `FileConversionService.resolve_bytes`.
 3. Compute the hashes.
 4. Merge the changes into the current manifest. A file whose hash equals the current one is not a change.
-5. Store the draft. Content for hashes the skill does not already hold goes in the draft's `files/{sha256}` subcollection.
+5. Store the draft. Content for hashes the skill does not already hold goes in the draft's own `draft_files/{sha256}` subcollection, and the draft doc lists them as `staged: [sha256]`. The file docs are written **before** the draft doc (or in one batch), so a valid code never points at missing files.
+
+**Accepted risks.** Model-written files are bounded in practice by Smart's output tokens, not by 5 × 256 KB; large references arrive via `from_file`. The first split of an existing body retypes text the model already holds, which is the paraphrase risk §15.3 avoids for revisions; the preview shows every model-written file, so the owner catches it there.
 
 **Checks** (§8) extend to files. Every file, whether model-written or re-saved, goes through `SecurityPort` and is **rejected** if flagged, because Smart will read it as part of the procedure. As in §8, these checks are hygiene; the security boundary is the command.
 
@@ -382,17 +384,18 @@ The file texts travel in `DeliveryItem.data`; there are at most 5 of them, each 
   - the index doc;
   - the cap query;
   - the draft's files;
-  - a presence check for every inherited hash.
+  - a presence check for every inherited hash, via `get_all(refs, field_paths=["size"], transaction=…)` so it does not pull file contents.
 
   Then the writes:
   - the draft's file documents are copied into the skill's `files/`;
   - the version is written with its manifest;
   - `current` is flipped;
-  - consumed drafts are deleted, together with their `files/`.
+  - consumed drafts are deleted, together with their `draft_files/` docs, addressed by reference from each draft's `staged` list (no extra reads).
 
-  The worst case is 5 new files of 256 KB each, about 1.3 MB, well under Firestore's 10 MiB request bound. Save stays atomic.
-- **`$skill delete`** removes the index document, `versions/*` and `files/*`. Nothing outside the skill references its files.
-- **Unsaved drafts** get a Firestore TTL on a new `expires_at` field, set 30 days ahead, on the drafts collection and on its `files` collection group. A code older than that gets the existing "no pending draft" reply. This replaces §8's "no TTL: a stale draft is inert": drafts now carry content beyond one document.
+  The worst case is about 3.4 MB (5 new files of 256 KB plus the version and index docs, up to ~1 MiB each), under Firestore's 10 MiB request bound. Save stays atomic.
+- **Skill file docs never carry `expires_at`.** The copy writes `content`, `size`, `created_at` only; a test asserts it.
+- **`$skill delete`** removes the index document, `versions/*` and `files/*`. Nothing outside the skill references its files. References are gathered with `list_documents()` (refs only, no content) and deleted in chunked batches.
+- **Unsaved drafts** get a Firestore TTL on a new `expires_at` field, set 30 days ahead, on the drafts collection and on the `draft_files` collection group. TTL policies are keyed by collection-group ID across the whole database, so the draft subcollection has its own name: a policy on `files` would also cover every skill's own files. A code older than that gets the existing "no pending draft" reply. This replaces §8's "no TTL: a stale draft is inert": drafts now carry content beyond one document.
 - **`$skill list`** shows each skill's file count.
 
 ### 15.8 System skills
@@ -405,7 +408,7 @@ A system skill's files live next to its `SKILL.md` in git, for example `src/skil
 ### 15.9 Configuration, deployment, acceptance
 
 - **No new configuration key.**
-- **Owner deployment step:** TTL policies on `expires_at` for `{prefix}skill_drafts` and its `files` collection group, recorded in `docs/07_deployment/README.md`.
+- **Owner deployment step:** TTL policies on `expires_at` for `{prefix}skill_drafts` and the `draft_files` collection group, recorded in `docs/07_deployment/README.md`.
 - **Unit tests:**
   - path, extension and limit validation;
   - the manifest bound proving the document budget;
@@ -453,3 +456,5 @@ A system skill's files live next to its `SKILL.md` in git, for example `src/skil
 | `content_type` unused; extensionless paths | Extension allowlist required; `content_type` dropped from the manifest (§15.2) |
 | "Audio is transcribed" false | Claim removed; gap noted (§15.10) |
 | Deploy env var; `open_file` description | No new key; manifest description updated (§15.4, §15.9) |
+
+**Targeted re-check (revision 2): ready for planning after F1–F2.** F1 TTL on a shared `files` group → draft subcollection renamed `draft_files` (§15.5, §15.7). F2 draft cleanup reads → `staged` list, `get_all` with field mask (§15.7). F3 mime guessing → `skill:` refs decoded as UTF-8 directly (§15.4). F4 delete reads contents → `list_documents()` (§15.7). F5 draft before its files → files written first (§15.5). Accepted risks stated (§15.5).
