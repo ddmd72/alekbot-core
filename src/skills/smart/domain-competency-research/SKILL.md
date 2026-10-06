@@ -49,19 +49,4 @@ The owner may add, remove, merge, re-tag or re-score items, or challenge the sco
 
 ## The final manifest
 
-On approval, output:
-1. A short human-readable list: `<symbol> <name> (<TAG>)`, one per line, ordered by score.
-2. The machine-readable manifest in one JSON block:
-
-```json
-{
-  "artifact_type": "Domain_Manifest",
-  "domain_name": "<domain>",
-  "status": "FINALIZED",
-  "mandatory_stack": [
-    {"name": "...", "type": "KNOWLEDGE|ALGORITHM|CONSTRAINT|STYLE", "score": 0, "rationale": "..."}
-  ]
-}
-```
-
-Then offer, in one line, to keep it: as a document (`create_document`) or in memory — whichever the owner prefers.
+When the owner approves, open `skill:domain-competency-research/references/final-manifest.md` and output exactly what it specifies.
