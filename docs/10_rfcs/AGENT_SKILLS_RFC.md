@@ -1,6 +1,6 @@
 # RFC: Agent Skills — named procedures for Smart, loaded on demand, saved by the user
 
-**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary.
+**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary. **Delivery C (skill files, §15) — design agreed with the owner 2026-10-06, G1 pending.**
 **Date:** 2026-10-04 (first draft 2026-09-30)
 **Owner decisions:**
 - Skills are named procedures in Anthropic's `SKILL.md` format, run by our own layer (Smart is multi-provider).
@@ -67,7 +67,7 @@ description: "Use when the owner asks about a flight's status, delay, gate or ar
 - `name`: kebab-case `[a-z0-9-]`, ≤ 64 chars.
 - `description`: the trigger, ≤ 250 chars, one line, "Use when …". Re-sent on every request.
 - body: markdown; the whole `SKILL.md` is capped just under the Firestore document limit (1 MiB, `MAX_SKILL_MD_BYTES` = 1 MiB − 32 KB). The cap is a storage bound, not a style limit (owner, 2026-10-05: an earlier 20 KB cap had no basis and rejected real drafts). Concision is guidance for the author.
-- **No files and no scripts in v1.** Reference material goes in the body. Executing scripts needs a sandbox and its own RFC.
+- **No files and no scripts in deliveries A and B.** Reference material went in the body. Files are delivery C (§15). Executing scripts needs a sandbox and its own RFC.
 
 **Parsing.** Frontmatter is read with `yaml.safe_load` (PyYAML is already a dependency) in `src/utils/skill_md.py`, shared by the seeding script and delivery B's filesystem adapter; `domain/` holds a pydantic `Skill` model that validates the result.
 
@@ -252,3 +252,99 @@ Findings are resolved in the artefact; a gate re-runs when a finding changed the
 | Delete and cap | Versions deleted explicitly; count inside the save transaction (§8) |
 | SecurityPort sanitize vs reject | Reject (§8) |
 | Offering line always on | Tuned on live use (§6, §10) |
+
+## 15. Delivery C — files in a skill
+
+**Status:** design agreed with the owner in chat 2026-10-06; G1 pending. Scripts stay out (§4).
+
+### 15.1 Why
+
+A skill today is one text. Material needed only sometimes (reference tables, lists, long examples) rides in the body and so in the prompt for up to three exchanges every time the skill loads (§7). Anthropic's skills solve this with progressive disclosure: `SKILL.md` stays short and points at files the model opens when it needs them. The second use is keeping a file the owner sent to the chat (a template, a logo, a PDF) as part of a skill.
+
+**Owner decisions (2026-10-06):**
+- Files of **any type**; no scripts.
+- Files arrive two ways only: the model writes a text file while drafting (typically by moving rarely used parts of the body out), or it **re-saves a file already in the chat** at the owner's request. No separate upload path.
+- `skill-creator` is updated to split skills this way.
+- No concrete custom skill needs files yet; acceptance uses a system skill and a chat file (§15.9).
+
+### 15.2 Storage
+
+- **A dedicated bucket, `GCS_SKILLS_BUCKET`, with no age-based deletion.** The media bucket deletes every object after 30 days, and GCS lifecycle rules cannot express "everything except `skills/`".
+- **Content-addressed blobs:** `files/{user_id}/{sha256}`. Draft blobs go to `drafts/{user_id}/{sha256}`; the bucket's only lifecycle rule deletes `drafts/` after 7 days, so an unsaved draft costs no code.
+- **A manifest per version:** `files: {path: {sha256, content_type, size}}` on the version doc, the index doc (denormalized, like `body`) and the draft doc. The index doc also keeps `blob_refs`, the set of every sha256 any version of that skill ever referenced, for cleanup (§15.7).
+- Access goes through the existing `MediaStoragePort`, a second `GcsMediaAdapter` instance bound to the skills bucket. The port gains what is missing for this use (`delete`, a server-side `copy`); the plan settles the exact methods.
+- **Limits:** 10 MB per file, 50 MB and 50 files per skill. They guard against accidents and change with real use.
+- **Paths:** relative, `[A-Za-z0-9._-]` segments joined by `/`, no `.` or `..` segment, at most 200 chars; `SKILL.md` is reserved. Convention, not rule: `references/` for reference text, `assets/` for other files.
+
+### 15.3 Versions inherit files
+
+A draft lists **changes** against the skill's current version; everything not listed carries over. Each saved version still stores its **full** manifest, so v1 stays exactly readable.
+
+Why: editing one line of the body must not make the model regenerate a 50 KB reference. Regenerating costs tokens and silently corrupts data, because the model paraphrases instead of copying.
+
+Inheritance is resolved **at draft time**, against the version current then, and the draft stores the full resulting manifest. A stale code therefore saves exactly the manifest it was shown with, consistent with §8 ("a stale code saves its own content").
+
+### 15.4 Reading: `skill:` refs through the existing file pipeline
+
+There is no new read tool. A skill file is addressed as **`skill:<name>/<path>`** and read with **`open_file`**, or passed to any specialist as `file_ref`, like an uploaded file.
+
+- `FileConversionService._download_by_ref` already dispatches by ref shape (bare filename → uploads, `docs/…` → delivered documents). It gains a third shape. A `skill:` ref resolves against the requesting user's **visible set** (§3): their custom skill's current manifest, or a system skill's files on disk. The user comes from the request context, never from the ref, so another user's skill cannot be addressed and no ownership check is needed.
+- `FileManagementAgent` makes no LLM call, so opening a reference is zero-LLM. Text and markdown are read as UTF-8, PDF and DOCX through markitdown, images pass to the orchestrator as for uploads, audio is transcribed. These are the existing `open_file` rules, unchanged.
+- **`use_skill` lists the files.** A `Files` block is appended after the body: `- skill:<name>/<path> — <size>, <content_type>`. The model then knows what it can open even when the body forgets to mention a file. The list is part of the loaded text and is tiered with it (§7); nothing else changes in history.
+- A file opened with `open_file` is an ordinary tool result. It does not persist like a body: a body is an instruction followed over several turns, a reference is a lookup, and reopening it is cheap.
+- A ref resolves against the version **current at read time**. If a skill is saved again mid-conversation, a later `open_file` sees the new file. This is the same as a body reload (§7).
+- **`delete_file` refuses `skill:` refs.** Skill files leave only through a new version or `$skill delete`.
+- **Dependency direction, no cycle.** `SkillService` needs `FileConversionService` to read `from_file` (§15.5), and `FileConversionService` needs to resolve `skill:` refs. Resolution therefore lives in a small read-only `SkillFileResolver` (services/, over `SkillRepository`, the skills `MediaStoragePort` and the system skills), so the graph is `SkillService → FileConversionService → SkillFileResolver`. Cross-service dependencies go by constructor injection (REQ-ARCH-22).
+- The `skill:` shape must not collide with an upload's filename. Upload sanitization in `GcsFileStorageAdapter` must keep a user upload from starting with `skill:`; the plan verifies this and adds a test.
+
+### 15.5 Authoring: `draft_skill(…, files)`
+
+`draft_skill` gains an optional `files` parameter, a list of changes:
+
+| Entry | Meaning |
+|-------|---------|
+| `{path, content}` | a text file the model writes (new or replacing) |
+| `{path, from_file}` | re-save a file the model can already open: an upload, a delivered document, or another skill's file (`skill:` ref) |
+| `{path, remove: true}` | drop a file from the new version |
+
+The handler validates paths and limits, resolves `from_file` bytes through `FileConversionService` (the same dispatch `open_file` uses), computes sha256 hashes, uploads new blobs under `drafts/`, merges the changes into the current manifest and stores the draft. A file whose content equals the current one (same hash) is not a change.
+
+**Checks** (§8) extend to files. Every file with a `text/*` (or markdown/JSON) content type, whether model-written or re-saved, goes through `SecurityPort` and is **rejected** if flagged: Smart will read it as part of the procedure. Binary files are checked for type and size only. As in §8, these are hygiene; the boundary is the command.
+
+**`skill-creator`** gains a section on structure:
+- the body says when the skill applies and what to do;
+- rarely needed material goes to `references/` with a line in the body saying when to open it;
+- files from the chat are re-saved with `from_file`, never retyped;
+- a revision lists only what changed.
+
+### 15.6 Preview before `$skill save`
+
+The command authorizes what the owner was shown (§8), so everything the model wrote is shown. `skill_preview` gains two posts:
+
+1. `SKILL.md` as a file (unchanged);
+2. **each text file the model wrote or changed, as its own file.** Re-saved files from the chat are not posted again; the owner sent them;
+3. **a change summary message:** `+ references/airlines.md (new, 12 KB)`, `~ references/fees.md (changed)`, `+ assets/logo.png (from chat, 84 KB)`, `− old.md (removed)`, `= 2 files unchanged`. Without it a v2 is opaque: a removed file does not show in the body. Omitted when the skill has no files and none changed, so file-less skills look exactly as today;
+4. the `$skill save <code>` message, **last**.
+
+If any post fails, the command is not posted, as today.
+
+### 15.7 Save, delete, list
+
+- **`$skill save`**: before the Firestore transaction, every manifest blob missing under `files/` is copied from `drafts/`. Copying is idempotent: same hash, same bytes. The transaction then writes the version with its manifest, flips `current`, and adds the hashes to `blob_refs`. A failed copy aborts the save with a chat reply, and nothing is written.
+- **`$skill delete`**: after the Firestore delete, blobs in the deleted skill's `blob_refs` that no other skill of the user references (union of the remaining index docs' `blob_refs`, at most 20 reads) are deleted. A failed blob delete is logged; an orphan costs storage, not correctness.
+- **`$skill list`** shows each skill's file count.
+
+### 15.8 System skills
+
+Files live next to `SKILL.md` in git (`src/skills/smart/<name>/references/…`). `load_system_skills` builds each skill's manifest from its folder. A path that breaks the rules, a symlink, or a file over the limits fails startup, like a malformed `SKILL.md`. `skill:` refs to system skills are served from disk. System files skip `SecurityPort`, for the reason given in §6.
+
+### 15.9 Configuration, deployment, acceptance
+
+- `GCS_SKILLS_BUCKET` is registered in `load_settings()` (deploy configuration, not an optional knob). Unset (local dev): custom-skill files are unavailable; a draft with files is rejected with a clear tool message; system skills still serve their files from disk.
+- Deployment (owner steps, `docs/07_deployment/README.md`): create the bucket (uniform access, private), add the `drafts/` 7-day rule, grant the service account object admin on it, set the key.
+- **Unit:** path and limit validation; manifest inheritance and the stale-code rule; `skill:` ref resolution (custom, system, shadowing, unknown, cross-user impossible); `delete_file` refusal; `use_skill` files block; preview order and abort; save copy-before-transaction; delete GC across skills; loader manifests and startup failures; `SecurityPort` on text files. **Adapter wire tests** for the new `MediaStoragePort` methods at the SDK boundary.
+- **Live acceptance:** (1) move a reference part of a system skill into `references/`, then Smart opens it via `open_file` when needed and not otherwise; (2) re-save an image from the chat into a custom skill and hand it to `create_html_page` by `skill:` ref; (3) a v2 of a skill with files that changes only the body carries the files over.
+
+### 15.10 Not in delivery C
+
+Scripts; a Cabinet editor; files for Tutor/Lelik (Q2); pinning a ref to a version; dedup of identical blobs across users.
