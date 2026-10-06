@@ -443,3 +443,37 @@ async def test_list_skills_still_shadows_system(svc, repo, caplog):
 
     assert [s.name for s in result] == ["alpha", "skill-creator"]
     assert result[1] is custom
+
+
+# ---------------------------------------------------------------------------
+# save (owner seed) — files inherit from the current version (RFC §15.3)
+# ---------------------------------------------------------------------------
+
+async def test_save_without_files_keeps_current_manifest(svc, repo):
+    a = _file("references/a.md", "AAA")
+    repo.list_current.return_value = [Skill(name="fs", description="Use when x.", body="old", version=1, files=[a])]
+
+    await svc.save("u1", "a1", Skill(name="fs", description="Use when x.", body="new body"))
+
+    saved = repo.save_version.call_args.args[2]
+    assert saved.body == "new body"
+    assert saved.files == [a]
+
+
+async def test_save_of_new_skill_saves_as_given(svc, repo):
+    repo.list_current.return_value = []
+
+    await svc.save("u1", "a1", NEW)
+
+    repo.save_version.assert_awaited_once_with("u1", "a1", NEW, cap=MAX_CUSTOM_SKILLS_PER_USER)
+
+
+async def test_save_with_own_files_does_not_inherit(svc, repo):
+    a = _file("references/a.md", "AAA")
+    b = _file("references/b.md", "BBB")
+    repo.list_current.return_value = [Skill(name="fs", description="Use when x.", body="old", version=1, files=[a])]
+    incoming = Skill(name="fs", description="Use when x.", body="b", files=[b])
+
+    await svc.save("u1", "a1", incoming)
+
+    assert repo.save_version.call_args.args[2].files == [b]

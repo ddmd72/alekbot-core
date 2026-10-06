@@ -18,6 +18,7 @@ Collection: EnvironmentConfig.skill_drafts_collection   doc id = {user_id}:{code
              policy on `expires_at` never covers a skill's `files/`)
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Mapping, Optional
 
@@ -164,17 +165,16 @@ class FirestoreSkillRepository(SkillRepository):
                 refs = [doc_ref.collection(_FILES).document(s) for s in inherited]
                 present = set()
                 async for snap in self._db.get_all(refs, field_paths=["size"], transaction=txn):
-                    if not snap.exists:
-                        logger.warning("⚠️ [Skills] Inherited file %s missing for %s…:%s",
-                                       (snap.id or "?")[:8], user_id[:8], skill.name)
-                        raise SkillFileMissing(
-                            f"file {(snap.id or '?')[:8]} of {skill.name} no longer exists; draft again"
-                        )
-                    present.add(snap.id)
+                    if snap.exists:
+                        present.add(snap.id)
                 missing = [s for s in inherited if s not in present]
                 if missing:
+                    # The message reaches the owner: name the path, never the hash.
+                    paths = sorted(f.path for f in skill.files if f.sha256 == missing[0])
+                    logger.warning("⚠️ [Skills] Inherited file %s missing for %s…:%s",
+                                   ", ".join(paths), user_id[:8], skill.name)
                     raise SkillFileMissing(
-                        f"file {missing[0][:8]} of {skill.name} no longer exists; draft again"
+                        f"file {', '.join(paths)} of {skill.name} no longer exists; draft again"
                     )
 
             # ---- Writes. ----
@@ -220,17 +220,18 @@ class FirestoreSkillRepository(SkillRepository):
         now = datetime.now(timezone.utc)
         expires = now + DRAFT_TTL
         draft_ref = self._drafts.document(f"{user_id}:{code}")
-        # Files first, so a valid code never points at missing files. On a code collision the
-        # staged docs land in the existing draft's `draft_files`, which is harmless: they are
-        # content-addressed and expire by TTL. Kept as separate writes on purpose: a WriteBatch
-        # would change TestCreateDraft's existing expectations.
-        for sha, content in staged.items():
-            await draft_ref.collection(_DRAFT_FILES).document(sha).set({
+        # Files first (written concurrently), then the draft doc: a valid code never points at
+        # missing files. On a code collision the staged docs land in the existing draft's
+        # `draft_files`, which is harmless: they are content-addressed and expire by TTL.
+        await asyncio.gather(*(
+            draft_ref.collection(_DRAFT_FILES).document(sha).set({
                 "content": content,
                 "size": len(content.encode("utf-8")),
                 "created_at": now,
                 "expires_at": expires,
             })
+            for sha, content in staged.items()
+        ))
         try:
             await draft_ref.create({
                 "user_id": user_id,

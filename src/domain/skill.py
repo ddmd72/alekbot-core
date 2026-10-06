@@ -137,6 +137,19 @@ class SkillFileChange(BaseModel):
     def _path(cls, v: str) -> str:
         return validate_file_path(v)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _unset_shapes(cls, data: Any) -> Any:
+        # Models fill unused fields with `remove: null` or `from_file: ""`; read both as unset.
+        # Empty `content` is NOT coerced: an empty file stays rejected.
+        if isinstance(data, dict):
+            data = dict(data)
+            if "remove" in data and data["remove"] is None:
+                data["remove"] = False
+            if data.get("from_file") == "":
+                data["from_file"] = None
+        return data
+
     @model_validator(mode="after")
     def _one_action(self) -> "SkillFileChange":
         actions = sum([self.content is not None, self.from_file is not None, self.remove])

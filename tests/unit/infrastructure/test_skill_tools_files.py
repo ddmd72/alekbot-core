@@ -144,3 +144,51 @@ async def test_draft_files_not_a_list_rejected():
     assert "SYSTEM: draft rejected" in r.result_str
     assert "files" in r.result_str
     draft.assert_not_awaited()
+
+
+async def test_draft_accepts_null_remove_and_empty_from_file():
+    result = DraftResult(code="ab12", skill=Skill(name="fs", description="Use when x.", body="b"))
+    draft = AsyncMock(return_value=result)
+
+    r = await make_draft_skill_handler(draft)(_draft_call(
+        name="fs", description="Use when x.", body="b",
+        files=[
+            {"path": "references/a.md", "content": "AAA", "remove": None},
+            {"path": "references/b.md", "content": "BBB", "from_file": ""},
+        ],
+    ))
+
+    assert not r.failed
+    assert draft.call_args.args[1] == [
+        SkillFileChange(path="references/a.md", content="AAA"),
+        SkillFileChange(path="references/b.md", content="BBB"),
+    ]
+
+
+async def test_draft_files_error_names_index_and_path():
+    draft = AsyncMock()
+
+    r = await make_draft_skill_handler(draft)(_draft_call(
+        name="fs", description="Use when x.", body="b",
+        files=[
+            {"path": "references/a.md", "content": "AAA"},
+            {"path": "references/b.md", "content": "x", "remove": True},
+        ],
+    ))
+
+    assert r.failed
+    assert "files[1] (references/b.md)" in r.result_str
+    draft.assert_not_awaited()
+
+
+async def test_draft_files_error_without_path_names_index():
+    draft = AsyncMock()
+
+    r = await make_draft_skill_handler(draft)(_draft_call(
+        name="fs", description="Use when x.", body="b",
+        files=[{"content": "AAA"}],
+    ))
+
+    assert r.failed
+    assert "files[0]" in r.result_str
+    draft.assert_not_awaited()

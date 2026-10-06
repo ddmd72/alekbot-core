@@ -143,3 +143,23 @@ def test_merge_visible_custom_shadows_system():
     other = Skill(name="b", description="Use when b.", body="b", version=1)
     merged = merge_visible_skills({"a": sys_s}, [cus, other])
     assert merged["a"].body == "cus" and set(merged) == {"a", "b"}
+
+
+# --- G3: model-shaped entries are coerced, empty content is not ----------------------------
+
+def test_file_change_null_remove_is_false():
+    c = SkillFileChange.model_validate({"path": "a.md", "content": "x", "remove": None})
+    assert c.remove is False and c.content == "x"
+
+
+@pytest.mark.parametrize("empty", ["", None])
+def test_file_change_empty_from_file_is_none(empty):
+    c = SkillFileChange.model_validate({"path": "a.md", "content": "x", "from_file": empty})
+    assert c.from_file is None and c.content == "x"
+
+
+def test_file_change_empty_content_is_not_coerced():
+    c = SkillFileChange.model_validate({"path": "a.md", "content": ""})
+    assert c.content == ""
+    with pytest.raises(ValidationError):
+        SkillFileChange.model_validate({"path": "a.md", "content": "", "from_file": "up.md"})

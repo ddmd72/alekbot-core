@@ -200,21 +200,25 @@ def make_draft_skill_handler(
                 failed=True,
             )
         else:
-            try:
-                changes = [SkillFileChange(**f) for f in raw_files]
-            except ValidationError as e:
-                reason = "; ".join(err["msg"] for err in e.errors()) or str(e)
-                logger.info("🧩 [draft_skill] files validation rejected name=%s: %s", name, reason)
+            changes = []
+            # One entry at a time, so the error names the entry the model must fix.
+            for i, entry in enumerate(raw_files):
+                path = entry.get("path") if isinstance(entry, dict) else None
+                label = f"files[{i}] ({path})" if path else f"files[{i}]"
+                if not isinstance(entry, dict):
+                    reason = "must be an object with path and one of content, from_file, remove"
+                else:
+                    try:
+                        changes.append(SkillFileChange.model_validate(entry))
+                        continue
+                    except ValidationError as e:
+                        reason = "; ".join(err["msg"] for err in e.errors()) or str(e)
+                logger.info("🧩 [draft_skill] files entry rejected name=%s: %s: %s", name, label, reason)
                 return ToolResult(
                     name=tool_call.name,
-                    result_str=f"SYSTEM: draft rejected — {reason}. Fix it and call draft_skill again.",
-                    failed=True,
-                )
-            except TypeError as e:
-                logger.info("🧩 [draft_skill] files entry rejected name=%s: %s", name, e)
-                return ToolResult(
-                    name=tool_call.name,
-                    result_str=f"SYSTEM: draft rejected — {e}. Fix it and call draft_skill again.",
+                    result_str=(
+                        f"SYSTEM: draft rejected — {label}: {reason}. Fix it and call draft_skill again."
+                    ),
                     failed=True,
                 )
 
