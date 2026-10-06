@@ -490,7 +490,7 @@ class SmartResponseAgent(BaseAgent):
                 if self.skill_service and message.context.get("interactive_delivery"):
                     tools.append(build_draft_skill_tool_declaration())
                     local_tools[DRAFT_SKILL_TOOL] = make_draft_skill_handler(
-                        lambda s: self.skill_service.draft(prompt_user_id, s)
+                        lambda s, ch: self.skill_service.draft(prompt_user_id, s, ch)
                     )
 
             running = await self._load_running_jobs(prompt_user_id, message)
