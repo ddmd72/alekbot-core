@@ -146,6 +146,26 @@ class TestDownload:
         mock_storage_client.bucket.assert_called_with("test-bucket")
         mock_storage_client.bucket.return_value.blob.assert_called_with("user1/files/report.docx")
 
+    async def test_download_missing_blob_raises_file_not_found(self, adapter, mock_storage_client):
+        from google.api_core.exceptions import NotFound
+        blob = MagicMock()
+        blob.download_as_bytes.side_effect = NotFound("No such object: test-bucket/user1/files/gone.csv")
+        mock_storage_client.bucket.return_value.blob.return_value = blob
+
+        with pytest.raises(FileNotFoundError) as e:
+            await adapter.download("gone.csv", "user1")
+
+        assert str(e.value) == "gone.csv"
+
+    async def test_download_other_gcs_error_is_not_file_not_found(self, adapter, mock_storage_client):
+        from google.api_core.exceptions import ServiceUnavailable
+        blob = MagicMock()
+        blob.download_as_bytes.side_effect = ServiceUnavailable("outage")
+        mock_storage_client.bucket.return_value.blob.return_value = blob
+
+        with pytest.raises(ServiceUnavailable):
+            await adapter.download("report.docx", "user1")
+
 
 # ---------------------------------------------------------------------------
 # delete()
