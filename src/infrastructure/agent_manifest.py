@@ -517,7 +517,9 @@ FILE_MANAGEMENT = AgentDescriptor(
             "Open a file the user uploaded earlier and return its raw content. "
             "Returns text for documents, binary for images and PDFs. "
             "The file reference is visible in the conversation as [File: name (size)]. "
-            'Requires: context={"file_ref": "<filename from file label>"}'
+            'Requires: context={"file_ref": "<filename from file label>"} '
+            "Also opens skill files listed under 'Files' in a loaded skill: pass the ref as "
+            "shown, e.g. skill:<name>/<path>."
         ),
         Intent.DELETE_FILE: (
             "Delete a file from storage. "
@@ -526,7 +528,10 @@ FILE_MANAGEMENT = AgentDescriptor(
     },
     context_schemas={
         Intent.OPEN_FILE: {
-            "file_ref": "Filename from the file label in conversation (e.g. 'report.docx')",
+            "file_ref": (
+                "Filename from the file label in conversation (e.g. 'report.docx'), or a skill "
+                "file ref (e.g. 'skill:flight-status/references/airlines.md')"
+            ),
         },
         Intent.DELETE_FILE: {
             "file_ref": "Filename of the file to delete (e.g. 'report.docx')",

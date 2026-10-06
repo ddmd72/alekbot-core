@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Optional
 import aiofiles
 
 from ..domain.llm import MessagePart
+from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.file_conversion import (
     convert_file_to_text,
@@ -27,16 +28,12 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from ..ports.audio_transcription_port import AudioTranscriptionPort
     from ..ports.media_storage_port import MediaStoragePort
-
-# Object-key prefixes of system-delivered documents (MediaStoragePort), as opposed
-# to user uploads (FileStoragePort, addressed by bare filename). All carry the owner
-# user_id as the second path segment: "{prefix}/{user_id}/...".
-_DELIVERED_PREFIXES = ("docs/", "email_review/", "deep_research/", "video_generation/")
+    from .skill_file_resolver import SkillFileResolver
 
 
 def _is_delivered_key(ref: str) -> bool:
     """True if ref is a system-delivered document key (vs a user-upload filename)."""
-    return any(ref.startswith(p) for p in _DELIVERED_PREFIXES)
+    return ref.startswith(DELIVERED_REF_PREFIXES)
 
 
 def _format_size(size_bytes: int) -> str:
@@ -56,6 +53,7 @@ class FileConversionService:
         storage: FileStoragePort,
         audio_service: Optional["AudioTranscriptionPort"] = None,
         media_storage: Optional["MediaStoragePort"] = None,
+        skill_files: Optional["SkillFileResolver"] = None,
     ) -> None:
         self._storage = storage
         self._audio_service = audio_service
@@ -63,14 +61,24 @@ class FileConversionService:
         # deep_research/) so agents can re-read them via open_file without an external
         # URL fetch. None → delivered-document re-read is unavailable.
         self._media_storage = media_storage
+        # Resolves `skill:<name>/<path>` refs (RFC §15.4). None → skill files unavailable.
+        self._skill_files = skill_files
+
+    async def _read_skill(self, ref: str, user_id: str) -> str:
+        if self._skill_files is None:
+            raise FileNotFoundError("Skill files are unavailable")
+        return await self._skill_files.read(user_id, ref)
 
     async def _download_by_ref(self, ref: str, user_id: str) -> bytes:
         """Fetch bytes for a ref, dispatching by ref shape (no LLM decision).
 
+        - `skill:<name>/<path>` ref → SkillFileResolver, encoded as UTF-8 (RFC §15.4).
         - Delivered-document key ("{prefix}/{user_id}/...") → MediaStoragePort.fetch,
           gated by an ownership check on the user_id path segment.
         - Bare filename → user upload via FileStoragePort.download.
         """
+        if ref.startswith(SKILL_REF_PREFIX):
+            return (await self._read_skill(ref, user_id)).encode("utf-8")
         if _is_delivered_key(ref):
             if not self._media_storage:
                 raise FileNotFoundError(ref)
@@ -147,6 +155,10 @@ class FileConversionService:
         Returns text wrapped in [File: ref]...[/File: ref] markers,
         or a [System: ...] alert on failure.
         """
+        if ref.startswith(SKILL_REF_PREFIX):
+            text = await self._read_skill(ref, user_id)
+            return f"[File: {ref}]\n{text}\n[/File: {ref}]"
+
         mime_type, _ = mimetypes.guess_type(ref)
         mime_type = mime_type or "application/octet-stream"
 

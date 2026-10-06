@@ -4,7 +4,7 @@ GcsFileStorageAdapter — FileStoragePort implementation backed by Google Cloud 
 Stores user file attachments under {user_id}/files/ prefix in a shared GCS bucket.
 Finder-style duplicate name resolution: report.docx → report (1).docx → report (2).docx.
 
-Filename sanitization: replaces GCS-prohibited characters (#?[]*\n\r\t) with underscore.
+Filename sanitization: replaces GCS-prohibited characters (#?[]*\n\r\t:) with underscore.
 """
 import asyncio
 import os
@@ -15,11 +15,12 @@ from typing import Optional
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.logger import logger
 
-_INVALID_GCS_CHARS = re.compile(r'[#?\[\]*\n\r\t]')
+_INVALID_GCS_CHARS = re.compile(r'[#?\[\]*\n\r\t:]')
 
 
 def sanitize_filename(filename: str) -> str:
-    """Normalize Unicode to NFC and replace GCS-prohibited characters with underscore.
+    """Normalize Unicode to NFC and replace GCS-prohibited characters (incl. ':', which collides
+    with the `skill:` ref prefix) with underscore.
 
     NFC normalization is critical: Slack sends filenames in NFD (decomposed, e.g. "і" + combining
     diaeresis for "ї"), GCS stores as-is. Without NFC, upload and download paths diverge on
