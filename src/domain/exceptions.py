@@ -198,3 +198,7 @@ class SkillDraftNotFound(Exception):
 class SkillNameReserved(Exception):
     """The name belongs to a system skill."""
 
+
+class SkillFileMissing(Exception):
+    """A file a skill or draft refers to is no longer stored (e.g. a draft file removed by TTL)."""
+
