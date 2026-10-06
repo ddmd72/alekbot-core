@@ -19,9 +19,18 @@ For an existing skill, load it with `use_skill` first and change only what the o
 - **body** — a set of available actions and why each exists, not a rigid step list: the next run may need a different order. Explain the reasons behind rules instead of shouting MUST/NEVER; give the exact values that matter (URLs, field names, formulas, formats); keep it under ~500 lines. Write it in English; the answers it produces follow the owner's language.
 - Keep personal data in it only when the procedure needs it — the skill is the owner's alone, but it is still a stored instruction.
 
+## Keep the body lean: files
+
+The body holds when to use the skill and what to do. Material needed only sometimes — reference tables, long lists, examples, output templates — goes into a file at `references/<topic>.md` (or `.csv`, `.json`, `.yaml`), with a line in the body saying when to open it, e.g. "When you need the fee table, open `skill:<name>/references/fees.csv`". The body is loaded every time; a file costs nothing until it is opened.
+
+- `files=[{path, content}]` — text you write; at most 5 per draft.
+- `files=[{path, from_file: "<filename from the file label>"}]` — keep a file the owner sent, copied as is. Never retype it: a copy cannot introduce mistakes. `from_file` also takes `skill:<name>/<path>` from one of the owner's own skills, never a built-in one.
+- A revision lists only changes: unlisted files carry over unchanged; `{path, remove: true}` drops one.
+- Text only: `.md .txt .csv .tsv .json .yaml .yml`; 256 KB each; 20 per skill.
+
 ## Hand it over
 
-Call `draft_skill(name, description, body)`. The owner then receives the full text as a file and a separate message with a save command — the command is shown only to the owner, not to you. Tell the owner, in one or two sentences, what the skill does and that pasting the command saves it. Do not claim it is saved: a saved skill appears in this conversation as a system note.
+Call `draft_skill(name, description, body, files=[...])` (`files` only when there are any). The owner then receives the full text as a file, every file you wrote as its own file, a summary of the file changes, and a separate message with a save command — the command is shown only to the owner, not to you. Tell the owner, in one or two sentences, what the skill does and that pasting the command saves it. Do not claim it is saved: a saved skill appears in this conversation as a system note.
 
 If `draft_skill` reports a problem (name format, size, a flagged phrase), fix it and draft again.
 

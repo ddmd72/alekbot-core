@@ -1,6 +1,6 @@
 # RFC: Agent Skills — named procedures for Smart, loaded on demand, saved by the user
 
-**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary.
+**Status:** Revision 7 — **G1 passed** (2026-10-04: full reviews of revisions 5 and 6, targeted check of 7; findings resolved, §14). Delivery A (read path) and delivery B (authoring + system skills) both shipped; §3 already reflects the two planning rulings recorded in `docs/superpowers/plans/2026-10-04-agent-skills-delivery-b.md` (no `FileSystemSkillRepository` — a loader instead; `domain-competency-research` as a second system skill). See that plan's Deviations section for the full rulings, including one on §8 step 6's save-transaction boundary. **Delivery C (text files in a skill, §15) — revision 2, G1 passed 2026-10-06. Delivery C implemented on `feat/skill-files`; G3 passed 2026-10-06; deploy + live acceptance pending.** Planning rulings (2026-10-06, Deviations section of `docs/superpowers/plans/2026-10-06-agent-skills-delivery-c.md`): `from_file` never copies from a system skill; empty files are rejected; the change summary is structured in the domain and localized in `ConversationHandler`; `$skill list` shows file counts for custom skills only.
 **Date:** 2026-10-04 (first draft 2026-09-30)
 **Owner decisions:**
 - Skills are named procedures in Anthropic's `SKILL.md` format, run by our own layer (Smart is multi-provider).
@@ -67,7 +67,7 @@ description: "Use when the owner asks about a flight's status, delay, gate or ar
 - `name`: kebab-case `[a-z0-9-]`, ≤ 64 chars.
 - `description`: the trigger, ≤ 250 chars, one line, "Use when …". Re-sent on every request.
 - body: markdown; the whole `SKILL.md` is capped just under the Firestore document limit (1 MiB, `MAX_SKILL_MD_BYTES` = 1 MiB − 32 KB). The cap is a storage bound, not a style limit (owner, 2026-10-05: an earlier 20 KB cap had no basis and rejected real drafts). Concision is guidance for the author.
-- **No files and no scripts in v1.** Reference material goes in the body. Executing scripts needs a sandbox and its own RFC.
+- **No files and no scripts in deliveries A and B.** Reference material went in the body. Text files are delivery C (§15); binaries come later with their own bucket. Executing scripts needs a sandbox and its own RFC.
 
 **Parsing.** Frontmatter is read with `yaml.safe_load` (PyYAML is already a dependency) in `src/utils/skill_md.py`, shared by the seeding script and delivery B's filesystem adapter; `domain/` holds a pydantic `Skill` model that validates the result.
 
@@ -252,3 +252,211 @@ Findings are resolved in the artefact; a gate re-runs when a finding changed the
 | Delete and cap | Versions deleted explicitly; count inside the save transaction (§8) |
 | SecurityPort sanitize vs reject | Reject (§8) |
 | Offering line always on | Tuned on live use (§6, §10) |
+
+## 15. Delivery C — text files in a skill
+
+**Status:** revision 2, implemented on `feat/skill-files`; G3 passed 2026-10-06; deploy + live acceptance pending. The design was agreed with the owner in chat on 2026-10-06. G1 on revision 1 returned "needs revision"; its findings are resolved below (§15.11). Revision 2 changes the design: files are text only and stored in Firestore. Scripts stay out of scope (§4).
+
+### 15.1 Why
+
+A skill is currently one text. Material needed only some of the time (reference tables, lists, long examples) rides in the body. It therefore enters the prompt every time the skill loads and stays there for up to three exchanges (§7).
+
+Anthropic's skills solve this with progressive disclosure. `SKILL.md` stays short and points at files, and the model opens a file only when it needs it.
+
+**Owner decisions (2026-10-06):**
+- **Text files only, in Firestore, one document per file** next to the skill, never inside the skill document. Keeping files inside would run into the document limit.
+- **Binary files come later**, with their own bucket. Executing scripts needs a sandbox, not GCS, but bundled binary assets (templates, fonts) will need the bucket. The file entry gains a location field then; refs, manifests and inheritance stay as they are.
+- Files arrive two ways only:
+  - the model writes a text file while drafting, typically by moving rarely used parts of the body out;
+  - the model re-saves a text file the owner sent to the chat.
+
+  There is no separate upload path.
+- `skill-creator` is updated to split skills this way.
+- No custom skill needs files yet. Acceptance therefore uses a system skill and a chat upload (§15.9).
+
+### 15.2 Storage
+
+- **One document per file, keyed by content:** `{prefix}skills/{user_id}:{name}/files/{sha256}` holds `content`, `size` and `created_at`.
+  - The sha256 is of the UTF-8 bytes.
+  - A file belongs to one skill. Nothing is shared across skills, so nothing needs reference counting.
+- **A manifest per version.** `files: [{path, sha256, size}]` is a list, not a map, because a map keyed by dotted paths would read as nested field paths. The manifest is stored on:
+  - the version document;
+  - the index document (denormalized, like `body`);
+  - the draft document.
+- **Old versions' file documents are kept** until the skill is deleted. They are text and cheap. Keeping them means a version never points at a missing file, and it removes any cleanup on save.
+- **Limits.** These guard against accidents and change with real use.
+  - Per file: 256 KB, roughly 64–80k tokens when opened.
+  - Per skill: 20 files.
+  - Per draft: at most 5 files the model writes (§15.6).
+  - `MAX_FILE_BYTES = 5 MB` (`utils/file_conversion.py:23`) never comes into play.
+- **Document budget.** A manifest entry is at most ~300 bytes: a 200-char path, a 64-char hash and a size. Twenty entries come to ~6 KB, inside the 32 KB headroom `MAX_SKILL_MD_BYTES` already leaves (`domain/skill.py:19`). A validator on the domain model enforces the entry and path bounds, so the budget holds by construction, not by hope.
+- **Paths.** A path is relative, made of `[A-Za-z0-9._-]` segments joined by `/`, at most 200 chars.
+  - No segment may be `.` or `..`.
+  - `SKILL.md` is reserved.
+  - An extension from the text allowlist is required: `.md .txt .csv .tsv .json .yaml .yml`. The read pipeline picks the conversion from the extension (`file_management_agent.py:106`), so a missing or binary extension would mis-read.
+  - Convention, not rule: reference text goes under `references/`.
+
+### 15.3 Versions inherit files
+
+A draft lists **changes** against the skill's current version. Everything not listed carries over. Each saved version still stores its **full** manifest.
+
+Why: editing one line of the body must not make the model regenerate a 50 KB reference. Regenerating costs tokens, and it silently corrupts data, because the model paraphrases instead of copying.
+
+Inheritance is resolved **at draft time**, against the version that is current then, and the draft stores the full resulting manifest. A stale code saves exactly the manifest it was shown with, which matches §8 ("a stale code saves its own content"). Inherited entries point at file documents that already exist, because they are kept until the skill is deleted. If the skill was deleted in between, the save finds a missing hash, aborts, and asks for a new draft.
+
+The owner's direct save (`SkillService.save`, used by `scripts/skills/seed_custom_skill.py`) follows the same rule. A seed is a bare `SKILL.md` with no files, so it inherits the current version's manifest instead of saving an empty one (G3 finding, 2026-10-06).
+
+### 15.4 Reading: `skill:` refs through the existing file pipeline
+
+There is no new read tool. A skill file is addressed as **`skill:<name>/<path>`** and read with **`open_file`**. This is the existing zero-LLM `FileManagementAgent` path.
+
+- **Ref resolution.** `FileConversionService._download_by_ref` already dispatches by ref shape (`file_conversion_service.py:67`). It gains a third shape, `skill:`.
+  - Resolution follows the requesting user's **visible set** (§3): the user's custom skill at its current version, or else a system skill.
+  - The user comes from the request context (`message.context["user_id"]`), never from the ref. Another user's skill cannot be addressed.
+- **Reading as text.** A `skill:` ref skips mime guessing and is decoded as UTF-8 directly: its content is text by construction. Mime guessing would send `.json`/`.yaml` (and `.md` on some Python versions) to markitdown, because `_is_plain_text` checks `text/*` only (`utils/file_conversion.py:185-187`). Uploads keep their current behaviour.
+- **`SkillFileResolver`** lives in `services/` and is read-only. It is built over:
+  - `SkillRepository`, which gains `get_current(user_id, name)` and `get_file(user_id, name, sha256)`. Listing all skills on every `open_file` would read twenty bodies.
+  - the system skills, whose file contents `load_system_skill_bundle` (`adapters/filesystem_skill_loader.py`) puts in memory at startup and composition hands to the resolver. `services/` never reads disk.
+- **Shadowing in one place.** The rule (custom over system) is moved into one domain function used by both `SkillService.list_skills` and the resolver, so it is not written twice.
+- **Errors.** A missing skill or path raises `FileNotFoundError` with skill-specific text. It must not say "re-upload" (`file_management_agent.py:121-125`) and must not show as a conversion error.
+- **Dependency direction.** The chain is `SkillService → FileConversionService → SkillFileResolver`, by constructor injection (REQ-ARCH-22). `SkillService` moves below `FileConversionService` in `service_container.py`.
+  - `FileConversionService`, and with it `open_file`, exists only when `GCS_MEDIA_BUCKET` is set (`service_container.py:305`). That is true of every file today, and skill files simply share the limitation. In practice it means local dev without the bucket.
+- **`use_skill` lists the files.** A `Files` block follows the body, one line per file: `- skill:<name>/<path> — <size>`.
+  - The model then knows what it can open, even when the body forgets to mention a file.
+  - The list is part of the loaded text and is tiered with it (§7).
+- **Opened files do not persist.** A file opened with `open_file` is an ordinary tool result. A body is an instruction followed over several turns; a reference is a lookup, and reopening it is cheap.
+- **Current at read time.** A ref resolves against the version current when it is read. If a skill is saved again mid-conversation, a later `open_file` sees the new file. This is the same as a body reload (§7).
+- **`delete_file` refuses `skill:` refs.** The check sits in `FileManagementAgent._delete`, which calls `FileStoragePort.delete` directly (`file_management_agent.py:254`) and never reaches the dispatcher. Skill files leave only through a new version or `$skill delete`.
+- **No collisions with uploads.** An upload's name must never start with `skill:`. `sanitize_filename` (`gcs_file_storage_adapter.py:21`) maps `:` to `_`, and a test covers it.
+- **The model learns about the refs.** `open_file`'s `file_ref` description in `agent_manifest.py` says that `skill:` refs from a `Files` list are valid.
+
+### 15.5 Authoring: `draft_skill(…, files)`
+
+`draft_skill` gains an optional `files` parameter, a list of changes:
+
+| Entry | Meaning |
+|-------|---------|
+| `{path, content}` | a text file the model writes, new or replacing |
+| `{path, from_file}` | re-save a text file from **the owner's own uploads** (a bare filename) or from **one of the owner's own custom skills** (`skill:` ref; never a system skill — system skill content is written only in git) |
+| `{path, remove: true}` | drop a file from the new version |
+
+`from_file` deliberately rejects bot-delivered documents (`docs/`, `email_review/`, `deep_research/`, `video_generation/`, `file_conversion_service.py:34`). They carry third-party text the owner never sent, such as email bodies. If the owner wants one in a skill, the model writes its content as a `{path, content}` file, and that file is shown in the preview (§15.6).
+
+An upload is re-saved **as stored**. It must have an allowlisted extension and decode as UTF-8. A PDF cannot be re-saved as is, which follows from text-only: the model opens it and writes the part that matters as a text file.
+
+**Handler steps:**
+1. Validate the paths, extensions and limits.
+2. Read `from_file` bytes through `FileConversionService.resolve_bytes`.
+3. Compute the hashes.
+4. Merge the changes into the current manifest. A file whose hash equals the current one is not a change.
+5. Store the draft. Content for hashes the skill does not already hold goes in the draft's own `draft_files/{sha256}` subcollection, and the draft doc lists them as `staged: [sha256]`. The file docs are written **before** the draft doc (or in one batch), so a valid code never points at missing files.
+
+**Accepted risks.** Model-written files are bounded in practice by Smart's output tokens, not by 5 × 256 KB; large references arrive via `from_file`. The first split of an existing body retypes text the model already holds, which is the paraphrase risk §15.3 avoids for revisions; the preview shows every model-written file, so the owner catches it there.
+
+**Checks** (§8) extend to files. Every file, whether model-written or re-saved, goes through `SecurityPort` and is **rejected** if flagged, because Smart will read it as part of the procedure. As in §8, these checks are hygiene; the security boundary is the command.
+
+**`skill-creator`** gains a section on structure:
+- the body says when the skill applies and what to do;
+- rarely needed material goes to `references/`, with a line in the body saying when to open it;
+- a file from the chat is re-saved with `from_file`, never retyped;
+- a revision lists only what changed.
+
+### 15.6 Preview before `$skill save`
+
+The command authorizes what the owner was shown (§8), so all text the owner did not author is shown. `skill_preview` is posted in this order:
+
+1. `SKILL.md`, as a file. Unchanged.
+2. **Each file the model wrote or changed, as its own file.** At most 5 per draft. A larger draft is rejected and the model is told to split it, which keeps the post count within the Slack and Telegram rate limits.
+3. **A change summary message**, for example:
+   ```
+   + references/airlines.md (new, 12 KB)
+   ~ references/fees.md (changed)
+   + references/rates.csv ← "rates (2).csv" (your upload, 4 KB)
+   − old.md (removed)
+   = 2 files unchanged
+   ```
+   Re-saved files name their source and are not posted again: an upload is the owner's own, and a `skill:` source was authorized when it was saved. Without the summary a v2 is opaque, since a removed file does not show in the body. The summary is omitted when the skill has no files and none changed, so file-less skills look exactly as they do today.
+4. The `$skill save <code>` message, **last**.
+
+The file texts travel in `DeliveryItem.data`; there are at most 5 of them, each 256 KB or less. `ConversationHandler` needs no repository access, so the late-answer path (`conversation_handler.py:1162`) delivers previews unchanged. Today the abort covers the single `send_file` (`conversation_handler.py:282-315`). It becomes a loop: if any post fails, the command is not posted.
+
+### 15.7 Save, delete, list
+
+- **`$skill save`** runs one Firestore transaction. All reads come first:
+  - the index doc;
+  - the cap query;
+  - the draft's files;
+  - a presence check for every inherited hash, via `get_all(refs, field_paths=["size"], transaction=…)` so it does not pull file contents.
+
+  Then the writes:
+  - the draft's file documents are copied into the skill's `files/`;
+  - the version is written with its manifest;
+  - `current` is flipped;
+  - consumed drafts are deleted, together with their `draft_files/` docs, addressed by reference from each draft's `staged` list (no extra reads).
+
+  The worst case is about 7 MB (up to 20 staged files of 256 KB — `from_file` re-saves are not bound by the 5-written-files cap — plus the version and index docs, up to ~1 MiB each), under Firestore's 10 MiB request bound. Save stays atomic.
+- **Skill file docs never carry `expires_at`.** The copy writes `content`, `size`, `created_at` only; a test asserts it.
+- **`$skill delete`** removes the index document, `versions/*` and `files/*`. Nothing outside the skill references its files. References are gathered with `list_documents()` (refs only, no content) and deleted in chunked batches.
+- **Unsaved drafts** get a Firestore TTL on a new `expires_at` field, set 30 days ahead, on the drafts collection and on the `draft_files` collection group. TTL policies are keyed by collection-group ID across the whole database, so the draft subcollection has its own name: a policy on `files` would also cover every skill's own files. A code older than that gets the existing "no pending draft" reply. This replaces §8's "no TTL: a stale draft is inert": drafts now carry content beyond one document.
+- **`$skill list`** shows each skill's file count.
+
+### 15.8 System skills
+
+A system skill's files live next to its `SKILL.md` in git, for example `src/skills/smart/<name>/references/…`.
+- `load_system_skill_bundle` reads the files into memory and builds each skill's manifest; it returns the skills and their file contents, and `load_system_skills` is the skills-only wrapper.
+- Each of the following fails startup, like a malformed `SKILL.md`: a path that breaks §15.2, a symlink, a non-UTF-8 file, a file over the limits.
+- System files skip `SecurityPort`, for the reason given in §6.
+
+### 15.9 Configuration, deployment, acceptance
+
+- **No new configuration key.**
+- **Owner deployment step:** TTL policies on `expires_at` for `{prefix}skill_drafts` and the `draft_files` collection group, recorded in `docs/07_deployment/README.md`.
+- **Unit tests:**
+  - path, extension and limit validation;
+  - the manifest bound proving the document budget;
+  - inheritance and the stale-code rule;
+  - the deleted-skill abort on save;
+  - `skill:` resolution: custom, system, shadowing, unknown skill, unknown path, and no route to another user;
+  - the `delete_file` refusal;
+  - the `sanitize_filename` colon mapping;
+  - `from_file` rejecting delivered refs and non-text uploads;
+  - `SecurityPort` on files;
+  - the `use_skill` files block;
+  - preview order, the 5-file cap and the abort loop;
+  - the save transaction: copy, presence check, draft cleanup;
+  - delete removing `files/`;
+  - loader manifests and startup failures.
+- **Live acceptance:**
+  1. Move a reference part of `domain-competency-research` into `references/`. Smart opens it via `open_file` when it needs it, and not otherwise.
+  2. Re-save a `.md` or `.csv` upload from the chat into a custom skill. The summary names the source, and the file opens in a new thread.
+  3. A v2 of a skill with files that changes only the body carries the files over.
+  4. `skill-creator` splits a long procedure into a body plus a reference on its own.
+
+### 15.10 Not in delivery C
+
+- Binary files and their bucket (owner, 2026-10-06: later, separately).
+- Scripts.
+- A Cabinet editor.
+- Files for Tutor and Lelik (Q2).
+- Pinning a ref to a version.
+- Audio transcription through `open_file`: the container's `FileConversionService` has no `audio_service` (`service_container.py:306-309`). This is an existing gap, unrelated to skills.
+
+### 15.11 Resolution of G1 findings (revision 1)
+
+| Finding | Resolution |
+|---------|------------|
+| B1 `from_file` bypasses "the command authorizes what was shown" via delivered docs | `from_file` limited to own uploads and own `skill:` refs; the summary names the source (§15.5, §15.6) |
+| M1 binaries have few consumers; acceptance (2) cannot pass | Text-only in Firestore; binaries deferred with their bucket (§15.1, §15.10); acceptance rewritten (§15.9) |
+| M2 limits vs the read pipeline | 256 KB per text file (§15.2) |
+| M3 1 MiB budget, `blob_refs` growth, unread old blobs | Files in their own documents; the manifest is a bounded list with a validator; no `blob_refs`; old versions' files kept as a stated choice (§15.2) |
+| `delete_file` bypasses the dispatcher; error texts | Refusal in `_delete`; skill-specific `FileNotFoundError` (§15.4) |
+| `GcsMediaAdapter` mutates HTML | No GCS in C |
+| Wiring: order, bucket-gated pipeline, disk reads in services, duplicated shadowing, `list_current` per read | Order stated; limitation stated; loader holds contents in memory; shadowing in one domain function; `get_current`/`get_file` (§15.4) |
+| `sanitize_filename` lets `:` through | Map `:` to `_`, plus a test (§15.4) |
+| Preview post count; where file texts live | 5 model-written files per draft; texts in `DeliveryItem.data`; abort loop (§15.6) |
+| 7-day draft rule vs "a stale draft is inert" | 30-day TTL on drafts; §8's rule replaced explicitly (§15.7) |
+| `content_type` unused; extensionless paths | Extension allowlist required; `content_type` dropped from the manifest (§15.2) |
+| "Audio is transcribed" false | Claim removed; gap noted (§15.10) |
+| Deploy env var; `open_file` description | No new key; manifest description updated (§15.4, §15.9) |
+
+**Targeted re-check (revision 2): ready for planning after F1–F2.** F1 TTL on a shared `files` group → draft subcollection renamed `draft_files` (§15.5, §15.7). F2 draft cleanup reads → `staged` list, `get_all` with field mask (§15.7). F3 mime guessing → `skill:` refs decoded as UTF-8 directly (§15.4). F4 delete reads contents → `list_documents()` (§15.7). F5 draft before its files → files written first (§15.5). Accepted risks stated (§15.5).

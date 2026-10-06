@@ -1,7 +1,7 @@
 # Decision: Agent Skills — skills as Smart-local tools (delivery A + B)
 
 **Date:** 2026-10-04
-**Status:** Shipped (delivery A, read path, AND delivery B, authoring + system skills). Full design: `docs/10_rfcs/AGENT_SKILLS_RFC.md`.
+**Status:** Shipped (delivery A, read path, AND delivery B, authoring + system skills); delivery C (text files) implemented on `feat/skill-files`, G3 passed 2026-10-06; deploy + live acceptance pending. Full design: `docs/10_rfcs/AGENT_SKILLS_RFC.md`.
 
 ## Decision
 
@@ -32,6 +32,16 @@ Owner authoring is a `draft_skill` local tool (interactive turns only) deliverin
 skills (`skill-creator`, `domain-competency-research`) ship in git and load via a plain
 `load_system_skills` function rather than a second `SkillRepository` adapter — they are read-only,
 so implementing the write port's drafts/delete on them would be a Liskov violation.
+
+## Delivery C (text files in a skill)
+
+A skill may carry up to 20 text files (`.md .txt .csv .tsv .json .yaml .yml`, 256 KB each), stored
+as Firestore documents `{prefix}skills/{user_id}:{name}/files/{sha256}` with a `{path, sha256, size}`
+manifest per version; versions inherit unlisted files. The model reads them as `skill:<name>/<path>`
+refs through `open_file`, so rarely needed material stays out of the prompt until it is needed.
+Text only, because nothing else is read today and Firestore needs no new infrastructure; binary
+assets come later with their own bucket. System skill files live in git next to `SKILL.md` and are
+never copied into a custom skill. RFC §15.
 
 ## Notes
 

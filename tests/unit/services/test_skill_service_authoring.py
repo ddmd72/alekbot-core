@@ -105,23 +105,25 @@ async def test_save_keeps_calling_save_version_with_cap_only(repo, service):
 # ---------------------------------------------------------------------------
 
 async def test_draft_returns_4_hex_lowercase_code_and_calls_create_draft(repo, service):
-    code = await service.draft("u1", SKILL)
+    result = await service.draft("u1", SKILL)
+    code = result.code
 
     assert len(code) == 4
     assert code == code.lower()
     assert all(c in "0123456789abcdef" for c in code)
-    repo.create_draft.assert_awaited_once_with("u1", code, SKILL)
+    # A file-less draft stages nothing; the stored skill is SKILL by value (RFC §15.5 step 5).
+    repo.create_draft.assert_awaited_once_with("u1", code, SKILL, staged={})
 
 
 async def test_draft_collision_draws_a_second_different_code(repo, service):
     repo.create_draft.side_effect = [False, True]
 
-    code = await service.draft("u1", SKILL)
+    result = await service.draft("u1", SKILL)
 
     assert repo.create_draft.await_count == 2
     codes = [c.args[1] for c in repo.create_draft.await_args_list]
     assert codes[0] != codes[1]
-    assert code == codes[1]
+    assert result.code == codes[1]
 
 
 async def test_draft_flagged_text_raises_rejected_create_draft_not_awaited(repo, security, service):
@@ -186,6 +188,7 @@ async def test_save_draft_not_found_raises(repo, service):
 
 async def test_save_draft_happy_path_consumes_drafts_and_returns_name_version(repo, service):
     repo.get_draft.return_value = SKILL
+    repo.get_draft_files.return_value = {}  # a file-less draft has no staged files
     repo.save_version.return_value = 3
 
     result = await service.save_draft("u1", "a1", "abcd")
@@ -193,6 +196,7 @@ async def test_save_draft_happy_path_consumes_drafts_and_returns_name_version(re
     assert result == (SKILL.name, 3)
     repo.save_version.assert_awaited_once_with(
         "u1", "a1", SKILL, cap=MAX_CUSTOM_SKILLS_PER_USER, consume_drafts_named=SKILL.name,
+        draft_code="abcd",
     )
 
 
@@ -204,13 +208,16 @@ async def test_save_draft_of_older_code_saves_that_drafts_own_content(repo, serv
     asserts the `consume_drafts_named` argument SkillService hands it."""
     older_draft = Skill(name="flight-status", description="Use when x.", body="older body")
     repo.get_draft.return_value = older_draft
+    repo.get_draft_files.return_value = {}  # a file-less draft has no staged files
     repo.save_version.return_value = 1
 
     name, version = await service.save_draft("u1", "a1", "older-code")
 
     repo.get_draft.assert_awaited_once_with("u1", "older-code")
+    repo.get_draft_files.assert_awaited_once_with("u1", "older-code")
     repo.save_version.assert_awaited_once_with(
         "u1", "a1", older_draft, cap=MAX_CUSTOM_SKILLS_PER_USER, consume_drafts_named=older_draft.name,
+        draft_code="older-code",
     )
     assert name == older_draft.name
     assert version == 1

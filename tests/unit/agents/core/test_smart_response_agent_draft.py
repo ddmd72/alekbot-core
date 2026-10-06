@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.agents.core.smart_response_agent import SmartResponseAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.skill import SKILL_PREVIEW_DELIVERY, Skill
+from src.domain.skill import SKILL_PREVIEW_DELIVERY, DraftResult, Skill
 from src.domain.user import PerformanceTier, UserBotConfig
 from src.infrastructure.task_execution_resolver import TaskExecutionResolver
 from src.ports.llm_port import (
@@ -57,10 +57,11 @@ def _message(interactive_delivery=True):
                                payload={"text": "save this as a skill"}, context=context)
 
 
-def _service(skills, draft_result="ab12"):
+def _service(skills, code="ab12"):
     s = MagicMock()
     s.list_skills = AsyncMock(return_value=skills)
-    s.draft = AsyncMock(return_value=draft_result)
+    drafted = Skill(name="flight-status", description="Use when a flight is asked about.", body="1. Open.")
+    s.draft = AsyncMock(return_value=DraftResult(code=code, skill=drafted))
     return s
 
 
@@ -103,10 +104,11 @@ async def test_draft_skill_call_routes_to_skill_service_with_user_id():
 
     assert response.status == AgentStatus.SUCCESS
     service.draft.assert_awaited_once()
-    user_id, drafted_skill = service.draft.await_args.args
+    user_id, drafted_skill, changes = service.draft.await_args.args
     assert user_id == "u1"
     assert isinstance(drafted_skill, Skill)
     assert drafted_skill.name == "flight-status"
+    assert changes == []
 
 
 async def test_successful_draft_surfaces_skill_preview_delivery_item():
@@ -133,7 +135,7 @@ async def test_draft_skill_save_code_never_reaches_any_llm_request():
     draft's save code string is absent from all of it, while the delivery item's command
     (never sent to any provider) does carry it.
     """
-    agent, llm, _ = _agent(_service([SKILL], draft_result="9f3e7c21"))
+    agent, llm, _ = _agent(_service([SKILL], code="9f3e7c21"))
     llm.generate_content = AsyncMock(side_effect=[
         _resp(tool_calls=[_draft_tool_call()]),
         _resp("Done — paste the command to save it."),

@@ -23,7 +23,13 @@ from ..domain.turn_clock import (
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
 from ..domain.exceptions import SkillCapExceeded, SkillDraftNotFound, SkillNameReserved, SkillRejected
-from ..domain.skill import SKILL_CONTEXT_KEY, SKILL_PREVIEW_DELIVERY, fold_skill_contexts, skill_saved_note
+from ..domain.skill import (
+    SKILL_CONTEXT_KEY,
+    SKILL_PREVIEW_DELIVERY,
+    fold_skill_contexts,
+    human_size,
+    skill_saved_note,
+)
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..ports.conversation_handler_port import ConversationHandlerPort
 from ..services.localization_service import LocalizationService
@@ -280,41 +286,115 @@ class ConversationHandler(ConversationHandlerPort):
             except Exception as e:
                 logger.error("⚠️ [ConversationHandler] document delivery failed: %s", e, exc_info=True)
         elif item.type == SKILL_PREVIEW_DELIVERY:
-            # Verbatim file first (text posts truncate and reformat), then the command alone,
-            # so the command is the last message — easy to copy and paste back. No
-            # MessageContext here, so the UI language comes from the response_channel itself
-            # (same attribute Slack/Telegram's own `_ui_string` read it from).
-            language = getattr(response_channel, "language", None)
+            await self._deliver_skill_preview(item, response_channel, thread_id)
+        else:
+            logger.warning("⚠️ [ConversationHandler] Unknown DeliveryItem type: %s — skipping", item.type)
+
+    async def _deliver_skill_preview(
+        self,
+        item: DeliveryItem,
+        response_channel: ResponseChannel,
+        thread_id: Optional[str],
+    ) -> None:
+        """Deliver a `SKILL_PREVIEW_DELIVERY` item: the SKILL.md file first (text posts
+        truncate and reformat), then each model-written file (Task 6's `files`), then a
+        localized change-summary message (Task 6's `summary`, when non-empty), then the
+        save command last — the easiest thing to copy and paste back.
+
+        On the first failed post (any file, or the summary), send the existing
+        `SKILL_PREVIEW_DELIVERY_FAILED` notice and return WITHOUT the command — the owner
+        must never be able to save content they were not shown. Items from before this
+        delivery existed carry no "files"/"summary" keys and behave exactly as before:
+        SKILL.md then command.
+
+        No MessageContext here, so the UI language comes from the response_channel itself
+        (same attribute Slack/Telegram's own `_ui_string` reads it from).
+        """
+        language = getattr(response_channel, "language", None)
+        name = item.data["name"]
+
+        posts = [(
+            item.data["skill_md"].encode("utf-8"),
+            f"{name}.SKILL.md",
+            self._ui_string_for_language(language, UIMessage.SKILL_PREVIEW_FILE_TITLE, name=name),
+        )]
+        for f in item.data.get("files", []):
+            path = f["path"]
+            posts.append((
+                f["content"].encode("utf-8"),
+                f"{name}.{path.replace('/', '__')}",
+                self._ui_string_for_language(
+                    language, UIMessage.SKILL_PREVIEW_REF_FILE_TITLE, name=name, path=path,
+                ),
+            ))
+
+        async def send_failure_notice() -> None:
+            try:
+                await response_channel.send_message(
+                    self._ui_string_for_language(language, UIMessage.SKILL_PREVIEW_DELIVERY_FAILED),
+                    thread_id,
+                )
+            except Exception as notice_err:
+                logger.error(
+                    "⚠️ [ConversationHandler] skill_preview failure notice also failed: %s",
+                    notice_err, exc_info=True,
+                )
+
+        for content, filename, title in posts:
             try:
                 await response_channel.send_file(
-                    content=item.data["skill_md"].encode("utf-8"),
-                    filename=f"{item.data['name']}.SKILL.md",
-                    title=self._ui_string_for_language(
-                        language, UIMessage.SKILL_PREVIEW_FILE_TITLE, name=item.data["name"],
-                    ),
-                    thread_id=thread_id,
+                    content=content, filename=filename, title=title, thread_id=thread_id,
                 )
             except Exception as e:
                 logger.error("⚠️ [ConversationHandler] skill_preview send_file failed: %s", e, exc_info=True)
                 # The owner must never be able to save content they were not shown —
                 # if the preview didn't arrive, the save command must not be sent either.
-                try:
-                    await response_channel.send_message(
-                        self._ui_string_for_language(language, UIMessage.SKILL_PREVIEW_DELIVERY_FAILED),
-                        thread_id,
-                    )
-                except Exception as notice_err:
-                    logger.error(
-                        "⚠️ [ConversationHandler] skill_preview failure notice also failed: %s",
-                        notice_err, exc_info=True,
-                    )
+                await send_failure_notice()
                 return
+
+        summary = item.data.get("summary")
+        if summary:
             try:
-                await response_channel.send_message(f"`{item.data['command']}`", thread_id)
+                text = "\n".join(self._render_skill_change_line(language, line) for line in summary)
+                await response_channel.send_message(text, thread_id)
             except Exception as e:
-                logger.error("⚠️ [ConversationHandler] skill_preview command send failed: %s", e, exc_info=True)
-        else:
-            logger.warning("⚠️ [ConversationHandler] Unknown DeliveryItem type: %s — skipping", item.type)
+                logger.error("⚠️ [ConversationHandler] skill_preview summary send failed: %s", e, exc_info=True)
+                await send_failure_notice()
+                return
+
+        try:
+            await response_channel.send_message(f"`{item.data['command']}`", thread_id)
+        except Exception as e:
+            logger.error("⚠️ [ConversationHandler] skill_preview command send failed: %s", e, exc_info=True)
+
+    def _render_skill_change_line(self, language: Optional[str], line: dict) -> str:
+        """Localize one `FileChangeLine` dict (Task 6's `change_summary`) for the channel's
+        language. `new`/`changed` lines with a non-None `source` use the *_UPLOAD variant —
+        the file was copied from an upload or another skill's file, not written by the model."""
+        kind = line["kind"]
+        path = line.get("path", "")
+        source = line.get("source")
+        if kind == "new":
+            if source:
+                return self._ui_string_for_language(
+                    language, UIMessage.SKILL_CHANGE_NEW_UPLOAD,
+                    path=path, source=source, size=human_size(line.get("size", 0)),
+                )
+            return self._ui_string_for_language(
+                language, UIMessage.SKILL_CHANGE_NEW, path=path, size=human_size(line.get("size", 0)),
+            )
+        if kind == "changed":
+            if source:
+                return self._ui_string_for_language(
+                    language, UIMessage.SKILL_CHANGE_CHANGED_UPLOAD, path=path, source=source,
+                )
+            return self._ui_string_for_language(language, UIMessage.SKILL_CHANGE_CHANGED, path=path)
+        if kind == "removed":
+            return self._ui_string_for_language(language, UIMessage.SKILL_CHANGE_REMOVED, path=path)
+        # "unchanged" — one collapsed line carrying the count, never one per untouched file.
+        return self._ui_string_for_language(
+            language, UIMessage.SKILL_CHANGE_UNCHANGED, count=line.get("count", 0),
+        )
 
     async def _get_consolidation_config(self, user_id: str) -> ConsolidationSettings:
         """Resolve consolidation settings for a specific user."""
@@ -1739,7 +1819,14 @@ class ConversationHandler(ConversationHandlerPort):
 
         lines = [self._ui_string(context, UIMessage.SKILL_LIST_HEADER)]
         if custom:
-            lines.extend(f"- {s.name} — {s.description}" for s in custom)
+            lines.extend(
+                f"- {s.name} — {s.description}"
+                + (
+                    f" ({self._ui_string(context, UIMessage.SKILL_LIST_FILES, count=len(s.files))})"
+                    if s.files else ""
+                )
+                for s in custom
+            )
         else:
             lines.append(self._ui_string(context, UIMessage.SKILL_LIST_EMPTY))
         lines.append("")

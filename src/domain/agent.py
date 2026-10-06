@@ -128,7 +128,8 @@ class DeliveryItem:
       "rich_content"  — structured visual content (table, etc.); data: {content_type, data, fallback}
       "html_gcs_link" — HTML uploaded to GCS, linked as "<url|link_text>"; data: {html, filename, link_text}
       "message"       — plain text message appended after main response; data: {text}
-      "skill_preview" — draft skill from draft_skill; data: {name, skill_md, command}
+      "skill_preview" — draft skill from draft_skill; data: {name, skill_md, command, files, summary}
+                        (files: [{path, content}] model-written entries; summary: [dataclasses.asdict(FileChangeLine)])
     """
     type: str
     data: Dict[str, Any]
