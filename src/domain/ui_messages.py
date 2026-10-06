@@ -44,6 +44,15 @@ class UIMessage(Enum):
     # language comes from the response_channel instead (see _ui_string_for_language).
     SKILL_PREVIEW_FILE_TITLE = "skill_preview_file_title"
     SKILL_PREVIEW_DELIVERY_FAILED = "skill_preview_delivery_failed"
+    # skill_preview: model-written reference files + change summary (delivery C, Task 7).
+    SKILL_PREVIEW_REF_FILE_TITLE = "skill_preview_ref_file_title"
+    SKILL_LIST_FILES = "skill_list_files"
+    SKILL_CHANGE_NEW = "skill_change_new"
+    SKILL_CHANGE_NEW_UPLOAD = "skill_change_new_upload"
+    SKILL_CHANGE_CHANGED = "skill_change_changed"
+    SKILL_CHANGE_CHANGED_UPLOAD = "skill_change_changed_upload"
+    SKILL_CHANGE_REMOVED = "skill_change_removed"
+    SKILL_CHANGE_UNCHANGED = "skill_change_unchanged"
     # Long-running turns (LONG_RUNNING_TURNS_RFC §3, §5.3–5.7).
     LONG_TURN_NOTICE = "long_turn_notice"
     LATE_ANSWER_PREFIX = "late_answer_prefix"
