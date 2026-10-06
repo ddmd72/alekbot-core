@@ -133,9 +133,7 @@ class LelikAgent(BaseAgent):
                 origin_channel_id=channel.channel_id,
                 origin_platform=channel.platform,
             )
-        # "later" has no delivery path for a SYNC-declared intent (AgentWorkerHandler
-        # delivers only generator intents), so on the phone it would drop the answer.
-        args = {k: v for k, v in arguments.items() if k != "mode"}
+        args = dict(arguments)
         args["context"] = {**normalize_delegate_context(arguments.get("context")), "call_context": call_context}
         result = await DelegationEngine(self.coordinator).dispatch(
             ToolCall(name=_DELEGATE_TOOL, args=args),

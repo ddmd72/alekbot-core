@@ -122,9 +122,11 @@ async def test_free_text_context_is_kept_as_reasoning_next_to_call_context():
 
 
 @pytest.mark.asyncio
-async def test_mode_is_stripped_so_lelik_always_runs_the_declared_mode():
-    """'later' has no delivery path for SYNC-declared intents: the answer would be lost."""
+async def test_stray_mode_cannot_change_lelik_dispatch():
+    """'later' has no delivery path for SYNC-declared intents: the answer would be lost.
+    The caller can no longer choose the mode at all — the manifest decides it — so a
+    stray `mode` from the realtime model must reach the coordinator as nothing."""
     agent, _, _, coordinator = _agent()
     await agent.delegate(user_id="u1", account_id="a1",
                          arguments={"intent": "search_memory", "query": "q", "mode": "later"}, call_context=[])
-    assert coordinator.handle_delegation.await_args.kwargs["mode_override"] is None
+    assert "mode_override" not in coordinator.handle_delegation.await_args.kwargs

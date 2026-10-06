@@ -231,9 +231,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     made for this second caller — see Orchestration Patterns below), exactly as a text orchestrator's
     single-call dispatch would. Seeds `context[CALL_CHAIN_KEY]=[lelik_agent]`, attaches the primary
     channel's `session_id`/`origin_channel_id`/`origin_platform` from `persona.primary_channel(user_id)`
-    when resolvable, and **strips `mode` from the arguments** before dispatch:
-    `AgentWorkerHandler` delivers only generator-declared (ASYNC) intents, so a SYNC-declared intent
-    forced into `mode: "later"` has no delivery path and would silently drop the answer on the phone.
+    when resolvable. Each intent runs in its manifest-declared mode — no caller can override it
+    (see Orchestration Patterns → Sync/async is the intent's).
   - **`delegate()` posts nothing to chat** (RFC §4.15.3, 2026-09-29). The rule-2 link copy for
     every non-Alek specialist was withdrawn: it filled the chat with every search's links. The
     `notifications` constructor argument is now unused, kept for construction compatibility. When
@@ -405,14 +404,16 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   what by design; the chain catches what design missed. **Lelik seeds `_call_chain=[lelik_agent]`**
   on every `delegate()` call; `AlekGatewayAgent` forwards `message.context` whole into the routed
   message, so the chain — and therefore the cycle guard — reaches through the Router into Smart.
-- **Per-call sync/async** — `handle_delegation(..., mode_override=ExecutionMode)` overrides the
-  intent's declared mode for one call; `None` keeps the manifest value, so callers that pass
-  nothing are unaffected. The LLM chooses via `mode: "now" | "later"` on `delegate_to_specialist`
-  (plain words, not SYNC/ASYNC — the model reasons about the wait, and an unknown word falls back
-  to the manifest rather than failing). **Fan-out ignores the override** — it merges parallel
-  results, and an async leg returns an ack with nothing to merge. There is deliberately no
-  "async-locked" flag for intents that are long by nature: forcing one sync hits the agent timeout
-  and fails loudly, which is the signal to add the flag if it ever happens.
+- **Sync/async is the intent's, not the caller's** — `handle_delegation` dispatches by
+  `manifest.capabilities[intent]` only. The per-call `mode: "now" | "later"` override
+  (2026-08-25) was **removed 2026-10-06**: "later" had no path back to the caller (an ASYNC
+  result goes to the *user* via `AgentWorkerHandler`, and only for generator intents — a
+  SYNC-declared intent forced async computed its answer and dropped it), and "now" on a
+  generator pulled it into the orchestrator's turn, where on the `notify()` path its document
+  was lost. So the switch chose the result's *recipient*, not the timing. A stray `mode`
+  argument is ignored. A real "async with the result returned to the orchestrator" is a
+  separate, undesigned feature (backlog), not a re-add of this flag. See
+  `decisions/delegate_mode_parameter_removed.md`.
   API: `engine.execute(call_llm, base_request, context, max_turns, terminal_tool?, intent_remap?,
   intent_fanout?)`.
   Smart: passes `terminal_tool="deliver_response"`. **This branch is live and provider-dependent —
