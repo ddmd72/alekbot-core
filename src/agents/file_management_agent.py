@@ -22,6 +22,7 @@ import aiofiles
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent
+from ..domain.skill import SKILL_REF_PREFIX
 from ..infrastructure.agent_manifest import Intent
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.file_conversion import is_native_binary
@@ -103,26 +104,38 @@ class FileManagementAgent(BaseAgent):
 
         self._on_agent_start(f"open_file: {ref}")
 
-        mime_type, _ = mimetypes.guess_type(ref)
-        mime_type = mime_type or "application/octet-stream"
-
         try:
+            # skill: refs are always text and never go through mime guessing (RFC §15.4) —
+            # the ref's "path" segment has its own extension, but the ref itself isn't a
+            # bare filename mimetypes can classify.
+            if ref.startswith(SKILL_REF_PREFIX):
+                return await self._fetch_text(message, ref, user_id)
+
+            mime_type, _ = mimetypes.guess_type(ref)
+            mime_type = mime_type or "application/octet-stream"
+
             if is_native_binary(mime_type):
                 return await self._fetch_binary(message, ref, user_id, mime_type)
             elif mime_type.startswith("video/"):
                 return await self._fetch_video(message, ref, user_id)
             else:
                 return await self._fetch_text(message, ref, user_id)
-        except FileNotFoundError:
+        except FileNotFoundError as e:
             logger.warning("FileManagementAgent: file not found '%s'", ref)
-            return AgentResponse.failure(
-                task_id=message.task_id,
-                agent_id=self.agent_id,
-                error=(
+            if ref.startswith(SKILL_REF_PREFIX):
+                # Skill-specific message already names the skill/path and the fix
+                # (draft_skill / $skill save) — "re-upload" doesn't apply to a skill file.
+                error = str(e)
+            else:
+                error = (
                     f"File '{ref}' not found in storage. "
                     f"It may have been deleted or expired (files are kept for 90 days). "
                     f"Ask the user to re-upload the file."
-                ),
+                )
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=error,
             )
         except Exception as e:
             logger.error("FileManagementAgent: fetch failed '%s': %s", ref, e, exc_info=True)
@@ -249,6 +262,16 @@ class FileManagementAgent(BaseAgent):
             )
 
         self._on_agent_start(f"delete_file: {ref}")
+
+        if ref.startswith(SKILL_REF_PREFIX):
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=(
+                    f"'{ref}' belongs to a skill. Skill files change only through a new skill "
+                    f"version (draft_skill) or are removed with the owner's `$skill delete <name>`."
+                ),
+            )
 
         try:
             await self._storage.delete(ref, user_id)
