@@ -335,7 +335,7 @@ There is no new read tool. A skill file is addressed as **`skill:<name>/<path>`*
 | Entry | Meaning |
 |-------|---------|
 | `{path, content}` | a text file the model writes, new or replacing |
-| `{path, from_file}` | re-save a text file from **the owner's own uploads** (a bare filename) or from **one of the owner's own skills** (`skill:` ref) |
+| `{path, from_file}` | re-save a text file from **the owner's own uploads** (a bare filename) or from **one of the owner's own custom skills** (`skill:` ref; never a system skill — system skill content is written only in git) |
 | `{path, remove: true}` | drop a file from the new version |
 
 `from_file` deliberately rejects bot-delivered documents (`docs/`, `email_review/`, `deep_research/`, `video_generation/`, `file_conversion_service.py:34`). They carry third-party text the owner never sent, such as email bodies. If the owner wants one in a skill, the model writes its content as a `{path, content}` file, and that file is shown in the preview (§15.6).
