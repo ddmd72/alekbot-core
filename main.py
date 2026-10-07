@@ -11,6 +11,7 @@ from src.web.worker_oidc_verifier import verify_worker_oidc
 from src.web.twilio_signature_verifier import verify_twilio_signature
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
+from src.web.mcp_error_logger import McpErrorLogger
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
@@ -1291,7 +1292,7 @@ async def main():
                         # /mcp/consent (the consent UI blueprint), /auth/*,
                         # /api/*, /slack/*, /worker, /health, /cabinet.
                         _fastmcp = mcp_components.fastmcp
-                        _mcp_asgi = _fastmcp.streamable_http_app()
+                        _mcp_asgi = McpErrorLogger(_fastmcp.streamable_http_app())
 
                         def _is_mcp_path(path: str) -> bool:
                             if path == "/mcp" or path == "/mcp/":
