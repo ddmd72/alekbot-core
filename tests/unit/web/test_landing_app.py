@@ -84,3 +84,12 @@ def test_every_external_link_opens_in_a_new_tab():
 
     assert anchors
     assert all('target="_blank"' in a and "noopener" in a for a in anchors)
+
+
+def test_cabinet_logout_lands_on_the_public_page_not_the_login():
+    from pathlib import Path
+    js = Path("src/web/static/cabinet.html").read_text()
+    body = js[js.index("async function logout()"):]
+    body = body[:body.index("</script>")]
+
+    assert 'window.location.href = "/";' in body
