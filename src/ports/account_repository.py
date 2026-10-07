@@ -26,7 +26,7 @@ class AccountRepository(ABC):
     async def increment_account_usage(
         self, account_id: str, tokens: int, cost: float
     ) -> UsageIncrement:
-        """Atomically increment account usage with transactional resets.
+        """Increment account usage; only a daily/monthly window rotation is transactional.
 
         Returns the resulting daily-spend position so callers can detect a budget
         limit crossing without re-reading the account.
