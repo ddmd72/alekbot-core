@@ -184,6 +184,11 @@ Smart sees its running jobs and can cancel one, per `PROTOCOL_LONG_TURNS`. The t
 path is retired. Not in scope: `ask_alek`/`tell_alek`/notifications stay unclocked (RFC §7
 deferred; see `decisions/long_running_turns.md`).
 
+**Public landing** — `/` serves `src/web/static/landing.html` to visitors without a session (it is the
+GitHub repo's homepage); a signed-in owner is still redirected to `/cabinet`. `src/web/landing_app.py`
+also serves `/og.png` (share image) and `/robots.txt` (`Allow: /$`, everything else closed). The page is
+one self-contained file, no external requests; its numbers (tests, RFCs) are hand-maintained.
+
 **Remote MCP Server** — alekbot as MCP *server* exposing memory search to claude.ai Custom Connectors
 (inverse of its Maps MCP *client*). One tool `get_user_context(query, …)` → `SearchEnrichmentService.enrich_context`
 directly (bypasses the agent stack). Full in-process OAuth 2.1 AS (DCR, PKCE S256, RFC 8707, refresh
