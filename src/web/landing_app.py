@@ -9,6 +9,8 @@ import os
 
 from quart import Blueprint, redirect, request, send_file
 
+from src.utils.logger import logger
+
 _ROBOTS = "User-agent: *\nAllow: /$\nDisallow: /\n"
 
 
@@ -25,8 +27,9 @@ def create_landing_blueprint(session_service) -> Blueprint:
             try:
                 session_service.verify_access_token(token)
                 return redirect("/cabinet")
-            except Exception:
-                pass  # expired or forged: show the public page, Sign in starts a fresh login
+            except Exception as e:
+                # Expired or forged: show the public page, Sign in starts a fresh login.
+                logger.info(f"Landing: login cookie not accepted ({e})")
         response = await send_file(os.path.join(static_dir, "landing.html"), mimetype="text/html")
         # Revalidate on every load: send_file's 12 h max-age would serve a stale page after deploys.
         response.headers["Cache-Control"] = "no-cache"
