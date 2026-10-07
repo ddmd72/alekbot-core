@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Union
 
 _VALID_TRACKS = {"inbound", "outbound"}
 
@@ -10,7 +10,7 @@ class AudioFrame:
 
     encoding: str
     sample_rate_hz: int
-    payload: bytes
+    payload: Union[bytes, str]  # raw bytes, or base64 text as a provider's wire carries it
     track: Literal["inbound", "outbound"]
 
     def __post_init__(self) -> None:

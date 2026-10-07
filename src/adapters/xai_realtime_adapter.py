@@ -2,6 +2,7 @@ import json
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 import websockets
+from websockets.asyncio.client import ClientConnection
 
 from src.domain.voice_audio_format import MULAW_8K, AudioFormat
 from src.domain.voice_audio_frame import AudioFrame
@@ -70,7 +71,13 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         self._voice = voice
         self._connect = ws_connect
         self._audio_format = audio_format
-        self._ws = None
+        self._ws: Optional[ClientConnection] = None
+
+    @property
+    def _socket(self) -> ClientConnection:
+        if self._ws is None:
+            raise RuntimeError("realtime session is not open")
+        return self._ws
 
     async def open(self, instructions: str, reasoning_effort: str, tools: List[dict]) -> None:
         url = f"wss://api.x.ai/v1/realtime?model={self._model}"
@@ -88,14 +95,14 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         if tools:
             session["tools"] = [{"type": "function", **tool} for tool in tools]
             session["tool_choice"] = "auto"
-        await self._ws.send(json.dumps({"type": "session.update", "session": session}))
+        await self._socket.send(json.dumps({"type": "session.update", "session": session}))
 
     async def send_audio(self, frame: AudioFrame) -> None:
         payload = frame.payload if isinstance(frame.payload, str) else frame.payload.decode("ascii")
-        await self._ws.send(json.dumps({"type": "input_audio_buffer.append", "audio": payload}))
+        await self._socket.send(json.dumps({"type": "input_audio_buffer.append", "audio": payload}))
 
     async def receive_events(self) -> AsyncIterator[RealtimeSessionEvent]:
-        async for raw in self._ws:
+        async for raw in self._socket:
             normalized = self._normalize(json.loads(raw))
             if normalized is not None:
                 yield normalized
@@ -103,9 +110,12 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
     def _normalize(self, event: dict) -> Optional[RealtimeSessionEvent]:
         event_type = event.get("type")
         if event_type in ("response.output_audio.delta", "response.audio.delta"):
+            payload = event.get("delta")
+            if not payload:
+                return None
             frame = AudioFrame(encoding=self._audio_format.encoding,
                                sample_rate_hz=self._audio_format.sample_rate_hz,
-                               payload=event.get("delta"), track="outbound")
+                               payload=payload, track="outbound")
             return RealtimeSessionEvent(
                 type="audio_delta", payload={"frame": frame, "item_id": event.get("item_id")}
             )
@@ -136,27 +146,27 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         return None
 
     async def submit_tool_result(self, call_id: str, output: str) -> None:
-        await self._ws.send(json.dumps({
+        await self._socket.send(json.dumps({
             "type": "conversation.item.create",
             "item": {"type": "function_call_output", "call_id": call_id, "output": output},
         }))
 
     async def submit_message(self, role: str, text: str) -> None:
-        await self._ws.send(json.dumps({
+        await self._socket.send(json.dumps({
             "type": "conversation.item.create",
             "item": {"type": "message", "role": role, "content": [{"type": "input_text", "text": text}]},
         }))
 
     async def request_response(self) -> None:
         # The greeting and delegation answers: the only replies the relay starts under PROVIDER ownership.
-        await self._ws.send(json.dumps({"type": "response.create"}))
+        await self._socket.send(json.dumps({"type": "response.create"}))
 
     async def cancel_response(self) -> None:
         # Not called under PROVIDER ownership (xAI stops its own reply); kept for the port contract.
-        await self._ws.send(json.dumps({"type": "response.cancel"}))
+        await self._socket.send(json.dumps({"type": "response.cancel"}))
 
     async def truncate(self, item_id: str, audio_end_ms: int) -> None:
-        await self._ws.send(json.dumps({
+        await self._socket.send(json.dumps({
             "type": "conversation.item.truncate",
             "item_id": item_id,
             "content_index": 0,

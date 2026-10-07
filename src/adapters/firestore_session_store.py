@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Optional, List, Any, Dict, Callable, Awaitable, Tuple
+from typing import Optional, List, Any, Dict, Callable, Awaitable, Coroutine, Tuple
 import datetime
 from datetime import datetime as dt_class, timedelta
 from google.cloud import firestore
@@ -29,7 +29,7 @@ class FirestoreSessionStore(SessionStore):
         collection_prefix: str = "",
         max_history_length: int = 200,
         batch_size: int = 100,
-        overflow_callback: Optional[Callable[[str, str, List[Message]], Awaitable[None]]] = None,
+        overflow_callback: Optional[Callable[[str, str, List[Message]], Coroutine[Any, Any, None]]] = None,
         threshold_resolver: Optional[Callable[[str], Awaitable[Optional[Tuple[int, int]]]]] = None,
     ):
         """
@@ -190,7 +190,7 @@ class FirestoreSessionStore(SessionStore):
                     )
 
             @firestore.async_transactional
-            async def _batch_append(transaction: firestore.AsyncTransaction) -> Optional[tuple[str, List[Message]]]:
+            async def _batch_append(transaction: firestore.AsyncTransaction) -> Optional[Tuple[str, List[List[Message]]]]:
                 doc = await doc_ref.get(transaction=transaction)
                 nonlocal resolved_owner_id
                 extracted_batches = []

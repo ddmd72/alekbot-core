@@ -34,7 +34,7 @@ WorkerHandler._handle_video_generation_polling also wraps the whole get_status()
 call as a belt-and-suspenders backstop for any other unexpected exception.
 """
 import base64
-from typing import Optional
+from typing import Any, Dict, Optional, cast
 
 import httpx
 from openai import AsyncOpenAI
@@ -80,7 +80,7 @@ class GrokVideoAdapter(VideoGenerationPort):
         aspect_ratio: Optional[str] = None, session_id: Optional[str] = None,
         origin_platform: Optional[str] = None,
     ) -> str:
-        body = {"model": _MODEL, "prompt": prompt}
+        body: Dict[str, Any] = {"model": _MODEL, "prompt": prompt}
         if duration is not None:
             body["duration"] = duration
         if resolution is not None:
@@ -94,7 +94,7 @@ class GrokVideoAdapter(VideoGenerationPort):
             # and against docs.x.ai/developers/rest-api-reference/inference/videos.
             body["image"] = {"url": f"data:{image_mime_type};base64,{b64}"}
 
-        response = await self._client.post("/videos/generations", cast_to=object, body=body)
+        response = cast(Dict[str, Any], await self._client.post("/videos/generations", cast_to=object, body=body))
         request_id = response.get("request_id")
         if not request_id:
             raise RuntimeError(f"xAI response missing request_id: {response!r}")
@@ -116,7 +116,7 @@ class GrokVideoAdapter(VideoGenerationPort):
         origin_platform: Optional[str] = None,
     ) -> str:
         b64 = base64.b64encode(video_data).decode("ascii")
-        body = {
+        body: Dict[str, Any] = {
             "model": _EDIT_MODEL,
             "prompt": prompt,
             # Same {"url": ...} wrapping as create_video's "image" field — same xAI
@@ -124,7 +124,7 @@ class GrokVideoAdapter(VideoGenerationPort):
             "video": {"url": f"data:{video_mime_type};base64,{b64}"},
         }
 
-        response = await self._client.post("/videos/edits", cast_to=object, body=body)
+        response = cast(Dict[str, Any], await self._client.post("/videos/edits", cast_to=object, body=body))
         request_id = response.get("request_id")
         if not request_id:
             raise RuntimeError(f"xAI response missing request_id: {response!r}")
@@ -143,7 +143,7 @@ class GrokVideoAdapter(VideoGenerationPort):
         return request_id
 
     async def get_status(self, request_id: str) -> VideoPollResult:
-        response = await self._client.get(f"/videos/{request_id}", cast_to=object)
+        response = cast(Dict[str, Any], await self._client.get(f"/videos/{request_id}", cast_to=object))
         status = response.get("status", "failed")
 
         if status == "done":

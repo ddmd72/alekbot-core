@@ -38,7 +38,7 @@ class RealtimeSessionPort(ABC):
         """Push one inbound audio frame into the session."""
 
     @abstractmethod
-    async def receive_events(self) -> AsyncIterator[RealtimeSessionEvent]:
+    def receive_events(self) -> AsyncIterator[RealtimeSessionEvent]:
         """Yield normalized events: audio_delta (payload: frame: AudioFrame,
         item_id - the provider's id for the assistant item this audio belongs to,
         needed to truncate it on barge-in),

@@ -96,9 +96,9 @@ class PromptComponentRepository(ABC):
         self, 
         user_id: str, 
         component_id: str
-    ) -> None:
+    ) -> bool:
         """
-        Delete user override, reverting to default.
+        Delete user override, reverting to default. True if an override existed and was deleted.
         
         Args:
             user_id: User identifier
@@ -115,10 +115,11 @@ class PromptComponentRepository(ABC):
         self,
         component_id: str,
         agent_type: str,
-        user_id: Optional[str] = None
+        account_id: str,
+        user_id: str
     ) -> Optional[PromptComponent]:
         """
-        Resolve component using 3-level priority: USER > AGENT > SYSTEM.
+        Resolve component using 4-level priority: USER > ACCOUNT > AGENT > SYSTEM.
         
         Resolution logic:
         1. Try USER level (if user_id provided)

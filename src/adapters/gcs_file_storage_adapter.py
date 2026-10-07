@@ -40,7 +40,7 @@ class GcsFileStorageAdapter(FileStoragePort):
 
     def _get_client(self):
         if self._client is None:
-            from google.cloud import storage
+            from google.cloud import storage  # type: ignore[attr-defined]  # mypy resolves google.cloud to a stub namespace without it
             self._client = storage.Client()
         return self._client
 

@@ -122,6 +122,8 @@ class CloudRunJobsAdapter(JobRunnerPort):
             credentials, _ = google.auth.default(scopes=_SCOPES)
             request = google.auth.transport.requests.Request()
             credentials.refresh(request)
-            return credentials.token
+            if not credentials.token:
+                raise RuntimeError("Application Default Credentials refresh returned no access token")
+            return str(credentials.token)
 
         return await asyncio.to_thread(_refresh)

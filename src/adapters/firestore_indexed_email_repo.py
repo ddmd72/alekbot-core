@@ -180,7 +180,7 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
         scores: Dict[str, float] = {}
 
         for query_results in results_lists:
-            if isinstance(query_results, Exception):
+            if isinstance(query_results, BaseException):
                 logger.error(f"💥 [email.find_nearest] query failed: {query_results}")
                 continue
             for rank, doc in enumerate(query_results):

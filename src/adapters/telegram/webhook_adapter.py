@@ -10,6 +10,7 @@ from telegram import Bot, Update
 
 from ...ports.platform_port import PlatformPort
 from .response_channel import TelegramResponseChannel
+from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
 from ...domain.messaging import MessageContext, FileAttachment
 from ...ports.conversation_handler_port import ConversationHandlerPort
 from ...ports.platform_auth_port import PlatformAuthPort
@@ -181,13 +182,17 @@ class TelegramWebhookAdapter(PlatformPort):
                 # User NOT authorized → send centralized IAM message
                 logger.warning(f"⛔ Unauthorized Telegram user: {telegram_user_id}")
                 response_channel = TelegramResponseChannel(self.bot, chat_id)
-                await response_channel.send_message(decision.message)
+                if decision.message:
+                    await response_channel.send_message(decision.message)
                 return
 
             # 2. User authorized → process message
             user_profile = decision.user
+            if user_profile is None:
+                logger.error(f"❌ IAM decision '{decision.action}' for {telegram_user_id} carries no user, skipping")
+                return
             user_id = user_profile.user_id
-            account_id = user_profile.account_id
+            account_id = user_profile.account_id or ANONYMOUS_ACCOUNT_ID
 
             # 3. Resolve session (deterministic: user_id:channel_id)
             session_id = self._resolve_session_id(user_id, str(chat_id))
@@ -370,7 +375,7 @@ class TelegramWebhookAdapter(PlatformPort):
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Filter out None and exceptions
-        attachments = [r for r in results if r and not isinstance(r, Exception)]
+        attachments = [r for r in results if r and not isinstance(r, BaseException)]
         
         if len(attachments) < len(platform_files):
             logger.warning(

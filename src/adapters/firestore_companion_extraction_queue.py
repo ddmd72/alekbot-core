@@ -6,7 +6,7 @@ session_id in place of user_id throughout.
 """
 import logging
 import time
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 
@@ -58,7 +58,7 @@ class FirestoreCompanionExtractionQueue(CompanionExtractionQueue):
         records_extracted: int = 0,
     ) -> None:
         doc_ref = self.collection.document(batch_id)
-        update_data = {"status": status.value, "records_extracted": records_extracted}
+        update_data: Dict[str, Any] = {"status": status.value, "records_extracted": records_extracted}
         if error:
             update_data["last_error"] = error
         if status == BatchStatus.PROCESSING:
