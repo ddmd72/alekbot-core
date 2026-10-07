@@ -1142,7 +1142,7 @@ async def main():
                 
                 # Public landing at `/` (signed-in owner → /cabinet), /og.png, /robots.txt
                 from src.web.landing_app import create_landing_blueprint
-                main_app.register_blueprint(create_landing_blueprint())
+                main_app.register_blueprint(create_landing_blueprint(session_service))
 
                 # Add health endpoint
                 @main_app.route("/health", methods=["GET"])
