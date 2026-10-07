@@ -18,6 +18,11 @@ All policies route to one Slack notification channel **#alerts-dev** (channel id
    POSTs by design — see `decisions/worker_oidc_and_docx_sandbox.md`).
 3. **Cloud Scheduler job failures - dev** (2026-06-03) — `cloud_scheduler_job` failures. Covers the
    "scheduled task never fired" gap that policy 1 cannot see.
+4. **Sensitive-path 2xx tripwire - dev** (2026-10-07) — `cloud_run_revision` + a 2xx response to a
+   path vulnerability scanners probe for (`.env`, `credentials*`, `wp-*`, `.php`,
+   `/proc/self/environ`, `aws-exports.js`, `appsettings.json`). The weekly scan volume on these
+   paths is pure noise (verified 100% 404, excluded from the `_Default` sink — see the
+   `scanner-404-noise` exclusion) — this fires only if one of them is ever actually served.
 
 ## Why policies 2–3 exist
 
@@ -25,3 +30,10 @@ Policy 1 only fires on errors *within* a task. The OIDC gate on `/worker` return
 WARNING) when a caller is rejected, and a scheduler that never invokes the service emits nothing to
 the revision logs — both are silent to an ERROR-only policy. 2 and 3 close that gap at the HTTP and
 scheduler layers respectively. See also `decisions/` and the enumerate-callers-before-gating lesson.
+
+## Logging exclusions
+
+`_Default` sink exclusion **`scanner-404-noise`** (2026-10-07): drops `run.googleapis.com/requests`
+entries with `httpRequest.status=404` from storage — background vulnerability-scanner traffic
+(verified zero 2xx hits over a 7-day sample, `docs/reviews/PROD_LOG_AUDIT_FOLLOWUP.md` C-17).
+Anything that stops being a 404 is not excluded, and is independently covered by policy 4 above.

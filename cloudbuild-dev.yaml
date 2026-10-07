@@ -186,7 +186,7 @@ steps:
         gcloud scheduler jobs describe alek-bot-dev-start-email-indexing \
           --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
         && gcloud scheduler jobs update http alek-bot-dev-start-email-indexing \
-          --schedule="0 * * * *" \
+          --schedule="7 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
           --http-method=POST \
@@ -196,7 +196,7 @@ steps:
           --attempt-deadline=60s \
           --project=$PROJECT_ID \
         || gcloud scheduler jobs create http alek-bot-dev-start-email-indexing \
-          --schedule="0 * * * *" \
+          --schedule="7 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
           --http-method=POST \
@@ -257,7 +257,7 @@ steps:
         gcloud scheduler jobs describe alek-bot-dev-repair-email-embeddings \
           --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
         && gcloud scheduler jobs update http alek-bot-dev-repair-email-embeddings \
-          --schedule="0 * * * *" \
+          --schedule="2 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
           --http-method=POST \
@@ -267,7 +267,7 @@ steps:
           --attempt-deadline=300s \
           --project=$PROJECT_ID \
         || gcloud scheduler jobs create http alek-bot-dev-repair-email-embeddings \
-          --schedule="0 * * * *" \
+          --schedule="2 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
           --http-method=POST \
@@ -280,7 +280,7 @@ steps:
         gcloud scheduler jobs describe alek-bot-dev-sweep-consolidation \
           --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
         && gcloud scheduler jobs update http alek-bot-dev-sweep-consolidation \
-          --schedule="0 * * * *" \
+          --schedule="17 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
           --http-method=POST \
@@ -290,7 +290,7 @@ steps:
           --attempt-deadline=60s \
           --project=$PROJECT_ID \
         || gcloud scheduler jobs create http alek-bot-dev-sweep-consolidation \
-          --schedule="0 * * * *" \
+          --schedule="17 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
           --http-method=POST \

@@ -637,7 +637,7 @@ class RouterAgent(BaseAgent):
         Returns:
             AgentResponse with confirmation message
         """
-        logger.warning("🔥 ADMIN: Cache reset command received")
+        logger.info("🔥 ADMIN: Cache reset command received")
         
         # Access assembly service via prompt_builder
         if self.prompt_builder and hasattr(self.prompt_builder, 'assembly_service'):

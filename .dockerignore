@@ -1,5 +1,8 @@
 .git
 .env
+service-account*.json
+*-admin-key.json
+scripts/email/credentials.json
 memory/
 scripts/memory/
 __pycache__

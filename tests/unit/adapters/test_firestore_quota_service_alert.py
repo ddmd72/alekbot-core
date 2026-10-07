@@ -98,7 +98,13 @@ class TestDailyBudgetAlert:
     async def test_alert_logs_structured_event(self, caplog):
         svc, _ = _service(_increment(4.80, 5.20), AsyncMock(spec=AlertSinkPort))
 
-        with caplog.at_level("WARNING"):
+        # INFO, not WARNING: this event is advisory (docstring: "Budget alerting is
+        # advisory only"); the owner-facing notification is the unconditional
+        # alert_sink.post() call right below the log line in
+        # _alert_daily_limit_crossed, not the log line's severity. Reviewed per
+        # PROD_LOG_AUDIT_FOLLOWUP.md C-21 — see docs/07_deployment/ALERTING.md:
+        # none of the 3 live GCP alert policies key off this log line.
+        with caplog.at_level("INFO"):
             await svc.record_usage("acct-1", "gpt-5.6-sol", tokens=1000, cost=0.40)
 
         assert "budget_daily_limit_crossed" in caplog.text

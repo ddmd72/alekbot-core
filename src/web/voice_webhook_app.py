@@ -111,7 +111,7 @@ def create_voice_webhook_blueprint(
 
         profile = await user_repository.get_user_by_platform_id("phone", caller)
         if profile is None:
-            logger.warning(f"voice auth: rejected dial from unbound number {caller}")
+            logger.info(f"voice auth: rejected dial from unbound number {caller}")
             await alert_sink.post(f"Voice: refused dial from unbound number {caller}")
             return _twiml_reject()
 
