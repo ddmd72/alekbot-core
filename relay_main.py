@@ -42,6 +42,7 @@ precedent: `job_main.py` has none either). Verified by manual read-through +
 architecture test run instead (see task-13-report.md).
 """
 import asyncio
+import logging
 import os
 import signal
 from pathlib import Path
@@ -60,6 +61,13 @@ from src.handlers.sfu_stream_handler import SfuStreamHandler
 from src.ports.realtime_session_port import RealtimeSessionPort
 from src.services.voice_session_service import VoiceSessionService
 from src.utils.logger import logger
+
+# The `websockets` library logs any TCP connection that never completes a WS handshake
+# (port scanners, bare health pings) as an ERROR on "websockets.server" — this is documented
+# upstream behavior, not a call-handling fault (prod log audit C-19: a third of this service's
+# weekly ERRORs). Quieted here, not in src/utils/logger.py, since only this raw-websockets
+# entrypoint triggers it.
+logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
 
 # Breath-pulse filler played while Lelik thinks or waits (owner pick B2, 2026-09-24).
 _THINKING_CUE_PATH = Path(__file__).parent / "src" / "assets" / "voice" / "thinking_cue.ulaw"

@@ -64,6 +64,7 @@ K ?= 300
 .PHONY: logs-relay fetch-logs-relay
 .PHONY: services status
 .PHONY: claude-model claude-rollback claude-forward dr-model dr-rollback dr-forward
+.PHONY: typecheck check-types
 .PHONY: check-models check-pricing openai-model openai-rollback openai-forward
 .PHONY: test-e2e-smart test-e2e-quick test-e2e-router test-e2e-consolidation test-e2e-websearch test-e2e-all
 .PHONY: delete
@@ -196,7 +197,15 @@ format: ## Format src/ with ruff (black-compatible)
 	@echo "✨ Formatting src/ with ruff..."
 	$(PYTHON) -m ruff format src/
 
-check: lint test-unit ## CI gate: ruff lint + unit/architecture tests
+typecheck: ## mypy --strict on src/domain + src/ports (part of the CI gate)
+	@echo "🔎 Running mypy (strict) on domain/ + ports/..."
+	$(PYTHON) -m mypy --config-file mypy.ini
+
+check-types: ## mypy (lenient) on src/adapters — informational, never fails
+	@echo "🔎 mypy on adapters/ (informational)..."
+	@$(PYTHON) -m mypy --config-file mypy-adapters.ini | tail -n 1 || true
+
+check: lint typecheck test-unit ## CI gate: ruff lint + mypy (domain/ports) + unit/architecture tests
 	@echo "✅ All checks passed"
 
 # ============================================================================

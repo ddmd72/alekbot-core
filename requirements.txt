@@ -77,6 +77,9 @@ pytest-mock
 # Linting — pinned so CI matches local; bumps are deliberate (new rules can break the gate)
 ruff==0.15.15
 
+# Type checking — strict on domain/ports (make typecheck); pinned like ruff, bumps are deliberate
+mypy==2.4.0
+
 # Telegram SDK
 python-telegram-bot==21.0
 

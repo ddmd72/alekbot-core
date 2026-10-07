@@ -78,7 +78,18 @@ def upload_document(collection: str, document_name: str, file_format: str, datab
         # Check if document exists and has token_id (Token v3) or blueprint_id (Blueprint v3)
         existing_doc = doc_ref.get()
         existing_data = existing_doc.to_dict() if existing_doc.exists else {}
-        if existing_doc.exists and existing_data.get("token_id"):
+        if not existing_doc.exists:
+            # groovy only ever writes {content, updated_at, ...} — never token_id/blueprint_id
+            # (prod log audit C-07: PROTOCOL_VIDEO_GEN_PREP was created this way and silently
+            # ended up with no token_id). First-time creation must carry the id field, so it
+            # has to go through --format json, which this document's own uploads/<name>.json
+            # already provides.
+            raise ValueError(
+                f"'{document_name}' does not exist yet in '{collection}'. First-time creation "
+                f"must use --format json (sets token_id/blueprint_id); .groovy only updates an "
+                f"existing document's content."
+            )
+        if existing_data.get("token_id"):
             # Token v3 document - only update content field (merge behavior)
             payload = {
                 "content": content,
@@ -86,7 +97,7 @@ def upload_document(collection: str, document_name: str, file_format: str, datab
             }
             doc_ref.update(payload)
             print(f"  ℹ️  Updated content field only (Token v3 document)")
-        elif existing_doc.exists and existing_data.get("blueprint_id"):
+        elif existing_data.get("blueprint_id"):
             # Blueprint v3 document - only update template field (merge behavior)
             payload = {
                 "template": content,
@@ -95,7 +106,7 @@ def upload_document(collection: str, document_name: str, file_format: str, datab
             doc_ref.update(payload)
             print(f"  ℹ️  Updated template field only (Blueprint v3 document)")
         else:
-            # Legacy document or new document - full overwrite
+            # Legacy document (no token_id/blueprint_id, but already exists) - full overwrite
             payload = {
                 "content": content,
                 "updated_at": firestore.SERVER_TIMESTAMP,

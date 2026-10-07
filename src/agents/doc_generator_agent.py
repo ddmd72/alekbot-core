@@ -32,6 +32,7 @@ from datetime import date
 from typing import List, Optional
 
 from .base_agent import BaseAgent
+from ..domain.delegation_timestamp import strip_delegation_timestamp
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.llm import Message, MessagePart
@@ -113,7 +114,10 @@ class DocGeneratorAgent(BaseAgent):
         )
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
-        raw_query = message.payload.get("query", "")
+        # payload["query"] is JSON, not commission text — handle_delegation() prepends a
+        # "[Mon DD, HH:MM UTC] " timestamp to every delegated query regardless, which breaks
+        # JSON.parse() on the Node side (prod log audit C-10). Strip it before using the spec.
+        raw_query = strip_delegation_timestamp(message.payload.get("query", ""))
         if not raw_query:
             self._on_agent_error(ValueError("No spec provided"), "empty_query")
             return AgentResponse.failure(

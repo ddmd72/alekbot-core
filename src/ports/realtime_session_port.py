@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, ClassVar, Dict, FrozenSet
+from typing import Any, AsyncIterator, ClassVar, Dict, FrozenSet, List
 
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_turn_ownership import TurnOwnership
@@ -29,7 +29,7 @@ class RealtimeSessionPort(ABC):
     supported_turn_ownership: ClassVar[FrozenSet[TurnOwnership]]
 
     @abstractmethod
-    async def open(self, instructions: str, reasoning_effort: str, tools: list) -> None:
+    async def open(self, instructions: str, reasoning_effort: str, tools: List[Any]) -> None:
         """Connect and send the initial session.update. `instructions` must
         already have PROMPT_CACHE_BOUNDARY stripped by the caller."""
 

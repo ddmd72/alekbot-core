@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Marks the delivered call note in chat and in history; PROTOCOL_VOICE_PARTNER names it.
@@ -37,7 +37,7 @@ def call_event_text(started_at: Optional[datetime], ended_at: Optional[datetime]
     )
 
 
-def call_event_from_turns(turns: List[dict], timezone: str, call_kind: str = "phone") -> str:
+def call_event_from_turns(turns: List[Dict[str, Any]], timezone: str, call_kind: str = "phone") -> str:
     """Same event, windowed by the relay's turn segments (ISO `started_at`/`ended_at`)."""
     starts = [datetime.fromisoformat(t["started_at"]) for t in turns if t.get("started_at")]
     ends = [datetime.fromisoformat(t["ended_at"]) for t in turns if t.get("ended_at")]

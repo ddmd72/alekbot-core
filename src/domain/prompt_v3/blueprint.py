@@ -55,5 +55,5 @@ class Blueprint:
             dupes = [c for c in self.class_order if self.class_order.count(c) > 1]
             raise ValueError(f"class_order has duplicates: {list(set(dupes))}")
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash((self.id, self.outer_class, tuple(self.class_order)))
