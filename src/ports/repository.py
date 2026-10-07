@@ -247,7 +247,7 @@ class FactRepository(ABC):
         self, 
         owner_id: str, 
         limit: int = 100
-    ) -> List[Dict]:
+    ) -> List[Dict[str, Any]]:
         """
         Retrieves cached biographical context (fast read).
         

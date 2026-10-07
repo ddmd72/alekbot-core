@@ -19,7 +19,7 @@ class CompanionExtractorPort(ABC):
         companion_type: str,
         account_id: str,
         created_by_user_id: str,
-        messages: List[dict],
+        messages: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """Run the companion_type's extractor over a batch of messages.
 

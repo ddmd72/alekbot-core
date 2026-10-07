@@ -113,7 +113,7 @@ class PromptComponent:
     is_user_override: bool = False  # Deprecated: use owner_type == USER
     version: str = "1.0"  # For migration tracking
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate component on creation."""
         if not self.id:
             raise ValueError("Component id required")

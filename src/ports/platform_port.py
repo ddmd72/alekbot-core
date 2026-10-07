@@ -8,7 +8,7 @@ in the adapter layer, not here.
 Moved from src/adapters/platform/base_adapter.py (TD-V4, 2026-03-08).
 """
 from abc import ABC, abstractmethod
-from typing import List
+from typing import Any, List
 
 from src.domain.messaging import FileAttachment
 
@@ -25,7 +25,7 @@ class PlatformPort(ABC):
         """Gracefully stop the adapter."""
 
     @abstractmethod
-    async def _translate_platform_files(self, platform_files: list) -> List[FileAttachment]:
+    async def _translate_platform_files(self, platform_files: List[Any]) -> List[FileAttachment]:
         """Translate platform-specific file objects to FileAttachment DTOs."""
 
     @abstractmethod

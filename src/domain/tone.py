@@ -1,6 +1,7 @@
 """User tone domain model for routing and response control."""
 
 from enum import Enum
+from typing import Any, Dict, Union
 from .agent import RoutingMetadata
 from .task_complexity import TaskComplexity
 
@@ -27,7 +28,7 @@ class UserTone(str, Enum):
         return tone in {cls.CASUAL, cls.FRIENDLY, cls.PLAYFUL, cls.NEUTRAL}
 
     @classmethod
-    def validate(cls, tone) -> str:
+    def validate(cls, tone: Union[str, "UserTone"]) -> str:
         """Validate tone (str or UserTone) and return its canonical lowercase value.
 
         Falls back to "friendly" on invalid input. Accepts both raw strings
@@ -42,7 +43,7 @@ class UserTone(str, Enum):
         return cls.FRIENDLY.value
 
 
-def build_routing_metadata(classification: dict) -> RoutingMetadata:
+def build_routing_metadata(classification: Dict[str, Any]) -> RoutingMetadata:
     """Build RoutingMetadata from raw triage classification JSON."""
     metadata = classification.get("metadata", {}) if classification else {}
     if not metadata:
@@ -86,7 +87,7 @@ def build_routing_metadata(classification: dict) -> RoutingMetadata:
     )
 
 
-def _safe_complexity(value) -> TaskComplexity:
+def _safe_complexity(value: Any) -> TaskComplexity:
     """Coerce router output to TaskComplexity; unknown → SIMPLE_ANALYTICS (Q4 safety net)."""
     if isinstance(value, TaskComplexity):
         return value

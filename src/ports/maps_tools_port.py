@@ -11,6 +11,7 @@ Implementations:
 RFC: docs/10_rfcs/MCP_INFRASTRUCTURE_RFC.md
 """
 
+from typing import Any, Dict
 from abc import ABC, abstractmethod
 
 
@@ -18,7 +19,7 @@ class MapsToolsPort(ABC):
     """Port for map-related tool capabilities."""
 
     @abstractmethod
-    async def get_tool_declarations(self) -> list[dict]:
+    async def get_tool_declarations(self) -> list[Dict[str, Any]]:
         """
         Return tool schemas in LLMRequest-compatible FunctionDeclaration dict format.
 
@@ -38,7 +39,7 @@ class MapsToolsPort(ABC):
         """
 
     @abstractmethod
-    async def call_tool(self, name: str, arguments: dict) -> dict:
+    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute a named tool call and return the parsed JSON result.
 

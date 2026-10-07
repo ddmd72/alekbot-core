@@ -43,7 +43,9 @@ plain unauthenticated `curl http://localhost:8080/worker ...` works with no toke
 ## Commands
 
 ```bash
-make check             # CI gate: ruff lint + unit/architecture tests
+make check             # CI gate: ruff lint + mypy --strict (domain/ports) + unit/architecture tests
+make typecheck         # mypy --strict on src/domain + src/ports only
+make check-types       # mypy (lenient) on src/adapters — informational, prints an error count, never fails
 make test              # All tests
 make test-unit         # Unit tests
 make test-integration  # Integration tests
@@ -55,7 +57,8 @@ make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — s
 ```
 
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
-`ruff check src/` before the unit suite, and CI (`.github/workflows/ci.yml`) runs `make check` on
+`ruff check src/` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
+informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite, and CI (`.github/workflows/ci.yml`) runs `make check` on
 every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite is green and runs ~1:14
 single-process — **safe to run in full** (any historical "don't run the full suite" warning was a
 since-fixed chunker infinite loop, not a standing hazard). Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle

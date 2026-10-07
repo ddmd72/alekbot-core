@@ -22,23 +22,23 @@ class Session(BaseModel):
     last_consolidation_at: Optional[float] = None
 
     @property
-    def messages(self):
+    def messages(self) -> List[Any]:
         return self.history
     
     @messages.setter
-    def messages(self, value):
+    def messages(self, value: List[Any]) -> None:
         self.history = value
         self.message_count = len(value)
 
     @property
-    def owner_id(self):
+    def owner_id(self) -> str:
         return self.user_id
     
     @owner_id.setter
-    def owner_id(self, value):
+    def owner_id(self, value: str) -> None:
         self.user_id = value
 
-    def add_message(self, message: Any):
+    def add_message(self, message: Any) -> None:
         self.history.append(message)
         self.message_count = len(self.history)
         self.updated_at = time.time()
