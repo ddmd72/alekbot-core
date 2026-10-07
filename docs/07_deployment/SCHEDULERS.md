@@ -96,7 +96,7 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 | Field | Value |
 |-------|-------|
 | **Job name** | `alek-bot-{env}-start-email-indexing` |
-| **Schedule** | `0 * * * *` (every hour, on the hour) |
+| **Schedule** | `7 * * * *` (hourly at :07 — staggered off :00 so the hourly fan-outs do not collide with each other, `fire-due-reminders` and the keep-alives; prod log audit C-01) |
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "start_email_indexing"}` |
 | **Purpose** | Fan-out: for every Gmail user with `config.gmail_auto_index=True`, checks if `current_hour_in_user_tz == config.gmail_auto_index_hour`. If yes, creates an incremental indexing job and enqueues it. Skips users with a job already running. |
@@ -111,7 +111,7 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 | Field | Value |
 |-------|-------|
 | **Job name** | `alek-bot-{env}-start-daily-email-review` |
-| **Schedule** | `0 * * * *` (every hour, on the hour) |
+| **Schedule** | `12 * * * *` (hourly at :12 — staggered, see Start Email Indexing) |
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "start_daily_email_review"}` |
 | **Purpose** | Fan-out: for every Gmail user with `config.gmail_daily_review=True`, checks if `current_hour_in_user_tz == config.gmail_daily_review_hour`. If yes, enqueues a `daily_email_review` Cloud Task. Worker fetches last 24h emails (up to 200, full body via BS4 HTML→text + invisible char stripping) and passes structured JSON to SmartAgent via `notify(save_history=False)`. SmartAgent runs Phase 0 triage → Phase 1 deep reads (`get_email_details`) → Phase 2 research (`search_web`) → delivers HTML report (GCS link) + short chat message. After HTML delivery, URL is saved to session history via `notify_document_link()`. |
@@ -192,7 +192,7 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 | Field | Value |
 |-------|-------|
 | **Job name** | `alek-bot-{dev,prod}-repair-email-embeddings` |
-| **Schedule** | `0 * * * *` (hourly, top of the hour — aligned with `start_email_indexing` cadence so failures from any indexing tick are detected within ≤1h) |
+| **Schedule** | `2 * * * *` (hourly at :02 — staggered; still within ≤1h of any `start_email_indexing` tick, so failures from an indexing tick are detected within ≤1h) |
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "repair_email_embeddings"}` |
 | **Purpose** | Re-embeds `IndexedEmail` docs where `embedding_pending=True` (set on transient embedding failures during initial indexing). Without this job those emails stay invisible to `find_nearest` search forever. |
@@ -208,7 +208,7 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 | Field | Value |
 |-------|-------|
 | **Job name** | `alek-bot-{dev,prod}-sweep-consolidation` |
-| **Schedule** | `0 * * * *` (hourly, top of the hour) |
+| **Schedule** | `17 * * * *` (hourly at :17 — staggered, see Start Email Indexing) |
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "sweep_consolidation"}` |
 | **Purpose** | Re-triggers consolidation for every user with a batch still in the queue. Consolidation is otherwise driven only by session overflow and the `$consolidate` command, so a batch that stalls (e.g. provider billing exhaustion exhausts its 3 attempts → `FAILED`, and the re-enqueue chain stops) would wait for the next overflow — potentially days. That batch's messages were already extracted from session history but not yet written to memory: a data hole between history and memory. This sweep closes it within ≤1h. |

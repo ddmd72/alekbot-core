@@ -9,7 +9,7 @@ import hmac
 import json
 import time
 import weakref
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, cast
 from slack_bolt.async_app import AsyncApp
 from quart import Blueprint, request, jsonify
 
@@ -66,17 +66,17 @@ class HTTPModeAdapter(SlackAdapter):
             audio_service=audio_service,
         )
 
-        self.slack_bot_token = config.get("SLACK_BOT_TOKEN")
-        self.slack_signing_secret = config.get("SLACK_SIGNING_SECRET")
+        signing_secret = config.get("SLACK_SIGNING_SECRET")
+        if not signing_secret:
+            raise ValueError("SLACK_SIGNING_SECRET is required for HTTP Mode")
+        self.slack_signing_secret: str = signing_secret
+        self.slack_bot_token: str = config.get("SLACK_BOT_TOKEN") or ""
         self.task_service = task_service
         self.session_store = session_store
         self.dedup_store = dedup_store
         self._language_service = language_service
         self._localization = localization
         self._session_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
-
-        if not self.slack_signing_secret:
-            raise ValueError("SLACK_SIGNING_SECRET is required for HTTP Mode")
 
         # ✅ Create Blueprint instead of Quart app
         self.blueprint = Blueprint('slack', __name__)
@@ -129,7 +129,7 @@ class HTTPModeAdapter(SlackAdapter):
 
     async def _handle_slack_event(self):
         try:
-            body = await request.get_data()
+            body = cast(bytes, await request.get_data())  # raw body: signature check needs bytes
             headers = dict(request.headers)
 
             event_data = json.loads(body)
@@ -176,11 +176,12 @@ class HTTPModeAdapter(SlackAdapter):
                 logger.warning(f"⚠️ Cannot determine session_id from event type={event_type}, event keys: {list(event.keys())}")
                 return jsonify({"ok": True}), 200
 
-            trace_headers = {}
+            trace_headers: Dict[str, str] = {}
             inject_trace_headers(trace_headers)
             trace_ids = get_trace_ids()
-            if trace_ids.get("trace_id"):
-                trace_headers["x-trace-id"] = trace_ids["trace_id"]
+            current_trace_id = trace_ids.get("trace_id")
+            if current_trace_id:
+                trace_headers["x-trace-id"] = current_trace_id
             logger.info("📬 Event enqueued to Cloud Tasks")
 
             await self.task_service.enqueue_slack_event(
@@ -294,6 +295,9 @@ class HTTPModeAdapter(SlackAdapter):
 
             text = event.get("text", "")
             channel = event.get("channel")
+            if not channel:
+                logger.warning("⚠️ Slack event without a channel, skipping")
+                return
             files = event.get("files", [])
             slack_user_id = event.get("user", "unknown")
 
@@ -317,11 +321,15 @@ class HTTPModeAdapter(SlackAdapter):
                     channel,
                     self.slack_bot_token
                 )
-                await response_channel.send_message(decision.message)
+                if decision.message:
+                    await response_channel.send_message(decision.message)
                 return
 
             # User authorized → continue
             user_profile = decision.user
+            if user_profile is None:
+                logger.error(f"❌ IAM decision '{decision.action}' for {slack_user_id} carries no user, skipping")
+                return
             user_id = user_profile.user_id
             account_id = user_profile.account_id or ANONYMOUS_ACCOUNT_ID  # SESSION_26
             session_id = self._resolve_session_id(user_id, channel)
@@ -396,6 +404,9 @@ class HTTPModeAdapter(SlackAdapter):
         try:
             text = event.get("text", "").split(">", 1)[-1].strip()
             channel = event.get("channel")
+            if not channel:
+                logger.warning("⚠️ Slack event without a channel, skipping")
+                return
             thread_ts = event.get("ts")
             slack_user_id = event.get("user", "unknown")
 
@@ -409,11 +420,15 @@ class HTTPModeAdapter(SlackAdapter):
                     channel,
                     self.slack_bot_token
                 )
-                await response_channel.send_message(decision.message)
+                if decision.message:
+                    await response_channel.send_message(decision.message)
                 return
 
             # User authorized → continue
             user_profile = decision.user
+            if user_profile is None:
+                logger.error(f"❌ IAM decision '{decision.action}' for {slack_user_id} carries no user, skipping")
+                return
             user_id = user_profile.user_id
             account_id = user_profile.account_id or ANONYMOUS_ACCOUNT_ID  # SESSION_26
             session_id = self._resolve_session_id(user_id, channel)

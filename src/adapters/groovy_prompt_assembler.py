@@ -5,7 +5,7 @@ Session: 23 (Prompt Component Architecture Implementation)
 RFC: docs/architecture/rfcs/PROMPT_COMPONENT_ARCHITECTURE_RFC.md
 """
 
-from typing import List, Dict
+from typing import List, Dict, Optional
 from src.domain.prompt import PromptComponent, PromptTemplate, ComponentScope
 from src.ports.prompt_assembler import PromptAssembler, AssemblyError
 from src.utils.logger import logger
@@ -28,7 +28,7 @@ class GroovyPromptAssembler(PromptAssembler):
         self, 
         template: PromptTemplate, 
         components: List[PromptComponent],
-        runtime_data: Dict[str, str] = None
+        runtime_data: Optional[Dict[str, str]] = None
     ) -> str:
         """
         Assemble components into final Groovy prompt.
@@ -160,7 +160,7 @@ class GroovyPromptAssembler(PromptAssembler):
     
     def _group_by_scope(self, components: List[PromptComponent]) -> dict:
         """Group components by their scope."""
-        grouped = {}
+        grouped: Dict[ComponentScope, List[PromptComponent]] = {}
         for component in components:
             if component.scope not in grouped:
                 grouped[component.scope] = []

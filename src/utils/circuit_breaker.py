@@ -4,7 +4,7 @@ Circuit breaker pattern for API resilience.
 import asyncio
 import time
 from enum import Enum
-from typing import Callable, Any
+from typing import Callable, Any, Optional
 from dataclasses import dataclass
 from .logger import logger
 
@@ -46,7 +46,7 @@ class CircuitBreaker:
         self.state = CircuitState.CLOSED
         self.failure_count = 0
         self.success_count = 0
-        self.last_failure_time = None
+        self.last_failure_time: Optional[float] = None
         self.lock = asyncio.Lock()
 
     async def call(self, func: Callable, *args, **kwargs) -> Any:

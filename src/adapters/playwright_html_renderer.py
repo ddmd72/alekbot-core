@@ -16,9 +16,13 @@ Local:
 """
 import asyncio
 import os
+from typing import TYPE_CHECKING, Optional
 
 from ..ports.html_renderer_port import HtmlRendererPort, HtmlRenderError
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from playwright.async_api import Browser, Playwright
 
 _RENDER_TIMEOUT_MS = 8_000
 _DEVICE_SCALE_FACTOR = 2  # Retina-quality output
@@ -28,8 +32,8 @@ class PlaywrightHtmlRenderer(HtmlRendererPort):
     """Renders HTML to PNG via a shared headless Chromium browser."""
 
     def __init__(self) -> None:
-        self._browser = None
-        self._playwright = None
+        self._browser: Optional["Browser"] = None
+        self._playwright: Optional["Playwright"] = None
         self._lock = asyncio.Lock()
         self._is_cloud_run = bool(os.getenv("K_SERVICE"))
 
@@ -54,10 +58,13 @@ class PlaywrightHtmlRenderer(HtmlRendererPort):
     async def render(self, html: str, width: int = 480) -> bytes:
         """Render HTML to PNG bytes. Lazy-starts browser on first call."""
         await self._ensure_browser()
+        browser = self._browser
+        if browser is None:
+            raise RuntimeError("Chromium failed to start")
 
         page = None
         try:
-            page = await self._browser.new_page(
+            page = await browser.new_page(
                 viewport={"width": width, "height": 800},
                 device_scale_factor=_DEVICE_SCALE_FACTOR,
             )
@@ -76,6 +83,8 @@ class PlaywrightHtmlRenderer(HtmlRendererPort):
                 element = await page.query_selector("body")
             if element is None:
                 element = await page.query_selector("body")
+            if element is None:
+                raise HtmlRenderError("page has no body to screenshot")
             png = await element.screenshot(omit_background=True)
             logger.debug("PlaywrightHtmlRenderer: rendered %d bytes PNG", len(png))
             return png

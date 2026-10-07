@@ -81,7 +81,7 @@ class FirestorePromptComponentRepository(PromptComponentRepository):
             # Parse scope
             comp_scope_str = data.get("scope")
             try:
-                comp_scope = ComponentScope(comp_scope_str) if comp_scope_str else None
+                comp_scope = ComponentScope(comp_scope_str)
             except ValueError:
                 logger.warning(f"Invalid scope '{comp_scope_str}' for component {doc.id}")
                 continue
@@ -299,7 +299,7 @@ class FirestorePromptComponentRepository(PromptComponentRepository):
             # Parse scope
             comp_scope_str = data.get("scope")
             try:
-                comp_scope = ComponentScope(comp_scope_str) if comp_scope_str else None
+                comp_scope = ComponentScope(comp_scope_str)
             except ValueError:
                 logger.warning(f"Invalid scope '{comp_scope_str}' for user component {doc.id}")
                 continue

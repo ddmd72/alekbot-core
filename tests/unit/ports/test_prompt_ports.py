@@ -71,8 +71,10 @@ class TestPromptComponentRepositoryContract:
     def test_resolve_component_signature(self):
         sig = inspect.signature(PromptComponentRepository.resolve_component)
         params = list(sig.parameters.keys())
-        assert params == ["self", "component_id", "agent_type", "user_id"]
-        assert sig.parameters["user_id"].default is None
+        assert params == ["self", "component_id", "agent_type", "account_id", "user_id"]
+        # SESSION_26: 4-level resolution (USER > ACCOUNT > AGENT > SYSTEM) needs both ids.
+        assert sig.parameters["account_id"].default is inspect.Parameter.empty
+        assert sig.parameters["user_id"].default is inspect.Parameter.empty
 
 
 class TestPromptComponentRepositoryMockImplementation:
@@ -108,7 +110,7 @@ class TestPromptComponentRepositoryMockImplementation:
 
     async def test_resolve_component_returns_none(self, mock_repo):
         mock_repo.resolve_component.return_value = None
-        result = await mock_repo.resolve_component("comp_id", "quick", user_id="user1")
+        result = await mock_repo.resolve_component("comp_id", "quick", account_id="acc1", user_id="user1")
         assert result is None
 
 

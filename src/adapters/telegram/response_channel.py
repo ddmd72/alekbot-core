@@ -132,10 +132,10 @@ class TelegramResponseChannel(ResponseChannel):
             title = item.get("title", "")
             if title:
                 escaped_title = self._escape_tg(title)
-                repl = f"\\[{escaped_title}\\]\\[{anchor_str}\\]"
+                repl: str = f"\\[{escaped_title}\\]\\[{anchor_str}\\]"
                 formatted_text = re.sub(
                     rf'{re.escape(escaped_title)}\s*\\\[{anchor_str}\\\]',
-                    lambda m, r=repl: r,
+                    repl.replace("\\", "\\\\"),  # literal replacement: no group/escape processing
                     formatted_text
                 )
 

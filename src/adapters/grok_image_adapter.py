@@ -33,7 +33,7 @@ singular "image": {...} field; 2 or 3 use a DIFFERENT, plural "images": [...] fi
 (mutually exclusive with "image", not an array under the same key).
 """
 import base64
-from typing import List
+from typing import Any, Dict, List
 
 from openai import AsyncOpenAI
 from openai.types.images_response import ImagesResponse
@@ -42,6 +42,12 @@ from ..ports.image_generation_port import GeneratedImage, ImageGenerationPort, R
 from ..utils.logger import logger
 
 _MODEL = "grok-imagine-image-2.0"
+
+
+def _decode_image(item: Any) -> GeneratedImage:
+    if not item.b64_json:
+        raise ValueError("xAI image item carries no b64_json")
+    return GeneratedImage(data=base64.b64decode(item.b64_json), mime_type="image/png")
 
 
 class GrokImageAdapter(ImageGenerationPort):
@@ -87,10 +93,9 @@ class GrokImageAdapter(ImageGenerationPort):
                 # an earlier "pricing is flat" belief was wrong.
                 extra_body={"aspect_ratio": aspect_ratio, "resolution": resolution, "quality": quality},
             )
-            return [
-                GeneratedImage(data=base64.b64decode(item.b64_json), mime_type="image/png")
-                for item in response.data
-            ]
+            if not response.data:
+                raise ValueError("xAI returned no image data")
+            return [_decode_image(item) for item in response.data]
         except Exception as e:
             # Decode is inside this try on purpose: the port contract promises []
             # on any failure, including a malformed response (None data / None
@@ -124,7 +129,7 @@ class GrokImageAdapter(ImageGenerationPort):
             for ref in reference_images
         ]
 
-        body = {
+        body: Dict[str, Any] = {
             "model": _MODEL,
             "prompt": prompt,
             "response_format": "b64_json",
@@ -145,5 +150,6 @@ class GrokImageAdapter(ImageGenerationPort):
             cast_to=ImagesResponse,
             body=body,
         )
-        item = response.data[0]
-        return GeneratedImage(data=base64.b64decode(item.b64_json), mime_type="image/png")
+        if not response.data:
+            raise ValueError("xAI returned no image data")
+        return _decode_image(response.data[0])

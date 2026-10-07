@@ -89,10 +89,10 @@ class SlackResponseChannel(ResponseChannel):
         for anchor_str, item in index.items():
             title = item.get("title", "")
             if title:
-                repl = f"[{title}][{anchor_str}]"
+                repl: str = f"[{title}][{anchor_str}]"
                 text = re.sub(
                     rf'{re.escape(title)}\s*\[{anchor_str}\]',
-                    lambda m, r=repl: r,
+                    repl.replace("\\", "\\\\"),  # literal replacement: no group/escape processing
                     text
                 )
 

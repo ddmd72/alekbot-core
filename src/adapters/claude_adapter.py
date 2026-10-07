@@ -734,7 +734,7 @@ class ClaudeAdapter(LLMPort):
         else:
             return None  # Not supported by Claude API
 
-    def _find_tool_use_id(self, messages: List[Message], tool_name: str, current_idx: int, used_ids: set = None) -> str:
+    def _find_tool_use_id(self, messages: List[Message], tool_name: str, current_idx: int, used_ids: Optional[set] = None) -> str:
         """
         Find the tool_use ID for a given tool name from previous messages.
 
@@ -837,7 +837,7 @@ class ClaudeAdapter(LLMPort):
                 continue
 
             # Convert from domain objects
-            content_parts = []
+            content_parts: List[Dict[str, Any]] = []
             used_tool_ids: set = set()  # Track matched tool_use IDs within this message
             # Most recent tool_result block emitted in THIS message. A file_data part
             # that follows a tool_response belongs to that tool's output and must nest
@@ -877,9 +877,9 @@ class ClaudeAdapter(LLMPort):
                     # search only for history that predates the explicit id (e.g. tool
                     # turns built before this change, or providers without a call id).
                     tool_name = p.tool_response.get("name", "")
-                    tool_id = p.tool_response.get("tool_use_id")
-                    if not tool_id:
-                        tool_id = self._find_tool_use_id(messages, tool_name, idx, used_tool_ids)
+                    tool_id = p.tool_response.get("tool_use_id") or self._find_tool_use_id(
+                        messages, tool_name, idx, used_tool_ids
+                    )
                     used_tool_ids.add(tool_id)
                     tool_result_block = {
                         "type": "tool_result",
