@@ -10,6 +10,7 @@ from ..domain.billing import (
     UsageIncrement,
 )
 from ..ports.account_repository import AccountRepository
+from ..utils.logger import logger
 
 
 class FirestoreAccountRepository(AccountRepository):
@@ -49,15 +50,86 @@ class FirestoreAccountRepository(AccountRepository):
     async def increment_account_usage(
         self, account_id: str, tokens: int, cost: float
     ) -> UsageIncrement:
-        """Atomically increment usage; report the resulting daily-spend position.
+        """Increment usage; report the resulting daily-spend position.
 
-        The return value exists so a caller can raise a budget alert without a second
-        read — the transaction already held the document, and only it knows whether the
-        daily counter rotated (a new day starts the comparison from zero).
+        Concurrent specialist executions all land here for the same account document.
+        A read-modify-write transaction made them abort each other and exhaust Firestore's
+        5 attempts (usage silently lost, prod log audit C-04), so the hot path is lock-free:
+        server-side `Increment`s with no transaction. A transaction is kept only for the rare
+        increment that has to rotate the daily or monthly window — that decision, and the
+        snapshot of the day that ended, must be made once.
+
+        The return value exists so a caller can raise a budget alert without a second read.
+        On the lock-free path it comes from the server's own post-increment value, so
+        concurrent callers see distinct, ordered `before`/`after` intervals and exactly one
+        of them crosses the limit.
         """
         doc_ref = self.accounts_collection.document(account_id)
         now = datetime.now(timezone.utc)
 
+        snapshot = await doc_ref.get()
+        if not snapshot.exists:
+            raise ValueError(f"Account {account_id} not found")
+        data = snapshot.to_dict()
+        usage = data.get("usage", {})
+
+        daily_rotates, monthly_rotates = self._rotations_due(usage, now)
+        if daily_rotates or monthly_rotates:
+            return await self._increment_with_rotation(doc_ref, account_id, tokens, cost, now)
+
+        updates = {
+            "usage.total_tokens": firestore.Increment(tokens),
+            "usage.total_cost": firestore.Increment(cost),
+            "usage.total_requests": firestore.Increment(1),
+            "usage.daily_tokens": firestore.Increment(tokens),
+            "usage.daily_cost": firestore.Increment(cost),
+            "usage.monthly_tokens": firestore.Increment(tokens),
+            "usage.monthly_cost": firestore.Increment(cost),
+        }
+        write_result = await doc_ref.update(updates)
+
+        daily_cost_after = self._applied_value(write_result, updates, "usage.daily_cost")
+        if daily_cost_after is None:
+            # The write succeeded; only the alert's accuracy degrades.
+            logger.warning(
+                "usage increment for %s returned no usable transform results; "
+                "estimating the daily position from the pre-read", account_id,
+            )
+            daily_cost_after = usage.get("daily_cost", 0.0) + cost
+
+        return UsageIncrement(
+            daily_cost_before=daily_cost_after - cost,
+            daily_cost_after=daily_cost_after,
+            daily_cost_limit=data.get("daily_cost_limit", DEFAULT_DAILY_COST_LIMIT),
+        )
+
+    @staticmethod
+    def _rotations_due(usage: dict, now: datetime) -> Tuple[bool, bool]:
+        daily_reset_at = usage.get("daily_reset_at")
+        monthly_reset_at = usage.get("monthly_reset_at")
+        daily = daily_reset_at is None or now.date() != daily_reset_at.date()
+        monthly = monthly_reset_at is None or (now.year, now.month) != (
+            monthly_reset_at.year, monthly_reset_at.month
+        )
+        return daily, monthly
+
+    @staticmethod
+    def _applied_value(write_result, updates: dict, field_path: str) -> Optional[float]:
+        """The server's value of `field_path` after its Increment.
+
+        `transform_results` come back in the alphabetical order of the transformed field
+        paths (probed against Firestore 2026-10-07: insertion order is NOT used).
+        """
+        results = list(getattr(write_result, "transform_results", None) or [])
+        paths = sorted(updates)
+        if len(results) != len(paths):
+            return None
+        value = results[paths.index(field_path)]
+        return float(value.double_value or value.integer_value)
+
+    async def _increment_with_rotation(
+        self, doc_ref, account_id: str, tokens: int, cost: float, now: datetime
+    ) -> UsageIncrement:
         @firestore.async_transactional
         async def _transaction(transaction) -> UsageIncrement:
             snapshot = await doc_ref.get(transaction=transaction)
@@ -67,15 +139,7 @@ class FirestoreAccountRepository(AccountRepository):
             data = snapshot.to_dict()
             usage = data.get("usage", {})
             daily_reset_at = usage.get("daily_reset_at")
-            monthly_reset_at = usage.get("monthly_reset_at")
-
-            daily_needs_reset = True
-            if daily_reset_at:
-                daily_needs_reset = (now.date() != daily_reset_at.date())
-
-            monthly_needs_reset = True
-            if monthly_reset_at:
-                monthly_needs_reset = (now.year, now.month) != (monthly_reset_at.year, monthly_reset_at.month)
+            daily_needs_reset, monthly_needs_reset = self._rotations_due(usage, now)
 
             updates = {
                 "usage.total_tokens": firestore.Increment(tokens),
