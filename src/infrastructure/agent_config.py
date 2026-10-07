@@ -385,13 +385,15 @@ TASKS = TasksAgentConfig()
 class DocPlannerAgentConfig:
     temperature: float = 1.0      # Claude default for JSON generation without thinking
     max_tokens: int = 54_000      # JSON spec for a full document can be large
-    timeout_ms: int = 600_000     # Background async task — allow 10 min for spec generation
+    timeout_ms: int = 1_100_000   # Background async task — allow ~18 min for spec generation
     thinking_effort: Optional[str] = "high"
     # Per-LLM-request timeout (seconds), passed as LLMRequest.timeout. Heavy
-    # layout-spec generation on reasoning models can run ~6 min, exceeding the
-    # OpenAI client's 300s default; set below timeout_ms (600s) so the request
-    # completes before the Cloud Task deadline rather than being clamped/retried.
-    request_timeout_s: int = 540
+    # layout-spec generation on reasoning models can run several minutes, exceeding the
+    # OpenAI client's 300s default; set below timeout_ms so the request completes before
+    # the Cloud Task deadline rather than being clamped/retried. Raised 540s→900s 2026-10-07
+    # alongside HtmlPageGenerator/PdfGenerator — same owner-accepted ASYNC ceiling, see
+    # decisions/html_page_fallback_context_wiring.md.
+    request_timeout_s: int = 900
 
 
 DOC_PLANNER = DocPlannerAgentConfig()
@@ -405,7 +407,13 @@ DOC_PLANNER = DocPlannerAgentConfig()
 class DocGeneratorAgentConfig:
     temperature: float = 1.0
     max_tokens: int = 64_000      # Full Node.js script can be large
-    timeout_ms: int = 600_000     # Background async task — allow 10 min for code generation
+    # Background async task — allow ~18 min total across the MAX_TURNS=5 tool-calling loop.
+    # Raised 600s→1100s 2026-10-07 alongside the other ASYNC generators (see
+    # decisions/html_page_fallback_context_wiring.md). No per-call request_timeout_s here:
+    # unlike HtmlPageGenerator/PdfGenerator/DocPlanner this agent is a multi-turn loop, not a
+    # single LLM call, so a flat per-call budget doesn't transfer — each turn still falls back
+    # to the provider SDK's own default (e.g. Claude ~120s), bounded in aggregate by timeout_ms.
+    timeout_ms: int = 1_100_000
     node_timeout_s: int = 60      # Subprocess timeout
     thinking_effort: Optional[str] = None
 
@@ -421,9 +429,16 @@ DOC_GENERATOR = DocGeneratorAgentConfig()
 class PdfGeneratorAgentConfig:
     temperature: float = 1.0
     max_tokens: int = 64_000      # Full HTML+CSS document can be large
-    timeout_ms: int = 600_000     # Background async task — allow 10 min for generation
+    timeout_ms: int = 1_100_000   # Background async task — allow ~18 min for generation
     node_timeout_s: int = 60  # Subprocess timeout
     thinking_effort: Optional[str] = None
+    # Per-LLM-request timeout (seconds), passed as LLMRequest.timeout. Previously unset (SDK
+    # default only — e.g. OpenAI's 300s client ceiling), which on a slow turn risks the SDK's
+    # own internal retries silently paying for multiple generations before timeout_ms kills the
+    # agent anyway (the same waste HtmlPageGenerator's ceiling exists to avoid). Added 2026-10-07
+    # alongside the other single-call ASYNC generators, see
+    # decisions/html_page_fallback_context_wiring.md.
+    request_timeout_s: int = 900
 
 
 PDF_GENERATOR = PdfGeneratorAgentConfig()
@@ -437,16 +452,20 @@ PDF_GENERATOR = PdfGeneratorAgentConfig()
 class HtmlPageGeneratorAgentConfig:
     temperature: float = 1.2      # High creativity for layout, design, and content choices
     max_tokens: int = 64_000      # Full HTML+CSS+JS document can be large
-    timeout_ms: int = 600_000     # Background async task — allow 10 min for generation
+    timeout_ms: int = 1_100_000   # Background async task — allow ~18 min for generation
     thinking_effort: Optional[str] = "medium"
     # Per-LLM-request timeout (seconds), passed as LLMRequest.timeout. Bounds TOTAL
     # wall time including any SDK retries (adapters wrap the call in asyncio.wait_for),
     # which is the point: without it a call that overruns the provider's client ceiling
     # is retried twice more, and three generations are paid for and thrown away before
-    # timeout_ms kills the agent anyway. Measured 2026-08-15 on the real briefing
-    # payload: grok-4.6 took 229s, gemini-pro-latest 120s. 420s leaves ~1.8x headroom
-    # over the slower provider while staying below timeout_ms (600s).
-    request_timeout_s: int = 420
+    # timeout_ms kills the agent anyway. Originally 420s (measured 2026-08-15: grok-4.6
+    # took 229s, gemini-pro-latest 120s). Raised to 900s on 2026-10-07 after grok-4.7
+    # (default since 2026-10-03) overran 420s on a live request and killed the whole
+    # generation with no fallback (see decisions/html_page_fallback_context_wiring.md —
+    # the Gemini fallback was also dead at the time, fixed in the same incident). 900s
+    # is an owner-accepted ceiling for an ASYNC intent nobody blocks on; timeout_ms keeps
+    # ~200s of headroom above it for Unsplash resolution + GCS upload.
+    request_timeout_s: int = 900
 
 
 HTML_PAGE_GENERATOR = HtmlPageGeneratorAgentConfig()
