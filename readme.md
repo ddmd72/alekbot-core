@@ -59,7 +59,7 @@ rule, and "ports are abstract" all run in the suite and fail the build on violat
   regressions a port-level mock would hide.
 - **LLMPort mocking** isolates the model in unit and e2e tests, so multi-turn reasoning and
   forced tool-call sequences run deterministically: no API tokens, no flakiness.
-- **CI:** `make check` (ruff lint + ~4,200 unit/architecture tests) runs on every push and PR
+- **CI:** `make check` (ruff lint + 6,500+ unit/architecture tests) runs on every push and PR
   via GitHub Actions.
 - **Deployment is manual by choice** — solo dev, a single live environment, and LLM behavior
   that tests can't fully verify make a deliberate `make deploy` saner than auto-deploy
@@ -70,7 +70,7 @@ rule, and "ports are abstract" all run in the suite and fail the build on violat
 ## Engineered for AI-assisted development
 
 This codebase is built and maintained in daily AI pair-programming, and the engineering
-system is designed around that fact. What keeps ~150 source files coherent under
+system is designed around that fact. What keeps ~400 source files coherent under
 high-velocity AI-generated change:
 
 - **Architecture rules are executable, not aspirational.** 30+ AST-based layer-isolation
@@ -79,7 +79,7 @@ high-velocity AI-generated change:
   fix `src/`, never the test. The few exceptions live in a tech-debt registry
   ([`arch_tech_debt.py`](tests/unit/arch_tech_debt.py)) that requires explicit owner sign-off —
   and its cross-port and cross-adapter whitelists are currently empty.
-- **Test density is the enforcement layer.** ~4,200 tests for ~150 source files is a
+- **Test density is the enforcement layer.** 6,500+ tests for ~400 source files is a
   deliberate ratio, not over-testing: tests are the fastest feedback channel an AI
   collaborator has, and the contract files ([`adapter_contracts.py`](tests/contracts/adapter_contracts.py))
   carry the same explicit AI-modification policy as the architecture rules.
