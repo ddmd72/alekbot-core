@@ -11,7 +11,7 @@ rather than copying a third time. ConversationHandler's own $consolidate
 copy is NOT migrated by this change — a second duplicate remains there,
 a known, separately-tracked cleanup.
 """
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from .companion_config import CompanionTextMode
 from .llm import Message
@@ -20,7 +20,7 @@ from .llm import Message
 def serialize_messages_for_consolidation(
     messages: List[Message],
     text_mode: CompanionTextMode = CompanionTextMode.SUMMARY,
-) -> List[Dict]:
+) -> List[Dict[str, Any]]:
     """Serialize a message batch for a consolidation-style background pipeline.
 
     Model parts: SUMMARY mode uses `text` (the summary); FULL mode prefers
@@ -29,7 +29,7 @@ def serialize_messages_for_consolidation(
     independent of `text_mode` — there is no FULL/SUMMARY distinction for
     user-authored text in this codebase.
     """
-    serialized: List[Dict] = []
+    serialized: List[Dict[str, Any]] = []
     for msg in messages:
         if msg.role == "model":
             if text_mode == CompanionTextMode.FULL:

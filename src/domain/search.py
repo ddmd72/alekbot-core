@@ -5,7 +5,7 @@ Contains entities related to semantic search, context enrichment, and retrieval.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Dict
+from typing import Any, Dict, List, Optional
 
 @dataclass
 class EnrichedFact:
@@ -22,7 +22,7 @@ class EnrichedFact:
     state: Optional[str] = None
     context_priority: Optional[str] = None
     tags: Optional[List[str]] = None
-    metadata: Optional[Dict] = None
+    metadata: Optional[Dict[str, Any]] = None
     reported_date: Optional[str] = None  # ISO string
     context: Optional[str] = None
     version: Optional[int] = None

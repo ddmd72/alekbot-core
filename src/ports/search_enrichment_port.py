@@ -7,7 +7,7 @@ Justification for port promotion:
 - Enables test doubles without wiring real Firestore + embeddings.
 """
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from ..domain.entities import FactEntity
 from ..domain.search import EnrichedContext, SearchLimits
@@ -23,7 +23,7 @@ class SearchEnrichmentPort(ABC):
         search_phrase_1: str,
         search_phrase_2: str,
         relevant_domains: Optional[List[str]] = None,
-        biographical_facts: Optional[List[Union[FactEntity, dict]]] = None,
+        biographical_facts: Optional[List[Union[FactEntity, Dict[str, Any]]]] = None,
         limits: Optional[SearchLimits] = None,
         dedup_threshold: float = 0.98,
         skip_semantic_dedup: bool = False,

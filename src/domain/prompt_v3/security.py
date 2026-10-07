@@ -5,6 +5,7 @@ Part of Prompt Design System v3 (RFC).
 SecurityPort (ABC) lives in src/ports/security_port.py.
 """
 
+from typing import Any, Dict
 from dataclasses import dataclass
 from enum import Enum
 
@@ -58,6 +59,6 @@ class ValidationResult:
     risk_score: float  # 0.0-1.0 normalized risk
     patterns_detected: list[str]  # Matched patterns (for logging)
     action_taken: str  # "passed", "sanitized", "blocked"
-    metadata: dict  # Adapter-specific metadata
+    metadata: Dict[str, Any]  # Adapter-specific metadata
 
 

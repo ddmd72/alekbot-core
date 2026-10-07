@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   check:
-    name: ruff lint + unit/architecture tests
+    name: ruff lint + mypy + unit/architecture tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +25,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: make check
-        # make check = ruff check src/ + unit/architecture tests.
+        # make check = ruff check src/ + mypy (domain/ports) + unit/architecture tests.
         # No secrets: the unit suite mocks all I/O at the port/SDK boundary.
         run: make check
 

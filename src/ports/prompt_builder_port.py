@@ -7,7 +7,7 @@ Justification for port promotion:
 - Future implementations: stripped-down prompt builder, test double.
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..domain.agent import RoutingMetadata
 from ..domain.llm import ProviderCapabilities
@@ -28,12 +28,12 @@ class PromptBuilderPort(ABC):
         account_id: Optional[str] = None,
         routing_metadata: Optional[RoutingMetadata] = None,
         capabilities: Optional[ProviderCapabilities] = None,
-        biographical_facts: Optional[List[Dict]] = None,
-        conversation_history: Optional[List[dict]] = None,
+        biographical_facts: Optional[List[Dict[str, Any]]] = None,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
         include_biographical: bool = True,
         include_directives: bool = True,
         kb_preamble: bool = False,
-        agent_notes: Optional[List[dict]] = None,
+        agent_notes: Optional[List[Dict[str, Any]]] = None,
         extra_static_blocks: Optional[List[str]] = None,
         include_datetime: bool = False,
         skills_catalog: Optional[str] = None,
@@ -48,9 +48,9 @@ class PromptBuilderPort(ABC):
     @abstractmethod
     def merge_enriched_context_with_biographical(
         self,
-        enriched_context: Optional[Dict],
-        cached_biographical: Optional[List[Dict]] = None,
-    ) -> List[Dict]:
+        enriched_context: Optional[Dict[str, Any]],
+        cached_biographical: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
         """Merge router enriched facts with cached biographical facts."""
 
     @abstractmethod
@@ -62,5 +62,5 @@ class PromptBuilderPort(ABC):
         """Invalidate biographical cache for a specific user."""
 
     @abstractmethod
-    def get_cache_stats(self) -> Dict:
+    def get_cache_stats(self) -> Dict[str, Any]:
         """Return cache statistics for monitoring."""
