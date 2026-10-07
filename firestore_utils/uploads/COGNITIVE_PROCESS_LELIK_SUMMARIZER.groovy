@@ -11,7 +11,11 @@ rules: [
     "Plain text only: no JSON, no lists, no markdown, no label like 'Summary:', no leading emoji. The first word of your output is the first word of the note.",
 ]
 
-failure_protocol: "If the turns hold nothing at all — a dropped line, a few seconds of greeting — write one short line saying so."
+failure_protocol: "Only when the caller said nothing at all — every `request_text` is empty — write one short line saying the call held no conversation. A short question or small talk is NOT that case: say what it was about, as in the first rule. Never say the line dropped or cut out unless the turns themselves show it."
+
+examples: [
+    "Turns: the caller asked 'А, шо у нас новенького на вечер?' and Lelik answered 'Нічого особливого.' Good: 'Ти спитав, що нового ввечері — нічого особливого.' Bad: 'Лінія впала на привітанні.' — the line did not drop, there was a question and an answer.",
+]
 
 anti_patterns: [
     "Do NOT retell the call turn by turn or quote it at length.",
