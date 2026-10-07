@@ -125,6 +125,7 @@ class PdfGeneratorAgent(BaseAgent):
     MAX_TOKENS = PDF_GENERATOR.max_tokens
     THINKING_EFFORT = PDF_GENERATOR.thinking_effort
     NODE_TIMEOUT = PDF_GENERATOR.node_timeout_s
+    REQUEST_TIMEOUT_S = PDF_GENERATOR.request_timeout_s
 
     def __init__(
         self,
@@ -135,6 +136,7 @@ class PdfGeneratorAgent(BaseAgent):
         user_id: Optional[str] = None,
     ) -> None:
         super().__init__(config)
+        self._set_execution_context(execution_context)
         self._llm = execution_context.provider
         self.model_name = execution_context.model_name
         self._runner = pdf_runner
@@ -181,6 +183,7 @@ class PdfGeneratorAgent(BaseAgent):
             temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
             thinking=self.THINKING_EFFORT or None,
+            timeout=self.REQUEST_TIMEOUT_S,
         )
         response = await self._call_llm_recitation_aware(request)
 
