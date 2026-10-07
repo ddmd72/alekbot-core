@@ -242,7 +242,7 @@ stale `running` jobs.
 - **Daily budget alert (advisory, never a gate).** `BillingAccount.daily_cost_limit` (default $5) →
   `increment_account_usage` returns `UsageIncrement`; `FirestoreQuotaService` posts to the ops sink
   (`AlertSinkPort`, `BILLING_SLACK_WEBHOOK_URL`) when the day *crosses* the limit — once per day, not
-  while-over. `check_quota` is dead **by decision** (alert-only; owner dropped the hard cap 2026-07-26).
+  while-over; the increment is lock-free except at a daily/monthly rotation (`decisions/billing_usage_increment_lock_free.md`). `check_quota` is dead **by decision** (alert-only; owner dropped the hard cap 2026-07-26).
   See `decisions/billing_execution_scoped_ledger.md`.
 - **Daily Email Review** (`gmail_daily_review*` in `UserBotConfig`; hourly `start_daily_email_review`
   fan-out → per-user `daily_email_review`) — fetches last-24h emails (cap 200, full body, cleaned by

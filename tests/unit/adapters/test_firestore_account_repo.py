@@ -16,6 +16,24 @@ from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.domain.billing import DEFAULT_DAILY_COST_LIMIT
 
 
+def _server_write_result(existing_usage: dict, updates: dict):
+    """WriteResult-like object as Firestore returns it for a lock-free Increment update.
+
+    transform_results carry each field's post-increment value, in the ALPHABETICAL order of
+    the transformed field paths (probed live 2026-10-07).
+    """
+    results = []
+    for path in sorted(updates):
+        post = existing_usage.get(path.removeprefix("usage."), 0) + updates[path].value
+        result = MagicMock()
+        result.double_value = float(post)
+        result.integer_value = 0
+        results.append(result)
+    write_result = MagicMock()
+    write_result.transform_results = results
+    return write_result
+
+
 def _make_repo_and_capture(existing_usage: dict):
     """Build a repo whose transaction captures the updates dict passed to update()."""
     captured = {}
@@ -26,6 +44,12 @@ def _make_repo_and_capture(existing_usage: dict):
 
     doc_ref = MagicMock()
     doc_ref.get = AsyncMock(return_value=snapshot)
+
+    def _lock_free_update(updates):
+        captured.update(updates)
+        return _server_write_result(existing_usage, updates)
+
+    doc_ref.update = AsyncMock(side_effect=_lock_free_update)
 
     transaction = MagicMock()
     transaction.update = MagicMock(side_effect=lambda ref, updates: captured.update(updates))
@@ -102,6 +126,9 @@ def _make_repo_returning(existing_usage: dict, **account_fields):
 
     doc_ref = MagicMock()
     doc_ref.get = AsyncMock(return_value=snapshot)
+    doc_ref.update = AsyncMock(
+        side_effect=lambda updates: _server_write_result(existing_usage, updates)
+    )
 
     db_client = MagicMock()
     collection = MagicMock()
