@@ -12,7 +12,7 @@ enum (PENDING/PROCESSING/COMPLETED/RETRY_PENDING/FAILED) carries no
 identity-model coupling, unlike FactRepository — RFC §11's rejection of
 reuse does not apply to it.
 """
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 import time
 import uuid
@@ -28,7 +28,7 @@ class CompanionExtractionBatch(BaseModel):
     account_id: str
     companion_type: str
     created_by_user_id: str
-    messages: List[Dict] = Field(default_factory=list)  # Serialized MessageContext
+    messages: List[Dict[str, Any]] = Field(default_factory=list)  # Serialized MessageContext
     created_at: float = Field(default_factory=time.time)
     status: BatchStatus = BatchStatus.PENDING
     attempts: int = 0

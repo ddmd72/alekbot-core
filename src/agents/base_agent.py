@@ -1029,6 +1029,14 @@ class BaseAgent(ABC):
                             },
                         )
                         await asyncio.sleep(backoff)
+                        if clock is not None and not clock.can_retry():
+                            # The backoff itself ate the budget: call_timeout() would floor at 1 s,
+                            # a call that cannot succeed and reads as "timeout after 1s".
+                            logger.warning(
+                                "llm_same_provider_retry skipped: backoff used up the turn budget (%s)",
+                                primary_name,
+                            )
+                            break
                         retry_request = request
                         if clock is not None:
                             # The original request's timeout (if any) was computed when the

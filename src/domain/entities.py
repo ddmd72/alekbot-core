@@ -80,7 +80,7 @@ class FactVisibility(str, Enum):
 _FACT_TAXONOMY_FIELDS = ("domain", "temporal_class", "state", "context_priority")
 
 
-def normalize_fact_taxonomy(metadata: dict) -> dict:
+def normalize_fact_taxonomy(metadata: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize 4D taxonomy fields to lowercase for enum compatibility.
 
     Call this BEFORE constructing FactEntity from LLM output.

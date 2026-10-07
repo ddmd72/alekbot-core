@@ -4,6 +4,7 @@ ProfileToken — token assignment entry in an agent profile.
 Part of Prompt Design System v4 (RFC: docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md).
 """
 
+from typing import Any, Dict
 from dataclasses import dataclass
 
 
@@ -44,7 +45,7 @@ class ProfileToken:
     non_overridable: bool = False
 
     @staticmethod
-    def from_dict(token_id: str, data: dict) -> "ProfileToken":
+    def from_dict(token_id: str, data: Dict[str, Any]) -> "ProfileToken":
         """Deserialize from Firestore map entry.
 
         Args:
@@ -57,12 +58,12 @@ class ProfileToken:
             non_overridable=bool(data.get("non_overridable", False)),
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict[str, Any]:
         """Serialize to Firestore map entry value (without the key).
 
         Only includes non_overridable when True to keep documents compact.
         """
-        d: dict = {"order": self.order}
+        d: Dict[str, Any] = {"order": self.order}
         if self.non_overridable:
             d["non_overridable"] = True
         return d

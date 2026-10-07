@@ -345,7 +345,7 @@ def render_catalog(skills: Sequence[Skill]) -> Optional[str]:
 
 def fold_skill_contexts(full_text: str, summary: str, contexts: Sequence[Any]) -> Tuple[str, str]:
     """Append loaded skill bodies to full_text (raw, unescaped) and one stub each to the summary."""
-    by_name: dict = {}
+    by_name: Dict[str, Any] = {}
     for ctx in contexts:
         if isinstance(ctx, dict) and ctx.get("name") and ctx.get("body"):
             by_name[ctx["name"]] = ctx

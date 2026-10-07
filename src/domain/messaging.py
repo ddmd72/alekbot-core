@@ -34,7 +34,7 @@ class MessageContext:
     account_id: str  # SESSION_26: Required for 4-level prompt resolution
     attachments: List[FileAttachment] = field(default_factory=list)
     thread_id: Optional[str] = None
-    metadata: dict = field(default_factory=dict)  # Platform-specific extras
+    metadata: Dict[str, Any] = field(default_factory=dict)  # Platform-specific extras
     language: str = "uk"  # Effective UI language (RFC: MULTILINGUAL_SUPPORT_RFC.md §13.3)
 
 
@@ -61,7 +61,7 @@ class SmartResponse:
     """
     text: str
     structured_data: Optional[RichContent] = None
-    link_list: list = field(default_factory=list)  # [{anchor, title, url}] — inline link anchors
+    link_list: List[Any] = field(default_factory=list)  # [{anchor, title, url}] — inline link anchors
 
 
 class ResponseChannel(Protocol):
@@ -88,7 +88,7 @@ class ResponseChannel(Protocol):
         ...
     
     @abstractmethod
-    async def send_message(self, text: str, thread_id: Optional[str] = None, link_list: Optional[list] = None) -> Any:
+    async def send_message(self, text: str, thread_id: Optional[str] = None, link_list: Optional[List[Any]] = None) -> Any:
         """
         Send a text message to the user.
 
@@ -103,7 +103,7 @@ class ResponseChannel(Protocol):
         ...
 
     @abstractmethod
-    async def update_message(self, message_id: str, text: str, link_list: Optional[list] = None) -> None:
+    async def update_message(self, message_id: str, text: str, link_list: Optional[List[Any]] = None) -> None:
         """
         Update an existing message (for streaming/status updates).
 
@@ -115,7 +115,7 @@ class ResponseChannel(Protocol):
         ...
 
     @abstractmethod
-    async def send_chunked_message(self, text: str, message_id: str, thread_id: Optional[str] = None, link_list: Optional[list] = None) -> None:
+    async def send_chunked_message(self, text: str, message_id: str, thread_id: Optional[str] = None, link_list: Optional[List[Any]] = None) -> None:
         """
         Send a long message by updating the first message and posting the rest as thread replies.
 
@@ -129,7 +129,7 @@ class ResponseChannel(Protocol):
 
     @abstractmethod
     async def send_long_text(
-        self, text: str, link_list: Optional[list] = None, thread_id: Optional[str] = None
+        self, text: str, link_list: Optional[List[Any]] = None, thread_id: Optional[str] = None
     ) -> Any:
         """
         Deliver arbitrary-length text without truncation, threading any overflow.
@@ -336,7 +336,7 @@ class ResponseChannel(Protocol):
     @abstractmethod
     async def send_late_answer(
         self, text: str, prefix: str, origin_message_id: Optional[str],
-        link_list: Optional[list] = None, link: Optional[str] = None,
+        link_list: Optional[List[Any]] = None, link: Optional[str] = None,
     ) -> None:
         """Post a long turn's answer in the main feed, marked and tied to the message it answers.
 

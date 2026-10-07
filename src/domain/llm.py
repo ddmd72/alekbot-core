@@ -323,7 +323,7 @@ class LLMResponse(BaseModel):
     grounding_metadata: Optional[Any] = None  # Gemini grounding metadata (Maps widget token, search sources)
 
 
-def build_tool_turn(response: "LLMResponse", tool_results: list) -> List[Message]:
+def build_tool_turn(response: "LLMResponse", tool_results: List[Any]) -> List[Message]:
     """Build message history entries from an LLM response with tool calls + their results.
 
     Standard formatting for multi-turn tool calling. Handles adapter-specific
@@ -383,7 +383,7 @@ def describe_empty_output(finish_reason: Optional[FinishReason]) -> str:
     this the user is told "the model produced nothing" when the truth is "the provider
     refused, and here is what to change".
     """
-    return {
+    reasons: Dict[Optional[FinishReason], str] = {
         FinishReason.RECITATION: (
             "the provider blocked the output as reproducing source material too closely "
             "— ask for an original summary instead of a rendering of the supplied text"
@@ -392,7 +392,8 @@ def describe_empty_output(finish_reason: Optional[FinishReason]) -> str:
         FinishReason.MAX_TOKENS: (
             "the output hit the length limit before anything usable was produced"
         ),
-    }.get(finish_reason, "the model returned nothing")
+    }
+    return reasons.get(finish_reason, "the model returned nothing")
 
 
 def append_user_directive(request: "LLMRequest", directive: str) -> "LLMRequest":

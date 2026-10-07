@@ -1,3 +1,4 @@
+from typing import Any, Dict, List
 from abc import ABC, abstractmethod
 
 from src.domain.voice_call_buffer import VoiceCallBuffer
@@ -8,7 +9,7 @@ class CallControlPlanePort(ABC):
     two operations; Slice 2 adds delegate."""
 
     @abstractmethod
-    async def fetch_session_config(self, ticket: str) -> dict:
+    async def fetch_session_config(self, ticket: str) -> Dict[str, Any]:
         """Exchange an opaque ticket for the session config the answer
         webhook stashed (persona instructions, resolved identity)."""
 
@@ -24,7 +25,7 @@ class CallControlPlanePort(ABC):
         """
 
     @abstractmethod
-    async def delegate(self, user_id: str, account_id: str, arguments: dict, call_context: list,
+    async def delegate(self, user_id: str, account_id: str, arguments: Dict[str, Any], call_context: List[Any],
                        ticket: str = "", call_id: str = "", request: str = "") -> str:
         """Run one delegate_to_specialist call from the live session on the main service
         (RFC §4.7) and return the result as text. No retry.

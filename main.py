@@ -11,6 +11,7 @@ from src.web.worker_oidc_verifier import verify_worker_oidc
 from src.web.twilio_signature_verifier import verify_twilio_signature
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
+from src.web.mcp_error_logger import McpErrorLogger
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
@@ -1166,7 +1167,19 @@ async def main():
                 async def health():
                     from quart import jsonify
                     return jsonify({"status": "healthy", "mode": "http"}), 200
-                
+
+                # Real browsers + link-preview bots request these by default; serving them
+                # stops the recurring 404 noise (prod log audit, P2 hygiene batch).
+                @main_app.route("/favicon.ico", methods=["GET"])
+                async def favicon():
+                    from quart import send_file
+                    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "web", "static")
+                    return await send_file(os.path.join(static_dir, "alek-logo.png"), mimetype="image/png")
+
+                @main_app.route("/robots.txt", methods=["GET"])
+                async def robots():
+                    return "User-agent: *\nDisallow: /\n", 200, {"Content-Type": "text/plain"}
+
                 # Add /worker endpoint — delegates to WorkerHandler
                 @main_app.route("/worker", methods=["POST"])
                 async def worker():
@@ -1279,7 +1292,7 @@ async def main():
                         # /mcp/consent (the consent UI blueprint), /auth/*,
                         # /api/*, /slack/*, /worker, /health, /cabinet.
                         _fastmcp = mcp_components.fastmcp
-                        _mcp_asgi = _fastmcp.streamable_http_app()
+                        _mcp_asgi = McpErrorLogger(_fastmcp.streamable_http_app())
 
                         def _is_mcp_path(path: str) -> bool:
                             if path == "/mcp" or path == "/mcp/":

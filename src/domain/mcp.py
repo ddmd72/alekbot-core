@@ -44,9 +44,8 @@ def normalize_phrase(value: Any) -> str:
     """
     if value is None:
         return ""
-    if not isinstance(value, str):
-        value = str(value)
-    return value.strip()
+    text = value if isinstance(value, str) else str(value)
+    return text.strip()
 
 
 def normalize_keywords(value: Any) -> List[str]:

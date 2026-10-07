@@ -72,4 +72,4 @@ class IAMDecision:
     action: str
     user: Optional[UserProfile] = None
     message: Optional[str] = None
-    metadata: dict = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)

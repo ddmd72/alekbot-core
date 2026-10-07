@@ -5,7 +5,7 @@ Part of Prompt Design System v3 (RFC).
 """
 
 from dataclasses import dataclass
-from typing import NewType
+from typing import Any, Dict, NewType
 
 TokenId = NewType('TokenId', str)  # e.g., "HUMOR_PRESET_RANEVSKAYA"
 TokenCategory = NewType('TokenCategory', str)  # e.g., "humor_engine", "cognitive_process"
@@ -42,7 +42,7 @@ class Token:
     category: TokenCategory  # semantic group, used as dedup key during override resolution
     class_: TokenClass       # Groovy section this token renders into (e.g., "properties")
     content: str             # bare Groovy block content, WITHOUT the outer section wrapper
-    metadata: dict           # version, author, description, validation results
+    metadata: Dict[str, Any]           # version, author, description, validation results
 
     @classmethod
     async def create(
@@ -51,8 +51,8 @@ class Token:
         category: TokenCategory,
         class_: TokenClass,
         content: str,
-        metadata: dict,
-        security_port: 'SecurityPort'  # noqa: F821 — domain must not import ports; forward-ref only
+        metadata: Dict[str, Any],
+        security_port: Any  # a SecurityPort — domain must not import ports
     ) -> "Token":
         """Factory method with SecurityPort validation.
 

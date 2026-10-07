@@ -44,7 +44,8 @@ def _json_unescape(fragment: str) -> str:
     Decoding via ``json.loads`` on the quoted fragment handles every escape ``json`` defines,
     instead of a partial hand-rolled replace table; an unparseable fragment is returned as-is."""
     try:
-        return json.loads(f'"{fragment}"')
+        decoded: str = json.loads(f'"{fragment}"')
+        return decoded
     except ValueError:
         return fragment
 

@@ -15,7 +15,7 @@ Related: RFC REQUEST_CONTEXT_RFC.md
 """
 
 from contextvars import ContextVar
-from typing import Optional
+from typing import Any, Optional
 from dataclasses import dataclass
 
 
@@ -51,24 +51,24 @@ class RequestContext:
     user_id: str
     account_id: Optional[str] = None
 
-    def __enter__(self):
+    def __enter__(self) -> "RequestContext":
         """Set context at the start of the request."""
         self._user_token = _current_user_id.set(self.user_id)
         self._account_token = _current_account_id.set(self.account_id)
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: Any) -> None:
         """Clear context at the end of the request."""
         _current_user_id.reset(self._user_token)
         _current_account_id.reset(self._account_token)
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "RequestContext":
         """Async context manager support."""
         return self.__enter__()
 
-    async def __aexit__(self, *args):
+    async def __aexit__(self, *args: Any) -> None:
         """Async context manager support."""
-        return self.__exit__(*args)
+        self.__exit__(*args)
 
 
 def get_current_user_id() -> Optional[str]:
