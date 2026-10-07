@@ -99,6 +99,7 @@ class DocGeneratorAgent(BaseAgent):
         user_id: Optional[str] = None,
     ) -> None:
         super().__init__(config)
+        self._set_execution_context(execution_context)
         self._llm = execution_context.provider
         self.model_name = execution_context.model_name
         self._runner = docx_runner
