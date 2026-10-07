@@ -1433,7 +1433,7 @@ class ConversationHandler(ConversationHandlerPort):
         
         async with RequestContext(user_id=context.user_id, account_id=context.account_id):
             if command == "admin_cache_reset":
-                logger.warning(f"🔥 ADMIN: Cache reset command received from user {context.user_id[:8]}")
+                logger.info(f"🔥 ADMIN: Cache reset command received from user {context.user_id[:8]}")
                 
                 # ARCHITECTURE FIX: Use facade instead of reaching into factory internals.
                 # Was: self.agent_factory.assembly_service.invalidate_cache() (Law of Demeter violation)

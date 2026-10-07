@@ -130,7 +130,7 @@ class AgentFallbackService:
         try:
             response = await self._coordinator.route_message(fallback_message)
             if response.status == AgentStatus.SUCCESS:
-                logger.warning("[AgentFallbackService] QuickAgent fallback succeeded")
+                logger.info("[AgentFallbackService] QuickAgent fallback succeeded")
                 return response
             logger.warning(
                 "[AgentFallbackService] QuickAgent fallback also failed (%s)",

@@ -51,7 +51,7 @@ class FirestoreQuotaService(QuotaService):
             f"(limit ${increment.daily_cost_limit:.2f})\n"
             f"  Execution continues — this is an alert, not a cap."
         )
-        logger.warning(
+        logger.info(
             "budget_daily_limit_crossed account=%s spend=%.4f limit=%.2f",
             account_id, increment.daily_cost_after, increment.daily_cost_limit,
             extra={

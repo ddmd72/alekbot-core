@@ -1166,7 +1166,19 @@ async def main():
                 async def health():
                     from quart import jsonify
                     return jsonify({"status": "healthy", "mode": "http"}), 200
-                
+
+                # Real browsers + link-preview bots request these by default; serving them
+                # stops the recurring 404 noise (prod log audit, P2 hygiene batch).
+                @main_app.route("/favicon.ico", methods=["GET"])
+                async def favicon():
+                    from quart import send_file
+                    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "web", "static")
+                    return await send_file(os.path.join(static_dir, "alek-logo.png"), mimetype="image/png")
+
+                @main_app.route("/robots.txt", methods=["GET"])
+                async def robots():
+                    return "User-agent: *\nDisallow: /\n", 200, {"Content-Type": "text/plain"}
+
                 # Add /worker endpoint — delegates to WorkerHandler
                 @main_app.route("/worker", methods=["POST"])
                 async def worker():

@@ -616,7 +616,7 @@ class PromptAssemblyService:
         """
         cache_size = len(self._assembled_cache)
         self._assembled_cache.clear()
-        logger.warning(f"🔥 Cache cleared: {cache_size} entries removed")
+        logger.info(f"🔥 Cache cleared: {cache_size} entries removed")
 
     async def preload_cache(
         self,
