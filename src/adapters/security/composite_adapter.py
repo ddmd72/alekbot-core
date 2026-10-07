@@ -5,7 +5,7 @@ Full implementation for MVP.
 """
 
 import logging
-from typing import List
+from typing import Dict, List
 
 from src.ports.security_port import (
     SecurityPort,
@@ -199,11 +199,11 @@ class CompositeAdapter(SecurityPort):
             >>> # return SAFE result (majority wins)
         """
         # Count risk levels
-        risk_counts = {}
+        risk_counts: Dict[RiskLevel, int] = {}
         for r in results:
             risk_counts[r.risk_level] = risk_counts.get(r.risk_level, 0) + 1
 
-        majority_risk = max(risk_counts, key=risk_counts.get)
+        majority_risk = max(risk_counts, key=lambda level: risk_counts[level])
 
         # If majority is CRITICAL and any adapter blocked, raise error
         if majority_risk == RiskLevel.CRITICAL:

@@ -55,7 +55,7 @@ class GcsMediaAdapter(MediaStoragePort):
         )
 
     def _upload_sync(self, data: bytes, key: str, content_type: str) -> str:
-        from google.cloud import storage  # lazy import — optional at startup
+        from google.cloud import storage  # type: ignore[attr-defined]  # lazy import — optional at startup; mypy resolves google.cloud to a stub namespace without it
 
         if content_type.startswith("text/html"):
             data = _inject_noindex(data)
@@ -70,7 +70,7 @@ class GcsMediaAdapter(MediaStoragePort):
         return key
 
     def _fetch_sync(self, key: str) -> bytes:
-        from google.cloud import storage  # lazy import — optional at startup
+        from google.cloud import storage  # type: ignore[attr-defined]  # lazy import — optional at startup; mypy resolves google.cloud to a stub namespace without it
 
         client = storage.Client()
         bucket = client.bucket(self._bucket_name)
@@ -79,7 +79,7 @@ class GcsMediaAdapter(MediaStoragePort):
 
     def _signed_url_sync(self, key: str, ttl_seconds: int) -> str:
         from datetime import timedelta
-        from google.cloud import storage  # lazy import — optional at startup
+        from google.cloud import storage  # type: ignore[attr-defined]  # lazy import — optional at startup; mypy resolves google.cloud to a stub namespace without it
 
         client = storage.Client()
         bucket = client.bucket(self._bucket_name)

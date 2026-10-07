@@ -94,7 +94,7 @@ class FactManagementAdapter(FactManagementPort):
             )
 
             # Convert EnrichedFact → Dict — taxonomy fields already carried by EnrichedFact
-            results = []
+            results: List[Dict[str, Any]] = []
             for ef in enriched.facts:
                 results.append({
                     "fact_id": ef.fact_id,

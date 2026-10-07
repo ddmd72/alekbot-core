@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from src.ports.consolidation_queue import ConsolidationQueue
@@ -57,7 +57,7 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         facts_extracted: int = 0
     ) -> None:
         doc_ref = self.collection.document(batch_id)
-        update_data = {
+        update_data: Dict[str, Any] = {
             "status": status.value,
             "facts_extracted": facts_extracted
         }

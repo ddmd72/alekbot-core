@@ -4,7 +4,7 @@ Shared across all adapters (Slack, Telegram, Web, etc.)
 
 Adapters can override specific messages if needed, but 99% will use these.
 """
-from typing import Dict, List
+from typing import Dict, List, Optional
 from ..domain.ui_messages import StatusType, UIMessage
 
 
@@ -92,7 +92,7 @@ def get_entertainment_intros() -> List[str]:
     return ENTERTAINMENT_INTROS
 
 
-def get_message(status_type: StatusType, overrides: Dict[str, List[str]] = None) -> List[str]:
+def get_message(status_type: StatusType, overrides: Optional[Dict[str, List[str]]] = None) -> List[str]:
     """
     Get Ukrainian message for status type.
     
