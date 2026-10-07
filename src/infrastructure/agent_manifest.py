@@ -417,7 +417,7 @@ DOC_PLANNER = AgentDescriptor(
         },
     },
     internal=False,
-    dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
+    dispatch_deadline_s=1220,  # 1100s agent timeout (DocPlannerAgentConfig.timeout_ms) + 2 min overhead
 )
 
 # internal=True: never shown to LLMs. Called only by DocPlannerAgent via coordinator.
@@ -428,7 +428,7 @@ DOC_GENERATOR = AgentDescriptor(
     capabilities={Intent.GENERATE_DOCX_CODE: ExecutionMode.ASYNC},
     description="LLM-driven DOCX code generation via Node.js subprocess",
     internal=True,
-    dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
+    dispatch_deadline_s=1220,  # 1100s agent timeout (DocGeneratorAgentConfig.timeout_ms) + 2 min overhead
 )
 
 PDF_GENERATOR = AgentDescriptor(
@@ -454,7 +454,7 @@ PDF_GENERATOR = AgentDescriptor(
         },
     },
     internal=False,
-    dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
+    dispatch_deadline_s=1220,  # 1100s agent timeout (PdfGeneratorAgentConfig.timeout_ms) + 2 min overhead
 )
 
 
@@ -499,7 +499,7 @@ HTML_PAGE_GENERATOR = AgentDescriptor(
         },
     },
     internal=False,
-    dispatch_deadline_s=720,  # 600s agent timeout + 2 min overhead
+    dispatch_deadline_s=1220,  # 1100s agent timeout (HtmlPageGeneratorAgentConfig.timeout_ms) + 2 min overhead
 )
 
 

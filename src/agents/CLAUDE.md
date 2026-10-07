@@ -67,10 +67,19 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     output quality, measured on the same input by `scripts/html_page/ab_grok.py`: $0.1332 / 229s vs
     gemini-pro-latest's $0.1999 / 120s. The latency is affordable *because the intent is ASYNC* —
     do not copy this trade-off to a synchronous agent.
-  - **`request_timeout_s=420`** bounds one call's TOTAL wall time (adapters wrap it in
-    `asyncio.wait_for`, so SDK retries are inside the bound). Without it a call overrunning the
-    provider's client ceiling is retried twice and three generations are paid for and discarded
-    before `timeout_ms` kills the agent anyway. See `decisions/html_page_grok_default.md`.
+  - **`request_timeout_s=900`** (raised from 420s 2026-10-07) bounds one call's TOTAL wall time
+    (adapters wrap it in `asyncio.wait_for`, so SDK retries are inside the bound). Without it a
+    call overrunning the provider's client ceiling is retried twice and three generations are
+    paid for and discarded before `timeout_ms` (1,100,000ms) kills the agent anyway. See
+    `decisions/html_page_grok_default.md`.
+  - **The declared Gemini fallback was dead until 2026-10-07** — `HtmlPageGeneratorAgent` (like
+    `PdfGeneratorAgent`/`DocPlannerAgent`/`DocGeneratorAgent`) never called
+    `BaseAgent._set_execution_context()`, so `_call_llm`'s cross-provider failover branch was
+    structurally unreachable regardless of the `fallback` entry in
+    `AgentProviderStrategy.STRATEGIES`; any FAILOVER-triggering error (a Grok timeout at 420s)
+    raised `BothProvidersUnavailableError` straight away. Fixed by calling
+    `_set_execution_context()` in all four constructors, mirroring the pattern NotesAgent already
+    used. See `decisions/html_page_fallback_context_wiring.md`.
   - **Recitation handling is Gemini-specific.** `_call_llm_recitation_aware` retries an empty-200
     block; only `GeminiAdapter` maps `finish_reason`, so on Grok the retry never fires. Probed
     2026-08-15: xAI refuses verbatim-reproduction with `status='completed'` and refusal **text**,
