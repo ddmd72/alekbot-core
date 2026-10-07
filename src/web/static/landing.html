@@ -45,15 +45,19 @@ h2{font-size:clamp(28px,4vw,46px);line-height:1.08;letter-spacing:-.02em;font-we
 .body{color:var(--muted);font-size:clamp(17px,1.5vw,19px);max-width:62ch}
 
 /* nav */
-.nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px var(--pad)}
+.nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px var(--pad);background:rgba(10,13,20,.86);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:2px solid var(--rule)}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:14px;color:var(--text);letter-spacing:.02em}
 .brand i{width:10px;height:10px;background:var(--mint);display:block}
-.nav-links{display:flex;gap:24px;font-family:var(--mono);font-size:13px}
+.nav-links{display:flex;align-items:center;gap:24px;font-family:var(--mono);font-size:13px}
 .nav-links a{color:var(--muted)}
 .nav-links a:hover{color:var(--text)}
+.nav-links .signin{color:var(--mint);border:1px solid var(--rule-strong);padding:6px 12px}
+.nav-links .signin:hover{color:var(--mint-hover);border-color:var(--mint)}
+html{scroll-behavior:smooth}
+[id]{scroll-margin-top:72px}
 
 /* hero */
-.hero{border-top:2px solid var(--rule);display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
+.hero{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
 .hero-copy{padding:clamp(48px,8vw,104px) var(--pad);display:flex;flex-direction:column;align-items:flex-start;gap:28px}
 .hero-art{border-left:2px solid var(--rule);display:flex;align-items:center;justify-content:center;padding:32px;background:
   linear-gradient(var(--rule) 1px,transparent 1px) 0 0/40px 40px,
@@ -133,6 +137,7 @@ footer a:hover{color:var(--text)}
   .frame{border-left:0;border-right:0}
 }
 @media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
   .pulse,.dot::after{animation:none}
   .pulse{display:none}
 }
@@ -145,9 +150,13 @@ footer a:hover{color:var(--text)}
 <header class="nav">
   <a class="brand" href="/" aria-label="Alek-Core home"><i></i>alek-core</a>
   <nav class="nav-links" aria-label="Primary">
-    <a class="opt" href="https://github.com/ddmd72/alekbot-core/tree/main/docs">Docs</a>
-    <a href="https://github.com/ddmd72/alekbot-core">GitHub</a>
-    <a href="/auth/login">Sign in</a>
+    <a class="opt" href="#memory">Memory</a>
+    <a class="opt" href="#cycle">Cycle</a>
+    <a class="opt" href="#inside">Inside</a>
+    <a class="opt" href="#engineering">Engineering</a>
+    <a class="opt" href="https://github.com/ddmd72/alekbot-core/tree/main/docs" target="_blank" rel="noopener noreferrer">Docs</a>
+    <a href="https://github.com/ddmd72/alekbot-core" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <a class="signin" href="/auth/login">Sign in</a>
   </nav>
 </header>
 
@@ -158,7 +167,7 @@ footer a:hover{color:var(--text)}
     <p class="sub">A multi-agent LLM exocortex.</p>
     <p class="lead">An AI extension of memory and thinking, living in Slack and Telegram. It remembers, thinks in the background, and answers with context. A solo project in daily use.</p>
     <div class="actions">
-      <a class="btn btn-primary" href="https://github.com/ddmd72/alekbot-core">View on GitHub
+      <a class="btn btn-primary" href="https://github.com/ddmd72/alekbot-core" target="_blank" rel="noopener noreferrer">View on GitHub
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"></path></svg></a>
       <a class="btn btn-secondary" href="/auth/login">Sign in
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
@@ -217,7 +226,7 @@ footer a:hover{color:var(--text)}
   </div>
 </section>
 
-<section class="sec split" aria-labelledby="s1">
+<section class="sec split" id="memory" aria-labelledby="s1">
   <p class="label"><b>01</b> / Memory</p>
   <div style="display:flex;flex-direction:column;gap:24px">
     <h2 id="s1">Not a chatbot. A system that remembers.</h2>
@@ -225,7 +234,7 @@ footer a:hover{color:var(--text)}
   </div>
 </section>
 
-<section class="sec" aria-labelledby="s2">
+<section class="sec" id="cycle" aria-labelledby="s2">
   <div class="split">
     <p class="label"><b>02</b> / The cycle</p>
     <h2 id="s2">The cycle</h2>
@@ -253,7 +262,7 @@ footer a:hover{color:var(--text)}
   </div>
 </section>
 
-<section class="sec" aria-labelledby="s3">
+<section class="sec" id="inside" aria-labelledby="s3">
   <div class="split">
     <p class="label"><b>03</b> / Components</p>
     <h2 id="s3">What's inside</h2>
@@ -268,7 +277,7 @@ footer a:hover{color:var(--text)}
   </div>
 </section>
 
-<section class="sec eng" aria-labelledby="s4">
+<section class="sec eng" id="engineering" aria-labelledby="s4">
   <div class="split">
     <p class="label"><b>04</b> / Engineering</p>
     <h2 id="s4">Built to stay coherent under AI-assisted development.</h2>
@@ -279,14 +288,14 @@ footer a:hover{color:var(--text)}
     <div class="row"><span class="tag">Decisions</span><p>Decisions are recorded: <strong>45+ RFCs and 90+ decision records.</strong></p></div>
     <div class="row"><span class="tag">Prompts</span><p><strong>Prompts are data:</strong> assembled from versioned tokens at runtime, no inline fallbacks.</p></div>
   </div>
-  <a class="more" href="https://github.com/ddmd72/alekbot-core/tree/main/docs">Read the architecture →</a>
+  <a class="more" href="https://github.com/ddmd72/alekbot-core/tree/main/docs" target="_blank" rel="noopener noreferrer">Read the architecture →</a>
 </section>
 
 <footer>
   <span>© Dmytro Deleur</span>
   <nav aria-label="Footer">
-    <a href="https://github.com/ddmd72/alekbot-core">GitHub</a>
-    <a href="https://www.linkedin.com/in/ddeleur/">LinkedIn</a>
+    <a href="https://github.com/ddmd72/alekbot-core" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <a href="https://www.linkedin.com/in/ddeleur/" target="_blank" rel="noopener noreferrer">LinkedIn</a>
   </nav>
   <span>A personal project. Sign-in is for the owner.</span>
 </footer>
