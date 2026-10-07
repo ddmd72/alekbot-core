@@ -6,7 +6,8 @@ import re
 import random
 import tempfile
 import aiohttp
-from typing import Any, Callable, Optional, Dict, List
+from typing import Any, Callable, Optional, Dict, List, Tuple
+from slack_sdk.errors import SlackApiError
 from ...domain.messaging import ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType, UIMessage
 from ...domain.language import LanguageCode
@@ -19,6 +20,8 @@ from ...utils.logger import logger
 SLACK_MAX_MESSAGE_LENGTH = 2500
 SLACK_CHUNK_SIZE = 2000
 SLACK_CHUNK_SEPARATOR = "\n\n"
+# Slack rejects an empty raw_text cell (invalid_blocks: "must be more than 0 characters").
+SLACK_EMPTY_CELL = "—"
 
 
 class SlackResponseChannel(ResponseChannel):
@@ -306,13 +309,23 @@ class SlackResponseChannel(ResponseChannel):
             # even when blocks are present. fallback_text is LLM-generated and
             # may be empty — use the table title as last resort.
             text = content.fallback_text or content.data.get("title") or "Table"
-            return await self.client.chat_postMessage(
-                channel=self.channel_id,
-                text=text,
-                blocks=blocks,
-                thread_ts=thread_id,
-                mrkdwn=True
-            )
+            try:
+                return await self.client.chat_postMessage(
+                    channel=self.channel_id,
+                    text=text,
+                    blocks=blocks,
+                    thread_ts=thread_id,
+                    mrkdwn=True
+                )
+            except SlackApiError as e:
+                error = e.response.get("error", "") if e.response else ""
+                if not error.startswith("invalid_blocks"):
+                    raise
+                # The reply is already generated and paid for — deliver the table as text.
+                logger.warning("Slack rejected table blocks (%s): re-sending as plain text. %s", error, e)
+                return await self.send_long_text(
+                    self._render_table_as_text(content.data), thread_id=thread_id
+                )
 
         if not content.fallback_text:
             return None
@@ -344,12 +357,49 @@ class SlackResponseChannel(ResponseChannel):
 
         return chunks
     
+    @staticmethod
+    def _normalize_table(data: Dict[str, Any]) -> Tuple[List[str], List[List[str]]]:
+        """Headers and rows as equal-width lists of non-empty strings.
+
+        Slack rejects a table whose rows differ in width or whose raw_text cell is empty.
+        The width is the widest of header and rows, so no cell is ever dropped.
+        """
+        headers = list(data.get("headers") or [])
+        rows = data.get("rows") or []
+
+        # Accepted row formats (LLM may produce any):
+        #   new: [{"cells": ["a","b"]}, ...]          — preferred
+        #   old: [["a","b"], ...]                      — plain arrays
+        #   flat: ["a","b","c","d"]                    — chunk by header count
+        if isinstance(rows, dict):
+            rows = list(rows.values())
+        normalized: List[List[Any]] = []
+        for row in rows:
+            if isinstance(row, dict):
+                normalized.append(list(row.get("cells", list(row.values()))))
+            elif isinstance(row, list):
+                normalized.append(list(row))
+            else:
+                normalized.append([row])
+        col_count = len(headers)
+        if normalized and col_count > 1 and all(len(r) == 1 for r in normalized):
+            flat = [r[0] for r in normalized]
+            normalized = [flat[i:i + col_count] for i in range(0, len(flat), col_count)]
+
+        width = max([col_count] + [len(r) for r in normalized] + [1])
+
+        def fill(cells: List[Any]) -> List[str]:
+            texts = ["" if c is None else str(c) for c in cells]
+            texts += [""] * (width - len(texts))
+            return [t if t.strip() else SLACK_EMPTY_CELL for t in texts]
+
+        return (fill(headers) if headers else []), [fill(r) for r in normalized]
+
     def _build_generic_table_blocks(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Render generic tabular data (headers + rows) using Slack table block."""
         title = data.get("title")
-        headers = data.get("headers", [])
-        rows = data.get("rows", [])
         footer = data.get("footer")
+        headers, rows = self._normalize_table(data)
 
         blocks: List[Dict[str, Any]] = []
         if title:
@@ -361,38 +411,14 @@ class SlackResponseChannel(ResponseChannel):
         if not rows:
             return blocks
 
-        # Normalize rows to list of cell-lists.
-        # Accepted formats (LLM may produce any):
-        #   new: [{"cells": ["a","b"]}, ...]          — preferred
-        #   old: [["a","b"], ...]                      — plain arrays
-        #   flat: ["a","b","c","d"]                    — chunk by col_count
-        if isinstance(rows, dict):
-            rows = list(rows.values())
-        col_count = len(headers) if headers else 1
-        normalized: List[List[str]] = []
-        for row in rows:
-            if isinstance(row, dict):
-                normalized.append(row.get("cells", list(row.values())))
-            elif isinstance(row, list):
-                normalized.append(row)
-            else:
-                normalized.append([str(row)])
-        # If all rows ended up as single-element lists (flat array was passed), rechunk
-        if normalized and col_count > 1 and all(len(r) == 1 for r in normalized):
-            flat = [r[0] for r in normalized]
-            normalized = [flat[i:i + col_count] for i in range(0, len(flat), col_count)]
-        rows = normalized
-
-        table_rows = []
-        if headers:
-            table_rows.append([{"type": "raw_text", "text": str(h)} for h in headers])
-        for row in rows:
-            table_rows.append([{"type": "raw_text", "text": str(cell)} for cell in row])
-
+        table_rows = [
+            [{"type": "raw_text", "text": cell} for cell in row]
+            for row in ([headers] if headers else []) + rows
+        ]
         blocks.append({
             "type": "table",
             "rows": table_rows,
-            "column_settings": [{"align": "left"} for _ in range(col_count)]
+            "column_settings": [{"align": "left"} for _ in table_rows[0]]
         })
 
         if footer:
@@ -402,6 +428,17 @@ class SlackResponseChannel(ResponseChannel):
             })
 
         return blocks
+
+    def _render_table_as_text(self, data: Dict[str, Any]) -> str:
+        """Plain-text table for when Slack rejects the table block."""
+        headers, rows = self._normalize_table(data)
+        lines: List[str] = []
+        if data.get("title"):
+            lines.append(f"*{data['title']}*")
+        lines += [" | ".join(row) for row in ([headers] if headers else []) + rows]
+        if data.get("footer"):
+            lines.append(data["footer"])
+        return "\n".join(lines)
 
     def _get_status_phrases(self, status_type: StatusType) -> List[str]:
         if self._localization:

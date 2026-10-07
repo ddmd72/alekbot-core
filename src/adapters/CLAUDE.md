@@ -176,3 +176,7 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   a `cells` key (array of strings). Never use `[[...], [...]]` (Gemini hangs on
   `array<array<string>>` in `response_schema`) or duplicate `rows` keys (JSON parse drops all but
   last). The Slack adapter normalizes all row variants: `{cells}` objects, plain arrays, flat lists.
+  It also makes every row the same width (the widest of header and rows — nothing is dropped) and
+  never sends an empty cell (`SLACK_EMPTY_CELL`): Slack rejects uneven rows and empty `raw_text`
+  with `invalid_blocks`. If Slack rejects the blocks anyway (row/column/10k-char limits), the table
+  is re-sent as plain text via `send_long_text` — the reply is never lost to a block schema error.
