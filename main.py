@@ -1140,28 +1140,10 @@ async def main():
                     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
                     return response
                 
-                # Add root endpoint with OAuth redirect
-                @main_app.route("/", methods=["GET"])
-                async def root():
-                    """
-                    Root endpoint: redirect to OAuth or Cabinet depending on auth status.
-                    
-                    UX Flow:
-                    - If authenticated → /cabinet
-                    - If not authenticated → /auth/login (OAuth flow)
-                    """
-                    from quart import redirect, session as quart_session
-                    
-                    # Check if user is authenticated via session
-                    access_token = quart_session.get("access_token")
-                    
-                    if access_token:
-                        # User is authenticated → go to cabinet
-                        return redirect("/cabinet")
-                    else:
-                        # User is not authenticated → start OAuth flow
-                        return redirect("/auth/login")
-                
+                # Public landing at `/` (signed-in owner → /cabinet), /og.png, /robots.txt
+                from src.web.landing_app import create_landing_blueprint
+                main_app.register_blueprint(create_landing_blueprint(session_service))
+
                 # Add health endpoint
                 @main_app.route("/health", methods=["GET"])
                 async def health():
@@ -1175,10 +1157,6 @@ async def main():
                     from quart import send_file
                     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "web", "static")
                     return await send_file(os.path.join(static_dir, "alek-logo.png"), mimetype="image/png")
-
-                @main_app.route("/robots.txt", methods=["GET"])
-                async def robots():
-                    return "User-agent: *\nDisallow: /\n", 200, {"Content-Type": "text/plain"}
 
                 # Add /worker endpoint — delegates to WorkerHandler
                 @main_app.route("/worker", methods=["POST"])

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alek-Core — multi-agent LLM exocortex</title>
+<meta name="description" content="Alek-Core is a multi-agent LLM exocortex living in Slack and Telegram. It remembers, thinks in the background, and answers with context. Open source, solo project in daily use.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Alek-Core — multi-agent LLM exocortex">
+<meta property="og:description" content="An AI extension of memory and thinking, living in Slack and Telegram. Open source, in daily use.">
+<meta property="og:url" content="https://dev.alekbot.app/">
+<meta property="og:image" content="https://dev.alekbot.app/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Alek-Core — multi-agent LLM exocortex">
+<meta name="twitter:description" content="An AI extension of memory and thinking, living in Slack and Telegram. Open source, in daily use.">
+<meta name="twitter:image" content="https://dev.alekbot.app/og.png">
+<meta name="theme-color" content="#0a0d14">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a0d14'/%3E%3Cg stroke='%235eead4' stroke-width='2'%3E%3Cpath d='M16 4v8M16 20v8M4 16h8M20 16h8'/%3E%3C/g%3E%3Crect x='12' y='12' width='8' height='8' fill='%235eead4'/%3E%3C/svg%3E">
+<style>
+/* Optional: self-host Archivo at /fonts/Archivo.woff2 (same origin). Falls back to system grotesk. */
+@font-face{font-family:"Archivo";src:local("Archivo"),local("Archivo Regular");font-weight:100 900;font-display:swap}
+:root{
+  --bg:#0a0d14;--surface:#0e121b;--rule:#1d2330;--rule-strong:#2a3243;
+  --text:#e7e9f0;--muted:#9aa3b6;--dim:#6b7488;
+  --mint:#5eead4;--mint-hover:#8cf2e1;--lav:#c7ccff;--live:#34d399;
+  --sans:"Archivo","Helvetica Neue",Helvetica,"Segoe UI",system-ui,-apple-system,Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,"Liberation Mono",monospace;
+  --pad:clamp(20px,4vw,48px);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:var(--bg);-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:17px;line-height:1.55;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+a{color:var(--mint);text-decoration:none}
+a:hover{color:var(--mint-hover)}
+:focus-visible{outline:2px solid var(--mint);outline-offset:3px}
+::selection{background:rgba(94,234,212,.28);color:#fff}
+p,h1,h2,h3{text-wrap:pretty}
+.mono{font-family:var(--mono)}
+
+.frame{max-width:1240px;margin:0 auto;border-left:2px solid var(--rule);border-right:2px solid var(--rule);min-height:100vh}
+.sec{border-top:2px solid var(--rule);padding:clamp(48px,8vw,96px) var(--pad)}
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,3fr);gap:24px 48px}
+.label{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);padding-top:8px}
+.label b{color:var(--mint);font-weight:500}
+h2{font-size:clamp(28px,4vw,46px);line-height:1.08;letter-spacing:-.02em;font-weight:700;max-width:22ch;color:#fff}
+.body{color:var(--muted);font-size:clamp(17px,1.5vw,19px);max-width:62ch}
+
+/* nav */
+.nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px var(--pad);background:rgba(10,13,20,.86);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:2px solid var(--rule)}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:14px;color:var(--text);letter-spacing:.02em}
+.brand i{width:10px;height:10px;background:var(--mint);display:block}
+.nav-links{display:flex;align-items:center;gap:24px;font-family:var(--mono);font-size:13px}
+.nav-links a{color:var(--muted)}
+.nav-links a:hover{color:var(--text)}
+.nav-links .signin{color:var(--mint);border:1px solid var(--rule-strong);padding:6px 12px}
+.nav-links .signin:hover{color:var(--mint-hover);border-color:var(--mint)}
+html{scroll-behavior:smooth}
+[id]{scroll-margin-top:72px}
+
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
+.hero-copy{padding:clamp(48px,8vw,104px) var(--pad);display:flex;flex-direction:column;align-items:flex-start;gap:28px}
+.hero-art{border-left:2px solid var(--rule);display:flex;align-items:center;justify-content:center;padding:32px;background:
+  linear-gradient(var(--rule) 1px,transparent 1px) 0 0/40px 40px,
+  linear-gradient(90deg,var(--rule) 1px,transparent 1px) 0 0/40px 40px;background-color:var(--bg)}
+.hero-art svg{width:100%;max-width:440px;height:auto;background:var(--bg)}
+.live{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:var(--live);border:2px solid var(--rule);padding:6px 12px}
+.dot{position:relative;width:8px;height:8px;background:var(--live);border-radius:50%}
+.dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--live);animation:ping 2.4s ease-out infinite}
+@keyframes ping{0%{transform:scale(.6);opacity:.9}100%{transform:scale(2.2);opacity:0}}
+h1{font-size:clamp(56px,10vw,120px);line-height:.92;letter-spacing:-.045em;font-weight:800;background:linear-gradient(100deg,#fff 20%,var(--lav) 90%);-webkit-background-clip:text;background-clip:text;color:transparent;padding-bottom:.04em}
+.sub{font-size:clamp(22px,2.6vw,30px);line-height:1.2;letter-spacing:-.01em;color:var(--lav);font-weight:500;margin-top:-12px}
+.lead{color:var(--muted);font-size:clamp(17px,1.6vw,19px);max-width:52ch}
+.actions{display:flex;flex-wrap:wrap;gap:12px}
+.btn{display:inline-flex;align-items:center;justify-content:space-between;gap:24px;min-width:200px;height:52px;padding:0 18px;font-family:var(--sans);font-size:16px;font-weight:600;border:2px solid transparent;transition:background .15s,border-color .15s,color .15s}
+.btn svg{flex:none}
+.btn-primary{background:var(--mint);color:#04211c}
+.btn-primary:hover{background:var(--mint-hover);color:#04211c}
+.btn-primary:active{background:#3fd6bd}
+.btn-secondary{border-color:var(--rule-strong);color:var(--text);min-width:150px}
+.btn-secondary:hover{border-color:var(--mint);color:var(--text)}
+.btn-secondary:active{background:rgba(94,234,212,.08)}
+.stack{font-family:var(--mono);font-size:13px;color:var(--dim);display:flex;flex-wrap:wrap;gap:6px 10px;padding-top:20px;border-top:2px solid var(--rule);width:100%}
+.stack span{color:var(--muted)}
+
+/* hub diagram */
+.ray{stroke:var(--rule-strong);stroke-width:1.5}
+.pulse{stroke:var(--mint);stroke-width:2;stroke-dasharray:10 300;stroke-dashoffset:10;animation:flow 3.6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-150}}
+.node{fill:var(--bg);stroke:var(--rule-strong);stroke-width:2}
+.node-lbl{font-family:var(--mono);font-size:11px;fill:var(--muted);letter-spacing:.04em}
+
+/* cycle */
+.cycle{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;background:var(--rule);border:2px solid var(--rule);margin-top:48px}
+.step{background:var(--bg);padding:28px 24px 32px;display:flex;flex-direction:column;gap:14px;position:relative}
+.step-n{font-family:var(--mono);font-size:12px;color:var(--mint);letter-spacing:.1em;display:flex;justify-content:space-between;align-items:center}
+.step-n em{font-style:normal;color:var(--dim)}
+.step h3{font-size:22px;letter-spacing:-.01em;color:#fff;font-weight:700}
+.step p{color:var(--muted);font-size:16px}
+.loop{grid-column:1/-1;background:var(--surface);padding:12px 24px;font-family:var(--mono);font-size:12px;color:var(--dim);letter-spacing:.06em;display:flex;align-items:center;gap:10px}
+.loop svg{color:var(--mint)}
+
+/* features */
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;background:var(--rule);border:2px solid var(--rule);margin-top:48px}
+.cell{background:var(--bg);padding:28px 24px 32px;display:flex;flex-direction:column;gap:12px;transition:background .15s}
+.cell:hover{background:var(--surface)}
+.cell .k{font-family:var(--mono);font-size:12px;color:var(--dim)}
+.cell h3{font-size:20px;letter-spacing:-.01em;color:#fff;font-weight:700}
+.cell p{color:var(--muted);font-size:15.5px}
+
+/* engineering */
+.eng h2{max-width:26ch}
+.rows{margin-top:48px;border-top:2px solid var(--rule-strong)}
+.row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,3fr);gap:12px 48px;padding:28px 0;border-bottom:2px solid var(--rule)}
+.row .tag{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--mint);padding-top:6px}
+.row p{font-size:clamp(18px,2vw,23px);line-height:1.4;color:var(--muted);letter-spacing:-.005em}
+.row p strong{color:#fff;font-weight:600}
+.more{display:inline-flex;margin-top:36px;font-family:var(--mono);font-size:15px;border-bottom:2px solid var(--mint);padding-bottom:4px}
+
+/* footer */
+footer{border-top:2px solid var(--rule);padding:28px var(--pad) 40px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px 32px;font-family:var(--mono);font-size:13px;color:var(--dim)}
+footer nav{display:flex;flex-wrap:wrap;gap:8px 20px}
+footer a{color:var(--muted)}
+footer a:hover{color:var(--text)}
+
+@media (max-width:960px){
+  .hero{grid-template-columns:1fr}
+  .hero-art{border-left:0;border-top:2px solid var(--rule);padding:24px}
+  .hero-art svg{max-width:360px}
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:720px){
+  .split,.row{grid-template-columns:1fr}
+  .cycle,.grid{grid-template-columns:1fr}
+  .row{gap:8px}
+  .nav-links .opt{display:none}
+  .btn{flex:1 1 100%}
+  .frame{border-left:0;border-right:0}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .pulse,.dot::after{animation:none}
+  .pulse{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="frame">
+
+<header class="nav">
+  <a class="brand" href="/" aria-label="Alek-Core home"><i></i>alek-core</a>
+  <nav class="nav-links" aria-label="Primary">
+    <a class="opt" href="#memory">Memory</a>
+    <a class="opt" href="#cycle">Cycle</a>
+    <a class="opt" href="#inside">Inside</a>
+    <a class="opt" href="#engineering">Engineering</a>
+    <a class="opt" href="https://github.com/ddmd72/alekbot-core/tree/main/docs" target="_blank" rel="noopener noreferrer">Docs</a>
+    <a href="https://github.com/ddmd72/alekbot-core" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <a class="signin" href="/auth/login">Sign in</a>
+  </nav>
+</header>
+
+<section class="hero">
+  <div class="hero-copy">
+    <span class="live"><span class="dot" aria-hidden="true"></span>IN PRODUCTION</span>
+    <h1>Alek-Core</h1>
+    <p class="sub">A multi-agent LLM exocortex.</p>
+    <p class="lead">An AI extension of memory and thinking, living in Slack and Telegram. It remembers, thinks in the background, and answers with context. A solo project in daily use.</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="https://github.com/ddmd72/alekbot-core" target="_blank" rel="noopener noreferrer">View on GitHub
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"></path></svg></a>
+      <a class="btn btn-secondary" href="/auth/login">Sign in
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
+    </div>
+    <p class="stack"><span>Python</span>·<span>GCP</span>·<span>Claude / Gemini / OpenAI / Grok</span>·<span>6,500+ tests + CI</span></p>
+  </div>
+
+  <div class="hero-art" aria-hidden="true">
+    <svg viewBox="0 0 400 400" role="img">
+      <circle cx="200" cy="200" r="150" fill="none" stroke="#1d2330" stroke-width="1" stroke-dasharray="2 6"></circle>
+      <circle cx="200" cy="200" r="90" fill="none" stroke="#1d2330" stroke-width="1"></circle>
+      <g class="rays">
+        <line class="ray" x1="200" y1="200" x2="200" y2="50"></line>
+        <line class="ray" x1="200" y1="200" x2="306" y2="94"></line>
+        <line class="ray" x1="200" y1="200" x2="350" y2="200"></line>
+        <line class="ray" x1="200" y1="200" x2="306" y2="306"></line>
+        <line class="ray" x1="200" y1="200" x2="200" y2="350"></line>
+        <line class="ray" x1="200" y1="200" x2="94" y2="306"></line>
+        <line class="ray" x1="200" y1="200" x2="50" y2="200"></line>
+        <line class="ray" x1="200" y1="200" x2="94" y2="94"></line>
+      </g>
+      <g>
+        <line class="pulse" x1="200" y1="200" x2="200" y2="50" style="animation-delay:0s"></line>
+        <line class="pulse" x1="200" y1="200" x2="306" y2="94" style="animation-delay:-2.1s"></line>
+        <line class="pulse" x1="200" y1="200" x2="350" y2="200" style="animation-delay:-0.9s"></line>
+        <line class="pulse" x1="200" y1="200" x2="306" y2="306" style="animation-delay:-3.0s"></line>
+        <line class="pulse" x1="200" y1="200" x2="200" y2="350" style="animation-delay:-1.5s"></line>
+        <line class="pulse" x1="200" y1="200" x2="94" y2="306" style="animation-delay:-2.6s"></line>
+        <line class="pulse" x1="200" y1="200" x2="50" y2="200" style="animation-delay:-0.4s"></line>
+        <line class="pulse" x1="200" y1="200" x2="94" y2="94" style="animation-delay:-1.9s"></line>
+      </g>
+      <g>
+        <rect class="node" x="193" y="43" width="14" height="14"></rect>
+        <rect class="node" x="299" y="87" width="14" height="14"></rect>
+        <rect class="node" x="343" y="193" width="14" height="14"></rect>
+        <rect class="node" x="299" y="299" width="14" height="14"></rect>
+        <rect class="node" x="193" y="343" width="14" height="14"></rect>
+        <rect class="node" x="87" y="299" width="14" height="14"></rect>
+        <rect class="node" x="43" y="193" width="14" height="14"></rect>
+        <rect class="node" x="87" y="87" width="14" height="14"></rect>
+      </g>
+      <g class="node-lbl">
+        <text x="200" y="32" text-anchor="middle">smart</text>
+        <text x="320" y="84">search</text>
+        <text x="364" y="186" text-anchor="end" dy="-6">email</text>
+        <text x="320" y="326">tasks</text>
+        <text x="200" y="376" text-anchor="middle">docs</text>
+        <text x="80" y="326" text-anchor="end">research</text>
+        <text x="36" y="186" text-anchor="start" dy="-6">media</text>
+        <text x="80" y="84" text-anchor="end">memory</text>
+      </g>
+      <rect x="168" y="168" width="64" height="64" fill="#0a0d14" stroke="#5eead4" stroke-width="2"></rect>
+      <rect x="192" y="192" width="16" height="16" fill="#5eead4"></rect>
+      <text x="200" y="250" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#5eead4" letter-spacing=".08em">ROUTER</text>
+    </svg>
+  </div>
+</section>
+
+<section class="sec split" id="memory" aria-labelledby="s1">
+  <p class="label"><b>01</b> / Memory</p>
+  <div style="display:flex;flex-direction:column;gap:24px">
+    <h2 id="s1">Not a chatbot. A system that remembers.</h2>
+    <p class="body">Every conversation produces facts: preferences, events, decisions, principles. Alek-Core extracts them in the background, deduplicates them against what it already knows, and uses them in every future answer. The more you talk to it, the less you have to explain.</p>
+  </div>
+</section>
+
+<section class="sec" id="cycle" aria-labelledby="s2">
+  <div class="split">
+    <p class="label"><b>02</b> / The cycle</p>
+    <h2 id="s2">The cycle</h2>
+  </div>
+  <div class="cycle">
+    <div class="step">
+      <span class="step-n">01 <em>→</em></span>
+      <h3>You speak.</h3>
+      <p>A message arrives via Slack or Telegram. A router triages it: complexity, tone, what to search for.</p>
+    </div>
+    <div class="step">
+      <span class="step-n">02 <em>→</em></span>
+      <h3>It answers with context.</h3>
+      <p>Memory and web search enrich the request. A model tier matching the difficulty answers: cheap for simple, strong for complex.</p>
+    </div>
+    <div class="step">
+      <span class="step-n">03 <em>↺</em></span>
+      <h3>It learns.</h3>
+      <p>A background agent turns the conversation into long-term facts. The next conversation already knows them.</p>
+    </div>
+    <div class="loop">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"></path></svg>
+      facts from 03 feed step 02 of the next conversation
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="inside" aria-labelledby="s3">
+  <div class="split">
+    <p class="label"><b>03</b> / Components</p>
+    <h2 id="s3">What's inside</h2>
+  </div>
+  <div class="grid">
+    <article class="cell"><span class="k">a.</span><h3>Multi-agent network</h3><p>Router, Smart orchestrator, and specialists for search, email, tasks, documents, research, images and video, commissioned through one delegation tool.</p></article>
+    <article class="cell"><span class="k">b.</span><h3>Long-term memory</h3><p>Multi-vector retrieval with Reciprocal Rank Fusion, versioned facts with full history, number-aware deduplication (<span class="mono" style="color:var(--text)">75 kg ≠ 84 kg</span>).</p></article>
+    <article class="cell"><span class="k">c.</span><h3>Provider-agnostic</h3><p>Claude, Gemini, OpenAI and Grok are swappable per agent and per user, with complexity-driven model tiers.</p></article>
+    <article class="cell"><span class="k">d.</span><h3>Voice</h3><p>A phone call and a web call with a voice companion that shares the character and memory of the text assistant.</p></article>
+    <article class="cell"><span class="k">e.</span><h3>Email as memory</h3><p>Gmail is indexed passively; a daily review triages the inbox into an HTML report.</p></article>
+    <article class="cell"><span class="k">f.</span><h3>Remote MCP server</h3><p>Memory exposed to Claude as a custom connector (experimental).</p></article>
+  </div>
+</section>
+
+<section class="sec eng" id="engineering" aria-labelledby="s4">
+  <div class="split">
+    <p class="label"><b>04</b> / Engineering</p>
+    <h2 id="s4">Built to stay coherent under AI-assisted development.</h2>
+  </div>
+  <div class="rows">
+    <div class="row"><span class="tag">Architecture</span><p><strong>Hexagonal architecture enforced by 30+ AST-based tests</strong>, not by documentation.</p></div>
+    <div class="row"><span class="tag">Testing</span><p><strong>6,500+ tests</strong>; contract tests validate the payloads sent to each LLM provider SDK instead of mocking the model.</p></div>
+    <div class="row"><span class="tag">Decisions</span><p>Decisions are recorded: <strong>45+ RFCs and 90+ decision records.</strong></p></div>
+    <div class="row"><span class="tag">Prompts</span><p><strong>Prompts are data:</strong> assembled from versioned tokens at runtime, no inline fallbacks.</p></div>
+  </div>
+  <a class="more" href="https://github.com/ddmd72/alekbot-core/tree/main/docs" target="_blank" rel="noopener noreferrer">Read the architecture →</a>
+</section>
+
+<footer>
+  <span>© Dmytro Deleur</span>
+  <nav aria-label="Footer">
+    <a href="https://github.com/ddmd72/alekbot-core" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <a href="https://www.linkedin.com/in/ddeleur/" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+  </nav>
+  <span>A personal project. Sign-in is for the owner.</span>
+</footer>
+
+</div>
+
+
+</body></html>
