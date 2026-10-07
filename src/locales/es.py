@@ -3,7 +3,7 @@ Spanish UI messages library. Style: ironic, warm, slightly self-deprecating — 
 
 RFC: docs/10_rfcs/MULTILINGUAL_SUPPORT_RFC.md §14
 """
-from typing import Dict, List
+from typing import Dict, List, Optional
 from ..domain.ui_messages import StatusType, UIMessage
 
 
@@ -84,7 +84,7 @@ ES_MESSAGES: Dict[str, List[str]] = {
 }
 
 
-def get_message(status_type: StatusType, overrides: Dict[str, List[str]] = None) -> List[str]:
+def get_message(status_type: StatusType, overrides: Optional[Dict[str, List[str]]] = None) -> List[str]:
     if overrides and status_type.value in overrides:
         return overrides[status_type.value]
     return ES_MESSAGES.get(status_type.value, ["Procesando..."])

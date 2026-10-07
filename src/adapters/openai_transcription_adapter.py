@@ -11,7 +11,7 @@ multilingual speaker is the normal case here, not an edge one. Env-overridable
 
 import asyncio
 import os
-from typing import Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from openai import AsyncOpenAI
 
@@ -65,7 +65,7 @@ class OpenAITranscriptionAdapter(AudioTranscriptionPort):
 
         # Omitted rather than defaulted: an empty list would pin the recogniser to nothing,
         # while an absent param lets it auto-detect.
-        extra = {"languages": list(languages)} if languages else {}
+        extra: Dict[str, Any] = {"languages": list(languages)} if languages else {}
 
         try:
             # Tuple form (name, bytes, content_type): the API picks the container format

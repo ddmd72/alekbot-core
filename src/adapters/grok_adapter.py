@@ -779,8 +779,7 @@ class GrokAdapter(LLMPort):
                     if url:
                         annotations.append(f"- [{title}]({url})" if title else f"- {url}")
         if annotations:
-            seen = set()
-            unique = [a for a in annotations if not (a in seen or seen.add(a))]
+            unique = list(dict.fromkeys(annotations))
             text += "\n\n*Sources:*\n" + "\n".join(unique)
 
         # Extract usage metadata

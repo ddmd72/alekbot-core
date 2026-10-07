@@ -2,6 +2,7 @@ import json
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 import websockets
+from websockets.asyncio.client import ClientConnection
 
 from src.domain.voice_audio_format import MULAW_8K, AudioFormat
 from src.domain.voice_audio_frame import AudioFrame
@@ -170,7 +171,13 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
         self._model = model
         self._connect = ws_connect
         self._audio_format = audio_format
-        self._ws = None
+        self._ws: Optional[ClientConnection] = None
+
+    @property
+    def _socket(self) -> ClientConnection:
+        if self._ws is None:
+            raise RuntimeError("realtime session is not open")
+        return self._ws
 
     async def open(self, instructions: str, reasoning_effort: str, tools: List[dict]) -> None:
         url = f"wss://api.openai.com/v1/realtime?model={self._model}"
@@ -200,16 +207,16 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
             # OpenAI Realtime wants type=function.
             session["tools"] = [{"type": "function", **tool} for tool in tools]
             session["tool_choice"] = "auto"
-        await self._ws.send(json.dumps({"type": "session.update", "session": session}))
+        await self._socket.send(json.dumps({"type": "session.update", "session": session}))
 
     async def send_audio(self, frame: AudioFrame) -> None:
         # payload arrives already base64-encoded mulaw off the wire (RFC §4.4/§4.7) - AudioFrame.payload
         # holds the ascii bytes of that base64 string, so this only decodes to str, never re-encodes.
         payload = frame.payload if isinstance(frame.payload, str) else frame.payload.decode("ascii")
-        await self._ws.send(json.dumps({"type": "input_audio_buffer.append", "audio": payload}))
+        await self._socket.send(json.dumps({"type": "input_audio_buffer.append", "audio": payload}))
 
     async def receive_events(self) -> AsyncIterator[RealtimeSessionEvent]:
-        async for raw in self._ws:
+        async for raw in self._socket:
             event = json.loads(raw)
             normalized = self._normalize(event)
             if normalized is not None:
@@ -219,6 +226,8 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
         event_type = event.get("type")
         if event_type in ("response.output_audio.delta", "response.audio.delta"):
             payload = event.get("delta") or event.get("audio")
+            if not payload:
+                return None
             frame = AudioFrame(encoding=self._audio_format.encoding,
                                sample_rate_hz=self._audio_format.sample_rate_hz,
                                payload=payload, track="outbound")
@@ -258,31 +267,31 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
         return None
 
     async def submit_tool_result(self, call_id: str, output: str) -> None:
-        await self._ws.send(json.dumps({
+        await self._socket.send(json.dumps({
             "type": "conversation.item.create",
             "item": {"type": "function_call_output", "call_id": call_id, "output": output},
         }))
 
     async def submit_message(self, role: str, text: str) -> None:
-        await self._ws.send(json.dumps({
+        await self._socket.send(json.dumps({
             "type": "conversation.item.create",
             "item": {"type": "message", "role": role, "content": [{"type": "input_text", "text": text}]},
         }))
 
     async def request_response(self) -> None:
-        await self._ws.send(json.dumps({"type": "response.create"}))
+        await self._socket.send(json.dumps({"type": "response.create"}))
 
     async def cancel_response(self) -> None:
         # Barge-in: stop the provider generating the response the caller just talked
         # over (validated live in scripts/voice/test_mulaw_relay_poc.py:158-170). The
         # caller must only reach here while a response is actually active - OpenAI
         # errors on a response.cancel with nothing in flight.
-        await self._ws.send(json.dumps({"type": "response.cancel"}))
+        await self._socket.send(json.dumps({"type": "response.cancel"}))
 
     async def truncate(self, item_id: str, audio_end_ms: int) -> None:
         # Over WebSocket the server cannot know what was played, so the client must cut
         # the unheard tail itself (realtime-conversations guide, checked 2026-09-22).
-        await self._ws.send(json.dumps({
+        await self._socket.send(json.dumps({
             "type": "conversation.item.truncate",
             "item_id": item_id,
             "content_index": 0,

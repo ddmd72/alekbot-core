@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Any, Optional
+from typing import List, Any, Optional, cast
 import httpx
 from google import genai
 from google.genai import types, errors as genai_errors
@@ -221,7 +221,7 @@ class GeminiAdapter(LLMPort):
             ]
         )
         _gen_coro = self.client.aio.models.generate_content(
-            model=model_name, contents=contents, config=config
+            model=model_name, contents=cast(Any, contents), config=config  # list[Content] is invariant
         )
         try:
             response = await (asyncio.wait_for(_gen_coro, timeout=request_timeout) if request_timeout else _gen_coro)

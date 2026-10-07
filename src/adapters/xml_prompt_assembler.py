@@ -12,8 +12,8 @@ Part of hexagonal architecture:
 Session: 26 (Variable Formatting System)
 """
 
-from typing import List, Dict
-from ..domain.prompt import PromptComponent, PromptTemplate
+from typing import List, Dict, Optional
+from ..domain.prompt import ComponentScope, PromptComponent, PromptTemplate
 
 
 class XmlPromptAssembler:
@@ -30,7 +30,7 @@ class XmlPromptAssembler:
         self,
         template: PromptTemplate,
         components: List[PromptComponent],
-        runtime_data: Dict[str, str] = None
+        runtime_data: Optional[Dict[str, str]] = None
     ) -> str:
         """
         Assemble components into XML format.
@@ -47,7 +47,7 @@ class XmlPromptAssembler:
             return "<agent_instructions />"
 
         # Group components by scope
-        components_by_scope = {}
+        components_by_scope: Dict[ComponentScope, List[PromptComponent]] = {}
         for component in components:
             if component.scope not in components_by_scope:
                 components_by_scope[component.scope] = []

@@ -7,6 +7,7 @@ Read from UNSPLASH_ACCESS_KEY env var at startup in composition/user_agent_facto
 Returns [] silently on any request failure.
 """
 import aiohttp
+from typing import Dict, Union
 
 from ..ports.image_search_port import ImageResult, ImageSearchPort
 from ..utils.logger import logger
@@ -23,7 +24,7 @@ class UnsplashAdapter(ImageSearchPort):
 
     async def search(self, query: str, count: int = 1) -> list[ImageResult]:
         headers = {"Authorization": f"Client-ID {self._access_key}"}
-        params = {
+        params: Dict[str, Union[str, int]] = {
             "query": query[:200],
             "per_page": min(max(count, 1), 10),
             "orientation": "landscape",

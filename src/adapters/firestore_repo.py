@@ -54,7 +54,7 @@ class FirestoreFactRepository(FactRepository):
         db_client,
         env_config: EnvironmentConfig,
         embedding_service: Optional[EmbeddingService] = None,
-        biographical_context_service: Optional["BiographicalContextService"] = None,  # noqa: F821 — adapter must not import services; forward-ref only
+        biographical_context_service: Optional[Any] = None,  # a BiographicalContextService — adapters must not import services
         dedup_service: Optional[SmartDeduplication] = None,
     ):
         """
@@ -696,6 +696,8 @@ class FirestoreFactRepository(FactRepository):
             existing_fact = FactEntity(**existing_data)
             
             # Calculate exact similarity using domain utility
+            if fact.vector is None or existing_fact.vector is None:
+                raise ValueError(f"fact {existing_fact.id} matched by vector search has no vector to compare")
             similarity = cosine_similarity(fact.vector, existing_fact.vector)
             
             # Use SmartDeduplication for intelligent comparison
@@ -890,9 +892,9 @@ class FirestoreFactRepository(FactRepository):
                     continue
                 
                 fact = dict(item)
-                created_at = fact.get("created_at")
-                if hasattr(created_at, "isoformat"):
-                    fact["created_at"] = created_at.isoformat()
+                to_iso = getattr(fact.get("created_at"), "isoformat", None)
+                if callable(to_iso):
+                    fact["created_at"] = to_iso()
                 
                 sanitized.append(fact)
             
