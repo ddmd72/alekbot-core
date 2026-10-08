@@ -62,7 +62,7 @@ lack typed support for the GA `output_config.format` structured outputs API.
 
 | Parameter                     | Gated to                                      | Behavior on unsupported model                |
 | ----------------------------- | --------------------------------------------- | -------------------------------------------- |
-| sampling (`temperature`, …)   | `_REASONING_PREFIXES = gpt-5, gpt-6, o1, o3`  | Dropped for reasoning models (they 400 on non-default sampling). |
+| sampling (`temperature`, …)   | none                                          | Never sent on any provider (removed 2026-10-08, `decisions/temperature_removed.md`). |
 | `reasoning.effort = "low"`    | `_MIN_MEDIUM_EFFORT_PREFIXES = gpt-5.5-pro`   | **Clamped up to `"medium"`** — `gpt-5.5-pro` rejects `low` (`400 Unsupported value: 'low' … Supported: 'medium', 'high', 'xhigh'`; floor verified via live API probe 2026-07-13). The 5.4 family (nano/mini/5.4) accepts `low`. The clamp sits after effort is resolved, so it covers BOTH sources: an explicit `thinking="low"` and the grounding-forced `"low"`. Prefix match (`startswith`) so dated snapshots inherit it. |
 | `reasoning.effort = "none"`   | `_MIN_LOW_EFFORT_PREFIXES = gpt-6.1-sol`      | **Clamped up to `"low"`** (probed 2026-10-03). |
 | no `thinking` requested       | `_THINKING_OFF_EFFORT = {gpt-6-luna: none}`   | Sends `effort: none` — the model reasons by default otherwise. |

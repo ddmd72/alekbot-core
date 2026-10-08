@@ -18,9 +18,9 @@ All tool execution is server-side. The API manages context internally — we do 
 serialise tool results or maintain history across turns. The only state we manage is the
 growing messages[] array for pause_turn continuations.
 
-Thinking: adaptive, effort=high. Temperature is omitted for the new-generation models
-(Sonnet 5 / Opus 4.7+ / Fable 5 — they 400 on a non-default sampling param) and pinned to
-1.0 for older thinking models (Sonnet 4.6 / Opus 4.6) where thinking forces temperature=1.0.
+Thinking: adaptive, effort=high. No sampling parameters are sent: new-generation models
+(Sonnet 5 / Opus 4.7+ / Fable 5) 400 on a non-default one, and the API default (1.0) is what
+older thinking models require anyway.
 
 Message payload shape (from AgentWorkerHandler):
   message.payload = {"query": <full research brief>, "intent": "execute_deep_research_claude"}
@@ -91,7 +91,7 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
 
     # New-generation Claude models (the Sonnet 5 / Opus 4.7+ / Fable 5 line). This single set
     # captures two properties that arrived together in that generation:
-    #   1. They reject a non-default temperature/top_p/top_k with a 400 → we omit temperature.
+    #   1. They reject a non-default temperature/top_p/top_k with a 400 (we send none).
     #   2. They use the new tokenizer (~+30% tokens for the same text) → the same report exhausts
     #      a fixed output budget ~30% sooner, so we raise max_tokens (96K vs 64K) to avoid
     #      truncating long research reports.
@@ -390,12 +390,6 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
             extra_kwargs = {
                 "thinking": {"type": "enabled", "budget_tokens": 24_000},
             }
-
-        # Sampling gate: new-gen models 400 on a non-default temperature, so omit it for them.
-        # Older thinking models require temperature=1.0 while extended thinking is active; the
-        # non-thinking (Haiku) path also keeps 1.0. See _NO_SAMPLING_MODELS above.
-        if not is_new_gen:
-            extra_kwargs["temperature"] = 1.0
 
         messages: list[dict] = [{"role": "user", "content": query}]
         accumulated_content: list = []

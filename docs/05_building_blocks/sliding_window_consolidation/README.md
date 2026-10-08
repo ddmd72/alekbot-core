@@ -248,7 +248,6 @@ All parameters in `src/infrastructure/agent_config.py` → `ConsolidationAgentCo
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `max_turns` | 15 | Max LLM turns per stage. Raised to 15 after Stage 2 on 25-fact cluster hit the 10-turn limit. |
-| `temperature` | 1.0 | Model default. Zero-temp was abandoned — it degrades extraction quality on current models. |
 | `facts_limit` | 50 | Biographical facts loaded into context per stage. |
 | `principles_limit` | 15 | Principles loaded into context per stage. |
 | `max_tokens` | 64_000 | Output token limit. Large headroom for Gemini 3 Pro thinking tokens + full fact JSON. |

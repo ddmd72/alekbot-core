@@ -29,7 +29,6 @@ from ..ports.llm_port import (
 )
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
-from ..infrastructure.agent_config import COMPUTE
 
 
 class ComputeAgent(BaseAgent):
@@ -42,7 +41,6 @@ class ComputeAgent(BaseAgent):
     Returns plain text result consumed by the orchestrator.
     """
 
-    TEMPERATURE = COMPUTE.temperature
 
     def __init__(
         self,
@@ -118,7 +116,6 @@ class ComputeAgent(BaseAgent):
                 system_instruction=system_prompt,
                 messages=[Message(role="user", parts=[MessagePart(text=user_text)])],
                 use_code_execution=True,
-                temperature=self.TEMPERATURE,
             )
             response = await self._call_llm(request)
 

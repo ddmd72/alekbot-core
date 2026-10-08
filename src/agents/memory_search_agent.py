@@ -35,7 +35,6 @@ class FactsMemoryAgent(BaseAgent):
     - save_to_memory: Attach text to user message for consolidation (no LLM call)
     """
 
-    TEMPERATURE = MEMORY_SEARCH.temperature
     MAX_TOKENS = MEMORY_SEARCH.max_tokens
     RESULT_LIMIT = MEMORY_SEARCH.result_limit
 
@@ -138,7 +137,6 @@ class FactsMemoryAgent(BaseAgent):
                 system_instruction=system_prompt,
                 messages=[Message(role="user", parts=[MessagePart(text=user_text)])],
                 tools=[],
-                temperature=self.TEMPERATURE,
                 max_tokens=self.MAX_TOKENS,
                 disable_safety=True,
                 response_mime_type="application/json",

@@ -52,7 +52,7 @@ into a single labeled tool response. Controlled by `PROTOCOL_QUICK_AGENT_SELECTI
 ### 2.1 Entry Point: `DelegationEngine.execute()`
 
 Quick (and Smart) agents delegate loop mechanics to the shared `DelegationEngine`
-(`src/infrastructure/delegation_engine.py`). The agent builds the `LLMRequest` (model, temperature,
+(`src/infrastructure/delegation_engine.py`). The agent builds the `LLMRequest` (model,
 schema, tools) and passes it to the engine. The engine owns the iteration, tool dispatch, history
 management, and parallel execution.
 
@@ -254,7 +254,6 @@ execute(message)
   └─ Single LLMRequest:
        model_name: ECO tier provider (gemini-flash-lite-latest)
        tools: [grounding_tool]          ← Google Search grounding
-       temperature: 0.5
        system_instruction: ""           ← All context in user message
        → Returns response.text as plain Slack mrkdwn
 ```

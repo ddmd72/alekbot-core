@@ -86,7 +86,6 @@ class DocGeneratorAgent(BaseAgent):
     RETRY_POLICY = NO_RETRY_POLICY
 
     MAX_TURNS = 5
-    TEMPERATURE = DOC_GENERATOR.temperature
     MAX_TOKENS = DOC_GENERATOR.max_tokens
     THINKING_EFFORT = DOC_GENERATOR.thinking_effort
     NODE_TIMEOUT = DOC_GENERATOR.node_timeout_s
@@ -156,7 +155,6 @@ class DocGeneratorAgent(BaseAgent):
                 model_name=self.model_name,
                 system_instruction=system_prompt,
                 messages=messages,
-                temperature=self.TEMPERATURE,
                 max_tokens=self.MAX_TOKENS,
                 tools=_GENERATE_DOCX_TOOL,
                 thinking=self.THINKING_EFFORT or None,

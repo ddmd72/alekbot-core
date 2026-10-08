@@ -29,8 +29,11 @@ mocks cannot detect translation regressions) + contract validators in
 - **Claude sampling / thinking / tool-choice gates — substring traps.** Model ids nest
   (`claude-sonnet-5` is a prefix of `claude-sonnet-5-5`), so every gate is either a deliberate
   family prefix or an exact id; read each one before adding a model.
-  - `_NO_SAMPLING_MODELS` — Sonnet 5+, Opus 4.7+/5+, Fable **400 on a non-default
-    `temperature`/`top_p`/`top_k`**; the param is omitted (Sonnet 4.6 / Opus 4.6 / Haiku keep it).
+  - **No sampling params are sent, by any adapter** (2026-10-08, `decisions/temperature_removed.md`).
+    Sonnet 5+, Opus 4.7+/5+, Fable and Haiku 5.5 **400 on a non-default `temperature`/`top_p`/`top_k`**;
+    Gemini and the OpenAI reasoning line deprecate or reject them too. `LLMRequest` has no
+    `temperature` field; the old `_NO_SAMPLING_MODELS` gate is gone from `ClaudeAdapter` (the Deep
+    Research runner keeps its own copy because the same tuple also gates its `max_tokens`).
   - `_THINKING_OFF` (longest prefix wins) — what to send when the caller asks for **no** thinking on
     a model that thinks by default: Sonnet 5 → `disabled`; **Sonnet 5.5 → `between_tools`**
     (`disabled` is a 400 there). Opus 5.5 / Fable cannot turn thinking off — the field is omitted
@@ -58,8 +61,11 @@ mocks cannot detect translation regressions) + contract validators in
     clamps `low→medium` (prefix match, after effort is resolved → covers both explicit `thinking=low`
     and grounding-forced `low`). The 5.4 family (nano/mini/5.4) accepts `low` — **live-probed 2026-07-13,
     don't infer a new model's floor, probe it** (see memory `reference_openai_reasoning_effort_floor`).
-    Surfaced via the Smart provider-rotation landing ULTRA on OpenAI. Sampling params gated separately
-    on `_REASONING_PREFIXES = (gpt-5, o1, o3)`.
+    Surfaced via the Smart provider-rotation landing ULTRA on OpenAI. `_REASONING_PREFIXES` now only
+    selects the `reasoning.effort` path; no sampling param is sent.
+  - **GeminiAdapter sends no `temperature` / `top_p` / `top_k` / `thinking_budget`** (deprecated by
+    Google 2026-10, hard 400 announced) — thinking is `thinking_level` only. See
+    `decisions/gemini_sampling_params_removed.md`.
 - **GeminiEmbeddingAdapter** — `gemini-embedding-2`, dim 768 (Matryoshka from native 3072; migrated
   from `-001` 2026-05-29). Legacy `task_type` → inline instruction prefix inside the adapter
   (`RETRIEVAL_DOCUMENT`→`"title: | text: …"`, `RETRIEVAL_QUERY`→`"task: search result | query: …"`,

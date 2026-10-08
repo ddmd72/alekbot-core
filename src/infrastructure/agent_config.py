@@ -62,7 +62,6 @@ class BaseAgentConfig:
 
 @dataclass
 class RouterAgentConfig:
-    temperature: float = 0.3
     # History turns passed to the triage LLM call
     context_window: int = 5
     # Biographical context fetch limit
@@ -85,8 +84,6 @@ class QuickAgentConfig:
     # Retries when a specialist agent call fails
     max_agent_retries: int = 1
     retry_backoff_seconds: float = 0.5
-    # LLM temperature for the delegation loop
-    delegation_temperature: float = 1.0
     # AgentConfig field — see RetryPolicy in domain/retry_policy.py for retry behavior.
     # 300 s: covers PDF attachment parsing via markitdown (confirmed >60 s in production)
     timeout_ms: int = 300_000
@@ -104,7 +101,6 @@ class SmartAgentConfig:
     max_delegation_turns: int = 15
     max_agent_retries: int = 2
     retry_backoff_seconds: float = 1.0
-    delegation_temperature: float = 1.0
     # 300 s: raised from 120 s to accommodate slower reasoning models (e.g. GPT-5)
     # NOTE: per-call timeout_ms is overridden via AgentMessage.timeout_ms by
     # UserNotificationService (NotificationKind/SLA) — see notification_sla.py.
@@ -123,7 +119,6 @@ class SmartAgentConfig:
 
 @dataclass
 class MemorySearchAgentConfig:
-    temperature: float = 1.0
     max_tokens: int = 150
     result_limit: int = 10
     timeout_ms: int = 10_000
@@ -137,7 +132,6 @@ class MemorySearchAgentConfig:
 class WebSearchAgentConfig:
     """Behavior parameters for WebSearchAgent (two intents: search_web, fetch_url)."""
 
-    temperature: float = 1.0
     timeout_ms: int = 90_000
 
     # Performance tier for the `fetch_url` intent ONLY. `search_web` always uses the
@@ -168,7 +162,6 @@ class WebSearchAgentConfig:
 @dataclass
 class ConsolidationAgentConfig:
     max_turns: int = 15          # max deliberation iterations; Stage 2 on large clusters (25+ facts) needs ~12 turns
-    temperature: float = 1.0
     facts_limit: int = 50        # biographical cache limit passed at construction
     principles_limit: int = 15   # principles cache limit passed at construction
     # Output token limit. On Gemini 3 Pro, thinking_tokens count against
@@ -199,7 +192,6 @@ class ConsolidationAgentConfig:
 
 @dataclass
 class EmailSearchAgentConfig:
-    temperature: float = 1.0
     max_tokens: int = 250
     # 300 s: PDF attachment parsing via markitdown can be slow (confirmed >30 s in production)
     timeout_ms: int = 300_000
@@ -213,7 +205,6 @@ class EmailSearchAgentConfig:
 class EmailClassificationAgentConfig:
     max_turns: int = 4           # matches POC; LLM may call get_email_details() mid-loop
     max_parse_retries: int = 1   # one LLM retry on invalid JSON before giving up
-    temperature: float = 1.0
     max_tokens: int = 65_535     # near Gemini limit; reasoning mode needs headroom
 
 
@@ -258,7 +249,6 @@ class ClaudeDeepResearchRunnerConfig:
 
 @dataclass
 class ComputeAgentConfig:
-    temperature: float = 1.0
     timeout_ms: int = 30_000     # single code_execution call
 
 
@@ -268,7 +258,6 @@ class ComputeAgentConfig:
 
 @dataclass
 class WebSearchLightAgentConfig:
-    temperature: float = 1.0
     # One grounded call, ~2 s measured; the ceiling only guards a hung provider on a live phone call.
     timeout_ms: int = 20_000
 
@@ -289,7 +278,6 @@ class MapsSearchAgentConfig:
     # forces the minimum reasoning level (the floor on Gemini 3 / gpt-5 — full
     # off is not available on those families). Provider-agnostic: maps to
     # ThinkingLevel.LOW (Gemini) / reasoning.effort="low" (OpenAI).
-    temperature: float = 1.0
     thinking: str = "low"
     timeout_ms: int = 90_000
 
@@ -304,7 +292,6 @@ class TutorExtractorAgentConfig:
     # budget than ConsolidationAgent's 15-min 8-step loop.
     timeout_ms: int = 300_000  # 5 min
     max_tokens: int = 4096
-    temperature: float = 0.3
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +308,6 @@ class VoiceSummarizerAgentConfig:
     # real turn counts during Task 20's manual verification.
     timeout_ms: int = 60_000  # 1 min
     max_tokens: int = 2048
-    temperature: float = 0.3
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +338,6 @@ WEB_SEARCH_LIGHT = WebSearchLightAgentConfig()
 
 @dataclass
 class NotesAgentConfig:
-    temperature: float = 1.0
     max_tokens: int = 4096        # Reasoning models eat budget before output; CRUD tool args
                                   # (text + instruction + due + recurrence) need headroom or
                                   # OpenAI truncates JSON mid-string → JSONDecodeError → args={}
@@ -369,7 +354,6 @@ NOTES = NotesAgentConfig()
 
 @dataclass
 class TasksAgentConfig:
-    temperature: float = 1.0
     max_tokens: int = 1024        # Tool-calling loop: tool calls + final text response
     timeout_ms: int = 30_000      # Multi-turn: up to 2 tool calls + final synthesis
 
@@ -383,7 +367,6 @@ TASKS = TasksAgentConfig()
 
 @dataclass
 class DocPlannerAgentConfig:
-    temperature: float = 1.0      # Claude default for JSON generation without thinking
     max_tokens: int = 54_000      # JSON spec for a full document can be large
     timeout_ms: int = 1_100_000   # Background async task — allow ~18 min for spec generation
     thinking_effort: Optional[str] = "high"
@@ -405,7 +388,6 @@ DOC_PLANNER = DocPlannerAgentConfig()
 
 @dataclass
 class DocGeneratorAgentConfig:
-    temperature: float = 1.0
     max_tokens: int = 64_000      # Full Node.js script can be large
     # Background async task — allow ~18 min total across the MAX_TURNS=5 tool-calling loop.
     # Raised 600s→1100s 2026-10-07 alongside the other ASYNC generators (see
@@ -427,7 +409,6 @@ DOC_GENERATOR = DocGeneratorAgentConfig()
 
 @dataclass
 class PdfGeneratorAgentConfig:
-    temperature: float = 1.0
     max_tokens: int = 64_000      # Full HTML+CSS document can be large
     timeout_ms: int = 1_100_000   # Background async task — allow ~18 min for generation
     node_timeout_s: int = 60  # Subprocess timeout
@@ -450,7 +431,6 @@ PDF_GENERATOR = PdfGeneratorAgentConfig()
 
 @dataclass
 class HtmlPageGeneratorAgentConfig:
-    temperature: float = 1.2      # High creativity for layout, design, and content choices
     max_tokens: int = 64_000      # Full HTML+CSS+JS document can be large
     timeout_ms: int = 1_100_000   # Background async task — allow ~18 min for generation
     thinking_effort: Optional[str] = "medium"
@@ -477,7 +457,6 @@ HTML_PAGE_GENERATOR = HtmlPageGeneratorAgentConfig()
 
 @dataclass
 class DomainResearcherAgentConfig:
-    temperature: float = 1.0      # Ignored by OpenAI reasoning models, kept for non-reasoning fallback
     max_tokens: int = 32_000      # Complex analytical output — domain decomposition + scoring
     timeout_ms: int = 120_000     # Reasoning models take longer (high effort)
     context_window: int = 30      # Bound channel history messages to fetch
@@ -494,7 +473,6 @@ DOMAIN_RESEARCHER = DomainResearcherAgentConfig()
 
 @dataclass
 class TutorAgentConfig:
-    temperature: float = 0.7
     # 32768: same order of magnitude as DomainResearcherAgentConfig (32_000), this agent's
     # own structural template. Phase G gave Tutor a JSON-schema output contract
     # (full_response/response_summary) — truncation mid-response delivers malformed/raw
@@ -518,7 +496,6 @@ TUTOR = TutorAgentConfig()
 
 @dataclass
 class ImageGenerationAgentConfig:
-    temperature: float = 0.7      # Prompt-crafting is translation, not creative writing
     max_tokens: int = 2_000       # Output is a single prompt string, not a document
     # Hard wall-clock budget around the entire execute() call (prompt-builder read +
     # LLM prompt-crafting call + image render + encoding). Deliberately BELOW
@@ -553,7 +530,6 @@ IMAGE_GENERATION = ImageGenerationAgentConfig()
 
 @dataclass
 class VideoGenerationAgentConfig:
-    temperature: float = 0.7      # Prompt-crafting is translation, not creative writing
     max_tokens: int = 500         # Output is {video_prompt, aspect_ratio} JSON, not a document
     # Hard wall-clock budget around the entire execute() call (prompt-builder read +
     # LLM crafting call + xAI submit-only POST). Unlike ImageGenerationAgentConfig,

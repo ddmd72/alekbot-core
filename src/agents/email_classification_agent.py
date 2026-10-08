@@ -48,7 +48,6 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
       {email_id, valuable, valuable_type, category, fact, tags}
     """
 
-    TEMPERATURE = EMAIL_CLASSIFICATION.temperature
     MAX_TOKENS = EMAIL_CLASSIFICATION.max_tokens
 
     def __init__(
@@ -144,7 +143,6 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
                     system_instruction=system_instruction,
                     messages=history,
                     tools=tool_declarations,
-                    temperature=self.TEMPERATURE,
                     max_tokens=self.MAX_TOKENS,
                     response_mime_type="application/json" if not has_tools else None,
                     disable_safety=True,

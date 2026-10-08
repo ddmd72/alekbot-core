@@ -236,12 +236,13 @@ class TestExecuteFailure:
 
 class TestLLMCall:
 
-    async def test_temperature_matches_config(self, agent, mock_llm):
+    async def test_no_temperature_on_request_or_config(self, agent, mock_llm):
         from src.infrastructure.agent_config import DOC_PLANNER
         await agent.execute(_make_message())
         req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
                           mock_llm.generate_content.call_args.args[0]
-        assert req.temperature == DOC_PLANNER.temperature
+        assert not hasattr(req, "temperature")
+        assert not hasattr(DOC_PLANNER, "temperature")
 
     async def test_response_mime_type_is_json(self, agent, mock_llm):
         await agent.execute(_make_message())

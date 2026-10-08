@@ -150,15 +150,9 @@ class ClaudeAdapter(LLMPort):
     # Haiku 4.5 only supports the legacy web_search_20250305 (no dynamic filtering, no code_execution).
     _DYNAMIC_SEARCH_MODELS = ("claude-sonnet", "claude-opus")
 
-    # Sampling-restricted models (Sonnet 5, Opus 4.7/4.8, Fable 5): setting temperature /
-    # top_p / top_k to a non-default value returns HTTP 400. The adapter omits the sampling
-    # parameter entirely for these (Anthropic's recommended migration path). Sonnet 4.6 /
-    # Opus 4.6 / Haiku keep accepting temperature. Substrings are exact enough to exclude the
-    # 4.6 line (`sonnet-5` ≠ `sonnet-4-6`, `opus-4-8` ≠ `opus-4-6`).
-    # `claude-opus-5` covers Opus 5 and Opus 5.5; `claude-sonnet-5` covers Sonnet 5 and 5.5.
-    _NO_SAMPLING_MODELS = (
-        "claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-fable",
-    )
+    # No sampling parameter (temperature / top_p / top_k) is ever sent: Sonnet 5+, Opus 4.7+,
+    # Fable and Haiku 5.5 return HTTP 400 on a non-default one, and the API default (1.0) is what
+    # adaptive thinking requires on the older models. See decisions/temperature_removed.md.
 
     # Models whose effort scale stops at `high` (`xhigh` arrived with Opus 4.7). Reached only via
     # the Sonnet 5 → 4.6 fallback today; an `xhigh` request is clamped to `high` instead of a 400.
@@ -225,7 +219,6 @@ class ClaudeAdapter(LLMPort):
         system_instruction = request.system_instruction
         messages = request.messages
         tools = request.tools
-        temperature = request.temperature
         response_schema = request.response_schema
         cache_config = request.cache_config
         automatic_function_calling = request.automatic_function_calling
@@ -323,7 +316,7 @@ class ClaudeAdapter(LLMPort):
             tools=claude_tools if claude_tools else [],
         )
         create_kwargs.update(self._model_dependent_params(
-            model_name, thinking_effort or None, temperature,
+            model_name, thinking_effort or None,
             force_tool_use=bool(force_tool_use and claude_tools),
         ))
 
@@ -433,12 +426,12 @@ class ClaudeAdapter(LLMPort):
                 )
                 create_kwargs["model"] = fallback_model
                 # Thinking, sampling and tool_choice are model-dependent — recompute them for
-                # the fallback (Sonnet 5 rejects 5.5's `between_tools`; Sonnet 4.6 accepts the
-                # temperature Sonnet 5 rejected). output_config.format stays as built.
-                for key in ("thinking", "temperature", "tool_choice"):
+                # the fallback (Sonnet 5 rejects 5.5's `between_tools`). output_config.format
+                # stays as built.
+                for key in ("thinking", "tool_choice"):
                     create_kwargs.pop(key, None)
                 fallback_params = self._model_dependent_params(
-                    fallback_model, thinking_effort or None, temperature,
+                    fallback_model, thinking_effort or None,
                     force_tool_use=bool(force_tool_use and claude_tools),
                 )
                 # Merge, not replace: keep the primary's output_config.format, take the
@@ -460,10 +453,9 @@ class ClaudeAdapter(LLMPort):
         self,
         model_name: str,
         effort: Optional[str],
-        temperature: Optional[float],
         force_tool_use: bool,
     ) -> dict:
-        """Request fields whose valid values depend on the model: thinking, temperature,
+        """Request fields whose valid values depend on the model: thinking,
         output_config.effort and tool_choice. Called for the primary model and again for a
         same-provider fallback model, so each request carries values its model accepts."""
         params: dict = {}
@@ -471,10 +463,7 @@ class ClaudeAdapter(LLMPort):
         if effort == "xhigh" and model_name.startswith(self._NO_XHIGH_MODELS):
             effort = "high"
         if effort and any(m in model_name for m in self._THINKING_MODELS):
-            # Adaptive thinking + effort. Claude API hard requirement: temperature must be 1.0
-            # while thinking is enabled (only sent to models that still accept sampling).
             thinking_param = {"type": "adaptive"}
-            temperature = 1.0
             params["output_config"] = {"effort": effort}
             logger.info(
                 f"[ClaudeAdapter] Adaptive thinking enabled, effort={effort}, model={model_name}"
@@ -488,10 +477,6 @@ class ClaudeAdapter(LLMPort):
                 )
         if thinking_param:
             params["thinking"] = thinking_param
-        # Sampling gate: Sonnet 5+ / Opus 4.7+ / Fable reject a non-default temperature with a
-        # 400 — omit it entirely for those.
-        if not any(m in model_name for m in self._NO_SAMPLING_MODELS):
-            params["temperature"] = temperature
         if force_tool_use:
             # Forced tool use is incompatible with thinking, and rejected outright by the
             # 5.5 / Fable 5.1 generation — `auto` is the documented fallback for both.

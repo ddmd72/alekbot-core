@@ -91,7 +91,6 @@ class SmartResponseAgent(BaseAgent):
     MAX_DELEGATION_TURNS = SMART.max_delegation_turns
     MAX_AGENT_RETRIES = SMART.max_agent_retries
     RETRY_BACKOFF_SECONDS = SMART.retry_backoff_seconds
-    DELEGATION_TEMPERATURE = SMART.delegation_temperature
     MAX_TOKENS = SMART.max_tokens
 
     # Structured output envelope. Enforced by Gemini via response_json_schema and by Claude
@@ -509,7 +508,6 @@ class SmartResponseAgent(BaseAgent):
                 system_instruction=system_prompt,
                 messages=clean_history,
                 tools=tools,
-                temperature=self.DELEGATION_TEMPERATURE,
                 response_schema=self._RESPONSE_SCHEMA,
                 thinking=eff.thinking_effort,
                 max_tokens=self.MAX_TOKENS,
