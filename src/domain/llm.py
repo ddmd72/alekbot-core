@@ -263,7 +263,6 @@ class LLMRequest(BaseModel):
     model_name: str
     messages: List[Message]
     system_instruction: Optional[str] = None
-    temperature: float = 0.7
     max_tokens: Optional[int] = None
     tools: Optional[List[Any]] = None
     response_mime_type: Optional[str] = None

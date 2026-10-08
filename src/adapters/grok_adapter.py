@@ -15,7 +15,8 @@ Why Responses and not Chat Completions (migrated 2026-08-14):
 
 Verified live against xAI on 2026-08-14: text, `web_search`, `x_search`, custom
 function tools with `tool_choice="required"`, `instructions` as system prompt,
-`text.format` JSON mode, `temperature`, and `reasoning.effort` all work here.
+`text.format` JSON mode, and `reasoning.effort` all work here. No sampling parameter is
+sent (provider default; see decisions/temperature_removed.md).
 
 Timeouts (2026-08-15): the client ceiling is 300s, matching OpenAIAdapter, and an
 explicit `LLMRequest.timeout` is forwarded to the SDK as well as bounding total
@@ -167,7 +168,6 @@ class GrokAdapter(LLMPort):
         system_instruction = request.system_instruction
         messages = request.messages
         tools = request.tools
-        temperature = request.temperature
         response_mime_type = request.response_mime_type
         response_schema = request.response_schema
         cache_config = request.cache_config
@@ -293,7 +293,6 @@ class GrokAdapter(LLMPort):
         create_kwargs: dict = dict(
             model=model_name,
             input=input_items,
-            temperature=temperature,
             store=True,  # keep responses in the xAI dashboard for debugging
         )
         if system_instruction:

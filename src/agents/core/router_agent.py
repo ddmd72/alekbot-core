@@ -73,7 +73,6 @@ class RouterAgent(BaseAgent):
     RETRY_POLICY = NO_RETRY_POLICY
 
 
-    TEMPERATURE = ROUTER.temperature
     CONTEXT_WINDOW = ROUTER.context_window
     BIOGRAPHICAL_LIMIT = ROUTER.biographical_limit
 
@@ -468,7 +467,6 @@ class RouterAgent(BaseAgent):
             model_name=self.model_name,
             system_instruction=prompt,
             messages=clean_messages,
-            temperature=self.TEMPERATURE,
             max_tokens=300,
             disable_safety=True,
             response_mime_type="application/json",

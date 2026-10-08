@@ -327,7 +327,6 @@ class TasksAgent(BaseAgent):
     Uses a tool-calling loop to select and execute the right CRUD operation.
     """
 
-    TEMPERATURE = TASKS_CFG.temperature
     MAX_TOKENS = TASKS_CFG.max_tokens
 
     def __init__(
@@ -396,7 +395,6 @@ class TasksAgent(BaseAgent):
                 system_instruction=system_prompt,
                 messages=messages,
                 tools=_TOOL_DECLARATIONS,
-                temperature=self.TEMPERATURE,
                 max_tokens=self.MAX_TOKENS,
                 disable_safety=True,
             )
@@ -439,7 +437,6 @@ class TasksAgent(BaseAgent):
                     Message(role="user", parts=[MessagePart(text="Summarise the results concisely.")])
                 ],
                 tools=[],
-                temperature=self.TEMPERATURE,
                 max_tokens=self.MAX_TOKENS,
                 disable_safety=True,
             )

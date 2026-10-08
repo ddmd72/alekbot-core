@@ -51,7 +51,6 @@ class DocPlannerAgent(BaseAgent):
     # retry layer for the whole task — see RFC § retry policy.
     RETRY_POLICY = NO_RETRY_POLICY
 
-    TEMPERATURE = DOC_PLANNER.temperature
     MAX_TOKENS = DOC_PLANNER.max_tokens
     THINKING_EFFORT = DOC_PLANNER.thinking_effort
 
@@ -133,7 +132,6 @@ class DocPlannerAgent(BaseAgent):
             model_name=self.model_name,
             system_instruction=system_prompt,
             messages=messages,
-            temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
             response_mime_type="application/json",
             response_schema=self._RESPONSE_SCHEMA,

@@ -644,8 +644,8 @@ class TestResearchLoop:
         assert call_kwargs["output_config"] == {"effort": "high"}
         assert "temperature" not in call_kwargs
 
-    async def test_sonnet_4_6_keeps_temperature_and_64k(self):
-        """Older thinking model: temperature=1.0 stays (thinking forces it), 64k budget."""
+    async def test_sonnet_4_6_sends_no_temperature_and_64k(self):
+        """Older thinking model: no temperature sent (API default 1.0 satisfies thinking), 64k budget."""
         msg = _api_message("end_turn", [_text_block("Done")])
         client = MagicMock()
         client.messages.stream.return_value = _FakeStream([], msg)
@@ -655,7 +655,7 @@ class TestResearchLoop:
 
         call_kwargs = client.messages.stream.call_args.kwargs
         assert call_kwargs["max_tokens"] == 64_000
-        assert call_kwargs["temperature"] == 1.0
+        assert "temperature" not in call_kwargs
 
     async def test_non_thinking_model_uses_32k_max_tokens(self):
         msg = _api_message("end_turn", [_text_block("Done")])
@@ -667,8 +667,8 @@ class TestResearchLoop:
 
         call_kwargs = client.messages.stream.call_args.kwargs
         assert call_kwargs["max_tokens"] == 32_000
-        # Non-new-gen path (Haiku) keeps temperature=1.0 + explicit budget_tokens thinking.
-        assert call_kwargs["temperature"] == 1.0
+        # Non-new-gen path (Haiku): explicit budget_tokens thinking, no temperature sent.
+        assert "temperature" not in call_kwargs
         assert call_kwargs["thinking"] == {"type": "enabled", "budget_tokens": 24_000}
 
     async def test_extended_output_beta_header_present(self):

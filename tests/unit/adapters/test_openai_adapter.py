@@ -444,7 +444,6 @@ async def test_generate_content_excludes_temperature_for_gpt5():
             model_name="gpt-5-mini",
             system_instruction="You are helpful.",
             messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
-            temperature=0.8,
         )
     )
 
@@ -453,7 +452,7 @@ async def test_generate_content_excludes_temperature_for_gpt5():
 
 @pytest.mark.asyncio
 async def test_generate_content_includes_temperature_for_gpt4():
-    """Temperature must be included for non-gpt-5 models."""
+    """No sampling param is sent even for non-gpt-5 models (temperature removed)."""
     adapter = OpenAIAdapter(api_key="test-key")
 
     captured_kwargs = {}
@@ -469,12 +468,10 @@ async def test_generate_content_includes_temperature_for_gpt4():
             model_name="gpt-4o",
             system_instruction="You are helpful.",
             messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
-            temperature=0.8,
         )
     )
 
-    assert "temperature" in captured_kwargs
-    assert captured_kwargs["temperature"] == 0.8
+    assert "temperature" not in captured_kwargs
 
 
 # ---------------------------------------------------------------------------

@@ -52,7 +52,6 @@ class MapsSearchAgent(BaseAgent):
     including biographical facts. Falls back to empty instruction on assembly failure.
     """
 
-    TEMPERATURE = MAPS_SEARCH.temperature
     THINKING = MAPS_SEARCH.thinking
 
     def __init__(
@@ -142,7 +141,6 @@ class MapsSearchAgent(BaseAgent):
                     system_instruction=system_instruction,
                     messages=messages,
                     tools=tool_declarations,
-                    temperature=self.TEMPERATURE,
                     thinking=self.THINKING,
                 )
                 response = await self._call_llm(request, turn=turn + 1)
@@ -183,7 +181,6 @@ class MapsSearchAgent(BaseAgent):
                             parts=[MessagePart(text="Please summarize the results above.")],
                         )
                     ],
-                    temperature=self.TEMPERATURE,
                     thinking=self.THINKING,
                 )
                 response = await self._call_llm(request, turn=_MAX_TURNS + 1)

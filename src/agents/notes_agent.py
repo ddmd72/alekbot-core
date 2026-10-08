@@ -234,7 +234,6 @@ class NotesAgent(BaseAgent):
 
     _descriptor = NOTES_DESCRIPTOR
 
-    TEMPERATURE = NOTES_CFG.temperature
     MAX_TOKENS = NOTES_CFG.max_tokens
     MAX_TURNS = NOTES_CFG.max_turns
 
@@ -350,7 +349,6 @@ class NotesAgent(BaseAgent):
                 messages=messages,
                 tools=tools,
                 max_tokens=self.MAX_TOKENS,
-                temperature=self.TEMPERATURE,
             )
             response = await self._call_llm(request, turn=turn)
 
@@ -405,7 +403,6 @@ class NotesAgent(BaseAgent):
                     system_instruction=system_prompt,
                     messages=messages,
                     max_tokens=self.MAX_TOKENS,
-                    temperature=self.TEMPERATURE,
                 )
                 summary_response = await self._call_llm(summary_request, turn=turn + 1)
                 summary = summary_response.text or "Operation completed."

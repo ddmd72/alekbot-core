@@ -138,7 +138,7 @@ class TestEmailClassificationAgent:
         mock_llm.generate_content.assert_not_called()
 
     async def test_classify_batch_sends_correct_request(self, agent, mock_llm):
-        """Verify LLMRequest fields: model, temperature=0, disable_safety, no tools (no gmail)."""
+        """Verify LLMRequest fields: model, disable_safety, no tools (no gmail)."""
         emails = [_make_meta("id1")]
         mock_llm.generate_content.return_value = _llm_response([
             {"email_id": "id1", "valuable": False, "category": None,
@@ -150,7 +150,7 @@ class TestEmailClassificationAgent:
         call_args = mock_llm.generate_content.call_args
         req: LLMRequest = call_args.kwargs.get("request") or call_args.args[0]
         assert req.model_name == "gemini-test"
-        assert req.temperature == 1.0
+        assert not hasattr(req, "temperature")
         # No gmail injected → single-pass mode → JSON mode active
         assert req.response_mime_type == "application/json"
         assert req.disable_safety is True

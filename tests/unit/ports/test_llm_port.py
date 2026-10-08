@@ -81,6 +81,6 @@ def test_llm_request_defaults():
     request = LLMRequest(model_name="test-model", messages=[message])
     assert request.model_name == "test-model"
     assert request.system_instruction is None
-    assert request.temperature == 0.7
+    assert not hasattr(request, "temperature")
     assert request.max_tokens is None
     assert request.tools is None

@@ -66,7 +66,6 @@ class HtmlPageGeneratorAgent(BaseAgent):
     # ASYNC document generation. See DocPlannerAgent for rationale.
     RETRY_POLICY = NO_RETRY_POLICY
 
-    TEMPERATURE = HTML_PAGE_GENERATOR.temperature
     MAX_TOKENS = HTML_PAGE_GENERATOR.max_tokens
     THINKING_EFFORT = HTML_PAGE_GENERATOR.thinking_effort
     REQUEST_TIMEOUT_S = HTML_PAGE_GENERATOR.request_timeout_s
@@ -134,7 +133,6 @@ class HtmlPageGeneratorAgent(BaseAgent):
             model_name=self.model_name,
             system_instruction=system_instruction,
             messages=[Message(role="user", parts=[MessagePart(text="Generate the HTML page for the request in the REQUEST block above.")])],
-            temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
             thinking=self.THINKING_EFFORT or None,
             timeout=self.REQUEST_TIMEOUT_S,

@@ -102,7 +102,6 @@ class GeminiAdapter(LLMPort):
         system_instruction = request.system_instruction
         messages = request.messages
         tools = request.tools
-        temperature = request.temperature
         response_mime_type = request.response_mime_type
         response_schema = request.response_schema
         cache_config = request.cache_config
@@ -176,9 +175,11 @@ class GeminiAdapter(LLMPort):
         # The split is forced by API behavior: passing a plain dict to response_schema returns
         # empty responses; passing a typed schema to response_json_schema is rejected.
         use_json_schema = response_schema is not None and isinstance(response_schema, dict)
+        # temperature / top_p / top_k are deprecated by Google (no effect since Gemini 3.6 Flash,
+        # hard 400 INVALID_ARGUMENT announced), so none is sent. Determinism comes from
+        # response_schema + thinking_level.
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
-            temperature=temperature,
             max_output_tokens=max_tokens,
             tools=tools,
             tool_config=tool_config,

@@ -42,7 +42,6 @@ class HistorySummaryService:
                 "  [Analytical]: Role Prompting: 4 components — Persona, Context, Task, Tone. Anti-role trick noted. 🎭"
             ),
             messages=[Message(role="user", parts=[MessagePart(text=response_text)])],
-            temperature=0.0,
             response_mime_type="application/json",
             response_schema={
                 "type": "object",
