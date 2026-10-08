@@ -87,7 +87,7 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
     # Auto-includes future Sonnet/Opus versions (4.7, 4.8, …) without per-release updates.
     # Unified 2026-05-30 to fix divergence where opus-4-7/4-8 ULTRA fell to Haiku-style
     # fallback. See decisions/claude_ultra_tier_to_opus_4_8_plus_dr_gate_unification.md.
-    _THINKING_MODELS = ("claude-sonnet", "claude-opus")
+    _THINKING_MODELS = ("claude-sonnet", "claude-opus", "claude-haiku-5")
 
     # New-generation Claude models (the Sonnet 5 / Opus 4.7+ / Fable 5 line). This single set
     # captures two properties that arrived together in that generation:
@@ -101,6 +101,7 @@ class ClaudeDeepResearchRunnerAgent(BaseAgent):
     # Claude files BY DESIGN (this file is whitelisted in arch_tech_debt.py). Keep the two in sync.
     _NO_SAMPLING_MODELS = (
         "claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-fable",
+        "claude-haiku-5",
     )
 
     # Dynamic filtering enabled (no allowed_callers restriction).
