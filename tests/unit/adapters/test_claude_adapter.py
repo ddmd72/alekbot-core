@@ -449,7 +449,7 @@ async def test_grounded_loop_handles_pause_turn_continuation():
 
 @pytest.mark.asyncio
 async def test_thinking_enabled_sends_adaptive_param_for_sonnet():
-    """thinking set + Sonnet model → thinking={'type':'adaptive'} and temperature=1.0."""
+    """thinking set + Sonnet model → thinking={'type':'adaptive'}; no temperature is sent (API default 1.0)."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     cm = _make_claude_cm(_make_sdk_response())
@@ -472,8 +472,8 @@ async def test_thinking_enabled_sends_adaptive_param_for_sonnet():
     assert captured.get("thinking") == {"type": "adaptive"}, (
         f"Expected thinking={{'type':'adaptive'}}, got {captured.get('thinking')!r}"
     )
-    assert captured.get("temperature") == 1.0, (
-        f"Expected temperature=1.0 when thinking enabled, got {captured.get('temperature')!r}"
+    assert "temperature" not in captured, (
+        f"No sampling param may be sent under thinking, got {captured.get('temperature')!r}"
     )
 
 
@@ -1718,7 +1718,7 @@ async def test_temperature_omitted_for_sonnet_5():
     captured = {}
     adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
     await adapter.generate_content(
-        request=LLMRequest(model_name="claude-sonnet-5", messages=_MESSAGES, temperature=0.7)
+        request=LLMRequest(model_name="claude-sonnet-5", messages=_MESSAGES)
     )
     assert "temperature" not in captured, (
         f"Sonnet 5 must not receive a temperature param, got {captured.get('temperature')!r}"
@@ -1727,14 +1727,14 @@ async def test_temperature_omitted_for_sonnet_5():
 
 @pytest.mark.asyncio
 async def test_temperature_present_for_sonnet_4_6():
-    """Sonnet 4.6 still accepts temperature — the gate must not strip it."""
+    """Sonnet 4.6 accepts temperature but none is ever sent any more (API default)."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
     await adapter.generate_content(
-        request=LLMRequest(model_name="claude-sonnet-4-6", messages=_MESSAGES, temperature=0.7)
+        request=LLMRequest(model_name="claude-sonnet-4-6", messages=_MESSAGES)
     )
-    assert captured.get("temperature") == 0.7
+    assert "temperature" not in captured
 
 
 @pytest.mark.asyncio
@@ -1744,7 +1744,7 @@ async def test_temperature_omitted_for_opus_4_8():
     captured = {}
     adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
     await adapter.generate_content(
-        request=LLMRequest(model_name="claude-opus-4-8", messages=_MESSAGES, temperature=0.5)
+        request=LLMRequest(model_name="claude-opus-4-8", messages=_MESSAGES)
     )
     assert "temperature" not in captured
 
@@ -1856,7 +1856,7 @@ async def test_opus_5_5_omits_thinking_and_temperature_when_no_effort():
     captured = {}
     adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
     await adapter.generate_content(
-        request=LLMRequest(model_name="claude-opus-5-5", messages=_MESSAGES, temperature=0.5)
+        request=LLMRequest(model_name="claude-opus-5-5", messages=_MESSAGES)
     )
     assert "thinking" not in captured
     assert "temperature" not in captured
@@ -2013,7 +2013,7 @@ async def test_fable_5_1_request_shape():
     adapter.client.messages.stream = _capturing_stream(
         captured, _make_claude_cm(_make_sdk_tool_response("search_memory", {"q": "x"})))
     await adapter.generate_content(
-        request=LLMRequest(model_name="claude-fable-5-1", messages=_MESSAGES, temperature=0.4,
+        request=LLMRequest(model_name="claude-fable-5-1", messages=_MESSAGES,
                            tools=_TOOLS, force_tool_use=True)
     )
     assert "temperature" not in captured

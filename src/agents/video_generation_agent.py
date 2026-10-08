@@ -51,7 +51,6 @@ class VideoGenerationAgent(BaseAgent):
 
     RETRY_POLICY = NO_RETRY_POLICY  # a transient 5xx after xAI already billed a render must not retry
 
-    TEMPERATURE = VIDEO_GENERATION.temperature
     MAX_TOKENS = VIDEO_GENERATION.max_tokens
     REQUEST_TIMEOUT_S = VIDEO_GENERATION.request_timeout_s
 
@@ -172,7 +171,6 @@ class VideoGenerationAgent(BaseAgent):
             model_name=self.model_name,
             system_instruction=system_prompt,
             messages=[Message(role="user", parts=[MessagePart(text=query)])],
-            temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
             response_mime_type="application/json",
             response_schema=self._RESPONSE_SCHEMA,

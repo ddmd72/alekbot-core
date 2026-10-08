@@ -47,7 +47,6 @@ class WebSearchAgent(BaseAgent):
     - fetch_url:  Fetch specific URL content via provider-native grounding
     """
 
-    TEMPERATURE = WEB_SEARCH.temperature
 
     # NOT a fallback despite the name: _handle_fetch_url passes this unconditionally and
     # never consults the prompt builder, so this IS the fetch_url prompt. That makes it a
@@ -225,7 +224,6 @@ class WebSearchAgent(BaseAgent):
             system_instruction=system_instruction,
             messages=[Message(role="user", parts=[MessagePart(text=user_content)])],
             use_grounding=True,
-            temperature=self.TEMPERATURE,
         )
         response = await self._call_llm(request)
 

@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.delegation_timestamp import strip_delegation_timestamp
 from ..domain.llm import LLMRequest, Message, MessagePart
-from ..infrastructure.agent_config import WEB_SEARCH_LIGHT
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.prompt_builder_port import PromptBuilderPort
 from .base_agent import BaseAgent
@@ -26,7 +25,6 @@ from .base_agent import BaseAgent
 class WebSearchLightAgent(BaseAgent):
     """search_web_light → one grounded LLM call → short plain-text answer."""
 
-    TEMPERATURE = WEB_SEARCH_LIGHT.temperature
 
     def __init__(
         self,
@@ -75,7 +73,6 @@ class WebSearchLightAgent(BaseAgent):
                 # The date is in the system instruction; the query's own prefix would be a second one.
                 messages=[Message(role="user", parts=[MessagePart(text=strip_delegation_timestamp(query))])],
                 use_grounding=True,
-                temperature=self.TEMPERATURE,
             )
             response = await self._call_llm(request)
             result_text = (response.text or "").strip() or "No relevant information found."

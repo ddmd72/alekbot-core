@@ -300,6 +300,39 @@ async def test_no_thinking_omits_thinking_config():
     assert captured["config"].thinking_config is None
 
 
+@pytest.mark.asyncio
+async def test_deprecated_sampling_and_budget_params_not_sent():
+    """Google deprecated temperature/top_p/top_k/thinking_budget (hard 400 upcoming).
+
+    No sampling param is ever sent (LLMRequest has no temperature field); thinking is
+    expressed through thinking_level only.
+    """
+    adapter = GeminiAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_generate(model=None, contents=None, config=None):
+        captured["config"] = config
+        return _make_gemini_response()
+
+    adapter.client = MagicMock()
+    adapter.client.aio.models.generate_content = mock_generate
+
+    await adapter.generate_content(
+        request=LLMRequest(
+            model_name="gemini-flash-latest",
+            messages=_MESSAGES,
+            thinking="medium",
+        )
+    )
+
+    config = captured["config"]
+    assert config.temperature is None
+    assert config.top_p is None
+    assert config.top_k is None
+    assert config.thinking_config.thinking_budget is None
+    assert config.thinking_config.thinking_level == gemini_types.ThinkingLevel.MEDIUM
+
+
 # ============================================================================
 # Thought parts must never be mistaken for the answer.
 #

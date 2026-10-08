@@ -34,7 +34,7 @@ class TestLLMRequest:
     def test_required_fields(self):
         req = LLMRequest(model_name="test-model", messages=[self._make_message()])
         assert req.model_name == "test-model"
-        assert req.temperature == 0.7
+        assert not hasattr(req, "temperature")
 
     def test_defaults(self):
         req = LLMRequest(model_name="m", messages=[self._make_message()])

@@ -39,7 +39,6 @@ class DomainResearcherAgent(BaseAgent):
 
     _descriptor = DOMAIN_RESEARCHER_DESCRIPTOR
 
-    TEMPERATURE = DOMAIN_RESEARCHER.temperature
 
     def __init__(
         self,
@@ -129,7 +128,6 @@ class DomainResearcherAgent(BaseAgent):
                 system_instruction=system_prompt,
                 messages=messages,
                 tools=tools,
-                temperature=self.TEMPERATURE,
                 max_tokens=DOMAIN_RESEARCHER.max_tokens,
                 thinking=DOMAIN_RESEARCHER.thinking_effort,
             )

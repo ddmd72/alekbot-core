@@ -17,7 +17,7 @@ Model tiers are pinned to the gpt-5 family.
 Verify model IDs at https://platform.openai.com/docs/models before changing.
 
 Sampling parameters (temperature, top_p, etc.) are not supported by the gpt-5 family.
-Use _is_reasoning_model() to check before including them in API calls.
+No sampling parameter is sent at all (see decisions/temperature_removed.md).
 
 Migration from Chat Completions to Responses API (2026-04):
 - client.chat.completions.create → client.responses.create
@@ -174,7 +174,6 @@ class OpenAIAdapter(LLMPort):
         system_instruction = request.system_instruction
         messages = request.messages
         tools = request.tools
-        temperature = request.temperature
         response_mime_type = request.response_mime_type
         response_schema = request.response_schema
         cache_config = request.cache_config
@@ -313,8 +312,6 @@ class OpenAIAdapter(LLMPort):
             create_kwargs["instructions"] = system_instruction
         if request.max_tokens:
             create_kwargs["max_output_tokens"] = request.max_tokens
-        if not self._is_reasoning_model(model_name):
-            create_kwargs["temperature"] = temperature
         if api_tools:
             create_kwargs["tools"] = api_tools
             create_kwargs["tool_choice"] = "required" if force_tool_use else "auto"
@@ -418,7 +415,7 @@ class OpenAIAdapter(LLMPort):
         return self._parse_response(response)
 
     def _is_reasoning_model(self, model_name: str) -> bool:
-        """Return True for models that do not support sampling params (temperature etc.)."""
+        """Return True for reasoning models (no sampling params; reasoning.effort applies)."""
         return any(model_name.startswith(p) for p in self._REASONING_PREFIXES)
 
     def _deprecates_retention(self, model_name: str) -> bool:

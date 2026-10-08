@@ -143,7 +143,6 @@ class MyAgent(BaseAgent):
                 model_name=self.model_name,
                 system_instruction=system_prompt,
                 messages=[Message(role="user", parts=[MessagePart(text=text)])],
-                temperature=self.TEMPERATURE,
             )
             response = await self._call_llm(request)   # ← request + response auto-logged
             # ...process response...

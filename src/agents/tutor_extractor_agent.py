@@ -50,7 +50,6 @@ _RESPONSE_SCHEMA = {
 
 class TutorExtractorAgent(BaseAgent):
     MAX_TOKENS = TUTOR_EXTRACTOR.max_tokens
-    TEMPERATURE = TUTOR_EXTRACTOR.temperature
 
     def __init__(
         self,
@@ -100,7 +99,6 @@ class TutorExtractorAgent(BaseAgent):
                 model_name=self.model_name,
                 system_instruction=system_prompt,
                 messages=[Message(role="user", parts=[MessagePart(text=batch_text)])],
-                temperature=self.TEMPERATURE,
                 max_tokens=self.MAX_TOKENS,
                 response_mime_type="application/json",
                 response_schema=_RESPONSE_SCHEMA,

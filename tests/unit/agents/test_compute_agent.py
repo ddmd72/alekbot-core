@@ -163,13 +163,13 @@ class TestLLMCall:
                           mock_llm.generate_content.call_args.args[0]
         assert not req.tools
 
-    async def test_temperature_is_zero(self, agent, mock_llm):
+    async def test_no_temperature_field_on_request(self, agent, mock_llm):
         msg = _make_message()
         await agent.execute(msg)
 
         req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
                           mock_llm.generate_content.call_args.args[0]
-        assert req.temperature == 1.0
+        assert not hasattr(req, "temperature")
 
     async def test_query_in_user_message(self, agent, mock_llm):
         msg = _make_message(query="sqrt(289)")

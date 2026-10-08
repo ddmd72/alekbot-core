@@ -224,7 +224,7 @@ class DelegationEngine:
         Args:
             call_llm: Agent's _call_llm method (handles billing + debug).
             base_request: LLMRequest built by the agent. Engine updates only
-                          ``messages`` each turn — temperature, schema, thinking
+                          ``messages`` each turn — schema, thinking
                           etc. stay as the agent configured them.
             context: Message context dict (from message.context). Passed through
                      to coordinator on each delegation call.
