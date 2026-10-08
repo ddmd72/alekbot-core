@@ -119,6 +119,13 @@ def test_calculate_cost_claude_5_5_generation():
     assert calculate_cost("claude-opus-5-5", 1_000_000, 1_000_000) == 24.0
 
 
+def test_haiku_5_5_prices_and_cache_multipliers():
+    # $0.10 in / $0.50 out per MTok for prompts <= 100K; cache read 10%, 5m write 125% of input.
+    assert calculate_cost("claude-haiku-5-5", 1_000_000, 1_000_000) == 0.6
+    assert calculate_cost("claude-haiku-5-5", 0, 0, cache_read_tokens=1_000_000) == 0.01
+    assert calculate_cost("claude-haiku-5-5", 0, 0, cache_creation_tokens=1_000_000) == 0.125
+
+
 def test_opus_5_5_cache_read_is_5_percent_of_input():
     # Opus 5.5 reads cache at $0.20 on a $4 input — 5%, not the usual Claude 10%.
     assert calculate_cost("claude-opus-5-5", 0, 0, cache_read_tokens=1_000_000) == 0.20
