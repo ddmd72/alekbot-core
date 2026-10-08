@@ -9,7 +9,7 @@ The job (job_main.py) owns the full research loop (ClaudeDeepResearchRunnerAgent
 and result delivery (DocPlanner Cloud Task → DOCX → user notification).
 
 Tier → model mapping:
-  ECO / TIER1-3 → claude-haiku-4-5-20251001  (fast + cheap debugging / light tasks)
+  ECO / TIER1-3 → claude-haiku-5-5  (fast + cheap debugging / light tasks)
   BALANCED      → claude-sonnet-5-5           (research quality/cost sweet spot; 5.5 since 2026-10-03)
   PERFORMANCE   → claude-sonnet-5-5           (same as BALANCED for deep research)
   ULTRA         → claude-fable-5-1            (maximum quality; Fable 5.1 since 2026-10-03, $10/$50)
@@ -42,13 +42,13 @@ class ClaudeDeepResearchAdapter(DeepResearchPort):
     """
 
     MODEL_TIERS = {
-        PerformanceTier.ECO:         "claude-haiku-4-5-20251001",
+        PerformanceTier.ECO:         "claude-haiku-5-5",
         PerformanceTier.BALANCED:    "claude-sonnet-5-5",
         PerformanceTier.PERFORMANCE: "claude-sonnet-5-5",
         PerformanceTier.ULTRA:       "claude-fable-5-1",
-        PerformanceTier.TIER1:       "claude-haiku-4-5-20251001",
-        PerformanceTier.TIER2:       "claude-haiku-4-5-20251001",
-        PerformanceTier.TIER3:       "claude-haiku-4-5-20251001",
+        PerformanceTier.TIER1:       "claude-haiku-5-5",
+        PerformanceTier.TIER2:       "claude-haiku-5-5",
+        PerformanceTier.TIER3:       "claude-haiku-5-5",
     }
 
     def __init__(

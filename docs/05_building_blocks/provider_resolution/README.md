@@ -20,8 +20,9 @@ Abstract levels of reasoning capability:
 
 > **Tier × provider matrix has sharp edges.** Every adapter maps a tier to a
 > concrete model name and not every model accepts every parameter. Concrete
-> example: `BALANCED` on Claude resolves to `claude-haiku-4-5-20251001`, which
-> rejects `output_config.effort` with HTTP 400. The ConsolidationAgent default
+> example: `BALANCED` on Claude resolved to `claude-haiku-4-5-20251001` (until
+> 2026-10-08; now `claude-haiku-5-5`, which accepts effort), which
+> rejected `output_config.effort` with HTTP 400. The ConsolidationAgent default
 > tier was therefore lifted to `PERFORMANCE` (`claude-sonnet-4-6`) in
 > `_DEFAULT_AGENT_TIERS` (`src/domain/user.py`). When you change a default
 > tier, also verify that the resulting model accepts every parameter the agent
@@ -46,14 +47,14 @@ support is the provider's own `models.retrieve()` capability response (verified
 
 | Parameter             | Gated to                                | Behavior on unsupported model                |
 | --------------------- | --------------------------------------- | -------------------------------------------- |
-| `thinking={adaptive}` | `_THINKING_MODELS = sonnet, opus`       | Skipped silently (Haiku has only `enabled`). |
-| `output_config.effort`| Same `_THINKING_MODELS` substring check | Dropped silently. Required: API rejects with `400 invalid_request_error: This model does not support the effort parameter.` on Haiku 4.5. Effort and adaptive thinking go together — only Sonnet 4.6 / Opus 4.7 accept both. |
-| `web_search_20260209` | `_DYNAMIC_SEARCH_MODELS = sonnet, opus` | Falls back to legacy `web_search_20250305` on Haiku. |
+| `thinking={adaptive}` | `_THINKING_MODELS = sonnet, opus, haiku-5` | Skipped silently on Haiku 4.5 (only `enabled`). Haiku 5.5 takes adaptive; `enabled` and `between_tools` 400 there. |
+| `output_config.effort`| Same `_THINKING_MODELS` substring check | Dropped silently on Haiku 4.5. Required: API rejects with `400 invalid_request_error: This model does not support the effort parameter.` on Haiku 4.5. Effort and adaptive thinking go together — only Sonnet 4.6 / Opus 4.7 accept both. |
+| `web_search_20260209` | `_DYNAMIC_SEARCH_MODELS = sonnet, opus` | Falls back to legacy `web_search_20250305` on Haiku (incl. 5.5: the dynamic variant returned a failed search in the 2026-10-08 probe). |
 
 The gate uses substring matching (`"claude-sonnet" in model_name`) rather than
-hard-coded model lists so new minor revisions inherit the right behavior. If
-Anthropic ever adds effort to Haiku, drop `output_config.effort` from the
-gate; until then, **never send effort to a non-thinking model**.
+hard-coded model lists so new minor revisions inherit the right behavior. Haiku 5.5 is the
+first Haiku with effort (hence `claude-haiku-5` in the gate); **never send effort to a
+model whose `capabilities.effort.supported` is false**.
 
 **SDK pin:** `anthropic >= 0.97.0` (see `requirements.txt`). Older versions
 lack typed support for the GA `output_config.format` structured outputs API.

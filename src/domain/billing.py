@@ -176,6 +176,10 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "models/gemini-3-pro-preview":       {"input": 2.00,  "output": 12.00, "cache_read": 0.25},
     # --- Claude (Opus 4.8 for ULTRA tier from 2026-05-30; same pricing as 4.7) ---
     "claude-haiku-4-5-20251001":         {"input": 1.00,  "output": 5.00,  "cache_read": 0.10, "cache_write": 1.25},
+    # Haiku 5.5 (ECO/BALANCED on Claude since 2026-10-08). Base rates for prompts <= 100K tokens;
+    # above that Anthropic bills 5x ($0.50 in / $2.50 out / $0.05 cache read / $0.625 cache write).
+    # The long-prompt tier is not modelled (same stance as gpt-6.1-sol) — ECO traffic is far below it.
+    "claude-haiku-5-5":                  {"input": 0.10,  "output": 0.50,  "cache_read": 0.01, "cache_write": 0.125},
     "claude-sonnet-4-6":                 {"input": 3.00,  "output": 15.00, "cache_read": 0.10, "cache_write": 1.25},
     # Sonnet 5 (PERFORMANCE tier default from 2026-07): $2/$10. What was introductory pricing
     # became PERMANENT on 2026-08-12 — Anthropic cancelled the $3/$15 reversion that was set for

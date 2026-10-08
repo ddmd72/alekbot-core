@@ -80,7 +80,7 @@ def _get_context(runner: AsyncMock) -> dict:
 
 def test_resolve_model_eco():
     adapter, _ = _make_adapter()
-    assert adapter._resolve_model(PerformanceTier.ECO) == "claude-haiku-4-5-20251001"
+    assert adapter._resolve_model(PerformanceTier.ECO) == "claude-haiku-5-5"
 
 
 def test_resolve_model_balanced():

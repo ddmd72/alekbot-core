@@ -68,7 +68,7 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     "quick": PerformanceTier.ECO,
     "smart": PerformanceTier.PERFORMANCE,
     # PERFORMANCE → claude-sonnet-4-6. Required for consolidation:
-    # BALANCED on Claude maps to Haiku 4.5, which lacks extended-thinking
+    # BALANCED on Claude mapped to Haiku 4.5 (until 2026-10-08), which lacks extended-thinking
     # effort support → 400 invalid_request_error. Sonnet 4.6 is sufficient
     # quality-wise; opus-4-7 was 5x more expensive without proportional gain.
     # Multi-turn cache markers in the Claude adapter (cache_last_message +
