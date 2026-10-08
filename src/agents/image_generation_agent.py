@@ -58,7 +58,6 @@ class ImageGenerationAgent(BaseAgent):
     # ASYNC image generation — no automatic retry (avoid double-billing xAI on retry).
     RETRY_POLICY = NO_RETRY_POLICY
 
-    TEMPERATURE = IMAGE_GENERATION.temperature
     MAX_TOKENS = IMAGE_GENERATION.max_tokens
     THINKING_EFFORT = IMAGE_GENERATION.thinking_effort
     REQUEST_TIMEOUT_S = IMAGE_GENERATION.request_timeout_s
@@ -170,7 +169,6 @@ class ImageGenerationAgent(BaseAgent):
             model_name=self.model_name,
             system_instruction=system_prompt,
             messages=[Message(role="user", parts=[MessagePart(text=query)])],
-            temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
             thinking=self.THINKING_EFFORT or None,
             timeout=self.REQUEST_TIMEOUT_S,

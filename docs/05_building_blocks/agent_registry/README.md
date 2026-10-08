@@ -442,7 +442,6 @@ Add a typed `@dataclass` config and singleton:
 ```python
 @dataclass
 class FooAgentConfig:
-    temperature: float = 0.7
     timeout_ms: int = 60_000
     # any other agent-specific tunable params
 
@@ -468,8 +467,6 @@ Implement the agent class. **Follow this exact structure — no deviations:**
 
 ```python
 class FooAgent(BaseAgent):
-    TEMPERATURE = FOO.temperature
-
     def __init__(
         self,
         config: AgentConfig,
@@ -647,7 +644,7 @@ make test-e2e-all   # Quick and Smart delegate correctly to the new agent
 ## 10. Code References
 
 - `src/infrastructure/agent_manifest.py` — **Single source of truth** for all agent declarations: `Intent` constants, `AgentDescriptor` instances for every agent (specialists + orchestrators), `ALL_DESCRIPTORS` list. Start here when adding or understanding any agent.
-- `src/infrastructure/agent_config.py` — Central config registry: typed `@dataclass` per agent (`QUICK`, `SMART`, `ROUTER`, `MEMORY_SEARCH`, `WEB_SEARCH`, `WEB_SEARCH_LIGHT`, `CONSOLIDATION`, `EMAIL_SEARCH`, `EMAIL_CLASSIFICATION`, `MAPS_SEARCH`, `COMPUTE`, `PDF_PLANNER`, `PDF_GENERATOR`). Holds all tunable behavior params: delegation turns, timeouts, temperatures, and thinking config. `MapsSearchAgentConfig.model_name` is pinned to `gemini-2.5-flash` (Maps grounding unsupported on Gemini 3.x). `ComputeAgentConfig.temperature=0.0` (deterministic computation). `ConsolidationAgentConfig.thinking_effort="high"` + `max_tokens=32_000` (complex multi-turn reasoning; Claude Sonnet 4.6). `PdfGeneratorAgentConfig.max_tokens=64_000` (full HTML+CSS document can be large). `HtmlPageGeneratorAgentConfig.temperature=1.0` + `max_tokens=64_000` (high creativity for layout/design; full HTML+CSS+JS document).
+- `src/infrastructure/agent_config.py` — Central config registry: typed `@dataclass` per agent (`QUICK`, `SMART`, `ROUTER`, `MEMORY_SEARCH`, `WEB_SEARCH`, `WEB_SEARCH_LIGHT`, `CONSOLIDATION`, `EMAIL_SEARCH`, `EMAIL_CLASSIFICATION`, `MAPS_SEARCH`, `COMPUTE`, `PDF_PLANNER`, `PDF_GENERATOR`). Holds all tunable behavior params: delegation turns, timeouts and thinking config (no temperature — see decisions/temperature_removed.md). `MapsSearchAgentConfig.model_name` is pinned to `gemini-2.5-flash` (Maps grounding unsupported on Gemini 3.x). `ConsolidationAgentConfig.thinking_effort="high"` + `max_tokens=32_000` (complex multi-turn reasoning; Claude Sonnet 4.6). `PdfGeneratorAgentConfig.max_tokens=64_000` (full HTML+CSS document can be large). `HtmlPageGeneratorAgentConfig.max_tokens=64_000` (high creativity for layout/design; full HTML+CSS+JS document).
 - `src/infrastructure/agent_registry.py` — `AgentDescriptor` dataclass (alias: `AgentManifest`; includes `eager: bool` field), `AgentRegistry` mechanics, `ExecutionMode`, `get_available_intents()`, `get_available_intents_for(descriptor)`, `get_descriptor(agent_id)`. Descriptor instances live in `agent_manifest.py`.
 - `src/infrastructure/agent_coordinator.py` — handle_delegation(), _execute_sync(), _execute_async(), _ensure_lazy_agent(), _try_lazy_load(), get_available_intents(), get_available_intents_for(). Accepts `AgentFactoryPort` for lazy agent instantiation.
 - `src/ports/agent_factory_port.py` — `AgentFactoryPort` ABC with `create_agent_on_demand(agent_type, user_id) -> bool`. Implemented by `UserAgentFactory`.
@@ -659,7 +656,7 @@ make test-e2e-all   # Quick and Smart delegate correctly to the new agent
 - `src/handlers/agent_worker_handler.py` — ASYNC task execution handler
 - `src/ports/task_queue.py` — enqueue_agent_task() protocol method
 - `src/adapters/gcp_task_queue.py` — Cloud Tasks enqueuing implementation
-- `src/adapters/claude_adapter.py` — Claude adapter. Model tiers: ECO=`claude-haiku-4-5-20251001`, BALANCED=`claude-haiku-4-5-20251001`, PERFORMANCE=`claude-sonnet-5-5`, ULTRA=`claude-fable-5-1` (since 2026-10-03; see decisions/model_refresh_2026_10.md). Adaptive thinking + `output_config.effort` are gated on `_THINKING_MODELS = ("claude-sonnet", "claude-opus")` substring tuple — both parameters are silently dropped when the resolved model is Haiku (verified against `models.retrieve(...).capabilities.effort.supported`; Haiku 4.5 returns `False` and the API rejects with HTTP 400). The same substring gate now also lives in `claude_deep_research_runner_agent.py` (unified 2026-05-30 to fix divergence). `temperature` auto-set to 1.0 when thinking is active. `max_tokens` reads from `LLMRequest.max_tokens` (default 16,000). SDK pin: `anthropic >= 0.97.0`.
+- `src/adapters/claude_adapter.py` — Claude adapter. Model tiers: ECO=`claude-haiku-4-5-20251001`, BALANCED=`claude-haiku-4-5-20251001`, PERFORMANCE=`claude-sonnet-5-5`, ULTRA=`claude-fable-5-1` (since 2026-10-03; see decisions/model_refresh_2026_10.md). Adaptive thinking + `output_config.effort` are gated on `_THINKING_MODELS = ("claude-sonnet", "claude-opus")` substring tuple — both parameters are silently dropped when the resolved model is Haiku (verified against `models.retrieve(...).capabilities.effort.supported`; Haiku 4.5 returns `False` and the API rejects with HTTP 400). The same substring gate now also lives in `claude_deep_research_runner_agent.py` (unified 2026-05-30 to fix divergence). `max_tokens` reads from `LLMRequest.max_tokens` (default 16,000). SDK pin: `anthropic >= 0.97.0`.
 - `src/adapters/gemini_adapter.py` — Gemini adapter. Maps `LLMRequest.thinking` → `ThinkingConfig(thinking_level=LOW/MEDIUM/HIGH)`. `use_code_execution=True` injects `types.Tool(code_execution=...)` internally.
 - `main.py` — registers `ALL_DESCRIPTORS` into `AgentRegistry` at startup (1 loop, no inline declarations)
 - Firestore token: `PROTOCOL_SMART_AGENT_SELECTION` — delegation rules for SmartAgent

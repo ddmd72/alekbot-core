@@ -121,7 +121,6 @@ class PdfGeneratorAgent(BaseAgent):
     # ASYNC document generation. See DocPlannerAgent for rationale.
     RETRY_POLICY = NO_RETRY_POLICY
 
-    TEMPERATURE = PDF_GENERATOR.temperature
     MAX_TOKENS = PDF_GENERATOR.max_tokens
     THINKING_EFFORT = PDF_GENERATOR.thinking_effort
     NODE_TIMEOUT = PDF_GENERATOR.node_timeout_s
@@ -180,7 +179,6 @@ class PdfGeneratorAgent(BaseAgent):
             model_name=self.model_name,
             system_instruction=system_prompt,
             messages=[Message(role="user", parts=[MessagePart(text=raw_query)])],
-            temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
             thinking=self.THINKING_EFFORT or None,
             timeout=self.REQUEST_TIMEOUT_S,

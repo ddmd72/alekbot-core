@@ -63,7 +63,6 @@ class QuickResponseAgent(BaseAgent):
     MAX_DELEGATION_TURNS = QUICK.max_delegation_turns
     MAX_AGENT_RETRIES = QUICK.max_agent_retries
     RETRY_BACKOFF_SECONDS = QUICK.retry_backoff_seconds
-    DELEGATION_TEMPERATURE = QUICK.delegation_temperature
     TIMEOUT_MS = QUICK.timeout_ms
 
     # Mirrors SmartResponseAgent._RESPONSE_SCHEMA. See its inline comment for the per-provider
@@ -235,7 +234,6 @@ class QuickResponseAgent(BaseAgent):
                 system_instruction=system_prompt,
                 messages=conversation_history,
                 tools=self._get_quick_tool_declarations(),
-                temperature=self.DELEGATION_TEMPERATURE,
                 response_schema=self._RESPONSE_SCHEMA,
             )
             delegation_result = await engine.execute(

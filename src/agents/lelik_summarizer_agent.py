@@ -27,7 +27,6 @@ from .base_agent import BaseAgent
 
 class LelikSummarizerAgent(BaseAgent):
     MAX_TOKENS = VOICE_SUMMARIZER.max_tokens
-    TEMPERATURE = VOICE_SUMMARIZER.temperature
 
     def __init__(
         self,
@@ -81,7 +80,6 @@ class LelikSummarizerAgent(BaseAgent):
                 model_name=self.model_name,
                 system_instruction=system_prompt,
                 messages=[Message(role="user", parts=[MessagePart(text=batch_text)])],
-                temperature=self.TEMPERATURE,
                 max_tokens=self.MAX_TOKENS,
             )
             response = await self._call_llm(request)

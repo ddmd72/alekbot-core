@@ -248,12 +248,13 @@ class TestLLMCall:
         tool_names = [t["name"] for t in (req.tools or [])]
         assert "generate_docx" in tool_names
 
-    async def test_temperature_matches_config(self, agent, mock_llm):
+    async def test_no_temperature_on_request_or_config(self, agent, mock_llm):
         from src.infrastructure.agent_config import DOC_GENERATOR
         await agent.execute(_make_message())
         req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
                           mock_llm.generate_content.call_args.args[0]
-        assert req.temperature == DOC_GENERATOR.temperature
+        assert not hasattr(req, "temperature")
+        assert not hasattr(DOC_GENERATOR, "temperature")
 
     async def test_max_tokens_matches_config(self, agent, mock_llm):
         """Regression test for R14.3: ensure DOC_GENERATOR.max_tokens (64K) is

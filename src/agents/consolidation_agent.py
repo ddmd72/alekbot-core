@@ -108,7 +108,6 @@ class ConsolidationAgent(BaseAgent):
     """
     
     MAX_CONSOLIDATION_TURNS = CONSOLIDATION.max_turns
-    TEMPERATURE = CONSOLIDATION.temperature
     MAX_TOKENS = CONSOLIDATION.max_tokens
     THINKING_EFFORT = CONSOLIDATION.thinking_effort
     INLINE_CLUSTER_REVIEW = CONSOLIDATION.inline_cluster_review
@@ -871,7 +870,6 @@ class ConsolidationAgent(BaseAgent):
                 system_instruction=system_prompt,
                 messages=history,
                 tools=self._get_tool_declarations(),
-                temperature=self.TEMPERATURE,
                 max_tokens=self.MAX_TOKENS,
                 timeout=500,
                 thinking=self.THINKING_EFFORT or None,
@@ -1534,7 +1532,6 @@ class ConsolidationAgent(BaseAgent):
             model_name=self.model_name,
             system_instruction="You are Life Chronicler. Return only valid JSON.",
             messages=[Message(role="user", parts=[MessagePart(text=prompt)])],
-            temperature=self.TEMPERATURE,
             timeout=500,
         )
         response = await self._call_llm(request)

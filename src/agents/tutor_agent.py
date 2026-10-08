@@ -65,7 +65,6 @@ class TutorAgent(BaseAgent):
 
     _descriptor = TUTOR_DESCRIPTOR
 
-    TEMPERATURE = TUTOR.temperature
 
     _RESPONSE_SCHEMA = {
         "type": "object",
@@ -181,7 +180,6 @@ class TutorAgent(BaseAgent):
                 system_instruction=system_prompt,
                 messages=messages,
                 tools=tools,
-                temperature=self.TEMPERATURE,
                 max_tokens=TUTOR.max_tokens,
                 response_schema=self._RESPONSE_SCHEMA,
             )

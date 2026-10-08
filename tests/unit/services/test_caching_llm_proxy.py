@@ -42,7 +42,6 @@ def sample_request():
         model_name="claude-opus-4",
         messages=[Message(role="user", parts=[MessagePart(text="hello")])],
         system_instruction="You are helpful.",
-        temperature=0.7,
     )
 
 

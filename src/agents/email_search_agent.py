@@ -54,7 +54,6 @@ class EmailSearchAgent(BaseAgent):
     then delegates 7-stream multi-vector RRF search to EmailSearchService.
     """
 
-    TEMPERATURE = EMAIL_SEARCH.temperature
     MAX_TOKENS = EMAIL_SEARCH.max_tokens
 
     def __init__(
@@ -393,7 +392,6 @@ class EmailSearchAgent(BaseAgent):
             system_instruction=system_prompt,
             messages=messages,
             tools=[],
-            temperature=self.TEMPERATURE,
             max_tokens=self.MAX_TOKENS,
             disable_safety=True,
             response_mime_type="application/json",

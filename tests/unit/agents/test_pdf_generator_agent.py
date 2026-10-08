@@ -368,11 +368,12 @@ class TestLLMCall:
         req = _get_llm_request(mock_llm)
         assert not req.response_mime_type
 
-    async def test_temperature_matches_config(self, agent, mock_llm):
+    async def test_no_temperature_on_request_or_config(self, agent, mock_llm):
         from src.infrastructure.agent_config import PDF_GENERATOR
         await agent.execute(_make_message())
         req = _get_llm_request(mock_llm)
-        assert req.temperature == PDF_GENERATOR.temperature
+        assert not hasattr(req, "temperature")
+        assert not hasattr(PDF_GENERATOR, "temperature")
 
     async def test_max_tokens_matches_config(self, agent, mock_llm):
         from src.infrastructure.agent_config import PDF_GENERATOR

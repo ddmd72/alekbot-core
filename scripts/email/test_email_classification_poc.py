@@ -344,7 +344,8 @@ def classify_with_tools(
     config_kwargs: dict = {"tools": [tool]}
     if thinking_budget > 0:
         config_kwargs["thinking_config"] = types.ThinkingConfig(
-            thinking_budget=thinking_budget,
+            # thinking_budget is deprecated by Google; any positive budget now means MEDIUM.
+            thinking_level=types.ThinkingLevel.MEDIUM,
             include_thoughts=True,
         )
     config = types.GenerateContentConfig(**config_kwargs)
