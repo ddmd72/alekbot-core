@@ -22,6 +22,7 @@ from src.services.configuration_service import ConfigurationService
 from src.adapters.firestore_iam_adapter import FirestoreIAMAdapter
 from src.domain.user import UserProfile, UserBotConfig
 from src.domain.billing import BillingAccount, AccountTier
+from src.domain.whitelist import WhitelistEntry
 from src.ports.iam_port import Role, ResourceType, Action
 
 
@@ -67,10 +68,16 @@ def auth_service(mock_user_repo, mock_account_repo, mock_auth_provider):
     mock_auth_registry = MagicMock(spec=AuthProviderRegistry)
     mock_auth_registry.get_provider.return_value = mock_auth_provider
     mock_user_repo.get_user_by_email = AsyncMock(return_value=None)
+    # Whitelist gate admits the identities these flows sign in with.
+    mock_whitelist_repo = AsyncMock()
+    mock_whitelist_repo.get_whitelist = AsyncMock(return_value=WhitelistEntry(
+        allowed_emails=set(), allowed_domains={"example.com", "family.com"},
+    ))
     return AuthenticationService(
         user_repo=mock_user_repo,
         account_repo=mock_account_repo,
         auth_registry=mock_auth_registry,
+        whitelist_repo=mock_whitelist_repo,
     )
 
 
@@ -119,6 +126,7 @@ async def test_oauth_registration_creates_account_and_user(
     verify_claims = MagicMock()
     verify_claims.sub = "user123"
     verify_claims.email = "newuser@example.com"
+    verify_claims.email_verified = True
     verify_claims.name = "New User"
     mock_auth_provider.verify_token.return_value = verify_claims
 
@@ -199,7 +207,7 @@ async def test_oauth_login_existing_user(
         id_token="id_token",
     )
     mock_auth_provider.verify_token.return_value = MagicMock(
-        sub="user123", email="existing@example.com", name=None,
+        sub="user123", email="existing@example.com", email_verified=True, name=None,
     )
 
     # Mock repository: user exists
@@ -509,6 +517,7 @@ async def test_complete_oauth_to_config_flow(
     verify_claims = MagicMock()
     verify_claims.sub = "parent123"
     verify_claims.email = "parent@family.com"
+    verify_claims.email_verified = True
     verify_claims.name = "Parent User"
     mock_auth_provider.verify_token.return_value = verify_claims
 

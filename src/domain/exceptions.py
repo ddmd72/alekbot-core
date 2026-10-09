@@ -202,3 +202,10 @@ class SkillNameReserved(Exception):
 class SkillFileMissing(Exception):
     """A file a skill or draft refers to is no longer stored (e.g. a draft file removed by TTL)."""
 
+
+class AccessDeniedError(Exception):
+    """An authenticated identity is not allowed into the system (whitelist gate).
+
+    Deliberately not a ValueError: web handlers map ValueError to 400, and a
+    rejected identity must be a 403 with no session issued.
+    """
