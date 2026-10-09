@@ -20,8 +20,9 @@ mocks cannot detect translation regressions) + contract validators in
 
 - **PerformanceTier** (ECO/BALANCED/PERFORMANCE) — abstraction between agents and concrete models.
   When picking a default tier for a new agent, verify the resolved model accepts every
-  parameter the agent sends. Concrete trap: `BALANCED` on Claude → `claude-haiku-4-5-20251001`,
-  which rejects `output_config.effort` (HTTP 400). ConsolidationAgent default is therefore
+  parameter the agent sends. Concrete trap (historical): `BALANCED` on Claude was `claude-haiku-4-5-20251001`,
+  which rejects `output_config.effort` (HTTP 400); the small tiers are `claude-haiku-5-5` since
+  2026-10-08 (accepts effort; `CLAUDE_SMALL_MODEL` env repoints them). ConsolidationAgent default is therefore
   `PERFORMANCE` → **`claude-sonnet-5-5`** in `ClaudeAdapter.MODEL_TIERS` (Sonnet 5 from 2026-07,
   5.5 since 2026-10-03; env-overridable via `CLAUDE_PERFORMANCE_MODEL` for instant rollback —
   `make claude-rollback` → Sonnet 5). ULTRA → `claude-fable-5-1` (top model, for consistency). See

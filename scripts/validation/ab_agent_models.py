@@ -125,6 +125,13 @@ def load_queries(leg: str, n: int, days: int) -> List[str]:
     return queries
 
 
+# Model-id prefix -> provider name, so a candidate from another provider is sent through ITS adapter
+# (pinning only model_name would hand e.g. a Claude id to the OpenAI adapter -> 404). Filled in main().
+_PROVIDER_BY_PREFIX = {"claude": "claude", "gpt": "openai", "o1": "openai", "o3": "openai",
+                       "gemini": "gemini", "grok": "grok"}
+_REGISTRY = None
+
+
 async def run_one(agent, leg: str, model: str, query: str, user_id: str, account_id: str) -> Dict[str, Any]:
     usage = {"calls": 0, "prompt": 0, "completion": 0, "cache_read": 0, "cache_write": 0, "cost": 0.0}
     models_ran: List[str] = []
@@ -156,6 +163,12 @@ async def run_one(agent, leg: str, model: str, query: str, user_id: str, account
             eff = orig_resolve(msg)
             ctx = copy.copy(eff.ctx)
             ctx.model_name = model
+            pname = next((v for k, v in _PROVIDER_BY_PREFIX.items() if model.startswith(k)), None)
+            if pname and _REGISTRY is not None and pname != ctx.provider_name:
+                ctx.provider = _REGISTRY.get(pname)
+                ctx.provider_name = pname
+                ctx.capabilities = ctx.provider.CAPABILITIES
+                ctx.fallback_provider = ctx.fallback_model_name = ctx.fallback_provider_name = None
             return type(eff)(ctx=ctx, thinking_effort=eff.thinking_effort)
         agent._resolve_effective = pinned_resolve
     payload: Dict[str, Any] = {"text": query} if leg == "smart" else {"query": query}
@@ -255,6 +268,8 @@ async def main(args) -> None:
     account_repo = FirestoreAccountRepository(db_client=db, collection_name=env_config.account_collection_name)
     user_repo = FirestoreUserRepository(db, env_config, account_repo)
     container = ServiceContainer(config=settings, db_client=db, env_config=env_config, account_repo=account_repo)
+    global _REGISTRY
+    _REGISTRY = container.registry
     registry = AgentRegistry()  # as main.py wires it — without it Smart is offered no intents
     for descriptor in ALL_DESCRIPTORS:
         registry.register(descriptor)

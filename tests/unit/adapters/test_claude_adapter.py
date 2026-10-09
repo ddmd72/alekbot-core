@@ -38,8 +38,8 @@ def test_claude_capabilities():
 def test_claude_model_for_tier():
     adapter = ClaudeAdapter(api_key="test-key")
 
-    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "claude-haiku-4-5-20251001"
-    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-haiku-4-5-20251001"
+    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "claude-haiku-5-5"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-haiku-5-5"
     assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-5-5"
     assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-1"
 
@@ -2019,3 +2019,64 @@ async def test_fable_5_1_request_shape():
     assert "temperature" not in captured
     assert "thinking" not in captured
     assert captured["tool_choice"] == {"type": "auto"}
+
+
+# ---------------------------------------------------------------------------
+# Haiku 5.5 (ECO / BALANCED / TIER1-3 since 2026-10-08)
+# Live-probed 2026-10-08: thinking.enabled, between_tools, prefill and non-default
+# temperature all 400; adaptive + effort and thinking=disabled (effort <= high) work.
+# ---------------------------------------------------------------------------
+
+async def _haiku_5_5_kwargs(**request_kwargs):
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
+    await adapter.generate_content(
+        request=LLMRequest(model_name="claude-haiku-5-5", messages=_MESSAGES, **request_kwargs)
+    )
+    return captured
+
+
+def test_small_tiers_resolve_to_haiku_5_5():
+    adapter = ClaudeAdapter(api_key="test-key")
+    for tier in (PerformanceTier.ECO, PerformanceTier.BALANCED, PerformanceTier.TIER1,
+                 PerformanceTier.TIER2, PerformanceTier.TIER3):
+        assert adapter.get_model_for_tier(tier) == "claude-haiku-5-5"
+
+
+def test_claude_small_model_env_repoints_small_tiers_only(monkeypatch):
+    monkeypatch.setenv("CLAUDE_SMALL_MODEL", "claude-haiku-4-5-20251001")
+    adapter = ClaudeAdapter(api_key="test-key")
+    assert adapter.get_model_for_tier(PerformanceTier.ECO) == "claude-haiku-4-5-20251001"
+    assert adapter.get_model_for_tier(PerformanceTier.TIER3) == "claude-haiku-4-5-20251001"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-5-5"
+
+
+@pytest.mark.asyncio
+async def test_haiku_5_5_thinking_effort_sends_adaptive_and_effort_without_sampling():
+    captured = await _haiku_5_5_kwargs(thinking="low")
+    assert captured["thinking"] == {"type": "adaptive"}
+    assert captured["output_config"]["effort"] == "low"
+    assert "temperature" not in captured
+
+
+@pytest.mark.asyncio
+async def test_haiku_5_5_no_thinking_request_omits_thinking_field():
+    """thinking=None -> field omitted: adaptive at the default (medium) effort. `disabled` is
+    avoided on purpose: Anthropic warns it skips tool calls under JSON output and leaks
+    reasoning text into replies."""
+    captured = await _haiku_5_5_kwargs()
+    assert "thinking" not in captured
+    assert "effort" not in (captured.get("output_config") or {})
+
+
+@pytest.mark.asyncio
+async def test_haiku_4_5_still_gets_no_thinking_or_effort():
+    adapter = ClaudeAdapter(api_key="test-key")
+    captured = {}
+    adapter.client.messages.stream = _capturing_stream(captured, _make_claude_cm(_make_sdk_response()))
+    await adapter.generate_content(
+        request=LLMRequest(model_name="claude-haiku-4-5-20251001", messages=_MESSAGES, thinking="high")
+    )
+    assert "thinking" not in captured
+    assert "effort" not in (captured.get("output_config") or {})
