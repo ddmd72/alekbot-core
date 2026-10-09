@@ -189,6 +189,13 @@ GitHub repo's homepage); a signed-in owner is still redirected to `/cabinet`. `s
 also serves `/og.png` (share image) and `/robots.txt` (`Allow: /$`, everything else closed). The page is
 one self-contained file, no external requests; its numbers (tests, RFCs) are hand-maintained.
 
+**Access control: one whitelist, two gates.** `{prefix}domain_whitelist_v1/config` (emails + domains)
+decides who gets in. Chat: `IAMService.authorize` on every Slack/Telegram message. Cabinet:
+`AuthenticationService._require_allowed_email` on every Google sign-in, new and existing users,
+before any user lookup (verified ID-token email, `email_verified` required). Until 2026-10-09 the
+Cabinet path had no gate, so any Google account could register. A revoked email keeps Cabinet access
+until its session ends, at most 24h. See `decisions/cabinet_oauth_whitelist_gate.md`.
+
 **Remote MCP Server** — alekbot as MCP *server* exposing memory search to claude.ai Custom Connectors
 (inverse of its Maps MCP *client*). One tool `get_user_context(query, …)` → `SearchEnrichmentService.enrich_context`
 directly (bypasses the agent stack). Full in-process OAuth 2.1 AS (DCR, PKCE S256, RFC 8707, refresh

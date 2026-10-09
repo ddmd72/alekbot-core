@@ -15,6 +15,8 @@ from uuid import uuid4
 from ..ports.auth_port import TokenClaims, OAuthTokens, OAuthUserInfo
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
+from ..ports.whitelist_repository import WhitelistRepository
+from ..domain.exceptions import AccessDeniedError
 from ..domain.user import UserProfile, UserBotConfig
 from ..domain.billing import BillingAccount, AccountTier
 from ..utils.logger import logger
@@ -46,6 +48,7 @@ class AuthenticationService:
         auth_registry: AuthProviderRegistry,
         user_repo: UserRepository,
         account_repo: AccountRepository,
+        whitelist_repo: WhitelistRepository,
     ):
         """
         Initialize authentication service.
@@ -54,10 +57,40 @@ class AuthenticationService:
             auth_registry: OAuth provider registry
             user_repo: User repository for CRUD operations
             account_repo: Account repository for billing/IAM
+            whitelist_repo: Who may sign in at all (checked on every OAuth login)
         """
         self.auth_registry = auth_registry
         self.user_repo = user_repo
         self.account_repo = account_repo
+        self.whitelist_repo = whitelist_repo
+
+    async def _require_allowed_email(self, claims: TokenClaims) -> str:
+        """
+        Whitelist gate for every OAuth sign-in, new and existing users alike.
+
+        Reads the email from the verified ID token, never from userinfo, and
+        requires the provider to have verified it. Runs before any user lookup,
+        so a rejected identity never creates or links a user.
+
+        Returns:
+            The normalized (lowercase) email.
+
+        Raises:
+            AccessDeniedError: No email, unverified email, or not whitelisted.
+        """
+        email = (claims.email or "").lower().strip()
+        if not email:
+            logger.warning(f"⛔ OAuth sign-in rejected: no email in ID token (sub={claims.sub})")
+            raise AccessDeniedError("No email in ID token")
+        if claims.email_verified is not True:
+            logger.warning(f"⛔ OAuth sign-in rejected: email not verified: {email}")
+            raise AccessDeniedError(f"Email not verified: {email}")
+
+        whitelist = await self.whitelist_repo.get_whitelist()
+        if not whitelist.is_allowed(email):
+            logger.warning(f"⛔ OAuth sign-in rejected: email not in whitelist: {email}")
+            raise AccessDeniedError(f"Email not in whitelist: {email}")
+        return email
 
     async def handle_oauth_callback(
         self,
@@ -85,6 +118,7 @@ class AuthenticationService:
 
         Raises:
             ValueError: Invalid code, token verification failed, or network error
+            AccessDeniedError: Identity fails the whitelist gate
         """
         # Get OAuth provider
         auth_provider = self.auth_registry.get_provider(provider_name)
@@ -107,6 +141,9 @@ class AuthenticationService:
         except Exception as e:
             logger.error(f"❌ Token verification failed: {e}")
             raise ValueError(f"Failed to verify ID token: {e}")
+
+        # Step 2b: Whitelist gate — before any user read or write
+        email = await self._require_allowed_email(claims)
 
         # Step 3: Get user info from provider
         try:
@@ -146,48 +183,39 @@ class AuthenticationService:
                 logger.error(f"❌ Failed to update user: {e}", exc_info=True)
                 raise
         else:
-            # Fallback: Check by email (prevents duplicates for mixed registration)
-            email = user_info.email or claims.email
-            if email:
-                logger.debug(f"🔍 Checking for existing user by email: {email}")
-                existing_user_by_email = await self.user_repo.get_user_by_email(email)
+            # Fallback: Check by email (prevents duplicates for mixed registration).
+            # `email` is the verified, whitelisted address from the gate above.
+            logger.debug(f"🔍 Checking for existing user by email: {email}")
+            existing_user_by_email = await self.user_repo.get_user_by_email(email)
+            
+            if existing_user_by_email:
+                logger.info(
+                    f"👤 Found existing user by email (linking OAuth): "
+                    f"{existing_user_by_email.user_id}"
+                )
                 
-                if existing_user_by_email:
-                    logger.info(
-                        f"👤 Found existing user by email (linking OAuth): "
-                        f"{existing_user_by_email.user_id}"
-                    )
-                    
-                    # Link OAuth identity to existing user
-                    user = existing_user_by_email
-                    user.external_user_id = external_user_id
-                    user.auth_metadata = {
-                        "email": user_info.email,
-                        "name": user_info.name,
-                        "picture": user_info.picture,
-                        "locale": user_info.locale,
-                        "email_verified": user_info.email_verified,
-                        "provider": provider_id,
-                        "linked_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                    
-                    try:
-                        user = await self.user_repo.update_user(user)
-                        logger.info(f"✅ OAuth linked to existing user: {user.user_id}")
-                    except Exception as e:
-                        logger.error(f"❌ Failed to link OAuth: {e}", exc_info=True)
-                        raise
-                else:
-                    # No existing user - register new
-                    logger.info("🆕 New user - registering")
-                    user = await self.register_new_user(
-                        external_user_id=external_user_id,
-                        user_info=user_info,
-                        claims=claims,
-                    )
+                # Link OAuth identity to existing user
+                user = existing_user_by_email
+                user.external_user_id = external_user_id
+                user.auth_metadata = {
+                    "email": user_info.email,
+                    "name": user_info.name,
+                    "picture": user_info.picture,
+                    "locale": user_info.locale,
+                    "email_verified": user_info.email_verified,
+                    "provider": provider_id,
+                    "linked_at": datetime.now(timezone.utc).isoformat(),
+                }
+                
+                try:
+                    user = await self.user_repo.update_user(user)
+                    logger.info(f"✅ OAuth linked to existing user: {user.user_id}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to link OAuth: {e}", exc_info=True)
+                    raise
             else:
-                # No email available - register new (edge case)
-                logger.warning("⚠️ No email in OAuth claims, registering without email check")
+                # No existing user - register new
+                logger.info("🆕 New user - registering")
                 user = await self.register_new_user(
                     external_user_id=external_user_id,
                     user_info=user_info,
@@ -388,6 +416,7 @@ class AuthenticationService:
 
         Raises:
             ValueError: If user not found, OAuth identity already linked, or exchange failed
+            AccessDeniedError: The Google identity fails the whitelist gate
         """
         logger.info(f"🔗 Linking OAuth identity to existing user: {user_id}")
 
@@ -410,6 +439,9 @@ class AuthenticationService:
         except Exception as e:
             logger.error(f"❌ Token verification failed: {e}")
             raise ValueError(f"Failed to verify ID token: {e}")
+
+        # Step 2b: Whitelist gate — the Google identity being linked must pass it too
+        await self._require_allowed_email(claims)
 
         # Step 3: Get user info (optional, for metadata)
         try:
