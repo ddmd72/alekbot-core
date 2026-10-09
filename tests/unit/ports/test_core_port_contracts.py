@@ -895,9 +895,8 @@ class TestPlatformAuthPortContract:
     def test_authorize_signature(self):
         sig = inspect.signature(PlatformAuthPort.authorize)
         params = list(sig.parameters.keys())
-        assert params == ["self", "platform", "platform_user_id", "email"]
+        assert params == ["self", "platform", "platform_user_id"]
         assert sig.parameters["platform_user_id"].default is None
-        assert sig.parameters["email"].default is None
 
 
 class TestPlatformAuthPortMockImplementation:
