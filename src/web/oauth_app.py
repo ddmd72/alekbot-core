@@ -24,10 +24,22 @@ from ..services.auth_provider_registry import AuthProviderRegistry
 from ..services.google_oauth_service import GoogleOAuthService
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..config.auth import AuthConfig
+from ..domain.exceptions import AccessDeniedError
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..services.invite_code_service import InviteCodeService
+
+
+_ACCESS_DENIED_PAGE = (
+    "<!doctype html><html><head><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+    "<title>Access not authorized</title></head>"
+    "<body style=\"font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem\">"
+    "<h1>Access not authorized</h1>"
+    "<p>This Google account is not allowed to sign in.</p>"
+    "</body></html>"
+)
 
 
 def create_oauth_blueprint(
@@ -215,6 +227,13 @@ def create_oauth_blueprint(
 
             return response
 
+        except AccessDeniedError:
+            # Whitelist gate: no user created, no session cookies issued.
+            # The reason is logged by AuthenticationService, never shown to the caller.
+            response = await make_response(_ACCESS_DENIED_PAGE, 403)
+            response.headers["Content-Type"] = "text/html; charset=utf-8"
+            response.delete_cookie("oauth_state")
+            return response
         except Exception as e:
             logger.error(f"❌ OAuth callback failed: {e}")
             return jsonify({"error": "OAuth callback failed"}), 500
@@ -466,6 +485,8 @@ def create_oauth_blueprint(
         except jwt.InvalidTokenError as e:
             logger.warning(f"❌ Invalid access token: {e}")
             return jsonify({"error": "Invalid access token"}), 401
+        except AccessDeniedError:
+            return jsonify({"error": "Access not authorized"}), 403
         except ValueError as e:
             logger.error(f"❌ OAuth link validation error: {e}")
             return jsonify({"error": str(e)}), 400

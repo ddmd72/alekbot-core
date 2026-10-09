@@ -555,7 +555,8 @@ async def main():
         auth_service = AuthenticationService(
             auth_registry=auth_registry,
             user_repo=user_repo,
-            account_repo=account_repo
+            account_repo=account_repo,
+            whitelist_repo=whitelist_repo,
         )
         session_service = SessionService(
             secret_key=auth_config.oauth_session_secret,

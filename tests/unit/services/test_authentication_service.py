@@ -12,6 +12,7 @@ from src.services.auth_provider_registry import AuthProviderRegistry
 from src.ports.auth_port import TokenClaims, OAuthTokens, OAuthUserInfo
 from src.domain.user import UserProfile, UserBotConfig
 from src.domain.billing import BillingAccount, AccountTier
+from src.domain.whitelist import WhitelistEntry
 
 
 # ============================================================================
@@ -42,10 +43,24 @@ def mock_account_repo():
 
 
 @pytest.fixture
-def auth_service(mock_auth_registry, mock_user_repo, mock_account_repo):
+def mock_whitelist_repo():
+    """Mock WhitelistRepository admitting every @example.com identity used below.
+
+    The whitelist gate is a precondition of every OAuth sign-in; its own
+    behaviour is covered in test_authentication_service_whitelist.py.
+    """
+    repo = Mock()
+    repo.get_whitelist = AsyncMock(return_value=WhitelistEntry(
+        allowed_emails=set(), allowed_domains={"example.com"},
+    ))
+    return repo
+
+
+@pytest.fixture
+def auth_service(mock_auth_registry, mock_user_repo, mock_account_repo, mock_whitelist_repo):
     """Create AuthenticationService with mocked dependencies."""
     registry, _ = mock_auth_registry
-    return AuthenticationService(registry, mock_user_repo, mock_account_repo)
+    return AuthenticationService(registry, mock_user_repo, mock_account_repo, mock_whitelist_repo)
 
 
 # ============================================================================
@@ -70,6 +85,7 @@ async def test_handle_oauth_callback_existing_user(auth_service, mock_auth_regis
         exp=datetime.now(),
         iat=datetime.now(),
         email="test@example.com",
+        email_verified=True,
     ))
 
     mock_provider.get_user_info = AsyncMock(return_value=OAuthUserInfo(
@@ -129,6 +145,7 @@ async def test_handle_oauth_callback_new_user(auth_service, mock_auth_registry, 
         exp=datetime.now(),
         iat=datetime.now(),
         email="newuser@example.com",
+        email_verified=True,
     ))
 
     mock_provider.get_user_info = AsyncMock(return_value=OAuthUserInfo(
@@ -249,7 +266,7 @@ def _base_provider_setup(mock_provider, *, sub="firebase-sub1", email="u@example
     ))
     mock_provider.verify_token = AsyncMock(return_value=TokenClaims(
         sub=sub, iss="https://s", aud="test",
-        exp=datetime.now(), iat=datetime.now(), email=email,
+        exp=datetime.now(), iat=datetime.now(), email=email, email_verified=True,
     ))
     mock_provider.get_user_info = AsyncMock(return_value=OAuthUserInfo(
         sub=sub, email=email, name="User",
@@ -285,7 +302,7 @@ async def test_user_info_fetch_fails_falls_back_to_claims(
     ))
     mock_provider.verify_token = AsyncMock(return_value=TokenClaims(
         sub="s1", iss="https://s", aud="test",
-        exp=datetime.now(), iat=datetime.now(), email="u@example.com",
+        exp=datetime.now(), iat=datetime.now(), email="u@example.com", email_verified=True,
     ))
     mock_provider.get_user_info = AsyncMock(side_effect=RuntimeError("provider down"))
 
@@ -376,7 +393,11 @@ async def test_register_new_user_exception_raises_value_error(
 
 def _make_auth_svc(mock_auth_registry, mock_user_repo, mock_account_repo):
     registry, _ = mock_auth_registry
-    return AuthenticationService(registry, mock_user_repo, mock_account_repo)
+    whitelist_repo = Mock()
+    whitelist_repo.get_whitelist = AsyncMock(return_value=WhitelistEntry(
+        allowed_emails=set(), allowed_domains={"example.com"},
+    ))
+    return AuthenticationService(registry, mock_user_repo, mock_account_repo, whitelist_repo)
 
 
 @pytest.mark.asyncio

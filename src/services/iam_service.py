@@ -6,8 +6,6 @@ Replaces IdentityResolver with clean, testable IAM-centric architecture.
 """
 from typing import Optional
 
-from ..domain.user import UserProfile
-from ..domain.billing import BillingAccount
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
 from ..ports.whitelist_repository import WhitelistRepository
@@ -25,16 +23,16 @@ class IAMService(PlatformAuthPort):
     Architecture:
     - Pure service layer (no adapter/infrastructure dependencies)
     - Uses Ports (repositories) for data access
-    - Called by ALL adapters (Slack, OAuth, Telegram, etc)
+    - Called by the chat adapters (Slack, Telegram) on every message
     
     Decision Logic:
-    1. Platform user EXISTS? → ALLOW
-    2. OAuth + email EXISTS? → ALLOW  
-    3. OAuth + email in WHITELIST? → CREATE
-    4. DEFAULT → REJECT
+    1. Platform user EXISTS and email WHITELISTED? → ALLOW
+    2. DEFAULT → REJECT
     
     Key Principle:
     "Registration ONLY via Web UI (OAuth). Chat bots CANNOT create accounts."
+    The Web UI's own whitelist gate lives in AuthenticationService
+    (checked at every OAuth sign-in), not here.
     
     Message Generation:
     ALL user-facing messages are centralized here for:
@@ -135,27 +133,23 @@ class IAMService(PlatformAuthPort):
         self,
         platform: str,
         platform_user_id: Optional[str] = None,
-        email: Optional[str] = None
     ) -> IAMDecision:
         """
-        Make authorization decision for user access.
+        Make authorization decision for a chat platform user.
         
-        Called by ALL platform adapters (Slack, OAuth, Telegram) at EVERY message.
+        Called by the chat adapters (Slack, Telegram) at EVERY message.
         No caching for MVP - always checks fresh from database.
         
         Args:
-            platform: Platform name ("slack", "telegram", "oauth", etc)
+            platform: Platform name ("slack", "telegram")
             platform_user_id: Platform-specific user ID (verified by platform API)
-            email: Email address (only for OAuth)
             
         Returns:
             IAMDecision with action and user data
             
         Decision Tree:
-            Branch 1: Platform user exists? → ALLOW (registered user)
-            Branch 2: OAuth + email exists? → ALLOW (existing OAuth user)
-            Branch 3: OAuth + whitelist? → CREATE (new registration)
-            Default: REJECT (not authorized)
+            Branch 1: Platform user exists and is whitelisted? → ALLOW
+            Default: REJECT (not registered, revoked, or invalid parameters)
             
         Example:
             >>> # Slack user (registered)
@@ -167,21 +161,13 @@ class IAMService(PlatformAuthPort):
             >>> decision = await iam.authorize("slack", platform_user_id="U999")
             >>> assert decision.action == "reject"
             >>> assert "Register" in decision.message
-            
-            >>> # OAuth user (whitelisted)
-            >>> decision = await iam.authorize("oauth", email="admin@company.com")
-            >>> assert decision.action == "create_account"
-            
-            >>> # OAuth user (NOT whitelisted)
-            >>> decision = await iam.authorize("oauth", email="random@spam.com")
-            >>> assert decision.action == "reject"
         """
         
         # ================================================================
         # BRANCH 1: Existing Platform User (Slack, Telegram, iOS)
         # ================================================================
         # Use case: Registered user returns to chat bot
-        if platform_user_id and platform != "oauth":
+        if platform_user_id:
             user = await self.user_repo.get_user_by_platform_id(
                 platform,
                 platform_user_id
@@ -234,87 +220,13 @@ class IAMService(PlatformAuthPort):
             )
         
         # ================================================================
-        # BRANCH 2 & 3: OAuth Authentication
-        # ================================================================
-        # Use case: User logs in via Google OAuth
-        if platform == "oauth" and email:
-            # 2a. Existing OAuth user?
-            user = await self.user_repo.get_user_by_email(email)
-            
-            if user:
-                logger.info(
-                    f"✅ [IAM] Authorized OAuth user: {email} → {user.user_id}"
-                )
-                return IAMDecision(action="allow", user=user)
-            
-            # 2b. New user → Check whitelist
-            whitelist = await self.whitelist_repo.get_whitelist()
-            
-            if not whitelist.is_allowed(email):
-                logger.warning(f"⛔ [IAM] Email not in whitelist: {email}")
-                return IAMDecision(
-                    action="reject",
-                    message=(
-                        "Email not authorized. "
-                        "Contact admin for access."
-                    )
-                )
-            
-            # 2c. Create new user (whitelist passed)
-            logger.info(f"🆕 [IAM] Creating new user: {email}")
-            user = await self._create_new_user(email)
-            
-            return IAMDecision(action="create_account", user=user)
-        
-        # ================================================================
         # DEFAULT: REJECT (Invalid parameters)
         # ================================================================
         logger.error(
             f"⛔ [IAM] Invalid authorize call: "
-            f"platform={platform}, user_id={platform_user_id}, email={email}"
+            f"platform={platform}, user_id={platform_user_id}"
         )
         return IAMDecision(
             action="reject",
             message="Authorization failed. Invalid parameters."
         )
-    
-    async def _create_new_user(self, email: str) -> UserProfile:
-        """
-        Create new user with solo account (Master Account First paradigm).
-        
-        Args:
-            email: Email address of new user
-            
-        Returns:
-            Created UserProfile
-            
-        Note:
-            This is ONLY called after whitelist check passed.
-            Creates both UserProfile and solo BillingAccount.
-        """
-        # Create user profile
-        new_user = UserProfile(
-            email=email,
-            external_user_id=f"firebase|{email}",  # Placeholder for Firebase UID
-            display_name=email.split("@")[0]  # Use email prefix as display name
-        )
-        
-        # Create solo billing account (user is OWNER)
-        account = BillingAccount(
-            owner_user_id=new_user.user_id,
-            iam_policy={new_user.user_id: "OWNER"}  # User is owner of their account
-        )
-        
-        await self.account_repo.create_account(account)
-        logger.info(f"📋 [IAM] Created solo account: {account.account_id}")
-        
-        # Link user to account
-        new_user.account_id = account.account_id
-        created_user = await self.user_repo.create_user(new_user)
-        
-        logger.info(
-            f"✅ [IAM] User created: {created_user.user_id} "
-            f"(email={email}, account={account.account_id})"
-        )
-        
-        return created_user
