@@ -77,6 +77,9 @@ class AuthenticationService:
 
         Raises:
             AccessDeniedError: No email, unverified email, or not whitelisted.
+
+        The "OAuth sign-in rejected" log text is matched by a GCP alert policy
+        (docs/07_deployment/ALERTING.md, policy 5) — keep it verbatim.
         """
         email = (claims.email or "").lower().strip()
         if not email:
@@ -272,6 +275,7 @@ class AuthenticationService:
             - User is the OWNER of their account
             - Future: support invitations to existing accounts
         """
+        # "Registering new user" is matched by a GCP alert policy (ALERTING.md, policy 6).
         logger.info(f"🆕 Registering new user: {external_user_id}")
 
         # Step 1: Create billing account (tenant)
