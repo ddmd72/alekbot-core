@@ -23,6 +23,15 @@ All policies route to one Slack notification channel **#alerts-dev** (channel id
    `/proc/self/environ`, `aws-exports.js`, `appsettings.json`). The weekly scan volume on these
    paths is pure noise (verified 100% 404, excluded from the `_Default` sink — see the
    `scanner-404-noise` exclusion) — this fires only if one of them is ever actually served.
+5. **Cabinet sign-in rejected - dev** (2026-10-09) — `textPayload:"OAuth sign-in rejected"` on
+   `alek-bot-dev`. The whitelist gate refused a Google account at `/auth/callback` or
+   `/auth/link-oauth`; the log line names the reason (not whitelisted / email not verified / no
+   email) and the email. Matched on the app log, not on HTTP 403, so it covers both routes and
+   carries the reason. CSRF state is checked before the gate, so scanners cannot reach it.
+6. **New user registered (tripwire) - dev** (2026-10-09) — `textPayload:"Registering new user"`.
+   Only whitelisted emails can register, so this is rare; one you did not expect means the gate
+   was bypassed. Same idea as policy 4: alert on the attempt *succeeding*.
+   See `decisions/cabinet_oauth_whitelist_gate.md` for both.
 
 ## Why policies 2–3 exist
 
