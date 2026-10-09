@@ -131,20 +131,28 @@ class ClaudeAdapter(LLMPort):
     # Purpose: Decouple agent performance tier from concrete model names
     # ========================================================================
     MODEL_TIERS = {
-        PerformanceTier.ECO:         "claude-haiku-4-5-20251001",
-        PerformanceTier.BALANCED:    "claude-haiku-4-5-20251001",
+        PerformanceTier.ECO:         "claude-haiku-5-5",
+        PerformanceTier.BALANCED:    "claude-haiku-5-5",
         PerformanceTier.PERFORMANCE: "claude-sonnet-5-5",
         PerformanceTier.ULTRA:       "claude-fable-5-1",
-        PerformanceTier.TIER1:       "claude-haiku-4-5-20251001",
-        PerformanceTier.TIER2:       "claude-haiku-4-5-20251001",
-        PerformanceTier.TIER3:       "claude-haiku-4-5-20251001",
+        PerformanceTier.TIER1:       "claude-haiku-5-5",
+        PerformanceTier.TIER2:       "claude-haiku-5-5",
+        PerformanceTier.TIER3:       "claude-haiku-5-5",
     }
 
-    # Models that support adaptive thinking (Sonnet 4.6+, Opus 4.6+).
-    # Haiku models do not support thinking — silently skipped when thinking_effort is set.
+    # Tiers served by the small model; CLAUDE_SMALL_MODEL repoints all of them at once
+    # (e.g. back to claude-haiku-4-5-20251001) without a redeploy. See __init__.
+    _SMALL_MODEL_TIERS = (
+        PerformanceTier.ECO, PerformanceTier.BALANCED,
+        PerformanceTier.TIER1, PerformanceTier.TIER2, PerformanceTier.TIER3,
+    )
+
+    # Models that take adaptive thinking + output_config.effort (Sonnet 4.6+, Opus 4.6+, Haiku 5.5+).
+    # Haiku 4.5 does not — effort is silently skipped for it. `claude-haiku-5` is a prefix that
+    # excludes `claude-haiku-4-5-…`. Haiku 5.5 400s on `thinking.type=enabled` and `between_tools`.
     # Upgraded 2026-05-30: ULTRA → opus-4-8 (same price as 4-7, better benchmarks).
     # See decisions/claude_ultra_tier_to_opus_4_8_plus_dr_gate_unification.md.
-    _THINKING_MODELS = ("claude-sonnet", "claude-opus")
+    _THINKING_MODELS = ("claude-sonnet", "claude-opus", "claude-haiku-5")
 
     # Models that support dynamic filtering web search (web_search_20260209 / web_fetch_20260209).
     # Haiku 4.5 only supports the legacy web_search_20250305 (no dynamic filtering, no code_execution).
@@ -213,6 +221,12 @@ class ClaudeAdapter(LLMPort):
         override = performance_model or os.getenv("CLAUDE_PERFORMANCE_MODEL")
         if override:
             self.MODEL_TIERS = {**self.MODEL_TIERS, PerformanceTier.PERFORMANCE: override}
+        # Same lever for the small-model tiers (Haiku 5.5 rollout → Haiku 4.5).
+        small_override = os.getenv("CLAUDE_SMALL_MODEL")
+        if small_override:
+            self.MODEL_TIERS = {
+                **self.MODEL_TIERS, **{t: small_override for t in self._SMALL_MODEL_TIERS},
+            }
 
     async def generate_content(self, request: LLMRequest) -> LLMResponse:
         model_name = request.model_name
