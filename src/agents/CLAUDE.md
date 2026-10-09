@@ -337,7 +337,11 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   non-internal) + `intent_remap` (dispatch-time intent substitution; currently unused — Quick's is `{}`);
   (C) `context_schemas` — per-intent typed param contracts; when present the orchestrator fills
   structured `context` instead of a bare `query` (used by `save_to_memory`, `get_email_details`,
-  `get_email_attachment`). `eager: bool` (default True): eager → created in `ensure_agents_for_user()`;
+  `get_email_attachment`). **Every field a `capability_descriptions` prose names in `payload: {…}` /
+  `context={…}` must be declared here** — `context` is generated from `context_schemas` only, and an
+  undeclared key the prose asks for caused 64k-token whitespace runaways on OpenAI (2026-10-07/09).
+  Enforced by `tests/unit/infrastructure/test_manifest_prose_matches_tool_schema.py`; see
+  `decisions/delegate_tool_contract_and_strict.md`. `eager: bool` (default True): eager → created in `ensure_agents_for_user()`;
   lazy (`eager=False`) → created on first delegation via `AgentFactoryPort.create_agent_on_demand()`
   (DocGenerator/DocPlanner/Pdf/Html/DeepResearch/ClaudeDeepResearchRunner/FileManagement). Specialists
   registered via `ALL_DESCRIPTORS` in `main.py`; orchestrators set a class-level `_descriptor`

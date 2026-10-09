@@ -294,6 +294,15 @@ DEEP_RESEARCH_AGENT = AgentDescriptor(
             "used as confirmation to the user and stored as metadata>\"}"
         ),
     },
+    context_schemas={
+        Intent.DEEP_RESEARCH: {
+            "language": "Language the report must be written in (e.g. 'Ukrainian')",
+            "brief": (
+                "One-sentence summary of the research request, max 400 chars — "
+                "used as confirmation to the user and stored as metadata"
+            ),
+        },
+    },
     internal=False,
 )
 
@@ -307,7 +316,7 @@ TASKS = AgentDescriptor(
     capability_descriptions={
         Intent.MANAGE_USER_TASKS: (
             "Manage the user's personal task list (MS To Do). "
-            "payload: {\"query\": \"<delegation>\", \"context\": \"<optional background>\"}\n"
+            "payload: {\"query\": \"<delegation>\", \"background\": \"<optional background>\"}\n"
             "\n"
             "Write query as a natural language instruction — not a command. "
             "Include everything you know: what the user wants, what the task is about, "
@@ -316,6 +325,11 @@ TASKS = AgentDescriptor(
             "\n"
             "Write the delegation in the same language you use to respond to the user."
         ),
+    },
+    context_schemas={
+        Intent.MANAGE_USER_TASKS: {
+            "background": "Optional background the task agent should know (why, preferences, related plans)",
+        },
     },
     internal=False,
 )
