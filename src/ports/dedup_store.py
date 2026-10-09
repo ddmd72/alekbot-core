@@ -18,3 +18,7 @@ class DedupStore(ABC):
     @abstractmethod
     async def try_mark_processed(self, event_id: str) -> bool:
         """Atomically mark event as processed. Return True if newly marked, False if duplicate."""
+
+    @abstractmethod
+    async def release(self, event_id: str) -> None:
+        """Remove a mark so the event can be processed again (its attempt failed)."""

@@ -391,6 +391,17 @@ class EnvironmentConfig:
         return f"{prefix}event_dedup"
 
     @property
+    def worker_task_dedup_collection(self) -> str:
+        """
+        Claims on Cloud Tasks agent_execution deliveries, keyed by task name, so a
+        redelivered task is not executed twice (Cloud Tasks is at-least-once).
+        Dev: development_worker_task_dedup
+        Prod: worker_task_dedup
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}worker_task_dedup"
+
+    @property
     def long_turns_collection(self) -> str:
         """
         Long chat turns (LONG_RUNNING_TURNS_RFC §5.4). Dev: development_long_turns
