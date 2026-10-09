@@ -78,6 +78,13 @@ class FirestoreDedupStore(DedupStore):
                 logger.info(f"⏭️ Atomic check confirmed duplicate for event {event_id[:12]}...")
             return not is_dup
 
+    async def release(self, event_id: Optional[str]) -> None:
+        """Delete the mark so a retry of a failed attempt is processed, not skipped."""
+        if not event_id:
+            return
+        await self.db_client.collection(self.collection_name).document(event_id).delete()
+        logger.debug(f"🧹 Dedup mark released for event {event_id[:12]}...")
+
 
 class FirestoreEventDedupStore(FirestoreDedupStore):
     """

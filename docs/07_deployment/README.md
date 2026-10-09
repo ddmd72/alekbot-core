@@ -315,3 +315,21 @@ working implementation).
 ---
 
 **Last Updated:** 2026-03-14
+
+## Cloud Tasks redelivery dedup
+
+`docs/04_solution_strategy/decisions/worker_task_dedup.md`. Two one-time owner steps, neither blocks
+a deploy:
+
+1. **TTL policy on the task-claim collection** (per database). Each `agent_execution` delivery
+   creates a claim document with `expires_at` 30 min after creation; without the policy they are
+   never deleted:
+   ```bash
+   gcloud firestore fields ttls update expires_at --collection-group=<prefix>worker_task_dedup \
+     --enable-ttl --database=us-production --project=<PROJECT_ID>
+   ```
+2. **Attempt logging on the agent queue**, so a redelivery can be told from a retry:
+   ```bash
+   gcloud tasks queues update agent-tasks-dev --location=us-central1 \
+     --log-sampling-ratio=1.0 --project=<PROJECT_ID>
+   ```

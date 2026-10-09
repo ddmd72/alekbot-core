@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from ..services.short_link_service import ShortLinkService
     from ..services.companion_extraction_service import CompanionExtractionService
 
+from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain.notification_kind import NotificationKind
 from ..infrastructure.notification_sla import dispatch_deadline_s
@@ -137,9 +138,14 @@ class WorkerHandler:
         self._email_embedding_repair = email_embedding_repair
         self._companion_extraction = companion_extraction
 
-    async def handle(self, payload: dict) -> Optional[Tuple[dict, int]]:
+    async def handle(
+        self, payload: dict, delivery: Optional[CloudTaskDelivery] = None,
+    ) -> Optional[Tuple[dict, int]]:
         """
         Dispatch to appropriate handler by task_type.
+
+        ``delivery`` — the Cloud Tasks headers of this request (None outside Cloud Tasks);
+        agent_execution uses it to skip a redelivered task.
 
         Returns (body_dict, status_code) for known task_types, or None for
         unknown types (caller should handle fallback).
@@ -149,7 +155,7 @@ class WorkerHandler:
             user_id = payload.get("context", {}).get("user_id", "")
             if user_id:
                 await self._agent_factory.ensure_agents_for_user(user_id)
-            result = await self._agent_worker.handle_task(payload)
+            result = await self._agent_worker.handle_task(payload, delivery=delivery)
             return result, 200
         elif task_type == "email_indexing":
             return await self._handle_email_indexing(payload)
