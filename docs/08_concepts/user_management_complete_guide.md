@@ -218,6 +218,10 @@ async def join_team():
 
 
 
+> **Historical.** `IdentityResolver` was deleted on 2026-10-09: it had no callers since
+
+
+
 ```python
 
     

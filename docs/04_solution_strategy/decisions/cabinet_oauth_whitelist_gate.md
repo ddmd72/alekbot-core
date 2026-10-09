@@ -69,9 +69,9 @@ revocation, rotate the session signing secret, which logs everyone out.
 - **Gate in `oauth_callback` (web layer).** `link_oauth_identity` and any future caller of the
   service would bypass it. The service is the one place every OAuth sign-in passes through.
 
-## Leftover
+## Also deleted: `IdentityResolver`
 
-`src/services/identity_resolver.py` still contains an auto-registering `_register_new_user` for
-platform identities. It has no callers; `IAMService` replaced it. It is likely the source of the
-two email-less Slack users created in January 2026. It is not reachable today. Delete it on the next
-pass through `services/`.
+`src/services/identity_resolver.py` contained an auto-registering `_register_new_user` for
+platform identities. It had no callers, because `IAMService` replaced it, and it was likely the
+source of the two email-less Slack users created in January 2026. It was deleted along with its
+test so that no second registration path is left in the code.
