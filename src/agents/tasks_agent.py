@@ -359,7 +359,7 @@ class TasksAgent(BaseAgent):
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
         query = message.payload.get("query", "")
-        reasoning = message.payload.get("context", "")
+        reasoning = message.payload.get("background", "")
         user_id = message.context.get("user_id") or self.user_id
         account_id = message.context.get("account_id")
 

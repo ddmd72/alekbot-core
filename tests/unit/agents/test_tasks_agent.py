@@ -367,8 +367,10 @@ class TestExecuteEdgeCases:
         from src.domain.agent import AgentStatus
         assert response.status == AgentStatus.SUCCESS
 
-    async def test_reasoning_appended_when_context_in_payload(self):
-        """payload['context'] is appended to user_text."""
+    async def test_legacy_context_key_in_payload_is_not_read(self):
+        """payload['context'] is no longer a TasksAgent field: the declared context_schemas
+        field is 'background' (see test_reasoning_appended_when_background_in_payload).
+        An undeclared key must not silently feed the prompt (tool-contract strictness)."""
         agent, provider, indexing = _make_agent()
         provider.list_tasks.return_value = []
         captured = []
@@ -389,6 +391,37 @@ class TestExecuteEdgeCases:
             recipient="tasks_agent",
             intent=AgentIntent.QUERY,
             payload={"query": "List tasks", "context": "User prefers morning"},
+            context={"user_id": _USER_ID, "account_id": "acc-1"},
+        )
+        await agent.execute(msg)
+        first_user_text = captured[0].messages[0].parts[0].text
+        assert "List tasks" in first_user_text
+        assert "User prefers morning" not in first_user_text
+        assert "Context:" not in first_user_text
+
+    async def test_reasoning_appended_when_background_in_payload(self):
+        """payload['background'] — the declared context field (manifest context_schemas) —
+        is appended to user_text."""
+        agent, provider, indexing = _make_agent()
+        provider.list_tasks.return_value = []
+        captured = []
+
+        async def capture(req, turn=1):
+            captured.append(req)
+            resp = MagicMock(spec=LLMResponse)
+            resp.tool_calls = []
+            resp.text = "Done."
+            resp.raw_content = None
+            return resp
+
+        agent._call_llm = capture
+
+        msg = AgentMessage(
+            task_id="t1",
+            sender="orch",
+            recipient="tasks_agent",
+            intent=AgentIntent.QUERY,
+            payload={"query": "List tasks", "background": "User prefers morning"},
             context={"user_id": _USER_ID, "account_id": "acc-1"},
         )
         await agent.execute(msg)
