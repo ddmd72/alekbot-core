@@ -162,3 +162,40 @@ def mock_job_port():
     port = AsyncMock(spec=DeepResearchPort)
     port.create_interaction.return_value = "job_default"
     return port
+
+
+# ---------------------------------------------------------------------------
+# language + brief — DEEP_RESEARCH_RFC §3.3 (restored 2026-10-09)
+# ---------------------------------------------------------------------------
+
+async def test_execute_appends_language_instruction(mock_job_port):
+    mock_job_port.create_interaction.return_value = "job_lang"
+    agent = _make_agent(mock_job_port)
+
+    await agent.execute(_make_message(query="Spain housing market", language="Ukrainian"))
+
+    sent = mock_job_port.create_interaction.call_args.kwargs["query"]
+    assert sent == "Spain housing market\n\nPlease write the entire response in Ukrainian."
+
+
+async def test_execute_language_defaults_to_english(mock_job_port):
+    mock_job_port.create_interaction.return_value = "job_lang_default"
+    agent = _make_agent(mock_job_port)
+    msg = _make_message(query="Q")
+    del msg.payload["language"]
+
+    await agent.execute(msg)
+
+    sent = mock_job_port.create_interaction.call_args.kwargs["query"]
+    assert sent.endswith("Please write the entire response in English.")
+
+
+async def test_execute_passes_brief_as_original_query(mock_job_port):
+    mock_job_port.create_interaction.return_value = "job_brief"
+    agent = _make_agent(mock_job_port)
+    msg = _make_message(query="Long research brief " * 20)
+    msg.payload["brief"] = "One-line summary"
+
+    await agent.execute(msg)
+
+    assert mock_job_port.create_interaction.call_args.kwargs["original_query"] == "One-line summary"

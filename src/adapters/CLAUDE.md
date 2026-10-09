@@ -113,6 +113,10 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   `responseSchema`), which accepts deep nesting. **Known issue:** schema + Groovy DSL prompt →
   Flash Lite returns empty responses (session 7, confirmed by 22+ tests). This is why MemorySearch
   uses `response_mime_type` without `response_schema`.
+  **Function tools always carry `"strict": false` (OpenAI + Grok).** Omitted, OpenAI's Responses
+  API defaults it to `true` and rewrites the schema (all-required, `additionalProperties:false`);
+  a masked key then becomes a whitespace loop to `max_output_tokens`. See
+  `decisions/delegate_tool_contract_and_strict.md`.
   OpenAI: forwarded as `text.format={"type":"json_schema","strict":false}` — the schema IS sent
   and natively enforced (`OpenAIAdapter._to_openai_json_schema` lowercases Gemini-style uppercase
   types; suppressed when `use_grounding` is set — Web Search + JSON mode → 400). Grok: same

@@ -262,6 +262,7 @@ class GrokAdapter(LLMPort):
                     "text is not delivered to the user."
                 ),
                 "parameters": self._to_json_schema(response_schema),
+                "strict": False,
             }]
             synthesized_terminal = True
         elif isinstance(response_schema, dict):
@@ -673,6 +674,9 @@ class GrokAdapter(LLMPort):
                 tool_type = tool.get("type", "function")
 
                 if tool_type == "function":
+                    # strict=False is xAI's default (probed 2026-10-09); sent explicitly so a
+                    # provider default change cannot turn on strict grammar. See
+                    # decisions/delegate_tool_contract_and_strict.md.
                     api_tools.append({
                         "type": "function",
                         "name": tool["name"],
@@ -680,7 +684,8 @@ class GrokAdapter(LLMPort):
                         "parameters": tool.get("parameters", {
                             "type": "object",
                             "properties": {}
-                        })
+                        }),
+                        "strict": False,
                     })
                 else:
                     # Native xAI tool — already in the right shape

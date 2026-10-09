@@ -6,7 +6,7 @@ Adapter for OpenAI Responses API.
 Implements the LLMPort port with full feature parity with GeminiAdapter and ClaudeAdapter.
 
 Supported features:
-- Native function/tool calling (internally-tagged, strict by default)
+- Native function/tool calling (internally-tagged; strict=False sent explicitly — the API defaults it to True)
 - Web search (native {"type": "web_search"} tool with url_citation annotations)
 - JSON mode (text.format)
 - Streaming
@@ -668,7 +668,14 @@ class OpenAIAdapter(LLMPort):
         """Convert domain tool definitions to Responses API format.
 
         Responses API uses internally-tagged format (no nested function wrapper):
-        {"type": "function", "name": "...", "parameters": {...}}
+        {"type": "function", "name": "...", "parameters": {...}, "strict": False}
+
+        `strict` is always sent as False. Omitted, the Responses API defaults it to True and
+        rewrites the schema (every property required, additionalProperties:false — probed
+        2026-10-09). delegate_to_specialist's `context` is one object shared by ~15 intents,
+        so strict grammar forces every intent's field on every call, and a key the prompt asks
+        for but the schema lacks becomes a masked token: the model emitted whitespace up to
+        max_output_tokens (64k, ~13 min). See decisions/delegate_tool_contract_and_strict.md.
         """
         api_tools = []
         for tool in tools:
@@ -681,6 +688,7 @@ class OpenAIAdapter(LLMPort):
                         "type": "object",
                         "properties": {},
                     }),
+                    "strict": False,
                 })
         return api_tools
 

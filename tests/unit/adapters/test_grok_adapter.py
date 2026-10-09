@@ -1240,3 +1240,38 @@ async def test_xhigh_passes_through(model):
     )
 
     assert captured["reasoning"] == {"effort": "xhigh"}
+
+
+# ============================================================================
+# strict=False on function tools — decisions/delegate_tool_contract_and_strict.md
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_function_tools_send_strict_false():
+    """xAI defaults strict to False (probed 2026-10-09); sent explicitly so a provider
+    default change cannot switch on strict grammar for our shared context object."""
+    adapter = GrokAdapter(api_key="test-key")
+    captured = {}
+    _install(adapter, captured=captured)
+
+    await adapter.generate_content(request=LLMRequest(model_name="grok-4.6", messages=MESSAGES, tools=TOOLS))
+
+    function_tools = [t for t in captured["tools"] if t.get("type") == "function"]
+    assert function_tools and all(t["strict"] is False for t in function_tools)
+
+
+@pytest.mark.asyncio
+async def test_synthesized_terminal_tool_sends_strict_false():
+    adapter = GrokAdapter(api_key="test-key")
+    captured = {}
+    _install(adapter, captured=captured)
+
+    await adapter.generate_content(request=LLMRequest(
+        model_name="grok-4.6",
+        messages=MESSAGES,
+        tools=TOOLS,
+        response_schema={"type": "object", "properties": {"full_response": {"type": "string"}}},
+    ))
+
+    assert captured["tools"][-1]["name"] == "deliver_response"
+    assert captured["tools"][-1]["strict"] is False
