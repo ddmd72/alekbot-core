@@ -229,6 +229,10 @@ stale `running` jobs.
   `billing_daily_summary`, `repair_email_embeddings`. Full reference: `docs/07_deployment/SCHEDULERS.md`.
   `task_type=telegram_update` is intercepted in `/worker` **before** reaching `WorkerHandler` (routed
   straight to the Telegram adapter, main.py) — it is not in the dispatch list above.
+  **`agent_execution` is claimed by Cloud Tasks task name** (`{prefix}worker_task_dedup`, TTL 30 min):
+  Cloud Tasks is at-least-once, and a redelivered task is skipped (200 `duplicate`). A raising attempt
+  releases its claim, so the 500 retry still runs. `/worker` logs the `X-CloudTasks-*` headers. See
+  `decisions/worker_task_dedup.md`.
 - **`UserNotificationService`** — background notifications to the user's last active channel
   (`user_notification_state`). `notify()` routes `system_alert` through a formatter agent (Quick by
   default; `agent_id_override` → Smart for reminders/daily-review) → formatted delivery + session history.

@@ -19,6 +19,7 @@ import base64
 from typing import TYPE_CHECKING, Dict, Any, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
+from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.notification_kind import NotificationKind
 from ..domain.request_context import RequestContext
 from ..services.deep_research_delivery import (
@@ -31,6 +32,7 @@ from ..infrastructure.agent_manifest import Intent
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from ..ports.dedup_store import DedupStore
     from ..ports.media_storage_port import MediaStoragePort
     from ..services.file_link_service import FileLinkService
     from ..services.short_link_service import ShortLinkService
@@ -59,8 +61,10 @@ class AgentWorkerHandler:
         doc_delivery_service: Optional[DocumentDeliveryService] = None,
         link_service: Optional["FileLinkService"] = None,
         short_link_service: Optional["ShortLinkService"] = None,
+        task_dedup: Optional["DedupStore"] = None,
     ) -> None:
         self._coordinator = coordinator
+        self._task_dedup = task_dedup
         self._notification = notification_service
         self._media_storage = media_storage
         self._task_queue = task_queue
@@ -68,7 +72,9 @@ class AgentWorkerHandler:
         self._link_service = link_service
         self._short_link_service = short_link_service
 
-    async def handle_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_task(
+        self, payload: Dict[str, Any], delivery: Optional[CloudTaskDelivery] = None,
+    ) -> Dict[str, Any]:
         """
         Execute an async agent task.
 
@@ -81,6 +87,11 @@ class AgentWorkerHandler:
             "context":  {"user_id": "...", "account_id": "...", ...}
         }
 
+        ``delivery`` — Cloud Tasks headers. Cloud Tasks delivers at least once, so a task
+        is claimed by name before it runs: a second delivery of a claimed task is skipped
+        (200, nothing re-run). The claim is released when the attempt raises, so the
+        retry Cloud Tasks makes after a failed attempt still runs.
+
         Returns a result dict (used by the HTTP endpoint for the response body).
         """
         agent_id = payload.get("agent_id", "unknown")
@@ -90,6 +101,9 @@ class AgentWorkerHandler:
 
         user_id = context.get("user_id", "")
         resolved_agent_id = f"{agent_id}_{user_id}" if user_id else agent_id
+
+        if not await self._claim(delivery, resolved_agent_id, intent):
+            return {"status": "duplicate", "agent_id": resolved_agent_id, "intent": intent}
 
         logger.info(
             f"[AgentWorkerHandler] Executing: agent={resolved_agent_id}, "
@@ -171,7 +185,47 @@ class AgentWorkerHandler:
             # An errand nobody waits for on the line must not fail silently (VOICE_COMPANION_RFC §4.15.2).
             elif intent == Intent.TELL_ALEK:
                 await self._notify_errand_failure(context, query)
+            await self._release(delivery)
             raise
+
+    async def _claim(
+        self, delivery: Optional[CloudTaskDelivery], agent_id: str, intent: str,
+    ) -> bool:
+        """Claim this task by name. False only when another delivery of the same task holds
+        the claim. No delivery headers or no store → True (nothing to dedup against).
+
+        Fails open: a store error runs the task — a duplicate beats a lost task.
+        """
+        if delivery is None or self._task_dedup is None:
+            return True
+        try:
+            claimed = await self._task_dedup.try_mark_processed(delivery.task_name)
+        except Exception as exc:
+            logger.error(
+                "[AgentWorkerHandler] task claim failed, running anyway: task=%s error=%s",
+                delivery.task_name, exc, exc_info=True,
+            )
+            return True
+        if not claimed:
+            logger.warning(
+                "[AgentWorkerHandler] Skipping redelivered task: task=%s agent=%s intent=%s "
+                "retry_count=%s execution_count=%s",
+                delivery.task_name, agent_id, intent,
+                delivery.retry_count, delivery.execution_count,
+            )
+        return claimed
+
+    async def _release(self, delivery: Optional[CloudTaskDelivery]) -> None:
+        """Drop the claim after a raising attempt so Cloud Tasks' retry runs the task."""
+        if delivery is None or self._task_dedup is None:
+            return
+        try:
+            await self._task_dedup.release(delivery.task_name)
+        except Exception as exc:
+            logger.error(
+                "[AgentWorkerHandler] claim release failed — the retry will be skipped: "
+                "task=%s error=%s", delivery.task_name, exc, exc_info=True,
+            )
 
     async def _deliver_deep_research_result(
         self, response: Any, context: Dict[str, Any]
