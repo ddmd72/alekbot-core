@@ -218,6 +218,10 @@ async def join_team():
 
 ### 4.1 IdentityResolver Logic
 
+> **Historical.** `IdentityResolver` was deleted on 2026-10-09: it had no callers since
+> `IAMService.authorize` replaced it, and it still auto-registered unknown platform users.
+> See `decisions/cabinet_oauth_whitelist_gate.md`.
+
 ```python
 async def resolve_user(self, platform: str, platform_user_id: str, message_text: str = None):
     # 1. Check existing link

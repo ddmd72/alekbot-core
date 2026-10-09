@@ -267,7 +267,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── cost_calculator.py   # Token cost calculation utilities
 │   ├── embedding_service.py # Google Text Embeddings
 │   ├── file_upload_service.py # 🆕 File management implementation
-│   ├── identity_resolver.py # Resolve platform IDs to user identities
 │   ├── prompt_builder.py    # Compositional Prompt Builder + UserPromptBuilder (merged)
 │   ├── prompt_component_service.py # 🆕 3-level component resolution service
 │   ├── provider_registry.py # 🆕 LLM Provider Service Locator
@@ -448,7 +447,6 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`cloud_tasks_service.py`**: Cloud Tasks integration (legacy, moved to `adapters/gcp_task_queue.py`).
 -   **`embedding_service.py`**: Generates embeddings using `text-embedding-004` (Latency <0.5s, multilingual support).
 -   **`gcs_service.py`**: (Legacy) Google Cloud Storage interactions for YAML-based memory (deprecated in favor of Firestore).
--   **`identity_resolver.py`**: Resolves platform identities (e.g., Slack ID → user UUID).
 -   **`prompt_builder.py`**: Compositional prompt builder with component-level caching. Now supports unified dynamic `biographical_context` component with explicit on-demand invalidation.
 -   **`email_embedding_repair_service.py`**: 🆕 Async repair job that fetches emails with `embedding_pending=True` and computes their vectors.
 -   **`email_indexing_service.py`**: 🆕 Paginated inbox-to-Firestore pipeline. One call = one page of emails (fetch → classify → store). Writes `IndexedEmail` to Firestore; sets `embedding_pending=True` for async vector computation. Returns updated `IndexingJob` with `next_page_token` for resume.

@@ -2,7 +2,7 @@
 IAM (Identity & Access Management) Service.
 
 Centralized authorization logic for the system.
-Replaces IdentityResolver with clean, testable IAM-centric architecture.
+Replaced the legacy IdentityResolver (deleted 2026-10-09) with an IAM-centric architecture.
 """
 from typing import Optional
 
