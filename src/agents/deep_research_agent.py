@@ -79,6 +79,7 @@ class DeepResearchAgent(BaseAgent):
     async def execute(self, message: AgentMessage) -> AgentResponse:
         query      = message.payload.get("query", "")
         brief      = message.payload.get("brief", query)  # short summary for metadata; falls back to query
+        language   = message.payload.get("language", "English")  # DEEP_RESEARCH_RFC §3.3
         user_id    = message.context.get("user_id", "")
         account_id = message.context.get("account_id", "")
 
@@ -93,9 +94,7 @@ class DeepResearchAgent(BaseAgent):
             except Exception as e:
                 logger.warning("[DeepResearchAgent] PromptBuilder failed, proceeding without system prompt: %s", e)
 
-        full_query = (
-            f"{query}"
-        )
+        full_query = f"{query}\n\nPlease write the entire response in {language}."
         logger.info(
             "[DeepResearch] Submitting job (%d chars): %s...",
             len(full_query), full_query[:80],

@@ -1169,3 +1169,52 @@ def test_no_override_env_keeps_class_tiers(monkeypatch):
     monkeypatch.delenv("OPENAI_TIER_OVERRIDES", raising=False)
     adapter = OpenAIAdapter(api_key="test-key")
     assert adapter.MODEL_TIERS is OpenAIAdapter.MODEL_TIERS
+
+
+# ============================================================================
+# strict=False on function tools — decisions/delegate_tool_contract_and_strict.md
+# ============================================================================
+
+def test_convert_tools_sends_strict_false():
+    """Omitted, the Responses API defaults `strict` to True and rewrites the schema (all
+    properties required, additionalProperties:false). Under that grammar a key the prompt
+    asks for but the schema lacks became a 64k-token whitespace flood (2026-10-07/09)."""
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    result = adapter._convert_tools([{"name": "foo"}, {"name": "bar", "parameters": {"type": "object"}}])
+
+    assert [t["strict"] for t in result] == [False, False]
+
+
+@pytest.mark.asyncio
+async def test_generate_content_sends_strict_false_and_schema_untouched():
+    """At the SDK boundary: strict=False, and optional context properties stay optional."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    captured = {}
+
+    async def mock_create(**kwargs):
+        captured.update(kwargs)
+        return _make_response(text="ok")
+
+    adapter.client.responses.create = mock_create
+    params = {
+        "type": "object",
+        "properties": {
+            "intent": {"type": "string"},
+            "query": {"type": "string"},
+            "context": {"type": "object", "properties": {"language": {"type": "string"},
+                                                         "brief": {"type": "string"}}},
+        },
+        "required": ["intent", "query"],
+    }
+
+    await adapter.generate_content(request=LLMRequest(
+        model_name="gpt-5-mini",
+        messages=[Message(role="user", parts=[MessagePart(text="go")])],
+        tools=[{"name": "delegate_to_specialist", "description": "d", "parameters": params}],
+    ))
+
+    sent = [t for t in captured["tools"] if t.get("type") == "function"]
+    assert len(sent) == 1
+    assert sent[0]["strict"] is False
+    assert sent[0]["parameters"] == params
