@@ -12,6 +12,7 @@ from src.web.twilio_signature_verifier import verify_twilio_signature
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from src.web.mcp_error_logger import McpErrorLogger
+from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
@@ -30,6 +31,7 @@ from src.infrastructure.agent_registry import AgentRegistry
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
 from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.handlers.agent_worker_handler import AgentWorkerHandler
+from src.domain.cloud_task_delivery import CloudTaskDelivery
 from src.domain.agent import AgentConfig
 from src.agents.infrastructure.billing_agent import BillingAgent
 from src.agents.infrastructure.logger_agent import LoggerAgent
@@ -448,6 +450,14 @@ async def main():
         agent_worker_handler._doc_delivery_service = doc_delivery_service
         agent_worker_handler._link_service = file_link_service
         agent_worker_handler._short_link_service = short_link_service
+        # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
+        # from running twice. TTL 1800s = the longest dispatch_deadline Cloud Tasks allows,
+        # so every attempt of a task is over before its claim expires.
+        agent_worker_handler._task_dedup = FirestoreDedupStore(
+            db_client=db_client,
+            collection_name=env_config.worker_task_dedup_collection,
+            ttl_seconds=1800,
+        )
 
         # Anthropic client — created once, shared by ClaudeDeepResearchRunnerAgent instances.
         # The agent receives the client via constructor; does not import or instantiate the SDK.
@@ -1178,10 +1188,17 @@ async def main():
                             logger.warning("Rejected unauthenticated /worker request")
                             return jsonify({"error": "unauthorized"}), 401
                     payload = await request.get_json(silent=True) or {}
+                    delivery = CloudTaskDelivery.from_headers(request.headers)
+                    if delivery is not None:
+                        logger.info(
+                            "📥 /worker delivery: task_type=%s task=%s retry_count=%s execution_count=%s",
+                            payload.get("task_type"), delivery.task_name,
+                            delivery.retry_count, delivery.execution_count,
+                        )
                     if payload.get("task_type") == "telegram_update" and telegram_adapter is not None:
                         body, status = await telegram_adapter.handle_queued_update(payload)
                         return jsonify(body), status
-                    result = await worker_handler.handle(payload)
+                    result = await worker_handler.handle(payload, delivery=delivery)
                     if result is not None:
                         body, status = result
                         return jsonify(body), status

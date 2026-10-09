@@ -1888,3 +1888,21 @@ class TestHandleCompanionConsolidation:
         worker, ns = _make_full_worker()
         body, status = await worker.handle({"task_type": "sweep_companion_consolidation"})
         assert status == 501
+
+
+# ---------------------------------------------------------------------------
+# agent_execution — Cloud Tasks delivery passed through for redelivery dedup
+# ---------------------------------------------------------------------------
+
+async def test_agent_execution_passes_delivery_to_agent_worker():
+    from src.domain.cloud_task_delivery import CloudTaskDelivery
+
+    worker, _ = _make_worker()
+    worker._agent_worker.handle_task = AsyncMock(return_value={"status": "success"})
+    delivery = CloudTaskDelivery(task_name="t-1", retry_count=0, execution_count=0)
+    payload = {"task_type": "agent_execution", "context": {"user_id": _USER_ID}}
+
+    body, status = await worker.handle(payload, delivery=delivery)
+
+    worker._agent_worker.handle_task.assert_awaited_once_with(payload, delivery=delivery)
+    assert status == 200
