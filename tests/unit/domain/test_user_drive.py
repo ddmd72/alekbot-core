@@ -81,8 +81,10 @@ class TestNames:
         ref = "docs/u1/3f2b8c1e-9a4d-4e2f-8b7a-1c2d3e4f5a6b-Отчёт за май.docx"
         assert drive_filename(None, ref) == "Отчёт за май.docx"
 
-    def test_chat_upload_keeps_name(self):
-        assert drive_filename(None, "image (3).png") == "image (3).png"
+    def test_chat_upload_drops_chat_store_dedup_suffix(self):
+        # Owner decision 2026-10-10 (reversing the same-day "keep the chat store's name"): a re-sent
+        # chat file is saved under the name the user uploaded, so the duplicate check can see it.
+        assert drive_filename(None, "image (3).png") == "image.png"
 
     def test_requested_name_gets_source_extension(self):
         assert drive_filename("Договор аренды", "lease.pdf") == "Договор аренды.pdf"
