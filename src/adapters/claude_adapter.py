@@ -16,6 +16,7 @@ from ..ports.llm_port import (
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
 )
+from ..domain.llm import FinishReason
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
     LLMClientError,
@@ -1093,6 +1094,23 @@ class ClaudeAdapter(LLMPort):
                 })
         return claude_tools
 
+    _STOP_REASONS = {
+        "end_turn": FinishReason.STOP,
+        "stop_sequence": FinishReason.STOP,
+        "tool_use": FinishReason.STOP,
+        "max_tokens": FinishReason.MAX_TOKENS,
+        "model_context_window_exceeded": FinishReason.MAX_TOKENS,
+        "refusal": FinishReason.SAFETY,
+    }
+
+    @classmethod
+    def _map_finish_reason(cls, response) -> Optional[FinishReason]:
+        """Normalize ``stop_reason``, so a truncated reply is not reported as empty."""
+        raw = getattr(response, "stop_reason", None)
+        if not isinstance(raw, str):
+            return None
+        return cls._STOP_REASONS.get(raw, FinishReason.OTHER)
+
     def _parse_response(self, response: types.Message) -> LLMResponse:
         self._raise_on_refusal(response)
         text = ""
@@ -1151,6 +1169,7 @@ class ClaudeAdapter(LLMPort):
         return LLMResponse(
             text=text,
             tool_calls=tool_calls,
+            finish_reason=self._map_finish_reason(response),
             raw_content=response,
             usage_metadata=usage_metadata,
         )
