@@ -203,6 +203,16 @@ class SkillFileMissing(Exception):
     """A file a skill or draft refers to is no longer stored (e.g. a draft file removed by TTL)."""
 
 
+class OAuthGrantRevokedError(ValueError):
+    """The provider rejected a refresh token (``invalid_grant``): the user revoked access,
+    changed their password, or the grant expired. Retrying cannot help; only a new
+    consent (reconnect) does.
+
+    A ValueError so every existing ``except ValueError`` / auth-keyword path that
+    handled the untyped refresh failure keeps handling this one unchanged.
+    """
+
+
 class AccessDeniedError(Exception):
     """An authenticated identity is not allowed into the system (whitelist gate).
 

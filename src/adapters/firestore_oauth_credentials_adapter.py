@@ -39,6 +39,7 @@ class FirestoreOAuthCredentialsAdapter(OAuthCredentialsPort):
             "token_expiry": creds.token_expiry,
             "scopes": creds.scopes,
             "email_address": creds.email_address,
+            "needs_reconnect": creds.needs_reconnect,
         }
 
     @staticmethod
@@ -57,6 +58,7 @@ class FirestoreOAuthCredentialsAdapter(OAuthCredentialsPort):
             token_expiry=expiry,
             scopes=data["scopes"],
             email_address=data["email_address"],
+            needs_reconnect=bool(data.get("needs_reconnect", False)),
         )
 
     async def get_credentials(

@@ -30,6 +30,7 @@ from ..domain.email import (
     EmailMetadata,
     OAuthCredentials,
 )
+from ..domain.exceptions import OAuthGrantRevokedError
 from ..ports.email_provider_port import EmailProviderPort
 from ..utils.logger import logger
 
@@ -232,9 +233,12 @@ class GmailProviderAdapter(EmailProviderPort):
                 data = await resp.json()
 
         if "error" in data:
-            raise ValueError(
+            message = (
                 f"Gmail token refresh failed: {data['error']} — {data.get('error_description', '')}"
             )
+            if data["error"] == "invalid_grant":
+                raise OAuthGrantRevokedError(message)
+            raise ValueError(message)
 
         logger.info(
             f"🔑 Gmail token refreshed for user={credentials.user_id[:8]} "

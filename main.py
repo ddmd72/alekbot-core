@@ -727,6 +727,7 @@ async def main():
             link_service=file_link_service,
             short_link_service=short_link_service,
             companion_extraction=companion_extraction_service,
+            oauth_credentials=oauth_credentials_port,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
