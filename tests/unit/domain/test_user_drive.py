@@ -90,6 +90,18 @@ class TestNames:
         assert drive_filename("lease.PDF", "lease.pdf") == "lease.PDF"
         assert drive_filename("notes.md", "x.txt") == "notes.md"
 
+    def test_requested_extension_survives_without_system_mime_db(self, monkeypatch):
+        # A slim image has no /etc/mime.types, and Python's built-in table knows neither
+        # .docx nor .yaml — a requested name must still not get the extension doubled.
+        monkeypatch.setattr("src.domain.user_drive.mimetypes.guess_type", lambda *a, **k: (None, None))
+        uuid_ref = "docs/u1/3f2b8c1e-9a4d-4e2f-8b7a-1c2d3e4f5a6b-report.docx"
+        assert drive_filename("Отчёт за май.docx", uuid_ref) == "Отчёт за май.docx"
+        assert drive_filename("Отчёт.DOCX", uuid_ref) == "Отчёт.DOCX"
+        assert drive_filename("Таблица.xlsx", "export.csv") == "Таблица.xlsx"
+        assert drive_filename("config.yaml", "settings.json") == "config.yaml"
+        assert drive_filename("Договор v2.1", "lease.pdf") == "Договор v2.1.pdf"
+        assert drive_filename("Отчёт за май", uuid_ref) == "Отчёт за май.docx"
+
     def test_forbidden_characters(self):
         assert sanitize_drive_filename('a/b:c*d?"e<f>g|h\\i.txt') == "a_b_c_d__e_f_g_h_i.txt"
         assert sanitize_drive_filename("   ...  ") == "file"
