@@ -1,14 +1,14 @@
 """A delete/replace that fails after the agent answered "still running" tells the user (USER_DRIVE_RFC §4.13)."""
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.agents.file_management_agent import FileManagementAgent
-from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
+from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.language import LanguageCode
 from src.domain.ui_messages import UIMessage
-from src.domain.user_drive import DeleteOutcome, DriveItem, UpdateOutcome
+from src.domain.user_drive import DeleteOutcome, DriveItem, DriveItemNotFoundError
 from src.infrastructure.agent_manifest import Intent
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
@@ -183,3 +183,74 @@ async def test_fast_failure_leaves_no_per_task_state(agent, drive):
     await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
     await _settle(agent)
     assert not agent._armed and not agent._targets
+
+
+async def _queued_behind(agent, drive, first_gate):
+    """Start a delete that holds the user's mutation lock until `first_gate` is set."""
+    async def slow_delete(user_id, item_id):
+        await first_gate.wait()
+        return DeleteOutcome(item=FILE, file_count=0)
+    drive.delete.side_effect = slow_delete
+    first = await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
+    assert agent.STILL_RUNNING in first.result
+
+
+async def test_queued_replace_with_a_missing_source_posts_a_notice(agent, drive, notifier):
+    """The handler RETURNS a failure (no raise) after "still running" was answered: still a notice."""
+    gate = asyncio.Event()
+    await _queued_behind(agent, drive, gate)
+    agent._conversion_service.resolve_bytes.side_effect = FileNotFoundError("gone")
+    resp = await agent.execute(_msg(Intent.UPDATE_FILE_IN_DRIVE, file_ref="drive:f1", source_ref="new.pdf"))
+    assert agent.STILL_RUNNING in resp.result
+    gate.set()
+    await _settle(agent)
+    texts = [c.args[2] for c in notifier.notify_raw.await_args_list]
+    assert texts == ["DEL Inbox/lease.pdf", "REPFAIL Inbox/lease.pdf"]
+
+
+async def test_queued_delete_that_succeeds_posts_receipts_only(agent, drive, notifier):
+    gate = asyncio.Event()
+    await _queued_behind(agent, drive, gate)
+    resp = await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
+    assert agent.STILL_RUNNING in resp.result
+    gate.set()
+    await _settle(agent)
+    texts = [c.args[2] for c in notifier.notify_raw.await_args_list]
+    assert texts == ["DEL Inbox/lease.pdf", "DEL Inbox/lease.pdf"]
+    assert not agent._armed
+
+
+def _wait_then_time_out():
+    """A wait_for that lets the mutation finish and THEN reports the wait as timed out — the
+    mutation is done exactly when the TimeoutError is caught."""
+    async def fake(fut, timeout):
+        await asyncio.wait([asyncio.ensure_future(fut)])
+        raise asyncio.TimeoutError
+    return fake
+
+
+async def test_mutation_done_at_the_timeout_answers_its_own_success(agent, drive, notifier):
+    drive.delete.return_value = DeleteOutcome(item=FILE, file_count=0)
+    with patch.object(asyncio, "wait_for", _wait_then_time_out()):
+        resp = await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
+    assert resp.status == AgentStatus.SUCCESS and resp.result == "Deleted Inbox/lease.pdf."
+    await _settle(agent)
+    notifier.notify_raw.assert_awaited_once()
+    assert notifier.notify_raw.await_args.args[2] == "DEL Inbox/lease.pdf"
+
+
+async def test_mutation_done_at_the_timeout_reports_its_own_exception(agent, drive, notifier):
+    drive.delete.side_effect = DriveItemNotFoundError("gone")
+    with patch.object(asyncio, "wait_for", _wait_then_time_out()):
+        resp = await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
+    assert resp.status == AgentStatus.FAILED and resp.error == agent._GONE
+    await _settle(agent)
+    notifier.notify_raw.assert_not_called()
+
+
+async def test_mutation_timed_out_itself_at_the_timeout_is_a_failure(agent, drive):
+    drive.delete.side_effect = asyncio.TimeoutError("socket timed out")
+    with patch.object(asyncio, "wait_for", _wait_then_time_out()):
+        resp = await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
+    assert resp.status == AgentStatus.FAILED and resp.error.startswith("Drive operation failed")
+    assert agent.STILL_RUNNING not in (resp.result or "")
