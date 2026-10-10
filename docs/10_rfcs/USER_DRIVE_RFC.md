@@ -8,8 +8,8 @@ Supersedes the draft `ONEDRIVE_FILES_RFC.md` (revisions 1–3, never merged).
 - Revision 5, after a Fable review and owner decisions: the coordinator does not pre-fetch drive refs (§4.4);
   timeouts and cancellation (§4.13); token cache, expiry and throttling (§4.2); percent-encoded paths (§4.3);
   human-readable names and duplicate handling on save (§4.7); `update` limited to append and replace-by-file,
-  full in-place editing deferred (§4.9); confirmations are receipts, not consent (§4.10); search stays plain until
-  step 2 (§4.11); vision caps (§4.6).
+  full in-place editing deferred (§4.9); confirmations are receipts, not consent (§4.10); no search until step 2
+  (§4.11, spike A6); vision caps (§4.6).
 - Revision 6, after a second Fable review and owner decisions: the agent answers the model honestly when a mutation
   outlives its wait, and mutations of one user run one at a time (§4.13); a started mutation completes even if the
   turn is cancelled (§4.13); token cache lives at most 5 minutes (§4.2); Unicode-normalized name comparison and the
@@ -30,7 +30,8 @@ Supersedes the draft `ONEDRIVE_FILES_RFC.md` (revisions 1–3, never merged).
   request for consent (§4.10).
 - Saved files get **human-readable names**; a name clash is resolved without ever overwriting (§4.7).
 - `update` in step 1 is **safe only**: append text, or replace with another file. Full editing comes later (§4.9).
-- Proper search comes **with indexing and embeddings** (step 2); step 1 keeps the provider's plain search (§4.11).
+- Search comes **with indexing and embeddings** (step 2). The provider's plain search does not work inside the App
+  Folder (spike A6, §7), so step 1 has listing only (§4.11).
 - Drive operations get a **120 s** timeout (§4.13). Per-file download cap **45 MB** (§4.6).
 - **The drive is the only long-term file store.** Chat attachments are transport (§4.5).
 - **File operations must not leak into long-term memory** (§4.12).
@@ -79,7 +80,7 @@ server remains possible later as another adapter behind `UserDrivePort`.
 |---|---|---|
 | "remember this file" (a chat attachment, or a document the bot produced) | saves it under a readable name to `Inbox/`, or to the folder the user named | `save_file_to_drive` |
 | "what's in Meetings?" | lists a folder (bounded) | `list_files_in_drive` |
-| "find the contract with X" | the provider's plain search over the area (§4.11) | `search_files_in_drive` |
+| "find the contract with X" | not in step 1 — lists folders instead; search comes in step 2 (§4.11, spike A6) | — |
 | "open it" | downloads and reads with the existing converters | `open_file_from_drive` |
 | "move it to Meetings/2026", "rename to …" | moves and/or renames a file or folder | `move_file_in_drive` |
 | "make a folder Contracts" | creates a folder (with missing parents) | `create_folder_in_drive` |
@@ -149,12 +150,12 @@ unquotes it, so a label shows `Встречи/2026`, not `%D0%92…`. If a path 
 mismatch), the adapter logs a warning and re-reads the item once; it never silently labels the item as top-level.
 
 **Refs must outlive the turn.** Tool results are not part of session history, so a `drive:` ref returned by
-`search_files_in_drive` would be gone on the next turn ("open the second one"). Every drive intent therefore
+`list_files_in_drive` would be gone on the next turn ("open the second one"). Every drive intent therefore
 returns the items it touched as `history_context={"drive_context": [...]}` (path + ref per item) — the mechanism
 `EmailSearchAgent` uses (`email_search_context`). `ConversationHandler` appends `*_context` blocks to `full_text`
 only; consolidation reads the summary, so these blocks never reach long-term memory (§4.12). They live as long as
-the turn stays inside the full-text tiering window (`history_recent_full_turns`); after that the model lists or
-searches again. That is enough for "open the second one"; long-term recall of files is step 2.
+the turn stays inside the full-text tiering window (`history_recent_full_turns`); after that the model lists
+again. That is enough for "open the second one"; long-term recall of files is step 2.
 
 Identity is the item id, not the path: the owner moves and renames things, the provider id survives both.
 
@@ -183,7 +184,7 @@ before a delete and log every not-connected call at ERROR (an `#alerts-dev` page
 `prefetch_file_ref` (default `True`) is set to `False` on `FILE_MANAGEMENT`. This also closes the backlog item
 "File resolution double-fetch" for chat `open_file`.
 
-All drive intents live on `FILE_MANAGEMENT` — one zero-LLM agent for every store. Known cost: eight more intents in
+All drive intents live on `FILE_MANAGEMENT` — one zero-LLM agent for every store. Known cost: seven more intents in
 the orchestrator's tool description on every request. One `manage_drive(action=…)` would save tokens but throw
 away the name signal, which is the whole point; not done. When the drive is not connected the intents are still
 declared and fail with a connect hint (§4.11); hiding intents per user needs a mechanism we do not have.
@@ -196,7 +197,7 @@ so the model drifted to the closer one. Files get an explicit hierarchy instead:
 - **The drive is the only long-term store.** Anything to be kept lives there.
 
 So the stores form a pipeline (chat → "remember" → drive), not competitors. Two structural facts keep drift
-unlikely: chat files have no list or search, so "find …" can only go to the drive; and saving is triggered by the
+unlikely: chat files have no list, so "what do I have in …" can only go to the drive; and saving is triggered by the
 user's explicit word, not chosen by the model. The remaining trap is "it is already saved" — a chat file has a label
 and a store, so on "remember this" the model may do nothing. `save_file_to_drive`'s description carries one line:
 chat attachments and generated documents are temporary; "remember / save / keep / put" a file always means this
@@ -322,7 +323,7 @@ the provider may already have applied the change. So:
   completes and its receipt goes out whatever happens to the call that started it;
 - **the agent waits for it at most 100 s** — inside its own 120 s, so `BaseAgent`'s timeout never fires for a
   mutation. If the operation is still running, the agent answers the model with a success-shaped status: "the
-  operation is still running and may complete; check with list/search before retrying; a receipt follows for
+  operation is still running and may complete; check with a listing before retrying; a receipt follows for
   deletes and replaces". No false "failed", no circuit-breaker failure, no invitation to retry blindly;
 - **mutations of one user run one at a time** (a per-user `asyncio.Lock`). A retry that arrives while the first is
   still running waits for it, and then the duplicate check (§4.7) sees the finished first save. Without the lock a
@@ -406,13 +407,13 @@ locales, the `CONSOLIDATION_TAXONOMY` token. Docs: root `CLAUDE.md`, `src/agents
   unchanged.
 - Routing prompt tests on the live Smart: "запомни этот файл" → `save_file_to_drive`, "запомни, что …" →
   `save_to_memory`; "запомни в Встречи" fills `folder`; a chat file opened on one turn, then "move it to Встречи"
-  on the next → `save_file_to_drive`, not `move_file_in_drive`; search, then "open the second one" on the next
+  on the next → `save_file_to_drive`, not `move_file_in_drive`; a listing, then "open the second one" on the next
   turn → `open_file_from_drive` with the second ref. The previous turn is seeded in the shape production stores:
   the reply text plus the `{"drive_context": [[…]]}` JSON block, refs not repeated in the prose.
 - Consolidation dry run per §4.12.
 - Live: connect; save by default and into a named folder; save the same file twice (no duplicate) and a different
   file under the same name (suffix, stated); move a file by hand in OneDrive and open it by the old ref; rename and
-  move through the bot; append to a `.md`; replace a file by a new version (receipt with sizes); search; delete a
+  move through the bot; append to a `.md`; replace a file by a new version (receipt with sizes); delete a
   file and a folder and see the receipts; restore the folder from the recycle bin.
 
 ### Spike results (2026-10-10)
