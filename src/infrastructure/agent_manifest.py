@@ -561,10 +561,12 @@ FILE_MANAGEMENT = AgentDescriptor(
         Intent.SAVE_FILE_TO_DRIVE: (
             "Keep a file on the user's drive, their long-term file area. Chat attachments ([File: ...]) and "
             "documents you produced are temporary; to remember, save, keep or put a FILE anywhere, always use "
-            "this intent (facts and text go to save_to_memory). Saves to Inbox unless the user named a folder. "
+            "this intent (facts go to save_to_memory). Also writes a new text file you composed (note, list, "
+            "CSV, JSON, SVG...). Saves to Inbox unless the user named a folder. "
             "Never overwrites: the reply states the name actually used. "
-            'Requires: context={"file_ref": "<ref from [File: ...] or a delivered document>"}; optional '
-            '"folder" ONLY when the user named one; optional "name" for a clear, human-readable file name.'
+            'Requires exactly one source: context={"file_ref": "<ref from [File: ...] or a delivered document>"} '
+            'or {"text": "<full content>", "name": "<name with extension>"}; optional '
+            '"folder" ONLY when the user named one; with file_ref, optional "name" for a clear file name.'
         ),
         Intent.LIST_FILES_IN_DRIVE: (
             "List a folder on the user's drive (folders first). Results are [Drive: ...] labels with refs. "
@@ -607,9 +609,11 @@ FILE_MANAGEMENT = AgentDescriptor(
             "file_ref": "Filename of the file to delete (e.g. 'report.docx')",
         },
         Intent.SAVE_FILE_TO_DRIVE: {
-            "file_ref": "Ref of the file to keep: name from a [File: ...] label, or a delivered document key",
+            "file_ref": "Ref of the file to keep: name from a [File: ...] label, or a delivered document key. Not with text",
+            "text": "Full content of a new text file you wrote. Not with file_ref",
             "folder": "Optional. Folder path on the drive, only if the user named one (e.g. 'Meetings/2026')",
-            "name": "Optional. Clear, human-readable file name; the extension is kept from the source if omitted",
+            "name": ("Optional with file_ref (extension kept from the source if omitted). Required with text: "
+                     "must end in .md .txt .csv .json .yaml .yml .html .svg or .xml"),
         },
         Intent.LIST_FILES_IN_DRIVE: {"folder": "Optional. Folder path on the drive; omit for the top level"},
         Intent.OPEN_FILE_FROM_DRIVE: {"file_ref": "drive:<id> ref from a [Drive: ...] label"},

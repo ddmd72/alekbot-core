@@ -113,6 +113,7 @@ Chat attachments are kept for 90 days; to keep a file, ask me to remember it on 
 *Your drive (long-term files)*
 Connect your drive in the Cabinet. Then:
 - "Remember this file" — I keep it in your drive's Inbox, or in the folder you name, under a clear name
+- "Write this down as a note" — I create a text file (md, txt, csv, json, html and similar) in your drive
 - "What's in Meetings?" — I browse your folders (search by name comes later)
 - Open, rename, move, create folders; add a line to a note; replace a file with a new version
 - Delete a file or a whole folder — I post a note in chat with what was deleted; it stays in your drive's recycle bin

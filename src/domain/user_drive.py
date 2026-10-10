@@ -24,7 +24,21 @@ MAX_DRIVE_VISION_IMAGE_BYTES = 5 * 1024 * 1024    # below the strictest provider
 MAX_DRIVE_VISION_PDF_BYTES = 20 * 1024 * 1024     # below the strictest provider PDF/inline limit
 MAX_DRIVE_APPEND_FILE_BYTES = 5 * 1024 * 1024
 
+MAX_DRIVE_TEXT_FILE_BYTES = 5 * 1024 * 1024           # encoded size of text the bot writes (§4.7.1); = the append-target cap
+
 TEXT_FILE_EXTENSIONS = (".md", ".txt", ".csv", ".json", ".yaml", ".yml")
+# Extensions a new text file may be created with (§4.7.1) and the content type each implies.
+CREATABLE_TEXT_MIME_TYPES: Dict[str, str] = {
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".yaml": "application/yaml",
+    ".yml": "application/yaml",
+    ".html": "text/html",
+    ".svg": "image/svg+xml",
+    ".xml": "application/xml",
+}
 # Image formats every LLM provider accepts as vision input (§4.6). HEIC (iPhone default) is not one.
 VISION_IMAGE_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 
@@ -248,6 +262,30 @@ def _has_known_extension(name: str, source_ext: str) -> bool:
         or ext in _EXTRA_KNOWN_EXTENSIONS
         or mimetypes.guess_type(name)[0] is not None
     )
+
+
+def prepare_drive_text_file(name: Optional[str], text: str) -> "tuple[str, bytes, str]":
+    """Validate and encode text the bot wrote (§4.7.1): (filename, bytes, content type).
+
+    The extension of `name` decides the content type and must be a creatable text one; the name is
+    sanitized like any drive name. UTF-8 without BOM, line endings normalised to LF, otherwise as
+    given. Raises DrivePathError (no I/O happened)."""
+    if not name or not name.strip():
+        raise DrivePathError('"name" is required with "text", with an extension such as notes.md.')
+    filename = sanitize_drive_filename(name)
+    ext = os.path.splitext(filename)[1].lower()
+    mime = CREATABLE_TEXT_MIME_TYPES.get(ext)
+    if mime is None:
+        allowed = " ".join(CREATABLE_TEXT_MIME_TYPES)
+        raise DrivePathError(
+            f"Text files can be created only as {allowed}; '{name}' is not one of them. Images, PDF and "
+            f"DOCX come from generate_image, create_pdf or create_document: produce the file, then save "
+            f"it with file_ref.")
+    data = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    if len(data) > MAX_DRIVE_TEXT_FILE_BYTES:
+        raise DrivePathError(f"The text is {format_size(len(data))}; text files are limited to "
+                             f"{format_size(MAX_DRIVE_TEXT_FILE_BYTES)}.")
+    return filename, data, mime
 
 
 def is_text_file(name: str, mime_type: str) -> bool:
