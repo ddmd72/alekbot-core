@@ -355,7 +355,10 @@ the provider may already have applied the change. So:
 - **Late failure notice (owner decision 2026-10-10).** If the agent already answered "still running" for a delete or
   replace and the shielded mutation then raises, the user gets a localized `notify_raw` notice ("Deleting {path} did
   not complete." / "Replacing {path} did not complete.") on the same channel as the receipts; a failure to post it is
-  logged. No notice when the agent was still waiting (the model got the failure) or for other intents.
+  logged. No notice when the agent was still waiting (the model got the failure) or for other intents. The
+  notice is decided in the task's done-callback (one per task, so exactly one notice per failure). A replace
+  records the item's path before its provider call; a delete has none of its own (the service resolves the
+  item), so it is looked up after the failure, falling back to the `drive:` ref if that lookup fails too.
 
 **Cancellation (owner decision).** If the user cancels a long turn while a drive mutation has started, the mutation
 finishes and its receipt posts. A file operation half-done is worse than one done and shown.

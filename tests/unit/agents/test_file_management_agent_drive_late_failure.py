@@ -146,3 +146,40 @@ async def test_notice_uses_user_ui_language(agent, drive, language):
     await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
     await _settle(agent)
     agent._localization.get_ui_string.assert_called_once_with(LanguageCode.FR, UIMessage.DRIVE_DELETE_FAILED)
+
+
+async def test_replace_notice_names_the_path_captured_before_the_mutation(agent, drive, notifier):
+    """The path is recorded from the pre-mutation lookup: no provider call after the failure
+    (the provider is likely the thing that is down)."""
+    agent._source_bytes = AsyncMock(return_value=b"x")
+    drive.replace_with.side_effect = _late(RuntimeError("boom"))
+    await agent.execute(_msg(Intent.UPDATE_FILE_IN_DRIVE, file_ref="drive:f1", source_ref="new.pdf"))
+    drive.get_item.reset_mock()
+    await _settle(agent)
+    assert notifier.notify_raw.await_args.args[2] == "REPFAIL Inbox/lease.pdf"
+    drive.get_item.assert_not_called()
+
+
+async def test_delete_notice_falls_back_to_the_ref_when_the_lookup_fails(agent, drive, notifier):
+    drive.delete.side_effect = _late(RuntimeError("boom"))
+    drive.get_item.side_effect = RuntimeError("provider down")
+    await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
+    await _settle(agent)
+    notifier.notify_raw.assert_awaited_once()
+    assert notifier.notify_raw.await_args.args[2] == "DELFAIL drive:f1"
+
+
+@pytest.mark.parametrize("exc", [None, RuntimeError("boom")])
+async def test_per_task_state_is_released(agent, drive, exc):
+    agent._source_bytes = AsyncMock(return_value=b"x")
+    drive.replace_with.side_effect = _late(exc)
+    await agent.execute(_msg(Intent.UPDATE_FILE_IN_DRIVE, file_ref="drive:f1", source_ref="new.pdf"))
+    await _settle(agent)
+    assert not agent._armed and not agent._targets and not agent._shielded and not agent._notices
+
+
+async def test_fast_failure_leaves_no_per_task_state(agent, drive):
+    drive.delete.side_effect = _late(RuntimeError("boom"), delay=0.0)
+    await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
+    await _settle(agent)
+    assert not agent._armed and not agent._targets
