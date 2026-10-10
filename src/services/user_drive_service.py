@@ -33,6 +33,7 @@ from ..domain.user_drive import (
     split_folder_path,
 )
 from ..ports.user_drive_port import UserDrivePort
+from ..utils.logger import logger
 
 LIST_LIMIT = 100
 SEARCH_LIMIT = 25
@@ -68,11 +69,15 @@ class UserDriveService:
                 try:
                     match = await self._drive.create_folder(user_id, current.item_id, segment)
                     created.append(match.path or join_drive_path(current.path, segment))
-                except DriveNameConflictError:
+                except DriveNameConflictError as exc:
                     # A parallel save created it first (§4.7): use the winner.
                     match = match_child_folder(await self._drive.list_children(user_id, current.item_id), segment)
                     if match is None:
-                        raise
+                        # The name is taken, but not by a folder (a file of that name sits there).
+                        taken = join_drive_path(current.path, segment)
+                        logger.warning(f"Drive folder '{taken}' cannot be created: name taken by a non-folder")
+                        raise DrivePathError(f"'{taken}' already exists as a file, so it cannot be used as "
+                                             f"a folder") from exc
             current = match
         return FolderResolution(folder=current, created=created)
 
@@ -118,6 +123,7 @@ class UserDriveService:
         created: List[str] = []
         parent_id: Optional[str] = None
         if folder and folder.strip():
+            self._refuse_move_into_self(before, folder)
             resolution = await self.resolve_folder(user_id, folder, create=True)
             parent_id, created = resolution.folder.item_id, resolution.created
         after = await self._drive.move(user_id, item_id, new_parent_id=parent_id,
@@ -135,6 +141,7 @@ class UserDriveService:
         try:
             old.decode("utf-8")
         except UnicodeDecodeError as exc:
+            logger.warning(f"Drive append refused: '{item.path}' is not UTF-8 text")
             raise DrivePathError(f"'{item.path}' is not UTF-8 text") from exc
         separator = b"" if not old or old.endswith(b"\n") else b"\n"
         addition = text if text.endswith("\n") else f"{text}\n"
@@ -159,6 +166,18 @@ class UserDriveService:
     async def _refuse_root(self, user_id: str, item_id: str) -> None:
         if item_id == (await self._drive.get_root(user_id)).item_id:
             raise DriveRootProtectedError("The drive area itself cannot be deleted or moved")
+
+    @staticmethod
+    def _refuse_move_into_self(item: DriveItem, folder: str) -> None:
+        """A folder cannot be moved into itself or its own subtree. Decided on the item's path and
+        the requested segments (same `name_key` match as resolution) before any provider call, so
+        the missing segments of such a destination are never created."""
+        if not item.is_folder or not item.path:
+            return
+        own = [name_key(s) for s in item.path.split("/")]
+        wanted = [name_key(s) for s in split_folder_path(folder)]
+        if wanted[:len(own)] == own:
+            raise DrivePathError(f"'{item.path}' cannot be moved into itself")
 
     async def _count_files(self, user_id: str, folder_id: str) -> Tuple[int, bool]:
         """Files in the subtree; Graph's childCount covers direct children only (§4.10)."""
