@@ -329,8 +329,8 @@ Totals: baseline 3 leaks / 3 runs, new 1 leak / 3 runs. The expectation "zero le
 new run 3 still wrote the lease fact with a file reference ("contract lease_2026"), i.e. a mixed leak. The line
 removes the standalone file-operation facts and cut the leak rate from 3/3 to 1/3, but does not guarantee a clean
 mixed fact (n=3, dispersion expected). Anchor check: the line was inserted into the assembled prompt in every
-`new` run. The token edit was **not** applied; `migrate_file_ops_exclusion_token.py --dry-run` shows the single
-appended line (+179 chars) and wrote nothing. Applying it awaits the owner's decision.
+`new` run. `migrate_file_ops_exclusion_token.py --dry-run` showed the single appended line (+179 chars); the owner
+approved and ran `--apply` on 2026-10-10 (backup kept locally under `scripts/memory/`).
 
 ### 4.13 Timeouts and cancellation
 `FileManagementAgent` runs under `BaseAgent`'s `asyncio.wait_for` with `timeout_ms=30_000`
