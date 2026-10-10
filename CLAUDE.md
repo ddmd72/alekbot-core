@@ -559,8 +559,8 @@ onto a taken name ("A file with that name already exists there.") refused. Mutat
 delete/replace post a localised `notify_raw` receipt, or a "did not complete" notice if they fail after "still running" was answered. Vision only for JPEG/PNG/GIF/WebP and PDF (HEIC refused). Refs
 survive turns via `history_context["drive_context"]` (full_text only, never consolidated). **No search in step 1**
 (spike A6: search does not work inside the App Folder) — browsing folders only. The `Trivial_Exclusions` line that
-keeps file operations out of memory is written with a migration script but **not applied yet** (pending the owner's
-approval after a dry run). Step 2 (indexing + search), step 3 (long audio/video) and full editing are not built.
+keeps file operations out of memory was applied to the live `CONSOLIDATION_TAXONOMY` on 2026-10-10 (dry run: leaks
+3/3 → 1/3; RFC §4.12). Step 2 (indexing + search), step 3 (long audio/video) and full editing are not built.
 
 **Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic; each channel (Slack
 C.../D..., Telegram chat_id) has its own session/history/consolidation stream (a DM is just channel D...).
