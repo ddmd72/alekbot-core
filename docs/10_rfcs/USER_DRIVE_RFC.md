@@ -311,6 +311,27 @@ mentions a file location or operation, including a mixed one** ("lease ends Dec 
 likeliest leak is exactly that mix. Expected with the line: zero leaks, and the real fact still written on its
 own. If baseline already shows none, the line is still added (the risk grows with use) and recorded as preventive.
 
+**Dry-run result (2026-10-10, three runs per leg, model `claude-sonnet-5-5`).** Baseline leaked in 3 of 3 runs
+(1 leaking fact each) — so the line is corrective, not preventive. All baseline leaks were the mixed kind (the
+2027 lease fact carrying the contract's Drive path); no standalone "saved/moved/deleted" fact was written.
+`real_fact_clean` is "a written fact mentions 2027 without any file term".
+
+| Leg | Run | Ops | Leaks | `real_fact_clean` |
+|---|---|---|---|---|
+| baseline | 1 | 4 | 1 | True |
+| baseline | 2 | 2 | 1 | False |
+| baseline | 3 | 1 | 1 | False |
+| new | 1 | 1 | 0 | True |
+| new | 2 | 1 | 0 | True |
+| new | 3 | 1 | 1 | False |
+
+Totals: baseline 3 leaks / 3 runs, new 1 leak / 3 runs. The expectation "zero leaks" was **not** met in every run:
+new run 3 still wrote the lease fact with a file reference ("contract lease_2026"), i.e. a mixed leak. The line
+removes the standalone file-operation facts and cut the leak rate from 3/3 to 1/3, but does not guarantee a clean
+mixed fact (n=3, dispersion expected). Anchor check: the line was inserted into the assembled prompt in every
+`new` run. The token edit was **not** applied; `migrate_file_ops_exclusion_token.py --dry-run` shows the single
+appended line (+179 chars) and wrote nothing. Applying it awaits the owner's decision.
+
 ### 4.13 Timeouts and cancellation
 `FileManagementAgent` runs under `BaseAgent`'s `asyncio.wait_for` with `timeout_ms=30_000`
 (`user_agent_factory.py:828`, `base_agent.py:680`), which cancels mid-operation. Drive work is slower than GCS:
