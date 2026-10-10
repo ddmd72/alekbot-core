@@ -422,6 +422,10 @@ class FileManagementAgent(BaseAgent):
             try:
                 return await asyncio.wait_for(asyncio.shield(task), timeout=self.MUTATION_WAIT_S)
             except asyncio.TimeoutError:
+                if task.done():
+                    # The mutation itself ended with a TimeoutError (aiohttp's socket timeouts
+                    # subclass it) — a failure, not a wait that ran out.
+                    raise
                 logger.warning("FileManagementAgent: %s still running after %.0fs", payload.get("intent"),
                                self.MUTATION_WAIT_S)
                 return self._ok(message, self.STILL_RUNNING, [])
