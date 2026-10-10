@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.adapters.microsoft_graph_auth import GraphReauthRequired, MicrosoftGraphTokenProvider
+from src.adapters.microsoft.graph_auth import GraphReauthRequired, MicrosoftGraphTokenProvider
 from src.domain.email import OAuthCredentials
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 

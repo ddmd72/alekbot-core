@@ -190,5 +190,5 @@ Linear issues, GitHub issues.
 - `src/ports/tasks_provider_port.py` — CRUD port (external API abstraction)
 - `src/ports/task_search_index.py` — vector index port (Firestore abstraction)
 - `src/services/task_indexing_service.py` — embed-to-index pipeline
-- `src/adapters/microsoft_todo_adapter.py` — Graph API implementation
+- `src/adapters/microsoft/todo_adapter.py` — Graph API implementation
 - `src/adapters/firestore_task_search_index.py` — Firestore vector index implementation

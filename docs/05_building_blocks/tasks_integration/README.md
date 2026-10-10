@@ -240,7 +240,7 @@ is the caller's responsibility — these methods only interact with Graph API.
 
 ## 5. Adapters
 
-### 5.1 MicrosoftToDoAdapter (`src/adapters/microsoft_todo_adapter.py`)
+### 5.1 MicrosoftToDoAdapter (`src/adapters/microsoft/todo_adapter.py`)
 
 Implements `TasksProviderPort` and `TaskLifecyclePort` via MS Graph API.
 
@@ -596,7 +596,7 @@ implementation.
 - `src/ports/task_search_index.py` — Vector search port interface.
 - `src/ports/task_config_port.py` — Per-user config port.
 - `src/ports/task_lifecycle_port.py` — Subscription management port.
-- `src/adapters/microsoft_todo_adapter.py` — Graph API client (TasksProviderPort + TaskLifecyclePort).
+- `src/adapters/microsoft/todo_adapter.py` — Graph API client (TasksProviderPort + TaskLifecyclePort).
 - `src/adapters/firestore_task_search_index.py` — Firestore vector search adapter.
 - `src/adapters/firestore_task_config_repository.py` — Firestore config adapter.
 - `src/services/task_indexing_service.py` — Embed-to-index pipeline.

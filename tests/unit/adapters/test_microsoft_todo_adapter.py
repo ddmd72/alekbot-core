@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from src.adapters.microsoft_todo_adapter import MicrosoftToDoAdapter
+from src.adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from src.domain.email import OAuthCredentials
 from src.domain.task import (
     ChecklistItem,

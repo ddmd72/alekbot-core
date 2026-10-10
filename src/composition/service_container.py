@@ -51,7 +51,7 @@ from ..adapters.dateutil_recurrence_adapter import DateutilRecurrenceAdapter
 from ..adapters.firestore_agent_note_adapter import FirestoreAgentNoteAdapter
 from ..adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from ..adapters.firestore_task_search_index import FirestoreTaskSearchIndex
-from ..adapters.microsoft_todo_adapter import MicrosoftToDoAdapter
+from ..adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_media_adapter import GcsMediaAdapter

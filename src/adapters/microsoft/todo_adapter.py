@@ -21,8 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 
-from ..domain.email import OAuthCredentials
-from ..domain.task import (
+from ...domain.email import OAuthCredentials
+from ...domain.task import (
     ChecklistItem,
     LinkedResource,
     RecurrencePattern,
@@ -36,14 +36,14 @@ from ..domain.task import (
     TaskSubscriptionConfig,
     TaskUpdate,
 )
-from ..ports.oauth_credentials_port import OAuthCredentialsPort
-from ..ports.task_config_port import TaskConfigPort
-from ..ports.task_lifecycle_port import SubscriptionNotFoundError, TaskLifecyclePort
-from ..ports.tasks_provider_port import TasksProviderPort
-from ..utils.logger import logger
+from ...ports.oauth_credentials_port import OAuthCredentialsPort
+from ...ports.task_config_port import TaskConfigPort
+from ...ports.task_lifecycle_port import SubscriptionNotFoundError, TaskLifecyclePort
+from ...ports.tasks_provider_port import TasksProviderPort
+from ...utils.logger import logger
+from .graph_auth import MicrosoftGraphTokenProvider
 
 _GRAPH_BASE = "https://graph.microsoft.com/v1.0/me/todo"
-_TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
 _PROVIDER = "microsoft_todo"
 _PRIMARY_LIST_NAME = "Alek Bot Tasks"
 _BATCH_SEMAPHORE = asyncio.Semaphore(5)  # Graph API throttling for personal accounts
@@ -107,6 +107,9 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
         self._webhook_secret = webhook_secret
         # Per-instance in-memory primary_list_id cache: {user_id: list_id}
         self._primary_list_cache: Dict[str, str] = {}
+        self._tokens = MicrosoftGraphTokenProvider(
+            oauth_credentials, client_id, client_secret, _PROVIDER, "Tasks.ReadWrite offline_access",
+        )
         logger.info("✅ MicrosoftToDoAdapter initialized")
 
     # ------------------------------------------------------------------
@@ -115,46 +118,14 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
 
     async def _get_headers(self, user_id: str) -> Dict[str, str]:
         """Return Authorization headers with a valid (refreshed if needed) access token."""
-        creds = await self._oauth.get_credentials(user_id, _PROVIDER)
-        if creds is None:
+        headers = await self._tokens.headers(user_id)
+        if headers is None:
             raise ValueError(f"No MS To Do credentials for user {user_id[:8]}")
-
-        # Refresh if token expires within the next 5 minutes
-        now = datetime.now(timezone.utc)
-        if creds.token_expiry <= now + timedelta(minutes=5):
-            creds = await self._refresh_token(creds)
-
-        return {"Authorization": f"Bearer {creds.access_token}"}
+        return headers
 
     async def _refresh_token(self, creds: OAuthCredentials) -> OAuthCredentials:
         """Exchange refresh_token → new access_token and persist."""
-        data = {
-            "client_id": self._client_id,
-            "client_secret": self._client_secret,
-            "refresh_token": creds.refresh_token,
-            "grant_type": "refresh_token",
-            "scope": "Tasks.ReadWrite offline_access",
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(_TOKEN_URL, data=data) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    raise ValueError(f"MS token refresh failed ({resp.status}): {body}")
-                payload = await resp.json()
-
-        expires_in = payload.get("expires_in", 3600)
-        new_creds = OAuthCredentials(
-            user_id=creds.user_id,
-            provider=_PROVIDER,
-            access_token=payload["access_token"],
-            refresh_token=payload.get("refresh_token", creds.refresh_token),
-            token_expiry=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
-            scopes=creds.scopes,
-            email_address=creds.email_address,
-        )
-        await self._oauth.save_credentials(new_creds)
-        logger.info(f"🔄 MS To Do token refreshed for user {creds.user_id[:8]}")
-        return new_creds
+        return await self._tokens.refresh(creds)
 
     # ------------------------------------------------------------------
     # Graph API helpers
