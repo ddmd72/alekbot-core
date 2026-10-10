@@ -127,4 +127,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.LONG_TURN_FAILED.value: "No pude terminarlo: algo falló por el camino.",
     UIMessage.LONG_TURN_CANCELLED.value: "Detenido, como pediste.",
     UIMessage.LONG_TURN_LOST.value: "Perdí esta tarea a mitad de camino (el servicio se reinició). Pregunta de nuevo, por favor.",
+    UIMessage.DRIVE_DELETED_FILE.value: "🗑️ Eliminado del disco: {path}",
+    UIMessage.DRIVE_DELETED_FOLDER.value: "🗑️ Carpeta eliminada: {path} (archivos: {count})",
+    UIMessage.DRIVE_REPLACED.value: "✏️ Reemplazado: {path} ({before} → {after}; la versión anterior está en su historial de versiones)",
 }

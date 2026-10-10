@@ -156,4 +156,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.LONG_TURN_FAILED.value: "Не вдалося завершити — щось зламалося по дорозі.",
     UIMessage.LONG_TURN_CANCELLED.value: "Зупинив, як ти просив.",
     UIMessage.LONG_TURN_LOST.value: "Я втратив цю задачу посеред роботи (сервіс перезапустився). Спитай ще раз, будь ласка.",
+    UIMessage.DRIVE_DELETED_FILE.value: "🗑️ Видалено з диска: {path}",
+    UIMessage.DRIVE_DELETED_FOLDER.value: "🗑️ Видалено папку: {path} (файлів: {count})",
+    UIMessage.DRIVE_REPLACED.value: "✏️ Замінено: {path} ({before} → {after}; попередня версія — в історії версій)",
 }
