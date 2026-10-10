@@ -54,6 +54,7 @@ def create_oauth_blueprint(
     ms_todo_client_id: Optional[str] = None,
     ms_todo_client_secret: Optional[str] = None,
     ms_todo_redirect_uri: Optional[str] = None,
+    onedrive_redirect_uri: Optional[str] = None,
     task_queue=None,
 ) -> Blueprint:
     """
@@ -812,6 +813,109 @@ def create_oauth_blueprint(
         response = await make_response(redirect("/cabinet?microsoft_todo_connected=1"))
         response.delete_cookie("microsoft_todo_oauth_state")
         response.delete_cookie("microsoft_todo_connect_user_id")
+        return response
+
+    # ========================================================================
+    # GET /auth/connect-onedrive — the user's drive (USER_DRIVE_RFC §4.1)
+    # Same Microsoft app registration as To Do; its own redirect URI and scope.
+    # ========================================================================
+    _ONEDRIVE_PROVIDER = "microsoft_onedrive"  # == adapters.microsoft.ONEDRIVE_PROVIDER (tested)
+    _ONEDRIVE_SCOPE = "Files.ReadWrite.AppFolder offline_access"
+
+    @bp.route("/auth/connect-onedrive", methods=["GET"])
+    async def connect_onedrive():
+        """
+        Initiate the drive OAuth (Files.ReadWrite.AppFolder + offline_access).
+
+        Requires: authenticated session (access_token cookie).
+        Sets cookies: drive_oauth_state, drive_connect_user_id.
+        """
+        if not ms_todo_client_id or not onedrive_redirect_uri:
+            return jsonify({"error": "Drive integration not configured"}), 501
+
+        access_token = request.cookies.get("access_token")
+        if not access_token:
+            return redirect("/auth/login?next=/cabinet")
+        try:
+            user_id = session_service.verify_access_token(access_token)["sub"]
+        except jwt.InvalidTokenError:
+            return redirect("/auth/login?next=/cabinet")
+
+        state = secrets.token_urlsafe(32)
+        from urllib.parse import urlencode
+        auth_url = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?" + urlencode({
+            "client_id": ms_todo_client_id,
+            "response_type": "code",
+            "redirect_uri": onedrive_redirect_uri,
+            "scope": _ONEDRIVE_SCOPE,
+            "state": state,
+            "response_mode": "query",
+        })
+        logger.info(f"📁 Drive OAuth initiated for user={user_id[:8]}")
+        response = await make_response(redirect(auth_url))
+        response.set_cookie("drive_oauth_state", state, max_age=600, httponly=True, secure=True, samesite="lax")
+        response.set_cookie("drive_connect_user_id", user_id, max_age=600, httponly=True, secure=True, samesite="lax")
+        return response
+
+    @bp.route("/auth/connect-onedrive/callback", methods=["GET"])
+    async def connect_onedrive_callback():
+        """Exchange the code, persist credentials under the drive provider key."""
+        if not ms_todo_client_id or not ms_todo_client_secret or not onedrive_redirect_uri:
+            return jsonify({"error": "Drive integration not configured"}), 501
+        if request.args.get("error"):
+            logger.warning(f"⚠️ Drive OAuth denied by user: {request.args.get('error')}")
+            return redirect("/cabinet?drive_error=denied")
+
+        state, code = request.args.get("state"), request.args.get("code")
+        user_id = request.cookies.get("drive_connect_user_id")
+        stored_state = request.cookies.get("drive_oauth_state")
+        if not stored_state or stored_state != state or not user_id:
+            logger.warning("⚠️ Drive OAuth callback CSRF validation failed")
+            return redirect("/cabinet?drive_error=state")
+        if not code:
+            return redirect("/cabinet?drive_error=no_code")
+
+        try:
+            import aiohttp
+            from datetime import datetime, timedelta, timezone
+            from ..domain.email import OAuthCredentials
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+                    data={
+                        "client_id": ms_todo_client_id,
+                        "client_secret": ms_todo_client_secret,
+                        "code": code,
+                        "redirect_uri": onedrive_redirect_uri,
+                        "grant_type": "authorization_code",
+                        "scope": _ONEDRIVE_SCOPE,
+                    },
+                ) as resp:
+                    if not resp.ok:
+                        raise RuntimeError(f"Token exchange failed: {resp.status} {await resp.text()}")
+                    token_data = await resp.json()
+
+            await oauth_credentials_port.save_credentials(OAuthCredentials(
+                user_id=user_id,
+                provider=_ONEDRIVE_PROVIDER,
+                access_token=token_data["access_token"],
+                refresh_token=token_data.get("refresh_token"),
+                token_expiry=datetime.now(timezone.utc) + timedelta(seconds=int(token_data.get("expires_in", 3600))),
+                scopes=token_data.get("scope", "").split(),
+                email_address="",
+            ))
+            logger.info(f"✅ Drive connected for user={user_id[:8]}")
+        except Exception as exc:
+            logger.error(f"💥 Drive OAuth callback failed: {exc}", exc_info=True)
+            err_response = await make_response(redirect("/cabinet?drive_error=exchange"))
+            err_response.delete_cookie("drive_oauth_state")
+            err_response.delete_cookie("drive_connect_user_id")
+            return err_response
+
+        response = await make_response(redirect("/cabinet?drive_connected=1"))
+        response.delete_cookie("drive_oauth_state")
+        response.delete_cookie("drive_connect_user_id")
         return response
 
     return bp

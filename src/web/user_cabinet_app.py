@@ -20,6 +20,7 @@ from ..ports.task_queue import TaskQueue
 from ..ports.language_service_port import LanguageServicePort
 from ..ports.agent_note_port import AgentNotePort
 from ..ports.recurrence_port import RecurrencePort
+from ..ports.user_drive_port import UserDrivePort
 from ..utils.logger import logger
 from .cabinet_auth import make_auth_required
 
@@ -52,6 +53,7 @@ def create_user_cabinet_blueprint(
     agent_note_port: Optional[AgentNotePort] = None,
     recurrence_port: Optional[RecurrencePort] = None,
     twilio_verify_client: Optional[Any] = None,
+    user_drive: Optional[UserDrivePort] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -1246,6 +1248,37 @@ def create_user_cabinet_blueprint(
             return jsonify({"success": True}), 200
         except Exception as exc:
             logger.error(f"Error disconnecting Tasks: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    # =========================================================================
+    # User drive (USER_DRIVE_RFC §4.1)
+    # =========================================================================
+
+    @bp.route("/api/drive/status", methods=["GET"])
+    @auth_required
+    async def drive_status():
+        """The user's drive connection."""
+        if not user_drive:
+            return jsonify({"connected": False, "provider": ""}), 200
+        try:
+            return jsonify({"connected": await user_drive.is_connected(g.user_id),
+                            "provider": user_drive.display_name}), 200
+        except Exception as exc:
+            logger.error(f"Error fetching drive status: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/drive/disconnect", methods=["DELETE"])
+    @auth_required
+    async def drive_disconnect():
+        """Revoke the stored grant, drop the token and root caches (via the adapter)."""
+        if not user_drive:
+            return jsonify({"error": "Drive integration not configured"}), 501
+        try:
+            await user_drive.disconnect(g.user_id)
+            logger.info(f"🔌 Drive disconnected for user={g.user_id[:8]}")
+            return jsonify({"success": True}), 200
+        except Exception as exc:
+            logger.error(f"Error disconnecting drive: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
     # =========================================================================

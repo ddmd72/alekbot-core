@@ -51,7 +51,10 @@ from ..adapters.dateutil_recurrence_adapter import DateutilRecurrenceAdapter
 from ..adapters.firestore_agent_note_adapter import FirestoreAgentNoteAdapter
 from ..adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from ..adapters.firestore_task_search_index import FirestoreTaskSearchIndex
+from ..adapters.microsoft import OneDriveAdapter
 from ..adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
+from ..ports.user_drive_port import UserDrivePort
+from ..services.user_drive_service import UserDriveService
 from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_media_adapter import GcsMediaAdapter
@@ -154,6 +157,20 @@ class ServiceContainer:
                 search_index=self.task_search_index,
                 tasks_provider=self.ms_todo_adapter,
             )
+
+        # User drive — OneDrive App Folder (USER_DRIVE_RFC §4.2). Same app registration as To Do;
+        # functional only once the user has connected it in the Cabinet. The adapter and the
+        # service exist together or not at all: conversion reads and the agent's mutations hang
+        # off this one pair.
+        self.user_drive: Optional[UserDrivePort] = None
+        self.user_drive_service: Optional[UserDriveService] = None
+        if config.get("MICROSOFT_TODO_CLIENT_ID") and config.get("MICROSOFT_TODO_CLIENT_SECRET"):
+            self.user_drive = OneDriveAdapter(
+                oauth_credentials=self.oauth_credentials,
+                client_id=config["MICROSOFT_TODO_CLIENT_ID"],
+                client_secret=config["MICROSOFT_TODO_CLIENT_SECRET"],
+            )
+            self.user_drive_service = UserDriveService(self.user_drive)
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
         self.recurrence_adapter = DateutilRecurrenceAdapter()
@@ -309,6 +326,7 @@ class ServiceContainer:
                 storage=self.file_storage,
                 media_storage=self.media_storage,
                 skill_files=skill_file_resolver,
+                drive=self.user_drive,
             )
             if self.file_storage else None
         )
@@ -372,6 +390,7 @@ class ServiceContainer:
             "recurrence": self.recurrence_adapter,
             "file_conversion_service": self.file_conversion_service,
             "file_storage": self.file_storage,
+            "user_drive_service": self.user_drive_service,
             "prompt_content_store": self.prompt_content_store,
             "skill_service": self.skill_service,
         }
