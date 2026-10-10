@@ -34,6 +34,13 @@ _REF_RE = re.compile(r"drive:([^\s\"'\]\[)(,]+)")
 _UUID_PREFIX_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-", re.I)
 # Characters OneDrive and most drives forbid in a name, plus control characters.
 _FORBIDDEN_RE = re.compile(r'["*:<>?/\\|\x00-\x1f]')
+# Extensions Python's built-in `mimetypes` table does not know (it only learns them from
+# /etc/mime.types, absent on a slim image), so a requested "Отчёт.docx" is not doubled to
+# "Отчёт.docx.docx" in production.
+_EXTRA_KNOWN_EXTENSIONS = frozenset({
+    ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt", ".odt", ".ods", ".odp",
+    ".yaml", ".yml", ".toml", ".m4a", ".mkv", ".flac", ".7z", ".rar", ".epub", ".ics",
+})
 
 
 class DriveNotConnectedError(Exception):
@@ -210,9 +217,22 @@ def drive_filename(requested: Optional[str], source_ref: str) -> str:
         return sanitize_drive_filename(source_name)
     name = sanitize_drive_filename(requested)
     source_ext = os.path.splitext(source_name)[1]
-    if source_ext and mimetypes.guess_type(name)[0] is None:
+    if source_ext and not _has_known_extension(name, source_ext):
         name = f"{name}{source_ext}"
     return name
+
+
+def _has_known_extension(name: str, source_ext: str) -> bool:
+    """True when `name` already ends in a file extension: the source's own, one the
+    `mimetypes` table knows, or one from `_EXTRA_KNOWN_EXTENSIONS`."""
+    ext = os.path.splitext(name)[1].lower()
+    if not ext:
+        return False
+    return (
+        ext == source_ext.lower()
+        or ext in _EXTRA_KNOWN_EXTENSIONS
+        or mimetypes.guess_type(name)[0] is not None
+    )
 
 
 def is_text_file(name: str, mime_type: str) -> bool:
