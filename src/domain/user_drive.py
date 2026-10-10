@@ -274,6 +274,8 @@ def prepare_drive_text_file(name: Optional[str], text: str) -> "tuple[str, bytes
         raise DrivePathError('"name" is required with "text", with an extension such as notes.md.')
     filename = sanitize_drive_filename(name)
     ext = os.path.splitext(filename)[1].lower()
+    if not ext and filename.lower() in CREATABLE_TEXT_MIME_TYPES:   # ".md": an extension with no stem
+        raise DrivePathError(f'"name" needs a file name before the extension, e.g. notes{filename}.')
     mime = CREATABLE_TEXT_MIME_TYPES.get(ext)
     if mime is None:
         allowed = " ".join(CREATABLE_TEXT_MIME_TYPES)
@@ -281,7 +283,14 @@ def prepare_drive_text_file(name: Optional[str], text: str) -> "tuple[str, bytes
             f"Text files can be created only as {allowed}; '{name}' is not one of them. Images, PDF and "
             f"DOCX come from generate_image, create_pdf or create_document: produce the file, then save "
             f"it with file_ref.")
-    data = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    # "UTF-8 without BOM": a leading U+FEFF in the model's text would encode as one, so it is dropped.
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    try:
+        data = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    except UnicodeEncodeError as e:   # a lone surrogate from the model's JSON: not valid text
+        raise DrivePathError(f"The text has an invalid character at position {e.start} and cannot be "
+                             f"encoded as UTF-8; rewrite it with plain characters.") from e
     if len(data) > MAX_DRIVE_TEXT_FILE_BYTES:
         raise DrivePathError(f"The text is {format_size(len(data))}; text files are limited to "
                              f"{format_size(MAX_DRIVE_TEXT_FILE_BYTES)}.")

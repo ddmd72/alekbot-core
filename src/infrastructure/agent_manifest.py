@@ -127,11 +127,14 @@ MEMORY_SEARCH = AgentDescriptor(
     },
     context_schemas={
         Intent.SAVE_TO_MEMORY: {
+            # Shared field name: delegate_to_specialist.context keeps the FIRST description seen per
+            # field, and this descriptor precedes FILE_MANAGEMENT — so this text must cover both uses.
             "text": (
-                "Detailed, self-contained description of the fact to save. "
+                "save_to_memory: detailed, self-contained description of the fact to save. "
                 "Include every relevant detail: what, when, conditions, numbers, names, "
                 "surrounding circumstances. Write in third person ('User...'). "
-                "Must be fully understandable without the surrounding conversation."
+                "Must be fully understandable without the surrounding conversation. "
+                "save_file_to_drive: the full content of the new text file, verbatim (with \"name\")."
             ),
         },
     },
