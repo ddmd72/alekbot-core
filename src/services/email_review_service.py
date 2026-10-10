@@ -18,6 +18,7 @@ from typing import Any, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from ..domain.email import OAuthCredentials
+from ..domain.exceptions import OAuthGrantRevokedError
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..utils.logger import logger
@@ -61,8 +62,10 @@ class EmailReviewService:
     async def fetch_review_payload(self, user_id: str) -> Optional[List[dict]]:
         """
         Fetch and structure the last 24h of Gmail emails for user_id.
-        Returns None if credentials are missing or token refresh fails.
+        Returns None if credentials are missing or token refresh fails transiently.
         Returns an empty list if no emails were received in the period.
+        Raises OAuthGrantRevokedError when Google rejected the refresh token — the
+        caller must tell the user to reconnect; a retry cannot succeed.
         """
         creds = await self._oauth.get_credentials(user_id, "gmail")
         if not creds:
@@ -186,6 +189,11 @@ class EmailReviewService:
             try:
                 creds = await self._email_provider.refresh_token(creds)
                 await self._oauth.save_credentials(creds)
+            except OAuthGrantRevokedError:
+                logger.warning(
+                    f"[EmailReview] Gmail grant revoked for {creds.user_id[:8]} — reconnect required"
+                )
+                raise
             except Exception as exc:
                 logger.warning(
                     f"[EmailReview] token refresh failed for {creds.user_id[:8]}: {exc}"

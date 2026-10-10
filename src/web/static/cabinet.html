@@ -670,6 +670,10 @@
         background-color: var(--text-subtle);
       }
 
+      .status-dot.needs-reconnect {
+        background-color: var(--accent-danger);
+      }
+
       .integration-actions {
         width: 100%;
         display: flex;
@@ -1494,6 +1498,9 @@
           "platform.disconnect_account": "Disconnect Account",
           "platform.link_account": "Link Account",
           "platform.connect_gmail": "Connect Gmail",
+          "gmail.needs_reconnect": "Reconnect required",
+          "gmail.reconnect_hint": "Google revoked access to your Gmail. Daily review and auto-index are paused until you reconnect.",
+          "gmail.reconnect": "Reconnect Gmail",
           "platform.connect_todo": "Connect Microsoft To Do",
           "platform.index_emails": "Index Emails",
           "platform.indexing": "Indexing...",
@@ -1559,6 +1566,9 @@
           "platform.disconnect_account": "Відключити акаунт",
           "platform.link_account": "Прив\u2019язати акаунт",
           "platform.connect_gmail": "Підключити Gmail",
+          "gmail.needs_reconnect": "Потрібне перепідключення",
+          "gmail.reconnect_hint": "Google відкликав доступ до Gmail. Щоденний огляд і автоіндексація на паузі, доки ви не перепідключите.",
+          "gmail.reconnect": "Перепідключити Gmail",
           "platform.connect_todo": "Підключити Microsoft To Do",
           "platform.index_emails": "Індексувати пошту",
           "platform.indexing": "Індексується...",
@@ -1624,6 +1634,9 @@
           "platform.disconnect_account": "D\u00e9connecter le compte",
           "platform.link_account": "Lier le compte",
           "platform.connect_gmail": "Connecter Gmail",
+          "gmail.needs_reconnect": "Reconnexion requise",
+          "gmail.reconnect_hint": "Google a r\u00e9voqu\u00e9 l\u2019acc\u00e8s \u00e0 Gmail. La revue quotidienne et l\u2019indexation sont en pause jusqu\u2019\u00e0 la reconnexion.",
+          "gmail.reconnect": "Reconnecter Gmail",
           "platform.connect_todo": "Connecter Microsoft To Do",
           "platform.index_emails": "Indexer les emails",
           "platform.indexing": "Indexation...",
@@ -1689,6 +1702,9 @@
           "platform.disconnect_account": "Desconectar cuenta",
           "platform.link_account": "Vincular cuenta",
           "platform.connect_gmail": "Conectar Gmail",
+          "gmail.needs_reconnect": "Reconexi\u00f3n necesaria",
+          "gmail.reconnect_hint": "Google revoc\u00f3 el acceso a Gmail. La revisi\u00f3n diaria y la indexaci\u00f3n est\u00e1n en pausa hasta que vuelvas a conectar.",
+          "gmail.reconnect": "Reconectar Gmail",
           "platform.connect_todo": "Conectar Microsoft To Do",
           "platform.index_emails": "Indexar correos",
           "platform.indexing": "Indexando...",
@@ -2585,10 +2601,19 @@
         const container = document.getElementById("gmail-container");
 
         const linked = data.connected;
+        const needsReconnect = linked && !!data.needs_reconnect;
         const indexActive = linked && !!data.indexing_active;
         const activeJobId = data.active_job_id || null;
 
-        let statusText = linked ? t("platform.connected") : t("platform.not_connected");
+        let statusText = needsReconnect
+          ? t("gmail.needs_reconnect")
+          : linked ? t("platform.connected") : t("platform.not_connected");
+        const statusDotClass = needsReconnect
+          ? "needs-reconnect"
+          : linked ? "connected" : "disconnected";
+        const reconnectHtml = needsReconnect
+          ? `<div style="margin-bottom:16px; padding:12px 16px; border-radius:12px; border:1px solid var(--accent-danger); color:var(--accent-danger); font-size:14px;">${t("gmail.reconnect_hint")}</div>`
+          : "";
 
         let metaHtml = "";
         if (linked) {
@@ -2665,6 +2690,9 @@
 
         let actionButtons = !linked
           ? `<a href="/auth/connect-gmail" class="btn btn-black">${t("platform.connect_gmail")}</a>`
+          : needsReconnect
+          ? `<a href="/auth/connect-gmail" class="btn btn-black">${t("gmail.reconnect")}</a>
+             <button onclick="disconnectGmail()" class="btn btn-secondary">${t("platform.disconnect")}</button>`
           : `<button onclick="triggerGmailIndex()" class="btn btn-primary" ${indexActive ? "disabled" : ""}>${indexActive ? t("platform.indexing") : t("platform.index_emails")}</button>
              ${indexActive && activeJobId ? `<button onclick="cancelGmailIndex('${activeJobId}', this)" class="btn btn-secondary">${t("platform.cancel")}</button>` : ""}
              <button onclick="disconnectGmail()" class="btn btn-secondary">${t("platform.disconnect")}</button>`;
@@ -2678,10 +2706,11 @@
             <p class="integration-description">${t("platform.gmail_desc")}</p>
 
             <div class="integration-status">
-              <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
+              <div class="status-dot ${statusDotClass}"></div>
               <span>${statusText}</span>
             </div>
 
+            ${reconnectHtml}
             ${metaHtml}
             ${autoIndexHtml}
             ${dailyReviewHtml}

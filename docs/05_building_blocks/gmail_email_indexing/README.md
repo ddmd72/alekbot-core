@@ -70,7 +70,7 @@ User approves → GET /auth/connect-gmail/callback
 
 Credentials stored: `access_token`, `refresh_token`, `token_expiry`, `provider="gmail"`, `scopes=["gmail.readonly"]`.
 
-Token refresh is handled transparently by `GmailProviderAdapter` before each API call.
+Token refresh is handled transparently by `GmailProviderAdapter` before each API call. A refresh rejected with `invalid_grant` raises `OAuthGrantRevokedError`; the background paths then flag the credentials `needs_reconnect` and notify the user once (see `docs/04_solution_strategy/decisions/gmail_grant_revoked_reconnect.md`).
 
 ---
 
