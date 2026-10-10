@@ -22,6 +22,7 @@ import asyncio
 import mimetypes
 import os
 import tempfile
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Set
 
 import aiofiles
@@ -59,6 +60,15 @@ if TYPE_CHECKING:
     from ..services.user_drive_service import UserDriveService
     from ..services.file_conversion_service import FileConversionService
     from ..services.user_notification_service import UserNotificationService
+
+
+@dataclass(frozen=True)
+class _LateNotice:
+    """What a late-failure notice needs, armed when "still running" was answered (§4.13)."""
+    message: AgentMessage
+    payload: dict
+    user_id: str
+    ui: UIMessage
 
 
 class FileManagementAgent(BaseAgent):
@@ -103,6 +113,10 @@ class FileManagementAgent(BaseAgent):
         # tasks are not garbage-collected mid-flight; only touched on the event loop.
         self._shielded: Set["asyncio.Task[Any]"] = set()
         self._notices: Set["asyncio.Task[Any]"] = set()  # late-failure notices in flight
+        # Per shielded task (§4.13): the notice to post if it raises after "still running" was
+        # answered, and the human path of the item it touches, recorded before the provider call.
+        self._armed: Dict["asyncio.Task[Any]", "_LateNotice"] = {}
+        self._targets: Dict["asyncio.Task[Any]", str] = {}
         # One user's drive mutations run one at a time (§4.13): a mid-flight retry waits for the
         # first, then the duplicate check sees it. dict.setdefault is atomic on the event loop.
         self._mutation_locks: Dict[str, asyncio.Lock] = {}
@@ -459,43 +473,56 @@ class FileManagementAgent(BaseAgent):
 
     def _arm_late_failure_notice(self, task: "asyncio.Task[Any]", message: AgentMessage,
                                  payload: dict, user_id: str) -> None:
-        """The model was told "still running" for a delete/replace: if it then raises, tell the user (§4.13)."""
+        """The model was told "still running" for a delete/replace: if it then raises, tell the user (§4.13).
+
+        Called with no await between the wait timing out and here, so the task cannot finish
+        unseen in between: `_on_mutation_done` (its done-callback) reads `_armed` after this."""
         intent = payload.get("intent")
         ui = self._LATE_FAILURE_UI.get(intent)
         if ui is None or (intent == Intent.UPDATE_FILE_IN_DRIVE and not payload.get("source_ref")):
             return  # other intents promise no notice; an append is not a replace
+        self._armed[task] = _LateNotice(message, payload, user_id, ui)
 
-        def fire(done: "asyncio.Task[Any]") -> None:
-            if done.cancelled() or done.exception() is None:
-                return
-            notice = asyncio.ensure_future(self._late_failure_notice(message, payload, user_id, ui))
-            self._notices.add(notice)
-            notice.add_done_callback(self._notices.discard)
+    def _note_target(self, path: str) -> None:
+        """Record the path a running delete/replace touches, before its provider call, so a late-failure
+        notice names the file even when the provider is down. Runs inside the shielded task."""
+        task = asyncio.current_task()
+        if task is not None:
+            self._targets[task] = path
 
-        task.add_done_callback(fire)
-
-    async def _late_failure_notice(self, message: AgentMessage, payload: dict, user_id: str, ui: UIMessage) -> None:
+    async def _late_failure_notice(self, notice: "_LateNotice", path: Optional[str]) -> None:
+        payload, user_id = notice.payload, notice.user_id
         ref = payload.get("file_ref") or ""
-        path = ref
-        try:
-            item_id = parse_drive_ref(ref)
-            if item_id is not None:
-                path = (await self._svc().get_item(user_id, item_id)).path
-        except Exception:
-            logger.warning("FileManagementAgent: path lookup for the late-failure notice failed", exc_info=True)
-        await self._receipt(message, user_id, ui, path=path)
+        if path is None:
+            # A delete records no path (the service resolves the item itself); look it up now,
+            # falling back to the ref the model used.
+            path = ref
+            try:
+                item_id = parse_drive_ref(ref)
+                if item_id is not None:
+                    path = (await self._svc().get_item(user_id, item_id)).path
+            except Exception:
+                logger.warning("FileManagementAgent: path lookup for the late-failure notice failed", exc_info=True)
+        await self._receipt(notice.message, user_id, notice.ui, path=path)
 
     def _on_mutation_done(self, task: "asyncio.Task[Any]") -> None:
-        """Log how a shielded mutation ended — nobody may be awaiting it any more (§4.13)."""
+        """Log how a shielded mutation ended — nobody may be awaiting it any more (§4.13) — and post
+        the late-failure notice when one was armed and the task raised. Exactly one notice per task."""
         self._shielded.discard(task)
+        armed = self._armed.pop(task, None)
+        path = self._targets.pop(task, None)
         if task.cancelled():
             logger.warning("FileManagementAgent: drive mutation task was cancelled")
             return
         exc = task.exception()
-        if exc is not None:
-            logger.warning("FileManagementAgent: drive mutation ended with %s: %s", type(exc).__name__, exc)
-        else:
+        if exc is None:
             logger.info("FileManagementAgent: drive mutation completed")
+            return
+        logger.warning("FileManagementAgent: drive mutation ended with %s: %s", type(exc).__name__, exc)
+        if armed is not None:
+            notice = asyncio.ensure_future(self._late_failure_notice(armed, path))
+            self._notices.add(notice)
+            notice.add_done_callback(self._notices.discard)
 
     async def _source_bytes(self, message: AgentMessage, ref: str, user_id: str) -> Any:
         """Bytes of a source file, or an AgentResponse failure when a chat file is missing.
@@ -611,6 +638,7 @@ class FileManagementAgent(BaseAgent):
         if isinstance(data, AgentResponse):
             return data
         target = await self._svc().get_item(user_id, item_id)
+        self._note_target(target.path)
         mime = target.mime_type or (mimetypes.guess_type(target.name)[0] or "application/octet-stream")
         out = await self._svc().replace_with(user_id, item_id, data, mime)
         await self._receipt(message, user_id, UIMessage.DRIVE_REPLACED, path=out.item.path,
