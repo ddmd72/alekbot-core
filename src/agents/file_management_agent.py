@@ -48,6 +48,7 @@ from ..domain.user_drive import (
     drive_label,
     format_size,
     is_drive_ref,
+    prepare_drive_text_file,
     parse_drive_ref,
 )
 from ..infrastructure.agent_manifest import Intent
@@ -589,8 +590,14 @@ class FileManagementAgent(BaseAgent):
 
     async def _save_to_drive(self, message: AgentMessage, payload: dict, user_id: str) -> AgentResponse:
         ref = payload.get("file_ref") or ""
-        if not ref:
-            return self._fail(message, "file_ref is required: the ref from a [File: ...] label.")
+        text = payload.get("text")
+        has_text = isinstance(text, str) and text != ""
+        if bool(ref) == has_text:
+            return self._fail(message, 'Give exactly one of "file_ref" (a file to keep) or "text" + "name" '
+                                       '(a new text file).')
+        if has_text:  # §4.7.1: validated before any provider call
+            filename, data, mime = prepare_drive_text_file(payload.get("name"), text)
+            return await self._store(message, user_id, data, filename, mime, payload.get("folder"))
         # Refuse before naming: drive_filename() on a drive ref would produce "drive_<id>" (§4.4).
         if is_drive_ref(ref):
             return self._fail(message, f"'{ref}' is already on the drive; use move_file_in_drive.")
@@ -599,7 +606,11 @@ class FileManagementAgent(BaseAgent):
             return data
         filename = drive_filename(payload.get("name"), ref)
         mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        out = await self._svc().save(user_id, data, filename, mime, payload.get("folder") or None)
+        return await self._store(message, user_id, data, filename, mime, payload.get("folder"))
+
+    async def _store(self, message: AgentMessage, user_id: str, data: bytes, filename: str, mime: str,
+                     folder: Optional[str]) -> AgentResponse:
+        out = await self._svc().save(user_id, data, filename, mime, folder or None)
         created = f" Created folders: {', '.join(out.created)}." if out.created else ""
         if out.already_existed:
             head = f"Already on the drive: {drive_label(out.item)}."
