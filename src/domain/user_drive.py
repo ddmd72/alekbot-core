@@ -201,6 +201,20 @@ def drive_context_entry(item: DriveItem) -> Dict[str, str]:
     """One entry of the `drive_context` history block (§4.3)."""
     return {"path": item.path or "/", "ref": item.ref}
 
+# The chat store's Finder-style dedup suffix (GcsFileStorageAdapter._deduplicate): "<stem> (N)<ext>".
+_CHAT_DEDUP_SUFFIX_RE = re.compile(r"^(?P<stem>.+) \(\d+\)$")
+
+
+def strip_chat_dedup_suffix(name: str) -> str:
+    """The user's file name behind a chat-store dedup key: "a (1).md" -> "a.md".
+
+    The chat store renames a re-sent file to "<stem> (N)<ext>" and keeps no record of the original
+    name, so the suffix is stripped by shape. Edge case: a user file literally named "x (1).md" is
+    saved as "x.md" (the name is only a default; an explicit `name` always wins)."""
+    stem, ext = os.path.splitext(name)
+    match = _CHAT_DEDUP_SUFFIX_RE.match(stem)
+    return f"{match.group('stem')}{ext}" if match else name
+
 
 def sanitize_drive_filename(name: str) -> str:
     cleaned = _FORBIDDEN_RE.sub("_", name).strip().rstrip(". ")
@@ -209,12 +223,13 @@ def sanitize_drive_filename(name: str) -> str:
 
 def drive_filename(requested: Optional[str], source_ref: str) -> str:
     """The name a saved file gets (§4.7): requested if given, else the source name without
-    a delivered-document uuid prefix. The source extension is appended unless the requested
+    a delivered-document uuid prefix and the chat store's " (N)" dedup suffix (so a re-sent file
+    keeps the name the user uploaded and the service's duplicate check can see it). The source extension is appended unless the requested
     name already has a known file extension — "Договор v2.1" must not lose ".pdf" to a dotted
     version, "notes.md" keeps its own."""
     source_name = _UUID_PREFIX_RE.sub("", source_ref.rsplit("/", 1)[-1])
     if not requested or not requested.strip():
-        return sanitize_drive_filename(source_name)
+        return sanitize_drive_filename(strip_chat_dedup_suffix(source_name))
     name = sanitize_drive_filename(requested)
     source_ext = os.path.splitext(source_name)[1]
     if source_ext and not _has_known_extension(name, source_ext):
