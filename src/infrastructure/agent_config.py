@@ -530,17 +530,22 @@ IMAGE_GENERATION = ImageGenerationAgentConfig()
 
 @dataclass
 class VideoGenerationAgentConfig:
-    max_tokens: int = 500         # Output is {video_prompt, aspect_ratio} JSON, not a document
+    # Output is {video_prompt, aspect_ratio} JSON, but a detailed second-by-second brief
+    # yields a long video_prompt. 500 truncated one mid-string on 2026-10-10 (grok-4.7,
+    # ~2.4k chars visible) — the request failed as "invalid JSON". Sized for long briefs.
+    max_tokens: int = 16_000
     # Hard wall-clock budget around the entire execute() call (prompt-builder read +
     # LLM crafting call + xAI submit-only POST). Unlike ImageGenerationAgentConfig,
     # this does NOT need to cover a full render — VideoGenerationAgent is
-    # ExecutionMode.SYNC and returns an ACK in seconds; the multi-minute wait lives
+    # ExecutionMode.SYNC and returns an ACK once submitted; the multi-minute wait lives
     # entirely in WorkerHandler's polling loop, outside this budget. Sized as
-    # request_timeout_s (60s crafting call) + GrokVideoAdapter's submit timeout
-    # (60s) + margin — conservative, no live latency data yet
-    # (VIDEO_GENERATION_RFC.md §10 open question #3).
-    timeout_ms: int = 150_000
-    request_timeout_s: int = 60
+    # request_timeout_s (crafting call) + GrokVideoAdapter's submit timeout (60s) +
+    # margin.
+    timeout_ms: int = 900_000
+    # Per-LLM-request timeout (seconds) for the crafting call. The PERFORMANCE-tier
+    # crafting model reasons before answering; on a ~1.5k-token brief (2026-10-10,
+    # grok-4.7) it took over 60s and the request failed with LLMTimeoutError.
+    request_timeout_s: int = 600
 
 
 VIDEO_GENERATION = VideoGenerationAgentConfig()
