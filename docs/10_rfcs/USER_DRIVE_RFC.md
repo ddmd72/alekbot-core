@@ -238,6 +238,33 @@ intent. Prompt-tested (§7).
   `409` re-lists the parent and uses the folder that won.
 - **Re-sent chat attachments are named by their original name (2026-10-10, reverses an earlier same-day decision).** The chat store's Finder-style dedup renames a re-sent upload to `name (1).ext` and keeps no record of the original (not in GCS metadata; `file_data.original_name` never reaches the specialist, which receives only the ref). A save without `name` therefore strips that exact ` (N)` suffix before the extension (`strip_chat_dedup_suffix`, `drive_filename`), so the duplicate rule above applies: an identical re-sent file answers "already there", a different file with the same name gets the provider suffix `<stem> 1<ext>`. Edge case: a file the user literally named `x (1).md` is saved as `x.md`; pass `name` to override.
 
+### 4.7.1 Saving text the bot wrote (step 1.1, owner decision 2026-10-10)
+
+Live use showed the bot had no way to create a text file from scratch: `create_document` makes DOCX,
+`create_pdf` PDF, `create_html_page` a hosted page, and `update_file_in_drive` only appends to a file that already
+exists. A working note, an `INDEX.md` or a CSV could not be made. Decided with the owner:
+
+- **One intent, two modes — no new intent.** `save_file_to_drive` takes **either** `file_ref` (copy a chat
+  attachment or a document the bot produced — unchanged) **or** `text` + `name` (write the text as a new file).
+  Exactly one source; both or neither is refused with a clear message. Same shape as `update_file_in_drive`'s
+  `append_text` | `source_ref`. Considered and rejected: renaming to `copy_file_to_drive` + a new
+  `create_file_in_drive` (one more intent, a rename that touches tests, skills and routing, for semantics the model
+  does not need). The drive's CRUD stays one verb per cell: save · list · open · move · update · delete (+ create
+  folder, kept for empty folders).
+- **The name carries the type.** `name` is required in text mode and must end in an allowed text extension:
+  `.md .txt .csv .json .yaml .yml .html .svg .xml`. The content type is derived from the extension. Any other
+  extension is refused with a hint: binary formats (images, PDF, DOCX) are produced by their own intents
+  (`generate_image`, `create_pdf`, `create_document`) and then saved with `file_ref`.
+- **Encoding is fixed, not chosen by the model:** UTF-8 without BOM; line endings normalised to `\n`. The text is
+  stored as given otherwise (no trimming, no NFC rewrite of the content).
+- **Limit:** 5 MiB of encoded text per file (`MAX_DRIVE_TEXT_FILE_BYTES`, owner, 2026-10-10 — same as the append
+  target cap), refused above it before any provider call.
+- **Same rules as any save (§4.7):** default folder `Inbox`, missing folders created, never overwrite — same name +
+  same bytes → "already there", different bytes → provider suffix `<stem> 1<ext>`; the reply states the actual
+  name. No receipt. `history_context["drive_context"]` as for every drive intent.
+- **Append is unchanged:** `update_file_in_drive(append_text)` still accepts `TEXT_FILE_EXTENSIONS`
+  (`.md .txt .csv .json .yaml .yml`); `.html/.svg/.xml` are creatable but not appendable in this step.
+
 ### 4.8 Destination folders (`save_file_to_drive`, `move_file_in_drive`, `create_folder_in_drive`)
 Resolved segment by segment, deterministically (the agent is zero-LLM):
 - each segment matches an existing child folder **case-insensitively** (`встречи` → `Встречи`), so a casual

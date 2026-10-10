@@ -549,7 +549,7 @@ paths came back raw in the spike; the adapter unquotes (no-op on raw) and strips
 `/drives/<id>/root:` prefixes. Seven drive intents on `FILE_MANAGEMENT` (`save_file_to_drive`, `list_files_in_drive`,
 `open_file_from_drive`, `move_file_in_drive`, `create_folder_in_drive`, `update_file_in_drive`,
 `delete_file_from_drive`), store in the name; mutations refuse a ref from the other store, reads are lenient;
-`save_file_to_drive` refuses a `drive:` source. `FILE_MANAGEMENT.prefetch_file_ref=False` (the coordinator no longer
+`save_file_to_drive` refuses a `drive:` source and also writes text the bot composed (`text`+`name`: md/txt/csv/json/yaml/html/svg/xml, UTF-8, ≤ 5 MiB, RFC §4.7.1). `FILE_MANAGEMENT.prefetch_file_ref=False` (the coordinator no longer
 pre-downloads its `file_ref`; a `DriveNotConnectedError` during another specialist's pre-fetch logs WARNING).
 `UserDriveService`: case-insensitive folders, saves never overwrite (same bytes → existing, else suffixed name,
 NFC-normalized comparison), append-only text edits, root protected, a move into the folder's own subtree and a rename

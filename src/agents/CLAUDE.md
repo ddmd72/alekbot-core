@@ -92,7 +92,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `save_file_to_drive`, `list_files_in_drive`, `open_file_from_drive`, `move_file_in_drive`,
   `create_folder_in_drive`, `update_file_in_drive`, `delete_file_from_drive` (store in the name; refs are
   `drive:<id>`). Mutating intents are strict about the store (a ref from the other store is refused;
-  `save_file_to_drive` refuses a `drive:` source), reads are lenient. `prefetch_file_ref=False` on its
+  `save_file_to_drive` refuses a `drive:` source; it takes `file_ref` OR `text`+`name` — a new md/txt/csv/json/yaml/html/svg/xml file, UTF-8, ≤ 5 MiB, RFC §4.7.1), reads are lenient. `prefetch_file_ref=False` on its
   descriptor (the coordinator does not pre-download its `file_ref`). Per-user mutation lock + `asyncio.shield`
   + 100 s wait inside the agent's 120 s timeout → success-shaped "still running, check with a listing"; a
   provider `TimeoutError` inside a mutation is a failure, not "still running". Delete/replace post a localised
