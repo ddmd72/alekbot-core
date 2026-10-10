@@ -554,7 +554,8 @@ FILE_MANAGEMENT = AgentDescriptor(
             "shown, e.g. skill:<name>/<path>."
         ),
         Intent.DELETE_FILE: (
-            "Delete a file from storage. "
+            "Delete a chat file ([File: ...] label) from storage. A drive file ([Drive: ...] label) "
+            "is deleted with delete_file_from_drive instead. "
             'Requires: context={"file_ref": "<filename>"}'
         ),
         Intent.SAVE_FILE_TO_DRIVE: (
