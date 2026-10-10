@@ -592,6 +592,8 @@ class FileManagementAgent(BaseAgent):
         ref = payload.get("file_ref") or ""
         text = payload.get("text")
         has_text = isinstance(text, str) and text != ""
+        if text == "" and not ref:
+            return self._fail(message, '"text" is empty: nothing to write. Give the full content of the file.')
         if bool(ref) == has_text:
             return self._fail(message, 'Give exactly one of "file_ref" (a file to keep) or "text" + "name" '
                                        '(a new text file).')

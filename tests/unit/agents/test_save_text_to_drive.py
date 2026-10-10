@@ -137,6 +137,14 @@ class TestRefusals:
     async def test_neither_source(self, setup):
         await self._refused(setup)
 
+    async def test_empty_text_names_the_problem(self, setup):
+        res = await self._refused(setup, text="", name="n.md")
+        assert "empty" in res.error
+
+    async def test_lone_surrogate_is_refused_not_an_error(self, setup):
+        res = await self._refused(setup, text="\ud800", name="n.md")
+        assert "UTF-8" in res.error and "Drive operation failed" not in res.error
+
     async def test_missing_name(self, setup):
         res = await self._refused(setup, text="x")
         assert "name" in res.error
@@ -153,3 +161,20 @@ class TestRefusals:
 def test_manifest_schema_has_text():
     schema = FILE_MANAGEMENT.context_schemas[Intent.SAVE_FILE_TO_DRIVE]
     assert "text" in schema and "name" in schema
+
+
+def test_rendered_delegate_schema_describes_text_and_name_for_this_intent():
+    """delegate_to_specialist.context keeps the first description per field name across ALL
+    descriptors; `text` is also save_to_memory's field, so what the model actually reads must
+    still describe the file mode."""
+    from src.agents.base_agent import BaseAgent
+    from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
+    from src.infrastructure.agent_registry import AgentRegistry
+    registry = AgentRegistry()
+    for descriptor in ALL_DESCRIPTORS:
+        registry.register(descriptor)
+    declaration = BaseAgent._build_delegate_tool_declaration(registry.get_available_intents())
+    props = declaration["parameters"]["properties"]["context"]["properties"]
+    assert Intent.SAVE_FILE_TO_DRIVE in props["text"]["description"]
+    assert "content" in props["text"]["description"]
+    assert ".md" in props["name"]["description"] and "extension" in props["name"]["description"]

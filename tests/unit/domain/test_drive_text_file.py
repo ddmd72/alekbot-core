@@ -69,3 +69,36 @@ def test_missing_name_refused(name):
     with pytest.raises(DrivePathError) as exc:
         prepare_drive_text_file(name, "x")
     assert "name" in str(exc.value)
+
+
+def test_leading_bom_dropped_only_once():
+    """§4.7.1 "UTF-8 without BOM": a leading U+FEFF from the model would encode as a BOM."""
+    _, data, _ = prepare_drive_text_file("n.md", "\ufeff\ufeffx")
+    assert data == "\ufeffx".encode("utf-8")   # the second one is content, stored as given
+
+
+def test_lone_surrogate_is_a_clean_refusal():
+    with pytest.raises(DrivePathError) as exc:
+        prepare_drive_text_file("n.md", "ok \ud800 bad")
+    assert "position 3" in str(exc.value)
+
+
+def test_extension_case_insensitive_name_kept():
+    filename, _, mime = prepare_drive_text_file("Звіт.MD", "x")
+    assert filename == "Звіт.MD" and mime == "text/markdown"
+
+
+@pytest.mark.parametrize("name,ok", [("x.md.png", False), ("x.png.md", True), ("../x.md", True)])
+def test_last_extension_decides(name, ok):
+    if ok:
+        filename, _, _ = prepare_drive_text_file(name, "x")
+        assert "/" not in filename and filename.endswith(".md")
+    else:
+        with pytest.raises(DrivePathError):
+            prepare_drive_text_file(name, "x")
+
+
+def test_extension_without_stem_refused_with_hint():
+    with pytest.raises(DrivePathError) as exc:
+        prepare_drive_text_file(".md", "x")
+    assert "notes.md" in str(exc.value)
