@@ -1,4 +1,5 @@
 """Wire tests for MicrosoftGraphTokenProvider. Mock boundary: aiohttp.ClientSession."""
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -81,3 +82,88 @@ class TestTokenProvider:
         session = _session(_resp({"error": "invalid_grant"}, status=400))
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(GraphReauthRequired):
             await provider.headers("u1")
+
+
+class TestCacheIsolationAndInvalidation:
+    """Review additions (Task 3): the behaviours Tasks 4 and 9 rely on but the plan's tests left unpinned."""
+
+    async def test_invalidate_rereads_store(self):
+        provider, oauth = _provider(_creds(timedelta(hours=1)))
+        await provider.headers("u1")
+        provider.invalidate("u1")
+        await provider.headers("u1")
+        assert oauth.get_credentials.await_count == 2
+
+    async def test_cached_token_inside_refresh_margin_is_refreshed(self):
+        provider, oauth = _provider(_creds(timedelta(hours=1)))
+        await provider.headers("u1")
+        token, _, fetched_at = provider._cache["u1"]
+        provider._cache["u1"] = (token, datetime.now(timezone.utc) + timedelta(minutes=4), fetched_at)
+        oauth.get_credentials.return_value = _creds(timedelta(minutes=4))
+        session = _session(_resp({"access_token": "new", "expires_in": 3600}))
+        with patch("aiohttp.ClientSession", return_value=session):
+            assert await provider.headers("u1") == {"Authorization": "Bearer new"}
+        session.post.assert_called_once()
+
+    async def test_providers_never_share_a_token(self):
+        oauth = AsyncMock(spec=OAuthCredentialsPort)
+        oauth.get_credentials.side_effect = lambda user_id, provider: _creds(timedelta(hours=1), token=provider)
+        todo = MicrosoftGraphTokenProvider(oauth, "cid", "csecret", "microsoft_todo", "Tasks.ReadWrite offline_access")
+        drive = MicrosoftGraphTokenProvider(oauth, "cid", "csecret", "microsoft_onedrive",
+                                            "Files.ReadWrite.AppFolder offline_access")
+        assert await todo.headers("u1") == {"Authorization": "Bearer microsoft_todo"}
+        assert await drive.headers("u1") == {"Authorization": "Bearer microsoft_onedrive"}
+        assert [c.args[1] for c in oauth.get_credentials.await_args_list] == ["microsoft_todo", "microsoft_onedrive"]
+
+    async def test_other_refresh_error_is_value_error_not_reauth(self):
+        provider, oauth = _provider(_creds(timedelta(minutes=1)))
+        session = _session(_resp({"error": "server_error"}, status=503))
+        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(ValueError) as exc_info:
+            await provider.headers("u1")
+        assert not isinstance(exc_info.value, GraphReauthRequired)
+        oauth.save_credentials.assert_not_called()
+        assert "u1" not in provider._cache
+
+
+def _slow_session(post_resp):
+    """A session whose token exchange yields to the event loop once, so callers really overlap."""
+    s = _session(post_resp)
+
+    async def enter():
+        await asyncio.sleep(0)
+        return post_resp
+    post_resp.__aenter__ = AsyncMock(side_effect=enter)
+    return s
+
+
+class TestConcurrency:
+    """One token exchange per user, however many coroutines ask at once (per-user asyncio.Lock)."""
+
+    async def test_concurrent_callers_refresh_once(self):
+        provider, oauth = _provider(_creds(timedelta(minutes=1)))
+        session = _slow_session(_resp({"access_token": "new", "expires_in": 3600}))
+        with patch("aiohttp.ClientSession", return_value=session):
+            results = await asyncio.gather(*(provider.headers("u1") for _ in range(5)))
+        assert results == [{"Authorization": "Bearer new"}] * 5
+        assert session.post.call_count == 1
+        assert oauth.get_credentials.await_count == 1
+
+    async def test_concurrent_forced_refresh_is_one_exchange(self):
+        """A burst of 401s (every in-flight call invalidates + forces a refresh) costs one refresh."""
+        provider, oauth = _provider(_creds(timedelta(hours=1)))
+        await provider.headers("u1")
+        session = _slow_session(_resp({"access_token": "fresh", "expires_in": 3600}))
+        with patch("aiohttp.ClientSession", return_value=session):
+            results = await asyncio.gather(*(provider.headers("u1", force_refresh=True) for _ in range(3)))
+        assert results == [{"Authorization": "Bearer fresh"}] * 3
+        assert session.post.call_count == 1
+
+    async def test_forced_refresh_after_a_completed_one_still_refreshes(self):
+        """A forced refresh asked *after* the previous one finished is honoured (the token may be dead)."""
+        provider, _ = _provider(_creds(timedelta(hours=1)))
+        session = _session(_resp({"access_token": "fresh", "expires_in": 3600}))
+        with patch("aiohttp.ClientSession", return_value=session):
+            await provider.headers("u1", force_refresh=True)
+            await asyncio.sleep(0.001)
+            await provider.headers("u1", force_refresh=True)
+        assert session.post.call_count == 2
