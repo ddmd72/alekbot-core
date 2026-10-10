@@ -42,20 +42,27 @@ class MicrosoftGraphTokenProvider:
     def invalidate(self, user_id: str) -> None:
         self._cache.pop(user_id, None)
 
-    def _fresh(self, user_id: str) -> Optional[str]:
+    def _fresh(self, user_id: str, *, fetched_since: Optional[datetime] = None) -> Optional[str]:
+        """The cached token when it is still usable; with `fetched_since`, only one fetched at or after it."""
         cached = self._cache.get(user_id)
         now = datetime.now(timezone.utc)
         if cached and cached[1] > now + _REFRESH_MARGIN and cached[2] > now - CACHE_TTL:
-            return cached[0]
+            if fetched_since is None or cached[2] >= fetched_since:
+                return cached[0]
         return None
 
     async def headers(self, user_id: str, *, force_refresh: bool = False) -> Optional[Dict[str, str]]:
-        """Authorization header, or None when the user has not connected this provider."""
+        """Authorization header, or None when the user has not connected this provider.
+
+        `force_refresh` (the adapters' 401 path) refreshes even a cached token — but one refresh
+        serves every caller that was waiting on it, so a burst of 401s is one token exchange.
+        """
         token = None if force_refresh else self._fresh(user_id)
         if token:
             return {"Authorization": f"Bearer {token}"}
+        requested_at = datetime.now(timezone.utc)
         async with self._locks.setdefault(user_id, asyncio.Lock()):
-            token = None if force_refresh else self._fresh(user_id)
+            token = self._fresh(user_id, fetched_since=requested_at if force_refresh else None)
             if token:
                 return {"Authorization": f"Bearer {token}"}
             creds = await self._oauth.get_credentials(user_id, self._provider)
