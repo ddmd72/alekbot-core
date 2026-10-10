@@ -17,7 +17,15 @@ import mimetypes
 from typing import Optional
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
-from ..domain.llm import LLMRequest, LLMResponse, Message, MessagePart, describe_empty_output
+from ..domain.exceptions import BothProvidersUnavailableError, LLMTimeoutError
+from ..domain.llm import (
+    FinishReason,
+    LLMRequest,
+    LLMResponse,
+    Message,
+    MessagePart,
+    describe_empty_output,
+)
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..infrastructure.agent_config import VIDEO_GENERATION
 from ..infrastructure.agent_manifest import Intent
@@ -149,16 +157,34 @@ class VideoGenerationAgent(BaseAgent):
                 "motion for this specific image, not a new scene.]"
             )
 
-        craft_response = await self._craft_prompt(system_prompt, craft_query)
+        try:
+            craft_response = await self._craft_prompt(system_prompt, craft_query)
+        except (LLMTimeoutError, BothProvidersUnavailableError) as exc:
+            if not self._is_timeout(exc):
+                raise
+            self._on_agent_error(exc, "prompt_crafting")
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=(
+                    f"Could not craft a video prompt from the request — the crafting model "
+                    f"({self.model_name}) did not answer within {self.REQUEST_TIMEOUT_S}s. "
+                    "Nothing was submitted for rendering. A shorter brief usually finishes "
+                    "faster."
+                ),
+            )
+
         crafted = self._parse_crafted_response(craft_response)
-        if crafted is None:
-            reason = describe_empty_output(craft_response.finish_reason)
-            err = ValueError(f"LLM returned invalid/empty crafting output: {reason}")
+        if isinstance(crafted, str):
+            err = ValueError(f"LLM returned unusable crafting output: {crafted}")
             self._on_agent_error(err, "prompt_crafting")
             return AgentResponse.failure(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
-                error=f"Could not craft a video prompt from the request — {reason}.",
+                error=(
+                    f"Could not craft a video prompt from the request — {crafted}. "
+                    "Nothing was submitted for rendering."
+                ),
             )
 
         video_prompt, aspect_ratio = crafted
@@ -178,19 +204,37 @@ class VideoGenerationAgent(BaseAgent):
         )
         return await self._call_llm(request)
 
-    def _parse_crafted_response(self, response: LLMResponse) -> Optional[tuple[str, str]]:
+    @staticmethod
+    def _is_timeout(exc: Exception) -> bool:
+        if isinstance(exc, LLMTimeoutError):
+            return True
+        return isinstance(getattr(exc, "primary_cause", None), LLMTimeoutError)
+
+    def _parse_crafted_response(self, response: LLMResponse) -> "tuple[str, str] | str":
+        """Return ``(video_prompt, aspect_ratio)``, or a user-facing reason it is unusable."""
         raw = (response.text or "").strip()
         if not raw:
-            return None
+            return describe_empty_output(response.finish_reason)
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            logger.error("VideoGenerationAgent: crafting call returned invalid JSON: %r", raw[:200])
-            return None
+            logger.error(
+                "VideoGenerationAgent: crafting call returned invalid JSON "
+                "(%d chars, finish_reason=%s): %r",
+                len(raw), response.finish_reason, raw[:200],
+            )
+            if response.finish_reason == FinishReason.MAX_TOKENS:
+                return (
+                    f"the crafted prompt was cut off at the output length limit "
+                    f"({self.MAX_TOKENS} tokens) after {len(raw)} characters"
+                )
+            return f"the model returned malformed JSON ({len(raw)} characters, likely cut off)"
+        if not isinstance(data, dict):
+            return "the model returned JSON that is not an object"
         video_prompt = (data.get("video_prompt") or "").strip()
         aspect_ratio = (data.get("aspect_ratio") or "auto").strip()
         if not video_prompt:
-            return None
+            return "the model returned JSON with an empty video_prompt"
         return video_prompt, aspect_ratio
 
     def _resolve_duration(self, message: AgentMessage) -> int:

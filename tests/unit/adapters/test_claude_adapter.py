@@ -2080,3 +2080,39 @@ async def test_haiku_4_5_still_gets_no_thinking_or_effort():
     )
     assert "thinking" not in captured
     assert "effort" not in (captured.get("output_config") or {})
+
+
+# ============================================================================
+# finish_reason: a truncated reply must not read as an empty one (2026-10-10)
+# ============================================================================
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stop_reason,expected",
+    [
+        ("end_turn", "stop"),
+        ("tool_use", "stop"),
+        ("max_tokens", "max_tokens"),
+        ("pause_turn", "other"),
+        (None, None),
+    ],
+)
+async def test_finish_reason_mapped_from_stop_reason(stop_reason, expected):
+    from src.domain.llm import FinishReason
+
+    adapter = ClaudeAdapter(api_key="test-key")
+    sdk_response = _make_sdk_response('{"a": "cut')
+    sdk_response.stop_reason = stop_reason
+    cm = _make_claude_cm(sdk_response)
+    adapter.client.messages.stream = lambda **kwargs: cm
+
+    response = await adapter.generate_content(
+        request=LLMRequest(
+            model_name="claude-sonnet-4-6",
+            system_instruction="test",
+            messages=_MESSAGES,
+            max_tokens=500,
+        )
+    )
+
+    assert response.finish_reason == (FinishReason(expected) if expected else None)
