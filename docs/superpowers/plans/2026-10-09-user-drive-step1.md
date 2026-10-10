@@ -770,8 +770,8 @@ class UserDrivePort(ABC):
 ## Task 3: Shared Microsoft Graph token provider — cache, expiry, revocation
 
 **Files:**
-- Create: `src/adapters/microsoft_graph_auth.py`
-- Modify: `src/adapters/microsoft_todo_adapter.py` (`__init__`, `_get_headers`, `_refresh_token`, lines ~113–157)
+- Create: `src/adapters/microsoft/graph_auth.py`
+- Modify: `src/adapters/microsoft/todo_adapter.py` (`__init__`, `_get_headers`, `_refresh_token`, lines ~113–157)
 - Test: `tests/unit/adapters/test_microsoft_graph_auth.py`
 - Must stay green unchanged: `tests/unit/adapters/test_microsoft_todo_adapter.py`
 
@@ -792,7 +792,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.adapters.microsoft_graph_auth import GraphReauthRequired, MicrosoftGraphTokenProvider
+from src.adapters.microsoft.graph_auth import GraphReauthRequired, MicrosoftGraphTokenProvider
 from src.domain.email import OAuthCredentials
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 
@@ -980,7 +980,7 @@ class MicrosoftGraphTokenProvider:
 
 - [ ] **Step 4: To Do adapter delegates to it**
 
-In `src/adapters/microsoft_todo_adapter.py`: `from .microsoft_graph_auth import MicrosoftGraphTokenProvider`; at the end of `__init__`:
+In `src/adapters/microsoft/todo_adapter.py`: `from .graph_auth import MicrosoftGraphTokenProvider`; at the end of `__init__`:
 
 ```python
         self._tokens = MicrosoftGraphTokenProvider(
@@ -1003,18 +1003,18 @@ Replace `_get_headers` and `_refresh_token` bodies:
         return await self._tokens.refresh(creds)
 ```
 
-Remove `_TOKEN_URL` from the To Do module only if nothing else there uses it (`grep -n _TOKEN_URL src/adapters/microsoft_todo_adapter.py`).
+Remove `_TOKEN_URL` from the To Do module only if nothing else there uses it (`grep -n _TOKEN_URL src/adapters/microsoft/todo_adapter.py`).
 
 - [ ] **Step 5:** `pytest tests/unit/adapters/test_microsoft_graph_auth.py tests/unit/adapters/test_microsoft_todo_adapter.py -v` → all PASS. A To Do failure (e.g. a test that counts credential reads per call) → do not edit it; hand it to the reviewer with assertion + actual vs expected. Behaviour change to note in the commit body: a To Do disconnect now reaches other instances within 5 minutes instead of immediately (owner decision, RFC §4.2).
 
-- [ ] **Step 6: Commit** — `git add src/adapters/microsoft_graph_auth.py src/adapters/microsoft_todo_adapter.py tests/unit/adapters/test_microsoft_graph_auth.py && git commit -m "refactor(ms-graph): shared token provider with in-memory cache and reauth signal"`
+- [ ] **Step 6: Commit** — `git add src/adapters/microsoft/graph_auth.py src/adapters/microsoft/todo_adapter.py tests/unit/adapters/test_microsoft_graph_auth.py && git commit -m "refactor(ms-graph): shared token provider with in-memory cache and reauth signal"`
 
 ---
 
 ## Task 4: `OneDriveAdapter`
 
 **Files:**
-- Create: `src/adapters/onedrive_adapter.py`
+- Create: `src/adapters/microsoft/onedrive_adapter.py`
 - Test: `tests/unit/adapters/test_onedrive_adapter.py`
 
 **Interfaces:**
@@ -1039,7 +1039,7 @@ from urllib.parse import quote
 
 import pytest
 
-from src.adapters.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
+from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
 from src.domain.email import OAuthCredentials
 from src.domain.user_drive import DriveItemNotFoundError, DriveNameConflictError, DriveNotConnectedError
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
@@ -1162,7 +1162,7 @@ class TestAuthAndErrors:
         assert root.item_id == "root1"
 
     def test_retry_after_http_date_falls_back_to_backoff(self):
-        from src.adapters.onedrive_adapter import _retry_after
+        from src.adapters.microsoft.onedrive_adapter import _retry_after
         assert _retry_after("Wed, 21 Oct 2026 07:28:00 GMT", 1) == 2.0
         assert _retry_after("120", 0) == 30.0
 
@@ -1278,7 +1278,7 @@ from ..domain.user_drive import (
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.user_drive_port import UserDrivePort
 from ..utils.logger import logger
-from .microsoft_graph_auth import GraphReauthRequired, MicrosoftGraphTokenProvider
+from .graph_auth import GraphReauthRequired, MicrosoftGraphTokenProvider
 
 ONEDRIVE_PROVIDER = "microsoft_onedrive"
 _SCOPE = "Files.ReadWrite.AppFolder offline_access"
@@ -1541,9 +1541,9 @@ class OneDriveAdapter(UserDrivePort):
         )
 ```
 
-- [ ] **Step 4:** `pytest tests/unit/adapters/test_onedrive_adapter.py -v && ruff check src/adapters/onedrive_adapter.py src/adapters/microsoft_graph_auth.py && make check-types` → PASS; `check-types` shows no new errors for the two new files (compare counts before/after).
+- [ ] **Step 4:** `pytest tests/unit/adapters/test_onedrive_adapter.py -v && ruff check src/adapters/microsoft/onedrive_adapter.py src/adapters/microsoft/graph_auth.py && make check-types` → PASS; `check-types` shows no new errors for the two new files (compare counts before/after).
 
-- [ ] **Step 5: Commit** — `git add src/adapters/onedrive_adapter.py tests/unit/adapters/test_onedrive_adapter.py && git commit -m "feat(drive): OneDriveAdapter — App Folder, decoded paths, retries, reauth"`
+- [ ] **Step 5: Commit** — `git add src/adapters/microsoft/onedrive_adapter.py tests/unit/adapters/test_onedrive_adapter.py && git commit -m "feat(drive): OneDriveAdapter — App Folder, decoded paths, retries, reauth"`
 
 ---
 
@@ -2936,7 +2936,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 from quart import Quart
 
-from src.adapters.onedrive_adapter import ONEDRIVE_PROVIDER
+from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.web import oauth_app
 from src.web.oauth_app import create_oauth_blueprint
@@ -3132,7 +3132,7 @@ Pass `drive=self.user_drive` into `FileConversionService(...)`; add `"user_drive
     # ========================================================================
     # GET /auth/connect-onedrive — the user's drive (USER_DRIVE_RFC §4.1)
     # ========================================================================
-    _ONEDRIVE_PROVIDER = "microsoft_onedrive"  # == adapters.onedrive_adapter.ONEDRIVE_PROVIDER (tested)
+    _ONEDRIVE_PROVIDER = "microsoft_onedrive"  # == adapters.microsoft.onedrive_adapter.ONEDRIVE_PROVIDER (tested)
     _ONEDRIVE_SCOPE = "Files.ReadWrite.AppFolder offline_access"
 
     @bp.route("/auth/connect-onedrive", methods=["GET"])
@@ -3597,7 +3597,7 @@ and "Files are kept for 90 days." → "Chat attachments are kept for 90 days; to
 ```
 **User Drive** (`docs/10_rfcs/USER_DRIVE_RFC.md`) — the user's long-term file area: OneDrive App Folder
 (`Apps/Alek-bot`, scope `Files.ReadWrite.AppFolder`) behind the provider-neutral `UserDrivePort` (`OneDriveAdapter`;
-token refresh + 5-minute in-memory cache shared with To Do in `adapters/microsoft_graph_auth.py` — a disconnect
+token refresh + 5-minute in-memory cache shared with To Do in `adapters/microsoft/graph_auth.py` — a disconnect
 reaches every instance within 5 minutes, To Do included). The model and history see
 only `drive:<opaque id>` refs and `[Drive: …]` labels with decoded paths — no provider name. Eight drive intents on
 `FILE_MANAGEMENT`, store in the name (`*_to_drive`/`*_in_drive`/`*_from_drive`); mutations refuse a ref from the
