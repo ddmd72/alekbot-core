@@ -47,3 +47,47 @@ async def test_drive_not_connected_is_a_warning_not_an_error(caplog):
     assert "file_content" not in params
     records = [r for r in caplog.records if "drive:abc" in r.getMessage()]
     assert records and all(r.levelno == logging.WARNING for r in records)
+
+
+async def test_other_resolver_errors_still_logged_at_error(caplog):
+    """Only the not-connected state is downgraded; every other failure keeps its ERROR line."""
+    coord = _coordinator(True)
+    coord._file_ref_resolver = AsyncMock(side_effect=RuntimeError("boom"))
+    params = {"file_ref": "a.txt"}
+    with caplog.at_level(logging.DEBUG):
+        await coord._maybe_resolve_file_refs("files", params, "u1")
+    assert "file_content" not in params
+    records = [r for r in caplog.records if "a.txt" in r.getMessage()]
+    assert records and all(r.levelno == logging.ERROR for r in records)
+
+
+# Both dispatch paths must consult the flag (RFC §4.4 names _execute_sync AND _execute_async).
+
+async def test_sync_path_honours_flag():
+    coord = _coordinator(False)
+    context = {"user_id": "u1", "params": {"file_ref": "drive:abc"}}
+    await coord._execute_sync("files", "open_x", "open it", context)
+    coord._file_ref_resolver.assert_not_called()
+    assert "file_content" not in context["params"]
+
+
+async def test_async_path_honours_flag():
+    coord = _coordinator(False)
+    coord._task_queue = AsyncMock()
+    coord._task_queue.enqueue_agent_task = AsyncMock(return_value="task-1")
+    context = {"user_id": "u1", "params": {"file_ref": "drive:abc"}}
+    resp = await coord._execute_async("files", "open_x", "open it", context)
+    coord._file_ref_resolver.assert_not_called()
+    assert "file_content" not in context["params"]
+    assert resp.result["task_name"] == "task-1"
+    coord._task_queue.enqueue_agent_task.assert_awaited_once()
+
+
+async def test_async_path_default_still_prefetches():
+    coord = _coordinator(True)
+    coord._task_queue = AsyncMock()
+    coord._task_queue.enqueue_agent_task = AsyncMock(return_value="task-1")
+    context = {"user_id": "u1", "params": {"file_ref": "a.txt"}}
+    await coord._execute_async("files", "open_x", "open it", context)
+    coord._file_ref_resolver.assert_awaited_once_with("a.txt", "u1")
+    assert context["params"]["file_content"] == "text"

@@ -67,3 +67,28 @@ def test_no_provider_name_reaches_the_model():
 def test_save_says_chat_files_are_temporary():
     text = FILE_MANAGEMENT.capability_descriptions[Intent.SAVE_FILE_TO_DRIVE].lower()
     assert "temporary" in text and "remember" in text
+
+
+def test_only_file_management_opts_out_of_prefetch():
+    """Default True everywhere else: no other agent silently loses its pre-fetched file_content."""
+    from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
+    opted_out = {d.agent_id for d in ALL_DESCRIPTORS if not d.prefetch_file_ref}
+    assert opted_out == {FILE_MANAGEMENT.agent_id}
+
+
+def test_descriptions_disambiguate_the_routing_cases():
+    """RFC §3/§4.4/§4.9 routing cases, pinned to the wording the model reads."""
+    d = FILE_MANAGEMENT.capability_descriptions
+    # "remember this FILE" vs "remember THAT ...": the file intent points text and facts elsewhere.
+    assert "save_to_memory" in d[Intent.SAVE_FILE_TO_DRIVE]
+    # A chat file opened earlier, then "move it to <folder>": not on the drive yet, so save, not move.
+    assert "save_file_to_drive" in d[Intent.MOVE_FILE_IN_DRIVE]
+    # The store is in the name, both directions, for the destructive pair.
+    assert "delete_file_from_drive" in d[Intent.DELETE_FILE]
+    assert "[File: ...]" in d[Intent.DELETE_FILE] and "[Drive: ...]" in d[Intent.DELETE_FILE]
+    # update: two safe modes, no full-text overwrite offered.
+    update = d[Intent.UPDATE_FILE_IN_DRIVE]
+    assert "append_text" in update and "source_ref" in update
+    assert "Rewriting a file with new text is not available" in update
+    # Reading from the drive is addressed by [Drive: ...] label and drive:<id> ref.
+    assert "drive:<id>" in d[Intent.OPEN_FILE_FROM_DRIVE] and "[Drive: ...]" in d[Intent.OPEN_FILE_FROM_DRIVE]
