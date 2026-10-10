@@ -1,6 +1,6 @@
 # RFC: User Drive — the user's long-term file area
 
-**Status:** Step 1 implemented on `feat/user-drive` (2026-10-10); consolidation token migration, live routing probe, deploy and live acceptance pending. (Draft revision 6, 2026-10-09; steps 2–3 named only.)
+**Status:** Step 1 live (2026-10-10) from `feat/user-drive`, not yet merged: deployed, drive connected, live acceptance passed (list, delete folder + receipt, save into a new folder, append, rename + move, open by `drive:` ref, replace + receipt). Consolidation exclusion applied. The re-sent-file fix (`84a3f5e`) needs one more deploy. Routing probe ran on the Gemini fallback only (OpenAI unreachable from the test environment). (Draft revision 6, 2026-10-09; steps 2–3 named only.)
 Supersedes the draft `ONEDRIVE_FILES_RFC.md` (revisions 1–3, never merged).
 - Revision 4: the drive is a domain concept and OneDrive its first adapter — nothing the model sees or history
   stores names a provider (§4.3); every drive operation has its own intent (§4.4); roles of the file stores (§4.5);
