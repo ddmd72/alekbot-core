@@ -257,7 +257,8 @@ exists. A working note, an `INDEX.md` or a CSV could not be made. Decided with t
   (`generate_image`, `create_pdf`, `create_document`) and then saved with `file_ref`.
 - **Encoding is fixed, not chosen by the model:** UTF-8 without BOM; line endings normalised to `\n`. The text is
   stored as given otherwise (no trimming, no NFC rewrite of the content).
-- **Limit:** 1 MiB of encoded text (`MAX_DRIVE_TEXT_FILE_BYTES`), refused above it before any provider call.
+- **Limit:** 5 MiB of encoded text per file (`MAX_DRIVE_TEXT_FILE_BYTES`, owner, 2026-10-10 — same as the append
+  target cap), refused above it before any provider call.
 - **Same rules as any save (§4.7):** default folder `Inbox`, missing folders created, never overwrite — same name +
   same bytes → "already there", different bytes → provider suffix `<stem> 1<ext>`; the reply states the actual
   name. No receipt. `history_context["drive_context"]` as for every drive intent.
