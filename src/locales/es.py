@@ -130,4 +130,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_DELETED_FILE.value: "🗑️ Eliminado del disco: {path}",
     UIMessage.DRIVE_DELETED_FOLDER.value: "🗑️ Carpeta eliminada: {path} (archivos: {count})",
     UIMessage.DRIVE_REPLACED.value: "✏️ Reemplazado: {path} ({before} → {after}; la versión anterior está en su historial de versiones)",
+    UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ La eliminación de {path} no se completó.",
+    UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ El reemplazo de {path} no se completó.",
 }

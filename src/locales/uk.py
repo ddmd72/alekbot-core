@@ -159,4 +159,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_DELETED_FILE.value: "🗑️ Видалено з диска: {path}",
     UIMessage.DRIVE_DELETED_FOLDER.value: "🗑️ Видалено папку: {path} (файлів: {count})",
     UIMessage.DRIVE_REPLACED.value: "✏️ Замінено: {path} ({before} → {after}; попередня версія — в історії версій)",
+    UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ Видалення {path} не завершилося.",
+    UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ Заміна {path} не завершилася.",
 }

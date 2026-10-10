@@ -96,7 +96,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   descriptor (the coordinator does not pre-download its `file_ref`). Per-user mutation lock + `asyncio.shield`
   + 100 s wait inside the agent's 120 s timeout → success-shaped "still running, check with a listing"; a
   provider `TimeoutError` inside a mutation is a failure, not "still running". Delete/replace post a localised
-  `notify_raw` receipt. Vision only JPEG/PNG/GIF/WebP + PDF (HEIC refused). Refs persist via
+  `notify_raw` receipt, or a "did not complete" notice if they fail after "still running" was answered. Vision only JPEG/PNG/GIF/WebP + PDF (HEIC refused). Refs persist via
   `history_context["drive_context"]`. No search in step 1.
 - Notes / Proactive Self-Reminders (PERFORMANCE, OpenAI, intent `manage_self_reminders`) — deferred
   instructions the system writes to itself that fire autonomously as new conversations. Two-field model:
