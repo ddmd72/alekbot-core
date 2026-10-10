@@ -106,7 +106,17 @@ Send me files directly in the chat — documents, images, PDFs, spreadsheets. I 
 - Use files as source material for document generation (PDF, DOCX, HTML page) — e.g. "create a PDF from this file"
 - Delete files when you no longer need them
 
-Files are kept for 90 days. Supported: anything that can be converted to text (DOCX, PDF, CSV, TXT, XLSX, etc.) plus images for visual analysis.
+Chat attachments are kept for 90 days; to keep a file, ask me to remember it on your drive. Supported: anything that can be converted to text (DOCX, PDF, CSV, TXT, XLSX, etc.) plus images for visual analysis.
+
+---
+
+*Your drive (long-term files)*
+Connect your drive in the Cabinet. Then:
+- "Remember this file" — I keep it in your drive's Inbox, or in the folder you name, under a clear name
+- "What's in Meetings?" — I browse your folders (search by name comes later)
+- Open, rename, move, create folders; add a line to a note; replace a file with a new version
+- Delete a file or a whole folder — I post a note in chat with what was deleted; it stays in your drive's recycle bin
+Chat attachments are temporary; the drive is where files are kept.
 
 ---
 

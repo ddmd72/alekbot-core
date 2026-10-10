@@ -112,6 +112,9 @@ if TYPE_CHECKING:
     from ..infrastructure.agent_coordinator import AgentCoordinator
     from ..domain.user import UserBotConfig
     from ..services.skill_service import SkillService
+    from ..services.user_drive_service import UserDriveService
+    from ..services.localization_service import LocalizationService
+    from ..ports.language_service_port import LanguageServicePort
 
 
 def _voice_profile_for(user_id: str, config: "UserBotConfig") -> VoiceProviderProfile:
@@ -181,6 +184,9 @@ class UserAgentFactory(AgentFactoryPort):
         quota_service: Optional[object] = None,
         skill_service: Optional["SkillService"] = None,
         long_turn_registry: Optional[LongTurnRegistry] = None,
+        user_drive_service: Optional["UserDriveService"] = None,
+        localization: Optional["LocalizationService"] = None,
+        language_service: Optional["LanguageServicePort"] = None,
     ) -> None:
         self.config = config
         self.env_config = env_config
@@ -221,6 +227,9 @@ class UserAgentFactory(AgentFactoryPort):
         self.quota_service = quota_service
         self.skill_service = skill_service
         self.long_turn_registry = long_turn_registry
+        self.user_drive_service = user_drive_service
+        self.localization = localization
+        self.language_service = language_service
 
         unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
         self._image_search = UnsplashAdapter(unsplash_key) if unsplash_key else None
@@ -825,12 +834,15 @@ class UserAgentFactory(AgentFactoryPort):
             config=AgentConfig(
                 agent_id=f"file_management_agent_{user_id}",
                 agent_type="file_management",
-                timeout_ms=30_000,
+                timeout_ms=120_000,  # drive operations (USER_DRIVE_RFC §4.13)
                 capabilities=["file_storage"],
             ),
             conversion_service=self.file_conversion_service,
             storage=self.file_storage,
             notification=self.notification_service,
+            drive_service=self.user_drive_service,
+            localization=self.localization,
+            language_service=self.language_service,
         )
 
     def _build_domain_researcher(self, user_id: str, ctx: _UserContext) -> DomainResearcherAgent:

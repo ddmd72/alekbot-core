@@ -119,6 +119,11 @@ class AgentDescriptor:
     # instantiated on first delegation.  Default True preserves existing behavior.
     eager: bool = True
 
+    # Pre-fetch: AgentCoordinator downloads and converts any `file_ref` before dispatch and puts the
+    # text into `file_content`. An agent that reads files itself (FileManagement) opts out — otherwise
+    # a delete would first download the file it deletes (USER_DRIVE_RFC §4.4).
+    prefetch_file_ref: bool = True
+
 
 # Backward-compatible alias — existing callers using AgentManifest continue to work.
 AgentManifest = AgentDescriptor
