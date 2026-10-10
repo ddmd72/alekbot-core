@@ -46,6 +46,18 @@ def _is_delivered_key(ref: str) -> bool:
     return ref.startswith(DELIVERED_REF_PREFIXES)
 
 
+def _is_drive_ref(ref: str) -> bool:
+    """True if ref addresses the user's drive (USER_DRIVE_RFC §4.3).
+
+    `parse_drive_ref` searches anywhere in the string (label punctuation tolerance), so a
+    skill ref or a delivered-document key whose *filename* contains `drive:` must keep its
+    own store: those shapes are decided by prefix first.
+    """
+    if ref.startswith(SKILL_REF_PREFIX) or _is_delivered_key(ref):
+        return False
+    return parse_drive_ref(ref) is not None
+
+
 def _format_size(size_bytes: int) -> str:
     """Human-readable file size: 1.2MB, 340KB, 512B."""
     if size_bytes >= 1_048_576:
@@ -214,7 +226,7 @@ class FileConversionService:
         if ref.startswith(SKILL_REF_PREFIX):
             text = await self._read_skill(ref, user_id)
             return f"[File: {ref}]\n{text}\n[/File: {ref}]"
-        if parse_drive_ref(ref) is not None:
+        if _is_drive_ref(ref):
             return await self._resolve_drive_content(ref, user_id)
 
         mime_type, _ = mimetypes.guess_type(ref)
@@ -246,6 +258,6 @@ class FileConversionService:
         Dispatches by ref shape: delivered-document key → MediaStoragePort (with
         ownership check); bare filename → user-upload FileStoragePort.
         """
-        if parse_drive_ref(ref) is not None:
+        if _is_drive_ref(ref):
             return await self._resolve_drive_bytes(ref, user_id)
         return await self._download_by_ref(ref, user_id)

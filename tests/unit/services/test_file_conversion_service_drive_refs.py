@@ -88,3 +88,18 @@ class TestDriveRefs:
         svc._storage.download.return_value = b"x"
         await svc.resolve_bytes("report.docx", "u1")
         drive.get_item.assert_not_called()
+
+    async def test_other_store_ref_containing_drive_colon_keeps_its_store(self, drive):
+        """A delivered key / skill ref is decided by its prefix: `drive:` inside the
+        filename must not pull it onto the drive (keys embed the filename unsanitised)."""
+        media = AsyncMock()
+        media.fetch.return_value = b"%PDF"
+        skills = AsyncMock()
+        skills.read.return_value = "body"
+        svc = FileConversionService(storage=AsyncMock(spec=FileStoragePort), media_storage=media,
+                                    skill_files=skills, drive=drive)
+        key = "docs/u1/0f8e3b2a-1c2d-4e5f-8a9b-0c1d2e3f4a5b-drive:plan.pdf"
+        assert await svc.resolve_bytes(key, "u1") == b"%PDF"
+        media.fetch.assert_awaited_once_with(key)
+        assert "body" in await svc.resolve_content("skill:notes/drive:x.md", "u1")
+        drive.get_item.assert_not_called()
