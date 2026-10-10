@@ -235,6 +235,13 @@ class TestReceipts:
         assert resp.status == AgentStatus.SUCCESS and "[Drive folder: Meetings/2025/" in resp.result
         notifier.notify_raw.assert_not_called()
 
+    async def test_save_has_no_receipt(self, agent, conversion, drive, notifier):
+        conversion.resolve_bytes.return_value = b"x"
+        drive.save.return_value = SaveOutcome(item=FILE, created=["Inbox"])
+        resp = await agent.execute(_msg(Intent.SAVE_FILE_TO_DRIVE, file_ref="lease.pdf"))
+        assert resp.status == AgentStatus.SUCCESS
+        notifier.notify_raw.assert_not_called()
+
     async def test_receipt_failure_does_not_fail_the_delete(self, agent, drive, notifier):
         drive.delete.return_value = DeleteOutcome(item=FILE, file_count=1)
         notifier.notify_raw.side_effect = RuntimeError("slack down")
@@ -285,6 +292,26 @@ class TestMutationBudget:
         for _ in range(5):
             await asyncio.sleep(0)
         notifier.notify_raw.assert_awaited_once()  # the receipt still arrives
+
+    async def test_provider_timeout_inside_a_mutation_is_a_failure(self, agent, drive, notifier):
+        """A TimeoutError raised BY the mutation (aiohttp's socket timeouts subclass it) is not
+        the agent's own wait running out: the model must hear "failed", never "still running"."""
+        drive.delete.side_effect = asyncio.TimeoutError("socket timed out")
+        resp = await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
+        assert resp.status == AgentStatus.FAILED
+        assert "still running" not in (resp.result or "")
+        assert resp.error.startswith("Drive operation failed")
+        notifier.notify_raw.assert_not_called()
+
+    async def test_lock_is_released_after_a_failed_mutation(self, agent, drive):
+        drive.move.side_effect = DrivePathError("bad")
+        first = await agent.execute(_msg(Intent.MOVE_FILE_IN_DRIVE, file_ref="drive:f1", folder="A"))
+        assert first.status == AgentStatus.FAILED
+        drive.move.side_effect = None
+        drive.move.return_value = MoveOutcome(before=FILE, after=FILE, created=[])
+        agent.MUTATION_WAIT_S = 0.05
+        second = await agent.execute(_msg(Intent.MOVE_FILE_IN_DRIVE, file_ref="drive:f1", folder="A"))
+        assert second.status == AgentStatus.SUCCESS and second.result.startswith("Moved")
 
     async def test_one_users_mutations_run_one_at_a_time(self, agent, conversion, drive):
         conversion.resolve_bytes.return_value = b"x"
