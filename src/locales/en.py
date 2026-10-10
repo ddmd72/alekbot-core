@@ -151,4 +151,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.LONG_TURN_FAILED.value: "I couldn't finish this one — something broke along the way.",
     UIMessage.LONG_TURN_CANCELLED.value: "Stopped, as you asked.",
     UIMessage.LONG_TURN_LOST.value: "I lost this one mid-way (the service restarted). Please ask again.",
+    UIMessage.DRIVE_DELETED_FILE.value: "🗑️ Deleted from the drive: {path}",
+    UIMessage.DRIVE_DELETED_FOLDER.value: "🗑️ Deleted folder: {path} (files: {count})",
+    UIMessage.DRIVE_REPLACED.value: "✏️ Replaced: {path} ({before} → {after}; the previous version is in its version history)",
 }

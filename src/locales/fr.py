@@ -127,4 +127,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.LONG_TURN_FAILED.value: "Je n'ai pas pu terminer — quelque chose a cassé en route.",
     UIMessage.LONG_TURN_CANCELLED.value: "Arrêté, comme demandé.",
     UIMessage.LONG_TURN_LOST.value: "J'ai perdu cette tâche en cours de route (le service a redémarré). Redemandez, s'il vous plaît.",
+    UIMessage.DRIVE_DELETED_FILE.value: "🗑️ Supprimé du disque : {path}",
+    UIMessage.DRIVE_DELETED_FOLDER.value: "🗑️ Dossier supprimé : {path} (fichiers : {count})",
+    UIMessage.DRIVE_REPLACED.value: "✏️ Remplacé : {path} ({before} → {after} ; la version précédente est dans l'historique des versions)",
 }

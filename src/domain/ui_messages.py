@@ -59,3 +59,7 @@ class UIMessage(Enum):
     LONG_TURN_FAILED = "long_turn_failed"
     LONG_TURN_CANCELLED = "long_turn_cancelled"
     LONG_TURN_LOST = "long_turn_lost"
+    # User drive receipts (USER_DRIVE_RFC §4.10) — destructive actions only.
+    DRIVE_DELETED_FILE = "drive_deleted_file"
+    DRIVE_DELETED_FOLDER = "drive_deleted_folder"
+    DRIVE_REPLACED = "drive_replaced"
