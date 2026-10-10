@@ -1,6 +1,6 @@
 # RFC: User Drive — the user's long-term file area
 
-**Status:** Draft, revision 6 (2026-10-09). Step 1 specified; steps 2–3 named only.
+**Status:** Step 1 implemented on `feat/user-drive` (2026-10-10); consolidation token migration, live routing probe, deploy and live acceptance pending. (Draft revision 6, 2026-10-09; steps 2–3 named only.)
 Supersedes the draft `ONEDRIVE_FILES_RFC.md` (revisions 1–3, never merged).
 - Revision 4: the drive is a domain concept and OneDrive its first adapter — nothing the model sees or history
   stores names a provider (§4.3); every drive operation has its own intent (§4.4); roles of the file stores (§4.5);
