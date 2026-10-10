@@ -1063,7 +1063,6 @@ async def main():
                 if telegram_config:
                     logger.info("🤖 Initializing Telegram adapter...")
                     try:
-                        from src.adapters.firestore_dedup_store import FirestoreDedupStore
                         from src.adapters.platform.factory import PlatformAdapterFactory
                         from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 
