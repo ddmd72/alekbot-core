@@ -11,6 +11,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional, Any
 from ..domain.agent import AgentMessage, AgentResponse, AgentIntent
+from ..domain.user_drive import DriveNotConnectedError
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 from .agent_registry import AgentRegistry, AgentDescriptor, ExecutionMode
@@ -520,7 +521,7 @@ class AgentCoordinator:
 
         # Resolve file_ref in context before dispatching to specialist.
         # Specialist receives resolved text content, never knows about GCS.
-        await self._resolve_file_refs(extra_payload, user_id)
+        await self._maybe_resolve_file_refs(base_agent_id, extra_payload, user_id)
 
         message = AgentMessage.create(
             sender="coordinator",
@@ -542,7 +543,7 @@ class AgentCoordinator:
         """Enqueue ASYNC intent to Cloud Tasks, return immediate ack."""
         # Resolve file_ref before enqueue — content goes into the Cloud Task payload
         extra_payload = context.get("params", {})
-        await self._resolve_file_refs(extra_payload, context.get("user_id", ""))
+        await self._maybe_resolve_file_refs(base_agent_id, extra_payload, context.get("user_id", ""))
 
         if self._task_queue is None:
             logger.error(
@@ -572,6 +573,13 @@ class AgentCoordinator:
             },
         )
 
+    async def _maybe_resolve_file_refs(self, base_agent_id: str, params: Dict[str, Any], user_id: str) -> None:
+        """Pre-fetch file_ref unless the target agent opted out (AgentDescriptor.prefetch_file_ref)."""
+        descriptor = self._registry.get_descriptor(base_agent_id) if self._registry else None
+        if descriptor is not None and not descriptor.prefetch_file_ref:
+            return
+        await self._resolve_file_refs(params, user_id)
+
     async def _resolve_file_refs(self, params: Dict[str, Any], user_id: str) -> None:
         """
         Resolve file_ref in delegation params before dispatching to specialist.
@@ -596,6 +604,12 @@ class AgentCoordinator:
             logger.info(
                 "📎 [Coordinator] Resolved file_ref '%s' → %d chars",
                 file_ref, len(content),
+            )
+        except DriveNotConnectedError as e:
+            # An expected state (drive not connected / access expired), not a fault to page on.
+            logger.warning(
+                "⚠️ [Coordinator] file_ref '%s' not resolved, drive not connected: %s",
+                file_ref, e,
             )
         except Exception as e:
             logger.error(
