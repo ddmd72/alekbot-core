@@ -245,6 +245,25 @@ unsaved drafts are simply never deleted):
 
 ---
 
+## User Drive — OneDrive App Folder
+
+The user's long-term file area (`docs/10_rfcs/USER_DRIVE_RFC.md`). It reuses the To Do app registration
+(`MICROSOFT_TODO_CLIENT_ID` / `MICROSOFT_TODO_CLIENT_SECRET`), so no new client secret exists; the only
+new deploy-side value is the redirect URI. The adapter is wired only when both To Do keys are set.
+
+Before the first deploy that carries this change (`cloudbuild-dev.yaml` mounts the secret, so a missing
+secret fails the revision):
+
+1. Azure registration `Alek-bot`: add the delegated permission `Files.ReadWrite.AppFolder`.
+2. Create the Secret Manager secret `ONEDRIVE_REDIRECT_URI_DEV` with the value
+   `<service URL>/auth/connect-onedrive/callback`.
+3. Register that same URI as a redirect URI (platform "Web") on the `Alek-bot` registration.
+4. Deploy, then connect the drive from the Cabinet (Integrations, "Connect drive").
+
+Local runs read `ONEDRIVE_REDIRECT_URI` from `.env` (a separate key from the deploy secret, so a
+localhost value never reaches the deployed revision). With it unset, `/auth/connect-onedrive` answers 501;
+the Cabinet hides the drive card only when the adapter itself is absent (To Do keys unset).
+
 ## Cost Optimization
 
 | Strategy             | Cost/Month | Pros        | Cons                      |
