@@ -541,11 +541,11 @@ class VideoGenerationAgentConfig:
     # entirely in WorkerHandler's polling loop, outside this budget. Sized as
     # request_timeout_s (crafting call) + GrokVideoAdapter's submit timeout (60s) +
     # margin.
-    timeout_ms: int = 420_000
+    timeout_ms: int = 900_000
     # Per-LLM-request timeout (seconds) for the crafting call. The PERFORMANCE-tier
     # crafting model reasons before answering; on a ~1.5k-token brief (2026-10-10,
     # grok-4.7) it took over 60s and the request failed with LLMTimeoutError.
-    request_timeout_s: int = 300
+    request_timeout_s: int = 600
 
 
 VIDEO_GENERATION = VideoGenerationAgentConfig()
