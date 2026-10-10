@@ -74,7 +74,7 @@ async def main() -> int:
     client_id = (os.environ.get("MS_CLIENT_ID") or os.environ["MICROSOFT_TODO_CLIENT_ID"]).strip()
     report: Dict[str, Any] = {"at": datetime.now().isoformat()}
     stamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    async with aiohttp.ClientSession() as s:
+    async with aiohttp.ClientSession(trust_env=True) as s:  # honour HTTPS_PROXY where egress is proxied
         tok = await _device_code_token(s, client_id)
         h = {"Authorization": f"Bearer {tok['access_token']}"}
 
