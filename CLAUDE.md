@@ -556,7 +556,7 @@ NFC-normalized comparison), append-only text edits, root protected, a move into 
 onto a taken name ("A file with that name already exists there.") refused. Mutations of one user run one at a time under
 `asyncio.shield`; the agent has a 120 s timeout and waits 100 s, otherwise answers success-shaped "still running"
 (check with a listing) — never a false "failed", but a provider `TimeoutError` inside a mutation is a failure;
-delete/replace post a localised `notify_raw` receipt. Vision only for JPEG/PNG/GIF/WebP and PDF (HEIC refused). Refs
+delete/replace post a localised `notify_raw` receipt, or a "did not complete" notice if they fail after "still running" was answered. Vision only for JPEG/PNG/GIF/WebP and PDF (HEIC refused). Refs
 survive turns via `history_context["drive_context"]` (full_text only, never consolidated). **No search in step 1**
 (spike A6: search does not work inside the App Folder) — browsing folders only. The `Trivial_Exclusions` line that
 keeps file operations out of memory is written with a migration script but **not applied yet** (pending the owner's

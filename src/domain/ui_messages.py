@@ -63,3 +63,5 @@ class UIMessage(Enum):
     DRIVE_DELETED_FILE = "drive_deleted_file"
     DRIVE_DELETED_FOLDER = "drive_deleted_folder"
     DRIVE_REPLACED = "drive_replaced"
+    DRIVE_DELETE_FAILED = "drive_delete_failed"
+    DRIVE_REPLACE_FAILED = "drive_replace_failed"

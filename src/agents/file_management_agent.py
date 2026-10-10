@@ -102,6 +102,7 @@ class FileManagementAgent(BaseAgent):
         # Shielded mutations still running after their caller stopped waiting (§4.13). Kept so the
         # tasks are not garbage-collected mid-flight; only touched on the event loop.
         self._shielded: Set["asyncio.Task[Any]"] = set()
+        self._notices: Set["asyncio.Task[Any]"] = set()  # late-failure notices in flight
         # One user's drive mutations run one at a time (§4.13): a mid-flight retry waits for the
         # first, then the duplicate check sees it. dict.setdefault is atomic on the event loop.
         self._mutation_locks: Dict[str, asyncio.Lock] = {}
@@ -428,6 +429,7 @@ class FileManagementAgent(BaseAgent):
                     raise
                 logger.warning("FileManagementAgent: %s still running after %.0fs", payload.get("intent"),
                                self.MUTATION_WAIT_S)
+                self._arm_late_failure_notice(task, message, payload, user_id)
                 return self._ok(message, self.STILL_RUNNING, [])
         except DriveNotConnectedError:
             return self._fail(message, self._NOT_CONNECTED)
@@ -449,6 +451,39 @@ class FileManagementAgent(BaseAgent):
             logger.error("FileManagementAgent: drive op failed: %s", e, exc_info=True)
             self._on_agent_error(e, str(payload.get("intent")))
             return self._fail(message, f"Drive operation failed: {type(e).__name__}.")
+
+    _LATE_FAILURE_UI = {
+        Intent.DELETE_FILE_FROM_DRIVE: UIMessage.DRIVE_DELETE_FAILED,
+        Intent.UPDATE_FILE_IN_DRIVE: UIMessage.DRIVE_REPLACE_FAILED,
+    }
+
+    def _arm_late_failure_notice(self, task: "asyncio.Task[Any]", message: AgentMessage,
+                                 payload: dict, user_id: str) -> None:
+        """The model was told "still running" for a delete/replace: if it then raises, tell the user (§4.13)."""
+        intent = payload.get("intent")
+        ui = self._LATE_FAILURE_UI.get(intent)
+        if ui is None or (intent == Intent.UPDATE_FILE_IN_DRIVE and not payload.get("source_ref")):
+            return  # other intents promise no notice; an append is not a replace
+
+        def fire(done: "asyncio.Task[Any]") -> None:
+            if done.cancelled() or done.exception() is None:
+                return
+            notice = asyncio.ensure_future(self._late_failure_notice(message, payload, user_id, ui))
+            self._notices.add(notice)
+            notice.add_done_callback(self._notices.discard)
+
+        task.add_done_callback(fire)
+
+    async def _late_failure_notice(self, message: AgentMessage, payload: dict, user_id: str, ui: UIMessage) -> None:
+        ref = payload.get("file_ref") or ""
+        path = ref
+        try:
+            item_id = parse_drive_ref(ref)
+            if item_id is not None:
+                path = (await self._svc().get_item(user_id, item_id)).path
+        except Exception:
+            logger.warning("FileManagementAgent: path lookup for the late-failure notice failed", exc_info=True)
+        await self._receipt(message, user_id, ui, path=path)
 
     def _on_mutation_done(self, task: "asyncio.Task[Any]") -> None:
         """Log how a shielded mutation ended — nobody may be awaiting it any more (§4.13)."""
