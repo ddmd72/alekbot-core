@@ -51,7 +51,7 @@ that place is the general problem: a long-term file area the bot can work with.
 
 - A cloud drive is where the owner already keeps files; upload and large files are its problem, not ours.
 - Microsoft OAuth (consumers tenant), token refresh and Graph subscriptions already exist for To Do
-  (`src/web/oauth_app.py:673-800`, `src/adapters/microsoft_todo_adapter.py:117-156`).
+  (`src/web/oauth_app.py:673-800`, `src/adapters/microsoft/todo_adapter.py:117-156`).
 - **App Folder** (`/me/drive/special/approot`, `Apps/<app name>/`) is least privilege enforced by the provider, not
   by our code. It supports subfolders, search (`/special/approot:/{path}:/search`) and delta
   (`/special/approot:/{path}:/delta`) — the last one is what step 2 needs. Graph resolves `special/approot` even
@@ -114,11 +114,11 @@ change notifications, a second provider, saving chat attachments to the drive au
 - `UserDriveService` (`src/services/user_drive_service.py`) holds the rules on top of the port: destination-folder
   resolution (§4.8), duplicate handling on save (§4.7), append (§4.9), root protection and the subtree count
   (§4.10), list bounds. The agent stays a thin dispatcher.
-- `OneDriveAdapter` (`src/adapters/onedrive_adapter.py`) — Graph REST over aiohttp, like To Do. Upload session above
+- `OneDriveAdapter` (`src/adapters/microsoft/onedrive_adapter.py`) — Graph REST over aiohttp, like To Do. Upload session above
   the simple-upload limit; `conflictBehavior=rename`, so a save never overwrites. Move/rename is one `PATCH`.
   Composition picks the adapter; nothing else imports it.
 - **Transport rules** (the Fable review found the per-call cost was what made timeouts likely):
-  - **Token:** `MicrosoftGraphTokenProvider` (`src/adapters/microsoft_graph_auth.py`, extracted from To Do, shared
+  - **Token:** `MicrosoftGraphTokenProvider` (`src/adapters/microsoft/graph_auth.py`, extracted from To Do, shared
     by both adapters) caches the access token in memory for **at most 5 minutes** (and never past five minutes
     before expiry), with a per-user `asyncio.Lock` around refresh: one credentials-store read per 5 minutes, not per
     HTTP call. Owner decision: a Cabinet disconnect or a reconnect with another account therefore takes effect on
@@ -381,8 +381,8 @@ structure → save next to it) and is edited without a deploy.
 
 ## 7. Files and verification
 
-New: `src/domain/user_drive.py`, `src/ports/user_drive_port.py`, `src/adapters/onedrive_adapter.py`,
-`src/adapters/microsoft_graph_auth.py`, `src/services/user_drive_service.py`. Changed:
+New: `src/domain/user_drive.py`, `src/ports/user_drive_port.py`, `src/adapters/microsoft/onedrive_adapter.py`,
+`src/adapters/microsoft/graph_auth.py`, `src/services/user_drive_service.py`. Changed:
 `src/agents/file_management_agent.py`, `src/services/file_conversion_service.py`,
 `src/infrastructure/agent_manifest.py`, `src/infrastructure/agent_registry.py` + `agent_coordinator.py`
 (`prefetch_file_ref`), `src/web/oauth_app.py`, Cabinet, `src/composition/` wiring, `src/utils/capabilities.py`,
@@ -422,8 +422,9 @@ instead of the browser + localhost redirect (the spike ran from a remote session
 cannot reach); the registration has "Allow public client flows" enabled for this. Checks A1–A8 are unchanged.
 
 - **App Folder:** created as `Alek-bot` under the account's apps folder. On this account that folder is
-  localised and was moved by the owner: `/drive/root:/ARCHIVE/Приложения/Alek-bot`. The adapter must take the
-  root's absolute path from `special/approot`, never assume `/Apps/…`.
+  localised and had been moved by the owner (`/drive/root:/ARCHIVE/Приложения/Alek-bot`; moved back to the
+  drive root after the spike). The adapter must take the root's absolute path from `special/approot`, never
+  assume `/Apps/…`.
 - **A1 `parentReference.path`:** present on GET item, `/children`, and the PATCH / PUT / POST responses. Search
   returned no hits (A6), so the search shape is unobserved. **Two prefix forms:** POST (create folder) responses
   use `/drives/<drive-id>/root:/…`; GET, `/children`, PUT and PATCH use `/drive/root:/…`.
@@ -433,12 +434,20 @@ cannot reach); the registration has "Allow public client flows" enabled for this
 - **A2:** `PUT …/content` of exactly 4 MiB → 201.
 - **A3:** `PATCH` move + rename → 200, id kept.
 - **A4:** `DELETE` of a non-empty folder → 204; GET afterwards → 404. Recycle-bin restore of the whole subtree:
-  manual check by the owner, pending.
+  confirmed by the owner (folder, subfolder and files came back).
 - **A5:** GET item carries `@microsoft.graph.downloadUrl`.
 - **A6:** `GET /me/drive/special/approot/search(q=…)` returned **no hits** for a name query and for a content
   query, polled for 60 s each, on files in a nested subfolder.
 - **A7:** `PUT …/content` on an existing item → 200; `/versions` lists 2.
 - **A8:** `conflictBehavior=rename` on a clash produced `заметка 20261010154421 1.txt` — `<stem> 1<ext>`.
+
+- **Layout (owner decision 2026-10-10):** the three Graph modules live in one adapter sub-package,
+  `src/adapters/microsoft/` (`graph_auth.py`, `todo_adapter.py`, `onedrive_adapter.py`), because REQ-ARCH-23
+  forbids a top-level adapter importing another; imports inside one sub-package are allowed (as in `slack/`,
+  `telegram/`). The To Do adapter moves there from `src/adapters/microsoft_todo_adapter.py`.
+- **Paths (owner decision 2026-10-10, after the spike):** keep `unquote` (a no-op on the raw paths observed,
+  correct if Graph ever encodes), and normalise both prefix forms — `/drive/root:` and `/drives/<id>/root:` —
+  to one before comparing with the app-folder root, so a create-folder response does not take the re-read path.
 
 ## 8. Manual steps for the owner
 1. Azure registration `Alek-bot`: add delegated `Files.ReadWrite.AppFolder`.
