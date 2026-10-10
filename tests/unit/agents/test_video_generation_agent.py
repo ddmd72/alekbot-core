@@ -556,3 +556,67 @@ async def test_execute_edit_video_probe_failure_does_not_block(
 
     assert response.status == AgentStatus.SUCCESS
     mock_video_port.edit_video.assert_awaited_once()
+
+
+# -- Crafting-call failures carry a reason the user can act on (2026-10-10) --
+
+
+async def test_execute_truncated_crafting_json_reports_length_limit(agent, mock_llm, mock_video_port):
+    from src.domain.llm import FinishReason
+
+    mock_llm.generate_content.return_value = LLMResponse(
+        text='{"video_prompt": "A long scene that never clos',
+        tool_calls=[],
+        finish_reason=FinishReason.MAX_TOKENS,
+    )
+
+    response = await agent.execute(_make_message("generate_video"))
+
+    assert response.status == AgentStatus.FAILED
+    assert "cut off at the output length limit" in response.error
+    assert "the model returned nothing" not in response.error
+    mock_video_port.create_video.assert_not_awaited()
+
+
+async def test_execute_malformed_crafting_json_is_not_reported_as_empty(agent, mock_llm, mock_video_port):
+    mock_llm.generate_content.return_value = LLMResponse(text="not valid json{{{", tool_calls=[])
+
+    response = await agent.execute(_make_message("generate_video"))
+
+    assert response.status == AgentStatus.FAILED
+    assert "malformed JSON" in response.error
+    assert "the model returned nothing" not in response.error
+
+
+async def test_execute_crafting_timeout_reports_model_and_budget(agent, mock_llm, mock_video_port):
+    from src.domain.exceptions import LLMTimeoutError
+
+    mock_llm.generate_content.side_effect = LLMTimeoutError("deadline exceeded")
+
+    response = await agent.execute(_make_message("generate_video"))
+
+    assert response.status == AgentStatus.FAILED
+    assert "did not answer within" in response.error
+    assert f"{VideoGenerationAgent.REQUEST_TIMEOUT_S}s" in response.error
+    assert "grok-4.6-test" in response.error
+    mock_video_port.create_video.assert_not_awaited()
+
+
+async def test_execute_crafting_non_timeout_llm_error_propagates(agent, mock_llm, mock_video_port):
+    from src.domain.exceptions import LLMClientError
+
+    mock_llm.generate_content.side_effect = LLMClientError("bad request", http_status=400)
+
+    with pytest.raises(LLMClientError):
+        await agent.execute(_make_message("generate_video"))
+    mock_video_port.create_video.assert_not_awaited()
+
+
+async def test_crafting_call_limits_fit_a_long_brief(agent, mock_llm):
+    """A second-by-second brief needs room: 500 tokens / 60 s failed live on 2026-10-10."""
+    await agent.execute(_make_message("generate_video"))
+
+    call = mock_llm.generate_content.call_args
+    request = call.args[0] if call.args else call.kwargs["request"]
+    assert request.max_tokens >= 8000
+    assert request.timeout >= 180

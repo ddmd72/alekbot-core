@@ -1275,3 +1275,51 @@ async def test_synthesized_terminal_tool_sends_strict_false():
 
     assert captured["tools"][-1]["name"] == "deliver_response"
     assert captured["tools"][-1]["strict"] is False
+
+
+# ============================================================================
+# finish_reason: a truncated reply must not read as an empty one (2026-10-10)
+# ============================================================================
+
+
+def _with_status(response, status, reason=None):
+    response.status = status
+    details = MagicMock()
+    details.reason = reason
+    response.incomplete_details = details if reason is not None else None
+    return response
+
+
+@pytest.mark.parametrize(
+    "status,reason,expected",
+    [
+        ("completed", None, "stop"),
+        ("incomplete", "max_output_tokens", "max_tokens"),
+        ("incomplete", "content_filter", "safety"),
+        ("incomplete", "something_new", "other"),
+    ],
+)
+async def test_finish_reason_mapped_from_response_status(status, reason, expected):
+    from src.domain.llm import FinishReason
+
+    adapter = GrokAdapter(api_key="test-key")
+    _install(adapter, response=_with_status(_make_response(text='{"a": "cut'), status, reason))
+
+    response = await adapter.generate_content(
+        request=LLMRequest(model_name="grok-4.7", messages=MESSAGES, max_tokens=500)
+    )
+
+    assert response.finish_reason == FinishReason(expected)
+
+
+async def test_finish_reason_none_when_status_absent():
+    adapter = GrokAdapter(api_key="test-key")
+    raw = _make_response()
+    raw.status = None
+    _install(adapter, response=raw)
+
+    response = await adapter.generate_content(
+        request=LLMRequest(model_name="grok-4.7", messages=MESSAGES)
+    )
+
+    assert response.finish_reason is None

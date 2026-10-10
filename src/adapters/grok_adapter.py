@@ -31,6 +31,7 @@ import json
 import openai
 from openai import AsyncOpenAI
 from ..domain.llm import (
+    FinishReason,
     PROMPT_CACHE_BOUNDARY,
     USER_TURN_SYSTEM_ANCHOR,
     build_persona_anchor,
@@ -693,6 +694,34 @@ class GrokAdapter(LLMPort):
 
         return api_tools
 
+    # Responses API: status="incomplete" + incomplete_details.reason says why output stopped.
+    _INCOMPLETE_REASONS = {
+        "max_output_tokens": FinishReason.MAX_TOKENS,
+        "content_filter": FinishReason.SAFETY,
+    }
+
+    @classmethod
+    def _map_finish_reason(cls, response) -> Optional[FinishReason]:
+        """Normalize why generation stopped, so a truncated reply is not reported as empty.
+
+        Without this a JSON body cut off by ``max_output_tokens`` reached callers with
+        ``finish_reason=None`` and was described as "the model returned nothing"
+        (VideoGenerationAgent, 2026-10-10).
+        """
+        status = getattr(response, "status", None)
+        if status == "completed":
+            return FinishReason.STOP
+        if status != "incomplete":
+            return None
+        details = getattr(response, "incomplete_details", None)
+        reason = getattr(details, "reason", None)
+        logger.warning(
+            "⚠️ [GrokAdapter] Incomplete response: model=%s reason=%s",
+            getattr(response, "model", "?"),
+            reason,
+        )
+        return cls._INCOMPLETE_REASONS.get(reason, FinishReason.OTHER)
+
     def _parse_response(self, response) -> LLMResponse:
         """
         Parse a Responses API response into domain LLMResponse.
@@ -837,6 +866,7 @@ class GrokAdapter(LLMPort):
             text=text,
             thought_text=thought_text,
             tool_calls=tool_calls,
+            finish_reason=self._map_finish_reason(response),
             # Output items are replayed verbatim on the next turn, so the model's
             # reasoning/function_call sequence must survive the round trip.
             raw_content=list(output_items),

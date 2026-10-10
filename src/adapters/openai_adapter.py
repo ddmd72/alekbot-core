@@ -48,7 +48,7 @@ from ..ports.llm_port import (
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
 )
-from ..domain.llm import USER_TURN_SYSTEM_ANCHOR, build_persona_anchor
+from ..domain.llm import FinishReason, USER_TURN_SYSTEM_ANCHOR, build_persona_anchor
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
     LLMClientError,
@@ -692,6 +692,29 @@ class OpenAIAdapter(LLMPort):
                 })
         return api_tools
 
+    # Responses API: status="incomplete" + incomplete_details.reason says why output stopped.
+    _INCOMPLETE_REASONS = {
+        "max_output_tokens": FinishReason.MAX_TOKENS,
+        "content_filter": FinishReason.SAFETY,
+    }
+
+    @classmethod
+    def _map_finish_reason(cls, response) -> Optional[FinishReason]:
+        """Normalize why generation stopped, so a truncated reply is not reported as empty."""
+        status = getattr(response, "status", None)
+        if status == "completed":
+            return FinishReason.STOP
+        if status != "incomplete":
+            return None
+        details = getattr(response, "incomplete_details", None)
+        reason = getattr(details, "reason", None)
+        logger.warning(
+            "⚠️ [OpenAIAdapter] Incomplete response: model=%s reason=%s",
+            getattr(response, "model", "?"),
+            reason,
+        )
+        return cls._INCOMPLETE_REASONS.get(reason, FinishReason.OTHER)
+
     def _parse_response(self, response) -> LLMResponse:
         """Parse Responses API response into domain LLMResponse.
 
@@ -812,6 +835,7 @@ class OpenAIAdapter(LLMPort):
         return LLMResponse(
             text=text,
             tool_calls=tool_calls,
+            finish_reason=self._map_finish_reason(response),
             raw_content=response.output,  # Store output items for multi-turn
             usage_metadata=usage_metadata,
         )

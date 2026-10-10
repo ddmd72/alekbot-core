@@ -1218,3 +1218,38 @@ async def test_generate_content_sends_strict_false_and_schema_untouched():
     assert len(sent) == 1
     assert sent[0]["strict"] is False
     assert sent[0]["parameters"] == params
+
+
+# ============================================================================
+# finish_reason: a truncated reply must not read as an empty one (2026-10-10)
+# ============================================================================
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,reason,expected",
+    [
+        ("completed", None, "stop"),
+        ("incomplete", "max_output_tokens", "max_tokens"),
+        ("incomplete", "content_filter", "safety"),
+        ("incomplete", "something_new", "other"),
+        (None, None, None),
+    ],
+)
+async def test_finish_reason_mapped_from_response_status(status, reason, expected):
+    from src.domain.llm import FinishReason
+
+    adapter = OpenAIAdapter(api_key="test-key")
+    raw = _make_response(text='{"a": "cut')
+    raw.status = status
+    raw.incomplete_details = MagicMock(reason=reason) if reason else None
+    adapter.client.responses.create = AsyncMock(return_value=raw)
+
+    response = await adapter.generate_content(
+        request=LLMRequest(
+            model_name="gpt-5-mini",
+            messages=[Message(role="user", parts=[MessagePart(text="Hi")])],
+            max_tokens=500,
+        )
+    )
+
+    assert response.finish_reason == (FinishReason(expected) if expected else None)
