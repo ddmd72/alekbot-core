@@ -175,3 +175,98 @@ class TestProviderInvalidNames:
         with pytest.raises(DrivePathError):
             await service.move("u1", "a", "  ", "  ")
         drive.move.assert_not_called()
+
+
+class TestReviewGaps:
+    """Rules the plan's tests left unpinned; added in the Task 5 review."""
+
+    async def test_ensure_folder_blank_rejected(self, service, drive):
+        with pytest.raises(DrivePathError):
+            await service.ensure_folder("u1", " / ")
+        drive.get_root.assert_not_called()
+
+    async def test_ensure_folder_existing_reports_nothing_created(self, service, drive):
+        drive.list_children.return_value = [INBOX]
+        res = await service.ensure_folder("u1", "inbox")
+        assert res.folder is INBOX and res.created == []
+
+    async def test_name_taken_by_a_file_is_a_path_error(self, service, drive):
+        """A 409 whose re-list shows no folder (a file holds the name) is a DrivePathError, not a raw conflict."""
+        drive.list_children.side_effect = [[_file("f", "Inbox")], [_file("f", "Inbox")]]
+        drive.create_folder.side_effect = DriveNameConflictError("taken")
+        with pytest.raises(DrivePathError, match="already exists as a file"):
+            await service.resolve_folder("u1", "Inbox", create=True)
+
+    async def test_list_missing_folder_is_path_error_without_create(self, service, drive):
+        drive.list_children.return_value = []
+        with pytest.raises(DrivePathError):
+            await service.list_folder("u1", "Nope")
+        drive.create_folder.assert_not_called()
+
+    async def test_append_size_cap_checked_before_download(self, service, drive):
+        from src.domain.user_drive import MAX_DRIVE_APPEND_FILE_BYTES
+        drive.get_item.return_value = _file("n", "big.md", size=MAX_DRIVE_APPEND_FILE_BYTES + 1, mime="text/markdown")
+        with pytest.raises(DrivePathError):
+            await service.append_text("u1", "n", "x")
+        drive.download.assert_not_called()
+
+    async def test_append_refuses_non_utf8(self, service, drive):
+        drive.get_item.return_value = _file("n", "notes.txt", size=4)
+        drive.download.return_value = b"\xff\xfe\x00\x01"
+        with pytest.raises(DrivePathError):
+            await service.append_text("u1", "n", "x")
+        drive.replace_content.assert_not_called()
+
+    async def test_append_after_trailing_newline_adds_no_blank_line(self, service, drive):
+        note = _file("n", "todo.md", size=6, mime="")
+        drive.get_item.return_value = note
+        drive.download.return_value = b"- one\n"
+        drive.replace_content.return_value = note
+        await service.append_text("u1", "n", "- two\n")
+        drive.replace_content.assert_awaited_once_with("u1", "n", b"- one\n- two\n", "text/plain")
+
+    async def test_folder_count_capped(self, service, drive):
+        from src.services.user_drive_service import COUNT_CAP
+        drive.get_item.return_value = _folder("t", "Big")
+        drive.list_children.return_value = [_file(str(i), f"f{i}") for i in range(COUNT_CAP + 1)]
+        out = await service.delete("u1", "t")
+        assert out.file_count == COUNT_CAP and out.count_capped
+
+    async def test_delete_file_counts_one_without_listing(self, service, drive):
+        drive.get_item.return_value = _file("a", "a.txt", "Inbox")
+        out = await service.delete("u1", "a")
+        assert out.file_count == 1 and not out.count_capped
+        drive.list_children.assert_not_called()
+
+    async def test_move_into_folder_creates_missing_and_reports(self, service, drive):
+        drive.get_item.return_value = _file("a", "a.txt", "Inbox")
+        drive.list_children.return_value = []
+        drive.create_folder.return_value = _folder("m", "Встречи")
+        drive.move.return_value = _file("a", "a.txt", "Встречи")
+        out = await service.move("u1", "a", "встречи", None)
+        drive.move.assert_awaited_once_with("u1", "a", new_parent_id="m", new_name=None)
+        assert out.created == ["Встречи"] and out.after.path == "Встречи/a.txt"
+
+    async def test_move_missing_item_creates_no_folder(self, service, drive):
+        from src.domain.user_drive import DriveItemNotFoundError
+        drive.get_item.side_effect = DriveItemNotFoundError("gone")
+        with pytest.raises(DriveItemNotFoundError):
+            await service.move("u1", "a", "New", None)
+        drive.create_folder.assert_not_called()
+
+    @pytest.mark.parametrize("dest", ["Встречи", "встречи/2026", "Встречи/2026/new"])
+    async def test_move_folder_into_own_subtree_refused_before_any_create(self, service, drive, dest):
+        drive.get_item.return_value = _folder("m", "Встречи")
+        with pytest.raises(DrivePathError):
+            await service.move("u1", "m", dest, None)
+        drive.list_children.assert_not_called()
+        drive.create_folder.assert_not_called()
+        drive.move.assert_not_called()
+
+    async def test_move_folder_to_its_parent_or_sibling_allowed(self, service, drive):
+        sub = _folder("s", "2025", "Встречи")
+        drive.get_item.return_value = sub
+        drive.list_children.return_value = [_folder("m", "Встречи")]
+        drive.move.return_value = _folder("s", "2025", "Встречи")
+        out = await service.move("u1", "s", "Встречи", None)
+        assert out.after is drive.move.return_value
