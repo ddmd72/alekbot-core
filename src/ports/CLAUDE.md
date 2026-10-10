@@ -14,6 +14,7 @@ ABC interfaces. Contracts between domain/services and the external world. ~58 po
 | `IAMPort` | `iam_port.py` | IAMService | Authorization: platform + user_id → AuthResult |
 | `QuotaService` | `quota_service.py` | FirestoreQuotaService | Billing: deduct/check quota |
 | `PromptBuilderPort` | `prompt_builder_port.py` | PromptBuilder | Agent prompt assembly |
+| `UserDrivePort` | `user_drive_port.py` | OneDriveAdapter (`adapters/microsoft/`) | User's long-term file area: list, read, write, move, delete (provider-neutral) |
 
 ## Conventions
 

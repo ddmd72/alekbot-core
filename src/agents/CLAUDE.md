@@ -86,9 +86,18 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     not an empty 200 — so there is nothing to retry. The residual gap is the opposite shape: a
     refusal string is non-empty, so it passes the `if not html_code` guard and would be published
     as the page.
-- FileManagement (SYNC, zero-LLM) — intents `open_file` (GCS download + text/vision conversion via
-  `FileConversionService`/`FileStoragePort`) and `delete_file`. `context_schemas`: `file_ref` (from the
-  `[File: name (size)]` label). Binary → temp file + metadata for vision.
+- FileManagement (SYNC, zero-LLM) — two stores. GCS uploads: `open_file` (download + text/vision conversion via
+  `FileConversionService`/`FileStoragePort`) and `delete_file`; `context_schemas`: `file_ref` (from the
+  `[File: name (size)]` label). Binary → temp file + metadata for vision. User drive: seven intents
+  `save_file_to_drive`, `list_files_in_drive`, `open_file_from_drive`, `move_file_in_drive`,
+  `create_folder_in_drive`, `update_file_in_drive`, `delete_file_from_drive` (store in the name; refs are
+  `drive:<id>`). Mutating intents are strict about the store (a ref from the other store is refused;
+  `save_file_to_drive` refuses a `drive:` source), reads are lenient. `prefetch_file_ref=False` on its
+  descriptor (the coordinator does not pre-download its `file_ref`). Per-user mutation lock + `asyncio.shield`
+  + 100 s wait inside the agent's 120 s timeout → success-shaped "still running, check with a listing"; a
+  provider `TimeoutError` inside a mutation is a failure, not "still running". Delete/replace post a localised
+  `notify_raw` receipt. Vision only JPEG/PNG/GIF/WebP + PDF (HEIC refused). Refs persist via
+  `history_context["drive_context"]`. No search in step 1.
 - Notes / Proactive Self-Reminders (PERFORMANCE, OpenAI, intent `manage_self_reminders`) — deferred
   instructions the system writes to itself that fire autonomously as new conversations. Two-field model:
   `text` (≤15-word label) + `instruction` (self-contained execution context). Tools: create/update/delete

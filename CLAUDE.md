@@ -153,7 +153,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | DocGenerator | BALANCED | `generate_docx_code` (internal) | Node.js script → DOCX |
 | PdfGenerator | BALANCED | `create_pdf` | HTML+CSS → Puppeteer → PDF |
 | HtmlPageGenerator | PERFORMANCE (**Grok**) | `create_html_page` | full HTML+CSS+JS; Unsplash placeholders |
-| FileManagement | zero-LLM | `open_file`, `delete_file` | |
+| FileManagement | zero-LLM | `open_file`, `delete_file`, 7 × `*_drive` | GCS uploads + the user's drive |
 | Notes / Self-Reminders | PERFORMANCE (OpenAI) | `manage_self_reminders` | autonomous deferred firing |
 | Tasks | — | `manage_user_tasks` | MicrosoftToDo (GoogleTasks frozen) |
 | Consolidation | PERFORMANCE (Claude) | — | background memory formation (see below) |
@@ -538,6 +538,29 @@ in **bytes** — NAME_MAX is 255 bytes and a Cyrillic character costs 2. See
   (`UserBotConfig.voice_languages`, ISO-639-1 list, NOT `LanguageCode` — that enum has no `ru`).
   Slack's marker is the file name `audio_message.*`, never the mimetype (seen as both audio/mp4 and
   video/mp4). See `decisions/voice_message_transcription.md`.
+
+**User Drive** (`docs/10_rfcs/USER_DRIVE_RFC.md`) — the user's long-term file area: the OneDrive App Folder
+(scope `Files.ReadWrite.AppFolder`; its localised root path is read from Graph) behind the provider-neutral
+`UserDrivePort` (`OneDriveAdapter`; Graph modules in `src/adapters/microsoft/`: `graph_auth.py`, `todo_adapter.py`,
+`onedrive_adapter.py`). Token refresh is shared with To Do: concurrent forced refreshes are deduped and the cache
+lives at most 5 minutes per provider key, so a disconnect reaches every instance within 5 minutes. The model and
+history see only `drive:<opaque id>` refs and `[Drive: …]` labels with decoded paths — no provider name. Graph
+paths came back raw in the spike; the adapter unquotes (no-op on raw) and strips both `/drive/root:` and
+`/drives/<id>/root:` prefixes. Seven drive intents on `FILE_MANAGEMENT` (`save_file_to_drive`, `list_files_in_drive`,
+`open_file_from_drive`, `move_file_in_drive`, `create_folder_in_drive`, `update_file_in_drive`,
+`delete_file_from_drive`), store in the name; mutations refuse a ref from the other store, reads are lenient;
+`save_file_to_drive` refuses a `drive:` source. `FILE_MANAGEMENT.prefetch_file_ref=False` (the coordinator no longer
+pre-downloads its `file_ref`; a `DriveNotConnectedError` during another specialist's pre-fetch logs WARNING).
+`UserDriveService`: case-insensitive folders, saves never overwrite (same bytes → existing, else suffixed name,
+NFC-normalized comparison), append-only text edits, root protected, a move into the folder's own subtree and a rename
+onto a taken name ("A file with that name already exists there.") refused. Mutations of one user run one at a time under
+`asyncio.shield`; the agent has a 120 s timeout and waits 100 s, otherwise answers success-shaped "still running"
+(check with a listing) — never a false "failed", but a provider `TimeoutError` inside a mutation is a failure;
+delete/replace post a localised `notify_raw` receipt. Vision only for JPEG/PNG/GIF/WebP and PDF (HEIC refused). Refs
+survive turns via `history_context["drive_context"]` (full_text only, never consolidated). **No search in step 1**
+(spike A6: search does not work inside the App Folder) — browsing folders only. The `Trivial_Exclusions` line that
+keeps file operations out of memory is written with a migration script but **not applied yet** (pending the owner's
+approval after a dry run). Step 2 (indexing + search), step 3 (long audio/video) and full editing are not built.
 
 **Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic; each channel (Slack
 C.../D..., Telegram chat_id) has its own session/history/consolidation stream (a DM is just channel D...).
