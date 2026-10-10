@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from ..ports.indexed_email_repository import IndexedEmailRepository
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
+    from ..ports.oauth_credentials_port import OAuthCredentialsPort
     from ..ports.video_generation_port import VideoPollResult
     from ..services.file_link_service import FileLinkService
     from ..services.short_link_service import ShortLinkService
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
+from ..domain.exceptions import OAuthGrantRevokedError
 from ..domain.notification_kind import NotificationKind
 from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
@@ -112,6 +114,7 @@ class WorkerHandler:
         link_service: "Optional[FileLinkService]" = None,
         short_link_service: "Optional[ShortLinkService]" = None,
         companion_extraction: "Optional[CompanionExtractionService]" = None,
+        oauth_credentials: "Optional[OAuthCredentialsPort]" = None,
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -137,6 +140,7 @@ class WorkerHandler:
         self._billing_webhook = billing_webhook
         self._email_embedding_repair = email_embedding_repair
         self._companion_extraction = companion_extraction
+        self._oauth_credentials = oauth_credentials
 
     async def handle(
         self, payload: dict, delivery: Optional[CloudTaskDelivery] = None,
@@ -248,6 +252,11 @@ class WorkerHandler:
                 mode=job.mode,
                 backfill_until=job.backfill_until,
             )
+        except OAuthGrantRevokedError as exc:
+            # Job is already failed_auth (set by the service). Retrying cannot help.
+            logger.warning(f"⚠️ [Worker] Indexing job {job_id[:8]}: Gmail grant revoked: {exc}")
+            await self._flag_gmail_reconnect(job.user_id, job.account_id)
+            return {"status": "failed", "error": "gmail_reconnect_required"}, 200
         except Exception as exc:
             logger.warning(f"⚠️ [Worker] Indexing job {job_id[:8]} raised (status updated by service): {exc}")
             return {"status": "failed", "error": str(exc)}, 200
@@ -844,6 +853,41 @@ class WorkerHandler:
     # Daily email review
     # ------------------------------------------------------------------
 
+    async def _flag_gmail_reconnect(self, user_id: str, account_id: str) -> None:
+        """Google rejected the user's Gmail refresh token: mark the credentials
+        `needs_reconnect` (Cabinet shows it) and tell the user once per breakage.
+
+        Only the transition notifies — the daily review and the auto-index keep
+        hitting the dead token every day until the user reconnects, and that must
+        not become a daily message. A reconnect saves fresh credentials, which
+        clears the flag, so the next breakage notifies again. Best-effort: a
+        failure here is logged, never raised into the task.
+        """
+        if not self._oauth_credentials:
+            logger.warning("[Worker] Gmail grant revoked but oauth_credentials not configured")
+            return
+        try:
+            creds = await self._oauth_credentials.get_credentials(user_id, "gmail")
+            if creds is None or creds.needs_reconnect:
+                return
+            creds.needs_reconnect = True
+            await self._oauth_credentials.save_credentials(creds)
+            logger.warning(f"[Worker] Gmail marked needs_reconnect for {user_id[:8]}")
+            await self._notification.notify(
+                kind=NotificationKind.DOCUMENT_DELIVERY,
+                user_id=user_id,
+                account_id=account_id,
+                system_alert=(
+                    "Google revoked Alek's access to the user's Gmail (refresh token "
+                    "rejected — usually a Google password change or access removed in "
+                    "the Google account settings). Until the user reconnects, the daily "
+                    "email review and email auto-indexing do not run. Tell them, and "
+                    "that the fix is Cabinet → Gmail → Reconnect."
+                ),
+            )
+        except Exception as exc:
+            logger.error(f"[Worker] Gmail reconnect flag/notice failed for {user_id[:8]}: {exc}", exc_info=True)
+
     async def _handle_start_daily_email_review(self) -> Tuple[dict, int]:
         """
         Fan-out: enqueue daily_email_review for all Gmail users with gmail_daily_review enabled
@@ -883,7 +927,11 @@ class WorkerHandler:
             logger.warning("[Worker] daily_email_review: email_review_service not configured")
             return {"error": "email_review_service not configured"}, 501
 
-        emails = await self._email_review.fetch_review_payload(user_id)
+        try:
+            emails = await self._email_review.fetch_review_payload(user_id)
+        except OAuthGrantRevokedError:
+            await self._flag_gmail_reconnect(user_id, account_id)
+            return {"error": "gmail_reconnect_required"}, 200
         if emails is None:
             return {"error": "credentials unavailable"}, 200
         if not emails:
