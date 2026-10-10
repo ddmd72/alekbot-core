@@ -14,9 +14,9 @@ from typing import Dict, Optional, Tuple
 
 import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
 
-from ..domain.email import OAuthCredentials
-from ..ports.oauth_credentials_port import OAuthCredentialsPort
-from ..utils.logger import logger
+from ...domain.email import OAuthCredentials
+from ...ports.oauth_credentials_port import OAuthCredentialsPort
+from ...utils.logger import logger
 
 _TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
 _REFRESH_MARGIN = timedelta(minutes=5)
