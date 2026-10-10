@@ -236,6 +236,10 @@ intent. Prompt-tested (§7).
   - replacing content is only ever `update_file_in_drive` (§4.9).
 - Parallel saves into a folder that does not exist yet ("save these three") race to create it; a create answered
   `409` re-lists the parent and uses the folder that won.
+- **Re-sent chat attachments keep the chat store's name (owner decision, 2026-10-10).** When the same file is sent to
+  the chat twice, the chat store's Finder-style dedup names the second upload `name (1).ext`, and a save without an
+  explicit `name` uses that, so the drive gets `name (1).ext` beside `name.ext` rather than "already there". Seen in
+  live acceptance; the owner chose to keep it. The duplicate rule above still holds for the same chat ref saved twice.
 
 ### 4.8 Destination folders (`save_file_to_drive`, `move_file_in_drive`, `create_folder_in_drive`)
 Resolved segment by segment, deterministically (the agent is zero-LLM):
