@@ -75,6 +75,15 @@ class Intent:
     # File storage — retrieve and manage user file attachments
     OPEN_FILE           = "open_file"
     DELETE_FILE         = "delete_file"
+    # The user's drive — long-term file area (USER_DRIVE_RFC §3, §4.4). The store is in the name.
+    # No search intent in step 1: search does not work inside the App Folder (RFC §7, A6).
+    SAVE_FILE_TO_DRIVE     = "save_file_to_drive"
+    LIST_FILES_IN_DRIVE    = "list_files_in_drive"
+    OPEN_FILE_FROM_DRIVE   = "open_file_from_drive"
+    MOVE_FILE_IN_DRIVE     = "move_file_in_drive"
+    CREATE_FOLDER_IN_DRIVE = "create_folder_in_drive"
+    UPDATE_FILE_IN_DRIVE   = "update_file_in_drive"
+    DELETE_FILE_FROM_DRIVE = "delete_file_from_drive"
     # Domain research — interactive competency stack definition for agent construction
     DOMAIN_RESEARCH     = "domain_research"
     # Text language tutor — companion agent, bound-channel only (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §7/§9)
@@ -524,8 +533,17 @@ FILE_MANAGEMENT = AgentDescriptor(
     capabilities={
         Intent.OPEN_FILE: ExecutionMode.SYNC,
         Intent.DELETE_FILE:        ExecutionMode.SYNC,
+        Intent.SAVE_FILE_TO_DRIVE:     ExecutionMode.SYNC,
+        Intent.LIST_FILES_IN_DRIVE:    ExecutionMode.SYNC,
+        Intent.OPEN_FILE_FROM_DRIVE:   ExecutionMode.SYNC,
+        Intent.MOVE_FILE_IN_DRIVE:     ExecutionMode.SYNC,
+        Intent.CREATE_FOLDER_IN_DRIVE: ExecutionMode.SYNC,
+        Intent.UPDATE_FILE_IN_DRIVE:   ExecutionMode.SYNC,
+        Intent.DELETE_FILE_FROM_DRIVE: ExecutionMode.SYNC,
     },
-    description="File storage archivist: opens and reads user-uploaded files, no analysis",
+    # Reads files itself; the coordinator must not download a `file_ref` first (USER_DRIVE_RFC §4.4).
+    prefetch_file_ref=False,
+    description="File storage archivist: chat files (temporary) and the user's drive (long-term file area)",
     capability_descriptions={
         Intent.OPEN_FILE: (
             "Open a file the user uploaded earlier and return its raw content. "
@@ -539,6 +557,43 @@ FILE_MANAGEMENT = AgentDescriptor(
             "Delete a file from storage. "
             'Requires: context={"file_ref": "<filename>"}'
         ),
+        Intent.SAVE_FILE_TO_DRIVE: (
+            "Keep a file on the user's drive, their long-term file area. Chat attachments ([File: ...]) and "
+            "documents you produced are temporary; to remember, save, keep or put a FILE anywhere, always use "
+            "this intent (facts and text go to save_to_memory). Saves to Inbox unless the user named a folder. "
+            "Never overwrites: the reply states the name actually used. "
+            'Requires: context={"file_ref": "<ref from [File: ...] or a delivered document>"}; optional '
+            '"folder" ONLY when the user named one; optional "name" for a clear, human-readable file name.'
+        ),
+        Intent.LIST_FILES_IN_DRIVE: (
+            "List a folder on the user's drive (folders first). Results are [Drive: ...] labels with refs. "
+            'Optional context={"folder": "<path>"}; omit for the top level.'
+        ),
+        Intent.OPEN_FILE_FROM_DRIVE: (
+            "Open a file from the user's drive and return its content (text, or the image/PDF itself). "
+            'Requires: context={"file_ref": "drive:<id> from a [Drive: ...] label"}'
+        ),
+        Intent.MOVE_FILE_IN_DRIVE: (
+            "Move and/or rename a file or folder already on the user's drive. A chat file is not on the drive: "
+            "use save_file_to_drive for it. "
+            'Requires: context={"file_ref": "drive:<id>"} plus "folder" and/or "new_name".'
+        ),
+        Intent.CREATE_FOLDER_IN_DRIVE: (
+            "Create a folder (and missing parents) on the user's drive. "
+            'Requires: context={"folder": "<path>"}'
+        ),
+        Intent.UPDATE_FILE_IN_DRIVE: (
+            "Change a file on the user's drive in one of two safe ways: append text at the end of a text file "
+            '("append_text"), or replace the whole content with another file ("source_ref", e.g. a new version '
+            "the user sent or a document you just produced; the user gets a notice with old and new size). "
+            "Rewriting a file with new text is not available. "
+            'Requires: context={"file_ref": "drive:<id>"} plus exactly one of "append_text" or "source_ref".'
+        ),
+        Intent.DELETE_FILE_FROM_DRIVE: (
+            "Delete a file or a whole folder from the user's drive (recoverable from its recycle bin); the user "
+            "gets a notice with what was deleted. "
+            'Requires: context={"file_ref": "drive:<id>"}'
+        ),
     },
     context_schemas={
         Intent.OPEN_FILE: {
@@ -550,6 +605,25 @@ FILE_MANAGEMENT = AgentDescriptor(
         Intent.DELETE_FILE: {
             "file_ref": "Filename of the file to delete (e.g. 'report.docx')",
         },
+        Intent.SAVE_FILE_TO_DRIVE: {
+            "file_ref": "Ref of the file to keep: name from a [File: ...] label, or a delivered document key",
+            "folder": "Optional. Folder path on the drive, only if the user named one (e.g. 'Meetings/2026')",
+            "name": "Optional. Clear, human-readable file name; the extension is kept from the source if omitted",
+        },
+        Intent.LIST_FILES_IN_DRIVE: {"folder": "Optional. Folder path on the drive; omit for the top level"},
+        Intent.OPEN_FILE_FROM_DRIVE: {"file_ref": "drive:<id> ref from a [Drive: ...] label"},
+        Intent.MOVE_FILE_IN_DRIVE: {
+            "file_ref": "drive:<id> ref of the file or folder",
+            "folder": "Optional. Destination folder path",
+            "new_name": "Optional. New name, extension included for files",
+        },
+        Intent.CREATE_FOLDER_IN_DRIVE: {"folder": "Folder path to create, e.g. 'Contracts/2026'"},
+        Intent.UPDATE_FILE_IN_DRIVE: {
+            "file_ref": "drive:<id> ref of the file to change",
+            "append_text": "Optional. Text to add at the end (text files only)",
+            "source_ref": "Optional. Ref of a file whose content replaces the whole file",
+        },
+        Intent.DELETE_FILE_FROM_DRIVE: {"file_ref": "drive:<id> ref of the file or folder"},
     },
     internal=False,
 )
