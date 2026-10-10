@@ -220,6 +220,12 @@ Cloud Tasks → `EmailIndexingService` → `GmailProviderAdapter` → `EmailClas
 valuable emails as `IndexedEmail` in `domain_email_facts_v1` (4-vector, mirrors FactEntity).
 `EmailEmbeddingRepairService` backfills missing vectors; `email_indexing_watchdog` (every 2h) fails
 stale `running` jobs.
+- **A revoked Gmail grant is loud, once.** `invalid_grant` on refresh → `OAuthGrantRevokedError`;
+  the daily review / indexing worker sets `OAuthCredentials.needs_reconnect` and notifies the user
+  only on the False→True transition (a reconnect or successful refresh clears it implicitly).
+  `/api/gmail/status` returns the flag and the Cabinet shows **Reconnect Gmail**. Until 2026-10-10
+  a revoked grant failed silently while the Cabinet said "Connected". See
+  `decisions/gmail_grant_revoked_reconnect.md`.
 - **`WorkerHandler`** dispatches `/worker` Cloud Tasks by `task_type`:
   `agent_execution`, `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`,
   `consolidation`, `sweep_consolidation`, `companion_consolidation`, `sweep_companion_consolidation`,

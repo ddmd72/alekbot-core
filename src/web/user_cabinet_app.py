@@ -913,6 +913,9 @@ def create_user_cabinet_blueprint(
                 "oldest_indexed_through": oldest_indexed_through,
                 "indexing_active": indexing_active,
                 "active_job_id": active_job_id,
+                # Google rejected the refresh token: still "connected" (credentials
+                # stored), but nothing Gmail-backed runs until the user reconnects.
+                "needs_reconnect": creds.needs_reconnect,
             }), 200
         except Exception as exc:
             logger.error(f"Error fetching Gmail status: {exc}", exc_info=True)

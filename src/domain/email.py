@@ -29,6 +29,10 @@ class OAuthCredentials:
     token_expiry: datetime
     scopes: List[str]
     email_address: str      # provider account email (display only)
+    # Set when the provider rejected the refresh token (revoked / expired grant).
+    # Only a new consent (reconnect) clears it: every save after a fresh exchange
+    # or a successful refresh builds credentials with the default False.
+    needs_reconnect: bool = False
 
 
 # ---------------------------------------------------------------------------
