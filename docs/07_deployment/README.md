@@ -251,12 +251,21 @@ The user's long-term file area (`docs/10_rfcs/USER_DRIVE_RFC.md`). It reuses the
 (`MICROSOFT_TODO_CLIENT_ID` / `MICROSOFT_TODO_CLIENT_SECRET`), so no new client secret exists; the only
 new deploy-side value is the redirect URI. The adapter is wired only when both To Do keys are set.
 
-Before the first deploy that carries this change (`cloudbuild-dev.yaml` mounts the secret, so a missing
-secret fails the revision):
+> **Step 2 is a prerequisite for ANY deploy once this change is on `main`, not only for the drive.**
+> `cloudbuild-dev.yaml` mounts `ONEDRIVE_REDIRECT_URI_DEV:latest` in the main service's `--set-secrets`
+> unconditionally, so `gcloud run deploy` **fails** until the secret exists and the runtime service account
+> can read it. Create it before merging the branch (or before the next deploy of `main`, whichever comes
+> first) — the same hazard as the Cloudflare secrets above.
 
 1. Azure registration `Alek-bot`: add the delegated permission `Files.ReadWrite.AppFolder`.
 2. Create the Secret Manager secret `ONEDRIVE_REDIRECT_URI_DEV` with the value
-   `<service URL>/auth/connect-onedrive/callback`.
+   `<service URL>/auth/connect-onedrive/callback` and grant the runtime service account access:
+   ```bash
+   echo -n "<SERVICE_URL>/auth/connect-onedrive/callback" | \
+     gcloud secrets create ONEDRIVE_REDIRECT_URI_DEV --data-file=- --project=<PROJECT_ID>
+   gcloud secrets add-iam-policy-binding ONEDRIVE_REDIRECT_URI_DEV --project=<PROJECT_ID> \
+     --member="serviceAccount:<SERVICE_ACCOUNT_EMAIL>" --role=roles/secretmanager.secretAccessor
+   ```
 3. Register that same URI as a redirect URI (platform "Web") on the `Alek-bot` registration.
 4. Deploy, then connect the drive from the Cabinet (Integrations, "Connect drive").
 

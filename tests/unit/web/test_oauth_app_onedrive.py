@@ -90,3 +90,10 @@ async def test_501_when_not_configured(oauth_port):
 
 def test_provider_key_matches_adapter():
     assert f'"{ONEDRIVE_PROVIDER}"' in inspect.getsource(oauth_app)
+
+
+def test_state_compared_constant_time():
+    # Review (Task 9): the query `state` is attacker-chosen, the cookie is the secret.
+    src = inspect.getsource(oauth_app)
+    drive_callback = src[src.index("def connect_onedrive_callback"):]
+    assert "secrets.compare_digest(stored_state, state)" in drive_callback

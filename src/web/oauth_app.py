@@ -869,7 +869,9 @@ def create_oauth_blueprint(
         state, code = request.args.get("state"), request.args.get("code")
         user_id = request.cookies.get("drive_connect_user_id")
         stored_state = request.cookies.get("drive_oauth_state")
-        if not stored_state or stored_state != state or not user_id:
+        # Constant-time compare: the query value is attacker-chosen, the cookie is the secret.
+        if (not stored_state or not state or not user_id
+                or not secrets.compare_digest(stored_state, state)):
             logger.warning("⚠️ Drive OAuth callback CSRF validation failed")
             return redirect("/cabinet?drive_error=state")
         if not code:
