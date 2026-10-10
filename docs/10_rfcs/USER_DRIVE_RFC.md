@@ -415,6 +415,31 @@ locales, the `CONSOLIDATION_TAXONOMY` token. Docs: root `CLAUDE.md`, `src/agents
   move through the bot; append to a `.md`; replace a file by a new version (receipt with sizes); search; delete a
   file and a folder and see the receipts; restore the folder from the recycle bin.
 
+### Spike results (2026-10-10)
+
+Run against the owner's account with `scripts/onedrive/probe_appfolder.py`. Sign-in used the device-code flow
+instead of the browser + localhost redirect (the spike ran from a remote session, which a localhost redirect
+cannot reach); the registration has "Allow public client flows" enabled for this. Checks A1–A8 are unchanged.
+
+- **App Folder:** created as `Alek-bot` under the account's apps folder. On this account that folder is
+  localised and was moved by the owner: `/drive/root:/ARCHIVE/Приложения/Alek-bot`. The adapter must take the
+  root's absolute path from `special/approot`, never assume `/Apps/…`.
+- **A1 `parentReference.path`:** present on GET item, `/children`, and the PATCH / PUT / POST responses. Search
+  returned no hits (A6), so the search shape is unobserved. **Two prefix forms:** POST (create folder) responses
+  use `/drives/<drive-id>/root:/…`; GET, `/children`, PUT and PATCH use `/drive/root:/…`.
+- **A1b encoding:** **not percent-encoded.** Cyrillic and spaces come back raw (`…/Приложения/Alek-bot/Проба …/
+  Встречи 2026`) on every observed response. `unquote` is a no-op on them; it would only alter a name that
+  literally contains `%` followed by two hex digits.
+- **A2:** `PUT …/content` of exactly 4 MiB → 201.
+- **A3:** `PATCH` move + rename → 200, id kept.
+- **A4:** `DELETE` of a non-empty folder → 204; GET afterwards → 404. Recycle-bin restore of the whole subtree:
+  manual check by the owner, pending.
+- **A5:** GET item carries `@microsoft.graph.downloadUrl`.
+- **A6:** `GET /me/drive/special/approot/search(q=…)` returned **no hits** for a name query and for a content
+  query, polled for 60 s each, on files in a nested subfolder.
+- **A7:** `PUT …/content` on an existing item → 200; `/versions` lists 2.
+- **A8:** `conflictBehavior=rename` on a clash produced `заметка 20261010154421 1.txt` — `<stem> 1<ext>`.
+
 ## 8. Manual steps for the owner
 1. Azure registration `Alek-bot`: add delegated `Files.ReadWrite.AppFolder`.
 2. Spike only: add redirect URI `http://localhost:8765/callback`; remove it after the spike.
