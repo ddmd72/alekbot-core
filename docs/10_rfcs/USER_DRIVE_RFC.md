@@ -438,6 +438,13 @@ cannot reach); the registration has "Allow public client flows" enabled for this
 - **A5:** GET item carries `@microsoft.graph.downloadUrl`.
 - **A6:** `GET /me/drive/special/approot/search(q=…)` returned **no hits** for a name query and for a content
   query, polled for 60 s each, on files in a nested subfolder.
+- **A6 re-probe (`scripts/onedrive/probe_search.py`, 15 min budget):** a fresh file in a nested folder; both
+  `special/approot/search(q=…)` and `items/{approot-id}/search(q=…)`, for the full name, a name token and a
+  content token, every 30 s. **No hits for ~11 minutes (200, empty), then every query → 401
+  `unauthenticated` "Unauthorized when calling Substrate Search"** with the same, still-valid token that kept
+  working for create/delete. **Outcome per §4.11: search does not work inside the App Folder;
+  `search_files_in_drive` is dropped from step 1** (Tasks 7, 8, 11, 12 of the step 1 plan lose it). Listing
+  remains; search comes with step 2's own index.
 - **A7:** `PUT …/content` on an existing item → 200; `/versions` lists 2.
 - **A8:** `conflictBehavior=rename` on a clash produced `заметка 20261010154421 1.txt` — `<stem> 1<ext>`.
 
