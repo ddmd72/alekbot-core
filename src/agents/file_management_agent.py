@@ -19,6 +19,7 @@ delete and replace post a receipt via notify_raw (USER_DRIVE_RFC §4.4, §4.10, 
 """
 
 import asyncio
+import logging
 import mimetypes
 import os
 import tempfile
@@ -28,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Set
 import aiofiles
 
 from ..agents.base_agent import BaseAgent
-from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent
+from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..domain.language import LanguageCode
 from ..domain.skill import SKILL_REF_PREFIX
 from ..domain.ui_messages import UIMessage
@@ -438,9 +439,10 @@ class FileManagementAgent(BaseAgent):
                 return await asyncio.wait_for(asyncio.shield(task), timeout=self.MUTATION_WAIT_S)
             except asyncio.TimeoutError:
                 if task.done():
-                    # The mutation itself ended with a TimeoutError (aiohttp's socket timeouts
-                    # subclass it) — a failure, not a wait that ran out.
-                    raise
+                    # The mutation ended as the wait ran out — usually with its own TimeoutError
+                    # (aiohttp's socket timeouts subclass it): report the task's own outcome, so a
+                    # finished mutation answers normally and its exception takes the mapping below.
+                    return task.result()
                 logger.warning("FileManagementAgent: %s still running after %.0fs", payload.get("intent"),
                                self.MUTATION_WAIT_S)
                 self._arm_late_failure_notice(task, message, payload, user_id)
@@ -473,7 +475,8 @@ class FileManagementAgent(BaseAgent):
 
     def _arm_late_failure_notice(self, task: "asyncio.Task[Any]", message: AgentMessage,
                                  payload: dict, user_id: str) -> None:
-        """The model was told "still running" for a delete/replace: if it then raises, tell the user (§4.13).
+        """The model was told "still running" for a delete/replace: if it then raises or reports failure,
+        tell the user (§4.13).
 
         Called with no await between the wait timing out and here, so the task cannot finish
         unseen in between: `_on_mutation_done` (its done-callback) reads `_armed` after this."""
@@ -516,10 +519,14 @@ class FileManagementAgent(BaseAgent):
             return
         exc = task.exception()
         if exc is None:
-            logger.info("FileManagementAgent: drive mutation completed")
-            return
-        logger.warning("FileManagementAgent: drive mutation ended with %s: %s", type(exc).__name__, exc)
-        if armed is not None:
+            result = task.result()
+            failed = isinstance(result, AgentResponse) and result.status != AgentStatus.SUCCESS
+            logger.log(logging.WARNING if failed else logging.INFO,
+                       "FileManagementAgent: drive mutation %s", "reported failure" if failed else "completed")
+        else:
+            failed = True
+            logger.warning("FileManagementAgent: drive mutation ended with %s: %s", type(exc).__name__, exc)
+        if failed and armed is not None:
             notice = asyncio.ensure_future(self._late_failure_notice(armed, path))
             self._notices.add(notice)
             notice.add_done_callback(self._notices.discard)

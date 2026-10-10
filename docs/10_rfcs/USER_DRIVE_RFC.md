@@ -353,7 +353,8 @@ the provider may already have applied the change. So:
 - a shielded task that ends after nobody waits for it logs its outcome, including any exception (a done-callback),
   so no failure is lost to "Task exception was never retrieved".
 - **Late failure notice (owner decision 2026-10-10).** If the agent already answered "still running" for a delete or
-  replace and the shielded mutation then raises, the user gets a localized `notify_raw` notice ("Deleting {path} did
+  replace and the shielded mutation then raises or reports failure (a failure response, e.g. a missing source
+  file once the queued replace ran), the user gets a localized `notify_raw` notice ("Deleting {path} did
   not complete." / "Replacing {path} did not complete.") on the same channel as the receipts; a failure to post it is
   logged. No notice when the agent was still waiting (the model got the failure) or for other intents. The
   notice is decided in the task's done-callback (one per task, so exactly one notice per failure). A replace
