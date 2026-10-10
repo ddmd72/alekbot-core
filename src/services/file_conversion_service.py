@@ -18,8 +18,17 @@ import aiofiles
 
 from ..domain.llm import MessagePart
 from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
+from ..domain.user_drive import (
+    MAX_DRIVE_DOWNLOAD_BYTES,
+    DriveFileTooLargeError,
+    DriveItem,
+    DrivePathError,
+    format_size,
+    parse_drive_ref,
+)
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.file_conversion import (
+    MAX_FILE_BYTES,
     convert_file_to_text,
     is_native_binary,
 )
@@ -28,6 +37,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from ..ports.audio_transcription_port import AudioTranscriptionPort
     from ..ports.media_storage_port import MediaStoragePort
+    from ..ports.user_drive_port import UserDrivePort
     from .skill_file_resolver import SkillFileResolver
 
 
@@ -54,6 +64,7 @@ class FileConversionService:
         audio_service: Optional["AudioTranscriptionPort"] = None,
         media_storage: Optional["MediaStoragePort"] = None,
         skill_files: Optional["SkillFileResolver"] = None,
+        drive: Optional["UserDrivePort"] = None,
     ) -> None:
         self._storage = storage
         self._audio_service = audio_service
@@ -63,11 +74,56 @@ class FileConversionService:
         self._media_storage = media_storage
         # Resolves `skill:<name>/<path>` refs (RFC §15.4). None → skill files unavailable.
         self._skill_files = skill_files
+        # drive:<id> refs — the user's long-term file area (USER_DRIVE_RFC §4.6).
+        self._drive = drive
 
     async def _read_skill(self, ref: str, user_id: str) -> str:
         if self._skill_files is None:
             raise FileNotFoundError("Skill files are unavailable")
         return await self._skill_files.read(user_id, ref)
+
+    async def get_drive_item(self, ref: str, user_id: str) -> DriveItem:
+        """Metadata of a `drive:` ref. FileNotFoundError when it is not one or no drive is wired."""
+        item_id = parse_drive_ref(ref)
+        if item_id is None or self._drive is None:
+            raise FileNotFoundError(f"{ref!r} is not available on the user's drive")
+        return await self._drive.get_item(user_id, item_id)
+
+    def _require_drive(self) -> "UserDrivePort":
+        if self._drive is None:
+            raise FileNotFoundError("The user's drive is unavailable")
+        return self._drive
+
+    async def _resolve_drive_content(self, ref: str, user_id: str) -> str:
+        item = await self.get_drive_item(ref, user_id)
+        if item.is_folder:
+            return (f"[System: '{item.path or '/'}' is a folder, not a file. "
+                    f"Use list_files_in_drive to see what is inside.]")
+        if item.size_bytes > MAX_FILE_BYTES:
+            return (f"[System: '{item.path}' is {format_size(item.size_bytes)}; files above "
+                    f"{format_size(MAX_FILE_BYTES)} cannot be read as text yet. Long audio and video "
+                    f"processing is not available yet.]")
+        data = await self._require_drive().download(user_id, item.item_id)
+        mime_type = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(item.name)[1] or ".bin")
+        try:
+            os.close(tmp_fd)
+            async with aiofiles.open(tmp_path, "wb") as f:
+                await f.write(data)
+            return await convert_file_to_text(tmp_path, item.path, mime_type, audio_service=self._audio_service)
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                logger.debug("Failed to remove temp file %s", tmp_path)
+
+    async def _resolve_drive_bytes(self, ref: str, user_id: str) -> bytes:
+        item = await self.get_drive_item(ref, user_id)
+        if item.is_folder:
+            raise DrivePathError(f"'{item.path or '/'}' is a folder, not a file")
+        if item.size_bytes > MAX_DRIVE_DOWNLOAD_BYTES:
+            raise DriveFileTooLargeError(item, MAX_DRIVE_DOWNLOAD_BYTES)
+        return await self._require_drive().download(user_id, item.item_id)
 
     async def _download_by_ref(self, ref: str, user_id: str) -> bytes:
         """Fetch bytes for a ref, dispatching by ref shape (no LLM decision).
@@ -158,6 +214,8 @@ class FileConversionService:
         if ref.startswith(SKILL_REF_PREFIX):
             text = await self._read_skill(ref, user_id)
             return f"[File: {ref}]\n{text}\n[/File: {ref}]"
+        if parse_drive_ref(ref) is not None:
+            return await self._resolve_drive_content(ref, user_id)
 
         mime_type, _ = mimetypes.guess_type(ref)
         mime_type = mime_type or "application/octet-stream"
@@ -188,4 +246,6 @@ class FileConversionService:
         Dispatches by ref shape: delivered-document key → MediaStoragePort (with
         ownership check); bare filename → user-upload FileStoragePort.
         """
+        if parse_drive_ref(ref) is not None:
+            return await self._resolve_drive_bytes(ref, user_id)
         return await self._download_by_ref(ref, user_id)
