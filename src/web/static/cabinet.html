@@ -1156,6 +1156,8 @@
               </div>
             </div>
 
+            <div id="drive-container"></div>
+
             <div id="tasks-container">
               <!-- Tasks Skeleton -->
               <div class="card integration-card tasks-card">
@@ -1502,6 +1504,9 @@
           "gmail.reconnect_hint": "Google revoked access to your Gmail. Daily review and auto-index are paused until you reconnect.",
           "gmail.reconnect": "Reconnect Gmail",
           "platform.connect_todo": "Connect Microsoft To Do",
+          "platform.connect_drive": "Connect drive",
+          "platform.drive_title": "Drive",
+          "platform.drive_desc": "Long-term file area: files you ask me to remember live in the bot's own folder.",
           "platform.index_emails": "Index Emails",
           "platform.indexing": "Indexing...",
           "platform.cancel": "Cancel",
@@ -1536,6 +1541,7 @@
           "toast.team_joined": "Successfully joined team",
           "toast.gmail_connected": "Gmail connected",
           "toast.todo_connected": "To Do connected",
+          "toast.drive_connected": "Drive connected",
           "gmail.auto_index": "Daily auto-index",
           "gmail.daily_review": "Daily email review",
           "gmail.run_at": "Run at",
@@ -1570,6 +1576,9 @@
           "gmail.reconnect_hint": "Google відкликав доступ до Gmail. Щоденний огляд і автоіндексація на паузі, доки ви не перепідключите.",
           "gmail.reconnect": "Перепідключити Gmail",
           "platform.connect_todo": "Підключити Microsoft To Do",
+          "platform.connect_drive": "Підключити диск",
+          "platform.drive_title": "Диск",
+          "platform.drive_desc": "Довготривала зона файлів: файли, які ти просиш запам'ятати, лежать у власній папці бота.",
           "platform.index_emails": "Індексувати пошту",
           "platform.indexing": "Індексується...",
           "platform.cancel": "Скасувати",
@@ -1604,6 +1613,7 @@
           "toast.team_joined": "Успішно приєднано до команди",
           "toast.gmail_connected": "Gmail підключено",
           "toast.todo_connected": "To Do підключено",
+          "toast.drive_connected": "Диск підключено",
           "gmail.auto_index": "Щоденна індексація",
           "gmail.daily_review": "Щоденний огляд пошти",
           "gmail.run_at": "Запускати о",
@@ -1638,6 +1648,9 @@
           "gmail.reconnect_hint": "Google a r\u00e9voqu\u00e9 l\u2019acc\u00e8s \u00e0 Gmail. La revue quotidienne et l\u2019indexation sont en pause jusqu\u2019\u00e0 la reconnexion.",
           "gmail.reconnect": "Reconnecter Gmail",
           "platform.connect_todo": "Connecter Microsoft To Do",
+          "platform.connect_drive": "Connecter le disque",
+          "platform.drive_title": "Disque",
+          "platform.drive_desc": "Espace de fichiers \u00e0 long terme : les fichiers que tu me demandes de retenir vivent dans le dossier du bot.",
           "platform.index_emails": "Indexer les emails",
           "platform.indexing": "Indexation...",
           "platform.cancel": "Annuler",
@@ -1672,6 +1685,7 @@
           "toast.team_joined": "Rejoint l'\u00e9quipe",
           "toast.gmail_connected": "Gmail connect\u00e9",
           "toast.todo_connected": "To Do connect\u00e9",
+          "toast.drive_connected": "Disque connect\u00e9",
           "gmail.auto_index": "Indexation quotidienne",
           "gmail.daily_review": "Revue quotidienne des emails",
           "gmail.run_at": "Lancer \u00e0",
@@ -1706,6 +1720,9 @@
           "gmail.reconnect_hint": "Google revoc\u00f3 el acceso a Gmail. La revisi\u00f3n diaria y la indexaci\u00f3n est\u00e1n en pausa hasta que vuelvas a conectar.",
           "gmail.reconnect": "Reconectar Gmail",
           "platform.connect_todo": "Conectar Microsoft To Do",
+          "platform.connect_drive": "Conectar disco",
+          "platform.drive_title": "Disco",
+          "platform.drive_desc": "\u00c1rea de archivos a largo plazo: los archivos que me pides recordar viven en la carpeta del bot.",
           "platform.index_emails": "Indexar correos",
           "platform.indexing": "Indexando...",
           "platform.cancel": "Cancelar",
@@ -1740,6 +1757,7 @@
           "toast.team_joined": "Unido al equipo",
           "toast.gmail_connected": "Gmail conectado",
           "toast.todo_connected": "To Do conectado",
+          "toast.drive_connected": "Disco conectado",
           "gmail.auto_index": "Indexaci\u00f3n diaria",
           "gmail.daily_review": "Revisi\u00f3n diaria de correos",
           "gmail.run_at": "Ejecutar a las",
@@ -1825,6 +1843,7 @@
           loadPlatforms();
           loadGmailStatus();
           loadTasksStatus();
+          loadDriveStatus();
         }
       }
 
@@ -1899,6 +1918,7 @@
           loadPlatforms();
           loadGmailStatus();
           loadTasksStatus();
+          loadDriveStatus();
         }
         if (name === "team") loadCodes();
         if (name === "settings") loadSettings();
@@ -2244,6 +2264,10 @@
             showToast(t("toast.todo_connected"), "success");
           if (qs.get("microsoft_todo_error"))
             showToast("To Do connection error", "error");
+          if (qs.get("drive_connected") === "1")
+            showToast(t("toast.drive_connected"), "success");
+          if (qs.get("drive_error"))
+            showToast("Drive connection error", "error");
 
           const tab = qs.get("tab");
           navigate(tab && document.getElementById(`section-${tab}`) ? tab : "integrations");
@@ -2880,6 +2904,64 @@
             await res.json(),
           );
         } catch {}
+      }
+
+      async function loadDriveStatus() {
+        try {
+          const res = await fetch(`${API}/api/drive/status`, {
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error();
+          renderDriveStatus(await res.json());
+        } catch {}
+      }
+
+      function renderDriveStatus(data) {
+        const container = document.getElementById("drive-container");
+        // Not configured on this deployment: show no card rather than a dead connect button.
+        if (!data.provider) {
+          container.innerHTML = "";
+          return;
+        }
+        const linked = data.connected;
+        const statusText = linked ? t("platform.connected") : t("platform.not_connected");
+        const actionButtons = linked
+          ? `<button onclick="disconnectDrive()" class="btn btn-secondary">${t("platform.disconnect_account")}</button>`
+          : `<a href="/auth/connect-onedrive" class="btn btn-black">${t("platform.connect_drive")}</a>`;
+        container.innerHTML = `
+          <div class="card integration-card tasks-card reveal">
+            <div class="integration-icon">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#0078D4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+            </div>
+            <h3 class="integration-title">${t("platform.drive_title")}</h3>
+            <p class="integration-description">${t("platform.drive_desc")}</p>
+
+            <div class="integration-status">
+              <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
+              <span>${statusText}</span>
+            </div>
+
+            <div class="integration-actions">
+              ${actionButtons}
+            </div>
+          </div>
+        `;
+        observeElements();
+      }
+
+      async function disconnectDrive() {
+        if (!confirm(`${t("platform.disconnect_account")}?`)) return;
+        try {
+          const res = await fetch(`${API}/api/drive/disconnect`, {
+            method: "DELETE",
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error();
+          showToast("Drive disconnected", "success");
+          loadDriveStatus();
+        } catch (e) {
+          showToast("Error disconnecting", "error");
+        }
       }
 
       function renderServiceStatus(id, name, description, data) {

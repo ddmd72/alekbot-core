@@ -511,6 +511,8 @@ async def main():
             companion_context_assembler=companion_context_assembler,
             notification_service=notification_service,
             long_turn_registry=long_turn_registry,
+            localization=_localization,
+            language_service=_language_service,
         )
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
         _language_service._ensure_agents = agent_factory.ensure_agents_for_user
@@ -620,6 +622,7 @@ async def main():
             ms_todo_client_id=config.get("MICROSOFT_TODO_CLIENT_ID", ""),
             ms_todo_client_secret=config.get("MICROSOFT_TODO_CLIENT_SECRET", ""),
             ms_todo_redirect_uri=config.get("MICROSOFT_TODO_REDIRECT_URI", ""),
+            onedrive_redirect_uri=config.get("ONEDRIVE_REDIRECT_URI", ""),
             task_queue=agent_task_queue,
         )
 
@@ -658,6 +661,7 @@ async def main():
             agent_note_port=container.notes_adapter,
             recurrence_port=container.recurrence_adapter,
             twilio_verify_client=twilio_verify_client,
+            user_drive=container.user_drive,
         )
 
         # Services for WorkerHandler — wrap ports so the handler never imports ports directly

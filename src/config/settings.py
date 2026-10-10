@@ -86,6 +86,8 @@ def load_settings():
         "MICROSOFT_TODO_CLIENT_ID": os.getenv("MICROSOFT_TODO_CLIENT_ID", ""),
         "MICROSOFT_TODO_CLIENT_SECRET": os.getenv("MICROSOFT_TODO_CLIENT_SECRET", ""),
         "MICROSOFT_TODO_REDIRECT_URI": os.getenv("MICROSOFT_TODO_REDIRECT_URI", ""),
+        # User drive — OneDrive App Folder (USER_DRIVE_RFC §4.1); same app registration as To Do
+        "ONEDRIVE_REDIRECT_URI": os.getenv("ONEDRIVE_REDIRECT_URI", ""),
         "MICROSOFT_TASKS_WEBHOOK_SECRET": os.getenv("MICROSOFT_TASKS_WEBHOOK_SECRET", ""),
         # Unsplash image search (HtmlPageGeneratorAgent)
         "UNSPLASH_ACCESS_KEY": os.getenv("UNSPLASH_ACCESS_KEY", ""),

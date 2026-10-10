@@ -373,6 +373,15 @@ ref shape (§2.4) — so `open_file` re-reads generated/delivered documents too,
 Binary files returned as `file_data` in `AgentResponse.metadata` — SmartAgent propagates to
 MessagePart for LLM vision.
 
+**Two stores, two lifetimes.** Chat attachments (this document) live in GCS for 90 days and are addressed by
+file name. The user's **drive** (`UserDrivePort`, OneDrive App Folder; `docs/10_rfcs/USER_DRIVE_RFC.md`) is the
+long-term area: the same agent serves seven more intents (`save_file_to_drive`, `list_files_in_drive`,
+`open_file_from_drive`, `move_file_in_drive`, `create_folder_in_drive`, `update_file_in_drive`,
+`delete_file_from_drive`), addressed by `drive:<opaque id>` refs. "Remember this file" copies an attachment
+from GCS to the drive (Inbox by default). The coordinator never pre-fetches a drive ref
+(`prefetch_file_ref=False`); the agent opens it itself. There is no search in step 1 — folders are browsed
+by listing. Deployment prerequisites: `docs/07_deployment/README.md` → User Drive.
+
 ---
 
 ## 4. Configuration
@@ -420,7 +429,7 @@ Vision override (force complexity >= 7) uses refined logic:
 
 - LLM-powered file management: "find my PDFs from last month", "list all documents"
 - File metadata indexing (name, type, date, size) in Firestore
-- `list_files`, `search_files` intents
+- `search_files` intent over the GCS uploads (the drive already has `list_files_in_drive`; its search comes with drive step 2)
 - Per-user storage quota tracking
 
 ---
