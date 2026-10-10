@@ -2,8 +2,12 @@
 Keep file operations out of long-term memory (docs/10_rfcs/USER_DRIVE_RFC.md §4.12).
 
 Appends one line to ``exclude: [`` in ``rule Trivial_Exclusions()`` of the
-``CONSOLIDATION_TAXONOMY`` system token. The edit is anchored on exact existing text and
-aborts unless the anchor occurs exactly once, so a re-worded token is never half-patched.
+``CONSOLIDATION_TAXONOMY`` system token. The edit is anchored on the exact text of the
+list's last element followed by its closing ``]`` and aborts unless that anchor occurs
+exactly once, so a re-worded token is never half-patched. Leading whitespace is taken from
+the live token, not assumed: the token's indentation cannot be verified from the repo (the
+RFC copy and the plan disagree by four spaces), and a wrong guess would only turn into a
+spurious "re-worded" abort.
 
     python scripts/prompt/migrate_file_ops_exclusion_token.py --dry-run
     python scripts/prompt/migrate_file_ops_exclusion_token.py --apply
@@ -20,6 +24,7 @@ import asyncio
 import difflib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,11 +38,29 @@ from src.config.environment import EnvironmentConfig  # noqa: E402
 _BACKUP_DIR = Path(__file__).resolve().parents[1] / "memory"
 _TOKEN_ID = "CONSOLIDATION_TAXONOMY"
 
-_ANCHOR_OLD = '''                "Temporary debugging state: 'Testing feature X' (unless ongoing project)"
-            ]'''
-_ANCHOR_NEW = '''                "Temporary debugging state: 'Testing feature X' (unless ongoing project)",
-                "File operations: saving, opening, moving, renaming, deleting files or folders on the user's drive or in chat — the drive is the record of what exists and where"
-            ]'''
+# The last element of `exclude: [` today, and the line to append after it (RFC §4.12).
+_LAST_ITEM = '''"Temporary debugging state: 'Testing feature X' (unless ongoing project)"'''
+_NEW_ITEM = ('''"File operations: saving, opening, moving, renaming, deleting files or folders on '''
+             '''the user's drive or in chat — the drive is the record of what exists and where"''')
+
+# Exact element text, then the list's closing bracket on the next line. Indentation is
+# captured from the live token (group 1 = the item's, group 2 = the bracket's).
+_ANCHOR_RE = re.compile(
+    r"^([ \t]*)" + re.escape(_LAST_ITEM) + r"[ \t]*\n([ \t]*)\]",
+    re.M,
+)
+
+
+def patch(content: str) -> tuple[str, str, str] | None:
+    """(new_content, old_block, new_block) — or None when the anchor is not found exactly once."""
+    matches = list(_ANCHOR_RE.finditer(content))
+    if len(matches) != 1:
+        return None
+    m = matches[0]
+    item_indent, bracket_indent = m.group(1), m.group(2)
+    old_block = m.group(0)
+    new_block = f"{item_indent}{_LAST_ITEM},\n{item_indent}{_NEW_ITEM}\n{bracket_indent}]"
+    return content[: m.start()] + new_block + content[m.end():], old_block, new_block
 
 
 async def _run(mode: str, backup_path: str | None) -> int:
@@ -47,6 +70,9 @@ async def _run(mode: str, backup_path: str | None) -> int:
 
     if mode == "revert":
         payload = json.loads(Path(backup_path).read_text())
+        if payload.get("collection") != collection:
+            print(f"ERROR backup is for {payload.get('collection')!r}, this environment uses {collection!r}")
+            return 1
         for token_id, content in payload["tokens"].items():
             await db.collection(collection).document(token_id).update({"content": content})
             print(f"restored {token_id}")
@@ -58,20 +84,23 @@ async def _run(mode: str, backup_path: str | None) -> int:
         return 1
     content = (doc.to_dict() or {}).get("content", "")
 
-    if _ANCHOR_NEW in content:
+    if _NEW_ITEM in content:
         print(f"OK {_TOKEN_ID}: already up to date")
         return 0
-    n = content.count(_ANCHOR_OLD)
-    if n != 1:
-        print(f"ERROR {_TOKEN_ID}: anchor occurs {n} times (need exactly 1) — token was re-worded, patch by hand:\n"
-              f"{_ANCHOR_OLD[:120]}...")
+    patched = patch(content)
+    if patched is None:
+        n = len(_ANCHOR_RE.findall(content))
+        hint = ("the element text is present but not followed by the closing ']' on the next line"
+                if _LAST_ITEM in content else "the element text is absent")
+        print(f"ERROR {_TOKEN_ID}: anchor occurs {n} times (need exactly 1) — {hint}; "
+              f"token was re-worded, patch by hand:\n{_LAST_ITEM}")
         return 1
-    new_content = content.replace(_ANCHOR_OLD, _ANCHOR_NEW, 1)
+    new_content, old_block, new_block = patched
     print(f"OK {_TOKEN_ID}: 1/1 edit applied, {len(new_content) - len(content):+d} chars")
 
     if mode == "dry-run":
         for line in difflib.unified_diff(
-            _ANCHOR_OLD.splitlines(), _ANCHOR_NEW.splitlines(), "old", "new", lineterm="", n=0
+            old_block.splitlines(), new_block.splitlines(), "old", "new", lineterm="", n=0
         ):
             print(line)
         print("\n(dry run — nothing written)")
