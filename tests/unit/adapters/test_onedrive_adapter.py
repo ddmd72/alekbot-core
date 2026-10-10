@@ -299,3 +299,115 @@ class TestDownloadAndMutations:
         with patch("aiohttp.ClientSession", return_value=session):
             kids = await adapter.list_children("u1", "p1")
         assert [k.item_id for k in kids] == ["f1", "f2"]
+
+
+class TestPrefixRegex:
+    """Review additions: the prefix strip matches exactly the two forms Graph emits (RFC §7 spike A1)."""
+
+    def test_only_the_two_graph_forms_are_stripped(self):
+        from src.adapters.microsoft.onedrive_adapter import _normalize_path
+        assert _normalize_path("/drive/root:/Apps/Alek-bot") == "/Apps/Alek-bot"
+        assert _normalize_path("/drives/b!ab_C-1!23/root:/Apps") == "/Apps"
+        assert _normalize_path("/drive/root:") == ""
+        # Not Graph forms: left alone rather than guessed at.
+        assert _normalize_path("/drives/root:/x") == "/drives/root:/x"
+        assert _normalize_path("/drive/other/root:/x") == "/drive/other/root:/x"
+
+    def test_strip_is_anchored_and_once(self):
+        from src.adapters.microsoft.onedrive_adapter import _normalize_path
+        assert _normalize_path("/drive/root:/Apps/drive/root:/z") == "/Apps/drive/root:/z"
+        assert _normalize_path("/drive/root:/Apps/Alek-bot/100%25%20%231") == "/Apps/Alek-bot/100% #1"
+
+
+class TestReviewTransport:
+    """Review additions: bounded throttling, 503, quoting, logging on the reauth path."""
+
+    async def test_throttling_is_bounded_to_three_retries(self):
+        adapter, _ = _adapter()
+        throttled = [_resp({}, status=429, headers={"Retry-After": "0"}) for _ in range(5)]
+        session = _session(get=throttled)
+        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(ValueError):
+            await adapter.get_root("u1")
+        assert session.get.call_count == 4  # first attempt + 3 retries, never a 5th
+
+    async def test_503_retried_like_429(self):
+        adapter, _ = _adapter()
+        session = _session(get=[_resp({}, status=503, headers={"Retry-After": "0"}), _resp(_ROOT)])
+        with patch("aiohttp.ClientSession", return_value=session):
+            assert (await adapter.get_root("u1")).item_id == "root1"
+
+    async def test_401_after_refresh_is_logged_before_raise(self):
+        adapter, _ = _adapter()
+        adapter._tokens.headers = AsyncMock(return_value={"Authorization": "Bearer t"})
+        session = _session(get=[_resp({}, status=401), _resp({}, status=401)])
+        with patch("aiohttp.ClientSession", return_value=session), \
+                patch("src.adapters.microsoft.onedrive_adapter.logger") as log, \
+                pytest.raises(DriveNotConnectedError):
+            await adapter.get_root("u1")
+        log.warning.assert_called_once()
+        assert "Bearer" not in log.warning.call_args.args[0]
+
+    async def test_reauth_required_on_refresh_is_not_connected(self):
+        from src.adapters.microsoft.graph_auth import GraphReauthRequired
+        adapter, _ = _adapter()
+        adapter._tokens.headers = AsyncMock(side_effect=GraphReauthRequired("invalid_grant"))
+        with patch("aiohttp.ClientSession", return_value=_session()), pytest.raises(DriveNotConnectedError):
+            await adapter.get_root("u1")
+
+    async def test_upload_name_with_url_specials_is_fully_encoded(self):
+        adapter, _ = _adapter()
+        session = _session(put=_resp(_FILE, status=201), get=_resp(_ROOT))
+        with patch("aiohttp.ClientSession", return_value=session):
+            await adapter.upload("u1", "B1!23", "100% #1 'x' a/b.txt", b"x", "text/plain")
+        url = session.put.call_args.args[0]
+        assert "/me/drive/items/B1%2123:/100%25%20%231%20%27x%27%20a%2Fb.txt:/content" in url
+
+    async def test_search_query_quotes_are_doubled_and_encoded(self):
+        adapter, _ = _adapter()
+        session = _session(get=[_resp({"value": []}), _resp(_ROOT)])
+        with patch("aiohttp.ClientSession", return_value=session):
+            assert await adapter.search("u1", "o'neil/x", limit=5) == []
+        url = session.get.call_args_list[0].args[0]
+        assert "search(q='o%27%27neil%2Fx')?$top=5" in url
+
+    async def test_download_failure_is_logged(self):
+        adapter, _ = _adapter()
+        session = _session(get=[_resp(_FILE), _resp(status=500)])
+        with patch("aiohttp.ClientSession", return_value=session), \
+                patch("src.adapters.microsoft.onedrive_adapter.logger") as log, pytest.raises(ValueError):
+            await adapter.download("u1", "f1")
+        log.error.assert_called_once()
+
+
+class TestReviewPaths:
+    """Review Focus #2: a mismatch is one warning and one re-read, never a silent top-level label."""
+
+    async def test_prefix_mismatch_warns_once_and_rereads_once(self):
+        odd = {**_FILE, "parentReference": {"path": "/drive/root:/Elsewhere"}}
+        adapter, _ = _adapter()
+        session = _session(get=[_resp(odd), _resp(_ROOT), _resp(odd)])
+        with patch("aiohttp.ClientSession", return_value=session), \
+                patch("src.adapters.microsoft.onedrive_adapter.logger") as log:
+            item = await adapter.get_item("u1", "f1")
+        assert item.path == "…/заметка.txt"
+        assert session.get.call_count == 3  # item, approot, one re-read of the item — no more
+        assert log.warning.call_count == 2  # "outside the app folder" + "still unresolved"
+        assert session.get.call_args_list[2].args[0].endswith("/me/drive/items/f1")
+
+    async def test_mismatch_resolved_by_reread_gets_real_path(self):
+        odd = {**_FILE, "parentReference": {"path": "/drive/root:/Elsewhere"}}
+        adapter, _ = _adapter()
+        session = _session(get=[_resp(odd), _resp(_ROOT), _resp(_FILE)])
+        with patch("aiohttp.ClientSession", return_value=session), \
+                patch("src.adapters.microsoft.onedrive_adapter.logger") as log:
+            item = await adapter.get_item("u1", "f1")
+        assert item.path == "Встречи 2026/заметка.txt"
+        assert log.warning.call_count == 1
+
+    async def test_disconnect_drops_the_cached_root(self):
+        adapter, _ = _adapter()
+        with patch("aiohttp.ClientSession", return_value=_session(get=_resp(_ROOT))):
+            await adapter.get_root("u1")
+        assert "u1" in adapter._root_cache
+        await adapter.disconnect("u1")
+        assert "u1" not in adapter._root_cache

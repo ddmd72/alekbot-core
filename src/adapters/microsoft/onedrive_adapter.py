@@ -44,7 +44,12 @@ _MAX_RETRY_AFTER_S = 30.0
 _UNKNOWN_PARENT = "…"
 # Graph writes the same location two ways: '/drive/root:/…' (GET, children, PUT, PATCH, approot)
 # and '/drives/<drive-id>/root:/…' (POST create-folder responses). Strip either prefix (RFC §7).
-_ROOT_PREFIX_RE = re.compile(r"^/drives?(?:/[^/]+)?/root:")
+_ROOT_PREFIX_RE = re.compile(r"^(?:/drive|/drives/[^/]+)/root:")
+
+
+def _q(segment: str) -> str:
+    """One URL path segment: everything percent-encoded, '/' included (quote keeps it by default)."""
+    return quote(segment, safe="")
 
 
 def _normalize_path(path: str) -> str:
@@ -92,12 +97,12 @@ class OneDriveAdapter(UserDrivePort):
 
     async def get_item(self, user_id: str, item_id: str) -> DriveItem:
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{quote(item_id)}")
+            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
             return await self._item(s, user_id, raw)
 
     async def list_children(self, user_id: str, folder_id: str) -> List[DriveItem]:
         async with aiohttp.ClientSession() as s:
-            url: Optional[str] = f"/me/drive/items/{quote(folder_id)}/children?$top=200"
+            url: Optional[str] = f"/me/drive/items/{_q(folder_id)}/children?$top=200"
             items: List[DriveItem] = []
             while url:
                 page = await self._call(s, user_id, "GET", url)
@@ -110,18 +115,19 @@ class OneDriveAdapter(UserDrivePort):
         async with aiohttp.ClientSession() as s:
             escaped = query.replace("'", "''")
             page = await self._call(s, user_id, "GET",
-                                    f"/me/drive/special/approot/search(q='{quote(escaped)}')?$top={limit}")
+                                    f"/me/drive/special/approot/search(q='{_q(escaped)}')?$top={limit}")
             return [await self._item(s, user_id, raw) for raw in page.get("value", [])[:limit]]
 
     async def download(self, user_id: str, item_id: str) -> bytes:
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{quote(item_id)}")
+            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
             url = raw.get("@microsoft.graph.downloadUrl")
             if not url:
                 raise DriveItemNotFoundError(f"No downloadable content for item {item_id}")
             # Pre-authenticated short-lived URL on another host: never send the bearer token there.
             async with s.get(url) as resp:
                 if resp.status != 200:
+                    logger.error(f"Drive download failed ({resp.status}) for item {item_id}")
                     raise ValueError(f"Drive download failed ({resp.status})")
                 return bytes(await resp.read())
 
@@ -129,7 +135,7 @@ class OneDriveAdapter(UserDrivePort):
 
     async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes, content_type: str) -> DriveItem:
         async with aiohttp.ClientSession() as s:
-            target = f"/me/drive/items/{quote(parent_id)}:/{quote(filename)}:"
+            target = f"/me/drive/items/{_q(parent_id)}:/{_q(filename)}:"
             if len(data) <= _SIMPLE_UPLOAD_MAX:
                 raw = await self._call(s, user_id, "PUT",
                                        f"{target}/content?@microsoft.graph.conflictBehavior=rename",
@@ -141,7 +147,7 @@ class OneDriveAdapter(UserDrivePort):
 
     async def replace_content(self, user_id: str, item_id: str, data: bytes, content_type: str) -> DriveItem:
         async with aiohttp.ClientSession() as s:
-            base = f"/me/drive/items/{quote(item_id)}"
+            base = f"/me/drive/items/{_q(item_id)}"
             if len(data) <= _SIMPLE_UPLOAD_MAX:
                 raw = await self._call(s, user_id, "PUT", f"{base}/content", data=data, content_type=content_type)
             else:
@@ -157,19 +163,19 @@ class OneDriveAdapter(UserDrivePort):
         if new_name:
             body["name"] = new_name
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "PATCH", f"/me/drive/items/{quote(item_id)}", json=body)
+            raw = await self._call(s, user_id, "PATCH", f"/me/drive/items/{_q(item_id)}", json=body)
             return await self._item(s, user_id, raw)
 
     async def create_folder(self, user_id: str, parent_id: str, name: str) -> DriveItem:
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "POST", f"/me/drive/items/{quote(parent_id)}/children",
+            raw = await self._call(s, user_id, "POST", f"/me/drive/items/{_q(parent_id)}/children",
                                    json={"name": name, "folder": {},
                                          "@microsoft.graph.conflictBehavior": "fail"})
             return await self._item(s, user_id, raw)
 
     async def delete(self, user_id: str, item_id: str) -> None:
         async with aiohttp.ClientSession() as s:
-            await self._call(s, user_id, "DELETE", f"/me/drive/items/{quote(item_id)}")
+            await self._call(s, user_id, "DELETE", f"/me/drive/items/{_q(item_id)}")
 
     # -- transport ----------------------------------------------------------
 
@@ -201,6 +207,7 @@ class OneDriveAdapter(UserDrivePort):
                 status = resp.status
                 if status == 401:
                     if refreshed:
+                        logger.warning(f"Drive {method} {path}: 401 after a forced token refresh")
                         raise DriveNotConnectedError("Drive access rejected after refresh; reconnect needed")
                     refreshed = True
                     # The token provider dedupes forced refreshes itself; no invalidate here.
@@ -279,7 +286,7 @@ class OneDriveAdapter(UserDrivePort):
         if rel is None and raw.get("id"):
             if (raw.get("parentReference") or {}).get("path"):
                 logger.warning(f"Drive path outside the app folder for item {raw['id']}; re-reading")
-            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{quote(str(raw['id']))}")
+            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(str(raw['id']))}")
             rel = self._rel_parent(raw, root_abs)
             if rel is None:
                 logger.warning(f"Drive path still unresolved for item {raw.get('id')}")
