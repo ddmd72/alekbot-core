@@ -12,3 +12,14 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 
 ## Tasks
 
+
+### Task 0 — done
+- Commit `ef048c3`. `make check` (coordinator): 6940 passed, 3 skipped, 1 xfailed.
+- Deviations: none. Fixture copied byte-identical from the plan (reviewer diffed all four blocks).
+- Reviewer: APPROVED, round 1.
+- **OWNER decision (fixture slip in the plan):** in `tree.json` only `Photos/Porto/IMG_6201.HEIC` is at Porto
+  (41.1579, -8.6291). `IMG_6202..6206` have latitude 39.4705..39.4729 (Valencia's latitude, Porto's longitude), which
+  Δ7 resolves to "Monsanto, Portugal". Card text has no path, so gold cases `place-porto-en` / `place-porto-ru`
+  (expect all six) are reachable for 1 of 6 only. Left verbatim (the gold file is written before the code and is not
+  the implementer's to bend). Suggested fix: latitudes ≈ 41.1585..41.1609 (+0.0006 step) **before** the first
+  `--record` of bars in Task 47.
