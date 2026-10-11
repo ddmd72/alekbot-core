@@ -13,7 +13,8 @@ and are handled natively by each adapter.
 import asyncio
 import os
 import tempfile
-from typing import TYPE_CHECKING, Optional
+import zipfile
+from typing import TYPE_CHECKING, Any, Optional
 
 from .logger import logger
 
@@ -24,6 +25,11 @@ MAX_FILE_BYTES = 5 * 1024 * 1024    # 5 MB — context window would explode beyo
 MAX_CONVERTED_CHARS = 30_000         # ~7K tokens — hard truncation to protect context
 HISTORY_PREVIEW_CHARS = 1000         # chars kept in history stub per file
 
+# OOXML / EPUB are ZIP containers: a 5 MB upload can declare gigabytes once inflated. Checked on
+# the archive's central directory before any converter opens it.
+MAX_ZIP_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+MAX_ZIP_MEMBERS = 10_000
+
 NAME_MAX_BYTES = 255                 # ext4 / overlayfs limit for ONE path component, in bytes
 _MAX_KEPT_EXTENSION = 12             # ".markdown" fits; a 300-char "extension" is not one
 
@@ -31,11 +37,21 @@ _NATIVE_BINARY_EXACT = frozenset(["application/pdf"])
 
 _AUDIO_MIME_TYPES = frozenset([
     "audio/mpeg",   # mp3
+    "audio/mp3",
     "audio/wav",    # wav
+    "audio/x-wav",  # wav as Python's mimetypes names it
+    "audio/wave",
+    "audio/vnd.wave",
     "audio/mp4",    # m4a (Slack voice messages)
     "audio/x-m4a",  # m4a alt
+    "audio/mp4a-latm",  # m4a as Python 3.13's mimetypes names it
     "audio/ogg",    # ogg
+    "audio/flac",
+    "audio/x-flac",
+    "audio/webm",
 ])
+# A ref resolved by name alone can come with no usable MIME type (mimetypes knows no .m4a on 3.11).
+_AUDIO_EXTENSIONS = frozenset([".mp3", ".wav", ".m4a", ".ogg", ".oga", ".opus", ".flac", ".webm"])
 
 
 def is_native_binary(mime_type: str) -> bool:
@@ -187,6 +203,51 @@ def _is_plain_text(mime_type: str) -> bool:
     return mime_type.startswith("text/")
 
 
+class ArchiveTooLargeError(ValueError):
+    """A ZIP container declares more inflated bytes or members than the caps allow."""
+
+
+def check_zip_container(local_path: str) -> None:
+    """Refuse a ZIP container (docx/xlsx/pptx/epub/…) whose central directory declares too much.
+
+    Reads only the directory, never inflates a member. Not a ZIP → no-op.
+    """
+    if not zipfile.is_zipfile(local_path):
+        return
+    with zipfile.ZipFile(local_path) as archive:
+        infos = archive.infolist()
+    if len(infos) > MAX_ZIP_MEMBERS:
+        raise ArchiveTooLargeError(f"{len(infos)} members (limit {MAX_ZIP_MEMBERS})")
+    declared = sum(info.file_size for info in infos)
+    if declared > MAX_ZIP_UNCOMPRESSED_BYTES:
+        raise ArchiveTooLargeError(f"{declared} bytes inflated (limit {MAX_ZIP_UNCOMPRESSED_BYTES})")
+
+
+def build_markitdown() -> Any:
+    """MarkItDown with local document converters only — the files are untrusted user input.
+
+    Builtins stay off: ZipConverter inflates every archive member in RAM (decompression bomb),
+    AudioConverter uploads audio to Google's speech API, Image/URL converters call out to
+    exiftool and the network. Registration order mirrors `MarkItDown.enable_builtins`.
+    """
+    from markitdown import MarkItDown, PRIORITY_GENERIC_FILE_FORMAT  # lazy — optional dependency
+    from markitdown.converters import (
+        CsvConverter, DocxConverter, EpubConverter, HtmlConverter, IpynbConverter,
+        OutlookMsgConverter, PdfConverter, PlainTextConverter, PptxConverter, RssConverter,
+        XlsConverter, XlsxConverter,
+    )
+
+    md = MarkItDown(enable_builtins=False, enable_plugins=False)
+    md.register_converter(PlainTextConverter(), priority=PRIORITY_GENERIC_FILE_FORMAT)
+    md.register_converter(HtmlConverter(), priority=PRIORITY_GENERIC_FILE_FORMAT)
+    for converter in (
+        RssConverter(), DocxConverter(), XlsxConverter(), XlsConverter(), PptxConverter(),
+        IpynbConverter(), PdfConverter(), OutlookMsgConverter(), EpubConverter(), CsvConverter(),
+    ):
+        md.register_converter(converter)
+    return md
+
+
 
 async def convert_file_to_text(
     local_path: str,
@@ -211,8 +272,12 @@ async def convert_file_to_text(
         )
         return _size_alert(filename, size)
 
-    # Audio path — via injected AudioTranscriptionPort
-    if is_audio(mime_type):
+    # Audio path — via injected AudioTranscriptionPort. markitdown's own AudioConverter is not
+    # registered (it uploads to Google's speech API), so every audio file must be routed here.
+    if is_audio(mime_type) or (
+        mime_type in ("", "application/octet-stream")
+        and os.path.splitext(filename)[1].lower() in _AUDIO_EXTENSIONS
+    ):
         if audio_service is None:
             logger.warning(f"[FileConversion] No audio_service for '{filename}' ({mime_type})")
             return (
@@ -238,11 +303,10 @@ async def convert_file_to_text(
             logger.warning(f"[FileConversion] Failed to read '{filename}': {e}")
             return _conversion_alert(filename, mime_type)
     else:
-        # markitdown path: docx, xlsx, and anything else markitdown supports
+        # markitdown path: docx, xlsx, pptx, epub, … — local document converters only
         def _convert() -> str:
-            from markitdown import MarkItDown  # lazy import — optional dependency
-            md = MarkItDown()
-            result = md.convert(local_path)
+            check_zip_container(local_path)
+            result = build_markitdown().convert(local_path)
             return result.text_content or ""
 
         try:

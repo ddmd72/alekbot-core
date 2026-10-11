@@ -63,8 +63,26 @@ No external dependencies, no risks.
 
 ### Binary convertible formats
 
-DOCX, XLSX, and everything markitdown supports — via `MarkItDown.convert(path)`.
-Lazy import: `from markitdown import MarkItDown` inside the function — startup does not fail if the library is not installed.
+DOCX, XLSX, PPTX, PDF, EPUB, HTML, MSG, IPYNB, CSV — via `build_markitdown().convert(path)`.
+Lazy import inside the function — startup does not fail if the library is not installed.
+
+**Files are untrusted input** (chat uploads, drive files, email attachments). `build_markitdown()`
+turns markitdown's builtins off and registers local document converters only. Left out on
+purpose: `ZipConverter` (inflates every archive member in RAM — a 5 MB zip bomb takes the single
+instance down), `AudioConverter` (uploads audio to Google's speech API), `ImageConverter` and the
+URL converters (exiftool, network). A plain `.zip` therefore gets the conversion alert.
+Before conversion, `check_zip_container()` reads a ZIP container's central directory (OOXML and
+EPUB are ZIPs) and refuses more than `MAX_ZIP_UNCOMPRESSED_BYTES` (100 MiB) declared inflated or
+`MAX_ZIP_MEMBERS` (10 000) members — the refusal is the ordinary conversion alert.
+Audio never reaches markitdown: every audio MIME type (and an untyped file with an audio extension)
+goes to the injected `AudioTranscriptionPort`.
+
+**Not covered — memory amplification inside parsers.** The ZIP check stops archive recursion and
+outright bombs, not parser blow-up: measured on markitdown 0.1.4, a 66 KB DOCX peaked at ~950 MiB
+RSS, a 5 KB XLSX at ~1.75 GB, an 8.7 KB legacy XLS (not a ZIP) at ~3 GB, a 408 KB PDF at
+~955 MiB. Conversion still runs in-process on the single 1 GiB instance. The fix is isolation — a
+child process with a memory rlimit and a timeout (`ContentExtractorPort`,
+`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §9) — pending spike S1 on Cloud Run.
 
 ### Graceful degradation via LLM alerts
 
