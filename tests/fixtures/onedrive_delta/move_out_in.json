@@ -1,0 +1,404 @@
+{
+ "_meta": {
+  "scenario": "a move out of the App Folder (tombstone, then GET 404) and a move in (first sighting)",
+  "source": "20261011223343",
+  "moved_out_id": "ABCDEF0000000001!i0017",
+  "moved_in_id": "ABCDEF0000000001!i0018"
+ },
+ "pages": [
+  {
+   "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(microsoft.graph.driveItem)",
+   "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/drive/special/approot/delta?$top=3&token=tok0008",
+   "value": [
+    {
+     "createdDateTime": "2026-10-10T15:45:10Z",
+     "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000001},2\"",
+     "id": "ABCDEF0000000001!i0001",
+     "lastModifiedDateTime": "2026-10-10T15:45:11Z",
+     "name": "Alek-bot",
+     "webUrl": "https://onedrive.example.invalid/item/0001",
+     "isAuthoritative": false,
+     "size": 382900893,
+     "createdBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "lastModifiedBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0002",
+      "path": "/drive/root:/folder-0001",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "fileSystemInfo": {
+      "createdDateTime": "2026-10-10T15:45:10Z",
+      "lastModifiedDateTime": "2026-10-10T15:45:11Z"
+     },
+     "folder": {
+      "childCount": 3,
+      "view": {}
+     },
+     "shared": {
+      "scope": "users",
+      "owner": {
+       "user": {
+        "email": "redacted",
+        "id": "ABCDEF0000000001",
+        "displayName": "Owner"
+       }
+      }
+     },
+     "specialFolder": {
+      "name": "appRoot"
+     }
+    },
+    {
+     "createdDateTime": "2026-10-11T20:12:18Z",
+     "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000012},2\"",
+     "id": "ABCDEF0000000001!i0013",
+     "lastModifiedDateTime": "2026-10-11T20:12:18Z",
+     "name": "folder-0010",
+     "webUrl": "https://onedrive.example.invalid/item/0012",
+     "isAuthoritative": false,
+     "size": 265810348,
+     "createdBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "lastModifiedBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0001",
+      "path": "/drive/root:/folder-0001/Alek-bot",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "fileSystemInfo": {
+      "createdDateTime": "2026-10-11T20:12:18Z",
+      "lastModifiedDateTime": "2026-10-11T20:12:18Z"
+     },
+     "folder": {
+      "childCount": 22,
+      "view": {}
+     },
+     "shared": {
+      "scope": "users",
+      "owner": {
+       "user": {
+        "email": "redacted",
+        "id": "ABCDEF0000000001",
+        "displayName": "Owner"
+       }
+      }
+     }
+    },
+    {
+     "createdDateTime": "2025-08-26T23:55:26Z",
+     "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000016},8\"",
+     "id": "ABCDEF0000000001!i0018",
+     "lastModifiedDateTime": "2025-08-27T00:00:00Z",
+     "name": "file-0014.docx",
+     "webUrl": "https://onedrive.example.invalid/item/0016",
+     "cTag": "\"c:{aaaaaaaa-0000-4000-a000-000000000016},6\"",
+     "isAuthoritative": false,
+     "size": 22989,
+     "createdBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "lastModifiedBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0013",
+      "path": "/drive/root:/folder-0001/Alek-bot/folder-0010",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "file": {
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "hashes": {
+       "quickXorHash": "ZmFrZS1oYXNoLTAwMDAwMDE3LQ==",
+       "sha1Hash": "ZmFrZS1oYXNoLTAwMDAwMDE4LQ==",
+       "sha256Hash": "ZmFrZS1oYXNoLTAwMDAwMDE5LQ=="
+      }
+     },
+     "fileSystemInfo": {
+      "createdDateTime": "2025-08-26T23:55:26Z",
+      "lastModifiedDateTime": "2025-08-27T00:00:00Z"
+     },
+     "shared": {
+      "scope": "users",
+      "owner": {
+       "user": {
+        "email": "redacted",
+        "id": "ABCDEF0000000001",
+        "displayName": "Owner"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(microsoft.graph.driveItem)",
+   "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/drive/special/approot/delta?$top=3&token=tok0009",
+   "value": [
+    {
+     "createdDateTime": "2026-10-10T15:45:10Z",
+     "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000001},2\"",
+     "id": "ABCDEF0000000001!i0001",
+     "lastModifiedDateTime": "2026-10-10T15:45:11Z",
+     "name": "Alek-bot",
+     "webUrl": "https://onedrive.example.invalid/item/0001",
+     "isAuthoritative": false,
+     "size": 382900893,
+     "createdBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "lastModifiedBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0002",
+      "path": "/drive/root:/folder-0001",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "fileSystemInfo": {
+      "createdDateTime": "2026-10-10T15:45:10Z",
+      "lastModifiedDateTime": "2026-10-10T15:45:11Z"
+     },
+     "folder": {
+      "childCount": 3,
+      "view": {}
+     },
+     "shared": {
+      "scope": "users",
+      "owner": {
+       "user": {
+        "email": "redacted",
+        "id": "ABCDEF0000000001",
+        "displayName": "Owner"
+       }
+      }
+     },
+     "specialFolder": {
+      "name": "appRoot"
+     }
+    },
+    {
+     "id": "ABCDEF0000000001!i0017",
+     "webUrl": "https://onedrive.example.invalid/item/0017",
+     "cTag": "\"c:{aaaaaaaa-0000-4000-a000-000000000017},-1\"",
+     "isAuthoritative": false,
+     "size": 0,
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0019",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "deleted": {
+      "state": "deleted"
+     },
+     "file": {
+      "hashes": {
+       "quickXorHash": "ZmFrZS1oYXNoLTAwMDAwMDA5LQ=="
+      }
+     },
+     "fileSystemInfo": {}
+    },
+    {
+     "createdDateTime": "2026-10-11T20:12:18Z",
+     "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000012},2\"",
+     "id": "ABCDEF0000000001!i0013",
+     "lastModifiedDateTime": "2026-10-11T20:12:18Z",
+     "name": "folder-0010",
+     "webUrl": "https://onedrive.example.invalid/item/0012",
+     "isAuthoritative": false,
+     "size": 265810348,
+     "createdBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "lastModifiedBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0001",
+      "path": "/drive/root:/folder-0001/Alek-bot",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "fileSystemInfo": {
+      "createdDateTime": "2026-10-11T20:12:18Z",
+      "lastModifiedDateTime": "2026-10-11T20:12:18Z"
+     },
+     "folder": {
+      "childCount": 22,
+      "view": {}
+     },
+     "shared": {
+      "scope": "users",
+      "owner": {
+       "user": {
+        "email": "redacted",
+        "id": "ABCDEF0000000001",
+        "displayName": "Owner"
+       }
+      }
+     }
+    },
+    {
+     "createdDateTime": "2026-10-11T20:12:23Z",
+     "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000018},7\"",
+     "id": "ABCDEF0000000001!i0020",
+     "lastModifiedDateTime": "2026-10-11T20:23:07Z",
+     "name": "file-0015.docx",
+     "webUrl": "https://onedrive.example.invalid/item/0018",
+     "cTag": "\"c:{aaaaaaaa-0000-4000-a000-000000000018},7\"",
+     "isAuthoritative": false,
+     "size": 65606,
+     "createdBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "lastModifiedBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0013",
+      "path": "/drive/root:/folder-0001/Alek-bot/folder-0010",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "file": {
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "hashes": {
+       "quickXorHash": "ZmFrZS1oYXNoLTAwMDAwMDIwLQ==",
+       "sha1Hash": "ZmFrZS1oYXNoLTAwMDAwMDIxLQ==",
+       "sha256Hash": "ZmFrZS1oYXNoLTAwMDAwMDIyLQ=="
+      }
+     },
+     "fileSystemInfo": {
+      "createdDateTime": "2026-10-11T20:12:23Z",
+      "lastModifiedDateTime": "2026-10-11T20:23:07Z"
+     },
+     "shared": {
+      "scope": "users",
+      "owner": {
+       "user": {
+        "email": "redacted",
+        "id": "ABCDEF0000000001",
+        "displayName": "Owner"
+       }
+      }
+     }
+    }
+   ]
+  }
+ ],
+ "get_moved_out": {
+  "status": 404,
+  "body": {
+   "error": {
+    "code": "itemNotFound",
+    "message": "The resource could not be found.",
+    "innerError": {
+     "date": "2026-10-11T20:34:22",
+     "request-id": "aaaaaaaa-0000-4000-a000-000000000019",
+     "client-request-id": "aaaaaaaa-0000-4000-a000-000000000019"
+    }
+   }
+  }
+ }
+}

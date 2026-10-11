@@ -1,0 +1,227 @@
+{
+ "_meta": {
+  "scenario": "S0e facet shapes: phone HEIC with photo+location, messenger JPEG with photo {}, video",
+  "source": {
+   "facet_heic": "20261011222430",
+   "facet_jpeg": "20261011223015",
+   "facet_video": "20261011223015"
+  }
+ },
+ "heic_photo_location": {
+  "createdDateTime": "2026-10-11T20:17:54Z",
+  "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000035},2\"",
+  "id": "ABCDEF0000000001!i0036",
+  "lastModifiedDateTime": "2026-10-11T20:17:27Z",
+  "name": "file-0027.HEIC",
+  "webUrl": "https://onedrive.example.invalid/item/0034",
+  "cTag": "\"c:{aaaaaaaa-0000-4000-a000-000000000035},1\"",
+  "isAuthoritative": false,
+  "size": 1212849,
+  "createdBy": {
+   "application": {
+    "displayName": "Alek-bot"
+   },
+   "user": {
+    "email": "redacted",
+    "id": "ABCDEF0000000001",
+    "displayName": "Owner"
+   }
+  },
+  "lastModifiedBy": {
+   "application": {
+    "displayName": "Alek-bot"
+   },
+   "user": {
+    "email": "redacted",
+    "id": "ABCDEF0000000001",
+    "displayName": "Owner"
+   }
+  },
+  "parentReference": {
+   "driveType": "personal",
+   "driveId": "ABCDEF0000000001",
+   "id": "ABCDEF0000000001!i0013",
+   "path": "/drive/root:/folder-0001/Alek-bot/folder-0010",
+   "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+  },
+  "file": {
+   "mimeType": "image/heic",
+   "hashes": {
+    "quickXorHash": "ZmFrZS1oYXNoLTAwMDAwMDQ2LQ==",
+    "sha1Hash": "ZmFrZS1oYXNoLTAwMDAwMDQ3LQ==",
+    "sha256Hash": "ZmFrZS1oYXNoLTAwMDAwMDQ4LQ=="
+   }
+  },
+  "fileSystemInfo": {
+   "createdDateTime": "2026-10-11T20:17:54Z",
+   "lastModifiedDateTime": "2026-10-11T20:17:27Z"
+  },
+  "image": {
+   "height": 4032,
+   "width": 2268
+  },
+  "location": {
+   "altitude": 21.0,
+   "latitude": 41.9028,
+   "longitude": 12.4964
+  },
+  "photo": {
+   "cameraMake": "Apple",
+   "cameraModel": "iPhone 15",
+   "exposureDenominator": 1497.0,
+   "exposureNumerator": 1.0,
+   "fNumber": 1.9,
+   "focalLength": 2.690000057250488,
+   "iso": 40,
+   "orientation": 1,
+   "takenDateTime": "2025-08-14T18:22:05Z"
+  },
+  "shared": {
+   "scope": "users",
+   "owner": {
+    "user": {
+     "email": "redacted",
+     "id": "ABCDEF0000000001",
+     "displayName": "Owner"
+    }
+   }
+  }
+ },
+ "jpeg_empty_photo": {
+  "createdDateTime": "2026-10-11T20:20:37Z",
+  "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000020},3\"",
+  "id": "ABCDEF0000000001!i0021",
+  "lastModifiedDateTime": "2024-12-13T16:45:14Z",
+  "name": "file-0016.jpeg",
+  "webUrl": "https://onedrive.example.invalid/item/0019",
+  "cTag": "\"c:{aaaaaaaa-0000-4000-a000-000000000020},1\"",
+  "isAuthoritative": false,
+  "size": 129863,
+  "createdBy": {
+   "application": {
+    "displayName": "Alek-bot"
+   },
+   "user": {
+    "email": "redacted",
+    "id": "ABCDEF0000000001",
+    "displayName": "Owner"
+   }
+  },
+  "lastModifiedBy": {
+   "application": {
+    "displayName": "Alek-bot"
+   },
+   "user": {
+    "email": "redacted",
+    "id": "ABCDEF0000000001",
+    "displayName": "Owner"
+   }
+  },
+  "parentReference": {
+   "driveType": "personal",
+   "driveId": "ABCDEF0000000001",
+   "id": "ABCDEF0000000001!i0013",
+   "path": "/drive/root:/folder-0001/Alek-bot/folder-0010",
+   "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+  },
+  "file": {
+   "mimeType": "image/jpeg",
+   "hashes": {
+    "quickXorHash": "ZmFrZS1oYXNoLTAwMDAwMDIzLQ==",
+    "sha1Hash": "ZmFrZS1oYXNoLTAwMDAwMDI0LQ==",
+    "sha256Hash": "ZmFrZS1oYXNoLTAwMDAwMDI1LQ=="
+   }
+  },
+  "fileSystemInfo": {
+   "createdDateTime": "2026-10-11T20:20:37Z",
+   "lastModifiedDateTime": "2024-12-13T16:45:14Z"
+  },
+  "image": {
+   "height": 1141,
+   "width": 1417
+  },
+  "photo": {},
+  "shared": {
+   "scope": "users",
+   "owner": {
+    "user": {
+     "email": "redacted",
+     "id": "ABCDEF0000000001",
+     "displayName": "Owner"
+    }
+   }
+  }
+ },
+ "video": {
+  "createdDateTime": "2026-10-11T20:24:01Z",
+  "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000022},3\"",
+  "id": "ABCDEF0000000001!i0023",
+  "lastModifiedDateTime": "2026-10-09T14:21:14Z",
+  "name": "file-0018.webm",
+  "webUrl": "https://onedrive.example.invalid/item/0021",
+  "cTag": "\"c:{aaaaaaaa-0000-4000-a000-000000000022},2\"",
+  "isAuthoritative": false,
+  "size": 93704535,
+  "createdBy": {
+   "application": {
+    "displayName": "Alek-bot"
+   },
+   "user": {
+    "email": "redacted",
+    "id": "ABCDEF0000000001",
+    "displayName": "Owner"
+   }
+  },
+  "lastModifiedBy": {
+   "application": {
+    "displayName": "Alek-bot"
+   },
+   "user": {
+    "email": "redacted",
+    "id": "ABCDEF0000000001",
+    "displayName": "Owner"
+   }
+  },
+  "parentReference": {
+   "driveType": "personal",
+   "driveId": "ABCDEF0000000001",
+   "id": "ABCDEF0000000001!i0013",
+   "path": "/drive/root:/folder-0001/Alek-bot/folder-0010",
+   "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+  },
+  "file": {
+   "mimeType": "video/webm",
+   "hashes": {
+    "quickXorHash": "ZmFrZS1oYXNoLTAwMDAwMDI5LQ==",
+    "sha1Hash": "ZmFrZS1oYXNoLTAwMDAwMDMwLQ==",
+    "sha256Hash": "ZmFrZS1oYXNoLTAwMDAwMDMxLQ=="
+   }
+  },
+  "fileSystemInfo": {
+   "createdDateTime": "2026-10-11T20:24:01Z",
+   "lastModifiedDateTime": "2026-10-09T14:21:14Z"
+  },
+  "photo": {},
+  "shared": {
+   "scope": "users",
+   "owner": {
+    "user": {
+     "email": "redacted",
+     "id": "ABCDEF0000000001",
+     "displayName": "Owner"
+    }
+   }
+  },
+  "video": {
+   "audioBitsPerSample": 16,
+   "audioChannels": 2,
+   "audioSamplesPerSecond": 48000,
+   "bitrate": 573507,
+   "duration": 1307108,
+   "fourCC": "VP80",
+   "frameRate": 29.97,
+   "height": 1080,
+   "width": 1920
+  }
+ }
+}
