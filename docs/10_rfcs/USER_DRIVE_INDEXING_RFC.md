@@ -1,0 +1,1174 @@
+# RFC: User Drive Step 2 — Indexing and Search
+
+**Status:** Draft, revision 3.11 (2026-10-11) — design closed; spikes S0a–S0f done (§18); next: the Slice 1 implementation plan (§22). Nothing built. Phase 0 hardening merged (PR #57, §16).
+**Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
+Replaces that RFC's §5 "Step 2" placeholder.
+**Precedents reused:** email index ([GMAIL_EMAIL_INDEXING_RFC.md](GMAIL_EMAIL_INDEXING_RFC.md), `IndexedEmail`),
+To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker_task(dedup_key=…)`, the Gmail
+`needs_reconnect` pattern, scheduler fan-out (`start_daily_email_review`).
+
+**Revision history**
+- Rev 1 (2026-10-11, external draft): a broad catalogue of risks, written without checking the code. Its factual
+  errors are listed in §19 so they are not reintroduced.
+- Rev 2 (2026-10-11): rewritten as one spec after two review rounds (five lens analyzers + six-hats synthesis;
+  paradigm advocates + problem hunters + a judge panel) and owner decisions.
+- Rev 3 (2026-10-11): after a skeptic panel (product, architecture, QA, operations; each finding put to three
+  independent refuters, 38 survived) and a completeness critic (7 more). Main changes: tree-scoped policy with opaque
+  subtrees (§5.2), a per-user lease and explicit task keys (§7.1), chunk generations (§3.3), a durable folder-delete
+  cascade (§7.6), version upgrades that actually take effect (§12.3), failure classes (§8.2), a search coverage
+  envelope (§10.2), an escaped untrusted wrapper (§10.4), provisioning (§12.5), acceptance per slice (§16), a runnable
+  eval (§17.8).
+- Rev 3.1 (2026-10-11): after an audit of rev 3 (11 partial resolutions, 14 new defects): the App Folder root as an
+  implicit parent, generation persisted before chunk writes, epoch stamped on every upsert, purge keyed on state not on
+  exceptions, chunk-cap release by headroom, upgrade completion and embedding switch only when nothing is left, edits
+  ahead of onboarding in priority, staleness alert on class-0 work only, read-time hiding under opaque ancestors,
+  subtree re-listing instead of drive-wide epochs, an `unread` count limited to admitted kinds.
+- Rev 3.2 (2026-10-11): owner decisions D2, D4, D5 (separate indexer service) and proposals D1 (images, §5.3) and D3
+  (disconnect grace); `DriveChange`-returning port reads, cascades in their own priority class, upgrade completion by a
+  clean pass, dual-field writes during an embedding switch, folder search bounded by chunks, `observed_as_of`.
+- Rev 3.3 (2026-10-11): D1 decided with rationale — problem-content classes (§5.5) and image triage (§5.3); D3 decided —
+  access loss keeps the index under a 30-day TTL; indexer service provisioned and wired (§4, §12.5, §13).
+- Rev 3.4 (2026-10-11): TTL stamped once, late and at a fixed instant, with a safe resume rule; density decided once from
+  a probe, over content class, with hysteresis; the text-quality gate measured after timestamps; `building` limited to
+  incompleteness; image triage on every image (camera facet as a prior) and thumbnails as spike S0f; place names stored
+  as a derived facet; `drive_id` sourced from the credentials document; bounded folder walks.
+- Rev 3.5 (2026-10-11): regain before the TTL margin continues from the cursor (no epoch); VTT/SRT admitted and
+  normalised before the text gate, which ignores timestamp-only lines and short replies; `building` derived by a query,
+  not a counter; probes on threshold crossing with a budget; triage verdicts stored; geocoding versioned in the upgrade
+  step and injected by composition.
+- Rev 3.6 (2026-10-11), after an implementer's blocker pass: a 401 after a successful refresh is an operation error,
+  not a lost grant; regain checks the earliest stamp still written; per-item provider errors never stall a user;
+  first-seen cards wait for the round; cap priority by content class; date filters on `effective_date`; filter-only
+  queries; `drive_id` carried through token refreshes.
+- Rev 3.7 (2026-10-11), after an external review: a lexical name stream in the base (Slice 1); duplicates collapsed by
+  content hash; the content exact-token stream eval-gated within Slice 2; reranking, contextual headers, better PDF
+  extraction, extraction reuse and version clustering named as extensions; extraction quality and walk mode stated as
+  known limits; maintenance hotspots named.
+- Rev 3.8 (2026-10-11): quality decisions taken in the RFC instead of left to the eval — no cosine thresholds (rank +
+  `K` + Smart's judgement), the content exact-token stream decided into Slice 2; the eval is a regression guard only.
+- Rev 3.9 (2026-10-11): Slice 4 becomes one model extractor — a multimodal model reading PDFs and images natively,
+  behind a parser-first router (no text, low density, garbage text, parser error) — covering OCR, hybrid and hard
+  PDFs (§9).
+- Rev 3.10 (2026-10-11), final external review: the access-loss TTL stamping replaced by a tick-side purge after a
+  30-day grace period (same behaviour, far less machinery); full-text lexical search named as the known ceiling with
+  its seam; a per-user monthly page budget for the model extractor; a deterministic name-key selection rule.
+- Rev 3.11 (2026-10-11): spikes S0a–S0f run on the owner's App Folder (§18). Delta works under
+  `Files.ReadWrite.AppFolder`, so walk mode is not built. Results folded into §3.1, §5.3, §7.2, §7.3, §8.5, §15 and
+  §17.3. Unchanged items are re-emitted often, and a delete and a restore can share one round. A move out of the App
+  Folder arrives as a plain deletion. The `photo` facet can be an empty object, and audio files carry no `audio` facet.
+
+**Owner decisions (2026-10-11)**
+- The App Folder is meant to become a real document store. It is empty only because the feature is being built.
+  **We build the full target system**, not a usage-gated minimum. "Unjustified complexity" means future maintenance
+  cost and fragility, not implementation effort.
+- Several users exist. Nobody can be told what to put in their folder: **it may contain anything**, a git project
+  included.
+- **Anything not built now must arrive later as an extension** (new adapter, new stage, new stream, new policy kind),
+  never as a paradigm change (new unit of knowledge, new ID scheme, new data model, new concurrency model).
+- All three query types are equally likely: *find a file*, *answer from content*, *Smart uses the documents as a
+  knowledge base*.
+- The user's own edits in Office Online (autosave) are handled from day one. **Editing by the bot** is a separate RFC.
+- The drive is an **orthogonal knowledge base**, not validated facts about the user. It does not feed
+  `SearchEnrichmentService` (§10.3).
+- This RFC adds **no path that feeds document content to consolidation**. Where the line runs (a scanned receipt
+  *is* a fact about the user; a contract on the drive is not) needs its own design: OQ-1.
+
+**Owner decisions on the open points** (D1–D5) are in §21.
+
+---
+
+## 1. Problem and goals
+
+Step 1 gives the bot a long-term file area it can list, open, save, move and delete. It cannot find anything by
+meaning or content: Graph search inside the App Folder returned 401 (spike A6, Step 1 §7), and listing does not scale
+past a few folders. Files with uninformative names (`Договор_ред3.docx`, `notes (2).md`) are lost to the
+conversation.
+
+**Goals**
+- **G1 Find a file or folder** by name, type, date, folder, photo facets and place, and — for files with a text layer — by
+  what it is about. Screenshots and scans are found by their text from Slice 4; camera photos by date, place and
+  camera (§5.3).
+- **G2 Answer from content**: a clause, an amount or a date inside a document, with the file it came from.
+- **G3 Knowledge base**: Smart searches the drive on its own when the answer may be in the user's documents, and does
+  not when it is not.
+- **G4 Correctness under arbitrary content** (repositories, archives, dumps, books, scans, photos) and under Office
+  Online autosave churn, without owner intervention for months.
+- **G5 Extensibility**: every deferred capability (§14) plugs into a named seam.
+
+**Non-goals (this RFC)**
+- Editing files by the bot (separate RFC; Step 1 §4.9).
+- A path that feeds drive content to consolidation (OQ-1), and any use of `SearchEnrichmentService` (§10.3).
+- A second storage provider. The port stays provider-neutral, but the design is not bent around a hypothetical Google
+  Drive adapter: Google has no user-visible app area like the App Folder, so "the user drops files in, the indexer
+  picks them up" does not port as is. Step 1 §2 is corrected accordingly.
+- Descriptions of photo content, LLM summaries, code indexing, audio/video (all §14). Text recognition for screenshots
+  and scans is Slice 4.
+
+---
+
+## 2. Concept
+
+1. **The drive is the source of truth; the index is a disposable mirror.** Everything indexed can be recomputed from
+   the drive. Version changes migrate in place (§12.3); purge-and-rebuild (§12.2) is the recovery tool when the index
+   is suspect. Strictness goes where data is *not* disposable: memory, prompts, history refs, telemetry copies (§11).
+2. **One record per drive item is the canonical unit.** Chunks are children of a record, keyed by the record's index
+   generation. Search fuses results at the record level. A later stage (LLM summary, OCR text, a new vector) is a new
+   field or child of the same record, never a new unit.
+3. **Reconciliation is level-triggered.** A periodic tick per user observes the drive, writes what changed into the
+   records, then works off whatever is *due*. A record's state alone says what work remains: a crash, a missed tick,
+   an expired delta token and a reconnect all run the same code path. Long cascades (folder delete, policy change in a
+   subtree) are themselves record states, so they survive crashes.
+4. **Content admission is a default-deny domain policy over the tree.** Documents are read; everything else is
+   registered by metadata only, with a reason. Machine-generated subtrees (dot-folders, repositories) are collapsed
+   into one record. The policy is pure code: a new kind of content is a policy change plus a version bump.
+5. **Untrusted content is handled at two boundaries.** Extraction runs in a resource-limited child process behind a
+   port. Retrieved text and file names reach the model only inside an escaped, nonce-tagged wrapper.
+
+**Why not the alternatives** (each argued in full by an advocate and scored by three judges):
+- *A generic, source-agnostic document corpus*: pays for generality before a second source exists; the email index is
+  a different unit (one triaged message, not a file tree). If a second document source arrives, the card contract
+  (§10.2) is the seam.
+- *No content index, read on demand with long-context models*: fails G2/G3 across many files and puts untrusted
+  extraction on the chat path.
+- *An LLM summary per file as the core unit*: an LLM call over every hostile file at index time, and still no pinpoint
+  answers in long documents. It stays a later stage (§14).
+- *An internal UUID per file*: Step 1 refs are `drive:<provider item_id>`; a provider switch rebuilds the index anyway.
+  An alias resolver behind `parse_drive_ref` is the seam if ever needed.
+
+---
+
+## 3. Domain model (`src/domain/drive_index.py` and siblings, pure, `mypy --strict`)
+
+### 3.1 `DriveChange` — what the adapter observes
+
+`item_id`, `parent_id`, `name`, `is_folder`, `size_bytes`, `mime_type`, `content_version` (`cTag`), `modified_at`
+(the item's server-set `lastModifiedDateTime`, not `fileSystemInfo` — it drives scheduling only), `web_url`, `facets`,
+`deleted`. The record also stores `effective_date`, the date a user means: `photo.takenDateTime`, else
+`fileSystemInfo.lastModifiedDateTime`, else server time. Search date filters and cards use `effective_date`; an
+August holiday photo uploaded in October is an August photo. For a deletion
+only `item_id` and `deleted` are relied on. In S0a a file's tombstone carried `cTag` and `size` but no name or path, and a
+folder's carried neither; other providers and OneDrive for Business promise less. **No path is stored**: OneDrive
+personal does return `parentReference.path` on live delta items (S0a), but OneDrive for Business does not, and paths
+derived from the parent chain do not go stale on a folder rename. `DriveChange` is a new type; Step 1's `DriveItem` keeps its resolved `path` and is built for cards only
+after a path is derived (§10.2), so the Step 1 invariant "`path == ''` means the root" is never violated.
+
+### 3.2 `DriveIndexRecord` — one per drive item the sync keeps
+
+| Field | Meaning |
+|---|---|
+| `user_id`, `item_id` | Key. `item_id` is the provider id (same as Step 1 refs). |
+| `parent_id`, `name`, `is_folder`, `size_bytes`, `mime_type`, `web_url`, `facets` | From the last observation. Facets are stored raw (photo, audio, video, location, remoteItem, package, malware, hashes). |
+| `kind` | Content class from the policy (§5), from mime + magic bytes. |
+| `scope` | `normal`, `opaque_root`, `inside_opaque` (folders only), `unresolved` (parent not yet known). Inherited from the parent (§5.2). |
+| `content_version`, `modified_at` | Provider `cTag` and server `lastModifiedDateTime`. |
+| `state`, `reason` | §3.4. |
+| `index_generation` | Monotonic integer; incremented **and persisted** before an index run writes its first chunk (§8.1 step 2). |
+| `indexed_generation` | Generation whose chunks are readable; `None` if none (§7.4). |
+| `indexed_version` | `content_version` that `indexed_generation` was built from. `stale` = a readable generation exists **and** `content_version != indexed_version` (records without content are never stale). |
+| `policy_version`, `extraction_version`, `card_version`, `embedding_space` | Versions under which the record's current state, chunks and card were produced (§12.3). Stamped on every record, whatever its state. |
+| `card_hash`, `card_vector` | Hash of the card text built by `card_text(record)` and its vector (§8.5). |
+| `name_tokens` | Lexical keys of the name for the name stream (§10.1): NFC + casefold tokens split on separators, case and digit boundaries, their Cyrillic↔Latin transliterations, and character trigrams. Recomputed on rename. |
+| `content_hash` | `quickXorHash` + size from the facets, when present; collapses duplicates in search (§10.2). |
+| `dirty_since`, `due_at`, `priority` | Scheduling (§7.3, §7.8). |
+| `attempts`, `attempt_started_at` | Failure accounting (§8.2). `attempt_started_at` is persisted before download; a record found with a stale one is a crashed attempt. |
+| `extracted_by` | `extractor_id@version` that produced the current text (§9); compared per kind by the upgrade step. |
+| `text_chars`, `pages_total`, `chunk_count`, `truncated` | What the last extraction produced. `text_chars / pages_total` is the text density that finds hybrid PDFs (some pages scanned) for Slice 4. `chunk_count` is kept on refusal too, so cap release can test headroom (§5.4). |
+| `seen_epoch` | Epoch number current when the record was last upserted (§7.5). |
+
+### 3.3 `DriveChunk` — child of a record
+
+Key `(user_id, item_id, generation, index)`. Fields: `text`, `vector`, `char_start`, `char_end`, `kind` (copied from
+the record; immutable for a generation, so it is a free pre-filter). No file name, path or date: rename and move cost
+zero chunk writes. Neighbours are `index ± 1` of the same generation.
+
+### 3.4 States and reasons
+
+`state ∈ {unresolved, pending, indexed, metadata_only, failed, deleting}`.
+
+- `unresolved` — observed before its parent; no work, no card, until the parent arrives (§5.2). Transient: when a
+  round completes with the parent still unknown, the planner resolves it with one `get_change(parent_id)` (bounded per
+  tick); a missing parent means the record is an orphan and is deleted.
+- `pending` — content admitted, not yet indexed at the current version and versions.
+- `indexed` — readable chunks exist for `indexed_version == content_version` at the current extraction version.
+- `metadata_only` — findable by its card (unless the reason says otherwise), content deliberately not read.
+  `reason ∈ {folder, kind_not_admitted, too_large, opaque_root, dot_name, secret_name, os_artifact, remote_item,
+  package, malware, no_text, machine_text, dense_tree, encrypted, user_chunk_cap, user_card_cap}`. Entering `metadata_only` clears `indexed_generation`
+  and collects the chunks. `user_card_cap` is the only reason that also drops the card.
+- `failed` — admitted, failed at this version after the per-file retry budget (§8.2). `reason ∈ {extract_timeout,
+  extract_memory, extract_error, download_error, embed_timeout}`. **Keeps** the previous `indexed_generation`: older
+  chunks stay readable, with `stale` and the reason on the card.
+- `deleting` — a folder whose subtree is being removed (§7.6). Never returned by search, nor is anything under it.
+  Leaves the state only by removal, or by being observed again as not deleted (§7.6).
+
+**Content readability** is independent of state: a record's chunks are readable iff `indexed_generation` is set
+(states `indexed`, `pending` with a previous generation, `failed` with a previous generation). Search returns a card
+for every carded record and content only for readable generations (§10).
+
+`no_text` (a scan with no text layer) is deterministic, so it is `metadata_only`, and it is exactly the set the
+Slice 4 OCR extractor picks up (§5.3).
+
+### 3.5 `DriveSyncState` — one per user
+
+`drive_id`, `root_item_id` (the App Folder root: an implicit parent of scope `normal` that never becomes a record),
+`cursor` (opaque), `round_complete` (the last `get_changes` call returned `complete`), `epoch`,
+`epoch_phase ∈ {idle, enumerating, sweeping}`, `initial_enumeration_done`, `pending_cascades` (folder ids whose delete
+waits for the round to complete, §7.6), `pending_reobserve` (folder ids whose subtree must be re-listed, §5.2),
+`lease_owner`, `lease_until` (§7.1), `continuation_enqueued_at`, `applied_versions`, `target_versions` and
+`upgrade_cursor` (§12.3), `query_embedding_space` (§12.3), `observed_as_of` (§12.1), `access_lost_at` (§7.6),
+`last_success_at`, `last_error` (a category:
+`reconnect_needed`, `throttled`, `provider_error`, `internal`; detail stays in logs), `stale_alerted`, `counters`
+(records per state, readable chunks).
+
+### 3.6 The planner and the policy
+
+- `classify(change, parent_record, folder_probe | None, policy) -> (scope, state, reason, kind)` — pure.
+  `folder_probe` is the result of probing a folder's first `PROBE_CHILDREN` children with `list_children_changes`
+  (marker children such as `.git` and `pyvenv.cfg`, and content-class counts); the service supplies it for a folder
+  on first sight when its `childCount` exceeds `DENSE_FOLDER_CHILDREN`, whenever a later observation of the folder
+  crosses that threshold or doubles its count above it, and when a marker child is observed later; at most
+  `PROBES_PER_TICK` probes per tick (the rest wait, their children held as `unresolved`).
+- `plan(observations: [(change, existing_record | None, parent_record | None)], due_records, sync_state, now, policy)
+  -> list[Action]` — pure. Actions: `upsert`, `delete_record`, `mark(state, reason)`, `schedule(due_at, priority)`,
+  `index(item, generation)`, `embed_card(item)`, `collect_garbage(item, keep_generation | None)`,
+  `cascade(folder_id, purpose ∈ {delete, rescope})`, `reobserve_subtree(folder_id)`, `resolve_parent(item_id)`,
+  `start_epoch`, `sweep`.
+- A parent equal to `root_item_id` is a known parent of scope `normal`.
+- **All decision logic lives here** and is tested without Firestore, Graph or a clock (§17).
+
+---
+
+## 4. Ports
+
+| Port | Change | Why it is a port |
+|---|---|---|
+| `UserDrivePort` (exists) | `get_changes(user_id, cursor) -> DriveChanges` (`changes: list[DriveChange]` in feed order, next opaque `cursor`, `complete`, `full_enumeration`, `drive_id`, `root_item_id`; raises `DriveResyncRequired`). New error `DriveReauthRequired(DriveNotConnectedError)` **only** when the token refresh itself is rejected (`invalid_grant`, `onedrive_adapter.py:186`). A 401 that survives a *successful* forced refresh (`:211`) becomes a new `DriveAccessDenied` for that operation — spike A6 showed the App Folder answering 401 to a valid token for an unsupported call — and is handled as a per-item or drive-wide error (§8.2), never as a lost grant. Two new reads returning `DriveChange` (with `cTag`, `parent_id`, facets): `get_change(user_id, item_id)` (nudged items, unresolved parents; an item that no longer exists comes back as a `deleted` change) and `list_children_changes(user_id, folder_id)` (subtree re-observation). Step 1's `DriveItem`-returning methods are not used to build observations. | Provider boundary. Delta, confirmed by S0a; a bounded walk only for a future provider without a change feed. |
+| `DriveIndexRepository` (new) | Records, chunks, sync state; `find_nearest_cards`, `find_nearest_chunks` (pre-filter `user_id`, optional `kind`); `due_records(user_id, now, limit)` ordered by `(priority, due_at, item_id)`; `children(user_id, parent_id, limit)`; `records_page(user_id, after_item_id, limit)`; `acquire_lease`/`release_lease` (transactional); `delete_by_user`. Batching and transactions are the adapter's business. | Storage boundary (Firestore). One repository: records and chunks change together. |
+| `ContentExtractorPort` (new) | `extract(path, kind, limits) -> ExtractionOutcome` (`text`, `no_text`, `unsupported`, `too_large`, `timeout`, `memory`, `error`). | Sandbox and process boundary; several adapters expected (local child process, separate service, OCR provider). |
+| `EmbeddingService` (exists) | Exposes `embedding_space` (e.g. `gemini-embedding-2/768`). | Already a port. |
+| `TaskQueue` (exists) | Port unchanged. Composition injects a **second instance bound to the drive queue and to the indexer service's `/worker` URL and OIDC audience** (§12.5), used by the fan-out and by `UserDriveService` nudges on the main service; its `create_queue_if_not_exists` is never called (it would create the queue with concurrency 5). | — |
+
+No port for the policy, the planner, the chunker or the card builder: they are pure domain code.
+
+---
+
+## 5. Content policy (`src/domain/drive_index_policy.py`)
+
+### 5.1 Per item
+
+Decided from metadata first; a download happens only if the item is admitted.
+
+- **Never downloaded:** names starting with `.`; secret-shaped names (`id_rsa*`, `id_ed25519*`, `*.pem`, `*.key`,
+  `*.p12`, `*.pfx`, `*.kdbx`, `*.keychain*`); OS and lock artefacts (`~$*`, `Thumbs.db`, `desktop.ini`, `*.tmp`);
+  items with a `remoteItem`, `package` or `malware` facet.
+- **Admitted kinds (content read):** PDF, DOCX, PPTX, XLSX/XLS (row-capped), ODT/ODS/ODP, EPUB, HTML, Markdown, plain
+  text, CSV, RTF, MSG/EML, VTT/SRT subtitles and transcripts. **HTML/XHTML is always converted** (markitdown's HTML
+  converter: scripts and styles removed, headings and tables to Markdown, inline `data:` images truncated), never read
+  raw: today's `text/*` fast path in `convert_file_to_text` would put markup, CSS and base64 into chunks — and the bot
+  itself saves HTML reports to the drive. MHTML (saved web pages) is metadata-only for now.
+  **Every admitted kind has a named extractor** — a kind without one is not admitted (checked against today's code
+  2026-10-11):
+  - plain text, Markdown, CSV, JSON, VTT/SRT: read with **charset detection** (BOM first, then a detector such as
+    `charset-normalizer`, already a markitdown dependency) — today's `text/*` path decodes as UTF-8 only, so a CP1251
+    or UTF-16 `.txt` becomes replacement characters; VTT/SRT then normalised to cue text;
+  - RTF: a dedicated RTF-to-text step (e.g. `striprtf`) — markitdown has no RTF converter and passes raw control words;
+  - EML: Python's `email` parser, text/plain part preferred, else the HTML part through the HTML converter, decoded
+    from base64/quoted-printable — markitdown has no EML converter;
+  - ODT/ODS/ODP: an ODF text extractor (content.xml of the ZIP package) — markitdown has none;
+  - PDF, DOCX, PPTX, XLSX/XLS, EPUB, MSG, HTML: markitdown's allowlisted converters (Phase 0), PDF behind the §9 router.
+  Password-protected PDF/Office/EPUB → `metadata_only / encrypted` (deterministic: no retries, no model call). Apple
+  iWork (`.pages`, `.numbers`, `.key`) has no extractor → `kind_not_admitted`. Kind comes from magic bytes on the downloaded head plus the mime type: a `.txt` that is a
+  ZIP is a ZIP.
+- **Metadata only by default:** source code, logs and dumps, archives, disk images, databases, executables, images,
+  audio, video. Screenshots and scans are admitted to text recognition in Slice 4 (§5.3); the rest are candidate
+  extensions (§14). Why each class gets the treatment it gets: §5.5.
+
+### 5.2 Over the tree: scope and opaque subtrees
+
+- An **opaque root** is a dot-named folder, a folder with a child `.git` or `pyvenv.cfg`, `node_modules`, `vendor`,
+  `target`, `build`, `dist`, `__pycache__` inside a repository, or a **dense tree** (§5.5, class 1): a folder whose
+  `childCount` exceeds `DENSE_FOLDER_CHILDREN` and whose probed children are mostly of content class *other* — not
+  *document* (text, office, PDF, e-book, mail) and not *media* (images, audio, video). The class is about what a file
+  is, not whether this slice admits it, so a folder of 600 PDFs or 1 000 holiday photos is never dense. Density is
+  decided **once, before the folder's children are applied** (from the probe), and re-decided only when `childCount`
+  doubles or halves, or on a `policy_version` bump — no flapping. It gets one `metadata_only` record
+  (`reason = opaque_root`, `dot_name` or `dense_tree`) with a card (`name | repository`, `name | hidden folder` or
+  `name | generated files (N items)`) and a `descendant_count` facet when known.
+  From Slice 2, a repository root's card also carries the lead text of its root `README*` (extracted like any
+  document); the README gets no record of its own. One card per repository.
+- **Inside an opaque root, files get no record and folders get a lightweight record** (`scope = inside_opaque`, no
+  card, not counted toward caps) so their children can be recognised and dropped. A 30k-file repository costs one card
+  embedding and a few hundred folder writes.
+- `scope` is inherited: `classify` needs only the parent record, never the chain. A change whose parent is unknown is
+  stored as `unresolved` (no work, no card); when the parent is observed, the planner re-classifies its children.
+- **Re-scoping is durable.** When a folder's effective scope changes — renamed to or from a dot-name, moved into or
+  out of an opaque subtree, a `.git` child appears or disappears — the planner emits `cascade(folder, rescope)`: the
+  folder's children are marked due (class 1, §7.8); each due folder re-classifies itself and, if its scope
+  changed, marks its own children. Records that become opaque are deleted (files) or reduced to lightweight folder
+  records. A folder that leaves an opaque subtree joins `pending_reobserve`: its subtree, never stored, is re-listed
+  with `list_children_changes` (bounded per tick, resumable) and every listed item is applied as an observation — no
+  drive-wide epoch. A subtree whose effective policy is unchanged costs metadata reads only.
+- **Read-time check.** Until a cascade finishes, search drops any card whose ancestor chain (already walked to build
+  the path, §10.2) reaches an `opaque_root`, `inside_opaque` or `deleting` record. Search is correct at once; the
+  cascade does the physical work.
+
+### 5.3 Images
+
+An image is either **information-bearing** (a scan, a screenshot, a photographed receipt, a whiteboard) or a
+**photograph** (a holiday, people, places). The first needs its text; the second needs where and when. Reading every
+image with a vision model is the "photo gallery trap" — 100 holiday photos would cost 100 full vision calls for nothing
+— so images are triaged by signals the provider gives for free, and only the information-bearing ones are read.
+
+- **Every image (Slice 1):** a card from provider metadata only — name, date taken, camera, dimensions and a place name
+  derived **offline** from the `location` facet. The indexer service resolves the place once with a bundled
+  reverse-geocoding table (no API call, no download) and stores it on the record as a derived `place_name` facet
+  (English name plus the local name), stamped with `geo_table_version`; `card_text` stays pure over record fields.
+  Composition loads the table and injects a pure lookup into the indexing service — no port, no adapter import.
+  "Photos from Rome last August" works for 100 holiday photos at the cost of 100 card embeddings. S0e confirmed that
+  `photo` (with `takenDateTime`, camera make and model) and `location` arrive in delta for a phone HEIC.
+- **Triage (Slice 4), on every image:** the provider's small thumbnails (no full download) are sent in batches of
+  `TRIAGE_BATCH` to an ECO vision model with one question — "which of these show a document, a receipt, a screen or a
+  board with text?". 100 photos are about 7 cheap calls. The camera facet is only a prior (passed with each thumbnail),
+  never a verdict: photos saved from WhatsApp or Telegram, downloads and edited exports carry no EXIF, and sending them
+  all to full OCR would rebuild the gallery trap. The prior is `photo.takenDateTime` or `photo.cameraMake` being
+  present, never the `photo` key alone: S0e saw an empty `photo: {}` on EXIF-less JPEGs and on a video. S0f confirmed
+  thumbnails under `Files.ReadWrite.AppFolder` for JPEG, PNG, HEIC (served as JPEG) and SVG (served as PNG), in
+  bounding boxes of 96, 176 and 800 px, so the indexer never downscales an image itself. The verdict is stored on the record (`triage_verdict`,
+  `triage_version`), so a `policy_version` bump does not re-triage images; only a `triage_version` change does.
+  - Information-bearing images and PDFs with `no_text` (or a low text density, hybrid PDFs) go to the **model
+     extractor** (§9); the recognised text enters the ordinary chunk pipeline. Photographs stay metadata-only.
+- **Rejected signals:** file-name and folder patterns (`Scan_*`, `Screenshot_*`, `Docs/`) — the no-convention principle,
+  many languages, users rename; Shannon entropy — meaningless on compressed image formats.
+- **Later (§14):** descriptions of photo content ("a cathedral at night"), one or two sampled frames per burst (photos
+  close in time and place), so a 50-photo burst costs one description, not fifty. Bursts are never used for triage: a
+  receipt in the middle of a holiday burst must still be read.
+
+### 5.4 Caps
+
+- **Per file:** download size by kind; ZIP container caps (declared inflated size, member count); extraction limits
+  (§9); `MAX_CHUNKS_PER_FILE`. A file beyond the chunk cap is indexed up to the cap with `truncated = true`.
+- **Per user:** `MAX_CARD_RECORDS_PER_USER` counts records that carry a card vector; `MAX_CHUNKS_PER_USER` counts
+  readable chunks (`Σ chunk_count` over records with an `indexed_generation`).
+- **Card cap, admission order** by content class (document, then media, then other — §5.2), then folders. In Slice 1,
+  where no kind is admitted yet, a PDF still outranks a `.py` file. A higher-priority
+  item evicts the lowest-priority carded record (which becomes `metadata_only / user_card_cap`, card dropped), so a
+  document never loses its card while a non-document holds one.
+- **Chunk cap:** a file whose chunks would exceed `MAX_CHUNKS_PER_USER` is refused whole after extraction, never
+  partly indexed: `metadata_only / user_chunk_cap`, card kept, `chunk_count` recorded.
+- **Release:** a `user_card_cap` record becomes due when there is card headroom; a `user_chunk_cap` record becomes due
+  only when chunk headroom ≥ its recorded `chunk_count`. Bounded per tick, newest `modified_at` first. A refused file
+  is therefore never re-extracted until it can fit.
+
+### 5.5 Problem-content classes — why each rule exists
+
+Rev 1 grouped hostile content by the **harm it causes**, not by extension. That framing is kept, with one design
+principle on top: **safety never depends on classifying correctly.** Two layers:
+
+- **Layer 0 — bounds that hold for any input:** the per-user caps with document-first admission (§5.4), the per-file
+  caps, max-pooling one hit per file before fusion (§10.1), extraction in a killed-on-limit child process on a separate
+  service (§9), the quiet period (§7.3). A misclassified file can cost quality, never stability or another user's
+  service.
+- **Layer 1 — classification for quality and cost:** each class below needs (a) a harm, (b) an objective signal
+  available at the stage where it is evaluated (metadata, the first bytes, or extracted text), and (c) a visible
+  `reason`, so a wrong rule is fixed by a policy bump, not a migration.
+
+| Class (rev 1) | Harm | Signal we use | Stage | Outcome | Rev 1 signal not used, and why |
+|---|---|---|---|---|---|
+| 1. Machine-generated trees (repos, `node_modules`, venvs, app caches, site mirrors) | Record/embedding blow-up, search pollution | Markers: dot-folders, a `.git` child, a `pyvenv.cfg` child, build/vendor dirs inside a repository; **density**: a folder whose `childCount` (free provider facet) exceeds `DENSE_FOLDER_CHILDREN` and whose probed children are mostly content class *other* (neither document nor media), decided once before its children are applied | metadata + a bounded probe | opaque root (§5.2), reason `opaque_root` / `dense_tree` | Timestamp clustering: copying, syncing or unzipping gives human folders identical timestamps too (300 scanned invoices uploaded at once). Density alone: an Obsidian vault is hundreds of tiny Markdown notes, a photo folder thousands of images — the content-class condition keeps both. |
+| 2. Opaque containers (archives, disk images, encrypted DBs, password vaults) | Decompression bombs, OOM, unreadable | Magic bytes of the downloaded head; ZIP central directory for OOXML/EPUB | first bytes | metadata-only, `kind_not_admitted`; bombs → `too_large` | Shannon entropy: every DOCX/XLSX/PPTX/EPUB is a ZIP at ~7.9 bits/byte, so an entropy gate bars all Office documents and passes dumps. |
+| 3. Machine text disguised as text (logs, SQL/HAR dumps, telemetry saved as `.txt`) | Thousands of near-identical chunks that win every query on common tokens | Extension/kind first (`.log`, `.sql`, `.har`, `.jsonl` are not admitted); then a **text-quality gate** on extracted text: repeated-line ratio, share of lines starting with a timestamp/IP, distinct-token ratio over a sample | extracted text | `metadata_only / machine_text`, card keeps the lead text | — (rev 1's lexical-variety idea is used, but after extraction, where it is measurable, not as a guess before download). Tables are exempt: they are row-capped and treated as tables (§8.3). |
+| 4. Book-length monoliths | Search gravity over short notes; embedding cost | Chunk count | chunking | Max-pooling per file removes the gravity; `MAX_CHUNKS_PER_FILE` bounds cost; `truncated` is visible | Head + summary + tail sampling: loses the middle anyway and needs an LLM; a range read from stored chunks (§14) serves "chapter 12". |
+| 5. Image-only and hybrid scans | Silent "indexed" with no text | Zero yield (`no_text`); text density `text_chars / pages_total` | extracted text | `metadata_only / no_text`; OCR in Slice 4 (§5.3) | Per-page routing inside one PDF: deferred; the density field makes it a later refinement, not a migration. |
+| 6. Flapping files (Office Online autosave, live vaults) | Re-download/re-embed per save | `modified_at` vs. now | metadata | Quiet period + `MAX_DEFER` (§7.3) | — (rev 1's hysteresis, adopted as is). |
+| 7. Information-bearing vs. photographic images | Blind to scans, or a vision bill for every photo | Batched thumbnail triage on every image, camera facet as a prior | thumbnails | §5.3 | File-name and folder patterns (no-convention principle); the camera facet as a verdict (messenger-saved photos have no EXIF). |
+
+---
+
+## 6. Opt-in, disclosure, Cabinet
+
+- **Indexing starts only when the user turns it on** (Cabinet toggle; `UserBotConfig.drive_indexing_enabled`).
+  Connecting the drive for Step 1 copies nothing.
+- The toggle text says what is copied (names, extracted text, vectors) into our database, that excerpts reach the
+  model and stay in operational telemetry for up to 30 days, that scans, images and hard PDFs are read by a model
+  provider during indexing (Slice 4), that turning it off deletes the index, and that after a
+  disconnect or an expired connection the index is kept for about 30 days in case the
+  same drive comes back. Excerpts already shown in chat stay in the conversation history.
+- **Turning indexing off purges the index** (an explicit request).
+- **Losing access does not purge** (D3, §21). After a disconnect or an expired/revoked grant the index is kept for
+  `ACCESS_LOSS_TTL` (30 days) and then purged by the tick (§7.6); reconnecting the same drive in time resumes
+  indexing. Tokens drop often and a disconnect can be accidental, while a full
+  re-index is slow (the Gmail indexing experience). Connecting a **different** drive purges at once.
+- While access is lost: after a deliberate disconnect search returns `disconnected` (the index is hidden); with an
+  expired grant search keeps answering from the index, marked `reconnect_needed` with its `index_as_of`.
+- Cabinet card: on/off, records per state, readable chunks, "index full", last successful sync, last error category,
+  and **Reconnect** when the drive needs it (§7.7). All texts are `LANG_DICT` keys in en/uk/fr/es; `last_error` is
+  shown as its localised category, never as a raw message.
+- No manual "sync now", "reindex" or "skipped files" endpoints in the first cut (§14).
+
+---
+
+## 7. Change capture and reconciliation
+
+### 7.1 The tick, its lease and its task keys
+
+**Trigger.** A Cloud Scheduler job fans out every `TICK_INTERVAL` to each user with indexing on, **or with a
+`DriveSyncState` but indexing off or no credentials** (so an orphaned index always gets purged). The fan-out skips a
+user whose `continuation_enqueued_at` is recent (a continuation is already queued), which bounds the queue at about
+one task per user plus nudges. Payload: `{user_id, account_id}`.
+
+**Task keys** (`dedup_key` families; a name, once used, is reserved by Cloud Tasks for up to a day):
+- scheduler: `{user_id}:tick:{bucket}`;
+- continuation and `Retry-After`: `{user_id}:cont:{id of the finishing tick}` (unique), with `delay_seconds` for
+  `Retry-After`;
+- nudge: `{user_id}:nudge:{item_id}:{mutation id}` (`mutation id`: a UUID `UserDriveService` generates per mutation;
+  the payload carries the item id). A nudge
+  that finds a live lease is not dropped: it re-enqueues itself with a delay under `…:{mutation id}:r{n}`;
+- purge: `{user_id}:purge:{timestamp}`.
+A dropped continuation (`ALREADY_EXISTS`) is logged at WARNING.
+
+**Lease (single writer).** A tick starts by acquiring `DriveSyncState.lease_until` in a transaction; `lease_until`
+exceeds the task's dispatch deadline, so a holder never outlives its lease. A tick that finds a live lease returns
+200 `busy`. This covers concurrent redelivery after a deadline overrun and duplicate delivery (both seen in this repo,
+`decisions/worker_task_dedup.md`). The dedicated queue's `maxConcurrentDispatches = 1` is a CPU and memory knob for
+the instance, not the correctness mechanism; raising it later is an extension (§14).
+
+**Deadline.** Every `drive_sync` enqueue passes `deadline_seconds = TICK_DEADLINE`. A new file is started only if
+`elapsed + DOWNLOAD_TIMEOUT + EXTRACT_WALL_TIMEOUT + EMBED_FILE_BUDGET + margin < TICK_DEADLINE`; a test asserts this
+holds for the configured constants.
+
+**Steps.**
+0. **Gate.** Read `drive_indexing_enabled` from the user repository (not the agent cache) and `is_connected()` (the
+   credentials document exists). Indexing off and anything stored → purge (`delete_by_user`: chunks, records, sync
+   state) and stop. No credentials or `needs_reconnect` → the access-loss path of §7.6, and stop. Nothing is enqueued for a user with indexing off, whatever triggered the tick. Purge is keyed on these facts
+   only, never on an exception type: a `DriveNotConnectedError` or `DriveReauthRequired` raised
+   during a tick ends the tick without purging (§7.7).
+1. **Observe.** First the item ids carried by nudges: each is read with `get_change` and applied as an observation with
+   `QUIET = 0`, so a bot write is indexed even if delta has not caught up (S0d). Then pages from `get_changes(cursor)`
+   until the page budget or `complete`. Compare `drive_id` with the stored one before applying any page; on a
+   mismatch, purge and start fresh. Apply each page's actions, then save the cursor (a crash replays the page; actions
+   are idempotent). In walk mode, a new walk does not start while the previous epoch is sweeping.
+2. **Upgrade.** If `applied_versions` differ from the current constants, run a bounded upgrade step (§12.3).
+3. **Work off what is due**, in priority order (§7.8), within the budget (§8).
+4. **Continue.** If changes or due work remain, enqueue a continuation; release the lease.
+
+The gate is re-checked before each write batch and before committing an index result, so an opt-out during a tick
+drops the in-flight result.
+
+### 7.2 Delta or walk
+
+`get_changes` is the adapter's job. **S0a confirmed (2026-10-11) that delta works on the App Folder under
+`Files.ReadWrite.AppFolder`**, so the OneDrive adapter uses it: `full_enumeration = true` only at onboarding and after a
+410. **Walk mode is not built.** The rest of this paragraph specifies it as the fallback for a future provider without
+a change feed, an adapter extension (§14). In walk mode the adapter walks the tree
+within a per-tick budget, never descends into an opaque root (§5.2: dot-folders, folders whose listing contains a
+marker such as `.git` or `pyvenv.cfg`, dense trees already recorded as such; it still reports the root and its marker
+child), and reports `full_enumeration = true` on every walk; it does not diff. **Walk mode is a degraded mode, not
+an equivalent:** every walk is an epoch with a sweep, Graph calls scale with the drive's size instead of its changes,
+and freshness for edits made outside the bot drops to one walk's duration. If S0a fails, choosing between living with
+walk mode and widening the scope to `Files.Read` (a new consent, the whole drive visible) is an owner decision, taken
+with S0a's numbers. In both cases the planner diffs against stored records (`content_version` equal → nothing due), and
+every full enumeration is an epoch (§7.5).
+
+**Delta semantics the planner relies on** (each observed in S0a):
+- Changes are applied in feed order, so the last occurrence of an item wins. A delete and a recycle-bin restore of the
+  same item arrived in one round: the tombstone first, then the live item with the same id.
+- A deletion is decided by `item_id` alone, before any name or kind policy.
+- The App Folder root never becomes a record. It appears in every round, with a `specialFolder` facet and without a
+  `root` facet, so it is recognised by `root_item_id`, never by a facet.
+- **A move out of the App Folder is a deletion.** The tombstone carries the item's id, and a GET by that id returns
+  404 `itemNotFound`, the same as a real delete. **A move in is a first sighting** of an item with its existing id.
+  A move made in the web UI reached the feed within a few minutes, not instantly.
+- **Unchanged items are re-emitted often.** One round with two real moves carried 41 entries, the same item up to
+  three times. The `content_version` comparison keeps such an entry to a record read and nothing more. The records a
+  page touches are read in one batched read.
+- Deleting a non-empty folder produced a tombstone for every descendant on OneDrive personal. The cascade (§7.6) stays,
+  because the feed does not promise this.
+
+### 7.3 Office Online autosave: the quiet period
+
+A content change on an admitted record sets `dirty_since = now` if it is unset, and
+`due_at = min(modified_at + QUIET, dirty_since + MAX_DEFER)`: due when the file has been untouched for `QUIET` or
+dirty for `MAX_DEFER`, whichever comes first. `dirty_since` is cleared when the record reaches a terminal state
+(`indexed`, `failed`, `metadata_only`) or is deleted. Each autosave only moves `modified_at`; churn costs one metadata
+write per observed change. A first-seen file and a file named in a nudge (the bot's own atomic write) use `QUIET = 0`.
+`modified_at` is the item's server-set `lastModifiedDateTime`; `min(…, dirty_since + MAX_DEFER)` bounds any skew.
+S0b measured it: during 11 minutes of continuous typing in Word for the web, `cTag` moved every 1.2–3.3 minutes, and
+intermediate versions were skipped. A rename or a move leaves `cTag` unchanged and moves only `eTag`.
+
+### 7.4 The read fence
+
+An index run takes `generation = index_generation + 1`, writes its chunks under that generation, then sets
+`indexed_generation`, `indexed_version` and `extraction_version` in one record write, then deletes chunks of every
+other generation. Search counts a chunk only if its record exists, is not `deleting`, and
+`record.indexed_generation == chunk.generation`. Consequences:
+- a re-index at the same `cTag` (chunker change, fewer chunks) never serves a mix of generations;
+- a crash mid-write leaves the previous generation readable and the partial one invisible;
+- a deleted or demoted record's chunks are invisible at once, before collection.
+Before the record write, the tick re-reads the record and drops its result if `content_version` moved on meanwhile;
+with the lease this plain check is sufficient.
+
+### 7.5 Full enumeration (onboarding, expired cursor, walk)
+
+`epoch_phase`: `idle → enumerating(E) → sweeping(E) → idle`. **Every upsert, in any phase, stamps
+`seen_epoch = sync_state.epoch`**, so a record created during sweeping (a bot save, a nudge) carries E and survives.
+When the enumeration completes, `sweeping(E)` deletes records with `seen_epoch < E` in bounded, resumable batches,
+and also deletes chunks whose record is missing or whose generation is not the record's `indexed_generation` (the
+backstop for every crash window). The phase returns to `idle` only after the last sweep batch. A 410 in any phase
+abandons epoch E without sweeping and starts `enumerating(E+1)`. Onboarding is epoch 1;
+`initial_enumeration_done` is set when it reaches `idle`. In walk mode an item moved into an already-walked folder
+during a walk can be swept and is re-indexed by the next walk; on a disposable index that cost is accepted.
+
+### 7.6 Deletion, folder moves, purge
+
+- **File deleted** → `delete_record`: delete its chunks (all generations), then the record; the cursor is saved after
+  both.
+- **Folder deleted** → the folder record becomes `deleting` and its id joins `pending_cascades`. The cascade runs only
+  when the delta round reports `complete`, following Graph's advice to delete a folder locally only once it is empty
+  after all changes are synced: children that a later change re-parented are spared. It then deletes descendants
+  post-order (files first; subfolders become `deleting` before their children are removed) within the budget, and
+  deletes the folder last. A crash or a spent budget leaves `deleting` records due, so the next tick resumes.
+  A child whose parent is `deleting` is hidden (§5.2 read-time check) and is removed by the cascade unless it is
+  re-parented first.
+- **A `deleting` folder observed again as not deleted** (a later page undoes the delete, or a recycle-bin restore that
+  keeps the id, S0c) leaves `pending_cascades`, is re-classified, and joins `pending_reobserve`: descendants the
+  cascade already removed come back through the subtree re-listing (§5.2).
+- **Folder renamed or moved** → only its record changes, unless its scope changes (§5.2). Cards carry no path;
+  paths are derived at read time.
+- **Purge** (opt-out, or a reconnect to a different `drive_id`) runs only inside a tick, under the lease. Toggle-off
+  flips the flag and enqueues a purge task; the queue runs it after any tick already in flight. Search reads the flag
+  uncached (§10.1), so the index is invisible at once.
+- **Access lost** (no credentials document, or `needs_reconnect`): the gate sets `access_lost_at` once (a new loss
+  while one is recorded keeps the earlier value) and stops. Nothing else is written, so a token blip costs nothing.
+  The fan-out keeps visiting the user (§7.1); once `now ≥ access_lost_at + ACCESS_LOSS_TTL` the tick purges the index
+  in bounded batches under the lease. No Firestore TTL and no per-document stamps: the only case they would add is a
+  scheduler dead for 30 days, in which the whole system is down and the scheduler alert has long fired.
+- **Access regained** (same `drive_id`): before `access_lost_at + ACCESS_LOSS_TTL`, the tick clears `access_lost_at`
+  and **continues from the stored cursor** (nothing was deleted; a cursor that really expired still arrives as a 410
+  and gets its epoch). At or after it, the purge has started or finished, so the tick completes the purge and starts
+  epoch 1.
+
+### 7.7 Revoked access and throttling
+
+- `DriveReauthRequired` (the refresh was rejected: `invalid_grant`) ends the tick without purging, sets
+  `needs_reconnect` on the `microsoft_onedrive` credentials record and notifies the user once, on the False→True
+  transition (Gmail precedent, `decisions/gmail_grant_revoked_reconnect.md`); `/api/drive/status` returns it and the
+  Cabinet shows **Reconnect**. A successful save of credentials clears it. **This flag is new work**: Step 1 has none.
+- A deliberate disconnect removes the credentials document; the next tick's gate sees `is_connected() == false` and
+  starts the access-loss grace period (§7.6). No exception type ever purges; an access loss purges only after
+  `ACCESS_LOSS_TTL`.
+- Graph 429/503 and embedding 429/503 end the tick and enqueue a continuation with the `Retry-After` delay.
+
+### 7.8 Priorities
+
+`due_records` orders by `(priority, due_at, item_id)`:
+0. **edits and nudges**: content changed on a known record, items named in a nudge;
+1. **cascades**: folder delete and rescope steps (metadata operations only, no download), up to
+   `CASCADE_OPS_PER_TICK`; search is already correct through the read-time check (§5.2), so cascades only do the
+   physical work;
+2. **first seen**: onboarding, re-observed subtrees, bulk drops. A first-seen record's card waits until the round
+   that delivered it has completed (or its parent folder has been fully listed), so a `.git` or `pyvenv.cfg` that
+   arrives later in the same round makes the folder opaque before any of its files is carded;
+3. **maintenance**: version upgrades and newly admitted kinds (§12.3), cap releases;
+4. **retries** with backoff.
+A tick works class 0 first, then 1, then 2, and gives classes 3–4 at most `MAINTENANCE_SHARE` of its file budget. An
+edit or a bot write therefore never waits behind a cascade, onboarding or an upgrade; its worst-case freshness is
+about *(users with class-0 work) × tick budget*, and `STALE_ALERT_AFTER` stays above it.
+
+---
+
+## 8. Indexing a record
+
+### 8.1 Steps
+
+For each due `pending` record, within the budget:
+1. Policy check on metadata (§5).
+2. Persist, in one record write, `index_generation += 1` and `attempt_started_at = now`. Every chunk of this run is
+   written under that generation, so a retry never reuses a crashed run's generation.
+3. Download (per-kind size cap checked on metadata first; the task carries `item_id`, never the short-lived download
+   URL). The parent drops its in-memory copy once the temp file is written; the temp file is deleted in `finally`.
+4. Sniff kind from magic bytes; a mismatch goes back through the policy.
+5. Extract through `ContentExtractorPort` (§9).
+6. Text-quality gate (§5.5, class 3) on non-table text. Subtitle formats (VTT, SRT) are first normalised to cue text
+   (cue numbers, timing lines and blank separators removed — also before chunking). The gate then strips a leading
+   timestamp, speaker tag or IP from each line, **ignores lines that are only a timestamp or a number**, and measures
+   the remaining non-empty residue: repetition counted over lines of at least 20 characters (short replies like "ok"
+   do not count), share of near-empty residue lines, token variety. Machine-like residue →
+   `metadata_only / machine_text`, card keeps the lead text. Meeting transcripts (VTT/SRT, `[00:01:23] Speaker:`), chat
+   exports and dated journals leave prose after the timestamp and stay indexed. Deterministic (§8.2).
+7. Chunk (§8.4) up to `MAX_CHUNKS_PER_FILE`; set `truncated` if cut.
+8. Embed chunks with at most `EMBED_IN_FLIGHT` concurrent calls, and the card (§8.5).
+9. Commit through the fence (§7.4); clear `attempts` and `attempt_started_at`; collect older generations.
+
+### 8.2 Outcome classes
+
+| Class | Outcomes | Effect |
+|---|---|---|
+| Deterministic | `no_text`, `machine_text`, `encrypted`, `unsupported`, `too_large`, ZIP caps exceeded | Terminal at once: `metadata_only` with the reason. No retry, no re-download. |
+| Per-file transient | `download_error` (not 429/503), `extract_error`, `timeout`, `memory`, `embed_timeout` (the file's embeddings exceeded `EMBED_FILE_BUDGET`), and a **crashed attempt** (a record found with `attempt_started_at` older than `TICK_DEADLINE` and no outcome: the instance died during it) | `attempts++`, `attempt_started_at` cleared, `due_at = now + min(RETRY_BASE · 2^attempts, RETRY_CAP)`, class 4; at `MAX_ATTEMPTS` → `failed`. |
+| Per-item provider call | 5xx, `DriveAccessDenied` or timeout on a call about **one item** — a density probe, `get_change`, `resolve_parent`, a subtree re-listing, a download | The page is still applied; the item's own work is deferred with backoff (its children held `unresolved`, the record kept `pending`). After `MAX_ATTEMPTS`: a probe → classify without a probe (not dense); a parent lookup → orphan, deleted; a re-listing → dropped from `pending_reobserve`; a download → `failed / download_error`. One bad item never stalls the user's index. |
+| Systemic | Graph 429, or 5xx/`DriveAccessDenied` on the **drive-wide** feed (`get_changes`); embedding quota or 5xx; repository errors | End the tick; `attempts` untouched and `attempt_started_at` cleared; continuation with backoff; `last_error` set; `last_success_at` not advanced. |
+
+`attempts` is incremented only by the per-file class, never before the outcome is known, so a sequence of systemic
+errors of any length never moves a record to `failed` (property test, §17.1). It resets when `content_version` or
+`extraction_version` changes.
+
+### 8.3 Tables
+
+XLSX/XLS/CSV/ODS are read row-capped (`MAX_SHEET_ROWS` per sheet); continued table chunks repeat the header row.
+Search returns them as evidence of *where* data lives, not as data to sum (§10.4).
+
+### 8.4 Chunker (`src/domain/drive_chunker.py`)
+
+Split extracted text into chunks of about `CHUNK_CHARS` at paragraph boundaries, falling back to sentence and then
+hard boundaries, with `CHUNK_OVERLAP`; carry the header row into continued Markdown tables. A chunker change bumps
+`extraction_version` (§12.3). Heading breadcrumbs are a later improvement of the same function (§14).
+
+### 8.5 Card
+
+`card_text(record)` is pure over record fields: `name | kind | key facets` plus, for indexed and `machine_text`
+records, the first `CARD_LEAD_CHARS` of text; folders `name | folder`; opaque roots `name | repository`,
+`name | hidden folder` or `name | generated files (N items)`. Key facets are a fixed subset of stored facets (photo
+`takenDateTime`, camera make and model, the derived `place_name` (§5.3), image dimensions, video dimensions and
+duration), finalised by S0e. The `audio` facet is not used: S0e saw none on M4A or WAV files. A new geocoding table is a `geo_table_version` bump in the upgrade step (§12.3): it
+re-resolves `place_name`, and since the card hash covers the card text, only cards whose place name actually changed
+are re-embedded. **No path**, so a folder rename does not touch descendants. The planner emits
+`embed_card` whenever `hash(card_text(record), card_version)` differs from `card_hash`: on rename, on facet change, on
+first sight, when indexing adds lead text, when a demotion removes it, and when the card builder changes. A rename
+therefore costs one card embedding and zero chunk writes.
+
+### 8.6 Cost bounds
+
+Embedding (`gemini-embedding-2`, 768-dim): a 100-page document is about 100 chunks and 100 calls (the adapter's
+one-call-per-text quirk), cents at most. The dominating recurring cost is Firestore kNN (flat index, billed 1 read per
+100 index entries scanned under the user filter), linear in the user's chunk count; hence the per-user caps (S3
+measures it).
+
+---
+
+## 9. Extraction isolation
+
+- **Why a child process.** Phase 0 measurements on markitdown 0.1.4: a 66 KB DOCX peaked at ~950 MiB RSS, a 5 KB XLSX
+  at ~1.75 GB, an 8.7 KB legacy XLS at ~3 GB, a 408 KB PDF at ~955 MiB. Parsers amplify, so no size check on the
+  input bounds memory. Only a process with a memory limit and a kill does.
+- **Extraction quality is a known limit.** markitdown's PDF path (pdfminer) loses table structure and mixes two-column
+  layouts; for G2 over contracts and invoices this is the largest quality factor after retrieval. Phase 0 made
+  extraction safe, not good. The eval includes table-heavy and two-column PDFs; a better PDF extractor is another
+  `ContentExtractorPort` adapter plus an `extraction_version` bump (§14).
+- **Extractor chains per kind.** Which extractor reads which kind is a pure domain table,
+  `EXTRACTOR_CHAINS: kind → [extractor_id, …]` (e.g. PDF `[markitdown, model]`, DOCX `[markitdown]`, RTF `[rtf]`);
+  the next link runs only on the "parser failed" signals below. Each `ContentExtractorPort` adapter has an id and a
+  version; composition builds the registry `{id: adapter}`. Trying another parser for one kind (e.g. `pymupdf4llm`
+  or `docling` for PDF) is a new adapter plus one table edit. The record stores `extracted_by` (`id@version`), and the
+  upgrade step (§12.3) compares it with the current chain **for that record's kind**, so changing the PDF extractor
+  re-extracts PDFs only. Per-user overrides are a later extension, not needed now.
+- **The model extractor (Slice 4, decided).** The second `ContentExtractorPort` adapter sends a PDF or an image to a
+  multimodal ECO model that reads it natively (Gemini document understanding) and returns its text verbatim, tables
+  as Markdown tables. It serves scans and screenshots (the OCR of §5.3), hybrid PDFs and PDFs whose parser yield is
+  poor. **Router, parser first:** the free deterministic parser runs first; "the parser failed", and the model is
+  called, means exactly one of:
+  1. `no_text` — no text layer (a scan);
+  2. low density — `text_chars / pages_total` below `MODEL_EXTRACT_DENSITY` (a hybrid PDF, or only headers and page
+     numbers);
+  3. garbage text — the share of `(cid:N)` sequences, `U+FFFD` replacement characters and mojibake patterns above
+     `MODEL_EXTRACT_GARBAGE` (fonts without a Unicode map, common in Cyrillic PDFs: plenty of "text", none readable);
+  4. a parser `error` or `unsupported` on a PDF (a damaged or unusual file) — one model attempt before the per-file
+     retry budget of §8.2; `timeout` and `memory` are not routed (they are bombs, and stay failures).
+  Plus triaged information-bearing images. Not detectable and therefore not routed: readable text whose tables or
+  columns the parser scrambled — that is the §14 extension. Rules: a "transcribe verbatim, do not summarise or correct" instruction with deterministic settings; no
+  tools, text output only, so a hostile document can at worst corrupt its own text, which is served inside the
+  untrusted wrapper anyway; concurrency bounded like embeddings (`EMBED_IN_FLIGHT`, shared Gemini quota); pages per
+  file capped by `MODEL_EXTRACT_MAX_PAGES`; **pages per user per month capped by `MODEL_EXTRACT_PAGES_PER_MONTH`**
+  (a layer-0 bound, §5.5: a drive of 25 000 scans cannot burn vision calls for months) — over the cap a file waits as
+  `pending` in class 3 until the next month, and the pages sent to the model are a counter in the tick summary line
+  and in `DriveSyncState.counters`; disclosed in the opt-in text (§6).
+- `ContentExtractorPort`, first adapter `SubprocessContentExtractor`: the converter runs in a child Python process with
+  `RLIMIT_AS`, `RLIMIT_CPU` and a wall-clock kill (`EXTRACT_WALL_TIMEOUT`); a kill maps to `memory` or `timeout`.
+  Converters: markitdown with builtins off and a local-document allowlist, ZIP central-directory caps, XLSX row caps
+  (Phase 0).
+- **Host: a separate indexer service** (owner decision D5). A second Cloud Run service from the same image runs the
+  whole `drive_sync` tick — the drive queue targets its URL — with about 2 GiB, `concurrency = 1`, scale to zero and
+  `--execution-environment=gen2`. The main service (1 GiB, already peaking at 74–90 % memory) never indexes. Precedent:
+  the voice relay as a second deploy unit. S1 sets the memory and the child limits on this service; its results hold
+  only for the pinned environment. Same deploy discipline as the relay (own env, no reuse of dual-purpose `.env` keys).
+- The chat path, Step 1 `open_file_from_drive` and email attachments move to the same port in Slice 3: the indexer
+  service exposes an OIDC-protected `/extract`, and the main service's adapter calls it — one hardened way to turn a
+  user file into text.
+
+---
+
+## 10. Search and the agent surface
+
+### 10.1 `DriveSearchService`
+
+Input: `query`, optional `folder` (a `drive:` ref or a path), `kind`, `date_from`, `date_to` (on `effective_date`).
+**Filter-only requests** ("files I saved this week", "all my spreadsheets") leave `query` empty: the service then runs a
+plain Firestore query on `user_id` + `kind` / `effective_date`, ordered by `effective_date` descending, limit `K`, with
+no kNN and no threshold, and says how many matched. The manifest field description tells Smart to leave the query
+empty for such requests.
+0. Read the opt-in flag, `DriveSyncState` and the credentials state from Firestore, never from the agent cache. Off →
+   `disabled`. No credentials → `disconnected`. `needs_reconnect` with `now ≥ access_lost_at + ACCESS_LOSS_TTL`
+   → `disconnected` (the purge has begun). A connected `drive_id` (a field of the
+   credentials record written when the OAuth grant is saved; credentials are rebuilt on every refresh
+   (`graph_auth.py:96-105`), so the refresh must carry the field over; absent for a user connected earlier until
+   that refresh, in which case the comparison is skipped) different from the one in `DriveSyncState` → `disconnected`
+   until the purge runs. `needs_reconnect` → search proceeds and the envelope carries `reconnect_needed`.
+1. Embed the query once.
+2. **Card stream:** kNN over records, pre-filter `user_id` (+ `kind`), fetch `CARD_FETCH`.
+3. **Chunk stream:** kNN over chunks, pre-filter `user_id` (+ `kind`), fetch `CHUNK_FETCH` (≤ 1000). Drop chunks failing
+   the fence (§7.4); max-pool to one hit per record (best chunk).
+3a. **Name stream (lexical, from Slice 1):** the query's name keys (the same normalisation as `name_tokens`; when there
+   are more than 30, whole tokens first, then their transliterations, then trigrams in query order, cut at 30)
+   in one `array-contains-any` query on records, ranked by how many keys each record shares. Catches exact and
+   partial names (`IMG_4912`, `ред3`), transliteration and typos, where a cosine over the card vector is weak. "Find a
+   file" is Slice 1's core, so this stream is part of the base, not a later extension.
+4. **No cosine thresholds** in the design: each stream contributes its top results by rank, RRF and `K` bound the
+   output, and Smart judges relevance from the cards (the honest envelope covers "not found"). The name stream keeps
+   only records sharing at least one whole token or `NAME_MIN_TRIGRAMS` trigrams. Then post-filters (dates, folder),
+   then RRF
+   (`apply_rrf_ranking`, `k = 60`, key `item_id`). Pooling before fusion is required: `rrf.py` keeps the first object
+   seen per key.
+5. If fewer than `K` records survive, widen once (fetch at the cap).
+6. Collapse duplicates: cards with the same `content_hash` become one card with `also_at` paths.
+7. Return the top `K` cards plus the coverage envelope (§10.2).
+
+**Folder** means the subtree of one folder record, resolved by ref, or by path matched after NFC + casefold. If several
+folders match, return them as candidates instead of guessing. A folder-scoped query walks the subtree via `children`
+with projection reads (no vectors), never entering opaque roots, **stopping after `FOLDER_INMEM_CARDS` records
+read**. If the walk completed, the
+subtree's cards are ranked in memory, and its chunks too when `Σ chunk_count ≤ FOLDER_INMEM_CHUNKS`. Otherwise the
+user-wide streams are used and each candidate is kept only if its ancestor chain — already walked to build its path
+(§10.2) — passes through the folder, with the widening of step 5.
+
+One summary log line per search: counts after each stage (fetched, fenced, pooled, thresholded, filtered, fused).
+
+### 10.2 Result contract
+
+**Envelope:** `enabled`; `content_search` (false in Slice 1); `building` — the set of existing items may still be
+incomplete: an epoch started for onboarding or after a 410 is not `idle`, `pending_reobserve` is non-empty, or any
+class-2 (first-seen) record is due — derived with one `limit 1` query on the `due_records` index, never a counter that
+could drift. Edits (class 0) and
+cascades (class 1) do not set it: their items already have cards or are already hidden. Routine walks do not count. `reconnect_needed`; `index_as_of` (`observed_as_of`, §12.1 — never the last tick); `unread` — documents of an **admitted** kind whose
+content is not searchable: `pending` without a readable generation, `failed`, and `metadata_only` for `too_large`,
+`no_text`, `machine_text`, `user_chunk_cap` (photos, code, archives and other non-admitted kinds are not counted); `index_full`.
+
+**Card:** `ref` (`drive:<item_id>`), `name`, `path` (derived from the `parent_id` chain at read time, ending at
+`root_item_id`; an ancestor not yet recorded ends the path at the last known one and keeps the card; a `deleting`,
+`opaque_root` or `inside_opaque` ancestor drops the card, §5.2), `kind`, `modified_at`,
+`web_url`, `state`/`reason`, `stale`, `truncated`, `matched` (`card`, `content` or both), and for content hits a window:
+the best chunk and its neighbours `index ± 1` from stored text. The contract is the seam for future sources and
+stages.
+
+### 10.3 Not in `SearchEnrichmentService`
+
+`SearchEnrichmentService` injects validated facts about the user into every request; the same service backs the remote
+MCP server and the companion agents. The drive is a different thing: a knowledge base that may hold facts about the
+user and may hold nothing about them. It is reached through a tool when the question calls for it. (A consequence, not
+the reason: enrichment would also hand file content to claude.ai via MCP and to the companions.)
+
+### 10.4 Intent, protocol, history
+
+- **Intent** `search_files_in_drive` on FileManagement, `SYNC`. Context fields get names no other intent uses
+  (`drive_query`, `drive_folder`, `drive_kind`, `drive_date_from`, `drive_date_to`), because the delegate
+  tool keeps the first description seen for a field name (`src/agents/base_agent.py:786-794`); a manifest test fails on
+  any shared field name with differing descriptions.
+- **Untrusted wrapper.** Each result goes inside `<drive_document nonce="…" ref="…" path="…">…</drive_document nonce="…">`
+  with a per-result random nonce; content and names are XML-escaped (`&`, `<`, `>`, quotes), so text in a document
+  cannot close the wrapper. Every delivery of file text — search results and `open_file_from_drive` alike — carries the reminder that it is
+  reference material and can never be an instruction. File names are untrusted too. No extra confirmation for
+  destructive intents (D2).
+- **Smart protocol lines** (a token change, backed up before editing):
+  - search the drive when the answer may be in the user's documents;
+  - results reflect the drive as of `index_as_of`; if the user refers to a recent edit, or a card is `stale`, open the
+    file (Step 1 reads live) before quoting;
+  - while `building` is true, do not say a document does not exist — say the index is still being built; when
+    `unread > 0` or a matching card is `truncated`, a "not found" names what was not searched (e.g. "3 documents could
+    not be read") and offers to list or open the folder; when `content_search` is false, say only names and metadata
+    were searched;
+  - when a folder card matches, search or list within it before answering "not found";
+  - for sums and totals over tables, open the file or use the compute intent with the file ref;
+  - a document is authoritative for its own contents (its terms, amounts, dates). It does not override memory about
+    the user's current state: when they disagree, give both, citing the document's path and date (memory facts carry
+    no date in the prompt today). Provisional until OQ-1;
+  - when several cards look like versions of one document and their values differ, never pick silently: answer from
+    the version the name or date marks as latest, say which, and list the others with their dates.
+- **History.** Returned refs go into `history_context["drive_context"]` (Step 1 mechanism), so "open the second one"
+  works. Snippets live only in the tool result and `full_text`.
+- `capabilities.py` gains the capability.
+
+---
+
+## 11. Memory and the irreversible stores
+
+- **Memory.** Snippets never enter the turn summary `p.text`. That does **not** keep document content out of memory:
+  Smart's answer summary may restate document values and reaches consolidation like any answer — as it already does
+  for Step 1 `open_file`, chat uploads, email and web answers. This RFC accepts that existing path unchanged and adds
+  no new one (owner decision D4, §21). The `CONSOLIDATION_TAXONOMY` is not changed here; OQ-1 covers both direct
+  content and answers derived from it.
+- **Prompts.** The protocol lines (§10.4) are a Firestore token change, backed up before editing.
+- **History refs.** `drive:<item_id>` refs stay valid while the provider item exists; their format does not change.
+- **Telemetry.** Excerpts passed to Smart are captured by Logfire and `prompt_content` (30-day TTL), like any tool
+  result. Disclosed in the opt-in text (§6); redaction would be a separate, telemetry-wide decision.
+
+---
+
+## 12. Operations
+
+### 12.1 Observability and alerts
+- One summary line per tick: changes observed, records indexed / failed / demoted, chunks written, embedding calls,
+  embed wall time, duration, end reason (budget, complete, throttled, systemic error).
+- **Staleness is evaluated in the scheduler fan-out** (it runs even when the drive queue is stuck): a user with
+  indexing on and access (no `access_lost_at`) is stale when no tick has ended without a systemic error for
+  `STALE_ALERT_AFTER`, or a **class-0**
+  record has been due for longer than it. Cascades, onboarding and upgrades (classes 1–4) never trip it. The check posts to
+  `AlertSinkPort` on the False→True transition of `stale_alerted` and clears the flag only when the criterion itself is
+  false again (one alert per incident, no flapping).
+- `observed_as_of` is the start time of the last **complete** round — a delta round, or a walk whose sweep has
+  finished — set when that round ends; it is what search shows as `index_as_of`.
+- `last_success_at` advances on every tick that ends without a systemic error and either made progress or found
+  nothing to do. It drives the staleness alert only; search never shows it.
+- `DriveSyncState.counters` hold records per state and readable chunks only; embedding usage stays in the log line.
+  Embeddings are unbilled system-wide today; pricing them is a separate decision.
+
+### 12.2 Rebuild
+`rebuild_drive_index(user_id)`: purge + epoch 1. Tested; the documented answer to "the index looks wrong" and to a
+drive switch. It is not the version-migration path.
+
+### 12.3 Versions and rolling upgrades
+- `policy_version` (admission, scope), `extraction_version` (chunker and shared extraction rules; the extractor
+  itself is versioned per kind through `extracted_by`, §9), `card_version` (card builder),
+  `geo_table_version` (place names), `triage_version` (image triage, Slice 4), `embedding_space` (model, dimension) are domain constants; every record stamps the versions its state was decided
+  under.
+- When `DriveSyncState.applied_versions` differ from the constants, each tick runs a bounded **upgrade step**: it pages
+  through the user's records by `item_id` (`upgrade_cursor`) and hands stale ones to the planner, which picks the
+  cheapest work — re-classification only, card re-embed, re-extraction, or re-embedding stored chunk text for a model
+  change — and schedules it in class 3 (maintenance, §7.8). `failed` and `metadata_only` records are included, so a fixed converter or
+  a newly admitted kind takes effect. A further bump during a pass sets new `target_versions` and restarts the pass
+  from the first record (it is idempotent). `applied_versions` is updated when a **full pass finds no stale record**
+  — scheduling is not completion, and no count query is needed. Records whose work is blocked by a cap
+  (`user_chunk_cap`, `user_card_cap`) are re-stamped without work: their outcome is decided again when they are
+  released (§5.4).
+- Old chunks stay readable through the fence until the new generation commits. An embedding change writes a new vector
+  field next to the old one (Firestore vector indexes are per field). **During the transition every new card and chunk
+  embed writes both fields**, so fresh work never needs a second pass; `query_embedding_space` switches to the new
+  field when a full pass finds no card or readable chunk without it.
+- Expected duration of a full re-extraction ≈ records ÷ files per tick × tick duration, shared with fresh work by
+  `MAINTENANCE_SHARE`; a rollback costs the same as the bump it reverses.
+
+### 12.4 Maintenance hotspots
+The density probe (§3.6, §5.2) is correct and isolated but is where future maintenance cost concentrates (the
+access-loss machinery was simplified to a grace period in rev 3.10 for the same reason). Changes there get property tests first;
+incidents there are the first signal to simplify.
+
+### 12.4a Configuration
+Parameters (§15) are domain constants. The opt-in flag is per-user config. No new `.env` keys pass through Cloud Build
+substitutions (deploy-substitution trap).
+
+### 12.5 Provisioning (reproducible, in the repo)
+- **Queue** `drive-sync-{suffix}`: created and updated in `cloudbuild-dev.yaml` with the describe → update || create
+  pattern used for scheduler jobs, pinning `max-concurrent-dispatches=1`, the retry config and log sampling.
+- **Scheduler job** for the fan-out: in `cloudbuild-dev.yaml` and `docs/07_deployment/SCHEDULERS.md`.
+- **Firestore indexes** in `config/firestore.indexes.json`: card and chunk vector indexes with `user_id` (and
+  `user_id + kind`) pre-filters; `user_id + name_tokens` (array) for the name stream; `user_id + effective_date` and `user_id + kind + effective_date` for filter-only
+  queries; `user_id + priority + due_at + item_id` for `due_records`; `user_id + parent_id` for
+  `children`; `user_id + seen_epoch` for the sweep; `user_id + state + reason + modified_at` for cap release;
+  `user_id + item_id` for `records_page`; `user_id + item_id` on chunks for the folder-scoped in-memory path. Vector entries are created with the documented `gcloud` commands (the deploy script skips vector
+  indexes).
+- **Indexer service** `alek-bot-indexer-{suffix}` (D5): same image, entry point `indexer_main.py`, about 2 GiB,
+  `concurrency = 1`, `min-instances = 0`, `--execution-environment=gen2`, its own env (no reuse of dual-purpose `.env`
+  keys), OIDC-protected `/worker` (and `/extract` from Slice 3). Deployed in `cloudbuild-dev.yaml` next to the relay.
+
+---
+
+## 13. Where the logic lives
+
+| Piece | Layer | File |
+|---|---|---|
+| `DriveChange`, records, chunks, states, planner, policy, chunker, card builder | domain | `drive_index.py`, `drive_index_policy.py`, `drive_chunker.py`, `drive_card.py` |
+| Delta / walk, `DriveReauthRequired` | adapter | `adapters/microsoft/onedrive_adapter.py` |
+| Records, chunks, sync state, vector queries, lease | adapter | `adapters/firestore_drive_index_repo.py` |
+| Child-process extraction | adapter | `adapters/subprocess_content_extractor.py` |
+| Tick (gate → observe → upgrade → work off → continue), purge | service | `services/drive_indexing_service.py` |
+| Search | service | `services/drive_search_service.py` |
+| Nudge after a bot mutation | service | `UserDriveService`, with an injected `TaskQueue`; sent inside the shielded mutation after the provider call succeeds, carrying the item ids |
+| `drive_sync` tick entry point | indexer service | `indexer_main.py` (relay-style minimal app: OIDC `/worker` for `drive_sync` only; `/extract` from Slice 3) |
+| Fan-out and staleness check (scheduler task on the main service) | handler | `handlers/worker_handler.py` |
+| Intent, protocol, capability | agents / manifest | `file_management_agent.py`, `agent_manifest.py`, Smart protocol token |
+| Opt-in toggle, status, Reconnect | web | Cabinet app, `/api/drive/indexing`, `/api/drive/status` |
+| Place-name resolution (bundled reverse-geocoding table → `place_name` facet) | indexer service | `services/drive_indexing_service.py` via a small adapter; `geo_table_version` stamped |
+| Wiring (second `TaskQueue`, indexer's embedding fan-out) | composition | `service_container.py` |
+
+---
+
+## 14. Extension seams
+
+| Later capability | Seam | Already stored for it |
+|---|---|---|
+| Descriptions of photo content, burst sampling | Vision stage over sampled frames; new card text; `card_version` bump | `facets` |
+| LLM summary per document | New stage writing summary + vector on the record; new search stream | chunk text |
+| Heading breadcrumbs, smarter chunking | Chunker change + `extraction_version` bump | — |
+| Full-text lexical search over content (BM25 class) — the **known ceiling** of a Firestore-only index, which has no inverted index | A lexical stream on a separate engine (e.g. SQLite FTS5 or a small search service) fed from stored chunk text — rebuildable like the rest of the index — joined into RRF. The cure if rare terms and proper names inside documents miss, not a tweak | chunk text |
+| Cosine thresholds per stream | A filter step before RRF, only if the regression set shows noise that `K` and Smart's judgement do not absorb | — |
+| Reranking of the fused top-K (cross-encoder or LLM) | A step after RRF; makes the cosine thresholds less load-bearing | cards, windows |
+| Contextual chunk headers / breadcrumbs | Chunker change + `extraction_version` bump; until then, lower recall on long documents is expected (§17.8) | — |
+| Model extraction for born-digital PDFs whose parser output is structurally poor (tables, columns) | Widen the §9 router beyond text density; same model extractor | `text_chars`, `pages_total` |
+| Reuse of extraction for duplicate files | Copy chunks between records with the same `content_hash` instead of re-extracting | `content_hash` |
+| Near-duplicate / version clustering (ред1..3) | Grouping step after RRF; today a protocol line only (§10.4) | names, `effective_date` |
+| Code, logs, archive tables of contents | Policy change (opaque root → walkable, new admitted kinds) + `policy_version` bump; a new epoch picks up subtrees that were never stored | `reason`, `kind`, opaque root records |
+| Push instead of polling (Graph webhooks) | Another trigger enqueuing the same `drive_sync` | — |
+| Recency preference | Re-rank after RRF | `modified_at` |
+| Range read of long files | `open_file_from_drive` option served from stored chunks; past the indexed span it downloads | chunks, offsets |
+| Second document source | Same card contract; new source adapter | — |
+| Facts from documents (OQ-1) | A consolidation pass over stored chunk text (email Stage-3 precedent) | chunk text |
+| Manual sync / reindex / skipped-file views | Cabinet endpoints over existing state and `rebuild_drive_index` | state, reasons |
+| Faster or isolated extraction host | New `ContentExtractorPort` host | — |
+| Per-user parallel ticks | Raise the queue's `maxConcurrentDispatches`; the lease already guarantees one writer per user | lease |
+
+---
+
+## 15. Parameters (initial values; revisit after S1, S3 and the eval)
+
+| Name | Initial | Basis |
+|---|---|---|
+| `TICK_INTERVAL` | 10 min | Freshness vs. Graph calls; nudges cover the bot's own writes |
+| `TICK_DEADLINE` (`deadline_seconds`) | 1800 s | Cloud Tasks HTTP maximum = service timeout |
+| Tick start budget | 8 min, 50 files | No new file starts after it (§7.1 invariant) |
+| `MAINTENANCE_SHARE` | 30 % of the file budget | Fresh work first (§7.8) |
+| `QUIET` / `MAX_DEFER` | 10 min / 60 min | S0b: Word for the web saved every 1.2–3.3 min while typing; 10 min is three times the longest gap |
+| `MAX_ATTEMPTS`, `RETRY_BASE`, `RETRY_CAP` | 3, 5 min, 6 h | Per-file transient only (§8.2) |
+| `DOWNLOAD_TIMEOUT` | 120 s | Step 1 drive timeout |
+| `EXTRACT_WALL_TIMEOUT` | 120 s | S1 |
+| `RLIMIT_AS` / `RLIMIT_CPU` | placeholders | Set by S1 for the chosen host |
+| `EMBED_IN_FLIGHT` / `EMBED_FILE_BUDGET` | 4 / 180 s | Caps the indexer's share of the shared Gemini quota; a 429 ends the tick |
+| Download cap | 45 MB (Step 1), XLSX 10 MB | Step 1 §4.6 |
+| ZIP container caps | 100 MiB inflated, 10 000 members | Phase 0 pre-filter, not a memory bound |
+| `MAX_TEXT_CHARS` | 2 000 000 | Extractor-output memory bound |
+| `CHUNK_CHARS` / `CHUNK_OVERLAP` | 2 400 / 240 | ≈ 600 tokens, far below the 8 192-token embedding limit |
+| `MAX_CHUNKS_PER_FILE` | 400 | The binding content cap: ≈ 864k characters indexed |
+| `MAX_CARD_RECORDS_PER_USER` / `MAX_CHUNKS_PER_USER` | 25 000 / 50 000 | kNN cost — S3 |
+| `MAX_SHEET_ROWS` | 5 000 | — |
+| `CARD_LEAD_CHARS` | 2 000 | — |
+| `K`, `CARD_FETCH`, `CHUNK_FETCH`, `NAME_FETCH` | 8, 50, 300, 100 | Widened once when fewer than K survive |
+| `DENSE_FOLDER_CHILDREN` | 500 | Class 1 density threshold (with the kind condition) |
+| `MODEL_EXTRACT_DENSITY` / `MODEL_EXTRACT_GARBAGE` / `MODEL_EXTRACT_MAX_PAGES` / `MODEL_EXTRACT_PAGES_PER_MONTH` | 200 chars per page / 5 % / 200 / 5 000 | Parser-first router to the model extractor (§9) |
+| `TRIAGE_BATCH` | 16 thumbnails | Slice 4 image triage, one ECO vision call per batch |
+| `PROBE_CHILDREN` / `PROBES_PER_TICK` | 200 / 20 | Density probe sample and per-tick budget (§3.6) |
+| `FOLDER_INMEM_CARDS` | 1 000 | Folder-scoped card ranking in memory below it |
+| `FOLDER_INMEM_CHUNKS` | 2 000 | Folder-scoped chunk ranking in memory below it (reads and memory bounded) |
+| `CASCADE_OPS_PER_TICK` | 2 000 | Metadata deletes/rescopes per tick (§7.8) |
+| `NAME_MIN_TRIGRAMS` | 3 | Name stream match floor (a whole shared token also qualifies) |
+| `STALE_ALERT_AFTER` | 2 h | Above the worst-case freshness bound (§7.8) |
+| `ACCESS_LOSS_TTL` | 30 days | Grace period after a disconnect or an expired grant, then the tick purges (D3) |
+
+---
+
+## 16. Rollout and acceptance
+
+**Phase 0 — hardening, independent of this RFC** (merged 2026-10-11, PR #57): markitdown builtins off
+with a local-document allowlist (no ZIP recursion, no upload of audio to Google's speech API); ZIP central-directory
+caps; every audio type routed to `AudioTranscriptionPort`. Not covered and documented: parser memory amplification —
+closed by the child-process extractor (Slice 2).
+
+**Slice 1 — find a file by metadata (G1 without content).** `DriveChange`, records, policy with opaque subtrees and
+scope, planner; `get_changes`; repository; tick with gate, lease, task keys, epochs, cascades, purge; nudges; cards;
+`search_files_in_drive` with the envelope and the escaped wrapper; opt-in, disclosure, Reconnect; the access-loss grace period;
+the indexer service and the rest of provisioning; offline place names in image cards; staleness alert. The policy admits **no** content kinds yet: every file is `metadata_only / kind_not_admitted` with a
+metadata card.
+*Done when:* the record-level parts of §17 are green — §17.1 (a)–(d) and the record properties, §17.2, §17.3, §17.4
+(lease, purge, `due_records` ordering), §17.5, §17.6 (envelope, wrapper, folder scope, warm-cache opt-out), §17.7;
+the G1 metadata subset of the eval — including exact, partial, transliterated and misspelled names through the name
+stream — passes; duplicates are collapsed by content hash; a Step 1 save is found by name on the
+tick after its nudge; a 410 at an arbitrary page ends with the record set equal to the drive; opt-out during a tick
+leaves zero records and sync docs after the purge, and search returns `disabled` at once; a 30k-file repository costs
+at most one card embedding when its marker arrives in the same round as its files (files carded in earlier completed
+rounds are removed by the rescope cascade), and displaces no document. Chunk, fence and pooling tests belong to Slice 2.
+
+**Slice 2 — answer from content (G2, G3).** `ContentExtractorPort` + child-process adapter on the host S1 chose;
+chunker; chunks with generations and the fence; content stream with pooling and windows; the **content exact-token
+stream** (normalised amounts, numbers, ids and dates from each chunk as `content_terms`, matched with
+`array-contains-any`; decided, not eval-gated — embeddings are weak exactly on G2's numbers); protocol lines. Admitting the
+§5 document kinds is a `policy_version` bump, so the upgrade step makes the Slice 1 records due — the extension path
+exercised once before it is needed.
+*Done when:* §17 is green; the full eval meets its recorded bars (G1, G2, G3 positives; the G3 negative set's search
+rate is reported); the Office Online edit-then-ask scenario either answers from the edit or states the index time.
+
+**Slice 4 — the model extractor (D1).** The second `ContentExtractorPort` adapter (§9: a multimodal model reading
+images and PDFs natively, behind the parser-first router); a `policy_version` bump admits screenshots, scans,
+`no_text` and low-density PDFs (§5.3), with its own cost line in the tick summary.
+*Done when:* the eval's OCR-labelled G1/G2 queries meet their bars; 100 holiday photos — camera originals and
+messenger-saved copies without EXIF — cause only batched thumbnail-triage calls (≈ ⌈100 / TRIAGE_BATCH⌉) and no
+full-image vision call.
+
+**Slice 3 — one extraction path.** Includes the chat decision for HTML: today chat uploads and
+Step 1 `open_file_from_drive` pass raw markup; the default becomes converted text, with the raw source available when
+the user works on the markup itself. Chat uploads, Step 1 `open_file_from_drive` and email attachments move to
+`ContentExtractorPort`; correction of Step 1 §2.
+*Done when:* the port produces the same text as the current path for each caller's fixtures.
+
+**Documentation per slice.** Slice 1: CLAUDE.md (User Drive paragraph, WorkerHandler task list), `src/agents/CLAUDE.md`
+roster line, `docs/07_deployment/SCHEDULERS.md` (job, queue, its concurrency), a `docs/05_building_blocks/user_drive/`
+README, `capabilities.py`, `docs/07_deployment/README.md` (indexer service), decision records for
+"drive not in `SearchEnrichmentService`", "opt-in; access loss keeps the index under a 30-day TTL", "lease + dedicated
+queue + indexer service" and "problem-content classes (§5.5)". Slice 2: file storage README §2.2 (the extractor
+port) and the Smart protocol token change with its backup reference.
+
+---
+
+## 17. Testing
+
+1. **Planner properties** over a model state with a fake executor (outcomes fixed per item and version) and a fake
+   clock; generators include renames and moves of folders, `.git` appearing late, out-of-order parents, duplicate
+   feed items, folder delete followed by a re-parented child on a later page:
+   (a) *Terminal states*: with the clock past every `due_at` and an unlimited budget, every record ends at its latest
+   version in `indexed`, `failed` or `metadata_only` with a reason consistent with the policy.
+   (b) *Convergence*: at a fixed `now`, applying the full plan leaves no record due at or before `now`.
+   (c) *Idempotence*: observing the same page twice, or with duplicate items, gives the same state; the last
+   occurrence wins.
+   (d) *Visibility*: a card is returned iff its record exists, is not itself `deleting`, carries a card, and no ancestor is `deleting`,
+   `opaque_root` or `inside_opaque`; content is returned iff, in addition, the record has a readable generation
+   (§3.4). An item whose last observation was a deletion is never returned.
+   (e) *Fence*: no chunk with a generation other than its record's `indexed_generation` is ever returned; none is left
+   at convergence; a `metadata_only` record never has readable chunks; a retry after a crashed run never makes the
+   crashed run's chunks readable.
+   Plus: a systemic error sequence never moves a record to `failed`; class-0 work is never starved by class 1–3 work;
+   after a version bump every stale record becomes due within ⌈records / page⌉ ticks and `applied_versions` changes
+   only when none is left; an access loss and regain within `ACCESS_LOSS_TTL` writes nothing but `access_lost_at` and
+   its clearing, and never starts an epoch; a user with indexing off gets no record or chunk written, whatever the task sequence; a
+   record created during `sweeping` survives the sweep; every top-level item resolves (its parent is the root); a
+   `user_chunk_cap` record is not re-extracted while headroom is below its `chunk_count`.
+2. **Policy and scope**: a hostile tree fixture with expected `(state, reason)` per path — a git repository with
+   `node_modules`, dot-files, key files, `~$` locks, a nested zip, a ZIP bomb, a DOCX bomb, a 20 MiB PDF, a scan
+   without text, an XLSX with 100k rows, a Python venv without a dot-name, an extracted repository zip without
+   `.git`, an Obsidian-style vault of 800 small Markdown notes (must stay admitted), a server log saved as `.txt`
+   (must become `machine_text`), a VTT meeting transcript, a chat export and a dated journal (must stay indexed), a
+   folder of 600 PDFs and one of 1 000 photos (must not become `dense_tree`), a folder that grows past the threshold
+   over several ticks (probed when it crosses); plus rename into a dot-name, move out of a dot-folder, `.git` after its siblings.
+3. **Adapter wire tests** on Graph responses recorded during S0a: delta pages with `nextLink` and `deltaLink`,
+   deletions without a name, moves in and out, the approot item, re-emitted unchanged items, and a delete and a restore
+   in one round. They follow `docs/how_to/ADAPTER_WIRE_TESTING.md`. The raw recordings hold names and ids, so they stay
+   in `scripts/memory/`. Slice 1 builds sanitised fixtures from them. No 410 was seen, so its fixture follows the
+   documented shape: 410 Gone with a `resyncChanges…` error code and a `Location` header.
+4. **Repository**: the fence across generations (a re-index at the same `cTag` to fewer chunks returns no old chunk; a
+   crash after N chunk writes returns only the previous generation); lease exclusion; purge; `due_records` ordering.
+5. **Tick and queue**: a fake `TaskQueue` with `ALREADY_EXISTS` and name reservation — a budget-exhausted tick enqueues
+   exactly one continuation and it runs; a nudge after the bucket's tick is not lost; queue depth stays ≤ users +
+   nudges; a duplicate delivery returns `busy`; a file that cannot finish before the deadline never starts.
+6. **Search**: pooling before RRF; one 400-chunk document does not starve other records under a filter; folder scope
+   finds a weakly named file deep in the subtree; the envelope (`disabled`, `building`, `unread`); `index_as_of`;
+   the wrapper cannot be closed by a chunk containing `</drive_document …>`; opt-out with a warm agent cache returns
+   `disabled`; disconnect returns `disconnected`, an expired grant returns results with `reconnect_needed` until
+   `access_lost_at + ACCESS_LOSS_TTL`, then `disconnected`; a regain before it continues from the cursor with no epoch;
+   a regain after it completes the purge and starts epoch 1.
+7. **Manifest**: context-field description collisions; all new `LANG_DICT` keys present in en/uk/fr/es.
+8. **Eval** (`scripts/validation/drive_search_eval.py`; reuses only the Smart dry-run scaffolding of
+   `ab_agent_models.py`): a committed, PII-free, multilingual fixture folder (RU/UK/ES/EN; names like `Scan_0012.pdf`,
+   `Договор_ред1..3.docx`; a nested folder; a repository) behind an in-memory `UserDrivePort` fake, and a gold file
+   `{query, lang, goal, expected_refs, expected_substring?}`. Metrics: G1 and G2 recall@K, a substring hit for G2, the
+   G3 search-initiated rate on positives and on a negative set (chit-chat, memory and web questions). Cases also cover
+   a draft family whose dates disagree with its version names, and memory-vs-document conflicts in both directions.
+   Name cases: exact, partial, transliterated (`dogovor` → `Договор`) and misspelled names. G2 cases include
+   table-heavy and two-column PDFs and numeric questions (amounts, invoice numbers). Expected and recorded, not a
+   surprise: recall on long documents stays below what contextual chunk headers would give.
+   **The eval is a regression guard, not a decision tool.** Every quality choice is decided in this RFC with a default;
+   the eval decides nothing about scope. It is automated over a synthetic fixture folder (no live drive, no manual
+   testing), its first run records the bars, and later chunker, card, embedding or extraction changes must not fall
+   below them. G1 queries that need OCR are labelled expected misses until Slice 4 ships.
+
+---
+
+## 18. Spikes
+
+| # | Question | Decides |
+|---|---|---|
+| S0a | Does `GET /me/drive/special/approot/delta` work under `Files.ReadWrite.AppFolder` (pagination, 410 + `Location`, folder deletion as one item or each descendant, moves into and out of the App Folder, whether the approot item appears)? Record the responses as wire fixtures. | Delta or walk adapter |
+| S0b | Is `cTag` stable across rename and move? How often do `cTag` and `lastModifiedDateTime` change during 10 minutes of editing in Word for the web? | `QUIET`, `MAX_DEFER` |
+| S0c | Does a file restored from the recycle bin keep its `item_id`? | Restore = ordinary re-observation or not |
+| S0d | How soon does the bot's own upload appear in delta, and with which `cTag`? | Nudge timing |
+| S0e | Are `photo`, `location`, `remoteItem`, `package` facets and `folder.childCount` populated in delta pages? | Key facets, density probe, policy without extra calls |
+| S0f | Do `/items/{id}/thumbnails` work for App Folder items under `Files.ReadWrite.AppFolder`, at what sizes, and for which image formats (incl. HEIC)? | Slice 4 triage, or a fallback (downscale on the indexer) |
+| S1 | On the indexer service (gen2): child-process `RLIMIT_AS`/`RLIMIT_CPU` hold for the Phase 0 bomb set; the service's peak RSS with a 45 MB download and a child at its limit; cold-start time; whether a backfill's embedding calls raise chat-side 429s on the shared quota. | Indexer memory, child limits, `EMBED_IN_FLIGHT` |
+| S3 | Cost and latency of `find_nearest` at 10k and 50k chunks under a `user_id` filter. | Per-user caps |
+
+S0a–S0e and the eval fixture come before Slice 1 code; S1 before Slice 2; S3 before Slice 2 ships; S0f before
+Slice 4.
+
+**Results (2026-10-11).** These come from `scripts/onedrive/probe_delta.py` on the owner's App Folder. The raw
+reports are in `scripts/memory/onedrive_s0_*.json`, which is gitignored because they contain PII.
+
+| # | Result | Consequence |
+|---|---|---|
+| S0a | Delta works under `Files.ReadWrite.AppFolder`. `$top` pagination gives `nextLink` pages, and the last page carries a `deltaLink`. The approot appears in every round, without a `root` facet. Deleting a non-empty folder gave a tombstone for each descendant. A move out of the App Folder is a tombstone, after which a GET by the item's id returns 404. A move in shows up as the item, with its id. Unchanged items are re-emitted often. A delete and a restore came in one round. No 410 was seen. | Delta adapter, no walk mode (§7.2). The 410 path is tested on the documented shape (§17.3). |
+| S0b | A rename or a move keeps `cTag` and changes `eTag`. In Word for the web, `cTag` moved every 1.2–3.3 min of typing and intermediate versions were skipped. | `QUIET` 10 min and `MAX_DEFER` 60 min kept (§15). |
+| S0c | `POST /items/{id}/restore` works under the App Folder scope and keeps `item_id`. | A restore is an ordinary re-observation (§7.6). |
+| S0d | The bot's own upload was in delta on the first poll (0.3 s), with the `cTag` the PUT returned. | Nudges stay as a guarantee, not a workaround for lag. |
+| S0e | A phone HEIC carries `photo` (taken time, camera), `location` and `image`. Messenger JPEGs carry `image` and an empty `photo: {}`, and video carries `video` (duration, dimensions). Audio files have no `audio` facet. `folder.childCount` is present. `quickXorHash` is always present, and SHA-1 and SHA-256 only on some files. `remoteItem` and `package` were not seen. | Camera prior on `photo.takenDateTime` or `photo.cameraMake` (§5.3), key facets (§8.5). The density probe uses `childCount`. Duplicates are collapsed on `quickXorHash`. |
+| S0f | Thumbnails work for JPEG, PNG, HEIC (as JPEG) and SVG (as PNG), at 96, 176 and 800 px. | Slice 4 triage on provider thumbnails, with no downscale on the indexer (§5.3). |
+
+---
+
+## 19. Rev 1 claims that were wrong (do not reintroduce)
+
+- `FileConversionPort.can_extract` does not exist; conversion is `src/utils/file_conversion.py`.
+- Email search is not hybrid keyword + vector with LLM key extraction; it is multi-vector kNN + RRF over one record per
+  email.
+- Firestore takes compound pre-filters with vector search (in production for email) and sets dimension per field; the
+  500-writes-per-batch limit is gone from the current quotas.
+- `sha256Hash` is "not supported, don't use" on OneDrive; only `quickXorHash` is guaranteed.
+- Shannon entropy > 7.7 does not mean "container": every DOCX/XLSX/PPTX/EPUB is a ZIP.
+- An RRF threshold of 0.025 rejects every hit found by a single stream (rank 1 → 1/61 ≈ 0.016).
+- The "Anthropic Contextual Retrieval" of rev 1 was a fixed prefix; Anthropic's technique has an LLM write per-chunk
+  context.
+- There is no Redis in the stack.
+- Check-then-write "generation fencing" without a single writer is a race; see §7.1 and §7.4.
+- A size cap on the input does not bound a parser's memory (§9).
+- Synchronous delta before each search, write-through indexing from bot mutations, a `DriveIndexingJob` state machine,
+  per-model collections and per-user subcollections, keyword routing of queries to sources, and in-turn conversion
+  ("JIT") are not part of this design.
+
+---
+
+## 20. Open questions
+
+- **OQ-1 Document content and memory.** Document content is not fed to consolidation by this RFC, but some documents
+  *are* facts about the user (a scanned receipt, a ticket), and answers derived from documents already reach
+  consolidation (§11). Whether consolidation may draw on documents, how it would tell a fact about the user from a
+  third-party text, with what provenance on facts and turns, needs its own design and a measured dry run. The memory-
+  vs-document protocol line (§10.4) is revisited with it.
+- **OQ-2 Full text on open.** Step 1 deliberately returns a file's full converted text to Smart (file storage README
+  §2.2; truncation removed in `2ee8cb3`). With a growing drive, opening a 300-page document puts all of it in context.
+  Options: keep as is; a cap with an alert; range reads from stored chunks (§14).
+- **OQ-3 Caps.** Initial values in §15 are reasoned, not measured; S3 and the first real folders set them.
+
+---
+
+## 21. Owner decisions on the open points (2026-10-11)
+
+- **D1 Problem content and images — decided with rationale in §5.5 and §5.3.** Rev 1's harm-based classes are kept as
+  the frame; safety rests on bounds that need no classification (layer 0), classification only buys quality and cost
+  (layer 1). Adopted: markers + density over content class (decided once from a probe), magic bytes, a
+  post-extraction text-quality gate measured after timestamps, zero yield and text density, the quiet period, and
+  batched thumbnail triage on every image with the camera facet as a prior. Rejected:
+  timestamp clustering, entropy, name and folder conventions, head/summary/tail sampling.
+- **D2 Prompt injection — decided: no extra confirmation.** Every delivery of file text carries the
+  reference-material reminder inside an escaped, nonce-tagged wrapper (§10.4); deletes remain recoverable from the
+  recycle bin and post a receipt.
+- **D3 Access loss — decided: no immediate purge; a 30-day grace period** after a disconnect or an expired/revoked
+  grant, after which the tick purges; reconnecting the same drive in time resumes (§6, §7.6). Rev 3.10 replaced the
+  Firestore-TTL stamping with this tick-side rule — same behaviour for the user, far less machinery. Opt-out still purges at
+  once; a different drive purges at once. Basis: tokens drop often, disconnects can be accidental, and re-indexing is
+  slow in practice (Gmail indexing experience), even though its embedding cost is small.
+- **D4 Answers derived from documents reach memory as today — decided: accepted** as a trade-off, to be refined later
+  in the consolidator's prompt (OQ-1).
+- **D5 Extraction host — decided: a separate indexer service** running the whole tick (§9).
+
+---
+
+## 22. Where to continue (handoff, 2026-10-11)
+
+The design is closed at revision 3.11, and owner decisions D1–D5 are taken (§21). Spikes S0a–S0f are done and recorded
+in §18: delta works, so walk mode is not built. Phase 0 (PR #57) is merged. Open questions OQ-1..3 (§20) do not block
+Slice 1.
+
+1. **Implementation plan for Slice 1** (§16), written from this RFC. It is then executed subagent-driven, and a
+   reviewer owns any test edit (CLAUDE.md test rule). The plan's first adapter task builds the sanitised wire fixtures
+   of §17.3 from the S0a recordings in `scripts/memory/`.
+2. The eval fixture (§17.8) comes before Slice 1 code (§18).
+3. S1 (indexer limits) before Slice 2, S3 (`find_nearest` cost) before Slice 2 ships.
