@@ -17,43 +17,89 @@ Nobody answers questions until morning. These rules override anything below that
 
 **Scope: Tasks 0–46.** **Stop before Task 47** (deploy and live acceptance), which runs with the owner.
 
-**Setup:** Python 3.13. `python3 -m venv venv && venv/bin/pip install -r requirements.txt`, then `make check` must
-be green **before Task 0** (record the baseline count in the run log). No `.env` exists and none is needed: every test
-is offline.
+**Setup:** Python 3.13. `python3 -m venv venv && venv/bin/pip install -r requirements.txt` (or reuse an existing
+`venv/`), then `make check` must be green **before Task 0**. Record the baseline count in the run log. The unit
+suite is offline by design; do not make a test depend on `.env`, network or credentials.
 
-**Execution:** `superpowers:subagent-driven-development`: one implementer subagent per task, then a reviewer
-subagent per task. Implement each task exactly as written: code blocks are verified code, not suggestions. Commit
-per task with the task's own message, **ending with the attribution line** used in this repo's recent commits.
-`make check` must be green after every task. Push the branch after every few tasks (`git push -u origin
-feat/drive-indexing-slice1`), so progress survives the session.
+### What you may and may not do
 
-**Tests (CLAUDE.md, non-negotiable):** the implementer never edits an existing test.
-- Edits the plan marks **reviewer-approved** are applied as written.
-- Any other existing test that fails: stop that task, hand it to the reviewer subagent, and log the decision.
-- Never skip, weaken or delete a test to make code pass.
+- **Allowed:** network, package installs, reading GCP state (logs, `gcloud ... describe/list`), reading `.env` if your
+  environment has one.
+- **Not allowed: anything that deploys or changes shared infrastructure or live data.** That means no `make deploy`,
+  no `gcloud run deploy`/`services update`, no Cloud Build submits, no `make deploy-indexes`, no vector-index
+  creation, no queue or scheduler create/update, and no writes to live Firestore, OneDrive/Graph or Slack/Telegram.
+  The provisioning tasks (Part D, the index tasks of Part C) **edit files only**. Task 47 runs them with the owner.
+- **Optional, if a Gemini key is available:** after Task 41 (the eval runner), run the eval once with real embeddings
+  **into a scratch path**, e.g. `venv/bin/python -m scripts.validation.drive_eval --record --bars /tmp/bars.json
+  --report /tmp/report.json`. Copy the recall table and the misses into the run log. **Do not commit bars**: recording
+  the bars is the owner's review step in Task 47.
+- No PR, no merge, never touch `main`.
 
-**Things that cannot run here, and what to do instead:**
-- **Task 4 Step 6:** `src/assets/geo/places_v1.tsv` is **already committed**. Write the script and the README only; do
-  not run the script (it downloads from GeoNames).
-- **Part B, sanitized wire fixtures:** `tests/fixtures/onedrive_delta/*.json` are **already committed**, generated on
-  the owner's machine from the raw S0a reports, which hold PII and never leave it. Write the sanitizer script and its
-  tests as the plan shows, **do not run it**, and do not regenerate or edit the fixtures. If the plan's step asks you
-  to run it against `scripts/memory`, skip that command and note it in the run log.
-- **Never:** `gcloud`, `make deploy`, `make deploy-indexes`, `bq`, Cloud Build, curl to any live service, real
-  Graph/Gemini/Firestore calls, reading or creating `.env` values. Provisioning tasks edit files only.
-- No PR. Do not merge. Do not touch `main`.
+### Two inputs were built on the owner's machine; do not rebuild them
 
-**When stuck:** if a task cannot be completed as written (a failing test the reviewer cannot resolve, a missing name,
-a plan error):
+- **`src/assets/geo/places_v1.tsv`** (Task 4) is committed and was checked by hand (Rome, Porto, Paris, New York,
+  villages). Write the builder script and the README as the plan shows. Do not rerun the script: a rebuild would change
+  the asset that the checks were made on.
+- **`tests/fixtures/onedrive_delta/*.json`** (Part B, sanitized wire fixtures) are committed. They were generated from
+  raw S0a reports that contain the owner's PII and exist only on the owner's machine, so they are not available here.
+  Write the sanitizer script and its tests as the plan shows, but do not run the script against `scripts/memory`, and
+  do not regenerate or edit the fixtures. Log the skipped command.
+
+### How to execute: subagent-driven development
+
+Each task is done by a fresh **implementer** subagent, checked by a fresh **reviewer** subagent, and accepted by you,
+the coordinator. Use the Agent/Task tool. Work **sequentially**: tasks build on each other's interfaces, so never run
+two implementers at once on this branch. You hold the overview; subagents get exactly what they need.
+
+1. **Prepare the task.** Copy the task's full text from this plan: Files, Interfaces, every step with its code. Add
+   "Global Constraints" and the "Deltas" table from the top of this plan. Name the files they may read for context
+   (CLAUDE.md, the files the task modifies). Do not hand them the whole 17k-line plan.
+2. **Implementer subagent.** Prompt it to follow the steps in order (TDD: write the test, see it fail, implement, see
+   it pass) and to use the plan's code verbatim. It runs the step commands and `make check` before committing with the
+   task's commit message plus the repo's attribution line. It must not edit any existing test unless the plan marks
+   that edit **reviewer-approved**. It reports back:
+   - the files changed and the commit hash;
+   - the test results, as actual output and counts;
+   - every deviation from the plan, with the reason;
+   - any existing test that failed: the name, assertion, expected and actual.
+3. **Reviewer subagent**, which must not be the implementer. Give it the task text, the constraints and the commit
+   hash (`git show <hash>`). It checks, in order:
+   - **spec compliance:** everything the task asks is there, nothing extra, and the code matches the plan's blocks;
+   - **project rules:** CLAUDE.md layering and imports, no secrets, logger only, no `assert` in `src/`;
+   - **tests:** they ran, they can fail, and no existing test was weakened.
+
+   It answers APPROVED or a numbered list of required fixes. **Existing tests:** if a test the plan does not mark
+   reviewer-approved fails, the reviewer decides. Either the test encodes behaviour the RFC intentionally changes, and
+   the reviewer edits it and justifies that one edit, or the code is wrong and the implementer fixes it.
+4. **Loop:** fixes go back to the implementer (a new subagent, given the review), then to a fresh review, until
+   APPROVED. Stop after 3 rounds and treat the task as blocked.
+5. **Accept:**
+   - verify `make check` yourself;
+   - append the task's entry to the run log;
+   - push every 3–4 tasks (`git push -u origin feat/drive-indexing-slice1`).
+6. **After Task 46:** one final reviewer subagent over the whole branch (`git diff main...HEAD`). It looks for
+   cross-task inconsistencies, leftovers and rule violations. Fix what it finds the same way, then push.
+
+If your environment has no subagent tool, do the same yourself in two clearly separated passes per task: implement,
+then review against the checklist in step 3, as if someone else had written the code. The test rule still holds:
+never edit an existing test to make your own code pass. Log such cases as blocked for the morning.
+
+### When stuck
+
+If a task cannot be completed as written (a failing test the reviewer cannot resolve, a missing name, a plan error):
 - revert that task's uncommitted changes;
-- write it up in the run log (below);
+- write it up in the run log;
 - continue with the next task that does not depend on it;
-- never improvise a design change. A small, mechanical fix needed to make the plan's own code compile (an import,
-  a typo) is allowed; log it.
+- never improvise a design change. A small mechanical fix that the plan's own code needs to compile (an import, a
+  typo) is allowed: log it.
 
-**Run log:** `docs/superpowers/plans/2026-10-12-user-drive-indexing-slice1.run-log.md`, committed with each push (`docs/superpowers/` is gitignored: use `git add -f`).
-Per task: status (done / skipped / blocked), commit hash, `make check` count, deviations, reviewer decisions. At the
-end: what remains for Task 47 and anything the owner must decide.
+### Run log
+
+`docs/superpowers/plans/2026-10-12-user-drive-indexing-slice1.run-log.md`, committed with each push. `docs/superpowers/`
+is gitignored, so use `git add -f`.
+- **Per task:** status (done / skipped / blocked), commit hash, `make check` count, deviations, reviewer decisions
+  (especially on existing tests).
+- **At the end:** what remains for Task 47, the eval result if you ran it, and anything the owner must decide.
 
 ---
 
