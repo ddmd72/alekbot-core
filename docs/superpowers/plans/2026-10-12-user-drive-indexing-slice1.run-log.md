@@ -12,5 +12,3 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 
 ## Tasks
 
-| Task | Status | Commit | `make check` | Notes |
-|---|---|---|---|---|
