@@ -71,9 +71,9 @@ class TestAttemptsResetAfterASuccessfulStep:
         assert probes.count("big") == MAX_ATTEMPTS
 
 
-class TestParentLookupExhaustionParks:
+class TestParentLookupExhaustionKeepsTheSubtree:
 
-    async def test_transient_lookup_failures_park_the_record_instead_of_deleting_its_subtree(self):
+    async def test_transient_lookup_failures_keep_retrying_instead_of_deleting_the_subtree(self):
         w = await _onboarded()
         await _seed_unresolved(w, "orphan", "Projects", "far")
         await _seed_unresolved(w, "kid", "plan.pdf", "orphan", folder=False, due=False)
@@ -85,10 +85,10 @@ class TestParentLookupExhaustionParks:
 
         w.drive.get_change = failing_get
         await _ticks(w, MAX_ATTEMPTS + 3)
-        assert lookups == ["far"] * MAX_ATTEMPTS
+        assert lookups == ["far"] * (MAX_ATTEMPTS + 3)   # past MAX_ATTEMPTS: one lookup per RETRY_CAP
         orphan = w.rec("orphan")
-        assert orphan is not None and orphan.state is RecordState.UNRESOLVED and orphan.due_at is None
-        assert orphan.attempts == 0
+        assert orphan is not None and orphan.state is RecordState.UNRESOLVED
+        assert orphan.priority == int(Priority.RETRY) and orphan.due_at == w.clock.now   # due again: never parked
         assert w.rec("kid") is not None
 
     async def test_a_definite_not_found_still_removes_the_orphan_subtree(self):
