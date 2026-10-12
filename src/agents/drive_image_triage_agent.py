@@ -5,10 +5,11 @@ DriveImageTriageAgent — sorts a batch of thumbnails into text to read and phot
 Public interface:
     AGENT_TYPE = "drive_triage"
     TriageInput(index, data, mime_type, camera_prior)
-    TriageReply(verdicts: Mapping[int, (TriageVerdict, caption)], cost)
+    TriageReply(verdicts: Mapping[int, (TriageVerdict, caption)], cost, calls)
     DriveImageTriageAgent(config, execution_context, prompt_builder, thinking=None)
         .classify(images, account_id=) -> TriageReply
-            raises DriveModelCallFailed (this batch) or DriveModelUnavailable (the model, now)
+            raises DriveModelCallFailed (this batch) or DriveModelUnavailable (the model, now), each carrying the
+            calls made and their cost (`model_calls`, `model_cost`, from the ledger)
 
 Each thumbnail goes with an opaque index (never the item id) and the camera prior as text. The answer is mapped back
 by index: an unknown index is ignored, a repeated one keeps its first answer, and a batch with indexes missing gets
@@ -32,7 +33,9 @@ from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, Message
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from .base_agent import BaseAgent
-from ..infrastructure.drive_model_call import DriveModelCallFailed, build_drive_prompt, classify_model_error
+from ..infrastructure.drive_model_call import (
+    CallCounter, DriveModelCallFailed, build_drive_prompt, classify_model_error, with_usage,
+)
 
 AGENT_TYPE = "drive_triage"
 MAX_CAPTION_WORDS = 10
@@ -76,6 +79,7 @@ class TriageInput:
 class TriageReply:
     verdicts: Mapping[int, Tuple[TriageVerdict, str]] = field(default_factory=dict)
     cost: float = 0.0                 # USD, already billed to the account
+    calls: int = 0                    # LLM calls made, the correction turn included
 
 
 class DriveImageTriageAgent(BaseAgent):
@@ -102,21 +106,23 @@ class DriveImageTriageAgent(BaseAgent):
         """One call (plus at most one correction turn), billed to `account_id` as one execution (§24.9)."""
         if not images:
             return TriageReply()
+        counter = CallCounter()
         with self._execution_billing_scope(account_id) as ledger:
             try:
-                verdicts = await self._classify(images)
+                verdicts = await self._classify(images, counter)
             except Exception as exc:
-                mapped = classify_model_error(exc, AGENT_TYPE)
+                mapped = with_usage(classify_model_error(exc, AGENT_TYPE), counter, ledger.cost())
                 if mapped is exc:
                     raise
                 raise mapped from exc
             finally:
                 await self._flush_billing()
-            return TriageReply(verdicts=verdicts, cost=ledger.cost())
+            return TriageReply(verdicts=verdicts, cost=ledger.cost(), calls=counter.calls)
 
     # -- implementation -----------------------------------------------------------------------------------------
 
-    async def _classify(self, images: Sequence[TriageInput]) -> Dict[int, Tuple[TriageVerdict, str]]:
+    async def _classify(self, images: Sequence[TriageInput],
+                        counter: CallCounter) -> Dict[int, Tuple[TriageVerdict, str]]:
         async with self._system_lock:
             if self._system is None:
                 self._system = await build_drive_prompt(self._prompt_builder, AGENT_TYPE)
@@ -131,6 +137,7 @@ class DriveImageTriageAgent(BaseAgent):
         wanted = [image.index for image in images]
         verdicts: Dict[int, Tuple[TriageVerdict, str]] = {}
         for attempt in range(DRIVE_TRIAGE.max_parse_retries + 1):
+            counter.calls += 1
             response = await self._call_llm(LLMRequest(
                 model_name=self._model_name,
                 system_instruction=self._system,

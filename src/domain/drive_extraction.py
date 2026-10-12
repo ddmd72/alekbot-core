@@ -80,7 +80,17 @@ class PdfSplitFailed(Exception):
 
 class DriveModelUnavailable(Exception):
     """The reader or the triage model cannot be used now (429, 5xx, timeout, a missing prompt): a model outage,
-    handled by deferring model work only (§24.8)."""
+    handled by deferring model work only (§24.8). It carries what the file or batch spent before the outage — the
+    pages (reader) or images (triage) the model answered, the calls made and their cost, already billed — so the
+    tick counts them against the month and the summary before it records the outage (§24.7, §24.9)."""
+
+    def __init__(self, message: str = "", *, pages_sent: int = 0, images_sent: int = 0, model_calls: int = 0,
+                 model_cost: float = 0.0) -> None:
+        super().__init__(message)
+        self.pages_sent = pages_sent
+        self.images_sent = images_sent
+        self.model_calls = model_calls
+        self.model_cost = model_cost
 
 
 @dataclass(frozen=True)

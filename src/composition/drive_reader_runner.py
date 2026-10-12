@@ -168,9 +168,10 @@ class DriveReaderRunner(ContentExtractorPort):
             reply = await agent.read(data=data, mime_type=mime, file_name="image", first_window=True,
                                      account_id=request.account_id)
         except DriveModelCallFailed as exc:
-            return ExtractionOutcome(status=S.ERROR, pages_total=1, pages_sent=1, model_calls=1, detail=str(exc))
+            return ExtractionOutcome(status=S.ERROR, pages_total=1, model_calls=exc.model_calls,
+                                     model_cost=exc.model_cost, detail=str(exc))
         return self._outcome(reply.text, reply.brief, pages_total=1, pages_sent=1, truncated=reply.output_limited,
-                             calls=1, cost=reply.cost, timed_out=False, detail="image")
+                             calls=reply.calls, cost=reply.cost, timed_out=False, detail="image")
 
     # -- pdf ----------------------------------------------------------------------------------------------------
 
@@ -202,7 +203,9 @@ class DriveReaderRunner(ContentExtractorPort):
         failures = [t.exception() for t in done if not t.cancelled() and t.exception() is not None]
         unavailable = next((e for e in failures if isinstance(e, DriveModelUnavailable)), None)
         if unavailable is not None:
-            raise unavailable
+            # what the windows answered before the outage is spent and billed: the tick counts it (§24.7, §24.9)
+            raise DriveModelUnavailable(str(unavailable), pages_sent=run.total("pages_sent"),
+                                        model_calls=run.total("calls"), model_cost=run.total("cost")) from unavailable
         if failures:
             first = failures[0]
             status, detail = S.ERROR, str(first)
@@ -269,12 +272,20 @@ class DriveReaderRunner(ContentExtractorPort):
 
     async def _call(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, work: str, index: int,
                     win: _WindowRun, first_page: int, pages: int, first: bool) -> ReaderReply:
+        """One call on pages [first_page, first_page + pages). Pages count once the model answered (§24.7); calls and
+        cost as the agent's ledger reports them, also for a call that failed."""
         data = await self._cut(request, work, first_page, pages)
-        win.calls += 1
-        win.pages_sent += pages
-        reply = await agent.read(data=data, mime_type="application/pdf", file_name=f"window-{index + 1:03d}.pdf",
-                                 first_window=first, account_id=request.account_id)
+        try:
+            reply = await agent.read(data=data, mime_type="application/pdf",
+                                     file_name=f"window-{index + 1:03d}.pdf", first_window=first,
+                                     account_id=request.account_id)
+        except (DriveModelCallFailed, DriveModelUnavailable) as exc:
+            win.calls += exc.model_calls
+            win.cost += exc.model_cost
+            raise
+        win.calls += reply.calls
         win.cost += reply.cost
+        win.pages_sent += pages
         return reply
 
     @staticmethod
