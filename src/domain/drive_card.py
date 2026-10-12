@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Mapping, Optional, Tuple
 
 from .drive_index import CARD_VERSION, DriveChange, DriveIndexRecord, Reason, RecordState, Scope
-from .drive_index_policy import searchable
+from .drive_index_policy import is_generated_dir, searchable
 
 _KIND_LABEL = {
     "pdf": "PDF document", "docx": "Word document", "doc": "Word document", "pptx": "presentation",
@@ -82,11 +82,27 @@ def _key_facets(rec: DriveIndexRecord) -> List[str]:
     return out
 
 
+# A dense folder's count in buckets: its card text, and so its embedding, holds while children come and go.
+_COUNT_BUCKETS = (100_000, 50_000, 10_000, 5_000, 1_000, 500, 100)
+
+
+def _count_bucket(count: int) -> Optional[str]:
+    return next((f"{b}+" for b in _COUNT_BUCKETS if count >= b), None)
+
+
+def _opaque_label(rec: DriveIndexRecord) -> str:
+    if rec.reason is Reason.DOT_NAME:
+        return "hidden folder"
+    if rec.reason is Reason.DENSE_TREE:
+        bucket = _count_bucket(rec.child_count)
+        return f"generated files ({bucket} items)" if bucket else "generated files"
+    return "generated files" if is_generated_dir(rec.name) else "repository"
+
+
 def card_text(rec: DriveIndexRecord) -> str:
     if rec.is_folder:
         if rec.scope is Scope.OPAQUE_ROOT:
-            label = {Reason.DOT_NAME: "hidden folder", Reason.DENSE_TREE: f"generated files ({rec.child_count} items)"}
-            return f"{rec.name} | {label.get(rec.reason, 'repository') if rec.reason else 'repository'}"
+            return f"{rec.name} | {_opaque_label(rec)}"
         return f"{rec.name} | folder"
     return " | ".join([rec.name, _KIND_LABEL.get(rec.kind, "file"), *_key_facets(rec)])
 
