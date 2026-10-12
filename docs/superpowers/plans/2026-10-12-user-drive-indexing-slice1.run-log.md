@@ -639,3 +639,8 @@ scratch path (nothing recorded or committed): index settled in 1 tick, 2 481 car
 - Task 45 `04a48f9` committed (review running); its implementer also applied the review notes to `SCHEDULERS.md`.
   Gaps outside its scope noted: `.env.example` lacks an `INDEXER_URL_DEV` placeholder; `SCHEDULERS.md` line 9 says a
   scheduler call "never runs an agent" (the drive fan-out can run the formatter for a reconnect notice).
+- **Task 44 — done:** `86a097b` + `5b2b3c0`; round 2 APPROVED (every changed statement verified). One MINOR left for
+  the final cleanup: the README's "empty `indexing.counters` = purged" signal is wrong for an index that never
+  finished a round (counters are `{}` until a round settles) → use the `index purged` log line only. Also: the module
+  docstring of `firestore_drive_index_repo.py` (lines 23–25) omits that `delete_sync_state` removes the lease.
+- Task 46 `c9c0098` committed (review running).
