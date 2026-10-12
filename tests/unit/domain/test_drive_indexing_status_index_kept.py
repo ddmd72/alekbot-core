@@ -27,3 +27,8 @@ def test_no_records_means_nothing_is_kept():
     """After the purge the sync state is gone: no access_lost_at, no counters, and no index to keep."""
     assert DriveIndexingStatus(enabled=True, counters={}).index_kept(NOW) is False
     assert DriveIndexingStatus(enabled=True, counters={"carded": 0}).index_kept(NOW) is False
+
+
+def test_a_purge_in_progress_keeps_nothing():
+    """Matches the search gate (§10.1 step 0): once a purge has started the index is being deleted."""
+    assert DriveIndexingStatus(enabled=True, counters=_INDEX, purging=True).index_kept(NOW) is False
