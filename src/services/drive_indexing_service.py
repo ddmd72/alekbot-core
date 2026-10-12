@@ -28,7 +28,7 @@ from ..domain.drive_index import (
 from ..domain.drive_index_params import (
     CASCADE_OPS_PER_TICK, EMBED_IN_FLIGHT, ITEM_CALLS_PER_TICK, LEASE_MARGIN, MAINTENANCE_SHARE,
     MAX_ATTEMPTS, MAX_CARD_RECORDS_PER_USER, NUDGE_RETRY_DELAY_S, PROBE_CHILDREN, RECORD_WRITE_BATCH,
-    RELIST_PAGE, SYSTEMIC_BACKOFF_BASE_S, SYSTEMIC_BACKOFF_CAP_S, TICK_DEADLINE_S, TICK_START_BUDGET,
+    RELIST_PAGE, RETRY_CAP, SYSTEMIC_BACKOFF_BASE_S, SYSTEMIC_BACKOFF_CAP_S, TICK_DEADLINE_S, TICK_START_BUDGET,
 )
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, capped, card_refused, change_from_record,
@@ -533,11 +533,12 @@ class DriveIndexingService:
             parent_change = DriveChange(item_id=rec.parent_id, deleted=True)   # definite: the parent is gone
         except _PER_ITEM_ERRORS as exc:
             if rec.attempts + 1 >= MAX_ATTEMPTS:
-                # Transient failures prove nothing about the parent: the record is parked (unresolved, not due),
-                # never deleted with its subtree. The next full enumeration resolves it or sweeps it (§7.5).
+                # Transient failures prove nothing about the parent, so the record is never deleted on them; in delta
+                # mode no later enumeration would settle it either, so it keeps retrying at the backoff cap.
                 logger.warning(f"[DriveIndex] parent lookup failed {MAX_ATTEMPTS} times for {user_id[:8]}: {exc}; "
-                               f"record parked until the next full enumeration")
-                await self._commit(user_id, [replace(rec, attempts=0, due_at=None, priority=None)], set())
+                               f"retrying in {RETRY_CAP}")
+                await self._commit(user_id, [replace(rec, attempts=MAX_ATTEMPTS, due_at=ctx.now + RETRY_CAP,
+                                                     priority=int(Priority.RETRY))], set())
             else:
                 logger.warning(f"[DriveIndex] parent lookup failed for {user_id[:8]}: {exc}; backing off")
                 await self._commit(user_id, [with_retry(rec, ctx.now)], set())
