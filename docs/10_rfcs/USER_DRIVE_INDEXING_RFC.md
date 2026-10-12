@@ -1465,10 +1465,15 @@ this section wins; the text above was corrected where it was plainly false. Slic
   `content.xml` read with `defusedxml`; VTT/SRT normalised to cue text; page count and page windows for PDFs (`pypdf`).
   New direct dependencies: `pypdf`, `striprtf`, `defusedxml`, `charset-normalizer`.
 - **Page windows.** One call cannot transcribe 200 pages, and a Haiku 5.5 prompt above 100k tokens costs five times
-  as much on input and output. The child process cuts a routed PDF into windows of `MODEL_PAGES_PER_CALL` pages
-  (written as temp PDFs, never parsed by the indexer process); the windows run with at most `MODEL_IN_FLIGHT`
-  concurrent calls and their texts are joined in page order. A window answered at the output limit is split in half
-  and retried once; a single page that still hits it keeps its text and sets `truncated`. When the file's model time
+  as much on input and output. The child process counts a routed PDF's pages, then cuts one window of
+  `MODEL_PAGES_PER_CALL` pages at a time, on demand (a temp PDF the indexer process never parses, read into memory
+  and removed before the call), so at most `MODEL_IN_FLIGHT` windows exist on disk even when every page shares one
+  large image; the windows run with at most `MODEL_IN_FLIGHT` concurrent calls and their texts are joined in page
+  order. A window answered at the output limit, or whose call timed out, is split in half (cut from the source) and
+  retried once; a half or a single page still at the limit adds no text and sets `truncated`, and one that times out
+  again is a model outage. A window the provider refuses as too large (HTTP 413) is halved down to one page; a single
+  page still too large fails the file (`error`). An outage carries what the file spent before it (pages answered,
+  calls, cost), and the tick counts that before it records the outage. When the file's model time
   reaches `MODEL_FILE_BUDGET`, the windows done so far are indexed and the record is `truncated` — no file restarts
   forever. Pages past `MODEL_EXTRACT_MAX_PAGES` are not sent (`truncated`).
 - **Tick deadline (§7.1):** a file that may be routed starts only if
@@ -1499,8 +1504,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
   The verdict, `triage_version` and the caption are stored.
 - The reader gets an information-bearing image as the provider's large rendition (Graph custom size, JPEG; HEIC is
   never decoded by us). **Spike S0g** confirms custom rendition sizes under `Files.ReadWrite.AppFolder` and picks the
-  size that keeps receipt text legible; if it fails, the original is sent for JPEG/PNG/WebP/GIF within the 5 MiB
-  vision cap, and other formats stay `metadata_only / no_text`.
+  size that keeps receipt text legible; if it fails, the original is sent for JPEG/PNG/WebP/GIF within the vision
+  cap (3.75 MiB raw: 5 MiB once base64-encoded, Anthropic's per-image limit; to be confirmed in the live model check),
+  and other formats stay `metadata_only / no_text`.
 - Done-when of §16 Slice 4 holds: 100 holiday photos cost ⌈100 / `TRIAGE_BATCH`⌉ triage calls and no reader call.
 
 ### 24.6 Chunks and the content streams
