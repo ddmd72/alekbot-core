@@ -51,6 +51,13 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
             self.states[state.user_id] = replace(state, stale_alerted=flags[0], reconnect_notified=flags[1],
                                                  lease_owner=lease[0], lease_until=lease[1])
 
+    async def create_sync_state_if_absent(self, state: DriveSyncState) -> bool:
+        async with self._lock:
+            if state.user_id in self.states:
+                return False
+            self.states[state.user_id] = state
+            return True
+
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
                                 reconnect_notified: Optional[bool] = None) -> None:
         current = self.states.get(user_id)

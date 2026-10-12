@@ -18,6 +18,7 @@ Writes:
     - A record write is `set(doc, merge=[every record field])`: each listed top-level field is replaced whole (a
       nested map such as `facets` loses stale keys), and the fields not listed — `card_vector` and its mirror — are
       kept. A given vector adds both to the merge list; a record with has_card=False lists them with DELETE_FIELD.
+    - `create_sync_state_if_absent` is a document `create()`: AlreadyExists means a state is there, nothing written.
     - `save_sync_state` merges every state field except `stale_alerted` and `reconnect_notified`; only
       `update_sync_flags` writes those two, with `update`, so a missing state stays missing.
     - `save_sync_state` never writes `lease_owner`/`lease_until` either: the lease is taken and released in
@@ -40,7 +41,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import AlreadyExists, NotFound
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
@@ -187,6 +188,13 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
             transaction.set(ref, data, merge=list(STATE_FIELDS))
 
         await _save(self._db.transaction())
+
+    async def create_sync_state_if_absent(self, state: DriveSyncState) -> bool:
+        try:
+            await self._states.document(state.user_id).create(state_to_doc(state))
+        except AlreadyExists:
+            return False
+        return True
 
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
                                 reconnect_notified: Optional[bool] = None) -> None:

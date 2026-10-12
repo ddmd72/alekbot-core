@@ -6,7 +6,9 @@ Every TICK_INTERVAL Cloud Scheduler calls it once. It enqueues one `drive_sync` 
 indexing on, or with a stored sync state (so an orphaned index always gets purged), and skips a user
 whose continuation is already queued. It also runs the two checks that must work while the drive
 queue is stuck: the staleness alert (§12.1) and the one reconnect notice per lost grant (§7.7, Δ6).
-It writes nothing but the two fan-out flags, through `update_sync_flags`.
+It writes the two fan-out flags, through `update_sync_flags`, and a minimal sync state for an enabled
+user who has none (`create_sync_state_if_absent`): its `created_at` is the staleness baseline, so a user
+whose ticks never land is alerted too (§12.1). The tick onboards from it as from no state at all.
 
 Two passes: every user's tick is enqueued first, then the checks run. A notice goes through the
 formatter agent (up to its 120 s SLA), so running checks first would let one slow notice delay every
@@ -121,6 +123,10 @@ class DriveSyncSchedulerService:
                                                   deadline_seconds=TICK_DEADLINE_S,
                                                   dedup_key=tick_key(user_id, now))
             summary["enqueued"] += 1
+        if enabled and state is None:   # after the enqueue: a failed create never costs the user a tick
+            minimal = DriveSyncState(user_id=user_id, created_at=now)
+            state = minimal if await self._repo.create_sync_state_if_absent(minimal) \
+                else await self._repo.get_sync_state(user_id)
         return (user_id, profile, state) if enabled and state is not None else None
 
     async def _staleness(self, user_id: str, state: DriveSyncState, now: datetime) -> int:

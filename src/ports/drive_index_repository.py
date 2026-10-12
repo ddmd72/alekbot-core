@@ -33,6 +33,11 @@ class DriveIndexRepository(ABC):
         """Write the whole state except the fan-out flags and the lease, fenced by `owner` (LeaseLost)."""
 
     @abstractmethod
+    async def create_sync_state_if_absent(self, state: DriveSyncState) -> bool:
+        """Store `state` only if the user has none (an atomic create); True when it was written. The fan-out's minimal
+        state, so staleness covers a user whose ticks never land (§12.1)."""
+
+    @abstractmethod
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
                                 reconnect_notified: Optional[bool] = None) -> None:
         """Field-level update of the fan-out's flags; a missing state is left missing."""
