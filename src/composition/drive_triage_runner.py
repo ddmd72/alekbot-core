@@ -11,7 +11,8 @@ bills to `account_id` (the CompanionExtractorRunner pattern; no prompt-content s
 opaque index 1..n. One result per image given, always, with the calls made and their cost (§24.9):
 - a batch the provider refuses (HTTP 400) is halved until the refused image is alone; that image, an image the
   model left unanswered after its correction turn, and a rendition no provider takes are photographs without a
-  caption — the same deterministic answer as an image without a rendition (§24.5);
+  caption — the same deterministic answer as an image without a rendition (§24.5); so is a thumbnail over the
+  vision cap (MAX_VISION_IMAGE_BYTES), which is never sent;
 - an outage (429, 5xx, timeout, a missing prompt) raises DriveModelUnavailable for the whole batch (§24.8),
   carrying the images already answered, the calls made and their cost, for the tick to count (§24.7, §24.9).
 """
@@ -23,7 +24,7 @@ from ..agents.drive_image_triage_agent import AGENT_TYPE, DriveImageTriageAgent,
 from ..infrastructure.drive_model_call import DriveModelCallFailed
 from ..domain.agent import AgentConfig
 from ..domain.drive_extraction import DriveModelUnavailable, TriageBatchOutcome, TriageImage, TriageResult
-from ..domain.drive_image_mime import VISION_MIME_TYPES, image_mime
+from ..domain.drive_image_mime import MAX_VISION_IMAGE_BYTES, VISION_MIME_TYPES, image_mime
 from ..domain.drive_index import TriageVerdict
 from ..ports.image_triage_port import ImageTriagePort
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -50,7 +51,7 @@ class DriveTriageRunner(ImageTriagePort):
         for index, image in enumerate(images, start=1):
             # Magic bytes first: a rendition is JPEG or PNG whatever the declared type (S0f).
             mime = image_mime(image.thumbnail[:16]) or image.mime_type
-            if mime in VISION_MIME_TYPES:
+            if mime in VISION_MIME_TYPES and len(image.thumbnail) <= MAX_VISION_IMAGE_BYTES:
                 inputs.append(TriageInput(index=index, data=image.thumbnail, mime_type=mime,
                                           camera_prior=image.camera_prior))
         stats: Dict[str, Any] = {"calls": 0, "cost": 0.0, "refused": 0, "images": 0}

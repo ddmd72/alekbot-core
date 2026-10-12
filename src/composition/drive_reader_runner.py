@@ -46,7 +46,7 @@ from ..domain.agent import AgentConfig
 from ..domain.drive_extraction import (
     READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed,
 )
-from ..domain.drive_image_mime import VISION_MIME_TYPES, image_mime
+from ..domain.drive_image_mime import MAX_VISION_IMAGE_BYTES, VISION_MIME_TYPES, image_mime
 from ..domain.drive_index import DocumentBrief
 from ..domain.drive_index_params import (
     MODEL_EXTRACT_MAX_PAGES, MODEL_FILE_BUDGET_S, MODEL_IN_FLIGHT, MODEL_PAGES_PER_CALL,
@@ -58,8 +58,8 @@ from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
 READER_VERSION = 1
-# The vision input cap of both reader providers (USER_DRIVE_RFC §4.6); a bigger image is not sent.
-MAX_IMAGE_BYTES = 5 * 1024 * 1024
+# The vision input cap of both reader providers, base64-safe (drive_image_mime); a bigger image is not sent.
+MAX_IMAGE_BYTES = MAX_VISION_IMAGE_BYTES
 
 S = ExtractionStatus
 

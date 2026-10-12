@@ -9,6 +9,11 @@ reader and triage takes are named; anything else is "".
 from __future__ import annotations
 
 VISION_MIME_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
+# The largest image (raw bytes) the reader or triage sends: inline images travel base64-encoded, and 3.75 MiB encodes
+# to exactly 5 MiB, Anthropic's per-image limit as its errors state it ("exceeds 5 MB maximum: N bytes > 5242880
+# bytes", measured on the base64 data). OpenAI's limit is higher. The owner's live model check confirms the rule
+# (scripts/validation/drive_model_check.py: an image at the cap, read by each provider).
+MAX_VISION_IMAGE_BYTES = 3 * 1024 * 1024 + 768 * 1024
 
 
 def image_mime(head: bytes) -> str:
