@@ -39,16 +39,16 @@ _DOCUMENT_KINDS: FrozenSet[str] = frozenset({
 })
 _MEDIA_KINDS: FrozenSet[str] = frozenset({"image", "audio", "video"})
 
-ADMITTED_KINDS: FrozenSet[str] = frozenset()   # Slice 2 admits the §5.1 document kinds (policy_version bump)
-TRIAGED_KINDS: FrozenSet[str] = frozenset()    # Slice 4: every image enters triage first (§5.3, §24.5)
-
-# The values the Slice 2+4 flip sets ADMITTED_KINDS and TRIAGED_KINDS to (§5.1, §24.1), together with the
-# POLICY_VERSION bump. Each content kind has a named extractor; doc, ppt, mhtml and iwork have none and stay out.
+# The Slice 2+4 admission (§5.1, §24.1), taken with the POLICY_VERSION 2 bump. Each content kind has a named
+# extractor; doc, ppt, mhtml and iwork have none and stay out.
 SLICE2_CONTENT_KINDS: FrozenSet[str] = frozenset({
     "pdf", "docx", "pptx", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "markdown", "text", "csv", "json",
     "rtf", "msg", "eml", "subtitles",
 })
 SLICE2_TRIAGED_KINDS: FrozenSet[str] = frozenset({"image"})
+
+ADMITTED_KINDS: FrozenSet[str] = SLICE2_CONTENT_KINDS   # content read (§5.1)
+TRIAGED_KINDS: FrozenSet[str] = SLICE2_TRIAGED_KINDS    # every image enters triage first (§5.3, §24.5)
 _SHEET_KINDS: FrozenSet[str] = frozenset({"xlsx", "xls"})
 
 
