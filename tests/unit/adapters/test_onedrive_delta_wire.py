@@ -90,7 +90,9 @@ class TestEnumeration:
         assert [r.complete for r in results] == [False, False, True]
         assert all(r.full_enumeration for r in results)       # every page of the enumeration
         assert urls[1] == pages[0]["@odata.nextLink"] and urls[2] == pages[1]["@odata.nextLink"]
-        assert json.loads(results[-1].cursor) == {"url": pages[-1]["@odata.deltaLink"], "full": False}
+        # retro_drive_storage F1: a page cursor also names the drive and App Folder that served it.
+        assert json.loads(results[-1].cursor) == {"url": pages[-1]["@odata.deltaLink"], "full": False,
+                                                  "drive_id": DRIVE_ID, "root_id": ROOT_ID}
 
     async def test_drive_and_root_ids_come_from_the_approot_item(self):
         adapter, _ = _adapter()
@@ -104,9 +106,12 @@ class TestEnumeration:
         adapter, _ = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT), _resp(pages[0])])):
             first = await adapter.get_changes("u1", None)
+        # retro_drive_storage F1: a cursor bound to another drive is never followed (it restarts), so the
+        # fresh read is shown with a cursor written before the binding existed, which is still followed.
+        unbound = json.dumps({k: v for k, v in json.loads(first.cursor).items() if k in ("url", "full")})
         session = _session([_resp(other), _resp(pages[1])])
         with patch("aiohttp.ClientSession", return_value=session):
-            second = await adapter.get_changes("u1", first.cursor)
+            second = await adapter.get_changes("u1", unbound)
         assert (first.drive_id, second.drive_id) == (DRIVE_ID, "OTHER")
         assert session.get.call_args_list[0].args[0] == f"{_GRAPH}/me/drive/special/approot"
 
