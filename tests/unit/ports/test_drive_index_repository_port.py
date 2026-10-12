@@ -9,7 +9,7 @@ _EXPECTED = {
     "release_lease", "list_sync_user_ids", "get_records", "upsert_records", "delete_records", "due_records",
     "oldest_due_at", "children", "records_page", "records_seen_before", "count_carded", "lowest_ranked_carded",
     "card_capped", "count_by_state", "delete_user_records", "find_nearest_cards", "find_by_name_keys",
-    "filter_records", "card_vectors",
+    "filter_records", "card_vectors", "has_record_in",
 }
 
 
