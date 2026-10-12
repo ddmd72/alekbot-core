@@ -1,6 +1,8 @@
 # RFC: User Drive Step 2 — Indexing and Search
 
-**Status:** Draft, revision 3.11 (2026-10-11) — design closed; spikes S0a–S0f done (§18); next: the Slice 1 implementation plan (§22). Nothing built. Phase 0 hardening merged (PR #57, §16).
+**Status:** Draft, revision 3.12 (2026-10-12) — design closed; spikes S0a–S0f done (§18); **Slice 1 built** on its
+feature branch and reviewed, not yet deployed (deploy and live acceptance next, §22); where the build differs from
+this text, §23 says how and why. Slices 2–4 not built. Phase 0 hardening merged (PR #57, §16).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
 **Precedents reused:** email index ([GMAIL_EMAIL_INDEXING_RFC.md](GMAIL_EMAIL_INDEXING_RFC.md), `IndexedEmail`),
@@ -56,6 +58,7 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   `Files.ReadWrite.AppFolder`, so walk mode is not built. Results folded into §3.1, §5.3, §7.2, §7.3, §8.5, §15 and
   §17.3. Unchanged items are re-emitted often, and a delete and a restore can share one round. A move out of the App
   Folder arrives as a plain deletion. The `photo` facet can be an empty object, and audio files carry no `audio` facet.
+- Rev 3.12 (2026-10-12): Slice 1 built and reviewed; its deltas in §23 (Δ1–Δ45), false statements corrected in place.
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -122,7 +125,8 @@ conversation.
    registered by metadata only, with a reason. Machine-generated subtrees (dot-folders, repositories) are collapsed
    into one record. The policy is pure code: a new kind of content is a policy change plus a version bump.
 5. **Untrusted content is handled at two boundaries.** Extraction runs in a resource-limited child process behind a
-   port. Retrieved text and file names reach the model only inside an escaped, nonce-tagged wrapper.
+   port. Retrieved text and file names reach the model only inside a nonce-tagged wrapper that text inside it
+   cannot close (§10.4).
 
 **Why not the alternatives** (each argued in full by an advocate and scored by three judges):
 - *A generic, source-agnostic document corpus*: pays for generality before a second source exists; the email index is
@@ -158,16 +162,19 @@ after a path is derived (§10.2), so the Step 1 invariant "`path == ''` means th
 |---|---|
 | `user_id`, `item_id` | Key. `item_id` is the provider id (same as Step 1 refs). |
 | `parent_id`, `name`, `is_folder`, `size_bytes`, `mime_type`, `web_url`, `facets` | From the last observation. Facets are stored raw (photo, audio, video, location, remoteItem, package, malware, hashes). |
-| `kind` | Content class from the policy (§5), from mime + magic bytes. |
+| `kind`, `content_class`, `card_rank` | Kind from the policy (§5), from the extension and mime type (magic bytes from Slice 2); its content class (document, media, other, folder) and the card-cap rank derived from it (§5.4). |
 | `scope` | `normal`, `opaque_root`, `inside_opaque` (folders only), `unresolved` (parent not yet known). Inherited from the parent (§5.2). |
 | `content_version`, `modified_at` | Provider `cTag` and server `lastModifiedDateTime`. |
 | `state`, `reason` | §3.4. |
 | `index_generation` | Monotonic integer; incremented **and persisted** before an index run writes its first chunk (§8.1 step 2). |
 | `indexed_generation` | Generation whose chunks are readable; `None` if none (§7.4). |
 | `indexed_version` | `content_version` that `indexed_generation` was built from. `stale` = a readable generation exists **and** `content_version != indexed_version` (records without content are never stale). |
-| `policy_version`, `extraction_version`, `card_version`, `embedding_space` | Versions under which the record's current state, chunks and card were produced (§12.3). Stamped on every record, whatever its state. |
-| `card_hash`, `card_vector` | Hash of the card text built by `card_text(record)` and its vector (§8.5). |
-| `name_tokens` | Lexical keys of the name for the name stream (§10.1): NFC + casefold tokens split on separators, case and digit boundaries, their Cyrillic↔Latin transliterations, and character trigrams. Recomputed on rename. |
+| `policy_version`, `extraction_version`, `card_version`, `embedding_space`, `name_keys_version`, `geo_table_version` | Versions under which the record's current state, chunks, card, name keys and place name were produced (§12.3). The policy and name-keys versions are stamped on every record; the card version and embedding space when a card is embedded or refused; the geo-table version on a located photo. |
+| `card_hash`, `has_card`, `card_vector` | Hash of the card text built by `card_text(record)`, whether a vector is stored, and the vector (§8.5). |
+| `card_capped`, `card_refused` | The card cap withholds this record's card (§5.4, RFC Δ23); the provider refused the card text `card_hash` names (§8.2, RFC Δ24). Neither changes `state` or `reason`. |
+| `name_tokens` | Lexical keys of the name for the name stream (§10.1): NFC + casefold tokens split on separators, case and digit boundaries, their accent-stripped forms, Cyrillic↔Latin transliterations (Russian-style and Ukrainian national), and character trigrams (RFC Δ38). Recomputed on rename. Empty for OS artefacts (RFC Δ32). |
+| `place_name`, `effective_date`, `fs_modified_at` | Derived on observation: the offline place name of a located photo (§5.3), and the date a user means (§3.1) with the file-system time it falls back to. |
+| `probe_pending`, `rescope_pending`, `cascade_cursor`, `reobserve_pending`, `reobserve_cursor`, `probed_child_count` | Pending structural work that makes the record due (§3.6, §5.2, §7.6; RFC Δ18), and the child count the density decision was taken at (hysteresis). |
 | `content_hash` | `quickXorHash` + size from the facets, when present; collapses duplicates in search (§10.2). |
 | `dirty_since`, `due_at`, `priority` | Scheduling (§7.3, §7.8). |
 | `attempts`, `attempt_started_at` | Failure accounting (§8.2). `attempt_started_at` is persisted before download; a record found with a stale one is a crashed attempt. |
@@ -187,13 +194,18 @@ zero chunk writes. Neighbours are `index ± 1` of the same generation.
 
 - `unresolved` — observed before its parent; no work, no card, until the parent arrives (§5.2). Transient: when a
   round completes with the parent still unknown, the planner resolves it with one `get_change(parent_id)` (bounded per
-  tick); a missing parent means the record is an orphan and is deleted.
+  tick); a parent that is definitely gone (a deleted change, or not found) means the record is an orphan and is
+  deleted, a folder through the cascade. A lookup that keeps failing transiently never deletes it: it is retried
+  every `RETRY_CAP` (§8.2, RFC Δ29). A record whose parent is itself unresolved is parked (no due time, no card)
+  until the parent's resolution re-classifies its children.
 - `pending` — content admitted, not yet indexed at the current version and versions.
 - `indexed` — readable chunks exist for `indexed_version == content_version` at the current extraction version.
 - `metadata_only` — findable by its card (unless the reason says otherwise), content deliberately not read.
   `reason ∈ {folder, kind_not_admitted, too_large, opaque_root, dot_name, secret_name, os_artifact, remote_item,
-  package, malware, no_text, machine_text, dense_tree, encrypted, user_chunk_cap, user_card_cap}`. Entering `metadata_only` clears `indexed_generation`
-  and collects the chunks. `user_card_cap` is the only reason that also drops the card.
+  package, malware, no_text, machine_text, dense_tree, encrypted, user_chunk_cap}`. Entering `metadata_only` clears `indexed_generation`
+  and collects the chunks. `os_artifact` is the only reason that also withholds the card (and the name keys, RFC
+  Δ32). The card cap is not a reason but the flag `card_capped` (§5.4, RFC Δ23), and a terminally refused card the
+  flag `card_refused` (§8.2, RFC Δ24); `user_card_cap` is unused.
 - `failed` — admitted, failed at this version after the per-file retry budget (§8.2). `reason ∈ {extract_timeout,
   extract_memory, extract_error, download_error, embed_timeout}`. **Keeps** the previous `indexed_generation`: older
   chunks stay readable, with `stale` and the reason on the card.
@@ -210,28 +222,35 @@ Slice 4 OCR extractor picks up (§5.3).
 ### 3.5 `DriveSyncState` — one per user
 
 `drive_id`, `root_item_id` (the App Folder root: an implicit parent of scope `normal` that never becomes a record),
-`cursor` (opaque), `round_complete` (the last `get_changes` call returned `complete`), `epoch`,
-`epoch_phase ∈ {idle, enumerating, sweeping}`, `initial_enumeration_done`, `pending_cascades` (folder ids whose delete
-waits for the round to complete, §7.6), `pending_reobserve` (folder ids whose subtree must be re-listed, §5.2),
-`lease_owner`, `lease_until` (§7.1), `continuation_enqueued_at`, `applied_versions`, `target_versions` and
-`upgrade_cursor` (§12.3), `query_embedding_space` (§12.3), `observed_as_of` (§12.1), `access_lost_at` (§7.6),
+`cursor` (opaque), `round_complete` (the last `get_changes` call returned `complete`), `round_started_at`, `epoch`,
+`epoch_phase ∈ {idle, enumerating, sweeping}`, `initial_enumeration_done`, `purging` (a purge started and finishes
+before anything else, §7.6), `created_at` (the staleness baseline before any success, §12.1),
+`lease_owner`, `lease_until` (§7.1), `continuation_enqueued_at`, `applied_versions`, `target_versions`,
+`upgrade_cursor` and `upgrade_found_stale` (§12.3), `applied_space` and `target_space` (the embedding space the cards
+are in, and the one a running pass moves them to, §12.3), `observed_as_of` (§12.1), `access_lost_at` (§7.6),
 `last_success_at`, `last_error` (a category:
-`reconnect_needed`, `throttled`, `provider_error`, `internal`; detail stays in logs), `stale_alerted`, `counters`
-(records per state, readable chunks).
+`reconnect_needed`, `throttled`, `provider_error`, `internal`; detail stays in logs), `systemic_failures` (consecutive
+ticks ended by a systemic error, for the backoff, §8.2), `stale_alerted` and `reconnect_notified` (written only by the
+fan-out, §12.1, §7.7), `counters` (records per state and `carded`; readable chunks from Slice 2). There is no
+`pending_cascades` (RFC Δ14) and no `pending_reobserve` (a record flag instead, RFC Δ18).
 
 ### 3.6 The planner and the policy
 
-- `classify(change, parent_record, folder_probe | None, policy) -> (scope, state, reason, kind)` — pure.
+As built (`src/domain/drive_index_planner.py`, `drive_index_policy.py`; the policy is module code, not a parameter):
+- `classify(change, parent_scope, folder_probe | None, previous_record | None) -> Classification` (stored?, scope,
+  state, reason, kind, content class, `probe_pending`, the density count) — pure.
   `folder_probe` is the result of probing a folder's first `PROBE_CHILDREN` children with `list_children_changes`
   (marker children such as `.git` and `pyvenv.cfg`, and content-class counts); the service supplies it for a folder
-  on first sight when its `childCount` exceeds `DENSE_FOLDER_CHILDREN`, whenever a later observation of the folder
-  crosses that threshold or doubles its count above it, and when a marker child is observed later; at most
-  `PROBES_PER_TICK` probes per tick (the rest wait, their children held as `unresolved`).
-- `plan(observations: [(change, existing_record | None, parent_record | None)], due_records, sync_state, now, policy)
-  -> list[Action]` — pure. Actions: `upsert`, `delete_record`, `mark(state, reason)`, `schedule(due_at, priority)`,
-  `index(item, generation)`, `embed_card(item)`, `collect_garbage(item, keep_generation | None)`,
-  `cascade(folder_id, purpose ∈ {delete, rescope})`, `reobserve_subtree(folder_id)`, `resolve_parent(item_id)`,
-  `start_epoch`, `sweep`.
+  whose `childCount` exceeds `DENSE_FOLDER_CHILDREN` when no earlier density decision still stands (first sight, a
+  count that doubled or halved, a `policy_version` bump); at most `ITEM_CALLS_PER_TICK` item calls per tick (RFC Δ9;
+  the rest wait as `probe_pending`, their children held as `unresolved`).
+- `plan_observation(change, existing, parent, probe, ctx, previous_parent=None, *, observed=True) -> ObservationPlan`
+  — pure, one feed entry or a re-planned stored record: the record to upsert (with its due time and priority from
+  `schedule`), the item to delete, and updates of the old or new parent (a marker child closing or re-opening a
+  folder). Pending work is carried on the record itself — `probe_pending`, `rescope_pending`, `reobserve_pending`,
+  state `unresolved` or `deleting`, a card due or to drop — and the tick's due loop dispatches on it. The other pure
+  helpers: `access_action` (the gate), `stale_versions` and `reembed_in_space` (§12.3), `capped`, `released`,
+  `card_refused`, `with_card`, `with_retry`, `is_stale` (§12.1).
 - A parent equal to `root_item_id` is a known parent of scope `normal`.
 - **All decision logic lives here** and is tested without Firestore, Graph or a clock (§17).
 
@@ -241,10 +260,10 @@ waits for the round to complete, §7.6), `pending_reobserve` (folder ids whose s
 
 | Port | Change | Why it is a port |
 |---|---|---|
-| `UserDrivePort` (exists) | `get_changes(user_id, cursor) -> DriveChanges` (`changes: list[DriveChange]` in feed order, next opaque `cursor`, `complete`, `full_enumeration`, `drive_id`, `root_item_id`; raises `DriveResyncRequired`). New error `DriveReauthRequired(DriveNotConnectedError)` **only** when the token refresh itself is rejected (`invalid_grant`, `onedrive_adapter.py:186`). A 401 that survives a *successful* forced refresh (`:211`) becomes a new `DriveAccessDenied` for that operation — spike A6 showed the App Folder answering 401 to a valid token for an unsupported call — and is handled as a per-item or drive-wide error (§8.2), never as a lost grant. Two new reads returning `DriveChange` (with `cTag`, `parent_id`, facets): `get_change(user_id, item_id)` (nudged items, unresolved parents; an item that no longer exists comes back as a `deleted` change) and `list_children_changes(user_id, folder_id)` (subtree re-observation). Step 1's `DriveItem`-returning methods are not used to build observations. | Provider boundary. Delta, confirmed by S0a; a bounded walk only for a future provider without a change feed. |
-| `DriveIndexRepository` (new) | Records, chunks, sync state; `find_nearest_cards`, `find_nearest_chunks` (pre-filter `user_id`, optional `kind`); `due_records(user_id, now, limit)` ordered by `(priority, due_at, item_id)`; `children(user_id, parent_id, limit)`; `records_page(user_id, after_item_id, limit)`; `acquire_lease`/`release_lease` (transactional); `delete_by_user`. Batching and transactions are the adapter's business. | Storage boundary (Firestore). One repository: records and chunks change together. |
-| `ContentExtractorPort` (new) | `extract(path, kind, limits) -> ExtractionOutcome` (`text`, `no_text`, `unsupported`, `too_large`, `timeout`, `memory`, `error`). | Sandbox and process boundary; several adapters expected (local child process, separate service, OCR provider). |
-| `EmbeddingService` (exists) | Exposes `embedding_space` (e.g. `gemini-embedding-2/768`). | Already a port. |
+| `UserDrivePort` (exists) | `get_changes(user_id, cursor) -> DriveChanges` (`changes: list[DriveChange]` in feed order, next opaque `cursor`, `complete`, `full_enumeration`, `drive_id`, `root_item_id`; raises `DriveResyncRequired` on a 410, or a 404 on a stored cursor (RFC Δ40), and `DriveThrottled` with a `retry_after_s`). New error `DriveReauthRequired(DriveNotConnectedError)` **only** when the token refresh itself is rejected (`invalid_grant`, and `interaction_required` / `consent_required`, RFC Δ41). A 401 that survives a *successful* forced refresh becomes a new `DriveAccessDenied` for that operation — spike A6 showed the App Folder answering 401 to a valid token for an unsupported call — and is handled as a per-item or drive-wide error (§8.2), never as a lost grant. Two new reads returning `DriveChange` (with `cTag`, `parent_id`, facets): `get_change(user_id, item_id)` (nudged items, unresolved parents; an item that no longer exists comes back as a `deleted` change) and `list_children_changes(user_id, folder_id, limit, cursor)` (density probe, paged subtree re-observation; RFC Δ10). Also `connection(user_id)` (connected, `needs_reconnect`, the connected `drive_id`) and `flag_reconnect(user_id)` (True on the False→True transition). Step 1's `DriveItem`-returning methods are not used to build observations. | Provider boundary. Delta, confirmed by S0a; a bounded walk only for a future provider without a change feed. |
+| `DriveIndexRepository` (new) | Records and sync state (chunks join in Slice 2). Sync state: `get_sync_state`, `save_sync_state(state, owner)` and `delete_sync_state(user_id, owner)` fenced by the lease (§7.1), `create_sync_state_if_absent` (the fan-out's minimal state, RFC Δ28), `update_sync_flags` (the fan-out's two flags), `acquire_lease`/`release_lease` (transactional), `list_sync_user_ids`. Records: `get_records`, `upsert_records` (a card vector travels with its record write), `delete_records`, `due_records(user_id, now, limit)` ordered by `(priority, due_at, item_id)`, `oldest_due_at`, `has_record_in(user_id, state, priority)`, `children(user_id, parent_id, after_item_id, limit)`, `records_page(user_id, after_item_id, limit)`, `records_seen_before` (the sweep), `count_carded`, `lowest_ranked_carded`, `card_capped`, `count_by_state`, `delete_user_records(user_id, limit)` (a purge's batches). Search: `find_nearest_cards` (pre-filter `user_id`, optional `kind`), `find_by_name_keys`, `filter_records`, `card_vectors`. Batching and transactions are the adapter's business. | Storage boundary (Firestore). One repository: records and chunks change together. |
+| `ContentExtractorPort` (new, Slice 2) | `extract(path, kind, limits) -> ExtractionOutcome` (`text`, `no_text`, `unsupported`, `too_large`, `timeout`, `memory`, `error`). | Sandbox and process boundary; several adapters expected (local child process, separate service, OCR provider). |
+| `EmbeddingService` (exists) | Unchanged; the space is the adapter's class attribute `EMBEDDING_SPACE` (e.g. `gemini-embedding-2/768`), injected by composition (RFC Δ1). | Already a port. |
 | `TaskQueue` (exists) | Port unchanged. Composition injects a **second instance bound to the drive queue and to the indexer service's `/worker` URL and OIDC audience** (§12.5), used by the fan-out and by `UserDriveService` nudges on the main service; its `create_queue_if_not_exists` is never called (it would create the queue with concurrency 5). | — |
 
 No port for the policy, the planner, the chunker or the card builder: they are pure domain code.
@@ -257,9 +276,11 @@ No port for the policy, the planner, the chunker or the card builder: they are p
 
 Decided from metadata first; a download happens only if the item is admitted.
 
-- **Never downloaded:** names starting with `.`; secret-shaped names (`id_rsa*`, `id_ed25519*`, `*.pem`, `*.key`,
-  `*.p12`, `*.pfx`, `*.kdbx`, `*.keychain*`); OS and lock artefacts (`~$*`, `Thumbs.db`, `desktop.ini`, `*.tmp`);
-  items with a `remoteItem`, `package` or `malware` facet.
+- **Never downloaded:** names starting with `.`; secret-shaped names (`id_rsa*`, `id_ed25519*`, `*.pem`, `*.p12`,
+  `*.pfx`, `*.kdbx`, `*.keychain*`, and `*.key` unless its mime type is Keynote's); OS and lock artefacts (`~$*`,
+  `.~lock.*#`, `Thumbs.db`, `desktop.ini`, `.DS_Store`, `*.tmp`), checked first, so `.DS_Store` is an artefact
+  before it is a dot-name, and kept as records with no card and no name keys (RFC Δ32); items with a `remoteItem`,
+  `package` or `malware` facet.
 - **Admitted kinds (content read):** PDF, DOCX, PPTX, XLSX/XLS (row-capped), ODT/ODS/ODP, EPUB, HTML, Markdown, plain
   text, CSV, RTF, MSG/EML, VTT/SRT subtitles and transcripts. **HTML/XHTML is always converted** (markitdown's HTML
   converter: scripts and styles removed, headings and tables to Markdown, inline `data:` images truncated), never read
@@ -284,15 +305,19 @@ Decided from metadata first; a download happens only if the item is admitted.
 
 ### 5.2 Over the tree: scope and opaque subtrees
 
-- An **opaque root** is a dot-named folder, a folder with a child `.git` or `pyvenv.cfg`, `node_modules`, `vendor`,
-  `target`, `build`, `dist`, `__pycache__` inside a repository, or a **dense tree** (§5.5, class 1): a folder whose
+- An **opaque root** is a dot-named folder, a folder with a child `.git` or `pyvenv.cfg`, a `node_modules`,
+  `__pycache__` or `site-packages` folder anywhere (RFC Δ16; `vendor`, `target`, `build` and `dist` need no rule of
+  their own: inside a repository they are already inside its opaque root), or a **dense tree** (§5.5, class 1): a
+  folder whose
   `childCount` exceeds `DENSE_FOLDER_CHILDREN` and whose probed children are mostly of content class *other* — not
   *document* (text, office, PDF, e-book, mail) and not *media* (images, audio, video). The class is about what a file
   is, not whether this slice admits it, so a folder of 600 PDFs or 1 000 holiday photos is never dense. Density is
   decided **once, before the folder's children are applied** (from the probe), and re-decided only when `childCount`
   doubles or halves, or on a `policy_version` bump — no flapping. It gets one `metadata_only` record
-  (`reason = opaque_root`, `dot_name` or `dense_tree`) with a card (`name | repository`, `name | hidden folder` or
-  `name | generated files (N items)`) and a `descendant_count` facet when known.
+  (`reason = opaque_root`, `dot_name` or `dense_tree`) with a card: `name | repository` (a marker child),
+  `name | hidden folder` (a dot-name), `name | generated files` (a generated directory) or
+  `name | generated files (500+ items)` (a dense tree, its child count bucketed so the card does not change with
+  every child; RFC Δ33). No `descendant_count` is kept.
   From Slice 2, a repository root's card also carries the lead text of its root `README*` (extracted like any
   document); the README gets no record of its own. One card per repository.
 - **Inside an opaque root, files get no record and folders get a lightweight record** (`scope = inside_opaque`, no
@@ -301,12 +326,12 @@ Decided from metadata first; a download happens only if the item is admitted.
 - `scope` is inherited: `classify` needs only the parent record, never the chain. A change whose parent is unknown is
   stored as `unresolved` (no work, no card); when the parent is observed, the planner re-classifies its children.
 - **Re-scoping is durable.** When a folder's effective scope changes — renamed to or from a dot-name, moved into or
-  out of an opaque subtree, a `.git` child appears or disappears — the planner emits `cascade(folder, rescope)`: the
-  folder's children are marked due (class 1, §7.8); each due folder re-classifies itself and, if its scope
-  changed, marks its own children. Records that become opaque are deleted (files) or reduced to lightweight folder
-  records. A folder that leaves an opaque subtree joins `pending_reobserve`: its subtree, never stored, is re-listed
-  with `list_children_changes` (bounded per tick, resumable) and every listed item is applied as an observation — no
-  drive-wide epoch. A subtree whose effective policy is unchanged costs metadata reads only.
+  out of an opaque subtree, a `.git` child appears or disappears — the planner sets the folder's `rescope_pending`:
+  the folder is due (class 1, §7.8), its children are re-classified page by page; each child folder whose scope
+  changed gets its own rescope. Records that become opaque are deleted (files) or reduced to lightweight folder
+  records. A folder that leaves an opaque subtree gets the re-listing flag `reobserve_pending` (RFC Δ18): its
+  subtree, never stored, is re-listed with `list_children_changes` (one page per item call, resumable by a page
+  cursor) and every listed item is applied as an observation — no drive-wide epoch. A subtree whose effective policy is unchanged costs metadata reads only.
 - **Read-time check.** Until a cascade finishes, search drops any card whose ancestor chain (already walked to build
   the path, §10.2) reaches an `opaque_root`, `inside_opaque` or `deleting` record. Search is correct at once; the
   cascade does the physical work.
@@ -349,13 +374,14 @@ image with a vision model is the "photo gallery trap" — 100 holiday photos wou
 - **Per user:** `MAX_CARD_RECORDS_PER_USER` counts records that carry a card vector; `MAX_CHUNKS_PER_USER` counts
   readable chunks (`Σ chunk_count` over records with an `indexed_generation`).
 - **Card cap, admission order** by content class (document, then media, then other — §5.2), then folders. In Slice 1,
-  where no kind is admitted yet, a PDF still outranks a `.py` file. A higher-priority
-  item evicts the lowest-priority carded record (which becomes `metadata_only / user_card_cap`, card dropped), so a
-  document never loses its card while a non-document holds one.
+  where no kind is admitted yet, a PDF still outranks a `.py` file. A strictly higher-priority
+  item evicts the lowest-priority carded record (the oldest `modified_at` among equals), which gets the flag
+  `card_capped` and loses its card while its state and reason stay structural (RFC Δ23); an equal-rank newcomer is
+  capped itself. So a document never loses its card while a non-document holds one.
 - **Chunk cap:** a file whose chunks would exceed `MAX_CHUNKS_PER_USER` is refused whole after extraction, never
   partly indexed: `metadata_only / user_chunk_cap`, card kept, `chunk_count` recorded.
-- **Release:** a `user_card_cap` record becomes due when there is card headroom; a `user_chunk_cap` record becomes due
-  only when chunk headroom ≥ its recorded `chunk_count`. Bounded per tick, newest `modified_at` first. A refused file
+- **Release:** a `card_capped` record becomes due when there is card headroom (the flag is lifted, class 3); a `user_chunk_cap` record becomes due
+  only when chunk headroom ≥ its recorded `chunk_count`. Bounded per tick, best rank first, then newest `modified_at`. A refused file
   is therefore never re-extracted until it can fit.
 
 ### 5.5 Problem-content classes — why each rule exists
@@ -399,9 +425,13 @@ principle on top: **safety never depends on classifying correctly.** Two layers:
   re-index is slow (the Gmail indexing experience). Connecting a **different** drive purges at once.
 - While access is lost: after a deliberate disconnect search returns `disconnected` (the index is hidden); with an
   expired grant search keeps answering from the index, marked `reconnect_needed` with its `index_as_of`.
-- Cabinet card: on/off, records per state, readable chunks, "index full", last successful sync, last error category,
-  and **Reconnect** when the drive needs it (§7.7). All texts are `LANG_DICT` keys in en/uk/fr/es; `last_error` is
-  shown as its localised category, never as a raw message.
+- Cabinet card: on/off, every non-zero counter (records per state and carded records; readable chunks from Slice 2),
+  "index full", last successful sync, last error category, and **Reconnect** when the drive needs it (§7.7). The
+  switch is offered only where indexing can run (a drive queue is wired), unless search is already on; the "kept
+  about 30 days" and "search still answers from the index" hints show only while an index is kept (no purge running,
+  grace period not over). `/api/drive/status` returns `available`, `access_lost_at` and `index_kept` for that (RFC
+  Δ44). All texts are `LANG_DICT` keys in en/uk/fr/es; `last_error` is shown as its localised category, never as a
+  raw message.
 - No manual "sync now", "reindex" or "skipped files" endpoints in the first cut (§14).
 
 ---
@@ -413,45 +443,60 @@ principle on top: **safety never depends on classifying correctly.** Two layers:
 **Trigger.** A Cloud Scheduler job fans out every `TICK_INTERVAL` to each user with indexing on, **or with a
 `DriveSyncState` but indexing off or no credentials** (so an orphaned index always gets purged). The fan-out skips a
 user whose `continuation_enqueued_at` is recent (a continuation is already queued), which bounds the queue at about
-one task per user plus nudges. Payload: `{user_id, account_id}`.
+one task per user plus nudges and busy retries. For a user with indexing on, a working grant and no sync state, it
+also creates a minimal one (`created_at = now`), so the staleness check covers a user whose ticks never land (RFC
+Δ28). Payload: `{user_id}` plus an optional nudge (RFC Δ4).
 
 **Task keys** (`dedup_key` families; a name, once used, is reserved by Cloud Tasks for up to a day):
 - scheduler: `{user_id}:tick:{bucket}`;
 - continuation and `Retry-After`: `{user_id}:cont:{id of the finishing tick}` (unique), with `delay_seconds` for
-  `Retry-After`;
-- nudge: `{user_id}:nudge:{item_id}:{mutation id}` (`mutation id`: a UUID `UserDriveService` generates per mutation;
-  the payload carries the item id). A nudge
-  that finds a live lease is not dropped: it re-enqueues itself with a delay under `…:{mutation id}:r{n}`;
-- purge: `{user_id}:purge:{timestamp}`.
+  `Retry-After` and backoff;
+- busy retry: `{user_id}:cont:busy-{lease holder}` — a tick without a nudge that finds a live lease comes back once
+  per holder after `NUDGE_RETRY_DELAY_S` (RFC Δ27);
+- nudge: `{user_id}:nudge:{mutation id}`, one per mutation, the payload carrying every item id it touched (RFC Δ3).
+  A nudge that finds a live lease is not dropped: it re-enqueues itself with a delay under `…:{mutation id}:r{n}`;
+- toggle: `{user_id}:toggle:{timestamp}`, from the Cabinet switch in both directions (RFC Δ2).
 A dropped continuation (`ALREADY_EXISTS`) is logged at WARNING.
 
-**Lease (single writer).** A tick starts by acquiring `DriveSyncState.lease_until` in a transaction; `lease_until`
-exceeds the task's dispatch deadline, so a holder never outlives its lease. A tick that finds a live lease returns
-200 `busy`. This covers concurrent redelivery after a deadline overrun and duplicate delivery (both seen in this repo,
-`decisions/worker_task_dedup.md`). The dedicated queue's `maxConcurrentDispatches = 1` is a CPU and memory knob for
-the instance, not the correctness mechanism; raising it later is an extension (§14).
+**Lease (single writer).** A tick starts by acquiring `DriveSyncState.lease_until` in a transaction, for
+`TICK_DEADLINE + LEASE_MARGIN`. A tick that finds a live lease returns 200 `busy`. This covers concurrent redelivery
+after a deadline overrun and duplicate delivery (both seen in this repo, `decisions/worker_task_dedup.md`). A holder
+can still outlive its lease (Cloud Run answers 504 at its timeout without cancelling the coroutine), so its writes are
+**fenced** (RFC Δ26): the tick writes nothing once its clock reaches `lease_until - LEASE_MARGIN`, and
+`save_sync_state` and `delete_sync_state` are transactions that apply only while the tick still holds the stored
+lease, else `LeaseLost`. A tick that meets `LeaseLost` stops quietly (INFO, status `lease_lost`) and writes nothing
+more; the holder carries on from the last saved state. The dedicated queue's `maxConcurrentDispatches = 1` is a CPU
+and memory knob for the instance, not the correctness mechanism; raising it later is an extension (§14).
 
 **Deadline.** Every `drive_sync` enqueue passes `deadline_seconds = TICK_DEADLINE`. A new file is started only if
 `elapsed + DOWNLOAD_TIMEOUT + EXTRACT_WALL_TIMEOUT + EMBED_FILE_BUDGET + margin < TICK_DEADLINE`; a test asserts this
-holds for the configured constants.
+holds for the configured constants (Slice 2; in Slice 1 no work and no item call starts after `TICK_START_BUDGET`).
 
 **Steps.**
-0. **Gate.** Read `drive_indexing_enabled` from the user repository (not the agent cache) and `is_connected()` (the
-   credentials document exists). Indexing off and anything stored → purge (`delete_by_user`: chunks, records, sync
-   state) and stop. No credentials or `needs_reconnect` → the access-loss path of §7.6, and stop. Nothing is enqueued for a user with indexing off, whatever triggered the tick. Purge is keyed on these facts
-   only, never on an exception type: a `DriveNotConnectedError` or `DriveReauthRequired` raised
-   during a tick ends the tick without purging (§7.7).
-1. **Observe.** First the item ids carried by nudges: each is read with `get_change` and applied as an observation with
-   `QUIET = 0`, so a bot write is indexed even if delta has not caught up (S0d). Then pages from `get_changes(cursor)`
-   until the page budget or `complete`. Compare `drive_id` with the stored one before applying any page; on a
-   mismatch, purge and start fresh. Apply each page's actions, then save the cursor (a crash replays the page; actions
-   are idempotent). In walk mode, a new walk does not start while the previous epoch is sweeping.
-2. **Upgrade.** If `applied_versions` differ from the current constants, run a bounded upgrade step (§12.3).
-3. **Work off what is due**, in priority order (§7.8), within the budget (§8).
-4. **Continue.** If changes or due work remain, enqueue a continuation; release the lease.
+0. **Gate.** Read `drive_indexing_enabled` from the user repository (not the agent cache) and the connection (the
+   credentials document exists, `needs_reconnect`, its `drive_id`). Indexing off and anything stored → purge (the
+   user's records in batches, then the sync state) and stop. No credentials or `needs_reconnect` → the access-loss
+   path of §7.6, and stop. Indexing off and nothing stored → `disabled` before the lease: nothing is read from the
+   drive and nothing written. Tasks for such a user still arrive — a nudge after a bot write (nudges do not read
+   the flag), a toggle — and end there; a purge enqueues its own continuation until it has finished, and an opt-out
+   met mid-tick enqueues one whose gate purges. Purge is keyed on these facts only, never on an exception type: a
+   `DriveNotConnectedError` or `DriveReauthRequired` raised during a tick ends the tick without purging (§7.7). The
+   gate is decided again under the lease, since the facts may have moved.
+1. **Observe.** First the item ids carried by a nudge: each is read with `get_change` and applied as an observation
+   with `QUIET = 0` and its card due in class 0, so a bot write is indexed even if delta has not caught up (S0d). Then
+   pages from `get_changes(cursor)` until the start budget or `complete`. Compare `drive_id` with the stored one before
+   applying any page; on a mismatch, purge and start fresh. Apply each page, then save the cursor (a crash replays the
+   page; applying is idempotent). In walk mode, a new walk does not start while the previous epoch is sweeping.
+2. **Work off what is due**, after a complete round only (RFC Δ15): the sweep of a finished enumeration, then due
+   records in priority order (§7.8), within the budget.
+3. **Upgrade.** If no class stopped on its budget and `applied_versions` or the embedding space differ from the
+   current ones, run a bounded upgrade step (§12.3), then release capped cards into any headroom (§5.4). Fresh work
+   comes first (RFC Δ30).
+4. **Continue.** Release the lease; then, if changes or due work remain, enqueue a continuation (after the release,
+   so it can never meet its own parent's lease, RFC Δ27).
 
-The gate is re-checked before each write batch and before committing an index result, so an opt-out during a tick
-drops the in-flight result.
+The gate is re-checked before each write batch (at most every 5 s, RFC Δ19) and before committing an index result,
+so an opt-out during a tick drops the in-flight result.
 
 ### 7.2 Delta or walk
 
@@ -508,8 +553,11 @@ with the lease this plain check is sufficient.
 
 ### 7.5 Full enumeration (onboarding, expired cursor, walk)
 
-`epoch_phase`: `idle → enumerating(E) → sweeping(E) → idle`. **Every upsert, in any phase, stamps
-`seen_epoch = sync_state.epoch`**, so a record created during sweeping (a bot save, a nudge) carries E and survives.
+`epoch_phase`: `idle → enumerating(E) → sweeping(E) → idle`. **Every observation, in any phase, stamps
+`seen_epoch = sync_state.epoch`** (a feed item, a nudge read, a re-listed child), so a record created during sweeping
+(a bot save, a nudge) carries E and survives. A re-plan of a stored record (rescope, parent resolution, probe
+completion, upgrade, cap release) is not an observation and keeps its own stamp, so a record the drive no longer has
+cannot escape a sweep that spans ticks by being re-planned.
 When the enumeration completes, `sweeping(E)` deletes records with `seen_epoch < E` in bounded, resumable batches,
 and also deletes chunks whose record is missing or whose generation is not the record's `indexed_generation` (the
 backstop for every crash window). The phase returns to `idle` only after the last sweep batch. A 410 in any phase
@@ -521,20 +569,24 @@ during a walk can be swept and is re-indexed by the next walk; on a disposable i
 
 - **File deleted** → `delete_record`: delete its chunks (all generations), then the record; the cursor is saved after
   both.
-- **Folder deleted** → the folder record becomes `deleting` and its id joins `pending_cascades`. The cascade runs only
-  when the delta round reports `complete`, following Graph's advice to delete a folder locally only once it is empty
+- **Folder deleted** → the folder record becomes `deleting` (the durable marker; no `pending_cascades`, RFC Δ14). The
+  cascade runs only when the delta round reports `complete`, following Graph's advice to delete a folder locally only once it is empty
   after all changes are synced: children that a later change re-parented are spared. It then deletes descendants
   post-order (files first; subfolders become `deleting` before their children are removed) within the budget, and
-  deletes the folder last. A crash or a spent budget leaves `deleting` records due, so the next tick resumes.
+  deletes the folder last. A crash or a spent budget leaves `deleting` records due, so the next tick resumes. A
+  folder whose children are all deleting folders outside the page being worked steps aside one second behind them,
+  and a step that deletes nothing charges no budget (RFC Δ29).
   A child whose parent is `deleting` is hidden (§5.2 read-time check) and is removed by the cascade unless it is
   re-parented first.
 - **A `deleting` folder observed again as not deleted** (a later page undoes the delete, or a recycle-bin restore that
-  keeps the id, S0c) leaves `pending_cascades`, is re-classified, and joins `pending_reobserve`: descendants the
-  cascade already removed come back through the subtree re-listing (§5.2).
+  keeps the id, S0c) leaves `deleting`, is re-classified, and gets the re-listing flag: descendants the cascade
+  already removed come back through the subtree re-listing (§5.2).
 - **Folder renamed or moved** → only its record changes, unless its scope changes (§5.2). Cards carry no path;
   paths are derived at read time.
-- **Purge** (opt-out, or a reconnect to a different `drive_id`) runs only inside a tick, under the lease. Toggle-off
-  flips the flag and enqueues a purge task; the queue runs it after any tick already in flight. Search reads the flag
+- **Purge** (opt-out, or a reconnect to a different `drive_id`) runs only inside a tick, under the lease. It first
+  writes `purging = True`, so a started purge always finishes before anything else, then deletes the records in
+  batches within the tick's budget (continuing in-chain) and the sync state last. Toggle-off flips the flag and
+  enqueues a `toggle` task (RFC Δ2); the queue runs it after any tick already in flight. Search reads the flag
   uncached (§10.1), so the index is invisible at once.
 - **Access lost** (no credentials document, or `needs_reconnect`): the gate sets `access_lost_at` once (a new loss
   while one is recorded keeps the earlier value) and stops. Nothing else is written, so a token blip costs nothing.
@@ -548,30 +600,41 @@ during a walk can be swept and is re-indexed by the next walk; on a disposable i
 
 ### 7.7 Revoked access and throttling
 
-- `DriveReauthRequired` (the refresh was rejected: `invalid_grant`) ends the tick without purging, sets
-  `needs_reconnect` on the `microsoft_onedrive` credentials record and notifies the user once, on the False→True
-  transition (Gmail precedent, `decisions/gmail_grant_revoked_reconnect.md`); `/api/drive/status` returns it and the
-  Cabinet shows **Reconnect**. A successful save of credentials clears it. **This flag is new work**: Step 1 has none.
+- `DriveReauthRequired` (the refresh was rejected: `invalid_grant`, or `interaction_required` / `consent_required`,
+  RFC Δ41) ends the tick without purging and sets `needs_reconnect` on the `microsoft_onedrive` credentials record
+  (Gmail precedent, `decisions/gmail_grant_revoked_reconnect.md`); `/api/drive/status` returns it and the Cabinet
+  shows **Reconnect**. A successful save of credentials clears it. **This flag is new work**: Step 1 has none.
+- The user is notified by the fan-out on the main service, which has chat delivery (the indexer has none, RFC Δ6):
+  `reconnect_notified` goes up before the send and stays up once a send was attempted, delivered or not, so a notice
+  cut off after it left is never repeated; when no send was attempted (no channel, a formatter failure, `notify`
+  raising) it comes down and the next fan-out retries. A good grant again clears it.
 - A deliberate disconnect removes the credentials document; the next tick's gate sees `is_connected() == false` and
   starts the access-loss grace period (§7.6). No exception type ever purges; an access loss purges only after
   `ACCESS_LOSS_TTL`.
-- Graph 429/503 and embedding 429/503 end the tick and enqueue a continuation with the `Retry-After` delay.
+- Throttling and systemic errors end the tick and enqueue a continuation with a delay. A Graph 429/503
+  (`DriveThrottled`) waits the provider's `Retry-After` (capped at `TICK_DEADLINE`; 60 s when absent or for a failed
+  token refresh) the first time, and `max(Retry-After, backoff)` when it repeats; an embedding 429/503 or any other
+  systemic error waits the backoff, `min(60 · 2^n, 1800)` s over `n` consecutive systemic failures (§8.2).
 
 ### 7.8 Priorities
 
 `due_records` orders by `(priority, due_at, item_id)`:
-0. **edits and nudges**: content changed on a known record, items named in a nudge;
-1. **cascades**: folder delete and rescope steps (metadata operations only, no download), up to
-   `CASCADE_OPS_PER_TICK`; search is already correct through the read-time check (§5.2), so cascades only do the
-   physical work;
-2. **first seen**: onboarding, re-observed subtrees, bulk drops. A first-seen record's card waits until the round
-   that delivered it has completed (or its parent folder has been fully listed), so a `.git` or `pyvenv.cfg` that
-   arrives later in the same round makes the folder opaque before any of its files is carded;
+0. **edits and nudges**: content changed on a known record, a card that changed on a known record, items named in a
+   nudge;
+1. **cascades and structure**: folder delete and rescope steps (metadata operations only, no download), up to
+   `CASCADE_OPS_PER_TICK` records; density probes, parent resolutions and card drops share the class (probes and
+   lookups spend `ITEM_CALLS_PER_TICK`, RFC Δ9); search is already correct through the read-time check (§5.2), so
+   cascades only do the physical work;
+2. **first seen**: onboarding, re-observed subtrees (the folder's re-listing flag, RFC Δ18), bulk drops. A
+   first-seen record's card waits until the round that delivered it has completed (RFC Δ15: all work-off does), so a
+   `.git` or `pyvenv.cfg` that arrives later in the same round makes the folder opaque before any of its files is
+   carded;
 3. **maintenance**: version upgrades and newly admitted kinds (§12.3), cap releases;
 4. **retries** with backoff.
-A tick works class 0 first, then 1, then 2, and gives classes 3–4 at most `MAINTENANCE_SHARE` of its file budget. An
-edit or a bot write therefore never waits behind a cascade, onboarding or an upgrade; its worst-case freshness is
-about *(users with class-0 work) × tick budget*, and `STALE_ALERT_AFTER` stays above it.
+A tick works class 0 first, then 1, then 2, and gives classes 3–4 at most `MAINTENANCE_SHARE` of its start budget's
+time. When a class runs out of its budget, lower classes wait for the next tick (RFC Δ19). An edit or a bot write
+therefore never waits behind a cascade, onboarding or an upgrade once its round is complete; its worst-case freshness
+is about *(users with class-0 work) × tick budget*, and `STALE_ALERT_AFTER` stays above it.
 
 ---
 
@@ -604,12 +667,14 @@ For each due `pending` record, within the budget:
 |---|---|---|
 | Deterministic | `no_text`, `machine_text`, `encrypted`, `unsupported`, `too_large`, ZIP caps exceeded | Terminal at once: `metadata_only` with the reason. No retry, no re-download. |
 | Per-file transient | `download_error` (not 429/503), `extract_error`, `timeout`, `memory`, `embed_timeout` (the file's embeddings exceeded `EMBED_FILE_BUDGET`), and a **crashed attempt** (a record found with `attempt_started_at` older than `TICK_DEADLINE` and no outcome: the instance died during it) | `attempts++`, `attempt_started_at` cleared, `due_at = now + min(RETRY_BASE · 2^attempts, RETRY_CAP)`, class 4; at `MAX_ATTEMPTS` → `failed`. |
-| Per-item provider call | 5xx, `DriveAccessDenied` or timeout on a call about **one item** — a density probe, `get_change`, `resolve_parent`, a subtree re-listing, a download | The page is still applied; the item's own work is deferred with backoff (its children held `unresolved`, the record kept `pending`). After `MAX_ATTEMPTS`: a probe → classify without a probe (not dense); a parent lookup → orphan, deleted; a re-listing → dropped from `pending_reobserve`; a download → `failed / download_error`. One bad item never stalls the user's index. |
-| Systemic | Graph 429, or 5xx/`DriveAccessDenied` on the **drive-wide** feed (`get_changes`); embedding quota or 5xx; repository errors | End the tick; `attempts` untouched and `attempt_started_at` cleared; continuation with backoff; `last_error` set; `last_success_at` not advanced. |
+| Per-item provider call | 5xx, `DriveAccessDenied`, a transport error or timeout on a call about **one item** — a density probe, `get_change` (a nudge read, a parent lookup), a subtree re-listing page, a download | The page is still applied; the item's own work is deferred with backoff (its children held `unresolved`, the record kept `pending`). After `MAX_ATTEMPTS`: a probe → classify without a probe (not dense); a parent lookup → keep retrying every `RETRY_CAP`, never delete (only a definite not-found removes an orphan, RFC Δ29); a re-listing → the folder's re-listing flag is dropped; a nudge read → left to the delta feed; a download → `failed / download_error`. A change whose observation fails inside a page is skipped with an ERROR line. One bad item never stalls the user's index. |
+| Per-record provider refusal | The embedding provider refuses one card text (HTTP 400, `LLMClientError`) | That record backs off alone (`attempts++`, class 4); the rest of the batch is stored. At `MAX_ATTEMPTS` the refusal is terminal: flag `card_refused`, no card, `card_hash` names the refused text and `card_version` is stamped, the state stays structural; a new card text or a card-builder bump gets a fresh try (RFC Δ24). |
+| Systemic | Graph 429, or 5xx/`DriveAccessDenied` on the **drive-wide** feed (`get_changes`); a failed or timed-out token refresh; any embedding error but a 400 (quota, 5xx, timeout, network); repository errors | End the tick, after committing the vectors and refusals the card batch already obtained; `attempts` untouched and `attempt_started_at` cleared; continuation with the backoff of §7.7; `last_error` set; `last_success_at` not advanced. |
 
 `attempts` is incremented only by the per-file class, never before the outcome is known, so a sequence of systemic
 errors of any length never moves a record to `failed` (property test, §17.1). It resets when `content_version` or
-`extraction_version` changes.
+`extraction_version` changes, and after each successful step of a record's structural work (a parent resolved, a
+probe, a re-listing page), so the next step counts its own `MAX_ATTEMPTS`.
 
 ### 8.3 Tables
 
@@ -626,12 +691,13 @@ hard boundaries, with `CHUNK_OVERLAP`; carry the header row into continued Markd
 
 `card_text(record)` is pure over record fields: `name | kind | key facets` plus, for indexed and `machine_text`
 records, the first `CARD_LEAD_CHARS` of text; folders `name | folder`; opaque roots `name | repository`,
-`name | hidden folder` or `name | generated files (N items)`. Key facets are a fixed subset of stored facets (photo
+`name | hidden folder`, `name | generated files` or `name | generated files (500+ items)` (§5.2, RFC Δ33). OS
+artefacts have no card (RFC Δ32). Key facets are a fixed subset of stored facets (photo
 `takenDateTime`, camera make and model, the derived `place_name` (§5.3), image dimensions, video dimensions and
 duration), finalised by S0e. The `audio` facet is not used: S0e saw none on M4A or WAV files. A new geocoding table is a `geo_table_version` bump in the upgrade step (§12.3): it
 re-resolves `place_name`, and since the card hash covers the card text, only cards whose place name actually changed
-are re-embedded. **No path**, so a folder rename does not touch descendants. The planner emits
-`embed_card` whenever `hash(card_text(record), card_version)` differs from `card_hash`: on rename, on facet change, on
+are re-embedded. **No path**, so a folder rename does not touch descendants. The planner makes
+the card due whenever `hash(card_text(record), card_version)` differs from `card_hash`: on rename, on facet change, on
 first sight, when indexing adds lead text, when a demotion removes it, and when the card builder changes. A rename
 therefore costs one card embedding and zero chunk writes.
 
@@ -699,63 +765,86 @@ measures it).
 
 ### 10.1 `DriveSearchService`
 
-Input: `query`, optional `folder` (a `drive:` ref or a path), `kind`, `date_from`, `date_to` (on `effective_date`).
-**Filter-only requests** ("files I saved this week", "all my spreadsheets") leave `query` empty: the service then runs a
-plain Firestore query on `user_id` + `kind` / `effective_date`, ordered by `effective_date` descending, limit `K`, with
-no kNN and no threshold, and says how many matched. The manifest field description tells Smart to leave the query
-empty for such requests.
+Input: `query`, optional `folder` (a `drive:` ref or a path), `kind` (a format, an extension or a family, RFC Δ20),
+`date_from`, `date_to` (on `effective_date`; a date-only bound is a whole UTC day). **Filter-only requests** ("files
+I saved this week", "all my spreadsheets") have no name words in `query` (empty, or punctuation only): the service then
+runs a plain Firestore query on `user_id` + `kind` / `effective_date` (one per member kind of a family), ordered by
+`effective_date` descending, limit `K`, with no kNN and no threshold, and says how many matched (a lower bound when
+the fetch hit its cap). A request with no name words and no filter is **refused** with a correction, never answered
+with the newest files (RFC Δ36). The manifest field description tells Smart to put name words, a place or a subject
+in `drive_query` (the delegate's `query` is not read for search), never type words or dates.
 0. Read the opt-in flag, `DriveSyncState` and the credentials state from Firestore, never from the agent cache. Off →
    `disabled`. No credentials → `disconnected`. `needs_reconnect` with `now ≥ access_lost_at + ACCESS_LOSS_TTL`
-   → `disconnected` (the purge has begun). A connected `drive_id` (a field of the
-   credentials record written when the OAuth grant is saved; credentials are rebuilt on every refresh
-   (`graph_auth.py:96-105`), so the refresh must carry the field over; absent for a user connected earlier until
-   that refresh, in which case the comparison is skipped) different from the one in `DriveSyncState` → `disconnected`
-   until the purge runs. `needs_reconnect` → search proceeds and the envelope carries `reconnect_needed`.
+   → `disconnected` (the purge has begun). A purge in progress, or the TTL passed on a connected drive → no results,
+   `building`. A connected `drive_id` (a field of the
+   credentials record written when the OAuth grant is saved; credentials are rebuilt on every refresh, so the refresh
+   carries the field over; absent for a user connected earlier until that refresh, in which case the comparison is
+   skipped) different from the one in `DriveSyncState` → `disconnected`, saying a different drive is connected and is
+   being indexed, until the purge runs. `needs_reconnect` → search proceeds and the envelope carries `reconnect_needed`.
 1. Embed the query once.
-2. **Card stream:** kNN over records, pre-filter `user_id` (+ `kind`), fetch `CARD_FETCH`.
-3. **Chunk stream:** kNN over chunks, pre-filter `user_id` (+ `kind`), fetch `CHUNK_FETCH` (≤ 1000). Drop chunks failing
-   the fence (§7.4); max-pool to one hit per record (best chunk).
-3a. **Name stream (lexical, from Slice 1):** the query's name keys (the same normalisation as `name_tokens`; when there
-   are more than 30, whole tokens first, then their transliterations, then trigrams in query order, cut at 30)
-   in one `array-contains-any` query on records, ranked by how many keys each record shares. Catches exact and
-   partial names (`IMG_4912`, `ред3`), transliteration and typos, where a cosine over the card vector is weak. "Find a
-   file" is Slice 1's core, so this stream is part of the base, not a later extension.
+2. **Card stream:** kNN over records, pre-filter `user_id` (+ `kind`; a family runs one kNN per member kind, merged by
+   distance, RFC Δ37), fetch `CARD_FETCH`. Skipped while the index's cards are in another embedding space than the
+   query's; the envelope then says `refreshing` (§12.3, RFC Δ25).
+3. **Chunk stream** (Slice 2): kNN over chunks, pre-filter `user_id` (+ `kind`), fetch `CHUNK_FETCH` (≤ 1000). Drop
+   chunks failing the fence (§7.4); max-pool to one hit per record (best chunk).
+3a. **Name stream (lexical, from Slice 1):** the query's name keys (the same normalisation as `name_tokens`, with a
+   small set of function words dropped from the query, RFC Δ38). Each whole-token key and each trigram key gets its
+   own `array-contains-any` query, at most `NAME_KEY_QUERIES` of each in query order, plus one query with the
+   remaining keys (at most 30), in parallel, merged by id, ranked by how many keys each record shares (RFC Δ17).
+   Catches exact and partial names (`IMG_4912`, `ред3`), transliteration and typos, where a cosine over the card
+   vector is weak. "Find a file" is Slice 1's core, so this stream is part of the base, not a later extension.
 4. **No cosine thresholds** in the design: each stream contributes its top results by rank, RRF and `K` bound the
    output, and Smart judges relevance from the cards (the honest envelope covers "not found"). The name stream keeps
-   only records sharing at least one whole token or `NAME_MIN_TRIGRAMS` trigrams. Then post-filters (dates, folder),
-   then RRF
+   only records sharing at least one whole token or `NAME_MIN_TRIGRAMS` trigrams. Then read-time visibility (§5.2),
+   post-filters (kind, dates, folder), then RRF
    (`apply_rrf_ranking`, `k = 60`, key `item_id`). Pooling before fusion is required: `rrf.py` keeps the first object
-   seen per key.
-5. If fewer than `K` records survive, widen once (fetch at the cap).
-6. Collapse duplicates: cards with the same `content_hash` become one card with `also_at` paths.
+   seen per key. After RRF, records whose name covers every query token rank first, RRF order kept within each group
+   (RFC Δ17).
+5. If fewer than `K` records survive and a stream page was full, widen once (fetch at the cap). When the filters
+   then dropped candidates from a full page, the result is `capped`: the answer says the filters saw only the best N
+   matches, and with no survivor never says "no matching files" but how to search all files (RFC Δ37).
+6. Collapse duplicates: cards with the same `content_hash` (files with content only: every empty file shares one
+   hash) become one card with `also_at` paths.
 7. Return the top `K` cards plus the coverage envelope (§10.2).
 
-**Folder** means the subtree of one folder record, resolved by ref, or by path matched after NFC + casefold. If several
-folders match, return them as candidates instead of guessing. A folder-scoped query walks the subtree via `children`
+**Folder** means the subtree of one folder record, resolved by ref, or by path matched after NFC + casefold
+(root-anchored first, then folders named like the last segment anywhere). If several
+folders match, return them as candidates instead of guessing; a single suffix match from a full name page is
+"could not resolve", not a guess. A folder that hides its contents (an opaque root, inside one, or deleting) answers
+that its contents are not indexed and points to `list_files_in_drive`, instead of "no match". A folder-scoped query
+walks the subtree via `children`
 with projection reads (no vectors), never entering opaque roots, **stopping after `FOLDER_INMEM_CARDS` records
 read**. If the walk completed, the
 subtree's cards are ranked in memory, and its chunks too when `Σ chunk_count ≤ FOLDER_INMEM_CHUNKS`. Otherwise the
 user-wide streams are used and each candidate is kept only if its ancestor chain — already walked to build its path
 (§10.2) — passes through the folder, with the widening of step 5.
 
-One summary log line per search: counts after each stage (fetched, fenced, pooled, thresholded, filtered, fused).
+One summary log line per search (`[DriveSearch]`): counts after each stage (card and name fetched, name queries,
+name kept, visible, filtered, fused, covered, widened, collapsed, returned), `building`, and the elapsed `ms`.
 
 ### 10.2 Result contract
 
 **Envelope:** `enabled`; `content_search` (false in Slice 1); `building` — the set of existing items may still be
-incomplete: an epoch started for onboarding or after a 410 is not `idle`, `pending_reobserve` is non-empty, or any
-class-2 (first-seen) record is due — derived with one `limit 1` query on the `due_records` index, never a counter that
-could drift. Edits (class 0) and
-cascades (class 1) do not set it: their items already have cards or are already hidden. Routine walks do not count. `reconnect_needed`; `index_as_of` (`observed_as_of`, §12.1 — never the last tick); `unread` — documents of an **admitted** kind whose
+incomplete: no sync state or root yet (onboarding), a purge running, an epoch not `idle` (onboarding or after a 410),
+any class-2 record due (first-seen cards and folder re-listings, RFC Δ18), or an `unresolved` record at class 1 (its
+parent lookup or probe in progress) — each derived with one `limit 1` query, never a counter that could drift. Edits
+(class 0), other cascades, and unresolved records waiting on a `RETRY`-class lookup or parked do not set it, or a
+parent that is never found would keep it true for good. Routine walks do not count. `refreshing` — the cards are in
+another embedding space, so only names and filters were searched (RFC Δ25). `reconnect_needed`; `index_as_of`
+(`observed_as_of`, §12.1 — never the last tick); `unread` — documents of an **admitted** kind whose
 content is not searchable: `pending` without a readable generation, `failed`, and `metadata_only` for `too_large`,
-`no_text`, `machine_text`, `user_chunk_cap` (photos, code, archives and other non-admitted kinds are not counted); `index_full`.
+`no_text`, `machine_text`, `user_chunk_cap` (photos, code, archives and other non-admitted kinds are not counted; 0 in
+Slice 1); `index_full`.
 
 **Card:** `ref` (`drive:<item_id>`), `name`, `path` (derived from the `parent_id` chain at read time, ending at
 `root_item_id`; an ancestor not yet recorded ends the path at the last known one and keeps the card; a `deleting`,
-`opaque_root` or `inside_opaque` ancestor drops the card, §5.2), `kind`, `modified_at`,
-`web_url`, `state`/`reason`, `stale`, `truncated`, `matched` (`card`, `content` or both), and for content hits a window:
-the best chunk and its neighbours `index ± 1` from stored text. The contract is the seam for future sources and
-stages.
+`opaque_root` or `inside_opaque` ancestor drops the card, §5.2), `kind`, `effective_date`, `modified_at`, `web_url`,
+`state`/`reason`, `stale`, `truncated`, `also_at`, `matched` (`card`, `content` or both), and for content hits a
+window: the best chunk and its neighbours `index ± 1` from stored text. What Smart reads per card, inside its
+wrapper: the card text (`name | kind | key facets`), the path, the effective date, the index state and reason, and
+the `stale`, `truncated` and `also_at` lines when set; `ref` and `path` are wrapper attributes. `web_url`,
+`modified_at` and `matched` (always `card` in Slice 1) stay in the result object; history keeps each card's ref and
+path (§10.4). The contract is the seam for future sources and stages.
 
 ### 10.3 Not in `SearchEnrichmentService`
 
@@ -768,14 +857,19 @@ the reason: enrichment would also hand file content to claude.ai via MCP and to 
 
 - **Intent** `search_files_in_drive` on FileManagement, `SYNC`. Context fields get names no other intent uses
   (`drive_query`, `drive_folder`, `drive_kind`, `drive_date_from`, `drive_date_to`), because the delegate
-  tool keeps the first description seen for a field name (`src/agents/base_agent.py:786-794`); a manifest test fails on
-  any shared field name with differing descriptions.
+  tool keeps the first description seen for a field name (`src/agents/base_agent.py`); a manifest test fails when a
+  new shared field name has differing descriptions (the four existing collisions are listed as known debts).
 - **Untrusted wrapper.** Each result goes inside `<drive_document nonce="…" ref="…" path="…">…</drive_document nonce="…">`
-  with a per-result random nonce; content and names are XML-escaped (`&`, `<`, `>`, quotes), so text in a document
-  cannot close the wrapper. Every delivery of file text — search results and `open_file_from_drive` alike — carries the reminder that it is
-  reference material and can never be an instruction. File names are untrusted too. No extra confirmation for
-  destructive intents (D2).
-- **Smart protocol lines** (a token change, backed up before editing):
+  with a per-result random nonce. The defence is the nonce: a forged closing tag cannot guess it. On top of it, a
+  `<drive_document` or `</drive_document` look-alike in the body loses its opener (any case or spacing, a fullwidth
+  or small `<`, invisible characters inside the tag word), and attribute values escape only `"`, `<` and `>`. Nothing
+  else is escaped, so `R&D/Tom's plan.docx` reaches the model as written and a path it copies back is the real one
+  (RFC Δ34). Search results and `open_file_from_drive` carry the reminder that the text is reference material and can
+  never be an instruction; file names are untrusted too. A drive file the coordinator prefetches for another
+  specialist (DocPlanner, PdfGenerator, HtmlPageGenerator) still reaches it raw until Slice 3 (RFC Δ35). No extra
+  confirmation for destructive intents (D2).
+- **Smart protocol lines** (a token change, backed up before editing; Slice 2 — until then the guidance below that
+  Slice 1 needs is rendered with the results):
   - search the drive when the answer may be in the user's documents;
   - results reflect the drive as of `index_as_of`; if the user refers to a recent edit, or a card is `stale`, open the
     file (Step 1 reads live) before quoting;
@@ -813,11 +907,15 @@ the reason: enrichment would also hand file content to claude.ai via MCP and to 
 ## 12. Operations
 
 ### 12.1 Observability and alerts
-- One summary line per tick: changes observed, records indexed / failed / demoted, chunks written, embedding calls,
-  embed wall time, duration, end reason (budget, complete, throttled, systemic error).
+- One summary line per tick that ends normally, on the indexer: `[DriveIndex] tick user=… end=done|continued {…}
+  duration=…`, the counts being those of the work done (`pages`, `observed`, `skipped`, `swept`, `deleted`,
+  `rescoped`, `cards`, `evicted`, `released`, `upgraded`; Slice 2 adds indexed, failed, demoted, chunks and embedding
+  time). A throttled, failed or lease-lost tick logs its own WARNING, ERROR or INFO line instead; a purge logs
+  `index purged`.
 - **Staleness is evaluated in the scheduler fan-out** (it runs even when the drive queue is stuck): a user with
   indexing on and access (no `access_lost_at`) is stale when no tick has ended without a systemic error for
-  `STALE_ALERT_AFTER`, or a **class-0**
+  `STALE_ALERT_AFTER` since the last success, or since the sync state was created (the fan-out creates a minimal one
+  for a user whose ticks never land, RFC Δ28), or a **class-0**
   record has been due for longer than it. Cascades, onboarding and upgrades (classes 1–4) never trip it. The check posts to
   `AlertSinkPort` on the False→True transition of `stale_alerted` and clears the flag only when the criterion itself is
   false again (one alert per incident, no flapping).
@@ -825,31 +923,44 @@ the reason: enrichment would also hand file content to claude.ai via MCP and to 
   finished — set when that round ends; it is what search shows as `index_as_of`.
 - `last_success_at` advances on every tick that ends without a systemic error and either made progress or found
   nothing to do. It drives the staleness alert only; search never shows it.
-- `DriveSyncState.counters` hold records per state and readable chunks only; embedding usage stays in the log line.
+- `DriveSyncState.counters` hold records per state and carded records (readable chunks from Slice 2), refreshed when
+  a tick finds nothing left to do; embedding usage stays in the log line.
   Embeddings are unbilled system-wide today; pricing them is a separate decision.
 
 ### 12.2 Rebuild
-`rebuild_drive_index(user_id)`: purge + epoch 1. Tested; the documented answer to "the index looks wrong" and to a
-drive switch. It is not the version-migration path.
+`scripts/infrastructure/drive_index_rebuild.py --user <id> [--apply]`: under the user's lease (refused while a tick
+runs), it marks the sync state `purging`, so the next tick takes the purge-then-restart path — purge, then epoch 1
+(§7.6). Dry run by default. Tested on the in-memory repository through to the rebuilt index; the documented answer to
+"the index looks wrong". A drive switch purges on its own (§7.6). It is not the version-migration path.
 
 ### 12.3 Versions and rolling upgrades
 - `policy_version` (admission, scope), `extraction_version` (chunker and shared extraction rules; the extractor
   itself is versioned per kind through `extracted_by`, §9), `card_version` (card builder),
-  `geo_table_version` (place names), `triage_version` (image triage, Slice 4), `embedding_space` (model, dimension) are domain constants; every record stamps the versions its state was decided
-  under.
-- When `DriveSyncState.applied_versions` differ from the constants, each tick runs a bounded **upgrade step**: it pages
-  through the user's records by `item_id` (`upgrade_cursor`) and hands stale ones to the planner, which picks the
+  `geo_table_version` (place names), `name_keys_version` (the name-stream keyer, RFC Δ31), `triage_version` (image
+  triage, Slice 4) are domain constants; every record stamps the versions its state was decided under. The Slice 1
+  version map is `{policy, card, geo_table, name_keys}`. The embedding space (model, dimension) is tracked beside it:
+  each card stamps the space it was embedded in, and the sync state the space all its cards are in (RFC Δ25).
+- When `DriveSyncState.applied_versions` differ from the constants, or `applied_space` from the service's space, each
+  tick whose due work is done runs a bounded **upgrade step** (§7.1 step 3): it pages through the user's records by
+  `item_id` (`upgrade_cursor`) and hands stale ones to the planner, which picks the
   cheapest work — re-classification only, card re-embed, re-extraction, or re-embedding stored chunk text for a model
-  change — and schedules it in class 3 (maintenance, §7.8). `failed` and `metadata_only` records are included, so a fixed converter or
-  a newly admitted kind takes effect. A further bump during a pass sets new `target_versions` and restarts the pass
-  from the first record (it is idempotent). `applied_versions` is updated when a **full pass finds no stale record**
-  — scheduling is not completion, and no count query is needed. Records whose work is blocked by a cap
-  (`user_chunk_cap`, `user_card_cap`) are re-stamped without work: their outcome is decided again when they are
-  released (§5.4).
-- Old chunks stay readable through the fence until the new generation commits. An embedding change writes a new vector
-  field next to the old one (Firestore vector indexes are per field). **During the transition every new card and chunk
-  embed writes both fields**, so fresh work never needs a second pass; `query_embedding_space` switches to the new
-  field when a full pass finds no card or readable chunk without it.
+  change — and schedules it in class 3 (maintenance, §7.8). `failed` and `metadata_only` records are included, so a
+  fixed converter or a newly admitted kind takes effect; a record parked under an unresolved parent is left to its
+  parent's rescope. A further bump during a pass sets new `target_versions` (or `target_space`) and restarts the pass
+  from the first record (it is idempotent). `applied_versions` (and `applied_space`) are updated when a **full pass
+  finds no stale record** — scheduling is not completion, and no count query is needed. A pass that left stale
+  records waits until due work has run or the target changes before verifying again, so a record stuck in backoff
+  never costs a full read of the index per tick. A new sync state starts applied: onboarding builds every record under
+  the current constants (RFC Δ30). Records whose work is blocked by a cap (`user_chunk_cap`, `card_capped`) are
+  re-stamped without work: their outcome is decided again when they are released (§5.4).
+- Old chunks stay readable through the fence until the new generation commits. **An embedding-space change**
+  (Slice 1, RFC Δ25): a card embedded in another space is version-stale, so the pass clears its hash and the card is
+  re-embedded like any changed card, its old vector serving until the new one replaces it; while `applied_space`
+  differs from the query's space, search skips the card stream and answers from names and filters, saying so
+  (`refreshing`). **Not built:** a second vector field written next to the old one during the transition (Firestore
+  vector indexes are per field), with search switching fields when a full pass finds none left; it is an extension for
+  the day a model change must not degrade search for the length of a pass
+  (`decisions/drive_embedding_dual_field_deferred.md`).
 - Expected duration of a full re-extraction ≈ records ÷ files per tick × tick duration, shared with fresh work by
   `MAINTENANCE_SHARE`; a rollback costs the same as the bump it reverses.
 
@@ -866,15 +977,24 @@ substitutions (deploy-substitution trap).
 - **Queue** `drive-sync-{suffix}`: created and updated in `cloudbuild-dev.yaml` with the describe → update || create
   pattern used for scheduler jobs, pinning `max-concurrent-dispatches=1`, the retry config and log sampling.
 - **Scheduler job** for the fan-out: in `cloudbuild-dev.yaml` and `docs/07_deployment/SCHEDULERS.md`.
-- **Firestore indexes** in `config/firestore.indexes.json`: card and chunk vector indexes with `user_id` (and
-  `user_id + kind`) pre-filters; `user_id + name_tokens` (array) for the name stream; `user_id + effective_date` and `user_id + kind + effective_date` for filter-only
-  queries; `user_id + priority + due_at + item_id` for `due_records`; `user_id + parent_id` for
-  `children`; `user_id + seen_epoch` for the sweep; `user_id + state + reason + modified_at` for cap release;
-  `user_id + item_id` for `records_page`; `user_id + item_id` on chunks for the folder-scoped in-memory path. Vector entries are created with the documented `gcloud` commands (the deploy script skips vector
-  indexes).
+- **Firestore indexes** in `config/firestore.indexes.json`, for `development_drive_index_records` only (RFC Δ22):
+  card vector indexes with `user_id` and `user_id + kind` pre-filters; `user_id + name_tokens (array) + item_id` and
+  `user_id + kind + name_tokens + item_id` for the name stream; `user_id + effective_date` and
+  `user_id + kind + effective_date` for filter-only queries; `user_id + priority + due_at + item_id` for
+  `due_records`; `user_id + parent_id + item_id` for `children`; `user_id + item_id` for `records_page`;
+  `user_id + seen_epoch + item_id` for the sweep; `user_id + has_card_vector + card_rank (+ modified_at)` for card-cap
+  eviction; `user_id + card_capped + card_rank + modified_at` for cap release (RFC Δ23). Eleven composites and two
+  vector entries; the equality-only queries (`count_carded`, `count_by_state`, `has_record_in`, a purge's batches)
+  are served by single-field indexes, and the sync-state collection needs none. Chunk indexes come with Slice 2.
+  `make deploy-indexes` creates the composites; the vector entries are created by
+  `scripts/infrastructure/create_drive_vector_indexes.sh` (the deploy script skips vector indexes), and
+  `scripts/infrastructure/drive_index_smoke.py` runs every repository read once against live Firestore.
 - **Indexer service** `alek-bot-indexer-{suffix}` (D5): same image, entry point `indexer_main.py`, about 2 GiB,
-  `concurrency = 1`, `min-instances = 0`, `--execution-environment=gen2`, its own env (no reuse of dual-purpose `.env`
-  keys), OIDC-protected `/worker` (and `/extract` from Slice 3). Deployed in `cloudbuild-dev.yaml` next to the relay.
+  `concurrency = 1`, `min-instances = 0`, `max-instances = 1`, `--execution-environment=gen2`, `--ingress=internal`
+  (RFC Δ21), its own env (no reuse of dual-purpose `.env` keys), OIDC-protected `/worker` (and `/extract` from
+  Slice 3). Deployed in `cloudbuild-dev.yaml` with the drive queue and its IAM step **after** the main service, so a
+  failing drive step never blocks a fix of the bot; `make deploy` refuses an empty indexer URL outside the first
+  pass of the two-pass first deploy (`DRIVE_FIRST_PASS=1`, RFC Δ43).
 
 ---
 
@@ -890,11 +1010,12 @@ substitutions (deploy-substitution trap).
 | Search | service | `services/drive_search_service.py` |
 | Nudge after a bot mutation | service | `UserDriveService`, with an injected `TaskQueue`; sent inside the shielded mutation after the provider call succeeds, carrying the item ids |
 | `drive_sync` tick entry point | indexer service | `indexer_main.py` (relay-style minimal app: OIDC `/worker` for `drive_sync` only; `/extract` from Slice 3) |
-| Fan-out and staleness check (scheduler task on the main service) | handler | `handlers/worker_handler.py` |
+| Fan-out, staleness check, reconnect notice (scheduler task on the main service) | service, delegated to by the handler | `services/drive_sync_scheduler_service.py`; `handlers/worker_handler.py` only delegates (RFC Δ5) |
 | Intent, protocol, capability | agents / manifest | `file_management_agent.py`, `agent_manifest.py`, Smart protocol token |
 | Opt-in toggle, status, Reconnect | web | Cabinet app, `/api/drive/indexing`, `/api/drive/status` |
-| Place-name resolution (bundled reverse-geocoding table → `place_name` facet) | indexer service | `services/drive_indexing_service.py` via a small adapter; `geo_table_version` stamped |
-| Wiring (second `TaskQueue`, indexer's embedding fan-out) | composition | `service_container.py` |
+| Place-name resolution (bundled reverse-geocoding table → `place_name` facet) | domain + adapter | `domain/place_lookup.py` (pure lookup), `adapters/geo_place_table.py` (loads `src/assets/geo/places_v1.tsv`), injected into the tick by composition; `geo_table_version` stamped |
+| Wiring (second `TaskQueue`, repository, place lookup, fan-out) | composition | `composition/drive_indexing_setup.py`, `service_container.py`; the indexer builds its own in `indexer_main.py` |
+| Rebuild one user's index | ops script | `scripts/infrastructure/drive_index_rebuild.py` (§12.2) |
 
 ---
 
@@ -918,7 +1039,7 @@ substitutions (deploy-substitution trap).
 | Range read of long files | `open_file_from_drive` option served from stored chunks; past the indexed span it downloads | chunks, offsets |
 | Second document source | Same card contract; new source adapter | — |
 | Facts from documents (OQ-1) | A consolidation pass over stored chunk text (email Stage-3 precedent) | chunk text |
-| Manual sync / reindex / skipped-file views | Cabinet endpoints over existing state and `rebuild_drive_index` | state, reasons |
+| Manual sync / reindex / skipped-file views | Cabinet endpoints over existing state and the rebuild path (§12.2) | state, reasons |
 | Faster or isolated extraction host | New `ContentExtractorPort` host | — |
 | Per-user parallel ticks | Raise the queue's `maxConcurrentDispatches`; the lease already guarantees one writer per user | lease |
 
@@ -933,7 +1054,7 @@ substitutions (deploy-substitution trap).
 | Tick start budget | 8 min, 50 files | No new file starts after it (§7.1 invariant) |
 | `MAINTENANCE_SHARE` | 30 % of the file budget | Fresh work first (§7.8) |
 | `QUIET` / `MAX_DEFER` | 10 min / 60 min | S0b: Word for the web saved every 1.2–3.3 min while typing; 10 min is three times the longest gap |
-| `MAX_ATTEMPTS`, `RETRY_BASE`, `RETRY_CAP` | 3, 5 min, 6 h | Per-file transient only (§8.2) |
+| `MAX_ATTEMPTS`, `RETRY_BASE`, `RETRY_CAP` | 3, 5 min, 6 h | Per-file, per-item and per-record failures (§8.2) |
 | `DOWNLOAD_TIMEOUT` | 120 s | Step 1 drive timeout |
 | `EXTRACT_WALL_TIMEOUT` | 120 s | S1 |
 | `RLIMIT_AS` / `RLIMIT_CPU` | placeholders | Set by S1 for the chosen host |
@@ -950,7 +1071,11 @@ substitutions (deploy-substitution trap).
 | `DENSE_FOLDER_CHILDREN` | 500 | Class 1 density threshold (with the kind condition) |
 | `MODEL_EXTRACT_DENSITY` / `MODEL_EXTRACT_GARBAGE` / `MODEL_EXTRACT_MAX_PAGES` / `MODEL_EXTRACT_PAGES_PER_MONTH` | 200 chars per page / 5 % / 200 / 5 000 | Parser-first router to the model extractor (§9) |
 | `TRIAGE_BATCH` | 16 thumbnails | Slice 4 image triage, one ECO vision call per batch |
-| `PROBE_CHILDREN` / `PROBES_PER_TICK` | 200 / 20 | Density probe sample and per-tick budget (§3.6) |
+| `PROBE_CHILDREN` / `PROBES_PER_TICK` | 200 / 20 | Density probe sample and per-tick budget (§3.6); as built one budget, `ITEM_CALLS_PER_TICK` = 20, for probes, parent lookups and re-listing pages (`RELIST_PAGE` = 200 children each; RFC Δ9, Δ18) |
+| `NAME_KEY_QUERIES` | 8 | Whole-token keys, and trigram keys, each queried one by one before one query with the rest (RFC Δ17) |
+| `LEASE_MARGIN` / `NUDGE_RETRY_DELAY_S` | 1 min / 60 s | Lease = start + `TICK_DEADLINE` + margin, and the write fence at `lease_until` − margin (RFC Δ26); delay of a nudge or busy retry (RFC Δ27) |
+| `SYSTEMIC_BACKOFF_BASE_S` / `SYSTEMIC_BACKOFF_CAP_S` | 60 s / 1800 s | Continuation delay after a systemic error, doubled per consecutive failure (§7.7) |
+| `PLACE_MAX_DISTANCE_KM` / `PLACE_PREFER_RADIUS_KM` / `PLACE_PREFER_WEIGHT_FACTOR` / `PLACE_FOOTPRINT_K` | 50 / 15 / 3 / 0.0015 | Offline place naming (RFC Δ7, Δ39), measured by `scripts/geo/measure_place_preference.py` |
 | `FOLDER_INMEM_CARDS` | 1 000 | Folder-scoped card ranking in memory below it |
 | `FOLDER_INMEM_CHUNKS` | 2 000 | Folder-scoped chunk ranking in memory below it (reads and memory bounded) |
 | `CASCADE_OPS_PER_TICK` | 2 000 | Metadata deletes/rescopes per tick (§7.8) |
@@ -969,7 +1094,7 @@ closed by the child-process extractor (Slice 2).
 
 **Slice 1 — find a file by metadata (G1 without content).** `DriveChange`, records, policy with opaque subtrees and
 scope, planner; `get_changes`; repository; tick with gate, lease, task keys, epochs, cascades, purge; nudges; cards;
-`search_files_in_drive` with the envelope and the escaped wrapper; opt-in, disclosure, Reconnect; the access-loss grace period;
+`search_files_in_drive` with the envelope and the nonce-tagged wrapper; opt-in, disclosure, Reconnect; the access-loss grace period;
 the indexer service and the rest of provisioning; offline place names in image cards; staleness alert. The policy admits **no** content kinds yet: every file is `metadata_only / kind_not_admitted` with a
 metadata card.
 *Done when:* the record-level parts of §17 are green — §17.1 (a)–(d) and the record properties, §17.2, §17.3, §17.4
@@ -1049,8 +1174,11 @@ port) and the Smart protocol token change with its backup reference.
 4. **Repository**: the fence across generations (a re-index at the same `cTag` to fewer chunks returns no old chunk; a
    crash after N chunk writes returns only the previous generation); lease exclusion; purge; `due_records` ordering.
 5. **Tick and queue**: a fake `TaskQueue` with `ALREADY_EXISTS` and name reservation — a budget-exhausted tick enqueues
-   exactly one continuation and it runs; a nudge after the bucket's tick is not lost; queue depth stays ≤ users +
-   nudges; a duplicate delivery returns `busy`; a file that cannot finish before the deadline never starts.
+   exactly one continuation and it runs; a nudge after the bucket's tick is not lost; a duplicate delivery returns
+   `busy` and comes back once per holder; a continuation racing its parent finds the lease released; a file that
+   cannot finish before the deadline never starts (Slice 2). The queue bound (about one task per user, plus nudges and
+   busy retries) holds by construction — the fan-out skips a user with a fresh continuation marker, a tick enqueues
+   at most one continuation, a busy retry is keyed per holder — and is not a test of its own.
 6. **Search**: pooling before RRF; one 400-chunk document does not starve other records under a filter; folder scope
    finds a weakly named file deep in the subtree; the envelope (`disabled`, `building`, `unread`); `index_as_of`;
    the wrapper cannot be closed by a chunk containing `</drive_document …>`; opt-out with a warm agent cache returns
@@ -1058,10 +1186,12 @@ port) and the Smart protocol token change with its backup reference.
    `access_lost_at + ACCESS_LOSS_TTL`, then `disconnected`; a regain before it continues from the cursor with no epoch;
    a regain after it completes the purge and starts epoch 1.
 7. **Manifest**: context-field description collisions; all new `LANG_DICT` keys present in en/uk/fr/es.
-8. **Eval** (`scripts/validation/drive_search_eval.py`; reuses only the Smart dry-run scaffolding of
-   `ab_agent_models.py`): a committed, PII-free, multilingual fixture folder (RU/UK/ES/EN; names like `Scan_0012.pdf`,
+8. **Eval** (`scripts/validation/drive_eval/`, run as `python -m scripts.validation.drive_eval`; Slice 1 calls
+   `DriveSearchService` directly, the Smart dry-run scaffolding of `ab_agent_models.py` joins with G3 in Slice 2, RFC
+   Δ13): a committed, PII-free, multilingual fixture folder (RU/UK/ES/EN/FR; names like `Scan_0012.pdf`,
    `Договор_ред1..3.docx`; a nested folder; a repository) behind an in-memory `UserDrivePort` fake, and a gold file
-   `{query, lang, goal, expected_refs, expected_substring?}`. Metrics: G1 and G2 recall@K, a substring hit for G2, the
+   (Slice 1: `tests/fixtures/drive_eval/gold_g1.json`, cases `{id, case, query, filters, lang, goal, expected_paths,
+   k?, min_hits?, known_hard?}`; Slice 2 adds `expected_substring`). Metrics: G1 and G2 recall@K, a substring hit for G2, the
    G3 search-initiated rate on positives and on a negative set (chit-chat, memory and web questions). Cases also cover
    a draft family whose dates disagree with its version names, and memory-vs-document conflicts in both directions.
    Name cases: exact, partial, transliterated (`dogovor` → `Договор`) and misspelled names. G2 cases include
@@ -1070,7 +1200,10 @@ port) and the Smart protocol token change with its backup reference.
    **The eval is a regression guard, not a decision tool.** Every quality choice is decided in this RFC with a default;
    the eval decides nothing about scope. It is automated over a synthetic fixture folder (no live drive, no manual
    testing), its first run records the bars, and later chunker, card, embedding or extraction changes must not fall
-   below them. G1 queries that need OCR are labelled expected misses until Slice 4 ships.
+   below them; any case that hit when the bars were recorded and misses now fails the run. A case with more right
+   answers than `K` (a trip's photos) may set `min_hits`; a `known_hard` case (with its reason) is run and reported
+   but is in no bar; `semantic` cases reach their file only through the card stream (expected misses with offline
+   fake embeddings). G1 queries that need OCR are labelled expected misses until Slice 4 ships (RFC Δ45).
 
 ---
 
@@ -1148,8 +1281,8 @@ reports are in `scripts/memory/onedrive_s0_*.json`, which is gitignored because 
   batched thumbnail triage on every image with the camera facet as a prior. Rejected:
   timestamp clustering, entropy, name and folder conventions, head/summary/tail sampling.
 - **D2 Prompt injection — decided: no extra confirmation.** Every delivery of file text carries the
-  reference-material reminder inside an escaped, nonce-tagged wrapper (§10.4); deletes remain recoverable from the
-  recycle bin and post a receipt.
+  reference-material reminder inside a nonce-tagged wrapper (§10.4; as built, RFC Δ34, and the prefetch path in
+  Slice 3, RFC Δ35); deletes remain recoverable from the recycle bin and post a receipt.
 - **D3 Access loss — decided: no immediate purge; a 30-day grace period** after a disconnect or an expired/revoked
   grant, after which the tick purges; reconnecting the same drive in time resumes (§6, §7.6). Rev 3.10 replaced the
   Firestore-TTL stamping with this tick-side rule — same behaviour for the user, far less machinery. Opt-out still purges at
@@ -1161,14 +1294,73 @@ reports are in `scripts/memory/onedrive_s0_*.json`, which is gitignored because 
 
 ---
 
-## 22. Where to continue (handoff, 2026-10-11)
+## 22. Where to continue (handoff, 2026-10-12)
 
-The design is closed at revision 3.11, and owner decisions D1–D5 are taken (§21). Spikes S0a–S0f are done and recorded
-in §18: delta works, so walk mode is not built. Phase 0 (PR #57) is merged. Open questions OQ-1..3 (§20) do not block
-Slice 1.
+The design is closed, and owner decisions D1–D5 are taken (§21). Spikes S0a–S0f are done and recorded in §18: delta
+works, so walk mode is not built. Phase 0 (PR #57) is merged. Open questions OQ-1..3 (§20) do not block Slice 1.
 
-1. **Implementation plan for Slice 1** (§16), written from this RFC. It is then executed subagent-driven, and a
-   reviewer owns any test edit (CLAUDE.md test rule). The plan's first adapter task builds the sanitised wire fixtures
-   of §17.3 from the S0a recordings in `scripts/memory/`.
-2. The eval fixture (§17.8) comes before Slice 1 code (§18).
-3. S1 (indexer limits) before Slice 2, S3 (`find_nearest` cost) before Slice 2 ships.
+**Slice 1 is built** on its feature branch: tasks 0–46 of its implementation plan, then an independent five-lens
+re-review and its fixes. Every place where the build differs from this text is a row of §23. Next:
+
+1. **Deploy and live acceptance** with the owner: drive indexes READY, the two-pass first deploy, smoke checks, the
+   first real-embedding eval run whose bars are recorded after review (`docs/07_deployment/README.md` → Drive Indexer
+   Service).
+2. S1 (indexer limits) before Slice 2, S3 (`find_nearest` cost) before Slice 2 ships.
+3. Deferred by decision, each with its trigger: `docs/04_solution_strategy/decisions/drive_*.md`.
+
+---
+
+## 23. Slice 1 implementation deltas
+
+Where Slice 1 as built differs from the text above, and why. Δ1–Δ22 were decided before the build (CLAUDE.md
+Gate 4, by the arbiter under the owner's delegation); Δ23–Δ45 come from the review of the built slice (owner
+decisions and fixes). The body text above was corrected where a delta made it false; a row stays here as the record
+of the decision. Code and tests cite these rows as `RFC Δn`.
+
+| # | The RFC said | Slice 1 does | Why |
+|---|---|---|---|
+| Δ1 | `EmbeddingService` (port) exposes `embedding_space` (§4) | The port is unchanged. `GeminiEmbeddingAdapter.EMBEDDING_SPACE = "gemini-embedding-2/768"` is a class attribute; composition reads it and injects it as a `str` into the tick and, required, into `DriveSearchService` | The port contract pins its abstract methods; no caller switches on the value. A wiring that forgets the space fails at construction instead of skipping the space check |
+| Δ2 | Task-key families scheduler / cont / nudge / **purge** (§7.1) | `purge` is renamed `toggle` (`{user_id}:toggle:{ts}`) and is also used when indexing is turned **on** | Onboarding starts at once instead of after up to `TICK_INTERVAL`; the tick's gate decides purge or onboarding |
+| Δ3 | Nudge key `{user_id}:nudge:{item_id}:{mutation id}`, one per item | One nudge per mutation: `{user_id}:nudge:{mutation_id}`, payload `item_ids: [...]` | A save that creates folders touches several items; the mutation id is already unique |
+| Δ4 | Tick payload `{user_id, account_id}` | `{user_id}` plus an optional `nudge` | Nothing in the indexer uses `account_id` (embeddings are unbilled, §12.1) |
+| Δ5 | Fan-out and staleness in the handler (§13) | `DriveSyncSchedulerService` (services/) holds them; `WorkerHandler` only delegates | `WorkerHandler` owns no business logic |
+| Δ6 | "Notifies the user once" on a lost grant (§7.7), host unspecified | The indexer sets `needs_reconnect`. The **fan-out on the main service** posts the notice on the transition, tracked by `DriveSyncState.reconnect_notified`, set before the send. It comes down again when no send was attempted (no channel, a formatter failure, `notify` raising; `NotifyResult.sent`), so the next fan-out retries; once a send was attempted it stays up, delivered or not | The indexer has no chat delivery. A notice cut off after it left must not repeat every 10 minutes; one that never left must not be lost |
+| Δ7 | Place names "English plus local" from a bundled table (§5.3), no radius | GeoNames `cities5000` + `alternateNamesV2` reduced to `src/assets/geo/places_v1.tsv`, with a weight (population, tripled for capitals and regional seats). The nearest place within `PLACE_MAX_DISTANCE_KM = 50` names the photo, unless a heavier place within `PLACE_PREFER_RADIUS_KM = 15` qualifies (Δ39); else `None` | Pure nearest-point named districts ("Esquilino", "Paris 04") and missed villages. CC BY 4.0, attributed in the asset README |
+| Δ8 | Property tests (§17.1), library unspecified | Seeded `random` generators over 200 seeds | `hypothesis` is not installed; seeds make failures reproducible |
+| Δ9 | Per-item provider calls "bounded per tick", budgets unnamed except `PROBES_PER_TICK` | One shared budget, `ITEM_CALLS_PER_TICK = 20`, for probes, parent lookups and re-listing pages; no item call starts after the tick's start budget | One knob instead of three; a slow provider must not push the tick past its deadline. Each kind resumes on the next tick |
+| Δ10 | `list_children_changes(user_id, folder_id)` | `list_children_changes(user_id, folder_id, limit, cursor=None) -> DriveChildrenPage` | The probe reads only the first `PROBE_CHILDREN`; a re-listing is paged and resumable (Δ18) |
+| Δ11 | `open_file_from_drive` text "carries the reminder" (§10.4, D2), no slice named | Done in Slice 1 together with the search wrapper | One wrapper function, one review |
+| Δ12 | Quiet period (§7.3), index runs (§8), chunks, extractor, chunk cap | Not built; `ADMITTED_KINDS` is empty, so `pending` is unreachable | All of them act on content; Slice 2 builds them with the extractor |
+| Δ13 | Eval (§17.8) "reuses the Smart dry-run scaffolding" | Slice 1's eval measures G1 by calling `DriveSearchService` directly with each gold case's filters; the G3/Smart part arrives with Slice 2 | §16: Slice 1 is done on the G1 metadata subset; G3 bars are Slice 2's |
+| Δ14 | `DriveSyncState.pending_cascades` (§3.5, §7.6) | Not kept: the folder record's `deleting` state is the durable marker, and work-off runs only after a complete round (Δ15) | Two sources of truth for one fact |
+| Δ15 | First-seen cards and cascades wait for a complete round; edits do not (§7.6, §7.8) | **All** work-off waits for a complete round | One rule. Edits wait only while a round spans ticks (onboarding, 410), and continuations chain at once |
+| Δ16 | Opaque roots: generated dirs only "inside a repository" (§5.2) | `node_modules`, `__pycache__` and `site-packages` are opaque roots **anywhere**; their card reads `generated files` (Δ33) | Tools create them, so the no-convention principle does not apply; an extracted repository without `.git` would otherwise fill the card cap |
+| Δ17 | Name stream: one `array-contains-any` query, ranked by shared keys, then RRF (§10.1 3a) | One query per whole-token key **and** one per trigram key, at most `NAME_KEY_QUERIES = 8` of each in query order, plus one query with the remaining keys (≤ 30), in parallel, merged by id and cut by the `NAME_MIN_TRIGRAMS` floor. **After RRF, records whose name covers every query token rank first**, RRF order kept within each group | A shared query returns its first 100 matches by id: `IMG_4912` among 1 000 `IMG_*` files, or a fully misspelled name reachable only by trigrams, was never seen. Plain RRF ranked an exact name below two-stream noise. The tie-break is the §14 "step after RRF" seam, not a cosine threshold |
+| Δ18 | Re-listing a never-stored subtree (§5.2): "bounded, resumable"; `pending_reobserve` in the sync state | A record flag, `reobserve_pending` + `reobserve_cursor`, due in class 2: one page (`RELIST_PAGE = 200`) per item call, retried with backoff, dropped after `MAX_ATTEMPTS`. A folder that becomes opaque clears it, and the step skips an opaque folder without a call | A list in the sync state was lost on any systemic error, and a failing folder looped the user's ticks; an opaque folder's subtree is never stored, so listing it is wasted |
+| Δ19 | §7.8 class order; the gate re-checked "before each write batch"; toggle and nudge on a busy lease | (a) When a class runs out of budget, lower classes wait. (b) The gate is re-read at most every 5 s. (c) A nudge on a busy lease re-enqueues itself under `…:r{n}`; a toggle or a continuation comes back once per holder (Δ27) | (a) keeps a half-rescoped repository's files from being carded. (b) one Firestore read per write batch is noise |
+| Δ20 | `kind` filter, a single value (§10.1) | Families: spreadsheet → {xlsx, xls, ods, csv}, document → {docx, doc, odt, rtf, pdf}, word → {docx, doc}, presentation → {pptx, ppt, odp}, photo → {image}; a format, an extension or a plural ("jpgs") is accepted; an unknown value is refused | §10.1's own example ("all my spreadsheets") needs a family; an unknown word silently matched nothing |
+| Δ21 | The indexer has an OIDC-protected `/worker`; `.env` keys are not substitutions (§12.4a); audience unspecified | `--ingress=internal` + in-app OIDC with a pinned audience, failing closed on Cloud Run. One new substitution, `_INDEXER_URL`, from its own key `INDEXER_URL_DEV` | One caller (Cloud Tasks, same project). The key is deploy-only, which is exactly the deploy-substitution rule |
+| Δ22 | Indexes for both prefixed and unprefixed collections | `development_` collections only; the old unprefixed index entries elsewhere in the file are kept (`decisions/drive_index_pruning_deferred.md`) | The unprefixed collections were deleted 2026-05-31 |
+| Δ23 | The card cap marks a record `metadata_only / user_card_cap` (§3.4, §5.4) | A flag, `card_capped`: it withholds the card and nothing else; scope, state and reason stay structural. Eligibility, eviction and release read the flag; the release query is `user_id + card_capped + card_rank + modified_at`. `Reason.USER_CARD_CAP` is unused | Overwriting the reason re-opened a capped repository on every re-emission, kept a repository opaque after its `.git` left, and carded a released dense folder as a repository |
+| Δ24 | A card the provider refuses is retried like any per-file failure (§8.2) | After `MAX_ATTEMPTS` refusals (HTTP 400) the refusal is terminal: flag `card_refused`, no card, `card_hash` names the refused text and `card_version` is stamped; the state stays structural. A new card text or a card-builder bump gets a fresh try | Retried forever, a refused card stayed version-stale and restarted a full upgrade pass every tick. `failed` is reserved for content outcomes (Slice 2) |
+| Δ25 | An embedding change writes both vector fields; `query_embedding_space` switches when a full pass finds none left (§12.3) | The sync state records the space its cards are in (`applied_space`, and `target_space` for a running pass); a card embedded in another space is version-stale, so the upgrade pass re-embeds it (the old vector serves until replaced) and `applied_space` moves only when a full pass finds none left. While it differs from the query space, search skips the card stream (names and filters only) and the envelope says `refreshing`. The dual-field write is not built (`decisions/drive_embedding_dual_field_deferred.md`) | One space per index until a model change is real; a mixed-space kNN would rank by meaningless distances |
+| Δ26 | "`lease_until` exceeds the task's dispatch deadline, so a holder never outlives its lease" (§7.1) | Fenced: the tick writes nothing once its clock reaches `lease_until - LEASE_MARGIN`, and `save_sync_state(state, owner)` / `delete_sync_state(user_id, owner)` are transactions that apply only while `owner` holds the stored lease, else `LeaseLost`. The tick treats `LeaseLost` as a quiet stop (INFO, status `lease_lost`) | Cloud Run can answer 504 at its timeout without cancelling the coroutine; a stale purge could delete the new holder's state and lease |
+| Δ27 | The tick enqueues its continuation, then releases the lease; a busy tick returns `busy` (§7.1) | The continuation is enqueued after `release_lease`, on every path. A tick without a nudge that finds the lease busy re-enqueues itself once per holder, after `NUDGE_RETRY_DELAY_S`, under `{user_id}:cont:busy-{holder}` | A continuation dispatched at once found its own parent busy and was dropped, while the parent's continuation marker made the fan-out skip the user for up to 30 min |
+| Δ28 | Staleness is evaluated for users with a sync state (§12.1) | The fan-out creates a minimal sync state (`created_at = now`, Firestore `create()`) for a user with indexing on, a working grant and no state; the tick onboards from it as from none | A user whose ticks never land (indexer unreachable, 401/404/503, a crash before the lease) was never alerted, and the Cabinet said "building" forever. Not under a lost grant: a state then would restart the grace period and its notice |
+| Δ29 | After `MAX_ATTEMPTS` a parent lookup → orphan, deleted (§8.2) | Only a definite not-found (a deleted change, `DriveItemNotFoundError`) removes the orphan, a folder through the cascade. Transient failures past `MAX_ATTEMPTS` keep the record `unresolved`, retried every `RETRY_CAP` at priority `RETRY`. A record parked under an unresolved parent drops its card. A deleting folder whose children are all deleting folders not in the current page steps aside one second behind them; a cascade step that writes nothing charges no budget | Transient failures prove nothing about the parent, and in delta mode no later enumeration would settle it. Without the step-aside, a page full of such folders stopped the cascade class every tick |
+| Δ30 | Tick step 2 is the upgrade, before work-off (§7.1); a pass restarts until clean (§12.3) | The upgrade step runs after work-off, only when no class stopped on its budget, then the card-cap release. A new sync state starts with `applied_versions` = the current constants. A finished pass that left stale records waits until due work has run or the target changes | Fresh work first (§7.8). Onboarding builds every record under the current constants, so a verification read of the whole index found nothing; a record stuck in backoff must not cost a full read per tick |
+| Δ31 | Name keys are recomputed on rename (§3.2) | The keyer has its own version, `NAME_KEYS_VERSION`, in the version map; a record stamps `name_keys_version`, and an older one is version-stale | A key change re-keys through the upgrade pass instead of a policy bump |
+| Δ32 | OS and lock artefacts are never downloaded (§5.1) and keep a card with their reason | `~$*`, `.~lock.*#`, `Thumbs.db`, `desktop.ini`, `.DS_Store` and `*.tmp` are reason `os_artifact`, decided before the dot-name rule; the record is kept with no card and no name keys | A lock file ranked above the document it locks ("ред3" returned `~$Договор_ред3.docx`). §3.4 lets a reason withhold the card |
+| Δ33 | Opaque-root cards `name \| repository`, `name \| hidden folder` or `name \| generated files (N items)`, plus a `descendant_count` facet (§5.2, §8.5) | Dot-folder `hidden folder`; generated directory (Δ16) `generated files`; dense tree `generated files (500+ items)` with the child count bucketed (100+, 500+, 1000+, 5000+, …); a marker folder `repository`. No `descendant_count` | A live `childCount` re-embedded a dense folder's card on every child change; a `node_modules` is not a repository |
+| Δ34 | Content and names XML-escaped (`&`, `<`, `>`, quotes) in the wrapper (§10.4) | Body text: only a `<drive_document` / `</drive_document` look-alike loses its opener, including a fullwidth `＜` or small `﹤` opener and invisible characters (soft hyphen, zero-width, direction marks, word joiner, BOM) inside the tag word. Attribute values escape only `" < >`. The attached-file label for vision and video is not escaped. Letter look-alikes are out of scope: the per-result nonce is the defence | Full escaping turned `R&D` into `R&amp;D` in paths the model copied back, naming a folder that does not exist or creating one through save/move. A forged closing tag cannot guess the nonce |
+| Δ35 | Every delivery of file text carries the wrapper and reminder (§10.4, D2) | Search results and `open_file_from_drive` do. A drive file prefetched by the coordinator for another specialist (DocPlanner, PdfGenerator, HtmlPageGenerator) reaches it raw until Slice 3's one extraction path (`decisions/drive_prefetch_wrapper_slice3.md`) | That path is the coordinator's file-ref resolution shared with chat uploads; Slice 3 rebuilds it |
+| Δ36 | An empty query is filter-only (§10.1) | A request with no name keys (empty, or punctuation only) is filter-only; with no filter either it is refused with a correction (put the words in `drive_query`, or set a kind, date or folder filter). The `drive_query` description says it is required unless the request is filter-only, that the delegate's `query` is not read, and that it takes name words or a place or subject, never type words or dates | Smart's words sat in the required `query` field, which search never reads: the empty search answered with the 8 newest files as if they matched. A query of punctuation ran a kNN over a meaningless vector |
+| Δ37 | Filters are post-filters on the streams' pages; widen once (§10.1 steps 4–5) | When a stream page came back full (after the widening) and the filters dropped candidates, the result is `capped`: the answer says the filters saw only the best N name (and meaning) matches, and with no survivor never says "No matching files" but how to search all files. A kind family runs one card kNN per member kind, merged by distance | A query plus a date or folder filter answered a flat "no match" for files that exist past the page; a family filter dropped card candidates of the other kinds |
+| Δ38 | Name keys: NFC + casefold tokens, Cyrillic↔Latin transliterations, trigrams (§3.2) | Each token also gets its Latin accent-stripped form (œ æ ø ł ß đ ð þ ı ħ folded), and Cyrillic tokens the Ukrainian national transliteration (resolution No. 55, 2010) next to the Russian-style one; any Unicode punctuation and apostrophe look-alikes separate words. Variant keys sit after the originals; the Ukrainian form gets no trigrams. A small en/ru/uk function-word set is dropped from queries only | "resume" did not find `Résumé.pdf`, "kyiv" did not find `Київ.jpg`, `Report—final’s` was one token; a third script's trigrams lifted unrelated names over the floor; "photos from my trip" blocked the cover tie-break |
+| Δ39 | (Δ7) The heaviest place within 15 km names a photo | The nearest place names it, unless a place within 15 km weighs at least `PLACE_PREFER_WEIGHT_FACTOR = 3` times as much and is in the nearest place's country, or holds the photo inside its own footprint (`PLACE_FOOTPRINT_K = 0.0015 · √weight` km) while the nearest place's footprint does not | Across borders the old rule named Monaco "Nice" and Vaduz "Feldkirch" (603 places at their own centre). Measured over the bundled table by `scripts/geo/measure_place_preference.py`: all expected cases hold, self-name 62.7 %, residual cross-border cases listed in `src/assets/geo/README.md` (`decisions/drive_place_name_residuals.md`) |
+| Δ40 | A 410 on the delta link restarts the enumeration (§7.5) | A 404 on a **stored** cursor is treated the same: `DriveResyncRequired` from the delta start. A 404 on a fresh enumeration or on the App Folder read keeps its class | A delta link Graph no longer knows is as dead as a 410 one; it failed every tick as an internal error |
+| Δ41 | Only `invalid_grant` is a lost grant (§4, §7.7) | `interaction_required` and `consent_required` from the token endpoint are lost grants too (`GraphReauthRequired`, so `DriveReauthRequired`); To Do still sees a `ValueError` subclass | Only a new sign-in helps (MFA, Conditional Access, consent withdrawn); as a plain error they became a 60 s throttle retried forever |
+| Δ42 | Timeouts: per-call Graph bound only | The token POST has its own 30 s `ClientTimeout` (shared with To Do; a timeout keeps its throttle class), and the Gemini embedding client a 30 s HTTP timeout mapped to `LLMUnavailableError` (systemic). The connect-time drive-id read has 10 s | aiohttp's default is 300 s and google-genai sends with none: a hung connection held a tick indefinitely |
+| Δ43 | Provisioning in `cloudbuild-dev.yaml` next to the relay (§12.5) | `make deploy` refuses an empty `SERVICE_URL_DEV`, and an empty `INDEXER_URL_DEV` unless `DRIVE_FIRST_PASS=1` (the first pass of the two-pass first deploy). Cloud Build deploys the drive queue, the indexer and its IAM step **after** the main service | An empty indexer URL silently disabled indexing in the live environment; a failing drive step blocked every hotfix of the bot |
+| Δ44 | Cabinet card: on/off, records per state, … (§6) | `/api/drive/status` also returns `available` (a drive queue is wired; the switch is hidden when false unless search is already on), `access_lost_at` and `index_kept` (an index exists, no purge runs, and the grace period has not ended). The "kept about 30 days" and "search still answers" hints show only while `index_kept`; the card lists every non-zero counter, labelled in en/uk/fr/es | Turning search on where no queue exists showed "building" forever; the card promised a kept index past its grace period or during a purge |
+| Δ45 | The eval records bars and later runs must not fall below them (§17.8) | Per case `min_hits` (a trip's photos: 5 of more than K), `known_hard` cases (run and reported, in no bar), a `semantic` case type (card stream only; expected misses offline with fake embeddings), and **any** case that hit when the bars were recorded and misses now fails the run | The real-embedding run found the right photos for every place case but scored them as misses; a single lost case hid inside an unchanged scope recall |
