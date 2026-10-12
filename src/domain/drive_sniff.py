@@ -19,7 +19,7 @@ from typing import FrozenSet, List, Optional, Tuple
 SNIFF_HEAD_BYTES = 8192     # what the caller reads from the temp file; local ZIP headers and OLE2 names fit often
 
 _OOXML_KINDS: FrozenSet[str] = frozenset({"docx", "xlsx", "pptx"})
-_ZIP_KINDS: FrozenSet[str] = _OOXML_KINDS | frozenset({"epub", "odt", "ods", "odp", "iwork"})
+_ODF_KINDS: FrozenSet[str] = frozenset({"epub", "odt", "ods", "odp"})     # a `mimetype` member names the kind
 _OLE_KINDS: FrozenSet[str] = frozenset({"xls", "msg", "doc", "ppt"}) | _OOXML_KINDS   # OOXML: encrypted package
 _TEXT_KINDS: FrozenSet[str] = frozenset({"text", "markdown", "csv", "json", "subtitles", "html", "eml", "code",
                                          "log", "data_dump", "mhtml"})
@@ -84,17 +84,22 @@ def sniff_kind(head: bytes, declared_kind: str) -> str:
 
 
 def _zip_kind(head: bytes, declared_kind: str) -> str:
+    """The head proves a kind only by a readable `mimetype` value (ODF, EPUB) or an OOXML part name. Otherwise the
+    declared ZIP kind stays (members may sit past the head, a streamed ZIP stops the walk at its first member, a
+    `mimetype` may be deflated or late), unless the head shows the other family's marker: `mimetype` under an OOXML
+    kind, `[Content_Types].xml` under an ODF/EPUB kind."""
     names = _zip_local_names(head)
-    if names and names[0][0] == "mimetype" and names[0][1] is not None:
-        return _ODF_MIME.get(names[0][1].strip(), "archive")
-    for name, _ in names:
+    for name, stored in names:
+        if name == "mimetype" and stored is not None:
+            return _ODF_MIME.get(stored.strip(), "archive")
         for prefix, kind in _OOXML_PARTS:
             if name.startswith(prefix):
                 return kind
-    if names and names[0][0] == "[Content_Types].xml" and declared_kind in _OOXML_KINDS:
+    visible = {name for name, _ in names}
+    if declared_kind in _OOXML_KINDS and "mimetype" not in visible:
         return declared_kind
-    if not names and declared_kind in _ZIP_KINDS:
-        return declared_kind                         # an empty or unusual head: the central directory decides later
+    if declared_kind in _ODF_KINDS and "[Content_Types].xml" not in visible:
+        return declared_kind
     if declared_kind == "iwork":
         return "iwork"
     return "archive"
@@ -113,9 +118,10 @@ def _zip_local_names(head: bytes) -> List[Tuple[str, Optional[bytes]]]:
             break
         name = head[start:start + nlen].decode("utf-8", errors="replace")
         data_at = start + nlen + xlen
-        stored = head[data_at:data_at + csize] if method == 0 and data_at + csize <= len(head) else None
-        found.append((name, stored))
-        if flags & 0x08 or csize == 0xFFFFFFFF:      # data descriptor or ZIP64: the next header is not locatable
+        streamed = bool(flags & 0x08) or csize == 0xFFFFFFFF   # data descriptor or ZIP64: sizes are not here
+        readable = method == 0 and not streamed and data_at + csize <= len(head)
+        found.append((name, head[data_at:data_at + csize] if readable else None))
+        if streamed:                                 # the next header is not locatable
             break
         pos = data_at + csize
     return found
