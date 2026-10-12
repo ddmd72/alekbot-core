@@ -10,7 +10,7 @@ from scripts.validation.drive_eval.mini_pdf import text_pdf
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 
 from ..services.drive_index_fakes import FakeEmbeddings
-from .drive_eval_samples import rome
+from .drive_eval_samples import fake_content, rome
 
 USER = "zz-synthetic-test"
 
@@ -45,7 +45,7 @@ async def test_index_query_then_purge_leaves_nothing(folder):
     repo = InMemoryDriveIndexRepository()
     report = await live_check(folder, USER, [{"query": "electricity bill", "filters": {}}], repo=repo,
                               embeddings=FakeEmbeddings(), embedding_space="fake/8", place_of=rome,
-                              throttle_pause_s=0)
+                              throttle_pause_s=0, **fake_content())
     assert report.indexed.get("carded", 0) >= 2 and report.purged
     (answer,) = report.answers
     assert answer["status"] == "ok" and "Scans/electricity bill.pdf" in answer["paths"]
@@ -63,7 +63,7 @@ async def test_a_real_user_id_is_refused(folder):
 async def test_an_existing_synthetic_index_is_refused(folder):
     repo = InMemoryDriveIndexRepository()
     await live_check(folder, USER, [], repo=repo, embeddings=FakeEmbeddings(), embedding_space="fake/8",
-                     place_of=rome, throttle_pause_s=0)
+                     place_of=rome, throttle_pause_s=0, **fake_content())
     from src.domain.drive_index import DriveSyncState
     await repo.save_sync_state(DriveSyncState(user_id=USER))
     with pytest.raises(LiveCheckError, match="already has an index"):
@@ -81,5 +81,5 @@ async def test_a_failing_query_still_purges(folder, monkeypatch):
     repo = InMemoryDriveIndexRepository()
     with pytest.raises(ValueError, match="bad query"):
         await live_check(folder, USER, [{"query": "x", "filters": {}}], repo=repo, embeddings=FakeEmbeddings(),
-                         embedding_space="fake/8", place_of=rome, throttle_pause_s=0)
+                         embedding_space="fake/8", place_of=rome, throttle_pause_s=0, **fake_content())
     assert await repo.get_sync_state(USER) is None and not [k for k in repo.records if k[0] == USER]

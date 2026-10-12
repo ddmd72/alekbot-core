@@ -11,7 +11,7 @@ from scripts.validation.drive_eval.metrics import CASE_TYPES, case_hit
 from scripts.validation.drive_eval.runner import EXIT_REGRESSION, EvalError, exit_code, run_eval
 
 from ..services.drive_index_fakes import FakeEmbeddings
-from .drive_eval_samples import GOLD, MANIFEST, rome
+from .drive_eval_samples import GOLD, MANIFEST, fake_content, rome
 
 
 def test_min_hits_lowers_the_bar_below_min_of_expected_and_k():
@@ -31,7 +31,7 @@ async def _eval(tmp_path, record, gold=GOLD):
     gold_path.write_text(json.dumps(gold, ensure_ascii=False), encoding="utf-8")
     return await run_eval(tree, gold_path, tmp_path / "bars.json", tmp_path / "report.json",
                           embeddings=FakeEmbeddings(), embedding_space="fake/8", place_of=rome, record=record,
-                          throttle_pause_s=0)
+                          throttle_pause_s=0, **fake_content())
 
 
 @pytest.mark.parametrize("min_hits", [0, 2, "1", True])

@@ -18,7 +18,7 @@ from src.infrastructure.delegation_engine import DelegationEngine, ToolResult
 from src.services.drive_search_service import DriveSearchService
 
 from ..services.drive_index_fakes import FakeEmbeddings
-from .drive_eval_samples import MANIFEST, rome
+from .drive_eval_samples import MANIFEST, fake_content, rome
 
 _GOLD = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval" / "gold_g3.json"
 OWNER = "owner-1"
@@ -57,7 +57,7 @@ async def setup():
     drive = FixtureDrive(MANIFEST)
     repo = InMemoryDriveIndexRepository()
     clock = EvalClock()
-    await index_fixture(drive, repo, FakeEmbeddings(), rome, "fake/8", clock, throttle_pause_s=0)
+    await index_fixture(drive, repo, FakeEmbeddings(), rome, "fake/8", clock, throttle_pause_s=0, **fake_content())
     search = DriveSearchService(repo, FakeEmbeddings(), _EnabledUsers(), drive, clock=clock, embedding_space="fake/8")
     real_calls = []
 
