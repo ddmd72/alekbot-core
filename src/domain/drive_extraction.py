@@ -2,7 +2,8 @@
 Content extraction contract (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §9, §24.2-§24.5). Pure.
 
 Public interface:
-    ExtractionStatus, ExtractionRequest, ExtractionOutcome, PdfSplit, TriageImage, TriageResult, DriveModelUnavailable
+    ExtractionStatus, ExtractionRequest, ExtractionOutcome, PdfSplit, PdfSplitFailed, TriageImage, TriageResult,
+    DriveModelUnavailable
     PARSER, READER, EXTRACTOR_CHAINS, chain_for(kind) -> Tuple[str, ...]
     garbage_share(text) -> float
     model_route(outcome, kind) -> Optional[str]
@@ -70,6 +71,16 @@ class PdfSplit:
     paths: Tuple[str, ...]       # temp PDFs in page order, each at most MODEL_PAGES_PER_CALL pages
     pages_total: int             # pages in the source file
     truncated: bool = False      # pages past MODEL_EXTRACT_MAX_PAGES (or the caller's cap) were not cut
+
+
+class PdfSplitFailed(Exception):
+    """The sandboxed split could not cut the PDF: `status` is `encrypted`, `unsupported`, `timeout`, `memory`,
+    `too_large` or `error`, and the reader returns it as its outcome (§24.3)."""
+
+    def __init__(self, status: ExtractionStatus, detail: str = "") -> None:
+        super().__init__(f"{status.value}: {detail}" if detail else status.value)
+        self.status = status
+        self.detail = detail
 
 
 class DriveModelUnavailable(Exception):

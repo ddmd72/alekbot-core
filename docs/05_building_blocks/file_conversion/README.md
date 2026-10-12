@@ -74,6 +74,9 @@ URL converters (exiftool, network). A plain `.zip` therefore gets the conversion
 Before conversion, `check_zip_container()` reads a ZIP container's central directory (OOXML and
 EPUB are ZIPs) and refuses more than `MAX_ZIP_UNCOMPRESSED_BYTES` (100 MiB) declared inflated or
 `MAX_ZIP_MEMBERS` (10 000) members — the refusal is the ordinary conversion alert.
+Both helpers live in `src/utils/document_hardening.py` (re-exported by `file_conversion`), free of
+the logger and telemetry imports, because the drive parser's child process imports them for every
+file (`USER_DRIVE_INDEXING_RFC` §9).
 Audio never reaches markitdown: every audio MIME type (and an untyped file with an audio extension)
 goes to the injected `AudioTranscriptionPort`.
 
@@ -82,7 +85,8 @@ outright bombs, not parser blow-up: measured on markitdown 0.1.4, a 66 KB DOCX p
 RSS, a 5 KB XLSX at ~1.75 GB, an 8.7 KB legacy XLS (not a ZIP) at ~3 GB, a 408 KB PDF at
 ~955 MiB. Conversion still runs in-process on the single 1 GiB instance. The fix is isolation — a
 child process with a memory rlimit and a timeout (`ContentExtractorPort`,
-`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §9) — pending spike S1 on Cloud Run.
+`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §9). The drive indexer has it
+(`SubprocessContentExtractor`, limits pending spike S1); the chat path moves to it in Slice 3.
 
 ### Graceful degradation via LLM alerts
 

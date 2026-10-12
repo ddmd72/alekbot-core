@@ -27,6 +27,15 @@ aiohttp
 beautifulsoup4  # HTML → plain text extraction for Gmail email bodies
 aiofiles  # Async file I/O for Claude vision support
 markitdown[all]  # File-to-text conversion: DOCX, XLSX, YouTube, audio + image description in docs
+# Drive parser (USER_DRIVE_INDEXING_RFC §5.1, §24.3), imported directly by the sandboxed child: pinned so the
+# extraction a record was indexed with (`extracted_by`) does not drift with each image build. Bumps are deliberate:
+# a changed output for the same file is a SubprocessContentExtractor.VERSION bump.
+pypdf==6.20.1  # PDF page count, encryption check, page windows for the reader
+striprtf==0.0.33  # RTF to text (markitdown has no RTF converter)
+defusedxml==0.7.1  # ODF content.xml / manifest and EPUB encryption.xml, no entity expansion
+charset-normalizer==3.4.4  # text kinds that are not UTF-8 (CP1251, UTF-16 without BOM)
+xlrd==2.0.2  # legacy XLS, row-capped (markitdown's converter reads every row)
+olefile==0.47  # encrypted OOXML is an OLE2 package with an EncryptedPackage stream
 openpyxl>=3.1.0  # CSV → xlsx conversion in RichContentService
 python-docx>=1.1.0  # Markdown → docx conversion in RichContentService
 playwright>=1.40.0  # HTML → PNG rendering for widget rich content (ENABLE_HTML_RENDERER)
