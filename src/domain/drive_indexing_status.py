@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Mapping, Optional
 
+from .drive_index_params import ACCESS_LOSS_TTL
+
 
 @dataclass(frozen=True)
 class DriveIndexingStatus:
@@ -19,3 +21,11 @@ class DriveIndexingStatus:
     index_as_of: Optional[datetime] = None
     index_full: bool = False
     building: bool = False
+    access_lost_at: Optional[datetime] = None
+
+    def index_kept(self, now: datetime) -> bool:
+        """A stored index exists and is inside the access-loss grace period (§7.7): the only time the Cabinet
+        may say it is kept, or that search still answers from it."""
+        if not any(int(n) > 0 for n in self.counters.values()):
+            return False
+        return self.access_lost_at is None or now < self.access_lost_at + ACCESS_LOSS_TTL
