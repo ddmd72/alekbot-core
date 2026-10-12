@@ -299,3 +299,35 @@ def prepare_drive_text_file(name: Optional[str], text: str) -> "tuple[str, bytes
 
 def is_text_file(name: str, mime_type: str) -> bool:
     return mime_type.startswith("text/") or name.lower().endswith(TEXT_FILE_EXTENSIONS)
+
+
+class DriveResyncRequired(Exception):
+    """The change cursor expired (Graph 410): restart from `restart_cursor` as a full enumeration (§7.5)."""
+
+    def __init__(self, restart_cursor: str) -> None:
+        super().__init__("Drive change cursor expired; full enumeration required")
+        self.restart_cursor = restart_cursor
+
+
+class DriveReauthRequired(DriveNotConnectedError):
+    """The token refresh itself was rejected (invalid_grant): only a reconnect helps (§4, §7.7)."""
+
+
+class DriveAccessDenied(Exception):
+    """A 401 that survived a successful token refresh: an operation error, never a lost grant (§4). A 403 stays a per-item ValueError."""
+
+
+@dataclass(frozen=True)
+class DriveConnection:
+    """What the gate and search read about the user's connection (§7.1 step 0, §10.1 step 0)."""
+    connected: bool
+    needs_reconnect: bool = False
+    drive_id: str = ""
+
+
+class DriveThrottled(Exception):
+    """The provider kept answering 429/503 after the adapter's own retries (§7.7): end the tick."""
+
+    def __init__(self, retry_after_s: float) -> None:
+        super().__init__(f"Drive provider throttled; retry after {retry_after_s:.0f}s")
+        self.retry_after_s = retry_after_s
