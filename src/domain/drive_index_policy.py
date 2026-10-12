@@ -41,7 +41,9 @@ _MEDIA_KINDS: FrozenSet[str] = frozenset({"image", "audio", "video"})
 ADMITTED_KINDS: FrozenSet[str] = frozenset()   # Slice 2 admits the §5.1 document kinds (policy_version bump)
 
 _SECRET_PATTERNS = ("id_rsa*", "id_ed25519*", "*.pem", "*.p12", "*.pfx", "*.kdbx", "*.keychain*")
-_OS_PATTERNS = ("~$*", "thumbs.db", "desktop.ini", "*.tmp")
+_OS_PATTERNS = ("~$*", "thumbs.db", "desktop.ini", ".ds_store", "*.tmp")
+# Kept as records, never searchable: no card and no name keys (§3.4 lets a reason withhold the card).
+_UNSEARCHABLE_REASONS: FrozenSet[Reason] = frozenset({Reason.OS_ARTIFACT})
 _MARKERS = frozenset({".git", "pyvenv.cfg"})
 # Folders only tools create, wherever they sit (plan Δ16): an extracted repository without `.git` is still opaque.
 _GENERATED_DIRS = frozenset({"node_modules", "__pycache__", "site-packages"})
@@ -97,14 +99,15 @@ def _matches(name: str, patterns: Sequence[str]) -> bool:
 
 
 def item_rule(change: DriveChange) -> Optional[Reason]:
-    """Never-download rules (§5.1), in order. None: the kind decides."""
+    """Never-download rules (§5.1), in order. None: the kind decides. OS artefacts come first: `.DS_Store` is one
+    before it is a dot name."""
+    if _matches(change.name, _OS_PATTERNS):
+        return Reason.OS_ARTIFACT
     if is_dot_name(change.name):
         return Reason.DOT_NAME
     if _matches(change.name, _SECRET_PATTERNS) or (change.name.lower().endswith(".key")
                                                    and change.mime_type != "application/vnd.apple.keynote"):
         return Reason.SECRET_NAME
-    if _matches(change.name, _OS_PATTERNS):
-        return Reason.OS_ARTIFACT
     if "remoteItem" in change.facets:
         return Reason.REMOTE_ITEM
     if "package" in change.facets:
@@ -112,6 +115,11 @@ def item_rule(change: DriveChange) -> Optional[Reason]:
     if "malware" in change.facets:
         return Reason.MALWARE
     return None
+
+
+def searchable(reason: Optional[Reason]) -> bool:
+    """False for records kept only so the mirror is complete (OS and lock artefacts)."""
+    return reason not in _UNSEARCHABLE_REASONS
 
 
 def probe_from_children(children: Sequence[DriveChange]) -> FolderProbe:

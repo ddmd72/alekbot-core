@@ -35,7 +35,7 @@ from .drive_index import (
 from .drive_index_params import ACCESS_LOSS_TTL, DENSE_FOLDER_CHILDREN, RETRY_BASE, RETRY_CAP, STALE_ALERT_AFTER
 from .drive_index_policy import (
     ADMITTED_KINDS, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
-    is_generated_dir, is_marker_child, item_rule, kind_of,
+    is_generated_dir, is_marker_child, item_rule, kind_of, searchable,
 )
 from .drive_name_keys import name_keys
 from .user_drive import DriveConnection
@@ -196,7 +196,8 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         content_version=change.content_version, modified_at=change.modified_at,
         fs_modified_at=change.fs_modified_at, effective_date=effective_date(change, ctx.now),
         place_name=place_name, geo_table_version=geo_version, policy_version=POLICY_VERSION,
-        card_rank=card_rank_of(cls.content_class), name_tokens=name_keys(change.name),
+        card_rank=card_rank_of(cls.content_class),
+        name_tokens=name_keys(change.name) if searchable(cls.reason) else (),
         content_hash=content_hash_of(change), probe_pending=cls.probe_pending, probed_child_count=probed,
         seen_epoch=_stamp(existing, ctx, observed),
     )

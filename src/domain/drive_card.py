@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Mapping, Optional, Tuple
 
 from .drive_index import CARD_VERSION, DriveChange, DriveIndexRecord, Reason, RecordState, Scope
+from .drive_index_policy import searchable
 
 _KIND_LABEL = {
     "pdf": "PDF document", "docx": "Word document", "doc": "Word document", "pptx": "presentation",
@@ -100,6 +101,6 @@ def card_eligible(rec: DriveIndexRecord) -> bool:
 
 
 def structurally_card_eligible(rec: DriveIndexRecord) -> bool:
-    """What the structure allows, before the card cap (§5.4) has its say."""
+    """What the structure and the policy allow, before the card cap (§5.4) has its say."""
     return (rec.scope in (Scope.NORMAL, Scope.OPAQUE_ROOT)
-            and rec.state not in (RecordState.UNRESOLVED, RecordState.DELETING))
+            and rec.state not in (RecordState.UNRESOLVED, RecordState.DELETING) and searchable(rec.reason))
