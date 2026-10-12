@@ -102,10 +102,10 @@ def read_content(path: str, kind: str) -> ExtractionOutcome:
 
 
 def pdf_page_count(path: str) -> int:
-    """Pages of a PDF the reader may cut (§24.3). An owner-password-only PDF counts; a user password is
-    `encrypted`."""
+    """Pages of a PDF the reader may cut (§24.3), counted from the page tree like `_read_pdf` (an encrypted file's
+    /Count can claim anything). An owner-password-only PDF counts; a user password is `encrypted`."""
     with _pdf_failures():
-        return len(_open_pdf(path).pages)
+        return _page_count(_open_pdf(path))
 
 
 def cut_pdf_window(path: str, first_page: int, page_count: int, out_path: str) -> int:
@@ -116,7 +116,7 @@ def cut_pdf_window(path: str, first_page: int, page_count: int, out_path: str) -
         from pypdf import PdfWriter
 
         reader = _open_pdf(path)
-        total = len(reader.pages)
+        total = _page_count(reader)                 # the page tree, never /Count (arbiter R1-1)
         if first_page < 0 or page_count < 1 or first_page >= total:
             raise PdfSplitFailed(ExtractionStatus.ERROR, f"pages {first_page}+{page_count} outside 0..{total}")
         last = min(first_page + page_count, total)
