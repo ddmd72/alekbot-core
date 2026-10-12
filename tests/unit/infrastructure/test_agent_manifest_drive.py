@@ -25,11 +25,7 @@ def test_values_and_sync():
         assert FILE_MANAGEMENT.capabilities[const] == ExecutionMode.SYNC
 
 
-def test_no_search_intent_in_step_one():
-    assert not hasattr(Intent, "SEARCH_FILES_IN_DRIVE")
-    assert "search_files_in_drive" not in FILE_MANAGEMENT.capabilities
-    assert "search_files_in_drive" not in FILE_MANAGEMENT.context_schemas
-    assert "search_files_in_drive" not in FILE_MANAGEMENT.capability_descriptions
+def test_no_search_text_field():
     for schema in FILE_MANAGEMENT.context_schemas.values():
         assert "search_text" not in schema
 
