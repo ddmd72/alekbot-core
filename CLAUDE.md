@@ -607,8 +607,8 @@ in a document, freshness, honest not-found, totals, document vs memory, versions
 `PROTOCOL_AGENT_SELECTION`; the results carry per-result facts only. Not in `SearchEnrichmentService`. Opt-out purges
 at once; lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Eval:
 `venv/bin/python -m scripts.validation.drive_eval` (G1 and G2 over a committed fixture with file bytes made by
-`make_fixtures.py`, real embeddings, parser, reader and triage; bars in `tests/fixtures/drive_eval/bars.json` pin
-tree, gold and bytes; `--record` only deliberately; any lost case fails); G3 (does Smart search the drive when it
+`make_fixtures.py`, real embeddings, parser, reader and triage on the indexer's model registry; bars in
+`tests/fixtures/drive_eval/bars.json` pin tree, gold, bytes and the reader's provider; `--record` only deliberately; any lost case fails); G3 (does Smart search the drive when it
 should): `python -m scripts.validation.drive_eval.smart_dry_run`, owner-run, bars in `bars_g3.json`. Decisions:
 `decisions/drive_*.md`.
 

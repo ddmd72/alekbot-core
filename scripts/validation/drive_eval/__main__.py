@@ -7,7 +7,8 @@ are billed to nobody (no quota service) and cost cents per run.
     venv/bin/python -m scripts.validation.drive_eval [--record] [--report PATH] [--gold FILE ...]
 
 Exit codes: 0 pass or recorded, 1 recall fell below a recorded bar, 2 no verdict (malformed gold, did
-not settle, no bars, bars without an `overall` recall, bars from another K/tree/gold, a search raised, or
+not settle, no bars, bars without an `overall` recall, bars from another K/tree/gold/files/reader provider, a
+search raised, or
 --record with a refused case).
 Run it when chat is quiet: about 4,000 embedding calls share the Gemini quota with the bot.
 """
@@ -63,7 +64,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             embeddings=GeminiEmbeddingAdapter(api_key=key),
             embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
             place_of=PlaceIndex(load_place_rows()).lookup, record=args.record,
-            extractors=extractors, triage=triage))
+            extractors=extractors, triage=triage, reader_provider=content_wiring.reader_provider()))
     except content_wiring.ContentSetupError as exc:
         print(f"drive eval: no verdict — {exc}", file=sys.stderr)
         return EXIT_SETUP
