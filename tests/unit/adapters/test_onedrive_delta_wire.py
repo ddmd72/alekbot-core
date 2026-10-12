@@ -20,6 +20,8 @@ from src.ports.oauth_credentials_port import OAuthCredentialsPort
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
+# Observed 2026-10-12 after the owner moved the App Folder to the drive root (RFC Δ46).
+_LIVE_410_LOCATION = f"{_GRAPH}/drive/root/view.delta"
 
 
 def _load(name):
@@ -269,6 +271,39 @@ class TestResync:
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
             await adapter.get_changes("u1", cursor)
         assert "evil" not in exc.value.restart_cursor
+
+    async def test_410_location_on_another_feed_restarts_from_a_fresh_delta(self):
+        """RFC Δ46: a live 410 named the whole drive's legacy feed; following it failed every tick."""
+        adapter, _ = _adapter()
+        session = _session([_resp(APPROOT), _resp({}, status=410, headers={"Location": _LIVE_410_LOCATION})])
+        cursor = json.dumps({"url": f"{_GRAPH}/me/drive/special/approot/delta?token=old", "full": False})
+        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
+            await adapter.get_changes("u1", cursor)
+        assert json.loads(exc.value.restart_cursor) == {"url": "/me/drive/special/approot/delta?$top=200",
+                                                        "full": True}
+
+    async def test_stored_cursor_on_another_feed_restarts_without_a_call(self):
+        """The state the 2026-10-12 incident left behind heals on the next tick."""
+        adapter, _ = _adapter()
+        session = _session([])
+        cursor = json.dumps({"url": _LIVE_410_LOCATION, "full": True})
+        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
+            await adapter.get_changes("u1", cursor)
+        assert json.loads(exc.value.restart_cursor) == {"url": "/me/drive/special/approot/delta?$top=200",
+                                                        "full": True}
+        session.get.assert_not_called()
+
+    @pytest.mark.parametrize("url", [f"{_GRAPH}/me/drive/special/approot/delta?token=abc",
+                                     f"{_GRAPH}/me/drive/special/approot/delta",
+                                     "/me/drive/special/approot/delta?$top=200"])
+    async def test_app_folder_feed_cursor_is_followed(self, url):
+        page = {"value": [], "@odata.deltaLink": f"{_GRAPH}/me/drive/special/approot/delta?token=next"}
+        adapter, _ = _adapter()
+        session = _session([_resp(APPROOT), _resp(page)])
+        with patch("aiohttp.ClientSession", return_value=session):
+            result = await adapter.get_changes("u1", json.dumps({"url": url, "full": False}))
+        assert session.get.call_args_list[1].args[0].endswith(url.lstrip("/").split("v1.0/")[-1])
+        assert result.complete is True
 
     @pytest.mark.parametrize("cursor", ["not json", json.dumps({"url": 1}), json.dumps(["x"]),
                                         json.dumps({"url": "https://evil.example/delta", "full": False}),
