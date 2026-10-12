@@ -271,12 +271,13 @@ class TestReconnectNotice:
         assert (await env.repo.get_sync_state("u")).reconnect_notified is True
 
     @pytest.mark.parametrize("result", [
-        NotifyResult(delivered=False, agent_status=AgentStatus.FAILED),
-        NotifyResult(delivered=False, agent_status=AgentStatus.SUCCESS, error="rich content send failed"),
+        NotifyResult(delivered=False, agent_status=AgentStatus.FAILED, error="send raised", sent=True),
+        NotifyResult(delivered=False, agent_status=AgentStatus.SUCCESS, error="rich content send failed", sent=True),
     ])
     async def test_attempt_that_may_have_reached_the_user_is_not_repeated(self, env, result):
-        """A formatter failure or a partial send (text out, rich content failed) sets the flag anyway:
-        repeating it would message the user every 10 minutes (review D M3)."""
+        """A send that raised or a partial send (text out, rich content failed) sets the flag anyway:
+        repeating it would message the user every 10 minutes. A formatter failure sends nothing and is
+        retried (test_drive_reconnect_notice_retry.py)."""
         await self._lost(env)
         env.notifier.result = result
         await env.svc.fan_out()
