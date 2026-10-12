@@ -37,6 +37,7 @@ Routing and the OIDC gate live in `src/web/indexer_worker_app.py` and are tested
 import asyncio
 import os
 import signal
+from typing import Any, Awaitable, Callable
 
 from google.cloud import firestore
 from hypercorn.asyncio import serve
@@ -56,9 +57,9 @@ from src.services.drive_indexing_service import DriveIndexingService
 from src.utils.logger import logger
 from src.web.indexer_worker_app import create_indexer_worker_blueprint, indexer_audiences, worker_oidc_gate
 
-# Cloud Run allows ~10 s between SIGTERM and SIGKILL (a revision rollout on every deploy). Hypercorn
-# waits this long for an in-flight tick, then cancels it; the tick's `finally` releases its lease, so
-# the next tick is not refused as `busy` for the lease's 31 minutes.
+# Cloud Run allows ~10 s between SIGTERM and SIGKILL (a revision rollout on every deploy).
+# `serve_until_shutdown` waits this long for an in-flight tick, then cancels it and waits for its
+# `finally` to release the lease, so the next tick is not refused as `busy` for the lease's 31 minutes.
 _GRACEFUL_TIMEOUT_S = 8
 
 
@@ -101,6 +102,30 @@ def build_app() -> Quart:
     return app
 
 
+async def serve_until_shutdown(app: Any, config: Any, shutdown: asyncio.Event, *,
+                               serve_fn: Callable[..., Awaitable[None]] = serve) -> None:
+    """Serve until `shutdown` is set, then wait at most `config.graceful_timeout` for in-flight requests,
+    cancel what is left and wait for it to unwind. Hypercorn's own graceful timeout does not cancel an
+    in-flight request on Python >= 3.12.1, and its request tasks are not children of `serve`, so
+    cancelling `serve` alone would leave the tick running into SIGKILL with its lease held."""
+    serve_task = asyncio.create_task(serve_fn(app, config, shutdown_trigger=shutdown.wait))
+    signalled = asyncio.create_task(shutdown.wait())
+    await asyncio.wait({serve_task, signalled}, return_when=asyncio.FIRST_COMPLETED)
+    if serve_task.done():
+        signalled.cancel()
+        serve_task.result()   # a server that stopped on its own (bind failure) raises here
+        return
+    await asyncio.wait({serve_task}, timeout=config.graceful_timeout)
+    current = asyncio.current_task()
+    leftover = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+    if leftover:
+        logger.warning(f"[Indexer] graceful timeout ({config.graceful_timeout} s) passed; cancelling "
+                       f"{len(leftover)} task(s)")
+    for task in leftover:
+        task.cancel()
+    await asyncio.gather(*leftover, return_exceptions=True)
+
+
 async def main() -> None:
     app = build_app()
     config = HypercornConfig()
@@ -113,7 +138,7 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.set)
-    await serve(app, config, shutdown_trigger=shutdown.wait)
+    await serve_until_shutdown(app, config, shutdown)
     logger.info("[Indexer] shut down")
 
 
