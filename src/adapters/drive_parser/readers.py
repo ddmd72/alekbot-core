@@ -321,9 +321,13 @@ def _read_xlsx(path: str, kind: str) -> _Read:
                 break
             sheet.reset_dimensions()                  # a declared A1:XFD1048576 must not pad every row
             rows: List[Sequence[Any]] = []
+            missing: Optional[Sequence[Any]] = None
             for row in sheet.iter_rows(max_col=_MAX_TABLE_COLUMNS + 1, values_only=True):
+                if row is missing:
+                    continue                          # openpyxl yields one shared tuple for every absent row
                 if row.count(None) == len(row):
-                    continue                          # C speed: a missing row is a full tuple of None
+                    missing = row
+                    continue
                 values = _trim_row(row)
                 texts = [str(value) for value in values if value is not None]
                 if not any(text.strip() for text in texts):
