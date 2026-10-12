@@ -136,3 +136,18 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 ### Task 16 — done
 - Commit `a9ba722`. `make check` (coordinator, worktree at the commit): 7511 passed, 3 skipped, 1 xfailed.
 - Deviations: none. Reviewer: APPROVED, round 1.
+
+### Task 17 — done
+- Commit `45c5795`. `make check` (coordinator, worktree at the commit): 7578 passed, 3 skipped, 1 xfailed.
+- Deviations: none (four files byte-identical). Reviewer: APPROVED, round 1 (7 mutations, all caught).
+- Note: `records_seen_before` orders by (seen_epoch, item_id), the in-memory one by item_id (port leaves order open).
+
+## Review method change (after Task 17, on the user's request)
+
+Reviews of Tasks 0–17 checked "commit == plan" — with verbatim copying that is a byte diff, and the reviewer prompt
+told reviewers to treat the plan's code as the standard, so real findings were filed as notes. From Task 18 on the
+reviewer prompt adds a mandatory **adversarial pass over the code itself** (RFC divergence not covered by a Δ, logic
+bugs, races/redelivery, Firestore limits, logs/PII, mutation testing) and classifies findings: **IMPL** (fix),
+**PLAN-BUG with a local fix** (fix + a NEW failing-first test; existing tests untouched), **OWNER** (design decision,
+logged here). Tasks 0–17 get a retrospective adversarial review in three read-only areas (domain, tick, drive +
+storage); results and the fixes they lead to are logged below.
