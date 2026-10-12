@@ -79,7 +79,7 @@ async def test_busy_lease_returns_busy_and_requeues_a_nudge(w):
     assert (await w.tick()).status == "busy"
     assert (await w.tick(Nudge("m1", ("x",)))).status == "busy"
     keys = [t["key"] for t in w.queue.tasks]
-    assert keys == ["u:nudge:m1:r1"] and w.queue.tasks[0]["delay"] == 60
+    assert keys == ["u:cont:busy-other", "u:nudge:m1:r1"] and [t["delay"] for t in w.queue.tasks] == [60, 60]
 
 
 async def test_nudge_is_read_before_delta(w):
