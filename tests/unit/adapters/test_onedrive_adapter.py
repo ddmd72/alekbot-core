@@ -12,7 +12,9 @@ import pytest
 
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
 from src.domain.email import OAuthCredentials
-from src.domain.user_drive import DriveItemNotFoundError, DriveNameConflictError, DriveNotConnectedError
+from src.domain.user_drive import (
+    DriveAccessDenied, DriveItemNotFoundError, DriveNameConflictError, DriveNotConnectedError, DriveThrottled,
+)
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.ports.user_drive_port import UserDrivePort
 
@@ -165,12 +167,12 @@ class TestAuthAndErrors:
         with pytest.raises(DriveNotConnectedError):
             await adapter.get_root("u1")
 
-    async def test_401_after_forced_refresh_is_not_connected(self):
+    async def test_401_after_forced_refresh_is_access_denied(self):
         adapter, _ = _adapter()
         adapter._tokens.headers = AsyncMock(return_value={"Authorization": "Bearer t"})
         adapter._tokens.invalidate = MagicMock()
         session = _session(get=[_resp({}, status=401), _resp({}, status=401)])
-        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveNotConnectedError):
+        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveAccessDenied):
             await adapter.get_root("u1")
         forced = [c for c in adapter._tokens.headers.await_args_list if c.kwargs == {"force_refresh": True}]
         assert len(forced) == 1  # one forced refresh, then the second 401 gives up
@@ -326,7 +328,7 @@ class TestReviewTransport:
         adapter, _ = _adapter()
         throttled = [_resp({}, status=429, headers={"Retry-After": "0"}) for _ in range(5)]
         session = _session(get=throttled)
-        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(ValueError):
+        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveThrottled):
             await adapter.get_root("u1")
         assert session.get.call_count == 4  # first attempt + 3 retries, never a 5th
 
@@ -342,7 +344,7 @@ class TestReviewTransport:
         session = _session(get=[_resp({}, status=401), _resp({}, status=401)])
         with patch("aiohttp.ClientSession", return_value=session), \
                 patch("src.adapters.microsoft.onedrive_adapter.logger") as log, \
-                pytest.raises(DriveNotConnectedError):
+                pytest.raises(DriveAccessDenied):
             await adapter.get_root("u1")
         log.warning.assert_called_once()
         assert "Bearer" not in log.warning.call_args.args[0]
