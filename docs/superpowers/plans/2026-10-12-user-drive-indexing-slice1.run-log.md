@@ -617,3 +617,10 @@ scratch path (nothing recorded or committed): index settled in 1 tick, 2 481 car
 - Commit `29c3b0d`. `make check` (reviewer, worktree): 8098 passed. Reviewer: APPROVED. Code fix: `bar_mismatch`
   reports a reason when the bars' `recall` lacks `overall` (no verdict instead of a pass). The rest are new tests
   killing the named mutations. NIT for docs: `drive_eval/__main__.py` exit-2 docstring omits this cause.
+
+### Fix R13 (eval runner) — done
+- Commit `34318ca`. `make check` (reviewer, worktree): 8113 passed. Reviewer: APPROVED, 15/15 mutants killed.
+  Requests are built by production's `request_from_fields` and validated before indexing; throttled ticks sleep
+  `max(pause, queued delay)`, stop after `MAX_THROTTLED = 6` consecutive throttled ticks (≈ 31 min of backoff — the
+  code comment's "about an hour" is corrected in the docs batch). Offline eval re-run at `34318ca`: identical 32/37,
+  same per-case results.
