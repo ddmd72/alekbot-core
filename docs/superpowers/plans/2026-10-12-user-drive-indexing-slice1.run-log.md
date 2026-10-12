@@ -385,3 +385,12 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   queued as a separate suggested task.
 - MINOR: Task 45 doc says the unconfigured fan-out "logs a WARNING" (it is INFO, correctly); `main.py` wiring has no
   test (Task 47 live acceptance covers it).
+
+### Task 26 — done
+- Commit `59ab0a1` (byte-identical). `make check` (reviewer, worktree): 7780 passed, 3 skipped, 1 xfailed.
+- Reviewer (security focus): APPROVED, no findings. Checked against google-auth 2.61.0: signature/issuer/expiry still
+  verified with `audience=None`; the pin rejects a missing or list `aud`; main's `/worker` and the voice verifier stay
+  unpinned (existing tests still assert it); Cloud Tasks with no audience → `aud == {DRIVE_INDEXER_URL}/worker`, and
+  both sides normalise the same variable; fail-closed on Cloud Run via `K_SERVICE`. 15/17 mutations killed, 2 harmless.
+- Operational note for Task 47: a manual `create-http-task` with a different run.app URL form than `INDEXER_URL_DEV`
+  gets 401.
