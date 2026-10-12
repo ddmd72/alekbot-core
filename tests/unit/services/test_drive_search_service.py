@@ -442,7 +442,10 @@ class TestScale:
         batches = w.repo.name_keys[before:]
         whole = [b for b in batches if len(b) == 1 and b[0].startswith("w:")]
         assert ("w:4912",) in whole and ("w:img",) in whole
-        assert len(batches) == len(whole) + 1 and all(not k.startswith("w:") for k in batches[-1])
+        # Every whole-token and trigram key of this short query has its own call (premise audit P1): no
+        # common key shares a capped page with a rare one, so nothing is left for a remainder call.
+        assert sorted(batches) == sorted([("w:img",), ("w:4912",), ("w:имг",),
+                                          ("t:img",), ("t:491",), ("t:912",), ("t:имг",)])
 
     @pytest.mark.parametrize("query", ["ред3", "Договор ред3", "dogovor red3"])
     async def test_version_suffix_ranks_the_named_version_first(self, camera_roll, query):
