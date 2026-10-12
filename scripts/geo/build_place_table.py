@@ -10,7 +10,8 @@ Inputs (GeoNames, CC BY 4.0, https://www.geonames.org), downloaded into scripts/
   alternateNamesV2.zip  names per language (streamed; only rows of the cities above are kept)
 
 Output columns: lat, lon, name_en, name_local, country, weight — sorted by (lat, lon). weight = population, tripled
-for capitals and regional seats (PPLC, PPLA): within PLACE_PREFER_RADIUS_KM the heaviest place names a photo.
+for capitals and regional seats (PPLC, PPLA): a same-country place within PLACE_PREFER_RADIUS_KM that is at least
+PLACE_PREFER_WEIGHT_FACTOR times heavier than the nearest place names a photo instead of it.
   name_en     the preferred English alternate name, else GeoNames `name`
   name_local  the preferred name in the country's first language, else GeoNames `name`
 
