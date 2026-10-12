@@ -1,6 +1,6 @@
 # RFC: User Drive Step 2 — Indexing and Search
 
-**Status:** Draft, revision 3.12 (2026-10-12) — design closed; spikes S0a–S0f done (§18); **Slice 1 built** on its
+**Status:** Draft, revision 3.13 (2026-10-12) — design closed; spikes S0a–S0f done (§18); **Slice 1 built** on its
 feature branch and reviewed, not yet deployed (deploy and live acceptance next, §22); where the build differs from
 this text, §23 says how and why. Slices 2–4 not built. Phase 0 hardening merged (PR #57, §16).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
@@ -59,6 +59,7 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   §17.3. Unchanged items are re-emitted often, and a delete and a restore can share one round. A move out of the App
   Folder arrives as a plain deletion. The `photo` facet can be an empty object, and audio files carry no `audio` facet.
 - Rev 3.12 (2026-10-12): Slice 1 built and reviewed; its deltas in §23 (Δ1–Δ45), false statements corrected in place.
+- Rev 3.13 (2026-10-12): Δ46 — a 410 `Location` is followed only to the App Folder's own feed.
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -1171,7 +1172,8 @@ port) and the Smart protocol token change with its backup reference.
    deletions without a name, moves in and out, the approot item, re-emitted unchanged items, and a delete and a restore
    in one round. They follow `docs/how_to/ADAPTER_WIRE_TESTING.md`. The raw recordings hold names and ids, so they stay
    in `scripts/memory/`. Slice 1 builds sanitised fixtures from them. No 410 was seen, so its fixture follows the
-   documented shape: 410 Gone with a `resyncChanges…` error code and a `Location` header.
+   documented shape: 410 Gone with a `resyncChanges…` error code and a `Location` header. The first live 410
+   (2026-10-12) named another feed as its `Location`; its wire test pins that URL (Δ46).
 4. **Repository**: the fence across generations (a re-index at the same `cTag` to fewer chunks returns no old chunk; a
    crash after N chunk writes returns only the previous generation); lease exclusion; purge; `due_records` ordering.
 5. **Tick and queue**: a fake `TaskQueue` with `ALREADY_EXISTS` and name reservation — a budget-exhausted tick enqueues
@@ -1365,3 +1367,4 @@ of the decision. Code and tests cite these rows as `RFC Δn`.
 | Δ43 | Provisioning in `cloudbuild-dev.yaml` next to the relay (§12.5) | `make deploy` refuses an empty `SERVICE_URL_DEV`, and an empty `INDEXER_URL_DEV` unless `DRIVE_FIRST_PASS=1` (the first pass of the two-pass first deploy). Cloud Build deploys the drive queue, the indexer and its IAM step **after** the main service | An empty indexer URL silently disabled indexing in the live environment; a failing drive step blocked every hotfix of the bot |
 | Δ44 | Cabinet card: on/off, records per state, … (§6) | `/api/drive/status` also returns `available` (a drive queue is wired; the switch is hidden when false unless search is already on), `access_lost_at` and `index_kept` (an index exists, no purge runs, and the grace period has not ended). The "kept about 30 days" and "search still answers" hints show only while `index_kept`; the card lists every non-zero counter, labelled in en/uk/fr/es | Turning search on where no queue exists showed "building" forever; the card promised a kept index past its grace period or during a purge |
 | Δ45 | The eval records bars and later runs must not fall below them (§17.8) | Place cases call as the manifest says (the place in `drive_query`, `drive_kind=photo`); per case `min_hits` for a case with more right answers than K (the type-word place twins: 5), `known_hard` cases (run and reported, in no bar), a `semantic` case type (card stream only; expected misses offline with fake embeddings), and **any** case that hit when the bars were recorded and misses now fails the run | The real-embedding run found the right photos for every place case but scored them as misses; a single lost case hid inside an unchanged scope recall |
+| Δ46 | On a 410, restart from the `Location` header (§7.5, §17.3) | `Location` is followed only when it is the App Folder's own feed (`/me/drive/special/approot/delta`, absolute or relative); otherwise the restart is the delta start. A stored cursor on any other feed restarts the same way without a call. The 410 body is logged (200 chars) | The first live 410 (2026-10-12, after the owner moved the App Folder to the drive root) named `/drive/root/view.delta`, the whole drive's legacy feed. Following it failed every tick with an unparsable body until the staleness alert fired; the synthetic fixture had assumed an approot link |

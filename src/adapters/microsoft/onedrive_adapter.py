@@ -122,6 +122,15 @@ def _is_graph_url(url: Optional[str]) -> bool:
     return bool(url) and (str(url).startswith("/") or str(url).startswith(_GRAPH + "/"))
 
 
+def _is_approot_delta(url: Optional[str]) -> bool:
+    """A URL of the App Folder's own change feed. A live 410 named the whole drive's legacy feed
+    (/drive/root/view.delta) as its Location, which is not this feed (RFC Δ46)."""
+    if not _is_graph_url(url):
+        return False
+    path = _where(str(url))
+    return path in (f"{_APPROOT}/delta", f"{_GRAPH}{_APPROOT}/delta")
+
+
 def _encode_cursor(url: str, full: bool, drive_id: Optional[str] = None, root_id: Optional[str] = None) -> str:
     """A restart cursor carries no binding (its URL is the current grant's own feed); a page's cursor
     carries the drive and App Folder that served the page."""
@@ -315,8 +324,14 @@ class OneDriveAdapter(UserDrivePort):
             try:
                 page = await self._call(s, user_id, "GET", url)
             except _CursorGone as exc:
-                restart = exc.location if _is_graph_url(exc.location) else _DELTA_START
-                raise DriveResyncRequired(_encode_cursor(str(restart), True)) from exc
+                if _is_approot_delta(exc.location):
+                    restart = str(exc.location)
+                else:
+                    if exc.location:
+                        logger.warning(f"Drive 410 Location is not the App Folder's change feed "
+                                       f"({_where(exc.location)}); restarting from a fresh delta")
+                    restart = _DELTA_START
+                raise DriveResyncRequired(_encode_cursor(restart, True)) from exc
             except DriveItemNotFoundError as exc:
                 # A stored link Graph no longer knows is as dead as a 410 one (§7.5). Not on the delta start
                 # itself: restarting would ask for the same URL again, every tick.
@@ -403,9 +418,9 @@ class OneDriveAdapter(UserDrivePort):
         except (ValueError, TypeError, KeyError, AttributeError) as exc:
             logger.warning(f"Drive change cursor unreadable ({type(exc).__name__}); restarting enumeration")
             raise DriveResyncRequired(_encode_cursor(_DELTA_START, True)) from exc
-        if not isinstance(url, str) or not isinstance(full, bool) or not _is_graph_url(url) \
+        if not isinstance(url, str) or not isinstance(full, bool) or not _is_approot_delta(url) \
                 or not isinstance(drive_id, (str, type(None))) or not isinstance(root_id, (str, type(None))):
-            logger.warning("Drive change cursor malformed or outside Graph; restarting enumeration")
+            logger.warning("Drive change cursor malformed or not the App Folder's feed; restarting enumeration")
             raise DriveResyncRequired(_encode_cursor(_DELTA_START, True))
         return url, full, drive_id, root_id
 
@@ -467,7 +482,9 @@ class OneDriveAdapter(UserDrivePort):
                                        f"{_RETRIES} retries; retry after {hint:.0f}s")
                         raise DriveThrottled(hint)
                     if status == 410:
-                        logger.warning(f"Drive {method} {_where(path)}: 410 Gone (change cursor expired)")
+                        body = await resp.text()
+                        logger.warning(f"Drive {method} {_where(path)}: 410 Gone (change cursor expired): "
+                                       f"{body[:200]}")
                         raise _CursorGone(resp.headers.get("Location"))
                     if status == 404:
                         raise DriveItemNotFoundError(f"Drive item not found: {_where(path)}")
