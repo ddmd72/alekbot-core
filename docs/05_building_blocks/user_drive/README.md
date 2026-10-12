@@ -62,11 +62,12 @@ tick does, tested without Firestore, Graph or a clock.
   `name_tokens` and the card (`card_hash`, plus the `card_vector` field in Firestore). **No path is stored**: paths
   are derived from the `parent_id` chain at read time, so a folder rename touches no descendant.
 - **One sync state per user** (`DriveSyncState`, doc id `user_id`): delta cursor, drive and root ids, epoch and
-  phase, lease, `observed_as_of`, `access_lost_at`, `purging`, `systemic_failures`, applied versions, counters. Only
-  the lease transactions write the lease fields; `save_sync_state` never does, so a stale tick cannot release a
-  newer holder's lease. A subtree that must be listed again (a folder leaving an opaque root, or restored after a
-  delete) is a flag on the folder's own record (`reobserve_pending`, `reobserve_cursor`), worked page by page in
-  class 2 (plan Δ18).
+  phase, lease, `observed_as_of`, `access_lost_at`, `purging`, `systemic_failures`, applied versions, counters.
+  `save_sync_state` never writes the lease fields, and `release_lease` clears them only for the owner (fix R4), so
+  a stale tick's save or release cannot touch a newer holder's lease. Its other writes are not fenced (an open owner
+  item). These include the cursor, the records, and a purge's deletion of the whole state document, lease included.
+  A subtree that must be listed again (a folder leaving an opaque root, or restored after a delete) is a flag on the
+  folder's own record (`reobserve_pending`, `reobserve_cursor`), worked page by page in class 2 (plan Δ18).
 - **Policy (§5).** Slice 1 admits no content kind: every file is `metadata_only / kind_not_admitted` with a card.
   Dot-names, secret-shaped names (`id_rsa*`, `*.kdbx`, …), OS artefacts and remote/package/malware items keep a card
   with their reason. A dot-folder, a folder with a `.git` or `pyvenv.cfg` child, a `node_modules`, `__pycache__` or
@@ -76,7 +77,7 @@ tick does, tested without Firestore, Graph or a clock.
   deleted `.git` re-opens the folder. Why each rule exists:
   [decisions/drive_problem_content_classes.md](../../04_solution_strategy/decisions/drive_problem_content_classes.md).
 - **Card** (`card_text`): `name | kind | key facets`, where the facets are the photo's taken date, camera,
-  `place_name`, image dimensions and video duration. The place name is resolved offline from
+  `place_name`, image dimensions, and video duration and dimensions. The place name is resolved offline from
   `src/assets/geo/places_v1.tsv` (GeoNames, plan Δ7: the heaviest place within 15 km, else the nearest within
   50 km) and stored on the record. A card is re-embedded only when its hash changes.
 
@@ -101,7 +102,9 @@ tick does, tested without Firestore, Graph or a clock.
 Purge is keyed on facts only, never on an exception: a rejected refresh sets `needs_reconnect` and stops. Errors are
 classified by what the call is about (§8.2):
 - **Per item.** A probe, a parent lookup or a re-listing page that fails defers that one item (retried with
-  backoff, settled without it after `MAX_ATTEMPTS`); a failed nudge read is left to the delta feed. Item calls share
+  backoff). After `MAX_ATTEMPTS` a probe or a re-listing is settled without it (not dense; the subtree not
+  re-listed), and a record whose parent lookup keeps failing is removed as an orphan (a folder with its stored
+  subtree); a failed nudge read is left to the delta feed. Item calls share
   one budget (`ITEM_CALLS_PER_TICK` = 20, plan Δ9) and also stop once the tick's time is spent. A change that fails inside a page is skipped and logged at ERROR, and
   the page still applies. A card whose embedding is refused with HTTP 400 backs off alone.
 - **Systemic.** The delta feed, the token endpoint, any other embedding error and the repository end the tick. A
@@ -165,7 +168,10 @@ The drive is not part of `SearchEnrichmentService`:
   the gold cases (`gold_g1.json`) through the real search, and fails when recall@8 falls below the recorded bars
   (`bars.json`, written by the first owner-reviewed run). `--record` re-records them; do that only for a deliberate
   change, and review the misses it prints first.
-- **Rebuild.** Turning indexing off and on again purges and re-onboards.
+- **Rebuild.** Turning indexing off, waiting until the purge has run, then on again purges and re-onboards. The
+  purge shows as the indexer's `index purged` line, and `/api/drive/status` then returns empty `indexing.counters`;
+  the Cabinet hides the counters as soon as indexing is off, so it does not show it. A quick off/on can find the
+  index still there and keep it: the toggle tick then sees indexing on with a state stored and proceeds.
 
 ---
 

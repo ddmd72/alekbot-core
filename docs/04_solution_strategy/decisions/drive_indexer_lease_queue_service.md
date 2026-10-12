@@ -9,7 +9,8 @@
   start + `TICK_DEADLINE` + a margin (31 min). The lease is sized so that a tick normally ends inside it: no new
   work starts after `TICK_START_BUDGET` (8 min). A tick that still outlives it (a hung await, or Cloud Run answering
   504 at its timeout without cancelling the coroutine) can no longer overwrite or release the next holder's lease
-  (fix R4, below). Its other writes (the delta cursor, records) are not fenced: that is an open owner item
+  through a save or a release (fix R4, below). Its other writes (the delta cursor, records, a purge's deletion of
+  the whole state document, lease included) are not fenced: that is an open owner item
   ([run log](../../superpowers/plans/2026-10-12-user-drive-indexing-slice1.run-log.md), Fix R4, "OWNER part … not
   done"). A tick that finds a live lease answers `busy`; a nudge that finds one re-enqueues itself under a new key.
 - **Own queue** `drive-sync-{suffix}`, `max-concurrent-dispatches=1`, deadline 1800 s, dedup keys per family
@@ -22,9 +23,12 @@
 - Lease: `acquire_lease` / `release_lease` in `src/adapters/firestore_drive_index_repo.py`, both transactional;
   the span is `TICK_DEADLINE_S` (1800) + `LEASE_MARGIN` (1 min) from `src/domain/drive_index_params.py`. Release
   happens in the tick's `finally` and clears the lease only when this tick still owns it.
-- `save_sync_state` never writes `lease_owner`/`lease_until` (like the fan-out flags); only the lease transactions
-  do. Changed after review (fix R4): in the plan a tick that outlived its lease saved its whole state, lease fields
-  included, over the next holder's lease.
+- `save_sync_state` never writes `lease_owner`/`lease_until` (like the fan-out flags), and `release_lease` clears
+  them only for the owner. Changed after review (fix R4): in the plan a tick that outlived its lease saved its whole
+  state, lease fields included, over the next holder's lease. A purge is not fenced: its `delete_sync_state`
+  (from `_purge`, reachable mid-tick when a page comes from another drive) deletes the whole state document, a newer
+  holder's lease included, and that holder's next `save_sync_state` recreates the document without a lease, so a
+  third tick can take it. Fencing a stale tick's writes beyond the lease fields is the open owner item above.
 - Busy outcomes: a nudge comes back after `NUDGE_RETRY_DELAY_S` (60 s) under `{user_id}:nudge:{mutation_id}:r{n}`;
   a toggle that finds a live lease is dropped (plan Δ19c): the running tick re-reads the flag before its write
   batches (an opt-out enqueues a continuation whose gate purges), and the 10-minute fan-out is the backstop.
