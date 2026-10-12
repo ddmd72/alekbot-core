@@ -456,3 +456,13 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   F7: date-only bounds are UTC days (= P14).
 - Part D gate `make check` (coordinator, clean worktree at `019c069`, i.e. Part D + R7/R8 + Tasks 30–31):
   7921 passed, 3 skipped, 1 xfailed — green. **Part D complete.**
+
+### Task 32 — done
+- Commit `dfb59d1`. `make check` (reviewer, worktree): 7932 passed, 3 skipped, 1 xfailed. Reviewer: APPROVED.
+- The pre-existing `tests/unit/infrastructure/test_agent_manifest_drive.py` edit is the plan's reviewer-approved one
+  (review_E §7.1): `test_no_search_intent_in_step_one` → `test_no_search_text_field`, its four "no search intent"
+  assertions dropped (they pinned USER_DRIVE_RFC §7's "no search in step 1", which the indexing RFC §10.4 reverses);
+  each is covered by a stronger positive test in the new file. Confirmed exact.
+- System context checked: Smart sees the intent, companions' allowlists exclude it; the `drive_*` names collide with
+  nothing so their descriptions reach the model; the four allowlisted collisions are live. MINOR: the old test
+  module's docstring still says search is unavailable (→ Task 46 docs sweep).
