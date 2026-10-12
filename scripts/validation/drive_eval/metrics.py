@@ -69,6 +69,9 @@ def bar_mismatch(bars: Mapping[str, Any], k: int, tree_sha256: str, gold_sha256:
         now = set(case_ids)
         added, removed = sorted(now - recorded), sorted(recorded - now)
         reasons.append(f"gold_g1.json changed since the bars were recorded (added {added}, removed {removed})")
+    recorded_recall = bars.get("recall")
+    if not isinstance(recorded_recall, Mapping) or OVERALL not in recorded_recall:
+        reasons.append(f"the bars have no '{OVERALL}' recall (bars file edited or merged by hand?)")
     return reasons
 
 
