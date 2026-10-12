@@ -30,6 +30,7 @@
 - Telegram Integration: [telegram_integration/README.md](./telegram_integration/README.md)
 - Rich Content Protocol: [rich_content_protocol/README.md](./rich_content_protocol/README.md)
 - File Conversion Service: [file_conversion/README.md](./file_conversion/README.md)
+- User Drive (file area + index and search): [user_drive/README.md](./user_drive/README.md)
 
 ### Infrastructure & Providers
 
