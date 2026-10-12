@@ -6,8 +6,8 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from src.domain.drive_index import (
-    GEO_TABLE_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase,
-    FolderProbe, Priority, Reason, RecordState, Scope,
+    GEO_TABLE_VERSION, NAME_KEYS_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, DriveSyncState,
+    EpochPhase, FolderProbe, Priority, Reason, RecordState, Scope,
 )
 from src.domain.drive_index_params import NAME_MIN_TRIGRAMS, STALE_ALERT_AFTER
 from src.domain.drive_index_planner import (
@@ -48,7 +48,7 @@ class TestVersionUpgrades:
         """stale_versions_geo_off — §8.5, §12.3: a new place table re-resolves place names."""
         photo = DriveIndexRecord(user_id="u", item_id="p", name="IMG_1.jpg", kind="image", scope=Scope.NORMAL,
                                  state=RecordState.METADATA_ONLY, policy_version=POLICY_VERSION,
-                                 facets={"location": MADRID}, place_name="Madrid",
+                                 name_keys_version=NAME_KEYS_VERSION, facets={"location": MADRID}, place_name="Madrid",
                                  geo_table_version=GEO_TABLE_VERSION - 1)
         assert stale_versions(photo) is True
         assert stale_versions(replace(photo, geo_table_version=GEO_TABLE_VERSION)) is False

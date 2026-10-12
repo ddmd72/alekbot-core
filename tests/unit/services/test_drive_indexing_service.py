@@ -70,7 +70,7 @@ async def test_onboarding_builds_records_cards_and_epoch_one(w):
     assert state.cursor.startswith("delta:") and state.root_item_id == ROOT and state.observed_as_of is not None
     assert w.rec(doc).reason is Reason.KIND_NOT_ADMITTED and w.rec(doc).has_card
     assert w.carded() == {contracts, doc}
-    assert dict(state.applied_versions) == {"policy": 1, "card": 1, "geo_table": 1}
+    assert dict(state.applied_versions) == {"policy": 1, "card": 1, "geo_table": 1, "name_keys": 1}
     assert state.counters == {"metadata_only": 2, "carded": 2}
 
 

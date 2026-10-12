@@ -43,7 +43,7 @@ EXPECTED = {
     # dot-folders and dot-files
     ".obsidian": (OR, Reason.DOT_NAME),
     ".obsidian/workspace.json": None,
-    ".DS_Store": (N, Reason.DOT_NAME),
+    ".DS_Store": (N, Reason.OS_ARTIFACT),          # an OS artefact before it is a dot-name
     # density over content class, decided from a probe (§5.5 class 1)
     "Dumps/site-mirror": (OR, Reason.DENSE_TREE),
     "Dumps/site-mirror/page-000.bin": None,
@@ -52,7 +52,7 @@ EXPECTED = {
     "Archive/Invoices 2024": (N, Reason.FOLDER),       # 600 PDFs
     "Archive/Camera roll": (N, Reason.FOLDER),         # 1 000 photos: media, never dense
     "Archive/Camera roll/IMG_0417.HEIC": (N, Reason.KIND_NOT_ADMITTED),
-    # never-download names (§5.1): they keep a card with their reason
+    # never-download names (§5.1): they keep a card with their reason, except OS and lock artefacts (record only)
     "Keys/id_rsa": (N, Reason.SECRET_NAME),
     "Keys/backup.kdbx": (N, Reason.SECRET_NAME),
     "~$Договор_ред3.docx": (N, Reason.OS_ARTIFACT),
@@ -87,7 +87,7 @@ def test_scope_and_reason(indexed, path):
     else:
         assert rec is not None, f"{path} has no record"
         assert (rec.scope, rec.reason) == EXPECTED[path]
-        assert rec.has_card is (rec.scope is not Scope.INSIDE_OPAQUE)
+        assert rec.has_card is (rec.scope is not Scope.INSIDE_OPAQUE and rec.reason is not Reason.OS_ARTIFACT)
 
 
 def test_nothing_inside_an_opaque_root_is_carded_and_nothing_failed(indexed):

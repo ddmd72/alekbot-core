@@ -42,7 +42,7 @@ def test_folder_and_opaque_cards():
     assert card_text(_rec(name=".obsidian", kind="folder", is_folder=True, scope=Scope.OPAQUE_ROOT,
                           reason=Reason.DOT_NAME)) == ".obsidian | hidden folder"
     assert card_text(_rec(name="mirror", kind="folder", is_folder=True, scope=Scope.OPAQUE_ROOT,
-                          reason=Reason.DENSE_TREE, child_count=700)) == "mirror | generated files (700 items)"
+                          reason=Reason.DENSE_TREE, child_count=700)) == "mirror | generated files (500+ items)"
 
 
 def test_hash_changes_with_text_only():
