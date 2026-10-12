@@ -3,9 +3,16 @@ SubprocessContentExtractor — the drive parser (docs/10_rfcs/USER_DRIVE_INDEXIN
 
 Each file is read by a fresh child Python process (`src/adapters/drive_parser/child.py`) with RLIMIT_AS,
 RLIMIT_CPU and RLIMIT_FSIZE applied before any parser loads, a wall-clock kill of its whole process group, an
-allowlisted environment (no credentials) and a private temp directory removed afterwards. Parsers amplify
-(Phase 0: a 5 KB XLSX peaked at ~1.75 GB), so only a killed process bounds them. A kill is an outcome: `timeout`
-(wall clock, SIGXCPU) or `memory` (MemoryError, SIGKILL from the kernel); the indexer process never parses a byte.
+allowlisted environment and a private temp directory removed afterwards. Parsers amplify (Phase 0: a 5 KB XLSX
+peaked at ~1.75 GB), so only a killed process bounds them. A kill is an outcome: `timeout` (wall clock, SIGXCPU) or
+`memory` (MemoryError, SIGKILL from the kernel); the indexer process never parses a byte.
+
+This is resource isolation, not code-execution containment. The child runs as the same user, in the same container
+and network as the indexer: code an exploited parser runs there can read the parent's environment through
+`/proc/<ppid>/environ` (the allowlist keeps credentials out of the child's own environment, not out of its reach),
+ask the metadata server for the service account's token, and reach the network. Accepted for a single-owner
+deployment (RFC known limits); a parser CVE with code execution, or users who do not trust one another, is the
+trigger for a real boundary (a separate sandboxed service or gVisor-style isolation without credentials).
 
 The memory, CPU and file limits below are placeholders until spike S1 (§18) measures the Phase 0 bomb set on the
 indexer service (`scripts/infrastructure/drive_extract_s1.py`).

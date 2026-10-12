@@ -245,3 +245,110 @@ def test_non_admitted_text_kinds_stay_themselves(declared):
 def test_unknown_declared_kind_is_other():
     assert sniff_kind(b"words", "other") == "other"
     assert sniff_kind(b"", "text") == "text"
+
+
+# =============================================================================
+# A declared ZIP kind stays unless the head proves another kind (review A, BLOCKER)
+# =============================================================================
+
+class _Unseekable(io.RawIOBase):
+    """zipfile writes local headers with the data-descriptor flag (bit 3) to a stream it cannot seek."""
+
+    def __init__(self):
+        self.data = bytearray()
+
+    def writable(self):
+        return True
+
+    def write(self, chunk):
+        self.data += chunk
+        return len(chunk)
+
+
+def _zip_entries(entries, *, streamed: bool = False) -> bytes:
+    """(name, data, compress_type) in this order, built with zipfile."""
+    target = _Unseekable() if streamed else io.BytesIO()
+    with zipfile.ZipFile(target, "w") as z:
+        for name, data, method in entries:
+            z.writestr(zipfile.ZipInfo(name), data, compress_type=method)
+    return bytes(target.data) if streamed else target.getvalue()
+
+
+_D, _S = zipfile.ZIP_DEFLATED, zipfile.ZIP_STORED
+
+
+@pytest.mark.parametrize("declared", ["docx", "xlsx", "pptx"])
+def test_streamed_ooxml_with_rels_first_keeps_the_declared_kind(declared):
+    data = _zip_entries([("_rels/.rels", b"<Relationships/>", _D), ("docProps/app.xml", b"<x/>", _D)],
+                        streamed=True)
+    assert struct.unpack_from("<H", data, 6)[0] & 0x08          # the fixture really uses a data descriptor
+    assert sniff_kind(_head(data), declared) == declared
+
+
+def test_ooxml_with_doc_props_first_and_parts_past_the_head_keeps_the_declared_kind():
+    data = _zip_entries([("docProps/app.xml", b"<x/>", _D), ("_rels/.rels", b"<x/>", _D),
+                         ("docProps/core.xml", bytes(range(256)) * 64, _S), ("word/document.xml", b"<x/>", _D)])
+    assert sniff_kind(_head(data), "docx") == "docx"
+
+
+@pytest.mark.parametrize("mime,declared", [
+    (b"application/epub+zip", "epub"),
+    (b"application/vnd.oasis.opendocument.text", "odt"),
+    (b"application/vnd.oasis.opendocument.spreadsheet", "ods"),
+    (b"application/vnd.oasis.opendocument.presentation", "odp"),
+])
+def test_deflated_mimetype_keeps_the_declared_odf_or_epub_kind(mime, declared):
+    data = _zip_entries([("mimetype", mime, _D), ("META-INF/container.xml", b"<x/>", _D)])
+    assert sniff_kind(_head(data), declared) == declared
+
+
+@pytest.mark.parametrize("declared", ["epub", "odt"])
+def test_mimetype_not_first_keeps_the_declared_kind(declared):
+    data = _zip_entries([("META-INF/container.xml", b"<x/>", _D), ("content.xml", b"<x/>", _D)])
+    assert sniff_kind(_head(data), declared) == declared
+
+
+def test_stored_mimetype_not_first_still_names_the_kind():
+    data = _zip_entries([("META-INF/manifest.xml", b"<x/>", _D),
+                         ("mimetype", b"application/vnd.oasis.opendocument.text", _S)])
+    assert sniff_kind(_head(data), "epub") == "odt"
+
+
+def test_streamed_stored_mimetype_has_no_readable_value_and_keeps_the_declared_kind():
+    data = _zip_entries([("mimetype", b"application/epub+zip", _S), ("content.opf", b"<x/>", _D)], streamed=True)
+    assert sniff_kind(_head(data), "epub") == "epub"
+
+
+def test_mimetype_member_proves_an_odf_family_package_not_ooxml():
+    data = _zip_entries([("mimetype", b"application/vnd.oasis.opendocument.text", _D), ("content.xml", b"<x/>", _D)])
+    assert sniff_kind(_head(data), "docx") == "archive"
+
+
+def test_content_types_proves_an_ooxml_package_not_odf():
+    data = _zip_entries([("[Content_Types].xml", b"<Types/>", _D), ("docProps/app.xml", b"<x/>", _D)])
+    assert sniff_kind(_head(data), "odt") == "archive"
+
+
+@pytest.mark.parametrize("declared", ["text", "pdf", "xls", "other"])
+def test_a_zip_under_a_non_zip_kind_is_still_an_archive(declared):
+    data = _zip_entries([("_rels/.rels", b"<x/>", _D)], streamed=True)
+    assert sniff_kind(_head(data), declared) == "archive"
+
+
+# =============================================================================
+# A PDF header past offset 0 counts only for a declared pdf or other (review A, m)
+# =============================================================================
+
+@pytest.mark.parametrize("declared", ["markdown", "text", "csv", "html", "docx"])
+def test_text_mentioning_a_pdf_header_keeps_its_kind(declared):
+    head = b"# PDF notes\n\nEvery PDF starts with a header like %PDF-1.7 followed by a binary comment.\n"
+    assert sniff_kind(head, declared) != "pdf"
+
+
+@pytest.mark.parametrize("declared", ["pdf", "other"])
+def test_pdf_header_after_junk_counts_for_pdf_and_other(declared):
+    assert sniff_kind(b"\r\n\x00junk" * 20 + b"%PDF-1.4\n", declared) == "pdf"
+
+
+def test_pdf_header_at_offset_zero_wins_whatever_the_declared_kind():
+    assert sniff_kind(b"%PDF-1.7\nhello", "markdown") == "pdf"
