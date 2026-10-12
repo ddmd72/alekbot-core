@@ -1,6 +1,8 @@
 """Drive intents on FILE_MANAGEMENT (docs/10_rfcs/USER_DRIVE_RFC.md §3, §4.3–§4.5, §4.9).
 
-Step 1 has seven drive intents: search is not available inside the App Folder (RFC §7, A6).
+The seven Step 1 drive intents. They do not offer search themselves: the App Folder has no provider search
+(RFC §7, A6). Search is `search_files_in_drive` over the drive index (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md),
+tested in test_agent_manifest_drive_search.py.
 """
 import re
 
