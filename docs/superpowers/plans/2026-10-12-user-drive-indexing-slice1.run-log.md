@@ -437,3 +437,22 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
 ### Task 29 (Part D gate) — run by the coordinator
 - `ruff check indexer_main.py`: clean. `grep DRIVE_INDEXER_URL src/config/settings.py`: no match. Provider-name grep in
   `drive_sync_scheduler_service.py` / `indexer_worker_app.py`: no match. `make check`: see below.
+
+### Task 30 — done (local fixes queued with the search fix batch)
+- Commit `ac4e134` (byte-identical). `make check` (reviewer, worktree): 7861 passed, 3 skipped, 1 xfailed.
+  Reviewer: APPROVED. Wrapper sound (body `& < >`, attributes `& < > " '`, nonce drawn after content; look-alike
+  characters cannot forge a close); path derivation, cycle/depth handling and the gate agree with the indexer.
+- Queued LOCAL fixes: F2 (= P4) an all-empty request renders "at least N match the filters" when none were given →
+  word it as "no name words or filters: the N newest"; F3 while rebuilding a filter-only answer says "0 match" under
+  "do not say a file does not exist" → drop the count line then; F5 tests (date-filter bounds/undated, naive datetime
+  string, gate guard for a state without `drive_id`).
+- **OWNER:** F1 (= P3) opened HTML/Markdown/code reaches the model entity-escaped and can be written back via
+  `save_file_to_drive`; also two non-wrapped places escape for no benefit (`R&D's` → `R&amp;D&#x27;s`). If the
+  owner picks "escape only the tag", the *opening* `<drive_document` must be escaped too (case-insensitive, with
+  whitespace), or a file can forge a nested block. Otherwise keep full escaping + one reminder sentence.
+  P4 second half: refuse an empty request or not ("show my newest files" is legitimate). F4: RFC §10.4 says body
+  quotes are escaped; the plan escapes only `& < >` — needs a Δ row or an RFC edit. F6: `doc` = `.doc` only, the
+  "document" family excludes PDFs ("documents I saved last week" misses PDFs), plural extensions refused.
+  F7: date-only bounds are UTC days (= P14).
+- Part D gate `make check` (coordinator, clean worktree at `019c069`, i.e. Part D + R7/R8 + Tasks 30–31):
+  7921 passed, 3 skipped, 1 xfailed — green. **Part D complete.**
