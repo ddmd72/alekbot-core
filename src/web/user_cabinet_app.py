@@ -1290,12 +1290,16 @@ def create_user_cabinet_blueprint(
                 # The grant was rejected on refresh (§7.7): still stored, but only a reconnect helps.
                 "needs_reconnect": connection.connected and connection.needs_reconnect,
             }
-            if drive_search_service is not None:
-                body["indexing"] = _indexing_json(await drive_search_service.indexing_status(g.user_id))
-            return jsonify(body), 200
         except Exception as exc:
             logger.error(f"Error fetching drive status: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
+        if drive_search_service is not None:
+            try:
+                body["indexing"] = _indexing_json(await drive_search_service.indexing_status(g.user_id))
+            except Exception as exc:
+                # The connection card (Connect/Disconnect/Reconnect) must not depend on the index read.
+                logger.error(f"Error fetching drive indexing status: {exc}", exc_info=True)
+        return jsonify(body), 200
 
     @bp.route("/api/drive/indexing", methods=["GET"])
     @auth_required
@@ -1343,7 +1347,9 @@ def create_user_cabinet_blueprint(
                 logger.error(f"Drive indexing toggle saved but the sync task was not queued: {exc}",
                              exc_info=True)
         else:
-            logger.warning("Drive indexing toggled with no drive queue wired; the scheduler will pick it up")
+            # main.py builds the scheduler fan-out only with a drive queue, so nothing picks this up.
+            logger.warning("Drive indexing toggled with no drive queue wired; the flag is saved, but no sync "
+                           "task will run until the drive queue is configured (DRIVE_INDEXER_URL)")
         logger.info(f"🗂️ Drive indexing {'on' if enabled else 'off'} for user={g.user_id[:8]} (queued={queued})")
         return jsonify({"enabled": enabled, "queued": queued}), 200
 
