@@ -149,6 +149,8 @@ class DriveSearchResult:
     matched_at_least: bool = False       # matched_total is a lower bound (the fetch hit its cap)
     folder_path: Optional[str] = None    # the folder the search was scoped to
     folder_lookup_truncated: bool = False  # folder_not_found, but a lookup page was full: "could not resolve"
+    capped: bool = False                 # filters dropped candidates from a full (capped) stream page
+    candidates: int = 0                  # how many visible candidates the filters were applied to
 
 
 @dataclass(frozen=True)
@@ -480,6 +482,13 @@ def render_results(result: DriveSearchResult) -> str:
         else:
             total = f"at least {result.matched_total}" if result.matched_at_least else str(result.matched_total)
             out.append(f"{total} files and folders match the filters; showing the newest {shown}.")
+    if result.capped:
+        out.append(f"The filters were applied to the best {result.candidates} name and meaning matches only, not "
+                   f"to every file, so more files may match.")
+        if not result.cards:
+            out.append("None of them passed the filters; that does not mean no file does. Search again with "
+                       "drive_query empty to apply the filters to every file, or add a folder or more name words.")
+            return "\n".join(out)
     if not result.cards:
         out.append("No matching files or folders.")
         return "\n".join(out)

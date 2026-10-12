@@ -19,7 +19,7 @@ import secrets
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from ..domain.drive_card import card_text
 from ..domain.drive_index import DriveIndexRecord, DriveSyncState, EpochPhase, Priority
@@ -68,6 +68,7 @@ class _Stats:
     name_kept: int = 0
     visible: int = 0
     filtered: int = 0
+    candidates: Set[str] = field(default_factory=set)   # distinct visible records, before the filters
     fused: int = 0
     covered: int = 0
     widened: bool = False
@@ -181,26 +182,30 @@ class DriveSearchService:
     async def _ranked(self, user_id: str, request: DriveSearchRequest, kinds: FrozenSet[str],
                       folder: Optional[_Folder], ancestry: _Ancestry, stats: _Stats) -> DriveSearchResult:
         keys = query_name_keys(request.query)
-        prefilter = next(iter(kinds)) if len(kinds) == 1 else None   # a family is a post-filter (Δ20)
+        members: List[Optional[str]] = list(sorted(kinds)) or [None]   # a family: one card kNN per member kind
+        name_kind = members[0] if len(members) == 1 else None          # names: a family is a post-filter (Δ20)
         vector: Optional[List[float]] = None
         card_fetch, name_fetch = CARD_FETCH, NAME_FETCH
         while True:
-            (vector, nearest), (named, name_full) = await asyncio.gather(
-                self._nearest(user_id, request.query, vector, card_fetch, prefilter),
-                self._name_candidates(user_id, keys, name_fetch, prefilter, stats))
+            (vector, nearest, card_full), (named, name_full) = await asyncio.gather(
+                self._nearest(user_id, request.query, vector, card_fetch, members),
+                self._name_candidates(user_id, keys, name_fetch, name_kind, stats))
             stats.card, stats.name = len(nearest), len(named)
             scores = {r.item_id: s for r in named if (s := name_match(r.name_tokens, keys)) is not None}
             stats.name_kept = len(scores)
-            fused, paths = await self._fuse([[rec for rec, _ in nearest], rank_names(named, scores)],
-                                            request, kinds, folder, ancestry, stats)
-            full_page = len(nearest) >= card_fetch or name_full
+            fused, paths = await self._fuse([nearest, rank_names(named, scores)], request, kinds, folder,
+                                            ancestry, stats)
+            full_page = card_full or name_full
             if len(fused) >= K or stats.widened or not full_page:
                 break
             stats.widened = True   # §10.1 step 5: once, at the cap
             card_fetch, name_fetch = FETCH_MAX, FETCH_MAX
         ranked = self._covered_first(fused, request.query, stats)
+        # The filters saw only the streams' pages: past a full page, a matching file may exist (§10.2 honesty).
+        capped = full_page and stats.filtered < stats.visible
         return DriveSearchResult(status=STATUS_OK, cards=self._cards(ranked, paths, stats), request=request,
-                                 folder_path=folder.path if folder else None)
+                                 folder_path=folder.path if folder else None, capped=capped,
+                                 candidates=len(stats.candidates) if capped else 0)
 
     async def _filter_only(self, user_id: str, request: DriveSearchRequest, kinds: FrozenSet[str],
                            folder: Optional[_Folder], ancestry: _Ancestry, stats: _Stats) -> DriveSearchResult:
@@ -257,11 +262,14 @@ class DriveSearchService:
     # ------------------------------------------------------------------------------------------
 
     async def _nearest(self, user_id: str, query: str, vector: Optional[List[float]], limit: int,
-                       kind: Optional[str]) -> Tuple[List[float], List[Tuple[DriveIndexRecord, float]]]:
-        """Card kNN (§10.1 step 2); the query is embedded once per search (step 1)."""
+                       kinds: Sequence[Optional[str]]) -> Tuple[List[float], List[DriveIndexRecord], bool]:
+        """Card kNN (§10.1 step 2), one per kind, merged nearest first; the query is embedded once per search
+        (step 1). Returns (vector, records, any page full)."""
         if vector is None:
             vector = await self._embeddings.get_embedding(query, task_type="RETRIEVAL_QUERY")
-        return vector, await self._repo.find_nearest_cards(user_id, vector, limit, kind)
+        pages = await asyncio.gather(*(self._repo.find_nearest_cards(user_id, vector, limit, k) for k in kinds))
+        merged = sorted((hit for page in pages for hit in page), key=lambda hit: (hit[1], hit[0].item_id))
+        return vector, [rec for rec, _ in merged], any(len(page) >= limit for page in pages)
 
     async def _name_candidates(self, user_id: str, keys: Sequence[str], limit: int, kind: Optional[str],
                                stats: _Stats) -> Tuple[List[DriveIndexRecord], bool]:
@@ -299,6 +307,7 @@ class DriveSearchService:
                 continue
             visible += 1
             path, ancestor_ids = chain
+            stats.candidates.add(rec.item_id)
             if kinds and rec.kind not in kinds:
                 continue
             if not in_date_range(rec, request):
@@ -316,6 +325,7 @@ class DriveSearchService:
                     stats: _Stats) -> Tuple[List[DriveIndexRecord], Dict[str, str]]:
         """Filter each stream, pool it to one hit per record, then RRF on item_id (§10.1 step 4)."""
         stats.visible = stats.filtered = 0
+        stats.candidates = set()
         pooled: List[List[DriveIndexRecord]] = []
         paths: Dict[str, str] = {}
         for stream in streams:
