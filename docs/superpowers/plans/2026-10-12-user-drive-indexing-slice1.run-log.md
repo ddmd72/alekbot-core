@@ -373,3 +373,15 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   untested (dropping either survives → the reconnect notice and staleness alert would silently never fire); the
   container repository type is untested.
 - Task 47 note (= premise audit P12): Step 3 expects a WARNING, but "drive queue disabled" is INFO (INFO is right).
+
+### Task 25 — done (fix R8 queued)
+- Commit `88a0484` (byte-identical). `make check` (reviewer, worktree): 7754 passed, 3 skipped, 1 xfailed.
+- Reviewer (system context) found a **MAJOR plan bug** (reproduced with the real coordinator, registry and
+  notification service): the reconnect notice is lost whenever the user's agents are not loaded in the main process
+  (cold start, or idle eviction after ~1 h). `_reconnect_notice` calls `notify` without `ensure_agents_for_user`
+  (every other notifying `/worker` path loads agents first); the Quick formatter is unknown → FAILED, the flag stays up,
+  the user is never told. → fix R8 (inject `ensure_agents`, called before the flag). The same latent bug exists in
+  the Gmail daily review (`_flag_gmail_reconnect` notifies before `ensure_agents_for_user`) — outside this plan,
+  queued as a separate suggested task.
+- MINOR: Task 45 doc says the unconfigured fan-out "logs a WARNING" (it is INFO, correctly); `main.py` wiring has no
+  test (Task 47 live acceptance covers it).
