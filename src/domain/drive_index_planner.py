@@ -12,6 +12,7 @@ Public interface:
     change_from_record(rec) -> DriveChange
     schedule(rec, now, *, first_seen) -> DriveIndexRecord
     with_card(rec, card_hash, embedding_space, now) / without_card(rec, now) / capped(rec, now)
+    card_refused(rec, now) -> DriveIndexRecord
     with_retry(rec, now) -> DriveIndexRecord
     access_action(enabled, state, connection, now) -> AccessAction
     is_stale(state, oldest_edit_due_at, now) -> bool
@@ -188,7 +189,7 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
     place_name, geo_version = _place(change, existing, ctx.place_of)
     carried = existing.probed_child_count if existing and not cls.probe_pending and not cls.density_reset else 0
     probed = cls.density_count or carried
-    return replace(
+    rec = replace(
         base, parent_id=change.parent_id, name=change.name, is_folder=change.is_folder,
         size_bytes=change.size_bytes, mime_type=change.mime_type, web_url=change.web_url,
         child_count=change.child_count, facets=dict(change.facets), kind=cls.kind,
@@ -200,6 +201,15 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         content_hash=content_hash_of(change), probe_pending=cls.probe_pending, probed_child_count=probed,
         seen_epoch=_stamp(existing, ctx, observed),
     )
+    if _refusal_stands(existing, rec):
+        rec = replace(rec, state=RecordState.FAILED)
+    return rec
+
+
+def _refusal_stands(existing: Optional[DriveIndexRecord], rec: DriveIndexRecord) -> bool:
+    """A refused card stays failed while the card text is the one refused (§8.2)."""
+    return (existing is not None and existing.state is RecordState.FAILED and not existing.has_card
+            and existing.card_hash is not None and card_eligible(rec) and existing.card_hash == card_hash(rec))
 
 
 def _stamp(existing: Optional[DriveIndexRecord], ctx: PlanContext, observed: bool) -> int:
@@ -340,6 +350,14 @@ def with_card(rec: DriveIndexRecord, hash_: str, embedding_space: str, now: date
     return schedule(done, now, first_seen=False)
 
 
+def card_refused(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """The provider refused this card text MAX_ATTEMPTS times: terminal, `failed` (§8.2). The record keeps no card,
+    and `card_hash` names the refused text, so the same text is not tried again; a new text (a rename, a facet
+    change, a new card builder) gets a fresh try."""
+    return schedule(replace(rec, state=RecordState.FAILED, has_card=False, card_hash=card_hash(rec),
+                            card_version=CARD_VERSION, attempts=0), now, first_seen=False)
+
+
 def without_card(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     return schedule(replace(rec, card_hash=None, has_card=False), now, first_seen=False)
 
@@ -367,7 +385,7 @@ def stale_versions(rec: DriveIndexRecord) -> bool:
     """Decided or carded under an older constant (§12.3)."""
     if rec.policy_version != POLICY_VERSION:
         return True
-    if rec.has_card and rec.card_version != CARD_VERSION:
+    if (rec.has_card or rec.card_hash is not None) and rec.card_version != CARD_VERSION:   # carded, or refused
         return True
     return photo_location(rec.facets) is not None and rec.geo_table_version != GEO_TABLE_VERSION
 

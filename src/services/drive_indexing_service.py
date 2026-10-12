@@ -31,7 +31,7 @@ from ..domain.drive_index_params import (
     RELIST_PAGE, SYSTEMIC_BACKOFF_BASE_S, SYSTEMIC_BACKOFF_CAP_S, TICK_DEADLINE_S, TICK_START_BUDGET,
 )
 from ..domain.drive_index_planner import (
-    AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, capped, change_from_record,
+    AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, capped, card_refused, change_from_record,
     needs_probe, parent_scope, plan_observation, schedule, stale_versions, with_card, with_retry, without_card,
 )
 from ..domain.drive_index_policy import is_marker_child, probe_from_children
@@ -377,7 +377,9 @@ class DriveIndexingService:
                         summary: Dict[str, int]) -> DriveSyncState:
         if state.epoch_phase is EpochPhase.SWEEPING:
             state = await self._sweep(user_id, state, now, budget, summary)
-        stopped_class = await self._due_loop(user_id, state, now, budget, summary)
+        stopped_class, worked = await self._due_loop(user_id, state, now, budget, summary)
+        if worked and _upgrade_waiting(state):
+            state = replace(state, upgrade_found_stale=False)   # the work may have cleared what the pass left
         if stopped_class is None:
             state = await self._upgrade_step(user_id, state, now, budget, summary)
             await self._release_card_cap(user_id, state, now, summary)
@@ -408,26 +410,29 @@ class DriveIndexingService:
         return state
 
     async def _due_loop(self, user_id: str, state: DriveSyncState, now: datetime, budget: _Budget,
-                        summary: Dict[str, int]) -> Optional[int]:
-        """Work due records class by class (§7.8). Returns the class a budget stopped at, or None.
+                        summary: Dict[str, int]) -> Tuple[Optional[int], bool]:
+        """Work due records class by class (§7.8). Returns the class a budget stopped at (or None), and whether
+        any record was worked.
 
         A class that runs out of its budget stops the loop: lower classes wait for the next tick. That is
         what keeps a repository's files from being carded while its rescope is unfinished (plan Δ15)."""
+        worked = False
         while budget.time_left():
             batch = await self._repo.due_records(user_id, now, _DUE_PAGE)
             if not batch:
-                return None
+                return None, worked
             cls = batch[0].priority if batch[0].priority is not None else int(Priority.RETRY)
             same = [r for r in batch if r.priority == cls]
             if cls >= Priority.MAINTENANCE and not budget.maintenance_allowed():
-                return cls
+                return cls, worked
             started = self._monotonic()
             progressed = await self._work_class(user_id, state, same, now, budget, summary)
+            worked |= progressed
             if cls >= Priority.MAINTENANCE:
                 budget.maintenance_s += self._monotonic() - started
             if not progressed:
-                return cls
-        return int(Priority.RETRY)
+                return cls, worked
+        return int(Priority.RETRY), worked
 
     async def _work_class(self, user_id: str, state: DriveSyncState, recs: List[DriveIndexRecord], now: datetime,
                           budget: _Budget, summary: Dict[str, int]) -> bool:
@@ -646,7 +651,13 @@ class DriveIndexingService:
         vectors: Dict[str, List[float]] = {}
         for rec in refused:
             now_rec = fresh.get(rec.item_id)
-            if now_rec is not None:
+            if now_rec is None:
+                continue
+            if now_rec.attempts + 1 >= MAX_ATTEMPTS and card_text(now_rec) == card_text(rec):
+                logger.warning(f"[DriveIndex] card for item {rec.item_id} of {user_id[:8]} refused {MAX_ATTEMPTS} "
+                               f"times; the record is failed until its card text changes")
+                written.append(card_refused(now_rec, now))
+            else:
                 written.append(with_retry(now_rec, now))
         for rec, vec in results:
             now_rec = fresh.get(rec.item_id)
@@ -681,8 +692,13 @@ class DriveIndexingService:
     async def _upgrade_step(self, user_id: str, state: DriveSyncState, now: datetime, budget: _Budget,
                             summary: Dict[str, int]) -> DriveSyncState:
         """Pages through records while the maintenance share and the tick budget allow, at most to the end of
-        one pass: the work a pass schedules runs in the due loop of a later tick, so the next pass waits."""
+        one pass: the work a pass schedules runs in the due loop of a later tick, so the next pass waits.
+
+        A pass that left stale records (scheduled, backing off, or parked) is not repeated until due work has run
+        or the target versions change: a record stuck in backoff must not cost a full read of the index per tick."""
         target = dict(CURRENT_VERSIONS)
+        if _upgrade_waiting(state) and dict(state.target_versions) == target:
+            return state
         while dict(state.applied_versions) != target and budget.time_left() and budget.maintenance_allowed():
             started = self._monotonic()
             state = await self._upgrade_page(user_id, state, target, now, summary)
@@ -699,23 +715,25 @@ class DriveIndexingService:
         page = await self._repo.records_page(user_id, state.upgrade_cursor, _DUE_PAGE)
         writes: Dict[str, DriveIndexRecord] = {}
         deletes: Set[str] = set()
-        found = state.upgrade_found_stale
+        found = state.upgrade_found_stale   # a stale record this pass left stale (its work is due, or blocked)
         for rec in page:
             if rec.state is RecordState.DELETING or not stale_versions(rec):
                 continue
-            found = True
             if rec.state is RecordState.UNRESOLVED and rec.due_at is None:
+                found = True
                 continue   # parked under an unresolved parent, whose rescope re-plans it; scheduling only re-parks it
             parent = await self._parent_of(user_id, rec, ctx)
             self._fold(_as_maintenance(plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
                                                         observed=False)),
                        {}, writes, deletes)
+            if rec.item_id not in deletes and stale_versions(writes.get(rec.item_id, rec)):
+                found = True
         await self._commit(user_id, list(writes.values()), deletes)
         summary["upgraded"] = summary.get("upgraded", 0) + len(writes)
         if len(page) == _DUE_PAGE:
             return replace(state, upgrade_cursor=page[-1].item_id, upgrade_found_stale=found)
-        if found:   # scheduling is not completion: verify with another full pass
-            return replace(state, upgrade_cursor=None, upgrade_found_stale=False)
+        if found:   # scheduling is not completion: the next pass verifies once due work has run
+            return replace(state, upgrade_cursor=None, upgrade_found_stale=True)
         logger.info(f"[DriveIndex] versions {target} applied for {user_id[:8]}")
         return replace(state, applied_versions=target, upgrade_cursor=None, upgrade_found_stale=False)
 
@@ -783,6 +801,11 @@ class DriveIndexingService:
     def _log(user_id: str, end: str, summary: Dict[str, int], budget: _Budget) -> None:
         elapsed = budget.monotonic() - budget.started
         logger.info(f"[DriveIndex] tick user={user_id[:8]} end={end} {summary} duration={elapsed:.1f}s")
+
+
+def _upgrade_waiting(state: DriveSyncState) -> bool:
+    """A finished pass left stale records: no new pass before due work has run (or the target changes)."""
+    return state.upgrade_cursor is None and state.upgrade_found_stale
 
 
 def _dying(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
