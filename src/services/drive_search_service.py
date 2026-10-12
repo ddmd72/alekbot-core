@@ -8,7 +8,7 @@ query first (Δ17) -> widen once -> collapse duplicates -> top K with the covera
 no I/O is in `src/domain/drive_search.py`; this class reads and calls it.
 
 Public interface:
-    DriveSearchService(repo, embeddings, users, drive, *, clock, nonce)
+    DriveSearchService(repo, embeddings, users, drive, *, clock, nonce, monotonic)
     await search(user_id, request) -> DriveSearchResult
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
 """
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
@@ -112,28 +113,31 @@ class _Folder:
 class DriveSearchService:
     def __init__(self, repo: DriveIndexRepository, embeddings: EmbeddingService, users: UserRepository,
                  drive: UserDrivePort, *, clock: Callable[[], datetime] = _utcnow,
-                 nonce: Callable[[], str] = _nonce) -> None:
+                 nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._repo = repo
         self._embeddings = embeddings
         self._users = users
         self._drive = drive
         self._clock = clock
         self._nonce = nonce
+        self._monotonic = monotonic
 
     # ------------------------------------------------------------------------------------------
     # Search
     # ------------------------------------------------------------------------------------------
 
     async def search(self, user_id: str, request: DriveSearchRequest) -> DriveSearchResult:
+        started = self._monotonic()
         stats = _Stats(mode="filter" if request.filter_only else "query")
         result = await self._search(user_id, request, stats)
         stats.returned = len(result.cards)
+        ms = round((self._monotonic() - started) * 1000)
         logger.info(
             f"[DriveSearch] user={user_id[:8]} status={result.status} mode={stats.mode} scope={stats.scope} "
             f"card={stats.card} name={stats.name} name_queries={stats.name_queries} name_kept={stats.name_kept} "
             f"visible={stats.visible} filtered={stats.filtered} fused={stats.fused} covered={stats.covered} "
             f"widened={stats.widened} collapsed={stats.collapsed} returned={stats.returned} "
-            f"building={result.envelope.building}")
+            f"building={result.envelope.building} ms={ms}")
         return result
 
     async def _search(self, user_id: str, request: DriveSearchRequest, stats: _Stats) -> DriveSearchResult:
@@ -336,15 +340,16 @@ class DriveSearchService:
         by_hash: Dict[str, int] = {}
         for rec in ranked:
             path = paths[rec.item_id]
-            if rec.content_hash and rec.content_hash in by_hash:
-                first = by_hash[rec.content_hash]
+            same_as = rec.content_hash
+            if same_as and same_as in by_hash:
+                first = by_hash[same_as]
                 cards[first] = replace(cards[first], also_at=cards[first].also_at + (path,))
                 stats.collapsed += 1
                 continue
             if len(cards) >= K:
                 continue   # keep scanning: a later duplicate still adds its path to a shown card
-            if rec.content_hash:
-                by_hash[rec.content_hash] = len(cards)
+            if same_as:
+                by_hash[same_as] = len(cards)
             cards.append(make_card(rec, path, card_text(rec), self._nonce()))
         return tuple(cards)
 
