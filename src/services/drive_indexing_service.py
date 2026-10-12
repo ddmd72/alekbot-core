@@ -167,7 +167,7 @@ class DriveIndexingService:
             state = await self._observe(user_id, state, now, budget, summary, saved)
             if state.round_complete:
                 state = await self._work_off(user_id, state, now, budget, summary)
-            more = await self._has_more(user_id, state, now)
+            more = await self._has_more(user_id, state, now, upgrade_wrote=summary.get("upgraded", 0) > 0)
             if more:
                 await self._continue(user_id, tick_id)
             else:
@@ -675,6 +675,8 @@ class DriveIndexingService:
             if rec.state is RecordState.DELETING or not stale_versions(rec):
                 continue
             found = True
+            if rec.state is RecordState.UNRESOLVED and rec.due_at is None:
+                continue   # parked under an unresolved parent, whose rescope re-plans it; scheduling only re-parks it
             parent = await self._parent_of(user_id, rec, ctx)
             self._fold(_as_maintenance(plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
                                                         observed=False)),
@@ -710,11 +712,15 @@ class DriveIndexingService:
         await self._continue(user_id, tick_id)
         return TickResult("purging", summary)
 
-    async def _has_more(self, user_id: str, state: DriveSyncState, now: datetime) -> bool:
+    async def _has_more(self, user_id: str, state: DriveSyncState, now: datetime, *,
+                        upgrade_wrote: bool = False) -> bool:
         if not state.round_complete or state.epoch_phase is EpochPhase.SWEEPING:
             return True
-        if dict(state.applied_versions) != dict(CURRENT_VERSIONS) and state.upgrade_cursor is not None:
-            return True   # a pass is mid-way; a restarted pass waits for due work or the fan-out (retro_tick F6)
+        if dict(state.applied_versions) != dict(CURRENT_VERSIONS) and (state.upgrade_cursor is not None
+                                                                         or upgrade_wrote):
+            # a pass is mid-way, or this tick's pass wrote (re-stamped or scheduled) and the verification pass
+            # runs in-chain; a restarted pass that wrote nothing waits for due work or the fan-out (retro_tick F6)
+            return True
         return bool(await self._repo.due_records(user_id, now, 1))   # backed-off work waits for its due_at
 
     async def _continue(self, user_id: str, tick_id: str, delay_seconds: int = 0) -> None:

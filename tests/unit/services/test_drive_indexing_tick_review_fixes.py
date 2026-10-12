@@ -6,6 +6,7 @@ import pytest
 
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
+from src.domain.drive_index_params import RETRY_CAP
 from src.domain.drive_index import ErrorCategory, Nudge, Priority, Reason, RecordState
 from src.domain.user_drive import (
     DriveAccessDenied, DriveConnection, DriveNotConnectedError, DriveReauthRequired, DriveThrottled,
@@ -81,6 +82,32 @@ class TestSystemicErrorKeepsObserveProgress:
             w.clock.advance(5)
         st = await w.repo.get_sync_state("u")
         assert st.initial_enumeration_done, (st.cursor, st.epoch_phase)
+
+
+    async def test_throttle_right_after_a_410_keeps_the_new_epoch(self):
+        """Review R2 M2: the 410 restart is saved at once; a throttle on the next page call must not write back
+        the pre-410 cursor and epoch (the next tick would take another 410 and open epoch E+2)."""
+        w = World(page_size=5)
+        for i in range(20):
+            w.drive.add(f"f{i}.pdf")
+        await w.settle()
+        epoch = (await w.repo.get_sync_state("u")).epoch
+        w.drive.resync_next = True
+        orig = w.drive.get_changes
+        calls = {"n": 0}
+
+        async def throttle_after_410(user_id, cursor):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise DriveThrottled(retry_after_s=30)
+            return await orig(user_id, cursor)
+
+        w.drive.get_changes = throttle_after_410
+        assert (await w.tick()).status == "throttled"
+        st = await w.repo.get_sync_state("u")
+        assert st.epoch == epoch + 1
+        assert st.cursor == "full:0", st.cursor
+        assert st.last_error is ErrorCategory.THROTTLED
 
 
 def _photos_world():
@@ -232,6 +259,18 @@ class TestUpgradePassDoesNotSpin:
         assert await w.svc._has_more("u", replace(st, upgrade_cursor="i00003"), w.clock.now)
         assert not await w.svc._has_more("u", replace(st, upgrade_cursor=None), w.clock.now)
 
+    async def test_a_pass_that_wrote_continues_to_verify_in_chain(self, monkeypatch):
+        """Review R2 fix 1: a pass that ended this tick having written (re-stamped or scheduled) continues the
+        chain, so the verification pass runs in-chain; one that wrote nothing waits."""
+        w = World()
+        for i in range(5):
+            w.drive.add(f"f{i}.pdf")
+        await w.settle()
+        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 1, "geo_table": 2})
+        st = replace(await w.repo.get_sync_state("u"), upgrade_cursor=None)
+        assert await w.svc._has_more("u", st, w.clock.now, upgrade_wrote=True)
+        assert not await w.svc._has_more("u", st, w.clock.now, upgrade_wrote=False)
+
 
 class TestRfcBehaviourPinned:
     """F8 (a), (b): required behaviour that no test pinned."""
@@ -281,3 +320,91 @@ class TestRfcBehaviourPinned:
         await w.settle(max_ticks=100)
         assert all(w.rec(b).reason is Reason.DENSE_TREE for b in big)
         assert sum(1 for r in w.repo.records.values() if r.parent_id in big) == 0
+
+
+def _bumped_card(monkeypatch):
+    monkeypatch.setattr(drive_card, "CARD_VERSION", 2)
+    monkeypatch.setattr(planner, "CARD_VERSION", 2)
+    target = {"policy": 1, "card": 2, "geo_table": 1}
+    monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
+    return target
+
+
+async def _run_chain(w, max_ticks):
+    """Ticks while each one enqueues a continuation (delays elapse). Returns (ticks run, longest run of
+    back-to-back zero-delay continuations)."""
+    ticks = zero_delay_chain = longest = 0
+    for _ in range(max_ticks):
+        before = len(w.queue.tasks)
+        await w.tick()
+        ticks += 1
+        conts = [t for t in w.queue.tasks[before:] if ":cont:" in (t["key"] or "")]
+        if not conts:
+            break
+        delay = max(t["delay"] for t in conts)
+        zero_delay_chain = zero_delay_chain + 1 if delay == 0 else 0
+        longest = max(longest, zero_delay_chain)
+        w.clock.advance(max(1, delay))
+    return ticks, longest
+
+
+async def _converge_with_fanout(w, target, rounds=10):
+    """The periodic fan-out resumes a quiet user: let backoffs elapse and run chains until the bump applies.
+    Returns the longest zero-delay run seen in any chain."""
+    longest = 0
+    for _ in range(rounds):
+        _, chain = await _run_chain(w, 100)
+        longest = max(longest, chain)
+        if dict((await w.repo.get_sync_state("u")).applied_versions) == target:
+            return longest
+        w.clock.advance(RETRY_CAP.total_seconds())
+    pytest.fail("the version bump never applied")
+
+
+class TestUpgradePassSkipsParkedRecords:
+    """F6 remainder (review R2 fix 2): a record parked under an unresolved parent (UNRESOLVED, due_at None) is
+    not re-scheduled by the upgrade pass; the parent's rescope re-plans it. Scheduling it only re-parked it,
+    a zero-delay spin."""
+
+    @staticmethod
+    async def _photos_grown_past_dense_with_probe_refused(w):
+        f = w.drive.add("Photos", folder=True)
+        for i in range(10):
+            w.drive.add(f"p{i}.pdf", parent=f)
+        await w.settle()
+        for i in range(10, 610):
+            w.drive.add(f"p{i}.pdf", parent=f)
+        w.drive.reemit(f)
+        orig = w.drive.list_children_changes
+
+        async def denied(user_id, folder_id, limit, cursor=None):
+            raise DriveAccessDenied("probe refused")
+
+        w.drive.list_children_changes = denied
+        return f, orig
+
+    async def test_card_bump_with_a_deferred_reprobe_does_not_spin(self, monkeypatch):
+        w = World(page_size=2000)
+        f, orig = await self._photos_grown_past_dense_with_probe_refused(w)
+        target = _bumped_card(monkeypatch)
+        ticks, _ = await _run_chain(w, 30)
+        assert ticks < 30, ticks
+        parked = [r for r in w.repo.records.values()
+                  if r.parent_id == f and r.state is RecordState.UNRESOLVED and r.due_at is None]
+        assert parked and all(planner.stale_versions(r) for r in parked)   # the scenario: stale and parked
+        w.drive.list_children_changes = orig
+        await _converge_with_fanout(w, target)
+        assert not [r for r in w.repo.records.values() if planner.stale_versions(r)]
+        assert w.rec(f).state is not RecordState.UNRESOLVED
+        assert not [r for r in w.repo.records.values() if r.parent_id == f and r.state is RecordState.UNRESOLVED]
+
+    async def test_not_dense_outcome_converges_without_a_spin(self, monkeypatch):
+        """The probe keeps failing: after its attempts the folder is classified not dense and every child gets
+        its card rebuilt, with no zero-delay chain on the way."""
+        w = World(page_size=2000)
+        f, _ = await self._photos_grown_past_dense_with_probe_refused(w)
+        target = _bumped_card(monkeypatch)
+        longest = await _converge_with_fanout(w, target)
+        assert longest < 30, longest
+        assert not [r for r in w.repo.records.values() if planner.stale_versions(r)]
+        assert sum(1 for r in w.repo.records.values() if r.parent_id == f and r.has_card) == 610
