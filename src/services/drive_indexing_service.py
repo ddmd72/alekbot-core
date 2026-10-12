@@ -1144,9 +1144,10 @@ class DriveIndexingService:
                          now: datetime, summary: Dict[str, int]) -> Optional[DriveIndexRecord]:
         """§8.1 steps 6-9: gate, chunks, the chunk cap, embeddings, chunk writes, the fence and the commit. Returns
         the record to write, or None when the fence dropped the result."""
-        if not gate_exempt(kind) and is_machine_text(outcome.text):
+        # CPU work on up to MAX_TEXT_CHARS: in a worker thread, so the event loop keeps serving (lease, embeddings)
+        if not gate_exempt(kind) and await asyncio.to_thread(is_machine_text, outcome.text):
             return demoted(run, Reason.MACHINE_TEXT, now, outcome=outcome)
-        chunked = chunk_text(outcome.text)
+        chunked = await asyncio.to_thread(chunk_text, outcome.text)
         if not chunked.chunks:
             return demoted(run, Reason.NO_TEXT, now, outcome=outcome)
         if chunk_cap_refuses(await self._repo.readable_chunk_total(user_id), run, len(chunked.chunks)):
@@ -1169,10 +1170,10 @@ class DriveIndexingService:
             return content_retry(run, Reason.EXTRACT_ERROR, now)
         summary["embed_ms"] = summary.get("embed_ms", 0) + int((self._monotonic() - started) * 1000)
         generation = run.index_generation
+        terms = await asyncio.to_thread(_terms_of, [c.text for c in chunked.chunks])
         chunks = [DriveChunk(user_id=user_id, item_id=run.item_id, generation=generation, index=i, text=c.text,
-                             char_start=c.char_start, char_end=c.char_end, kind=run.kind,
-                             content_terms=content_terms(c.text))
-                  for i, c in enumerate(chunked.chunks)]
+                             char_start=c.char_start, char_end=c.char_end, kind=run.kind, content_terms=t)
+                  for i, (c, t) in enumerate(zip(chunked.chunks, terms))]
         _fence()
         await self._recheck_gate(user_id)
         for start in range(0, len(chunks), RECORD_WRITE_BATCH):
@@ -1617,6 +1618,10 @@ def _outcome_key(before: DriveIndexRecord, final: DriveIndexRecord) -> str:
     if final.state is RecordState.METADATA_ONLY:
         return "demoted"
     return "retried" if final.attempts > before.attempts else "deferred"
+
+
+def _terms_of(texts: Sequence[str]) -> List[Tuple[str, ...]]:
+    return [content_terms(t) for t in texts]
 
 
 def _write_file(path: str, data: bytes) -> None:
