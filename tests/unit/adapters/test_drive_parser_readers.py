@@ -763,3 +763,19 @@ def test_xlsx_value_in_the_first_column_past_the_cap_marks_truncated(tmp_path, m
 def test_xlsx_narrow_sheet_is_not_marked_truncated(tmp_path):
     path = make_xlsx(tmp_path / "n.xlsx", [("S", [("Item", "Cost"), ("Rent", 1200)])])
     assert _read(path, "xlsx").truncated is False
+
+
+# =============================================================================
+# An encrypted PDF's page count comes from its page tree, never its /Count (review A, m)
+# =============================================================================
+
+@pytest.mark.parametrize("lie", [b"/Count 9\n", b"/Count -1", b"/Count 0\n"])
+def test_owner_password_pdf_page_count_ignores_a_lying_count(tmp_path, lie):
+    plain = make_pdf(tmp_path / "a.pdf", ["first page", "second page"])
+    restricted = encrypt_pdf(plain, tmp_path / "restricted.pdf", user_password="").read_bytes()
+    assert restricted.count(b"/Count 2\n") == 1
+    lying = tmp_path / "lying.pdf"
+    lying.write_bytes(restricted.replace(b"/Count 2\n", lie))
+    outcome = _read(lying, "pdf")
+    assert outcome.status is ExtractionStatus.TEXT
+    assert outcome.pages_total == 2

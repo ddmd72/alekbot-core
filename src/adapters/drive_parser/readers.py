@@ -212,7 +212,7 @@ def _read_pdf(path: str, kind: str) -> _Read:
         reader = PdfReader(path, strict=False)
         if reader.is_encrypted and not reader.decrypt(""):
             raise _Encrypted("user password")
-        pages_total = len(reader.pages)
+        pages_total = _page_count(reader)
     except _Encrypted:
         raise
     except Exception as exc:  # pypdf cannot count a damaged file pdfminer may still read; density then is unknown
@@ -220,6 +220,18 @@ def _read_pdf(path: str, kind: str) -> _Read:
             raise
         pages_total = 0
     return _read_markitdown(path, kind), pages_total, False
+
+
+def _page_count(reader: Any) -> int:
+    """Pages found by walking the page tree. pypdf answers `len(reader.pages)` of an encrypted file from the root's
+    `/Count`, which a file can set to anything (negative, a billion); the walk is bounded by pypdf's page-tree
+    limits."""
+    if reader.flattened_pages is None:
+        try:
+            reader.get_page(0)                       # flattens the tree (pypdf's public way in)
+        except IndexError:
+            pass
+    return max(len(reader.flattened_pages or ()), 0)
 
 
 def _read_converter(path: str, kind: str) -> _Read:
