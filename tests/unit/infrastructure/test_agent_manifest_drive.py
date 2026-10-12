@@ -1,6 +1,8 @@
 """Drive intents on FILE_MANAGEMENT (docs/10_rfcs/USER_DRIVE_RFC.md §3, §4.3–§4.5, §4.9).
 
-Step 1 has seven drive intents: search is not available inside the App Folder (RFC §7, A6).
+The seven Step 1 drive intents. They do not offer search themselves: the App Folder has no provider search
+(RFC §7, A6). Search is `search_files_in_drive` over the drive index (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md),
+tested in test_agent_manifest_drive_search.py.
 """
 import re
 
@@ -25,11 +27,7 @@ def test_values_and_sync():
         assert FILE_MANAGEMENT.capabilities[const] == ExecutionMode.SYNC
 
 
-def test_no_search_intent_in_step_one():
-    assert not hasattr(Intent, "SEARCH_FILES_IN_DRIVE")
-    assert "search_files_in_drive" not in FILE_MANAGEMENT.capabilities
-    assert "search_files_in_drive" not in FILE_MANAGEMENT.context_schemas
-    assert "search_files_in_drive" not in FILE_MANAGEMENT.capability_descriptions
+def test_no_search_text_field():
     for schema in FILE_MANAGEMENT.context_schemas.values():
         assert "search_text" not in schema
 

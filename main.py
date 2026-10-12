@@ -662,6 +662,8 @@ async def main():
             recurrence_port=container.recurrence_adapter,
             twilio_verify_client=twilio_verify_client,
             user_drive=container.user_drive,
+            drive_search_service=container.drive_search_service,
+            drive_task_queue=container.drive_task_queue,
         )
 
         # Services for WorkerHandler — wrap ports so the handler never imports ports directly
@@ -705,6 +707,22 @@ async def main():
             alert_webhook=_alert_webhook,
         )
 
+        # Drive index fan-out (USER_DRIVE_INDEXING_RFC §7.1, §12.1; RFC Δ5, Δ6). Built only when the
+        # drive queue exists (DRIVE_INDEXER_URL set): its ticks run on the indexer service.
+        _drive_sync_scheduler = None
+        if container.drive_task_queue and container.drive_index_repo and container.user_drive:
+            from src.composition.drive_indexing_setup import build_drive_sync_scheduler
+            _drive_sync_scheduler = build_drive_sync_scheduler(
+                repo=container.drive_index_repo,
+                queue=container.drive_task_queue,
+                drive=container.user_drive,
+                users=user_repo,
+                oauth_credentials=oauth_credentials_port,
+                notifier=notification_service,
+                alert_sink=_alert_webhook,
+                ensure_agents=agent_factory.ensure_agents_for_user,
+            )
+
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
         worker_handler = WorkerHandler(
             agent_worker_handler=agent_worker_handler,
@@ -732,6 +750,7 @@ async def main():
             short_link_service=short_link_service,
             companion_extraction=companion_extraction_service,
             oauth_credentials=oauth_credentials_port,
+            drive_sync_scheduler=_drive_sync_scheduler,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

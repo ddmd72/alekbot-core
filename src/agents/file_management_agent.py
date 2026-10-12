@@ -14,14 +14,18 @@ Intents:
   list_files_in_drive, open_file_from_drive
   move_file_in_drive, create_folder_in_drive
   update_file_in_drive (append / replace-by-file), delete_file_from_drive
+  search_files_in_drive           — the drive index (USER_DRIVE_INDEXING_RFC §10)
 Mutating intents refuse a ref from the other store and run shielded from cancellation;
 delete and replace post a receipt via notify_raw (USER_DRIVE_RFC §4.4, §4.10, §4.13).
+File text and search results reach the model only inside the escaped, nonce-tagged wrapper
+(USER_DRIVE_INDEXING_RFC §10.4, D2).
 """
 
 import asyncio
 import logging
 import mimetypes
 import os
+import secrets
 import tempfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Set
@@ -30,6 +34,10 @@ import aiofiles
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
+from ..domain.drive_search import (
+    REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, render_results, request_from_fields, require_search_terms,
+    wrap_untrusted,
+)
 from ..domain.language import LanguageCode
 from ..domain.skill import SKILL_REF_PREFIX
 from ..domain.ui_messages import UIMessage
@@ -59,6 +67,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from ..ports.language_service_port import LanguageServicePort
     from ..services.localization_service import LocalizationService
+    from ..services.drive_search_service import DriveSearchService
     from ..services.user_drive_service import UserDriveService
     from ..services.file_conversion_service import FileConversionService
     from ..services.user_notification_service import UserNotificationService
@@ -106,9 +115,11 @@ class FileManagementAgent(BaseAgent):
         drive_service: Optional["UserDriveService"] = None,
         localization: Optional["LocalizationService"] = None,
         language_service: Optional["LanguageServicePort"] = None,
+        drive_search: Optional["DriveSearchService"] = None,
     ) -> None:
         super().__init__(config)
         self._drive = drive_service
+        self._drive_search = drive_search
         self._localization = localization
         self._language = language_service
         # Shielded mutations still running after their caller stopped waiting (§4.13). Kept so the
@@ -149,6 +160,7 @@ class FileManagementAgent(BaseAgent):
         reads = {
             Intent.OPEN_FILE_FROM_DRIVE: self._open_drive,
             Intent.LIST_FILES_IN_DRIVE: self._list_drive,
+            Intent.SEARCH_FILES_IN_DRIVE: self._search_drive,
         }
         writes = {
             Intent.SAVE_FILE_TO_DRIVE: self._save_to_drive,
@@ -172,7 +184,7 @@ class FileManagementAgent(BaseAgent):
                 f"File agent does not support intent '{intent}'. "
                 f"Supported intents: open_file, delete_file, save_file_to_drive, list_files_in_drive, "
                 f"open_file_from_drive, move_file_in_drive, create_folder_in_drive, "
-                f"update_file_in_drive, delete_file_from_drive."
+                f"update_file_in_drive, delete_file_from_drive, search_files_in_drive."
             ),
         )
 
@@ -569,7 +581,9 @@ class FileManagementAgent(BaseAgent):
                 os.close(tmp_fd)
                 async with aiofiles.open(tmp_path, "wb") as f:
                     await f.write(data)
-                return self._ok(message, f"{drive_label(item)} is attached. You can see and analyse it directly.",
+                # The model reads an attached PDF or image natively: the reminder travels with it (D2).
+                return self._ok(message, f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} is "
+                                         f"attached. You can see and analyse it directly.",
                                 [item], metadata={"file_data": {"path": tmp_path, "mime_type": mime}})
             if mime.startswith("video/"):
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
@@ -581,12 +595,31 @@ class FileManagementAgent(BaseAgent):
                     channel_id_override=message.context.get("origin_channel_id"),
                     platform_override=message.context.get("origin_platform"),
                 )
-                return self._ok(message, f"{drive_label(item)} has been sent to the user as a file.", [item])
+                return self._ok(message, f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} has "
+                                         f"been sent to the user as a file.", [item])
         except DriveFileTooLargeError as e:
             return self._ok(message, f"'{item.path}' is {format_size(item.size_bytes)}; files above "
                                      f"{format_size(e.limit_bytes)} cannot be opened yet.", [item])
         content = await self._conversion_service.resolve_content(ref, user_id)
-        return self._ok(message, f"{drive_label(item)}\n{content}", [item])
+        # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11).
+        wrapped = wrap_untrusted(f"{drive_label(item)}\n{content}", nonce=secrets.token_hex(8),
+                                 ref=item.ref, path=item.path)
+        return self._ok(message, f"{REFERENCE_REMINDER}\n{wrapped}", [item])
+
+    async def _search_drive(self, message: AgentMessage, payload: dict, user_id: str) -> AgentResponse:
+        """search_files_in_drive (USER_DRIVE_INDEXING_RFC §10). Returned refs go into drive_context, so
+        "open the second one" works on the next turn (§10.4 History)."""
+        if self._drive_search is None:
+            return self._fail(message, "Drive search is not available on this deployment.")
+        try:
+            request = request_from_fields(payload.get("drive_query"), payload.get("drive_folder"),
+                                          payload.get("drive_kind"), payload.get("drive_date_from"),
+                                          payload.get("drive_date_to"))
+            require_search_terms(request)
+        except ValueError as e:
+            return self._fail(message, str(e))
+        result = await self._drive_search.search(user_id, request)
+        return self._ok(message, render_results(result), [card.drive_item() for card in result.cards])
 
     async def _save_to_drive(self, message: AgentMessage, payload: dict, user_id: str) -> AgentResponse:
         ref = payload.get("file_ref") or ""

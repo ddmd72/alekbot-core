@@ -2,13 +2,14 @@
 
 All Cloud Scheduler jobs for Alek-Core. Managed via `cloudbuild-dev.yaml` using the `describe && update || create` pattern (idempotent on every deploy).
 
-Region: `us-central1`. Attempt deadline: `60s` for all `/worker` jobs.
+Region: `us-central1`. Attempt deadline: `60s` for most `/worker` jobs; `start_daily_email_review` and
+`start_drive_sync` use `180s` and `repair_email_embeddings` uses `300s` (`cloudbuild-dev.yaml`).
 
 ## Two deadlines, do not confuse them
 
 The Scheduler attempt deadline above bounds only the **fan-out** call — the tick that
-claims due work and enqueues Cloud Tasks. It returns in milliseconds and never runs an
-agent.
+claims due work and enqueues Cloud Tasks. It usually returns in seconds; `start_drive_sync`
+may post a reconnect notice through the formatter agent (hence 180s).
 
 The work itself runs under the **Cloud Tasks `dispatch_deadline`** of the task the tick
 enqueued, and that is a different number with a different failure mode. Left unset,
@@ -22,6 +23,7 @@ Task types whose `NotificationSLA` can exceed 10 minutes must therefore pass
 |-----------|-------------|-------------------|
 | `execute_reminder` | 1500s (REMINDER × PERFORMANCE) | 1620s |
 | `daily_email_review` | 1500s (DAILY_DIGEST) | 1620s |
+| `drive_sync` | no new work after 8 min (`TICK_START_BUDGET`) | 1800s (`TICK_DEADLINE_S`) |
 | everything else | ≤ 600s | Cloud Tasks default |
 
 The value is derived, not hardcoded: `dispatch_deadline_s(kind)` in
@@ -29,6 +31,10 @@ The value is derived, not hardcoded: `dispatch_deadline_s(kind)` in
 overrides and adds 2 minutes of handler headroom, clamped to the Cloud Tasks maximum of
 1800s (which is also this service's Cloud Run request timeout). Raising a budget in
 `NOTIFICATION_SLA` therefore raises its transport automatically.
+
+`drive_sync` is the exception: it is not a notification kind, so every enqueue (fan-out, continuation, nudge,
+toggle) passes `TICK_DEADLINE_S` directly, on its own queue (see Start Drive Sync below). A manual
+`gcloud tasks create-http-task` sets no deadline and gets the 600s default.
 
 Both budgets were unreachable from the day they were written until 2026-08-15 — see
 `docs/04_solution_strategy/decisions/grok_revival_2026_08.md`.
@@ -132,6 +138,36 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 | **Purpose** | Scans all `RUNNING` indexing jobs older than 2 hours and marks them `FAILED`. Handles Cloud Tasks timeouts and crash-recovery. |
 | **Handler** | `WorkerHandler._handle_watchdog()` |
 | **Env** | dev + prod |
+
+---
+
+### Start Drive Sync (drive index fan-out)
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `alek-bot-dev-start-drive-sync` |
+| **Schedule** | `3-59/10 * * * *` (every 10 min = `TICK_INTERVAL`, at :03, :13, … — staggered off the `*/10` keep-alive, the `*/5` reminders and the hourly jobs at :02/:07/:12/:17, and inside each 10-minute `tick_key` bucket rather than on its boundary) |
+| **HTTP** | `POST /worker` on the **main** service, OIDC (worker SA) |
+| **Payload** | `{"task_type": "start_drive_sync"}` |
+| **Attempt deadline** | `180s` — one pass may post a reconnect notice through the formatter agent |
+| **Purpose** | Fan-out: one `drive_sync` Cloud Task per user with indexing on, **or** with a stored `DriveSyncState` (indexing off, credentials gone, user deleted), so an orphaned index always gets purged. Candidates = users with drive credentials ∪ users with a sync state. Skips a user whose continuation was enqueued less than `TICK_DEADLINE_S` (1800 s) ago. Task key `{user_id}:tick:{10-min bucket}`, so a scheduler retry in the same bucket is a no-op. After every tick is enqueued, a second pass raises the staleness alert (ops Slack, once per incident, §12.1) and the one reconnect notice to the user (§7.7, RFC Δ6, retried on a later fan-out only when no send was attempted). It writes those two flags, and a minimal sync state (`created_at` only) for a user with indexing on, a working grant and no state, so a user whose ticks never land is alerted too (RFC Δ28). The queue holds about one task per user plus nudges **while it drains**; while it is stuck (indexer down, queue paused) each fan-out adds one task per user under a new bucket key, and after recovery the backlog runs as cheap no-op ticks (staleness alerts meanwhile). |
+| **Handler** | `WorkerHandler._handle_start_drive_sync()` → `DriveSyncSchedulerService.fan_out()` |
+| **Unconfigured** | Without `DRIVE_INDEXER_URL` (first pass of the two-pass first deploy) it answers `200 {"status": "disabled"}` — not 501, which would be an ERROR request log every 10 min. |
+| **RFC** | `docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §7.1, §12.1, §12.5 |
+
+The ticks themselves do not run on the main service. They go to a dedicated queue and a dedicated
+service:
+
+| Field | Value |
+|-------|-------|
+| **Queue** | `drive-sync-dev` (Cloud Tasks, `us-central1`), provisioned in `cloudbuild-dev.yaml` with `describe → update \|\| create` |
+| **Concurrency** | `max-concurrent-dispatches=1`, `max-dispatches-per-second=1` — a CPU/memory knob for the indexer instance; the per-user Firestore lease is the correctness mechanism (§7.1). Raising it is an extension (§14). The app never calls `create_queue_if_not_exists` on it (that would create it with concurrency 5). |
+| **Retry** | `max-attempts=3`, backoff 60 s → 600 s. Only an unhandled exception answers 500; every handled tick outcome is 200 and the tick enqueues its own continuation. |
+| **Target** | `alek-bot-indexer-dev` `POST /worker` (`indexer_main.py`): `--ingress=internal` (Cloud Tasks in the same project counts as internal), plus the in-app OIDC check with the audience pinned to the service URL, failing closed on Cloud Run without `SERVICE_ACCOUNT_EMAIL` (RFC Δ21). A manual `drive_sync` goes through the queue: `gcloud tasks create-http-task --queue=drive-sync-dev --location=us-central1 --url=<indexer URL>/worker --oidc-service-account-email=<SA> --body-content='{"task_type":"drive_sync","user_id":"<id>"}' --header=Content-Type:application/json`. It gets the 600 s default deadline, not 1800 s. `<indexer URL>` must be the URL in `INDEXER_URL_DEV`: the audience is pinned, so another run.app URL form of the same service gets 401. |
+| **IAM prerequisite** | `cloudbuild-dev.yaml` creates and updates the queue, so the Cloud Build service account needs `roles/cloudtasks.queueAdmin` (granted once by the owner; nothing in the repo created queues from Cloud Build before). The tasks' OIDC identity is the same SA the main queue already uses, so enqueueing needs no new grant. |
+| **dispatch_deadline** | 1800 s (`TICK_DEADLINE_S`) on every `drive_sync` enqueue: fan-out, continuation, nudge, toggle |
+| **Producers** | the fan-out above; `UserDriveService` nudges after each bot mutation (`{user_id}:nudge:{mutation_id}`, re-enqueued as `…:r{n}` on a busy lease); the Cabinet toggle (`{user_id}:toggle:{ts}`); the indexer's own continuations (`{user_id}:cont:{tick_id}`, enqueued after the tick releases its lease) and busy retries (`{user_id}:cont:busy-{holder}`, once per lease holder; RFC Δ27) |
+| **Deploy order** | `cloudbuild-dev.yaml` creates the queue and deploys the indexer and its IAM step after the main service, so a failing drive step never blocks a fix of the bot (RFC Δ43). `make deploy` refuses an empty `INDEXER_URL_DEV` unless `DRIVE_FIRST_PASS=1` (the first pass of the two-pass first deploy, [README.md](README.md) § Indexer URL). |
 
 ---
 
@@ -245,4 +281,4 @@ in the meantime.
 
 ---
 
-**Last Updated:** 2026-08-27
+**Last Updated:** 2026-10-11

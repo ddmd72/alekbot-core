@@ -18,6 +18,7 @@ def deploy_indexes(file_path, project_id, database_id="us-production"):
 
     print(f"🚀 Deploying {len(indexes)} indexes to project {project_id} (database={database_id})...")
 
+    failures = []
     for idx in indexes:
         collection = idx.get("collectionGroup")
         fields = idx.get("fields", [])
@@ -32,19 +33,21 @@ def deploy_indexes(file_path, project_id, database_id="us-production"):
             "--async"
         ]
 
+        if any(field.get("vectorConfig") for field in fields):
+            # A vector index is created by its own gcloud script (e.g. create_drive_vector_indexes.sh).
+            # Dropping only the vector field would create a stray composite of the remaining fields.
+            print(f"⚠️ Skipping vector index for {collection} (created by its scripts/infrastructure script)")
+            continue
+
         for field in fields:
             path = field.get("fieldPath")
             order = field.get("order")
-            vector = field.get("vectorConfig")
+            array = field.get("arrayConfig")
 
-            if vector:
-                # Vector config is complex in CLI, skipping for now or handling specifically
-                # For this project, we mainly need the composite ones for sessions
-                print(f"⚠️ Skipping vector index for {collection} (CLI complexity)")
-                continue
-            
             if order:
                 cmd.append(f"--field-config=field-path={path},order={order.lower()}")
+            elif array:
+                cmd.append(f"--field-config=field-path={path},array-config={array.lower()}")
 
         result = run_command(cmd)
         
@@ -55,6 +58,9 @@ def deploy_indexes(file_path, project_id, database_id="us-production"):
         else:
             print(f"❌ Error creating index for {collection}:")
             print(result.stderr)
+            failures.append(collection)
+
+    return failures
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -62,4 +68,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     database_id = sys.argv[3] if len(sys.argv) > 3 else "us-production"
-    deploy_indexes(sys.argv[1], sys.argv[2], database_id)
+    failed = deploy_indexes(sys.argv[1], sys.argv[2], database_id)
+    if failed:
+        print(f"❌ {len(failed)} index creation(s) failed: {', '.join(failed)}")
+        sys.exit(1)

@@ -821,6 +821,30 @@ def create_oauth_blueprint(
     # ========================================================================
     _ONEDRIVE_PROVIDER = "microsoft_onedrive"  # == adapters.microsoft.ONEDRIVE_PROVIDER (tested)
     _ONEDRIVE_SCOPE = "Files.ReadWrite.AppFolder offline_access"
+    _ONEDRIVE_APPROOT = "https://graph.microsoft.com/v1.0/me/drive/special/approot"
+
+    async def _read_drive_id(session, access_token: str) -> str:
+        """The connected drive's id, for the index's drive-switch check (USER_DRIVE_INDEXING_RFC
+        §10.1 step 0). Read from the App Folder item: it answers under Files.ReadWrite.AppFolder
+        (spike A6 saw other calls refused with 401), and `parentReference.driveId` is the field the
+        indexer's change feed reports (OneDriveAdapter.get_changes, `_APPROOT`; a test pins both), so
+        both sides compare the same string. Best effort: "" only
+        skips the check, so a failure here never fails the connect."""
+        import aiohttp
+
+        try:
+            # Its own timeout: the session default (5 min) would hold the OAuth callback on a hung Graph call.
+            async with session.get(_ONEDRIVE_APPROOT, headers={"Authorization": f"Bearer {access_token}"},
+                                   timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if not resp.ok:
+                    logger.warning(f"⚠️ Drive id not read at connect ({resp.status})")
+                    return ""
+                body = await resp.json()
+            drive_id = (body.get("parentReference") or {}).get("driveId") if isinstance(body, dict) else None
+            return drive_id if isinstance(drive_id, str) else ""
+        except Exception as e:
+            logger.warning(f"⚠️ Drive id not read at connect: {e}")
+            return ""
 
     @bp.route("/auth/connect-onedrive", methods=["GET"])
     async def connect_onedrive():
@@ -897,6 +921,7 @@ def create_oauth_blueprint(
                     if not resp.ok:
                         raise RuntimeError(f"Token exchange failed: {resp.status} {await resp.text()}")
                     token_data = await resp.json()
+                drive_id = await _read_drive_id(session, token_data["access_token"])
 
             await oauth_credentials_port.save_credentials(OAuthCredentials(
                 user_id=user_id,
@@ -906,6 +931,7 @@ def create_oauth_blueprint(
                 token_expiry=datetime.now(timezone.utc) + timedelta(seconds=int(token_data.get("expires_in", 3600))),
                 scopes=token_data.get("scope", "").split(),
                 email_address="",
+                drive_id=drive_id,
             ))
             logger.info(f"✅ Drive connected for user={user_id[:8]}")
         except Exception as exc:

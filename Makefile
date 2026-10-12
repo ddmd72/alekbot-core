@@ -23,11 +23,12 @@ REGION ?= us-central1
 PYTHON ?= python3
 
 # The single live Cloud Run service + its async research job + the voice relay
-# (second Cloud Run service, same image, different entrypoint — see
-# cloudbuild-dev.yaml and relay_main.py).
+# and the drive indexer (more Cloud Run services, same image, different
+# entrypoints — see cloudbuild-dev.yaml, relay_main.py and indexer_main.py).
 SERVICE_NAME ?= alek-bot-dev
 RESEARCH_JOB ?= alek-research-job-dev
 VOICE_RELAY ?= alek-voice-relay-dev
+INDEXER ?= alek-bot-indexer-dev
 
 # Cloud Run service URL — defined in .env (gitignored), loaded via include above.
 # Required: SERVICE_URL_DEV. The deploy-time OAuth callback is derived from it in
@@ -46,6 +47,30 @@ VOICE_RELAY ?= alek-voice-relay-dev
 # what `gcloud run services describe` prints and nothing has to be hand-edited.
 _VOICE_RELAY_URL = $(patsubst https://%,wss://%,$(VOICE_RELAY_URL_DEV))
 
+# Drive indexer URL (USER_DRIVE_INDEXING_RFC §12.5) — same category as
+# VOICE_RELAY_URL_DEV: a human-maintained .env value that reaches the deploy only
+# as the Cloud Build substitution _INDEXER_URL, which cloudbuild-dev.yaml sets as
+# DRIVE_INDEXER_URL on BOTH services (the main service enqueues drive_sync to it;
+# the indexer enqueues its own continuations to it). Never a dual-purpose key read
+# from local .env (CLAUDE.md, "Deploy-substitution trap"). It is a declared
+# exception to RFC §12.4a (RFC Δ21), like VOICE_RELAY_URL_DEV.
+# Prerequisite, once: the Cloud Build service account needs
+# roles/cloudtasks.queueAdmin to create/update drive-sync-dev (SCHEDULERS.md §
+# Start Drive Sync). Two-pass first deploy: alek-bot-indexer-dev has no URL until
+# it exists, so
+#   1. `DRIVE_FIRST_PASS=1 make deploy` — creates the queue, the indexer (after
+#      the main service) and the scheduler job; the main service gets an empty
+#      DRIVE_INDEXER_URL (no nudges, start_drive_sync answers "disabled") and the
+#      indexer's /worker answers 503;
+#   2. `gcloud run services describe alek-bot-indexer-dev --region=us-central1
+#      --format='value(status.url)'` and put it in .env as INDEXER_URL_DEV
+#      (the https:// form, no trailing slash);
+#   3. `make deploy` again.
+# Every other deploy refuses to run with INDEXER_URL_DEV empty: an empty value
+# disables indexing in the live environment without any alert (a checkout
+# without the real .env, a key lost in an edit).
+_INDEXER_URL = $(INDEXER_URL_DEV)
+
 # Default entry count for log reads
 K ?= 300
 
@@ -62,6 +87,7 @@ K ?= 300
 .PHONY: logs-mode-clean logs-mode-full
 .PHONY: logs-job fetch-logs-job list-jobs logs-execution cancel-job
 .PHONY: logs-relay fetch-logs-relay
+.PHONY: logs-indexer fetch-logs-indexer
 .PHONY: services status
 .PHONY: claude-model claude-rollback claude-forward dr-model dr-rollback dr-forward
 .PHONY: typecheck check-types
@@ -122,6 +148,8 @@ help: ## Show this help message
 	@echo "  make cancel-job EXECUTION=<name>      Cancel a running execution"
 	@echo "  make logs-relay      View recent voice relay service logs"
 	@echo "  make fetch-logs-relay [K=300]  Fetch last K relay logs to alek_debug_relay.log"
+	@echo "  make logs-indexer    View recent drive indexer service logs"
+	@echo "  make fetch-logs-indexer [K=300]  Fetch last K indexer logs to alek_debug_indexer.log"
 	@echo ""
 	@echo "🗄️  MAINTENANCE:"
 	@echo "  make check-models    Check available Gemini models"
@@ -213,9 +241,17 @@ check: lint typecheck test-unit ## CI gate: ruff lint + mypy (domain/ports) + un
 # ============================================================================
 
 deploy: ## Build + deploy to Cloud Run (the single live environment)
+	@if [ -z "$(SERVICE_URL_DEV)" ]; then \
+		echo "❌ SERVICE_URL_DEV is empty: deploy from a checkout with the real .env (docs/07_deployment/README.md)"; \
+		exit 1; fi
+	@if [ -z "$(INDEXER_URL_DEV)" ] && [ "$(DRIVE_FIRST_PASS)" != "1" ]; then \
+		echo "❌ INDEXER_URL_DEV is empty: drive indexing would be disabled. Set it in .env, or run"; \
+		echo "   DRIVE_FIRST_PASS=1 make deploy for the first pass of the two-pass first deploy"; \
+		echo "   (docs/07_deployment/README.md § Indexer URL)."; \
+		exit 1; fi
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL) .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json
@@ -426,6 +462,27 @@ fetch-logs-relay: ## Fetch last K voice relay logs to alek_debug_relay.log (defa
 	  --project=$(PROJECT_ID) \
 	  > alek_debug_relay.log
 	@echo "✅ Done: $$(wc -l < alek_debug_relay.log) lines written"
+
+# --- Drive indexer (Cloud Run service: $(INDEXER)) ---
+# Same shape as the relay targets above: a second Cloud Run service, not a Job.
+
+logs-indexer: ## View last K drive indexer log entries (default K=300)
+	@echo "📋 Logs for $(INDEXER) (last $(K) entries):"
+	@gcloud run services logs read $(INDEXER) \
+	  --region=$(REGION) \
+	  --limit=$(K) \
+	  --format="value(textPayload)" \
+	  --project=$(PROJECT_ID)
+
+fetch-logs-indexer: ## Fetch last K drive indexer logs to alek_debug_indexer.log (default K=300)
+	@echo "📥 Fetching last $(K) drive indexer log entries to alek_debug_indexer.log..."
+	@gcloud run services logs read $(INDEXER) \
+	  --region=$(REGION) \
+	  --limit=$(K) \
+	  --format="value(textPayload)" \
+	  --project=$(PROJECT_ID) \
+	  > alek_debug_indexer.log
+	@echo "✅ Done: $$(wc -l < alek_debug_indexer.log) lines written"
 
 # ============================================================================
 # MAINTENANCE

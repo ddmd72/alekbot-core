@@ -39,7 +39,13 @@ class NotifyResult:
             ``delivered=False`` due to an exception. ``None`` for
             success or for non-exception failures (e.g. agent reported
             FAILED status).
+        sent: True once ``notify()`` reached its first channel send,
+            set just before that call: a send that raised still counts,
+            because the message may have left. A caller that marks
+            "user told" before notifying rolls that back only when
+            neither ``delivered`` nor ``sent`` is true.
     """
     delivered: bool
     agent_status: AgentStatus
     error: Optional[str] = None
+    sent: bool = False

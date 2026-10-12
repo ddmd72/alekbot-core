@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from quart import Quart
 
+from src.domain.user_drive import DriveConnection
 from src.ports.user_drive_port import UserDrivePort
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 
@@ -23,6 +24,7 @@ def _app(user_drive):
 def _drive(connected=True):
     drive = MagicMock(spec=UserDrivePort)
     drive.is_connected = AsyncMock(return_value=connected)
+    drive.connection = AsyncMock(return_value=DriveConnection(connected=connected, drive_id="d1"))
     drive.disconnect = AsyncMock()
     drive.display_name = "OneDrive"
     return drive
@@ -32,7 +34,7 @@ class TestDriveCabinet:
     async def test_status_connected(self):
         async with _app(_drive()).test_client() as client:
             resp = await client.get("/api/drive/status", headers=_AUTH)
-        assert (await resp.get_json()) == {"connected": True, "provider": "OneDrive"}
+        assert (await resp.get_json()) == {"connected": True, "provider": "OneDrive", "needs_reconnect": False}
 
     async def test_status_without_drive_wired(self):
         async with _app(None).test_client() as client:

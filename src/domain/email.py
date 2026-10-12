@@ -33,6 +33,10 @@ class OAuthCredentials:
     # Only a new consent (reconnect) clears it: every save after a fresh exchange
     # or a successful refresh builds credentials with the default False.
     needs_reconnect: bool = False
+    # The connected drive's id (user drive only, USER_DRIVE_INDEXING_RFC §10.1 step 0): written when
+    # the grant is saved and carried through every token refresh. "" for every other provider and
+    # for a drive connected before the field existed (drive-switch checks are then skipped).
+    drive_id: str = ""
 
 
 # ---------------------------------------------------------------------------

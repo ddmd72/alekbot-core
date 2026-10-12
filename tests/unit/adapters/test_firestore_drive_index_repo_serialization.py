@@ -1,0 +1,329 @@
+"""FirestoreDriveIndexRepository serialization (USER_DRIVE_INDEXING_RFC §3.2, §3.5) and the write encoding,
+proven on the real google-cloud-firestore client offline: the batch is built by the SDK and captured at commit."""
+from dataclasses import fields
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+import pytest
+from google.api_core.datetime_helpers import DatetimeWithNanoseconds
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import firestore
+from google.cloud.firestore_v1.async_batch import AsyncWriteBatch
+from google.cloud.firestore_v1.async_document import AsyncDocumentReference
+from google.cloud.firestore_v1.async_transaction import AsyncTransaction
+
+from src.adapters.firestore_drive_index_repo import (
+    RECORD_FIELDS, STATE_FIELDS, FirestoreDriveIndexRepository, record_from_doc, record_to_doc, state_from_doc,
+    state_to_doc,
+)
+from src.domain.drive_index import (
+    ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, Reason, RecordState, Scope,
+)
+
+T = datetime(2026, 10, 11, 12, 30, 15, 123456, tzinfo=timezone.utc)
+
+
+def full_record() -> DriveIndexRecord:
+    """Every field away from its default, so a dropped or mistyped field fails the round trip."""
+    return DriveIndexRecord(
+        user_id="u1", item_id="I1", parent_id="P1", name="Договор_ред3.docx", is_folder=True, size_bytes=10,
+        mime_type="application/pdf", web_url="https://example.invalid/i1", child_count=3,
+        facets={"photo": {"takenDateTime": "2025-08-01T10:00:00Z", "cameraMake": "Apple"},
+                "location": {"latitude": 41.9, "longitude": 12.5}, "file": {"hashes": ["a", "b"]}},
+        kind="pdf", content_class=ContentClass.DOCUMENT, scope=Scope.NORMAL, state=RecordState.FAILED,
+        reason=Reason.EXTRACT_ERROR, content_version="c1", modified_at=T, fs_modified_at=T - timedelta(days=1),
+        effective_date=T - timedelta(days=2), place_name="Rome / Roma", geo_table_version=1, policy_version=2,
+        extraction_version=3, card_version=4, embedding_space="gemini-embedding-2/768", card_hash="h",
+        has_card=True, card_capped=True, card_refused=True, card_rank=1, name_tokens=("t:abc", "w:a"),
+        name_keys_version=6, content_hash="q:10",
+        dirty_since=T - timedelta(hours=1), due_at=T + timedelta(minutes=5), priority=4, attempts=2,
+        attempt_started_at=T - timedelta(minutes=1), probe_pending=True, rescope_pending=True, cascade_cursor="K",
+        probed_child_count=600, reobserve_pending=True, reobserve_cursor="next-page", index_generation=5,
+        indexed_generation=4, indexed_version="c0", extracted_by="markitdown@1", text_chars=100, pages_total=2,
+        chunk_count=3, truncated=True, seen_epoch=7)
+
+
+def full_state() -> DriveSyncState:
+    return DriveSyncState(
+        user_id="u1", drive_id="D1", root_item_id="R", cursor="cur", round_complete=True, round_started_at=T,
+        epoch=2, epoch_phase=EpochPhase.SWEEPING, initial_enumeration_done=True, purging=True,
+        created_at=T - timedelta(days=3), lease_owner="tick", lease_until=T + timedelta(minutes=31), continuation_enqueued_at=T,
+        applied_versions={"policy": 1}, target_versions={"policy": 2}, applied_space="old/768",
+        target_space="new/3072", upgrade_cursor="I9", upgrade_found_stale=True,
+        observed_as_of=T, access_lost_at=T, last_success_at=T, last_error=ErrorCategory.THROTTLED,
+        stale_alerted=True, reconnect_notified=True, systemic_failures=2, counters={"indexed": 3})
+
+
+def stored(value):
+    """What Firestore hands back: timestamps as DatetimeWithNanoseconds, everything else as written."""
+    if isinstance(value, datetime):
+        return DatetimeWithNanoseconds(value.year, value.month, value.day, value.hour, value.minute, value.second,
+                                       value.microsecond, tzinfo=timezone.utc)
+    if isinstance(value, dict):
+        return {k: stored(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [stored(v) for v in value]
+    return value
+
+
+class TestRecordSerialization:
+    def test_fixture_sets_every_field(self):
+        default = DriveIndexRecord(user_id="x", item_id="y")
+        same = [f.name for f in fields(DriveIndexRecord) if getattr(full_record(), f.name) == getattr(default, f.name)]
+        assert same == []
+
+    def test_doc_holds_every_field_as_plain_values(self):
+        doc = record_to_doc(full_record())
+        assert set(doc) == set(RECORD_FIELDS)
+        assert doc["content_class"] == "document" and doc["scope"] == "normal"
+        assert doc["state"] == "failed" and doc["reason"] == "extract_error"
+        assert doc["name_tokens"] == ["t:abc", "w:a"] and type(doc["priority"]) is int
+        assert doc["facets"]["photo"]["cameraMake"] == "Apple" and isinstance(doc["facets"], dict)
+        assert doc["modified_at"] == T and doc["modified_at"].tzinfo is not None
+
+    def test_round_trip_through_stored_types(self):
+        back = record_from_doc(stored(record_to_doc(full_record())))
+        assert back == full_record()
+
+    def test_read_datetimes_are_plain_utc(self):
+        back = record_from_doc(stored(record_to_doc(full_record())))
+        for name in ("modified_at", "fs_modified_at", "effective_date", "dirty_since", "due_at", "attempt_started_at"):
+            value = getattr(back, name)
+            assert type(value) is datetime and value.utcoffset() == timedelta(0), name
+
+    def test_tuples_inside_facets_become_lists(self):
+        doc = record_to_doc(DriveIndexRecord(user_id="u", item_id="i", facets={"a": ("x", {"b": ("y",)})}))
+        assert doc["facets"] == {"a": ["x", {"b": ["y"]}]}
+
+    def test_missing_fields_take_defaults_and_extras_are_ignored(self):
+        rec = record_from_doc({"user_id": "u", "item_id": "i", "card_vector": [1.0], "has_card_vector": True,
+                               "card_distance": 0.1, "reason": None, "priority": None})
+        assert rec == DriveIndexRecord(user_id="u", item_id="i")
+
+
+class TestStateSerialization:
+    def test_fixture_sets_every_field(self):
+        default = DriveSyncState(user_id="x")
+        same = [f.name for f in fields(DriveSyncState) if getattr(full_state(), f.name) == getattr(default, f.name)]
+        assert same == []
+
+    def test_doc_excludes_fanout_flags(self):
+        doc = state_to_doc(full_state())
+        assert set(doc) == {f.name for f in fields(DriveSyncState)} - {"stale_alerted", "reconnect_notified"}
+        assert set(STATE_FIELDS) == set(doc) - {"lease_owner", "lease_until"}   # the lease is not save_sync_state's
+        assert "stale_alerted" not in doc and "reconnect_notified" not in doc
+        assert doc["epoch_phase"] == "sweeping" and doc["last_error"] == "throttled"
+        assert doc["purging"] is True and doc["systemic_failures"] == 2 and doc["created_at"] == T - timedelta(days=3)
+        assert doc["applied_versions"] == {"policy": 1} and "pending_reobserve" not in doc
+
+    def test_round_trip_with_flags_from_the_document(self):
+        doc = {**stored(state_to_doc(full_state())), "stale_alerted": True, "reconnect_notified": True}
+        assert state_from_doc("u1", doc) == full_state()
+
+    def test_missing_doc_fields_default(self):
+        assert state_from_doc("u1", {"user_id": "u1"}) == DriveSyncState(user_id="u1")
+
+
+# -- the SDK's own encoding of our writes ---------------------------------------------------------
+
+@pytest.fixture
+def sdk(monkeypatch, mock_env_config):
+    """A real AsyncClient that never reaches the network: commit captures the Write protos it would send."""
+    sent = []
+
+    async def capture(self, *args, **kwargs):
+        sent.extend(self._write_pbs)
+        return [object() for _ in self._write_pbs]   # DocumentReference.set reads the first result
+
+    monkeypatch.setattr(AsyncWriteBatch, "commit", capture)
+    client = firestore.AsyncClient(project="p", credentials=AnonymousCredentials(), database="d")
+    mock_env_config.drive_index_records_collection = "test_drive_index_records"
+    mock_env_config.drive_sync_state_collection = "test_drive_sync_state"
+    return FirestoreDriveIndexRepository(client, mock_env_config), sent
+
+
+class TestWriteEncoding:
+    async def test_record_write_replaces_maps_whole_and_keeps_the_vector(self, sdk):
+        repo, sent = sdk
+        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="i", has_card=True,
+                                                    facets={"image": {"width": 10}})])
+        write = sent[0]
+        assert write.update.name.endswith("/documents/test_drive_index_records/u:i")
+        assert set(write.update_mask.field_paths) == set(RECORD_FIELDS)   # top-level paths only
+        assert "facets.image" not in write.update_mask.field_paths        # the map is replaced, stale keys go
+        assert set(write.update.fields["facets"].map_value.fields) == {"image"}
+        assert "card_vector" not in write.update_mask.field_paths          # not listed: the stored vector stays
+
+    async def test_given_vector_is_written_as_a_vector_value(self, sdk):
+        repo, sent = sdk
+        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="i", has_card=True)], {"i": [0.5, 0.25]})
+        write = sent[0]
+        assert {"card_vector", "has_card_vector"} <= set(write.update_mask.field_paths)
+        vec = write.update.fields["card_vector"].map_value.fields
+        assert vec["__type__"].string_value == "__vector__"
+        assert [v.double_value for v in vec["value"].array_value.values] == [0.5, 0.25]
+        assert write.update.fields["has_card_vector"].boolean_value is True
+
+    async def test_cardless_record_deletes_the_vector(self, sdk):
+        repo, sent = sdk
+        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="i", has_card=False)])
+        write = sent[0]
+        assert "card_vector" in write.update_mask.field_paths and "card_vector" not in write.update.fields
+        assert write.update.fields["has_card_vector"].boolean_value is False
+
+    async def test_empty_facets_still_clear_the_stored_map(self, sdk):
+        repo, sent = sdk
+        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="i")])
+        assert "facets" in sent[0].update_mask.field_paths
+        assert sent[0].update.fields["facets"].map_value.fields == {}
+
+    async def test_save_sync_state_never_masks_the_flags(self, tx_sdk):
+        """The save is a fenced transaction (§7.1): the holder's write is encoded by the SDK's transaction."""
+        repo, stored, sent, _ = tx_sdk
+        stored["u1"] = state_to_doc(full_state())
+        await repo.save_sync_state(full_state(), full_state().lease_owner)
+        mask = set(sent[0].update_mask.field_paths)
+        assert mask == set(STATE_FIELDS)
+        assert "stale_alerted" not in mask and "reconnect_notified" not in mask
+
+
+@pytest.fixture
+def compiled(monkeypatch, mock_env_config):
+    """A real AsyncClient whose query `get`/`stream` compile the request proto instead of calling the server."""
+    from google.cloud.firestore_v1.async_aggregation import AsyncAggregationQuery
+    from google.cloud.firestore_v1.async_query import AsyncQuery
+    from google.cloud.firestore_v1.async_vector_query import AsyncVectorQuery
+
+    protos = []
+
+    async def get(self, *args, **kwargs):
+        proto = self._to_protobuf()
+        protos.append(proto)
+        orders = [(o.field.field_path, o.direction.name) for o in getattr(proto, "order_by", [])]
+        if orders[:1] == [("card_rank", "DESCENDING")]:   # a carded record exists: eviction runs all three queries
+            doc = record_to_doc(DriveIndexRecord(user_id="u", item_id="x", card_rank=2))
+            return [SimpleNamespace(to_dict=lambda: doc)]
+        return []
+
+    async def stream(self, *args, **kwargs):
+        protos.append(self._to_protobuf())
+        for _ in ():
+            yield
+
+    async def count_get(self, *args, **kwargs):
+        protos.append(self._to_protobuf())
+        return [[SimpleNamespace(value=0)]]
+
+    monkeypatch.setattr(AsyncQuery, "get", get)
+    monkeypatch.setattr(AsyncQuery, "stream", stream)
+    monkeypatch.setattr(AsyncVectorQuery, "get", get)
+    monkeypatch.setattr(AsyncAggregationQuery, "get", count_get)
+    client = firestore.AsyncClient(project="p", credentials=AnonymousCredentials(), database="d")
+    mock_env_config.drive_index_records_collection = "test_drive_index_records"
+    mock_env_config.drive_sync_state_collection = "test_drive_sync_state"
+    return FirestoreDriveIndexRepository(client, mock_env_config), protos
+
+
+class TestQueriesCompile:
+    """Every query chain the adapter builds is accepted by the SDK (no server)."""
+
+    async def test_every_read_compiles(self, compiled):
+        repo, protos = compiled
+        await repo.due_records("u", T, 10)
+        await repo.oldest_due_at("u", 0)
+        await repo.children("u", "p", "a", 5)
+        await repo.records_page("u", "a", 5)
+        await repo.records_seen_before("u", 2, 5)
+        await repo.count_by_state("u")
+        await repo.lowest_ranked_carded("u")
+        await repo.card_capped("u", 5)
+        await repo.delete_user_records("u", 5)
+        await repo.list_sync_user_ids()
+        await repo.find_nearest_cards("u", [0.1] * 768, 50, kind="pdf")
+        await repo.find_by_name_keys("u", ["w:a", "t:abc"], 100, kind="pdf")
+        await repo.filter_records("u", "pdf", T - timedelta(days=1), T, 8)
+        # due_records: one per class (5); count_by_state: 6 states + carded (7); lowest_ranked_carded: 3
+        assert len(protos) == 25
+
+    async def test_undated_eviction_query_is_a_null_filter(self, compiled):
+        repo, protos = compiled
+        await repo.lowest_ranked_carded("u")
+        undated = protos[2].where.composite_filter.filters
+        assert any(f.unary_filter.field.field_path == "modified_at" and f.unary_filter.op.name == "IS_NULL"
+                   for f in undated)
+        assert [(o.field.field_path, o.direction.name) for o in protos[2].order_by] == [("item_id", "ASCENDING")]
+
+    async def test_keys_only_projection_encodes(self, compiled):
+        repo, protos = compiled
+        await repo.list_sync_user_ids()
+        assert [f.field_path for f in protos[0].select.fields] == ["__name__"]
+
+
+# -- the lease through the SDK's own transaction wrapper -------------------------------------------
+
+@pytest.fixture
+def tx_sdk(monkeypatch, mock_env_config):
+    """A real AsyncClient and the real `@async_transactional`. Begin, commit and the document read are stubbed;
+    the Write protos the transaction would commit are captured."""
+    stored, sent, reads = {}, [], []
+
+    async def begin(self, retry_id=None):
+        self._id = b"tx"
+
+    async def commit(self):
+        sent.extend(self._write_pbs)
+        self._clean_up()
+        return []
+
+    async def get(self, field_paths=None, transaction=None, **kwargs):
+        reads.append(transaction)
+        data = stored.get(self.id)
+        return SimpleNamespace(exists=data is not None, to_dict=lambda: dict(data) if data is not None else None)
+
+    monkeypatch.setattr(AsyncTransaction, "_begin", begin)
+    monkeypatch.setattr(AsyncTransaction, "_commit", commit)
+    monkeypatch.setattr(AsyncDocumentReference, "get", get)
+    client = firestore.AsyncClient(project="p", credentials=AnonymousCredentials(), database="d")
+    mock_env_config.drive_index_records_collection = "test_drive_index_records"
+    mock_env_config.drive_sync_state_collection = "test_drive_sync_state"
+    return FirestoreDriveIndexRepository(client, mock_env_config), stored, sent, reads
+
+
+def _is_null(value) -> bool:
+    return value._pb.WhichOneof("value_type") == "null_value"
+
+
+class TestLeaseEncoding:
+    async def test_create_writes_the_state_without_flags_inside_the_transaction(self, tx_sdk):
+        repo, _, sent, reads = tx_sdk
+        assert (await repo.acquire_lease("u", "a", T, T + timedelta(minutes=31), create=True)).lease_owner == "a"
+        assert isinstance(reads[0], AsyncTransaction)
+        (write,) = sent
+        assert write.update.name.endswith("/documents/test_drive_sync_state/u")
+        assert write.update.fields["lease_owner"].string_value == "a"
+        assert "stale_alerted" not in write.update.fields and "reconnect_notified" not in write.update.fields
+
+    async def test_taking_an_expired_lease_updates_only_the_lease_fields(self, tx_sdk):
+        repo, stored, sent, _ = tx_sdk
+        stored["u"] = {**state_to_doc(DriveSyncState(user_id="u", epoch=4, lease_owner="b", lease_until=T)),
+                       "stale_alerted": True}
+        await repo.acquire_lease("u", "a", T, T + timedelta(minutes=31), create=True)
+        (write,) = sent
+        assert set(write.update_mask.field_paths) == {"lease_owner", "lease_until"}
+        assert write.current_document.exists is True   # update(): never creates the document
+
+    async def test_busy_and_missing_without_create_commit_no_write(self, tx_sdk):
+        repo, stored, sent, _ = tx_sdk
+        assert await repo.acquire_lease("u", "a", T, T + timedelta(minutes=31), create=False) is None
+        stored["u"] = state_to_doc(DriveSyncState(user_id="u", lease_owner="b", lease_until=T + timedelta(minutes=1)))
+        assert await repo.acquire_lease("u", "a", T, T + timedelta(minutes=31), create=True) is None
+        assert sent == []
+
+    async def test_release_by_owner_nulls_the_lease_fields(self, tx_sdk):
+        repo, stored, sent, _ = tx_sdk
+        stored["u"] = state_to_doc(DriveSyncState(user_id="u", lease_owner="a", lease_until=T))
+        await repo.release_lease("u", "a")
+        await repo.release_lease("u", "someone-else")   # stored doc still names "a": no write
+        (write,) = sent
+        assert set(write.update_mask.field_paths) == {"lease_owner", "lease_until"}
+        assert _is_null(write.update.fields["lease_owner"]) and _is_null(write.update.fields["lease_until"])

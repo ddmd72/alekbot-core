@@ -379,8 +379,10 @@ long-term area: the same agent serves seven more intents (`save_file_to_drive`, 
 `open_file_from_drive`, `move_file_in_drive`, `create_folder_in_drive`, `update_file_in_drive`,
 `delete_file_from_drive`), addressed by `drive:<opaque id>` refs. "Remember this file" copies an attachment
 from GCS to the drive (Inbox by default). The coordinator never pre-fetches a drive ref
-(`prefetch_file_ref=False`); the agent opens it itself. There is no search in step 1 — folders are browsed
-by listing. Deployment prerequisites: `docs/07_deployment/README.md` → User Drive.
+(`prefetch_file_ref=False`); the agent opens it itself. Finding a drive file by name, kind, date, folder or
+place is an eighth intent, `search_files_in_drive`, served from an opt-in index (Step 2):
+[../user_drive/README.md](../user_drive/README.md). Deployment prerequisites: `docs/07_deployment/README.md` →
+User Drive and Drive Indexer Service.
 
 ---
 
@@ -429,7 +431,7 @@ Vision override (force complexity >= 7) uses refined logic:
 
 - LLM-powered file management: "find my PDFs from last month", "list all documents"
 - File metadata indexing (name, type, date, size) in Firestore
-- `search_files` intent over the GCS uploads (the drive already has `list_files_in_drive`; its search comes with drive step 2)
+- `search_files` intent over the GCS uploads (the drive has its own, `search_files_in_drive`)
 - Per-user storage quota tracking
 
 ---

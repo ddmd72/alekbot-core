@@ -59,7 +59,7 @@ gcloud logging read 'resource.type=cloud_run_revision' --limit=50
 
 ## Cloud Run Deploy Units
 
-All three units share one image (`gcr.io/$PROJECT_ID/alek-bot-dev:latest`) and one build config
+All four units share one image (`gcr.io/$PROJECT_ID/alek-bot-dev:latest`) and one build config
 (`cloudbuild-dev.yaml`, deployed together by a single `make deploy`); a job/service is distinguished
 only by `--command`/`--args` at deploy time.
 
@@ -68,6 +68,7 @@ only by `--command`/`--args` at deploy time.
 | `alek-bot-dev` | Cloud Run service | us-central1 | 1800s | min=0, max=1 | ~30 (Slack, Telegram, LLM providers, OAuth, etc. — see cloudbuild-dev.yaml) | `logs`, `fetch-logs`, `logs-tail` |
 | `alek-research-job-dev` | Cloud Run Job | us-central1 | task-timeout 18000s | on-demand (no min/max-instances — Jobs run to completion) | `ANTHROPIC_API_KEY`, `SERVICE_ACCOUNT_EMAIL` | `logs-job`, `fetch-logs-job`, `list-jobs`, `logs-execution`, `cancel-job` |
 | `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL` | `logs-relay`, `fetch-logs-relay` |
+| `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL` | `logs-indexer`, `fetch-logs-indexer` |
 
 **`alek-voice-relay-dev`** (added for Voice Companion Slice 1, see
 [`../10_rfcs/VOICE_COMPANION_RFC.md`](../10_rfcs/VOICE_COMPANION_RFC.md) §4.14) is `relay_main.py` on
@@ -272,6 +273,115 @@ new deploy-side value is the redirect URI. The adapter is wired only when both T
 Local runs read `ONEDRIVE_REDIRECT_URI` from `.env` (a separate key from the deploy secret, so a
 localhost value never reaches the deployed revision). With it unset, `/auth/connect-onedrive` answers 501;
 the Cabinet hides the drive card only when the adapter itself is absent (To Do keys unset).
+
+## Drive Indexer Service
+
+`alek-bot-indexer-dev` runs the per-user `drive_sync` tick of the drive index
+([`../10_rfcs/USER_DRIVE_INDEXING_RFC.md`](../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §9, §12.5;
+[decision](../04_solution_strategy/decisions/drive_indexer_lease_queue_service.md)). It is `indexer_main.py` on the
+same image: a `/worker` that serves `drive_sync` only (plus `/health`), gen2, 2 GiB, concurrency 1, timeout 1800 s,
+min 0, max 1. **Ingress is internal** and the in-app OIDC check stays: a request from outside Google's network gets
+404 before it reaches the app, and on Cloud Run the check fails closed when `SERVICE_ACCOUNT_EMAIL` is unset (RFC
+Δ21). The token audience is pinned to the indexer's own URL (`{url}` or `{url}/worker`), so a manual task sent to a
+run.app URL form other than the one in `INDEXER_URL_DEV` gets 401. The main service (1 GiB) never indexes. The
+scheduler job `alek-bot-dev-start-drive-sync` sends it `start_drive_sync` every 10 minutes (minutes 3, 13, …), and
+it fans out one `drive_sync` per user; it also nudges after bot writes, and the Cabinet toggle enqueues one. All of
+them go through the dedicated queue `drive-sync-dev` (`max-concurrent-dispatches=1`) with a 1800 s dispatch
+deadline. Queue, scheduler job and the Cloud Build service account's queue permission
+(`roles/cloudtasks.queueAdmin`, granted once): [SCHEDULERS.md](SCHEDULERS.md). `cloudbuild-dev.yaml` deploys the
+queue and the indexer after the main service, so a failing drive step never blocks a fix of the bot; on the second
+pass of the first deploy a task may meet the indexer's 503 for a minute or two and is retried by the queue.
+
+### Indexer URL — two-pass first deploy
+
+Both services read the indexer's URL from `DRIVE_INDEXER_URL` (an optional knob, never in `load_settings()`): the
+main service targets the drive queue at it, and the indexer enqueues its own continuations there and pins its token
+audience to it. **While it is empty, no drive task queue is built, and indexing never runs:**
+- the main service logs `Drive sync queue: disabled` at INFO on startup;
+- the main service answers the `start_drive_sync` job with `200 {"status": "disabled"}` and logs at INFO;
+- the nudges are skipped without a log line;
+- the Cabinet toggle saves the flag, enqueues nothing and logs a WARNING;
+- the indexer logs `DRIVE_INDEXER_URL is not set` at WARNING on startup, and its `/worker` answers 503 to a
+  `drive_sync`, logging an ERROR. No such request is expected: nothing enqueues to it on this pass.
+
+**Deploy only from a checkout that has the real `.env`.** `make deploy` reads it through `include .env` (only when the
+file exists) and passes `SERVICE_URL_DEV`, the relay URL and `INDEXER_URL_DEV` as Cloud Build substitutions.
+Without it the build ships empty values into the live environment and breaks OAuth and voice. A second working copy
+has no `.env` of its own: link the main checkout's file first (`ln -s ../alekbot-core/.env .env`). Before every
+deploy, check what will be sent with `make -n deploy | grep -o -- '--substitutions=[^ ]*'`. Every value must be
+non-empty, except `_INDEXER_URL` on the first pass below. `make deploy` itself refuses to start when
+`SERVICE_URL_DEV` is empty, and when `INDEXER_URL_DEV` is empty unless `DRIVE_FIRST_PASS=1` is set: an empty indexer
+URL silently disables indexing in the live environment, with no alert.
+
+0. **Once:** the Cloud Build service account needs `roles/cloudtasks.queueAdmin`
+   ([SCHEDULERS.md](SCHEDULERS.md) § Start Drive Sync).
+   **Indexes first.** Only the drive indexes are new: eleven composites and two `card_vector` vector indexes on
+   `development_drive_index_records` (RFC Δ22). **In dev they already exist and are `READY` (created 2026-10-12, all
+   13)**, so this step is a check there; on a fresh database, create them. `make deploy-indexes` issues every entry of
+   `config/firestore.indexes.json` (an existing one answers "already exists"; read the output, not only the exit
+   code) and skips vector entries; the two `card_vector` indexes come from
+   `scripts/infrastructure/create_drive_vector_indexes.sh` (`COLLECTION_PREFIX` defaults to `development_`). Both
+   need the project id passed explicitly: `.env` has `GOOGLE_CLOUD_PROJECT`, not `PROJECT_ID`, so run
+   `make deploy-indexes PROJECT_ID=<PROJECT_ID>` (or `python scripts/infrastructure/deploy_firestore_indexes.py
+   config/firestore.indexes.json <PROJECT_ID>`) and `PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh`.
+   Wait until every new index is `READY`: the tick's own `due_records` query needs them, not only search. This prints
+   the ones still building:
+   ```bash
+   gcloud firestore indexes composite list --database=us-production --project=<PROJECT_ID> \
+     --format='table(name.basename(), state)' | grep -v READY
+   ```
+   Then run the read-only smoke check, which runs every repository query once and names any missing index:
+   `venv/bin/python scripts/infrastructure/drive_index_smoke.py <DEV_USER_ID>`.
+1. **Deploy once.** `DRIVE_FIRST_PASS=1 make deploy` creates the queue, `alek-bot-indexer-dev` and the scheduler
+   job. Both services ship with an empty `DRIVE_INDEXER_URL` on this pass (expected; the log lines are listed
+   above). The flag is for this pass only; never set it in `.env`.
+2. **Read the indexer's URL back.** It is stable once the service exists:
+   ```bash
+   gcloud run services describe alek-bot-indexer-dev --region=us-central1 --format='value(status.url)'
+   ```
+3. **Put it in `.env`** as `INDEXER_URL_DEV=<that https:// URL>` (no trailing slash). The `deploy` target passes it
+   to Cloud Build as `_INDEXER_URL`, and `cloudbuild-dev.yaml` sets `DRIVE_INDEXER_URL` on both services. It is a key
+   of its own, never a reuse of `SERVICE_URL_DEV` or another dual-purpose `.env` key (CLAUDE.md, "Deploy-substitution
+   trap"; the new substitution is declared in RFC Δ21). Manual tasks must use this same URL (see the 401 above).
+4. **`make deploy` again**, then check:
+   ```bash
+   gcloud run services describe alek-bot-indexer-dev --region=us-central1 --format=yaml | grep -A1 DRIVE_INDEXER_URL
+   gcloud run services describe alek-bot-dev --region=us-central1 --format=yaml | grep -A1 DRIVE_INDEXER_URL
+   gcloud tasks queues describe drive-sync-dev --location=us-central1 \
+     --format='value(rateLimits.maxConcurrentDispatches)'            # 1
+   gcloud scheduler jobs describe alek-bot-dev-start-drive-sync --location=us-central1 \
+     --format='value(schedule,state)'                                 # 3-59/10 * * * *  ENABLED
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST "<indexer URL>/worker" -d '{}'   # 404 (ingress), never 2xx/5xx
+   ```
+5. **Write round trip under a synthetic user.** The unit suite runs the Firestore repository against a stubbed SDK
+   only, so before indexing is turned on for anyone, exercise the real writes once under a user id that is not a real
+   user (e.g. `smoke-drive-<date>`): `save_sync_state` and `upsert_records` with a few records (one with a card
+   vector), read them back with `get_records`, `due_records`, `find_by_name_keys` and `find_nearest_cards`, compare
+   with the same calls on `InMemoryDriveIndexRepository`, then purge (`delete_user_records` until it returns 0, then
+   `delete_sync_state`) and check that nothing is left under that user id. Use a throwaway script outside the repo
+   (or under `scripts/memory/`); it must never touch a real user's documents.
+6. **Alert policies cover the indexer.** The policies in [ALERTING.md](ALERTING.md) were written for `alek-bot-dev`.
+   Check each policy's filter: any filter on `resource.labels.service_name="alek-bot-dev"` misses
+   `alek-bot-indexer-dev`, so its tick errors (`severity>=ERROR`) and `/worker` 5xx would never page. Widen those
+   filters to the indexer too (or add its own policy) and note it in ALERTING.md.
+
+**Rebuild one user's index.** `venv/bin/python scripts/infrastructure/drive_index_rebuild.py --user <USER_ID>` is a
+dry run; add `--apply` to mark the sync state `purging` under the user's lease (refused while a tick runs: retry in a
+few minutes). The next tick purges the index and re-onboards from epoch 1 (USER_DRIVE_INDEXING_RFC §12.2).
+
+**Logs.** The indexer has no Logfire telemetry: Cloud Logging only. A tick that ends `done` or `continued` logs one
+`[DriveIndex] tick user=… end=… {…} duration=…` line on the indexer, not on the main service, so `make fetch-logs`
+does not show it: `make fetch-logs-indexer K=300` writes `alek_debug_indexer.log` (`make logs-indexer` prints
+instead). A throttled tick logs a WARNING and a failed one an ERROR instead of that line; a purge logs
+`index purged`. An item whose observation fails inside a page is skipped with one ERROR line. That is expected
+behaviour (§8.2), not an incident, unless the same item repeats on every tick.
+
+**Until the branch is merged**, a `make deploy` from another branch removes `start_drive_sync` from the main service
+while the scheduler job keeps firing. Pause the job first:
+`gcloud scheduler jobs pause alek-bot-dev-start-drive-sync --location=us-central1`.
+After the next deploy from this branch, resume it:
+`gcloud scheduler jobs resume alek-bot-dev-start-drive-sync --location=us-central1`. A deploy does not resume a
+paused job.
 
 ## Cost Optimization
 

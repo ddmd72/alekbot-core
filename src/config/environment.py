@@ -346,6 +346,22 @@ class EnvironmentConfig:
         """
         return f"{self.firestore_collection_prefix}skill_drafts"
 
+    @property
+    def drive_index_records_collection(self) -> str:
+        """
+        User-drive index records, one per drive item (USER_DRIVE_INDEXING_RFC §3.2).
+        Dev: development_drive_index_records
+        """
+        return f"{self.firestore_collection_prefix}drive_index_records"
+
+    @property
+    def drive_sync_state_collection(self) -> str:
+        """
+        User-drive sync state, one per user (USER_DRIVE_INDEXING_RFC §3.5).
+        Dev: development_drive_sync_state
+        """
+        return f"{self.firestore_collection_prefix}drive_sync_state"
+
     # --- Infrastructure Collections (Stable) ---
 
     @property
