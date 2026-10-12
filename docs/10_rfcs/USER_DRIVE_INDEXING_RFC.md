@@ -1561,7 +1561,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
   two-column PDFs); OCR-labelled G1/G2 cases lose their expected-miss label. Bars are recorded with the real reader and
   real embeddings; unit tests use fakes.
 - G3: a Smart dry run (the `ab_agent_models.py` scaffolding) in which the drive read intents run for real against the
-  fixture index; positives and a negative set; the search-initiated rate is recorded.
+  fixture index; positives and a negative set; the search-initiated rate is recorded. Each case also says where its
+  date belongs (`expect`: `date_in_query`, `date_filter` or `none`), scored from the fields of Smart's search calls as
+  its own rate. The bars are the Wilson lower bounds (z = 1.96) of the recorded rates, judged only at equal repeats.
 
 ### 24.12 Acceptance
 §17 and §24.11 green; the eval meets its recorded bars (G1, G2, OCR-labelled, G3 positives; the G3 negative rate
