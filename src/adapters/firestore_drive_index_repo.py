@@ -411,9 +411,10 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         if kind is not None:
             query = query.where(filter=FieldFilter("kind", "==", kind))
         # the distance comes back under a projection only when its name is selected too (verified live 2026-10-12)
-        nearest = query.select([*RECORD_FIELDS, CARD_DISTANCE]).find_nearest(vector_field=CARD_VECTOR, query_vector=Vector([float(x) for x in vector]),
-                                     limit=limit, distance_measure=DistanceMeasure.COSINE,
-                                     distance_result_field=CARD_DISTANCE)
+        projected = query.select([*RECORD_FIELDS, CARD_DISTANCE])
+        nearest = projected.find_nearest(vector_field=CARD_VECTOR, query_vector=Vector([float(x) for x in vector]),
+                                         limit=limit, distance_measure=DistanceMeasure.COSINE,
+                                         distance_result_field=CARD_DISTANCE)
         hits: List[Tuple[DriveIndexRecord, float]] = []
         for snap in await nearest.get():
             data = snap.to_dict()
