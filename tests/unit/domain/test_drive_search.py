@@ -191,8 +191,9 @@ class TestUnread:
         assert not is_unread(rec("k", reason=Reason.KIND_NOT_ADMITTED, kind="image"), admitted)
         assert not is_unread(rec("d", folder=True), admitted)
 
-    def test_slice_one_admits_nothing_so_nothing_is_unread(self):
-        assert not is_unread(rec("p", state=RecordState.FAILED))
+    def test_the_default_is_the_live_admission(self):   # since the flip (§24.1) a failed PDF is unread
+        assert is_unread(rec("p", state=RecordState.FAILED))
+        assert not is_unread(rec("c", state=RecordState.FAILED, kind="code"))
 
 
 class TestWrapper:
