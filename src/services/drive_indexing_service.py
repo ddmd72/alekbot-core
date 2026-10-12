@@ -87,6 +87,11 @@ class _Budget:
     def time_left(self) -> bool:
         return self.monotonic() - self.started < TICK_START_BUDGET.total_seconds()
 
+    def item_call_allowed(self) -> bool:
+        """An item call (probe, parent lookup, re-listing page) starts only within both budgets: a slow provider
+        must not push the tick past its deadline (premise_audit P8). The item waits for the next tick."""
+        return self.item_calls > 0 and self.time_left()
+
     def maintenance_allowed(self) -> bool:
         return self.maintenance_s < MAINTENANCE_SHARE * TICK_START_BUDGET.total_seconds()
 
@@ -181,6 +186,9 @@ class DriveIndexingService:
             return TickResult("done", summary)
         except _OptedOut:
             logger.info(f"[DriveIndex] indexing turned off mid-tick for {user_id[:8]}; result dropped")
+            # The next tick's gate purges. Without it a lost toggle task leaves the purge to a fan-out that skips
+            # the user on the stale continuation marker for up to 30 min (premise_audit P2).
+            await self._continue(user_id, tick_id)
             return TickResult("disabled", summary)
         except _DriveSwitched:
             logger.warning(f"[DriveIndex] a page came from another drive for {user_id[:8]}; purging")
@@ -332,7 +340,7 @@ class DriveIndexingService:
                            budget: _Budget) -> Optional[FolderProbe]:
         if not needs_probe(change, parent_scope(change.parent_id, parent, ctx.root_item_id), existing):
             return None
-        if budget.item_calls <= 0:
+        if not budget.item_call_allowed():
             return None   # the folder waits as probe_pending; its children are held unresolved (§3.6)
         return await self._probe(user_id, change.item_id, budget)
 
@@ -475,7 +483,7 @@ class DriveIndexingService:
         return True
 
     async def _probe_step(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget) -> bool:
-        if budget.item_calls <= 0:
+        if not budget.item_call_allowed():
             return False
         probe = await self._probe(user_id, rec.item_id, budget)
         if probe is None and rec.attempts + 1 < MAX_ATTEMPTS:
@@ -500,7 +508,7 @@ class DriveIndexingService:
             await self._commit_plan(user_id, plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
                                                               observed=False))
             return True
-        if budget.item_calls <= 0:
+        if not budget.item_call_allowed():
             return False
         budget.item_calls -= 1
         try:
@@ -556,7 +564,7 @@ class DriveIndexingService:
     async def _reobserve_step(self, user_id: str, folder: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
                               summary: Dict[str, int]) -> bool:
         """One page of a never-stored subtree (§5.2): bounded per item call, resumable by a page cursor."""
-        if budget.item_calls <= 0:
+        if not budget.item_call_allowed():
             return False
         budget.item_calls -= 1
         try:
@@ -615,10 +623,28 @@ class DriveIndexingService:
             async with semaphore:
                 return rec, await self._embeddings.get_embedding(card_text(rec), "RETRIEVAL_DOCUMENT")
 
-        results = await asyncio.gather(*(embed(r) for r in to_embed))
-        fresh = await self._repo.get_records(user_id, [rec.item_id for rec, _ in results])
+        outcomes = await asyncio.gather(*(embed(r) for r in to_embed), return_exceptions=True)
+        results: List[Tuple[DriveIndexRecord, List[float]]] = []
+        refused: List[DriveIndexRecord] = []
+        for rec, outcome in zip(to_embed, outcomes):
+            if isinstance(outcome, (LLMRateLimitError, LLMUnavailableError)):
+                logger.warning(f"[DriveIndex] embedding throttled for {user_id[:8]}: {outcome}")
+                raise outcome   # systemic: the tick backs off (§8.2)
+            if isinstance(outcome, BaseException) and not isinstance(outcome, Exception):
+                raise outcome   # cancellation and the like are never an item's fault
+            if isinstance(outcome, Exception):   # one card text refused: that record backs off alone (premise_audit P9)
+                logger.warning(f"[DriveIndex] card embedding failed for item {rec.item_id} of {user_id[:8]}: "
+                               f"{type(outcome).__name__}: {outcome}; backing off")
+                refused.append(rec)
+                continue
+            results.append(outcome)
+        fresh = await self._repo.get_records(user_id, [rec.item_id for rec in to_embed])
         written: List[DriveIndexRecord] = []
         vectors: Dict[str, List[float]] = {}
+        for rec in refused:
+            now_rec = fresh.get(rec.item_id)
+            if now_rec is not None:
+                written.append(with_retry(now_rec, now))
         for rec, vec in results:
             now_rec = fresh.get(rec.item_id)
             # Written only over a record whose card is still the one embedded; anything else is rescheduled anyway.
@@ -627,7 +653,7 @@ class DriveIndexingService:
             written.append(with_card(now_rec, card_hash(now_rec), self._space, now))
             vectors[rec.item_id] = vec
         await self._commit(user_id, written, set(), vectors)
-        summary["cards"] = summary.get("cards", 0) + len(written)
+        summary["cards"] = summary.get("cards", 0) + len(vectors)
         summary["evicted"] = summary.get("evicted", 0) + evicted
 
     async def _release_card_cap(self, user_id: str, state: DriveSyncState, now: datetime,
