@@ -9,7 +9,12 @@ on the owner's real files; nothing is billed to an account and nothing is writte
 
 read    Every PDF and image directly in <folder> (files the owner copied out of the drive, or the c2048x2048
         renditions saved by scripts/onedrive/probe_renditions.py) through DriveReaderRunner. PDFs are cut by the
-        child-process parser (SubprocessContentExtractor.cut_pdf_window), as on the indexer.
+        child-process parser (SubprocessContentExtractor.cut_pdf_window), as on the indexer. Every model call is
+        timed: per window its seconds, output tokens and output speed (tokens/s), and per provider the slowest call
+        against DRIVE_READER.call_timeout_s — the numbers that calibrate the per-window timeout (a timed-out
+        multi-page window is halved, §24.3). To confirm the vision cap (MAX_VISION_IMAGE_BYTES, 3.75 MiB raw =
+        5 MiB base64, Anthropic's per-image limit as its errors state it), include a JPEG just under 3.75 MiB: its
+        row must read `text`, not `error`.
 triage  The renditions saved by probe_renditions.py (`<n>_<size>.<ext>`), per size, in batches of TRIAGE_BATCH
         through DriveTriageRunner: the 176 px vs 800 px question of §24.5.
 
@@ -31,7 +36,7 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from unittest.mock import AsyncMock, MagicMock
 
 from dotenv import load_dotenv
@@ -44,7 +49,10 @@ from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
 from src.domain.drive_extraction import DriveModelUnavailable, ExtractionRequest, TriageImage
 from src.domain.drive_index_params import TRIAGE_BATCH
+from src.domain.llm import LLMResponse
 from src.domain.user import UserBotConfig
+from src.infrastructure.agent_config import DRIVE_READER
+from src.ports.llm_port import LLMPort, LLMRequest
 from src.ports.quota_service import QuotaService
 from src.services.agent_context_builder import AgentContextBuilder
 from src.services.prompt_builder import PromptBuilder
@@ -71,6 +79,70 @@ class CostMeter(QuotaService):
         self.calls += 1
         self.cost += cost
         self.tokens += tokens
+
+
+class CallTimer(LLMPort):
+    """A provider that times every call it forwards: the window's file name, input size, seconds, output tokens and
+    output speed (tokens/s). Calibrates the per-window timeout (C17); the calls of one file go to `calls`."""
+
+    def __init__(self, inner: LLMPort) -> None:
+        self._inner = inner
+        self.calls: List[Dict[str, Any]] = []
+
+    async def generate_content(self, request: LLMRequest) -> LLMResponse:
+        part = next((p for m in request.messages for p in m.parts if p.file_data), None)
+        row: Dict[str, Any] = {"window": (part.file_data.get("name") or "image") if part else "",
+                               "input_bytes": len(part.file_data.get("base64", "")) * 3 // 4 if part else 0,
+                               "timeout_s": request.timeout}
+        started = time.monotonic()
+        try:
+            response = await self._inner.generate_content(request)
+        except Exception as exc:
+            row.update(seconds=round(time.monotonic() - started, 2), error=type(exc).__name__)
+            self.calls.append(row)
+            raise
+        seconds = time.monotonic() - started
+        output = response.usage_metadata.completion_tokens if response.usage_metadata else 0
+        row.update(seconds=round(seconds, 2), output_tokens=output,
+                   tokens_per_s=round(output / seconds, 1) if seconds > 0 else None,
+                   finish=response.finish_reason.value if response.finish_reason else None)
+        self.calls.append(row)
+        return response
+
+    def supports_caching(self) -> bool:
+        return self._inner.supports_caching()
+
+    async def upload_file(self, path: str, mime_type: str) -> Any:
+        return await self._inner.upload_file(path, mime_type)
+
+    def get_capabilities(self) -> Any:
+        return self._inner.get_capabilities()
+
+    def get_model_for_tier(self, tier: Any) -> str:
+        return self._inner.get_model_for_tier(tier)
+
+
+def timing_summary(calls: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Per provider: calls, the slowest call against the configured timeout, median seconds and median output
+    speed — the inputs of the per-window timeout."""
+    seconds = sorted(c["seconds"] for c in calls if "seconds" in c)
+    speeds = sorted(c["tokens_per_s"] for c in calls if c.get("tokens_per_s"))
+    timeout = next((c["timeout_s"] for c in calls if c.get("timeout_s")), DRIVE_READER.call_timeout_s)
+    return {"calls": len(calls), "errors": sum(1 for c in calls if "error" in c),
+            "max_seconds": seconds[-1] if seconds else None,
+            "median_seconds": seconds[len(seconds) // 2] if seconds else None,
+            "median_tokens_per_s": speeds[len(speeds) // 2] if speeds else None,
+            "min_tokens_per_s": speeds[0] if speeds else None,
+            "timeout_s": timeout,
+            "max_share_of_timeout": round(seconds[-1] / timeout, 2) if seconds and timeout else None}
+
+
+def _timed(registry: ProviderRegistry, provider: str) -> Tuple[ProviderRegistry, CallTimer]:
+    """A registry serving `provider` through a CallTimer."""
+    timer = CallTimer(registry.get(provider))
+    timed: ProviderRegistry = ProviderRegistry()
+    timed.register(provider, timer)
+    return timed, timer
 
 
 class _Users:
@@ -125,36 +197,49 @@ async def check_read(folder: Path, providers: Sequence[str], *, registry: Provid
     files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in _KINDS)
     summary: Dict[str, Any] = {}
     for provider in providers:
+        if provider not in registry.list_available():
+            print(f"[read] {provider}: no API key, skipped", flush=True)
+            continue
         meter = CostMeter()
-        runner = DriveReaderRunner(_context_builder(registry), _Users(provider), PromptBuilder(repo=None, assembly_service=assembly),
+        timed, timer = _timed(registry, provider)
+        runner = DriveReaderRunner(_context_builder(timed), _Users(provider), PromptBuilder(repo=None, assembly_service=assembly),
                                    splitter, quota_service=meter)
+        all_calls: List[Dict[str, Any]] = []
         target = out_dir / "read" / provider
         target.mkdir(parents=True, exist_ok=True)
         rows: List[Dict[str, Any]] = []
         for path in files:
             kind, mime = _KINDS[path.suffix.lower()]
             started = time.monotonic()
+            timer.calls = []
             request = ExtractionRequest(path=str(path), name=path.name, kind=kind, mime_type=mime,
                                         user_id="model-check", account_id="model-check", max_model_pages=10_000)
             try:
                 outcome = await runner.extract(request)
             except DriveModelUnavailable as exc:
-                rows.append({"file": path.name, "status": "model_unavailable", "detail": str(exc)})
+                all_calls.extend(timer.calls)
+                rows.append({"file": path.name, "bytes": path.stat().st_size, "status": "model_unavailable",
+                             "detail": str(exc), "pages_sent": exc.pages_sent, "calls": exc.model_calls,
+                             "cost": round(exc.model_cost, 6), "windows": timer.calls})
                 continue
+            all_calls.extend(timer.calls)
             (target / f"{path.stem}.txt").write_text(outcome.text, encoding="utf-8")
             brief = asdict(outcome.brief) if outcome.brief else None
             if brief and brief.get("doc_date"):
                 brief["doc_date"] = brief["doc_date"].date().isoformat()
             (target / f"{path.stem}.brief.json").write_text(json.dumps(brief, ensure_ascii=False, indent=1),
                                                             encoding="utf-8")
-            rows.append({"file": path.name, "status": outcome.status.value, "pages": outcome.pages_total,
-                         "pages_sent": outcome.pages_sent, "calls": outcome.model_calls,
+            rows.append({"file": path.name, "bytes": path.stat().st_size, "status": outcome.status.value,
+                         "pages": outcome.pages_total, "pages_sent": outcome.pages_sent, "calls": outcome.model_calls,
                          "cost": round(outcome.model_cost, 6), "truncated": outcome.truncated,
                          "chars": len(outcome.text), "seconds": round(time.monotonic() - started, 1),
-                         "detail": outcome.detail})
+                         "detail": outcome.detail, "windows": timer.calls})
+        timing = timing_summary(all_calls)
         summary[provider] = {"files": rows, "calls": meter.calls, "cost": round(meter.cost, 6),
-                             "tokens": meter.tokens}
-        print(f"[read] {provider}: {len(files)} files, {meter.calls} calls, ${meter.cost:.4f}", flush=True)
+                             "tokens": meter.tokens, "timing": timing}
+        print(f"[read] {provider}: {len(files)} files, {meter.calls} calls, ${meter.cost:.4f}; slowest call "
+              f"{timing['max_seconds']} s of a {timing['timeout_s']} s timeout, median "
+              f"{timing['median_tokens_per_s']} tokens/s", flush=True)
     (out_dir / "read" / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1),
                                                    encoding="utf-8")
     return summary
