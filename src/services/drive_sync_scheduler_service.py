@@ -155,13 +155,24 @@ class DriveSyncSchedulerService:
         if self._notifier is None:
             logger.warning(f"[DriveSync] drive needs reconnect for {user_id[:8]}; no notifier configured")
             return 0
-        result = await self._notifier.notify(user_id=user_id, account_id=profile.account_id,
-                                             system_alert=RECONNECT_NOTICE, kind=NotificationKind.DOCUMENT_DELIVERY)
+        # The flag goes up BEFORE the send (Gmail precedent, WorkerHandler._flag_gmail_reconnect): a request
+        # cancelled after the message left (scheduler attempt deadline, deploy SIGTERM) must not repeat it.
+        # It comes down again only when nothing can have been sent. CancelledError is not an Exception.
+        await self._repo.update_sync_flags(user_id, reconnect_notified=True)
+        try:
+            result = await self._notifier.notify(user_id=user_id, account_id=profile.account_id,
+                                                 system_alert=RECONNECT_NOTICE,
+                                                 kind=NotificationKind.DOCUMENT_DELIVERY)
+        except Exception as exc:   # notify raises only before any send (channel lookup)
+            logger.error(f"[DriveSync] reconnect notice for {user_id[:8]} raised ({exc}); retried on the "
+                         f"next fan-out")
+            await self._repo.update_sync_flags(user_id, reconnect_notified=False)
+            raise
         if not result.delivered and _nothing_sent(result):
+            await self._repo.update_sync_flags(user_id, reconnect_notified=False)
             logger.warning(f"[DriveSync] reconnect notice for {user_id[:8]} had no channel ({result.error}); "
                            f"retried on the next fan-out")
             return 0
-        await self._repo.update_sync_flags(user_id, reconnect_notified=True)
         if not result.delivered:
             logger.warning(f"[DriveSync] reconnect notice for {user_id[:8]} not confirmed delivered "
                            f"({result.agent_status.value}, {result.error}); not retried")
