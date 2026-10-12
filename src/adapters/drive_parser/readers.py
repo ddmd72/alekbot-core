@@ -55,6 +55,7 @@ _CSV_SNIFF_CHARS = 4096
 # Legacy code pages of the languages the bot serves (uk, ru, en, es, fr), in tie-break order.
 _PREFERRED_LEGACY = ("cp1251", "cp1252", "cp1250", "koi8_u", "koi8_r", "iso8859_15", "latin_1")
 _CHAOS_MARGIN = 0.1
+_PLAUSIBILITY_SAMPLE_BYTES = 4096
 _ODF = {
     "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
     "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
@@ -589,7 +590,30 @@ def _guess_encoding(data: bytes) -> str:
     near = [m for m in matches if m.encoding in _PREFERRED_LEGACY and m.chaos <= best.chaos + _CHAOS_MARGIN]
     if not near:
         return str(best.encoding)
-    return str(max(near, key=lambda m: (m.coherence, -_PREFERRED_LEGACY.index(m.encoding))).encoding)
+    sample = data[:_PLAUSIBILITY_SAMPLE_BYTES]
+    return str(max(near, key=lambda m: (-_implausible_words(sample.decode(m.encoding, errors="replace")),
+                                        m.coherence, -_PREFERRED_LEGACY.index(m.encoding))).encoding)
+
+
+def _implausible_words(text: str) -> int:
+    """Words no language writes: Latin and Cyrillic letters in one word ("Rйsumй": CP1252 read as CP1251), or a
+    lowercase letter followed by a capital ("пРМБФБ": KOI8 read as CP1251, which swaps the case). ASCII decodes
+    the same in every candidate, so a real "iPhone" costs all of them alike."""
+    count = 0
+    latin = cyrillic = inverted = False
+    previous_lower = False
+    for char in text + " ":
+        if not char.isalpha():
+            count += (latin and cyrillic) or inverted
+            latin = cyrillic = inverted = previous_lower = False
+            continue
+        if "\u0400" <= char <= "\u04ff":
+            cyrillic = True
+        elif char < "\u0250":
+            latin = True
+        inverted = inverted or (previous_lower and char.isupper())
+        previous_lower = char.islower()
+    return count
 
 
 def _decode(data: bytes, encoding: str, cut: bool, errors: str) -> str:
