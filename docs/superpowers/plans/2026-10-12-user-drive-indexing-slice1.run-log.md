@@ -336,3 +336,14 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   query it runs has a declared index. **Skipped:** the live run (see Environment limits) → Task 47 Step 2.
 - Reviewer (adversarial): APPROVED. MINOR plan test gaps, not required: tests only count queries (dropping the `kind`
   argument from the three kind checks survives); no test on the CLI exit code (Task 47 gates on "exits 0").
+
+### Task 22 — done (fix R7 queued)
+- Commit `bb781b0` (byte-identical; no adaptation needed). `make check` (reviewer, worktree): 7724 passed, 3 skipped,
+  1 xfailed. Reviewer (adversarial + system context): APPROVED, nothing BLOCKER/MAJOR.
+- Fix R7 queued: F1 (= premise audit P7, confirmed: Quart 0.23.1 cancels the request at the scheduler's 180 s
+  disconnect, and SIGTERM cancels in-flight requests; a notice cut off after sending → one duplicate on the next run)
+  → set the flag before `notify`, roll back only when nothing was sent (Gmail precedent `_flag_gmail_reconnect`);
+  F2 (test: a deliberate disconnect with the flag down sends no notice — mutation M8 survives today).
+- **OWNER (F3):** the plan's premise "a formatter failure may have reached the user" is false when the agent returns
+  non-success (`notify` returns before sending), so one transient Quick failure means no reconnect notice for that
+  breakage. Accept at-most-once (as Gmail does) or add a "sent anything" field to `NotifyResult`.
