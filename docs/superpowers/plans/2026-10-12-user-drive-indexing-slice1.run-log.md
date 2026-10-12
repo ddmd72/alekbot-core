@@ -656,3 +656,15 @@ scratch path (nothing recorded or committed): index settled in 1 tick, 2 481 car
   BOOTSTRAP §4 credits `make deploy-indexes` with vector indexes; only the drive's vector script is named.
 
 **All plan Tasks 0–46 are done.** Final whole-branch review running.
+
+## Final whole-branch review (`git diff origin/main...fdadf64`)
+- **No BLOCKER, no MAJOR.** `make check` 8113 passed; `make check-types` 61 errors = baseline; ruff clean on
+  `indexer_main.py`, `scripts/validation/drive_eval`, `scripts/geo`, `scripts/onedrive`, infra scripts, `main.py`;
+  `import main` / `import indexer_main` work; every advertised `drive_kind` resolves.
+- **No cross-task drift** between code and CLAUDE.md / agents CLAUDE.md / README / decision records / deploy docs /
+  SCHEDULERS / BOOTSTRAP / `.env.example` / `capabilities.py` (name stream, error classes, lease, reconnect order, log
+  levels, Cabinet categories, task keys and deadlines, deploy wiring).
+- Rules clean except two MINOR (an `except` that does not log in the re-listing path; "Graph" in two domain
+  docstrings); no secrets/PII/stray artefacts; the only pre-existing tests edited are the three the plan approved
+  (Tasks 15, 32, 34) plus recorded reviewer decisions; none weakened.
+- → final cleanup R14 (N1, N2 and the queued comment/doc fixes C1–C5; C6 to the reviewer).
