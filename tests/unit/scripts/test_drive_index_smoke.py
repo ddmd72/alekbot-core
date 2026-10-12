@@ -27,8 +27,8 @@ async def test_every_read_runs_once_and_nothing_is_written(smoke, mock_env_confi
     queries = db.cols[RECS].executed
     # due 5 + oldest_due_at 5 + count_carded 1 + count_by_state 7 + lowest_ranked_carded 1 (empty) + 2 direct
     # eviction queries + children, records_page, records_seen_before, card_capped, 2 nearest, 2 name, 2 filter
-    # + readable_chunk_total's sum (§24.6)
-    assert len(queries) == 32
+    # + readable_chunk_total's sum (§24.6) + chunk_capped 1 + count_unread's 6 counts (one kind batch x 6 classes)
+    assert len(queries) == 39
     assert any(("where", "modified_at", "IS_NULL", None) in ops for ops in queries)
     assert sum(1 for ops in queries if any(op[0] == "sum" for op in ops)) == 1
     assert len(db.cols[CHUNKS].executed) == 5                     # 2 nearest, 2 term, 1 page
@@ -53,5 +53,5 @@ async def test_a_missing_index_is_reported_and_the_rest_still_runs(smoke, mock_e
     failures = await smoke.run_smoke(make_chunk_repo(db, mock_env_config), "smoke-user")
     assert [name for name, _ in failures] == ["find_nearest_cards", "find_nearest_cards[kind]"]
     assert "requires an index" in failures[0][1]
-    assert len(db.cols[RECS].executed) == 32   # the failing ones were sent, and every other query still ran
+    assert len(db.cols[RECS].executed) == 39   # the failing ones were sent, and every other query still ran
     assert len(db.cols[CHUNKS].executed) == 5  # including the chunk reads after them
