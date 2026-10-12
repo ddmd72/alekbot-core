@@ -563,9 +563,11 @@ class DriveSearchService:
     async def _fuse(self, streams: List[List[DriveIndexRecord]], request: DriveSearchRequest,
                     kinds: FrozenSet[str], folder: Optional[_Folder], ancestry: _Ancestry,
                     stats: _Stats) -> Tuple[List[DriveIndexRecord], Dict[str, str]]:
-        """Filter each stream, pool it to one hit per record, then RRF on item_id (§10.1 step 4)."""
+        """Filter each stream, pool it to one hit per record, then RRF on item_id (§10.1 step 4). The ancestors of
+        every stream's records load in one pass first: per stream, they took one sequential round each."""
         stats.visible = stats.filtered = 0
         stats.candidates = set()
+        await ancestry.load([rec for stream in streams for rec in stream])
         pooled: List[List[DriveIndexRecord]] = []
         paths: Dict[str, str] = {}
         for stream in streams:
