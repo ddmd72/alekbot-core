@@ -27,7 +27,7 @@ token only when `SERVICE_ACCOUNT_EMAIL` is set); the route enforces iff that sam
 value is set (see `main.py`). This module only performs the cryptographic check.
 """
 
-from typing import Optional
+from typing import Collection, Optional
 
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
@@ -38,13 +38,17 @@ from ..utils.logger import logger
 def verify_worker_oidc(
     authorization_header: Optional[str],
     expected_sa_email: str,
+    audiences: Optional[Collection[str]] = None,
 ) -> bool:
     """Return True iff the Authorization header carries a valid Google OIDC token
     issued for ``expected_sa_email``.
 
     Validates, via Google's public keys: signature, issuer and expiry; then that
     the ``email`` claim equals ``expected_sa_email`` and ``email_verified`` is
-    truthy. Audience is intentionally NOT pinned (see module docstring).
+    truthy. Audience is NOT pinned by default (see module docstring). A caller with
+    a single, known token source passes ``audiences``: the ``aud`` claim must then
+    be one of them. The drive indexer does (USER_DRIVE_INDEXING_RFC §4, plan Δ21):
+    its only caller is Cloud Tasks, whose default audience is the task's target URL.
 
     Never raises: any failure (missing/malformed header, bad signature, expired
     token, email mismatch) is logged and returned as ``False`` so the route can
@@ -80,6 +84,10 @@ def verify_worker_oidc(
 
     if not claims.get("email_verified"):
         logger.warning("Worker OIDC: email_verified is not set on the token")
+        return False
+
+    if audiences is not None and claims.get("aud") not in audiences:
+        logger.warning("Worker OIDC: audience claim is not one this route accepts")
         return False
 
     return True
