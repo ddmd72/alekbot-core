@@ -33,13 +33,17 @@ from urllib.parse import quote, unquote
 import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
 
 from ...domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
+from ...domain.drive_index_params import TICK_DEADLINE_S
 from ...domain.user_drive import (
+    DriveAccessDenied,
     DriveConnection,
     DriveItem,
     DriveItemNotFoundError,
     DriveNameConflictError,
     DriveNotConnectedError,
+    DriveReauthRequired,
     DriveResyncRequired,
+    DriveThrottled,
     join_drive_path,
 )
 from ...ports.oauth_credentials_port import OAuthCredentialsPort
@@ -56,6 +60,9 @@ _ROOT_TTL_S = 300.0
 _RETRIES = 3
 _MAX_RETRY_AFTER_S = 30.0
 _UNKNOWN_PARENT = "…"
+# Provider-transport default (also used for a failed token refresh): a Retry-After that is missing or
+# an HTTP date. The tick continues after it (Part A keeps its own default for LLM errors).
+_THROTTLE_HINT_S = 60.0
 # The App Folder item. Its parentReference.driveId is the drive id; the OAuth callback
 # (src/web/oauth_app.py, _read_drive_id) reads the same field of the same call, so the two compare equal.
 _APPROOT = "/me/drive/special/approot"
@@ -84,6 +91,16 @@ def _retry_after(value: Optional[str], attempt: int) -> float:
     except ValueError:
         seconds = float(2 ** attempt)
     return min(max(seconds, 0.0), _MAX_RETRY_AFTER_S)
+
+
+def _retry_after_hint(value: Optional[str]) -> float:
+    """The provider's own Retry-After in seconds for the tick's continuation, capped at TICK_DEADLINE_S:
+    the fan-out re-ticks after that anyway, and a far-future delay would break the enqueue."""
+    try:
+        seconds = float(value) if value is not None else _THROTTLE_HINT_S
+    except ValueError:
+        seconds = _THROTTLE_HINT_S
+    return min(max(seconds, 0.0), float(TICK_DEADLINE_S))
 
 
 def _where(path: str) -> str:
@@ -362,7 +379,13 @@ class OneDriveAdapter(UserDrivePort):
         try:
             headers = await self._tokens.headers(user_id, force_refresh=force_refresh)
         except GraphReauthRequired as exc:
-            raise DriveNotConnectedError("Drive access expired; reconnect needed") from exc
+            logger.warning(f"Drive token refresh rejected for user {user_id[:8]}; reconnect needed")
+            raise DriveReauthRequired("Drive access expired; reconnect needed") from exc
+        except (ValueError, aiohttp.ClientError) as exc:
+            # The token endpoint failed (5xx, network) but did not reject the grant: systemic, so the
+            # tick ends and retries later (§8.2), never charged to the item being read.
+            logger.warning(f"Drive token refresh failed for user {user_id[:8]}: {exc}")
+            raise DriveThrottled(_THROTTLE_HINT_S) from exc
         if headers is None:
             raise DriveNotConnectedError(f"No drive credentials for user {user_id[:8]}")
         return headers
@@ -386,18 +409,25 @@ class OneDriveAdapter(UserDrivePort):
                 status = resp.status
                 if status == 401:
                     if refreshed:
-                        logger.warning(f"Drive {method} {path}: 401 after a forced token refresh")
-                        raise DriveNotConnectedError("Drive access rejected after refresh; reconnect needed")
+                        # The refresh succeeded, so the grant is alive: this operation is refused
+                        # (spike A6: the App Folder answers 401 to calls it does not support).
+                        logger.warning(f"Drive {method} {_where(path)}: 401 after a successful token refresh")
+                        raise DriveAccessDenied(f"Drive {method} refused after a token refresh")
                     refreshed = True
                     # The token provider dedupes forced refreshes itself; no invalidate here.
                     await self._headers(user_id, force_refresh=True)  # next attempt uses the fresh token
                     continue
-                if status in (429, 503) and throttled < _RETRIES:
-                    delay = _retry_after(resp.headers.get("Retry-After"), throttled)
-                    throttled += 1
-                    logger.warning(f"Drive {method} throttled ({status}); retrying in {delay:.0f}s")
-                    await asyncio.sleep(delay)
-                    continue
+                if status in (429, 503):
+                    if throttled < _RETRIES:
+                        delay = _retry_after(resp.headers.get("Retry-After"), throttled)
+                        throttled += 1
+                        logger.warning(f"Drive {method} throttled ({status}); retrying in {delay:.0f}s")
+                        await asyncio.sleep(delay)
+                        continue
+                    hint = _retry_after_hint(resp.headers.get("Retry-After"))
+                    logger.warning(f"Drive {method} {_where(path)} still throttled ({status}) after "
+                                   f"{_RETRIES} retries; retry after {hint:.0f}s")
+                    raise DriveThrottled(hint)
                 if status == 410:
                     logger.warning(f"Drive {method} {_where(path)}: 410 Gone (change cursor expired)")
                     raise _CursorGone(resp.headers.get("Location"))
