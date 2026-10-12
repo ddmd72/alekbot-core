@@ -20,8 +20,10 @@ restarts instead (a cursor without the binding, written before it existed, is fo
 Errors (§4): a rejected refresh is DriveReauthRequired (a DriveNotConnectedError); a 401 that
 survives a successful forced refresh is DriveAccessDenied for that operation, never a lost grant
 (spike A6); 429/503 still failing after the retries here is DriveThrottled; a 410 on the change
-feed is DriveResyncRequired. A transport failure (any aiohttp.ClientError) or a call that outlives
-GRAPH_CALL_TIMEOUT_S is DriveThrottled too: systemic for the tick, a plain failure for Step 1 callers.
+feed is DriveResyncRequired. A call that outlives GRAPH_CALL_TIMEOUT_S is a TimeoutError and any other
+transport failure (an aiohttp.ClientError) an OSError: the tick classifies them by what the call is about
+(§8.2: per-item on a call about one item, systemic on the change feed), Step 1 reports a plain failure.
+A failed token refresh is drive-wide, so it stays DriveThrottled.
 """
 from __future__ import annotations
 
@@ -68,7 +70,7 @@ _UNKNOWN_PARENT = "…"
 # an HTTP date. The tick continues after it (Part A keeps its own default for LLM errors).
 _THROTTLE_HINT_S = 60.0
 # Bound on one Graph call (aiohttp's default is 300 s), well under TICK_DEADLINE_S: a hanging call
-# ends as DriveThrottled instead of holding the user's tick (premise_audit P8).
+# ends as a TimeoutError instead of holding the user's tick (premise_audit P8).
 GRAPH_CALL_TIMEOUT_S = 60.0
 # The App Folder item. Its parentReference.driveId is the drive id; the OAuth callback
 # (src/web/oauth_app.py, _read_drive_id) reads the same field of the same call, so the two compare equal.
@@ -471,11 +473,15 @@ class OneDriveAdapter(UserDrivePort):
                         logger.error(f"Drive {method} {_where(path)} failed ({status}): {body[:300]}")
                         raise ValueError(f"Drive {method} failed ({status})")
                     return dict(await resp.json())
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                # A transport failure or a call past GRAPH_CALL_TIMEOUT_S: systemic, so the tick ends and
-                # retries later (§8.2), never charged to the item; a Step 1 call reports a failure.
+            except asyncio.TimeoutError as exc:
+                # A call past GRAPH_CALL_TIMEOUT_S (aiohttp's socket timeouts subclass it too). §8.2 classifies
+                # it by the call's scope: per-item on a call about one item, systemic on the feed.
+                logger.warning(f"Drive {method} {_where(path)} timed out: {type(exc).__name__}")
+                raise asyncio.TimeoutError(f"Drive {method} timed out") from exc
+            except aiohttp.ClientError as exc:
+                # Any other transport failure: an OSError, the per-item class on a call about one item (§8.2).
                 logger.warning(f"Drive {method} {_where(path)} transport failure: {type(exc).__name__}")
-                raise DriveThrottled(_THROTTLE_HINT_S) from exc
+                raise OSError(f"Drive {method} transport failure ({type(exc).__name__})") from exc
 
     async def _session_upload(self, s: aiohttp.ClientSession, user_id: str, path: str,
                               body: Dict[str, Any], data: bytes) -> Dict[str, Any]:
