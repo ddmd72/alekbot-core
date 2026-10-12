@@ -14,6 +14,8 @@ Public interface:
     releasable(capped, headroom) -> List[DriveIndexRecord]
     chunk_released(rec, now) -> DriveIndexRecord
     readme_choice(children) -> Optional[DriveChange]  the README a repository card carries (§5.2)
+    reader_pages(kind, parsed) -> int             pages a file needs from the month's reader budget (§24.7)
+    no_rendition(rec, now) -> DriveIndexRecord    an image without a provider rendition (§24.5)
 """
 from __future__ import annotations
 
@@ -24,10 +26,12 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
-from .drive_extraction import READER, ExtractionStatus, chain_for
-from .drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState
-from .drive_index_params import MAX_CHUNKS_PER_USER
-from .drive_index_planner import schedule
+from .drive_extraction import READER, ExtractionOutcome, ExtractionStatus, TriageResult, chain_for
+from .drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState, TriageVerdict
+from .drive_index_params import (
+    MAX_ATTEMPTS, MAX_CHUNKS_PER_USER, MODEL_EXTRACT_MAX_PAGES, MODEL_EXTRACT_PAGES_PER_MONTH,
+)
+from .drive_index_planner import content_retry, schedule, triaged
 from .drive_index_policy import is_readme_name
 
 READER_IMAGE_MAX_BYTES = 5 * 1024 * 1024    # the vision input cap the original may be sent under (§24.5)
@@ -136,3 +140,22 @@ def readme_choice(children: Sequence[DriveChange]) -> Optional[DriveChange]:
         order = _README_ORDER.index(ext) if ext in _README_ORDER else len(_README_ORDER)
         return order, len(change.name), change.item_id
     return min(found, key=rank)
+
+
+def reader_pages(kind: str, parsed: Optional[ExtractionOutcome]) -> int:
+    """Pages the reader needs from this month's budget for the file (§24.7), known before it is called: an image is
+    one page; a PDF is the page count the parser's outcome carries, at most MODEL_EXTRACT_MAX_PAGES, and that maximum
+    when the parser could not count. A file waits for the next month rather than being cut by what is left of this
+    one; only a file that needs more than the whole monthly budget is cut to it."""
+    if kind != "pdf":
+        return 1
+    pages = parsed.pages_total if parsed is not None and parsed.pages_total > 0 else MODEL_EXTRACT_MAX_PAGES
+    return min(pages, MODEL_EXTRACT_MAX_PAGES, MODEL_EXTRACT_PAGES_PER_MONTH)
+
+
+def no_rendition(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """The provider has no rendition of an image waiting for triage (§24.5). A missing rendition may be one the
+    provider has not made yet: retried with backoff, and a photograph without a caption only at MAX_ATTEMPTS."""
+    if rec.attempts + 1 >= MAX_ATTEMPTS:
+        return triaged(rec, TriageResult(item_id=rec.item_id, verdict=TriageVerdict.PHOTO), now)
+    return content_retry(rec, Reason.DOWNLOAD_ERROR, now)
