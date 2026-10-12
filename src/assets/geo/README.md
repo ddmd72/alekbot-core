@@ -28,49 +28,79 @@ Built 2026-10-12: 64 458 places, about 3.3 MB.
 
 How the table is read: `src/adapters/geo_place_table.py` loads it into `PlaceRow`s, and
 `src/domain/place_lookup.py` (`PlaceIndex`) names a photo after the nearest place within
-`PLACE_MAX_DISTANCE_KM` (50 km), else no place. One exception: a place of the **same country as the
-nearest one**, within `PLACE_PREFER_RADIUS_KM` (15 km) of the photo and at least
-`PLACE_PREFER_WEIGHT_FACTOR` (3) times the nearest place's `weight`, names it instead; of several, the
-heaviest. So a photo in a suburb gets the city's name, and never a bigger town across a border. The
-result reads `"Rome (Roma), Italy"`; the local name is omitted when it equals the English one.
+`PLACE_MAX_DISTANCE_KM` (50 km), else no place. One exception: a heavier place within
+`PLACE_PREFER_RADIUS_KM` (15 km) of the photo names it instead when both hold:
 
-The factor was picked with `scripts/geo/measure_place_preference.py` (read-only, offline) on the table
-built 2026-10-12, 64 458 places. "Self-name" counts places whose own centre is named after themselves;
-"cross-border" counts places whose own centre is named after a place in another country:
+- its `weight` is at least `PLACE_PREFER_WEIGHT_FACTOR` (3) times the nearest place's, and
+- it is in the **nearest place's country**, or the photo lies inside its own **footprint**,
+  `PLACE_FOOTPRINT_K` (0.0015) × √weight km, capped at 15 km.
 
-| Rule | Self-name | Cross-border | Expected cases missed (10 in the script) |
+Of several, the heaviest wins. So a photo in a suburb gets the city's name (Torrent is "Valencia"), and a
+city reaches across a border only near its own centre: a row is a point, not the city's extent, and
+without the footprint every point in Trastevere, nearer to the Vatican City row than to Rome's, would
+be "Vatican City". Rome's footprint is 4.0 km, Strasbourg's 1.4 km (Kehl, 5.3 km away, stays "Kehl"),
+Nice's 0.9 km (Monaco stays "Monaco"). The result reads `"Rome (Roma), Italy"`; the local name is
+omitted when it equals the English one.
+
+Both constants were picked with `scripts/geo/measure_place_preference.py` (read-only, offline) on the
+table built 2026-10-12, 64 458 places, against the 16 expected cases below. "Self-name" counts places
+whose own centre is named after themselves; "cross-border" counts places whose own centre is named
+after a place in another country.
+
+Factor, at k = 0.0015:
+
+| Rule | Self-name | Cross-border | Expected cases missed |
 |---|---|---|---|
-| before: heaviest within 15 km, any country | 29 240 (45.4%) | 603 | Monaco ("Nice"), Vaduz ("Feldkirch") |
-| same country, factor 1 | 29 521 (45.8%) | 0 | Trastevere, Vaduz ("Schaan") |
-| same country, factor 1.5 | 33 392 (51.8%) | 0 | Trastevere |
-| same country, factor 2 | 36 259 (56.3%) | 0 | Trastevere |
-| same country, factor 2.5 | 38 573 (59.8%) | 0 | Trastevere |
-| **same country, factor 3** | **40 435 (62.7%)** | **0** | **Trastevere** |
-| same country, factor 3.5 | 42 035 (65.2%) | 0 | Trastevere, Brooklyn ("Brooklyn") |
-| same country, factor 5 | 45 554 (70.7%) | 0 | Trastevere, Brooklyn |
-| same country, factor 10 | 51 351 (79.7%) | 0 | Trastevere, Brooklyn |
-| same country, factor 30 | 57 613 (89.4%) | 0 | Trastevere, Brooklyn |
-| same country, factor 50 | 59 502 (92.3%) | 0 | Trastevere, Brooklyn, Torrent ("Torrent") |
+| before: heaviest within 15 km, any country | 29 240 (45.4%) | 603 | St. Peter's, Monaco, Vaduz, San Marino, Gibraltar, Kehl |
+| factor 1 | 29 519 (45.8%) | 5 | Vaduz ("Schaan"), San Marino ("Serravalle"), Kehl ("Offenburg") |
+| factor 1.5 | 33 390 (51.8%) | 5 | San Marino |
+| factor 2 | 36 257 (56.2%) | 5 | San Marino |
+| factor 2.5 | 38 571 (59.8%) | 5 | none |
+| **factor 3** | **40 432 (62.7%)** | **5** | **none** |
+| factor 3.5 | 42 032 (65.2%) | 5 | Brooklyn ("Brooklyn") |
+| factor 10 | 51 349 (79.7%) | 4 | Brooklyn |
+| factor 50 | 59 498 (92.3%) | 4 | Brooklyn, Torrent ("Torrent") |
 
-3 is the largest factor that keeps Brooklyn → New York (New York weighs 3.2 times Brooklyn); Torrent →
-Valencia holds up to about 30. A rebuilt table can move these ratios: re-run the script.
+k, at factor 3:
+
+| k | Self-name | Cross-border | Expected cases missed |
+|---|---|---|---|
+| 0 (no footprint) | 40 435 (62.7%) | 0 | Trastevere ("Vatican City") |
+| 0.001 | 40 435 (62.7%) | 0 | Trastevere |
+| 0.0013 | 40 433 (62.7%) | 3 | Trastevere |
+| **0.0015** | **40 432 (62.7%)** | **5** | **none** |
+| 0.00175 | 40 432 (62.7%) | 5 | none |
+| 0.002 | 40 430 (62.7%) | 8 | St. Peter's Square ("Rome") |
+| 0.003 | 40 427 (62.7%) | 22 | St. Peter's Square |
+| 0.006 | 40 402 (62.7%) | 66 | St. Peter's Square, Kehl ("Strasbourg") |
+| 0.01 | 40 366 (62.6%) | 122 | St. Peter's Square, Kehl |
+
+Factor 3 is the largest that keeps Brooklyn → New York (New York weighs 3.2 times Brooklyn). k must
+reach Trastevere (3.4 km from the Rome row: k ≥ 0.0013) and stop short of St. Peter's Square (4.7 km:
+k < 0.0018); 0.0015 is the middle. A rebuilt table can move these numbers: re-run the script.
+
+The five cross-border names left at these settings, all megacity footprints over a neighbour across a
+border: Brazzaville → Kinshasa, Aflao (Ghana) → Lomé (Togo), Si Chiang Mai (Thailand) → Vientiane
+(Laos), San Tin and Sheung Shui (Hong Kong) → Shenzhen.
 
 Expected results on the built table (pinned by `tests/unit/adapters/test_geo_place_table_expected_places.py`):
 
 | Photo taken in | Place name |
 |---|---|
+| Trastevere | Rome (Roma), Italy (not Vatican City, whose row is nearer) |
+| St. Peter's Square | Vatican City, Vatican |
 | central Porto, Ribeira | Porto, Portugal (not the parish, not Vila Nova de Gaia) |
 | Brooklyn, Williamsburg | New York, United States |
 | Torrent | Valencia, Spain |
 | Monaco | Monaco, Monaco (not Nice) |
 | Vaduz | Vaduz, Liechtenstein (not Feldkirch or Buchs) |
+| San Marino (the city) | San Marino, San Marino (not Serravalle) |
+| Andorra la Vella | Andorra la Vella, Andorra |
+| Gibraltar | Gibraltar, Gibraltar (not Algeciras) |
+| Kehl | Kehl, Germany (not Strasbourg) |
+| Geneva | Geneva (Genf), Switzerland |
 | the Dolomites (Plose) | Brixen (Bressanone), Italy |
 | open sea | no place |
-
-Known miss: **Trastevere is "Vatican City, Vatican"**, no longer Rome. Every point in Trastevere is
-nearer to the Vatican City row than to Rome's (the Rome row sits east of the centre), and the preference
-never crosses a border. Open: whether a heavier foreign place may name a photo whose nearest place is a
-tiny enclave.
 
 ## Rebuilding
 

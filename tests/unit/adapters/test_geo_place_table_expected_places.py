@@ -20,6 +20,13 @@ def index():
     (43.7384, 7.4246, "Monaco, Monaco"),                     # not Nice across the border
     (47.1410, 9.5215, "Vaduz, Liechtenstein"),               # not Feldkirch or Buchs across the border
     (46.6930, 11.7300, "Brixen (Bressanone), Italy"),        # the Dolomites
+    (41.8894, 12.4700, "Rome (Roma), Italy"),                # Trastevere, though the Vatican City row is nearer
+    (41.9022, 12.4568, "Vatican City, Vatican"),             # St. Peter's Square
+    (43.9356, 12.4473, "San Marino, San Marino"),            # the city, not a heavier Sammarinese town
+    (42.5063, 1.5218, "Andorra la Vella, Andorra"),
+    (36.1408, -5.3536, "Gibraltar, Gibraltar"),              # not Algeciras or La Línea
+    (48.5719, 7.8150, "Kehl, Germany"),                      # not Strasbourg across the Rhine
+    (46.2044, 6.1432, "Geneva (Genf), Switzerland"),
     (0.0, -30.0, None),                                      # open sea
 ])
 def test_expected_place_names(index, lat, lon, expected):
