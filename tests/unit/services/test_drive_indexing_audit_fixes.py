@@ -6,7 +6,7 @@ import pytest
 from src.domain import drive_index_planner as planner
 from src.domain.drive_index import Priority, RecordState
 from src.domain.drive_index_params import TICK_START_BUDGET
-from src.domain.exceptions import LLMRateLimitError, LLMServerError
+from src.domain.exceptions import LLMClientError, LLMRateLimitError
 
 from .drive_index_fakes import FakeEmbeddings
 from .test_drive_indexing_service import World
@@ -153,8 +153,7 @@ class _RefusingEmbeddings(FakeEmbeddings):
 class TestOneRefusedCardDoesNotStallTheUser:
     """P9: a card text the embedding service refuses backs off alone; the rest of the batch is stored (§8.2)."""
 
-    @pytest.mark.parametrize("exc", [RuntimeError("400 INVALID_ARGUMENT"),
-                                     LLMServerError("500", http_status=500)])
+    @pytest.mark.parametrize("exc", [LLMClientError("400 INVALID_ARGUMENT", http_status=400)])
     async def test_refused_card_backs_off_alone(self, exc):
         w = World()
         w.svc._embeddings = _RefusingEmbeddings(exc)
