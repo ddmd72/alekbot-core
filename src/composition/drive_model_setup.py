@@ -34,6 +34,17 @@ from .drive_reader_runner import DriveReaderRunner, PdfSplitter
 from .drive_triage_runner import DriveTriageRunner
 
 
+class _DrivePromptBuilder(PromptBuilder):
+    """The drive agents' prompt builder. Invalidating its whole cache also clears the assembled-prompt cache of its
+    assembly service (24 h TTL), which on the indexer serves only the drive agents: build_drive_prompt invalidates
+    an assembly it rejects, so it is rebuilt once the missing token or profile is uploaded."""
+
+    def invalidate_cache(self, component_key: Optional[str] = None) -> None:
+        super().invalidate_cache(component_key)
+        if component_key is None and self.assembly_service is not None:
+            self.assembly_service.invalidate_cache()
+
+
 def build_drive_model_registry(keys: Mapping[str, Optional[str]]) -> ProviderRegistry:
     """Claude and OpenAI, each only when its key is set. Keys are stripped: a secret stored with a trailing
     newline becomes an illegal header that looks like a network error."""
@@ -56,10 +67,10 @@ def build_drive_model_extractors(*, parser: Any, users: UserRepository, account_
                                  alert_sink: Optional[AlertSinkPort] = None,
                                  ) -> Tuple[Dict[str, ContentExtractorPort], ImageTriagePort]:
     """The extractor registry and the triage port for DriveIndexingService. `parser` is the child-process parser
-    (a ContentExtractorPort with `split_pdf`)."""
+    (a ContentExtractorPort with `pdf_page_count` and `cut_pdf_window`)."""
     registry = build_drive_model_registry(keys)
     context_builder = AgentContextBuilder(registry, resilience_port=InMemoryProviderResilience())
-    prompt_builder = PromptBuilder(repo=None, assembly_service=assembly_service)
+    prompt_builder = _DrivePromptBuilder(repo=None, assembly_service=assembly_service)
     quota = FirestoreQuotaService(account_repo, alert_sink=alert_sink)
     splitter: PdfSplitter = parser
     reader = DriveReaderRunner(context_builder, users, prompt_builder, splitter, quota_service=quota)

@@ -38,6 +38,7 @@ from urllib.parse import quote, unquote
 
 import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
 
+from ...domain.drive_image_mime import MAX_VISION_IMAGE_BYTES
 from ...domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from ...domain.drive_index_params import DOWNLOAD_TIMEOUT_S, TICK_DEADLINE_S
 from ...domain.user_drive import (
@@ -73,10 +74,10 @@ _THROTTLE_HINT_S = 60.0
 # Bound on one Graph call (aiohttp's default is 300 s), well under TICK_DEADLINE_S: a hanging call
 # ends as a TimeoutError instead of holding the user's tick (RFC Δ9, §8.2).
 GRAPH_CALL_TIMEOUT_S = 60.0
-# Streamed content reads (§8.1 step 3): chunk size, and the cap on one rendition. 5 MiB is the vision input cap of
-# the reader's providers (USER_DRIVE_RFC §4.6); a bigger rendition is no rendition.
+# Streamed content reads (§8.1 step 3): chunk size, and the cap on one rendition — the drive models' vision cap,
+# base64-safe (domain/drive_image_mime.py); a bigger rendition is no rendition.
 _DOWNLOAD_CHUNK = 64 * 1024
-THUMBNAIL_MAX_BYTES = 5 * 1024 * 1024
+THUMBNAIL_MAX_BYTES = MAX_VISION_IMAGE_BYTES
 # Graph's named sizes and custom `c{w}x{h}[_crop]`; anything else never reaches the URL.
 _THUMBNAIL_SIZE_RE = re.compile(
     r"(?:small|medium|large|smallSquare|mediumSquare|largeSquare|c[1-9]\d{0,3}x[1-9]\d{0,3}(?:_crop)?)")
@@ -311,7 +312,8 @@ class OneDriveAdapter(UserDrivePort):
 
     async def download_to_file(self, user_id: str, item_id: str, dest_path: str, max_bytes: int) -> int:
         """Stream the content to `dest_path`, chunk by chunk, never whole in memory. The stream is cut as soon
-        as it passes `max_bytes` (metadata can understate a size, §5.4); the partial file is the caller's."""
+        as it passes `max_bytes` (metadata can understate a size, §5.4); the partial file is the caller's. No
+        download URL, or one answering 404/410: DriveItemNotFoundError."""
         async with aiohttp.ClientSession() as s:
             raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
             url = raw.get("@microsoft.graph.downloadUrl")
@@ -321,6 +323,9 @@ class OneDriveAdapter(UserDrivePort):
             try:
                 # Pre-authenticated short-lived URL on another host: never send the bearer token there.
                 async with s.get(url, timeout=aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as resp:
+                    if resp.status in (404, 410):   # the content went away between the item read and the fetch
+                        logger.info(f"Drive download URL for item {item_id} is gone ({resp.status})")
+                        raise DriveItemNotFoundError(f"Content of item {item_id} is gone ({resp.status})")
                     if resp.status != 200:
                         logger.error(f"Drive download failed ({resp.status}) for item {item_id}")
                         raise ValueError(f"Drive download failed ({resp.status})")

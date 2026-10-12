@@ -2,7 +2,7 @@
 Content extraction contract (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §9, §24.2-§24.5). Pure.
 
 Public interface:
-    ExtractionStatus, ExtractionRequest, ExtractionOutcome, PdfSplit, PdfSplitFailed, TriageImage, TriageResult,
+    ExtractionStatus, ExtractionRequest, ExtractionOutcome, PdfSplitFailed, TriageImage, TriageResult,
     TriageBatchOutcome, DriveModelUnavailable
     PARSER, READER, EXTRACTOR_CHAINS, chain_for(kind) -> Tuple[str, ...]
     garbage_share(text) -> float
@@ -67,17 +67,10 @@ class ExtractionOutcome:
     model_cost: float = 0.0      # their cost in USD, already billed to the account (§24.9)
 
 
-@dataclass(frozen=True)
-class PdfSplit:
-    """A routed PDF cut into page windows by the sandboxed parser (§24.3); the reader sends one window per call."""
-    paths: Tuple[str, ...]       # temp PDFs in page order, each at most MODEL_PAGES_PER_CALL pages
-    pages_total: int             # pages in the source file
-    truncated: bool = False      # pages past MODEL_EXTRACT_MAX_PAGES (or the caller's cap) were not cut
-
-
 class PdfSplitFailed(Exception):
-    """The sandboxed split could not cut the PDF: `status` is `encrypted`, `unsupported`, `timeout`, `memory`,
-    `too_large` or `error`, and the reader returns it as its outcome (§24.3)."""
+    """The sandboxed parser could not count or cut the PDF's pages: `status` is `encrypted`, `unsupported`,
+    `timeout`, `memory`, `too_large` or `error`, and the reader returns it as its outcome (§24.3). The reader cuts
+    one page window at a time, on demand, so at most MODEL_IN_FLIGHT windows exist at once."""
 
     def __init__(self, status: ExtractionStatus, detail: str = "") -> None:
         super().__init__(f"{status.value}: {detail}" if detail else status.value)
@@ -87,7 +80,17 @@ class PdfSplitFailed(Exception):
 
 class DriveModelUnavailable(Exception):
     """The reader or the triage model cannot be used now (429, 5xx, timeout, a missing prompt): a model outage,
-    handled by deferring model work only (§24.8)."""
+    handled by deferring model work only (§24.8). It carries what the file or batch spent before the outage — the
+    pages (reader) or images (triage) the model answered, the calls made and their cost, already billed — so the
+    tick counts them against the month and the summary before it records the outage (§24.7, §24.9)."""
+
+    def __init__(self, message: str = "", *, pages_sent: int = 0, images_sent: int = 0, model_calls: int = 0,
+                 model_cost: float = 0.0) -> None:
+        super().__init__(message)
+        self.pages_sent = pages_sent
+        self.images_sent = images_sent
+        self.model_calls = model_calls
+        self.model_cost = model_cost
 
 
 @dataclass(frozen=True)

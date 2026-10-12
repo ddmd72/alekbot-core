@@ -204,6 +204,25 @@ class _Models:
                        triage_images_used=m.triage_images_used)
 
 
+def _count_reader(models: _Models, summary: Dict[str, int], now: datetime, *, calls: int, cost: float,
+                  pages: int, outage: bool = False) -> None:
+    """What the reader spent on one file — all of it, or the part before an `outage` (§24.7, §24.9). Before an
+    outage with nothing spent there is no `used`: it would reset the doubling backoff the outage then extends."""
+    if not outage or calls or cost or pages:
+        models.used(now, calls=calls, cost=cost, pages=pages)
+    summary["model_calls"] = summary.get("model_calls", 0) + calls
+    summary["model_pages"] = summary.get("model_pages", 0) + pages
+
+
+def _count_triage(models: _Models, summary: Dict[str, int], now: datetime, *, calls: int, cost: float,
+                  images: int, outage: bool = False) -> None:
+    """What triage spent on one batch — all of it, or the part before an `outage` (§24.7, §24.9)."""
+    if not outage or calls or cost or images:
+        models.used(now, calls=calls, cost=cost, images=images)
+    summary["triage_calls"] = summary.get("triage_calls", 0) + calls
+    summary["triage_images"] = summary.get("triage_images", 0) + images
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -1116,16 +1135,17 @@ class DriveIndexingService:
                     outcome = replace(outcome, extracted_by=f"{extractor_id}@{extractor.version}")
             except DriveModelUnavailable as exc:
                 logger.warning(f"[DriveIndex] reader unavailable for {user_id[:8]}: {exc}; model work deferred")
-                models.outage(now)
+                _count_reader(models, summary, now, calls=exc.model_calls, cost=exc.model_cost, pages=exc.pages_sent,
+                              outage=True)
+                models.outage(now)   # after the usage: `used` ends an outage, this one must stand (C-M1)
                 return None, deferred(_cleared(run), _backoff_until(models), now)
             except Exception as exc:   # the port reports per-file failures as outcomes; anything else is this file's
                 logger.error(f"[DriveIndex] {extractor_id} failed on item {run.item_id} of {user_id[:8]}: {exc}",
                              exc_info=True)
                 return None, content_retry(run, Reason.EXTRACT_ERROR, now)
             if extractor_id == READER:
-                models.used(now, calls=outcome.model_calls, cost=outcome.model_cost, pages=outcome.pages_sent)
-                summary["model_calls"] = summary.get("model_calls", 0) + outcome.model_calls
-                summary["model_pages"] = summary.get("model_pages", 0) + outcome.pages_sent
+                _count_reader(models, summary, now, calls=outcome.model_calls, cost=outcome.model_cost,
+                              pages=outcome.pages_sent)
         if outcome is None:   # an empty chain: no kind is admitted without an extractor (§5.1)
             raise RuntimeError(f"no extractor chain for kind {kind}")
         step, reason = outcome_step(outcome.status)
@@ -1315,16 +1335,17 @@ class DriveIndexingService:
                 batch_outcome = await port.triage(user_id, self._account_ids.get(user_id, ""), images)
             except DriveModelUnavailable as exc:
                 logger.warning(f"[DriveIndex] triage unavailable for {user_id[:8]}: {exc}; model work deferred")
-                models.outage(now)
+                _count_triage(models, summary, now, calls=exc.model_calls, cost=exc.model_cost,
+                              images=exc.images_sent, outage=True)
+                models.outage(now)   # after the usage: `used` ends an outage, this one must stand (C-M1)
                 writes.extend(deferred(r, _backoff_until(models), now) for r in waiting.values())
                 summary["deferred"] = summary.get("deferred", 0) + len(waiting)
             except Exception as exc:   # a refusal or unreadable output: per-file transient for the batch (§24.8)
                 logger.error(f"[DriveIndex] triage failed for {user_id[:8]}: {exc}", exc_info=True)
                 writes.extend(content_retry(r, Reason.EXTRACT_ERROR, now) for r in waiting.values())
             else:
-                models.used(now, calls=batch_outcome.model_calls, cost=batch_outcome.model_cost, images=len(images))
-                summary["triage_calls"] = summary.get("triage_calls", 0) + batch_outcome.model_calls
-                summary["triage_images"] = summary.get("triage_images", 0) + len(images)
+                _count_triage(models, summary, now, calls=batch_outcome.model_calls, cost=batch_outcome.model_cost,
+                              images=len(images))
                 by_id = {r.item_id: r for r in batch_outcome.results}
                 for item_id, rec in waiting.items():
                     result = by_id.get(item_id)

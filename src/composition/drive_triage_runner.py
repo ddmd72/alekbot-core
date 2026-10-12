@@ -11,8 +11,10 @@ bills to `account_id` (the CompanionExtractorRunner pattern; no prompt-content s
 opaque index 1..n. One result per image given, always, with the calls made and their cost (§24.9):
 - a batch the provider refuses (HTTP 400) is halved until the refused image is alone; that image, an image the
   model left unanswered after its correction turn, and a rendition no provider takes are photographs without a
-  caption — the same deterministic answer as an image without a rendition (§24.5);
-- an outage (429, 5xx, timeout, a missing prompt) raises DriveModelUnavailable for the whole batch (§24.8).
+  caption — the same deterministic answer as an image without a rendition (§24.5); so is a thumbnail over the
+  vision cap (MAX_VISION_IMAGE_BYTES), which is never sent;
+- an outage (429, 5xx, timeout, a missing prompt) raises DriveModelUnavailable for the whole batch (§24.8),
+  carrying the images already answered, the calls made and their cost, for the tick to count (§24.7, §24.9).
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from ..agents.drive_image_triage_agent import AGENT_TYPE, DriveImageTriageAgent,
 from ..infrastructure.drive_model_call import DriveModelCallFailed
 from ..domain.agent import AgentConfig
 from ..domain.drive_extraction import DriveModelUnavailable, TriageBatchOutcome, TriageImage, TriageResult
-from ..domain.drive_image_mime import VISION_MIME_TYPES, image_mime
+from ..domain.drive_image_mime import MAX_VISION_IMAGE_BYTES, VISION_MIME_TYPES, image_mime
 from ..domain.drive_index import TriageVerdict
 from ..ports.image_triage_port import ImageTriagePort
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -49,14 +51,18 @@ class DriveTriageRunner(ImageTriagePort):
         for index, image in enumerate(images, start=1):
             # Magic bytes first: a rendition is JPEG or PNG whatever the declared type (S0f).
             mime = image_mime(image.thumbnail[:16]) or image.mime_type
-            if mime in VISION_MIME_TYPES:
+            if mime in VISION_MIME_TYPES and len(image.thumbnail) <= MAX_VISION_IMAGE_BYTES:
                 inputs.append(TriageInput(index=index, data=image.thumbnail, mime_type=mime,
                                           camera_prior=image.camera_prior))
-        stats = {"calls": 0, "cost": 0.0, "refused": 0}
+        stats: Dict[str, Any] = {"calls": 0, "cost": 0.0, "refused": 0, "images": 0}
         verdicts: _Verdicts = {}
         if inputs:
             agent = await self._agent(user_id)
-            verdicts = await self._classify(agent, inputs, account_id, stats)
+            try:
+                verdicts = await self._classify(agent, inputs, account_id, stats)
+            except DriveModelUnavailable as exc:
+                raise DriveModelUnavailable(str(exc), images_sent=stats["images"], model_calls=stats["calls"],
+                                            model_cost=stats["cost"]) from exc
         results: List[TriageResult] = []
         unanswered = 0
         for index, image in enumerate(images, start=1):
@@ -87,18 +93,26 @@ class DriveTriageRunner(ImageTriagePort):
 
     async def _classify(self, agent: DriveImageTriageAgent, inputs: List[TriageInput], account_id: str,
                         stats: Dict[str, Any]) -> _Verdicts:
-        """One call; a refused batch is halved until the refused image stands alone (it is then left out)."""
+        """One call; a refused batch is halved until the refused image stands alone (it is then left out). Calls and
+        cost as the agent's ledger reports them, also for a failed call; images count once answered."""
         try:
-            stats["calls"] += 1
             reply = await agent.classify(inputs, account_id=account_id)
+        except (DriveModelCallFailed, DriveModelUnavailable) as exc:
+            stats["calls"] += exc.model_calls
+            stats["cost"] += exc.model_cost
+            if isinstance(exc, DriveModelUnavailable):
+                raise
+            refused = exc
+        else:
+            stats["calls"] += reply.calls
             stats["cost"] += reply.cost
+            stats["images"] += len(inputs)
             return dict(reply.verdicts)
-        except DriveModelCallFailed as exc:
-            if len(inputs) == 1:
-                logger.warning(f"[DriveTriage] image refused ({exc}); kept as a photograph without a caption")
-                stats["refused"] += 1
-                return {}
-            mid = len(inputs) // 2
-            left = await self._classify(agent, inputs[:mid], account_id, stats)
-            right = await self._classify(agent, inputs[mid:], account_id, stats)
-            return {**left, **right}
+        if len(inputs) == 1:
+            logger.warning(f"[DriveTriage] image refused ({refused}); kept as a photograph without a caption")
+            stats["refused"] += 1
+            return {}
+        mid = len(inputs) // 2
+        left = await self._classify(agent, inputs[:mid], account_id, stats)
+        right = await self._classify(agent, inputs[mid:], account_id, stats)
+        return {**left, **right}
