@@ -195,11 +195,11 @@ def name_match(record_keys: Sequence[str], query_keys: Sequence[str]) -> Optiona
 
 
 def query_token_groups(query: str) -> Tuple[FrozenSet[str], ...]:
-    """One group per query token: its whole-token key and its variants' (plan Δ17)."""
+    """One group per query token: its whole-token key and its variants' (RFC Δ17)."""
     return tuple(frozenset(f"w:{t}" for t in [token, *_variants(token)]) for token in _query_tokens(query))
 
 
 def covers_query(record_keys: Sequence[str], groups: Sequence[FrozenSet[str]]) -> bool:
-    """The name contains every query token, as itself or transliterated: ranks first after RRF (plan Δ17)."""
+    """The name contains every query token, as itself or transliterated: ranks first after RRF (RFC Δ17)."""
     keys = set(record_keys)
     return bool(groups) and all(keys & group for group in groups)

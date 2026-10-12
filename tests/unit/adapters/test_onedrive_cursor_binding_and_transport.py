@@ -1,14 +1,15 @@
 """
-Wire tests for the OneDriveAdapter review fixes R3 (USER_DRIVE_INDEXING_RFC §4, §7.2, §7.5, §8.2).
+Wire tests for the OneDriveAdapter cursor binding, timeouts and transport errors (USER_DRIVE_INDEXING_RFC §4,
+§7.2, §7.5, §8.2).
 
-- retro_drive_storage F1: a stored delta cursor is bound to the drive and App Folder that served it.
+- A stored delta cursor is bound to the drive and App Folder that served it.
   A cursor minted under another drive or a re-created App Folder is never followed: the adapter
-  restarts the enumeration, so the restart page carries the fresh drive id (Part A's per-page check).
-- retro_drive_storage F3: a token-endpoint timeout is systemic (DriveThrottled), never per-item.
-- retro_drive_storage F6: fs_modified_at comes from fileSystemInfo, not the server timestamp.
-- retro_tick F2 (adapter part): an aiohttp transport error leaves the adapter as an OSError, the per-item class
+  restarts the enumeration, so the restart page carries the fresh drive id (the tick's per-page check).
+- A token-endpoint timeout is systemic (DriveThrottled), never per-item.
+- fs_modified_at comes from fileSystemInfo, not the server timestamp.
+- An aiohttp transport error leaves the adapter as an OSError, the per-item class
   of §8.2 (the tick decides by the call's scope), never a raw aiohttp error; Step 1 callers get a "failed" answer.
-- premise_audit P8 (adapter part): every Graph call is bounded by GRAPH_CALL_TIMEOUT_S, well under
+- Every Graph call is bounded by GRAPH_CALL_TIMEOUT_S, well under
   TICK_DEADLINE_S, and a timeout stays a TimeoutError (per-item on a call about one item, §8.2).
 
 Mock boundary: aiohttp.ClientSession (docs/how_to/ADAPTER_WIRE_TESTING.md), never UserDrivePort.
@@ -92,7 +93,7 @@ async def _page(adapter, approot, page, cursor=None):
         return await adapter.get_changes("u1", cursor), session
 
 
-# -- F1: the delta cursor is bound to its drive and App Folder ------------------------------------
+# -- The delta cursor is bound to its drive and App Folder ------------------------------------
 
 class TestCursorBoundToDriveAndRoot:
     async def test_cursor_from_another_drive_restarts_without_following_it(self):
@@ -154,7 +155,7 @@ class TestCursorBoundToDriveAndRoot:
         session.get.assert_not_called()
 
 
-# -- F3: a token-endpoint timeout is systemic ------------------------------------------------------
+# -- A token-endpoint timeout is systemic ---------------------------------------------------------
 
 class TestTokenEndpointTimeout:
     async def test_token_endpoint_timeout_is_systemic_not_per_item(self):
@@ -165,7 +166,7 @@ class TestTokenEndpointTimeout:
         assert exc.value.retry_after_s == 60.0
 
 
-# -- F6: fs_modified_at is the file-system time ------------------------------------------------------
+# -- fs_modified_at is the file-system time ----------------------------------------------------------
 
 class TestFsModifiedAt:
     async def test_fs_modified_at_comes_from_file_system_info(self):
@@ -182,7 +183,7 @@ class TestFsModifiedAt:
         assert effective_date(c, datetime(2000, 1, 1, tzinfo=timezone.utc)) == august
 
 
-# -- F2 (adapter part): transport errors are per-call (OSError), classified by the tick (§8.2) ------
+# -- Transport errors are per-call (OSError), classified by the tick (§8.2) ------
 
 def _transport_errors():
     return [aiohttp.ServerDisconnectedError(), aiohttp.ClientPayloadError("cut"),
@@ -266,7 +267,7 @@ class TestTransportErrors:
         assert "not connected" not in resp.error
 
 
-# -- P8 (adapter part): a bounded per-call timeout ---------------------------------------------------
+# -- A bounded per-call timeout ---------------------------------------------------
 
 class TestPerCallTimeout:
     def test_the_bound_is_well_under_the_tick_deadline(self):

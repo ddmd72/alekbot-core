@@ -128,7 +128,7 @@ steps:
       - "--timeout=1800"
       - "--set-env-vars=APP_ENV=development,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,DRIVE_INDEXER_URL=$_INDEXER_URL"
       - "--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest"
-      # Plan Δ21. Ingress internal: the only caller is Cloud Tasks on drive-sync-dev, which counts as
+      # RFC Δ21. Ingress internal: the only caller is Cloud Tasks on drive-sync-dev, which counts as
       # internal (same project, default run.app URL). No internet request can reach the service or
       # take its single request slot (concurrency 1, max 1 instance) from a dispatch.
       # Unauthenticated at the IAM layer, OIDC checked in the app: GcpTaskQueue sets no token audience,

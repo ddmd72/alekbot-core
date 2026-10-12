@@ -1,7 +1,7 @@
-"""Review fixes R11 for the drive search wiring (USER_DRIVE_INDEXING_RFC §10, §13; rev_35 F1).
+"""The drive search wiring gives the search service a user repository (USER_DRIVE_INDEXING_RFC §10, §13).
 
-The search service reads the opt-in flag uncached through its user repository on every search (Review
-Focus 4). Without one, every search raises in production."""
+The search service reads the opt-in flag uncached through its user repository on every search (§10.1 step 0).
+Without one, every search raises in production."""
 from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.firestore_user_repo import FirestoreUserRepository

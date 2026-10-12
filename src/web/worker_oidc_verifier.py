@@ -47,7 +47,7 @@ def verify_worker_oidc(
     the ``email`` claim equals ``expected_sa_email`` and ``email_verified`` is
     truthy. Audience is NOT pinned by default (see module docstring). A caller with
     a single, known token source passes ``audiences``: the ``aud`` claim must then
-    be one of them. The drive indexer does (USER_DRIVE_INDEXING_RFC §4, plan Δ21):
+    be one of them. The drive indexer does (USER_DRIVE_INDEXING_RFC §4, RFC Δ21):
     its only caller is Cloud Tasks, whose default audience is the task's target URL.
 
     Never raises: any failure (missing/malformed header, bad signature, expired

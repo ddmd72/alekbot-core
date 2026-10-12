@@ -75,7 +75,7 @@ async def test_every_record_query_has_a_declared_index(repo, db):
 
 def test_indexes_are_declared_for_the_live_collection_only():
     assert len(_declared_indexes()) == 13
-    assert _declared_indexes("drive_index_records") == []   # plan Δ22: the unprefixed collections were deleted
+    assert _declared_indexes("drive_index_records") == []   # RFC Δ22: the unprefixed collections were deleted
 
 
 def _deploy_commands():

@@ -1,5 +1,5 @@
-"""Review fixes R7 for DriveSyncSchedulerService (rev_22 F1 = premise audit P7, rev_22 F2;
-USER_DRIVE_INDEXING_RFC §7.7)."""
+"""DriveSyncSchedulerService: the reconnect flag goes up before the notice, and a deliberate disconnect gets
+none (USER_DRIVE_INDEXING_RFC §7.7; RFC Δ6)."""
 import asyncio
 
 import pytest
@@ -15,7 +15,7 @@ class TestReconnectNoticeReview:
         env.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
 
     async def test_flag_is_up_before_the_notice_is_sent(self, env):  # noqa: F811
-        """F1: the flag is stored before the send (Gmail precedent), so a cancel after the message left
+        """The flag is stored before the send (Gmail precedent), so a cancel after the message left
         cannot repeat it."""
         await self._lost(env)
         seen = []
@@ -30,7 +30,7 @@ class TestReconnectNoticeReview:
         assert seen == [True]
 
     async def test_cancelled_notice_is_not_repeated(self, env):  # noqa: F811
-        """F1: scheduler deadline or deploy SIGTERM cancels the request mid-notify: the message may be out."""
+        """A scheduler deadline or deploy SIGTERM cancels the request mid-notify: the message may be out."""
         await self._lost(env)
         env.notifier.raises = asyncio.CancelledError()
         with pytest.raises(asyncio.CancelledError):
@@ -41,7 +41,7 @@ class TestReconnectNoticeReview:
         assert len(env.notifier.calls) == 1
 
     async def test_deliberate_disconnect_with_flag_down_sends_no_notice(self, env):  # noqa: F811
-        """F2: a user who disconnected on purpose is not told the connection expired (§7.7)."""
+        """A user who disconnected on purpose is not told the connection expired (§7.7)."""
         await env.repo.save_sync_state(DriveSyncState(user_id="u"))
         env.drive.connection_state = DriveConnection(connected=False)
         await env.svc.fan_out()

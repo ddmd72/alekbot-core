@@ -35,7 +35,7 @@ Supported task_types:
   - start_drive_sync              → fan-out: DriveSyncSchedulerService enqueues one drive_sync tick per
                                      user on the drive queue (the indexer service runs it), raises the
                                      staleness alert and the one reconnect notice (USER_DRIVE_INDEXING_RFC
-                                     §7.1, §12.1; plan Δ5, Δ6)
+                                     §7.1, §12.1; RFC Δ5, Δ6)
 """
 
 from __future__ import annotations
@@ -719,7 +719,7 @@ class WorkerHandler:
     # ------------------------------------------------------------------
 
     async def _handle_start_drive_sync(self) -> Tuple[dict, int]:
-        """Cloud Scheduler, every TICK_INTERVAL: one drive_sync tick per user (delegates, plan Δ5).
+        """Cloud Scheduler, every TICK_INTERVAL: one drive_sync tick per user (delegates, RFC Δ5).
 
         Unconfigured (no DRIVE_INDEXER_URL, e.g. the first pass of the two-pass first deploy) answers
         200, not the 501 other fan-outs use: the job fires every 10 minutes, and a 5xx request log is

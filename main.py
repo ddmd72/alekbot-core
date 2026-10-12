@@ -707,7 +707,7 @@ async def main():
             alert_webhook=_alert_webhook,
         )
 
-        # Drive index fan-out (USER_DRIVE_INDEXING_RFC §7.1, §12.1; plan Δ5, Δ6). Built only when the
+        # Drive index fan-out (USER_DRIVE_INDEXING_RFC §7.1, §12.1; RFC Δ5, Δ6). Built only when the
         # drive queue exists (DRIVE_INDEXER_URL set): its ticks run on the indexer service.
         _drive_sync_scheduler = None
         if container.drive_task_queue and container.drive_index_repo and container.user_drive:

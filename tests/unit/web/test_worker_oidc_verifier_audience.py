@@ -1,4 +1,4 @@
-"""verify_worker_oidc's optional audience pin, used by the drive indexer (plan Δ21). The default stays
+"""verify_worker_oidc's optional audience pin, used by the drive indexer (RFC Δ21). The default stays
 unpinned for the main service (tests/unit/web/test_worker_oidc_verifier.py)."""
 from unittest.mock import patch
 

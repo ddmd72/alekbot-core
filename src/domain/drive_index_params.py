@@ -20,20 +20,20 @@ NAME_FETCH = 100
 FETCH_MAX = 1_000                           # Firestore find_nearest limit; the widened fetch (§10.1 step 5)
 DENSE_FOLDER_CHILDREN = 500
 PROBE_CHILDREN = 200
-ITEM_CALLS_PER_TICK = 20                    # plan Δ9: probes, parent lookups, re-listing pages
+ITEM_CALLS_PER_TICK = 20                    # RFC Δ9: probes, parent lookups, re-listing pages
 RELIST_PAGE = 200                           # children per re-listing page (one item call)
 FOLDER_INMEM_CARDS = 1_000
 CASCADE_OPS_PER_TICK = 2_000
 NAME_MIN_TRIGRAMS = 3
 NAME_QUERY_KEYS_MAX = 30                    # Firestore array-contains-any limit
 NAME_KEY_QUERIES = 8                        # whole-token keys, and trigram keys, each queried one by one (at most
-                                            # this many of each) before one query with the rest (plan Δ17, P1)
+                                            # this many of each) before one query with the rest (RFC Δ17)
 STALE_ALERT_AFTER = timedelta(hours=2)
 ACCESS_LOSS_TTL = timedelta(days=30)
 LEASE_MARGIN = timedelta(minutes=1)         # lease_until = start + TICK_DEADLINE + margin (§7.1)
 NUDGE_RETRY_DELAY_S = 60                    # a live lease ends within TICK_DEADLINE: at most ~31 retries
-PLACE_MAX_DISTANCE_KM = 50.0                # plan Δ7
-PLACE_PREFER_RADIUS_KM = 15.0               # within it the heaviest place names a photo (plan Δ7)
+PLACE_MAX_DISTANCE_KM = 50.0                # RFC Δ7
+PLACE_PREFER_RADIUS_KM = 15.0               # within it the heaviest place names a photo (RFC Δ7)
 RRF_K = 60
 SYSTEMIC_BACKOFF_BASE_S = 60                # continuation delay after a systemic error, doubled per failure
 SYSTEMIC_BACKOFF_CAP_S = 1800               # = 3 x TICK_INTERVAL

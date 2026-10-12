@@ -3,9 +3,9 @@ DriveSearchService — find the user's drive files by name and metadata
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §10.1, §10.2; Slice 1: no content stream).
 
 Gate (uncached) -> folder scope -> card kNN + name stream (one query per whole-token and trigram key,
-plan Δ17) -> read-time visibility -> kind, date and folder post-filters -> RRF -> names that cover the
-query first (Δ17) -> widen once -> collapse duplicates -> top K with the coverage envelope. Every decision that needs
-no I/O is in `src/domain/drive_search.py`; this class reads and calls it.
+RFC Δ17) -> read-time visibility -> kind, date and folder post-filters -> RRF -> names that cover the
+query first (RFC Δ17) -> widen once -> collapse duplicates -> top K with the coverage envelope. Every decision
+that needs no I/O is in `src/domain/drive_search.py`; this class reads and calls it.
 
 Public interface:
     DriveSearchService(repo, embeddings, users, drive, *, embedding_space, clock, nonce, monotonic)
@@ -208,7 +208,7 @@ class DriveSearchService:
                       stats: _Stats) -> DriveSearchResult:
         keys = query_name_keys(request.query)
         members: List[Optional[str]] = list(sorted(kinds)) or [None]   # a family: one card kNN per member kind
-        name_kind = members[0] if len(members) == 1 else None          # names: a family is a post-filter (Δ20)
+        name_kind = members[0] if len(members) == 1 else None          # names: a family is a post-filter (RFC Δ20)
         vector: Optional[List[float]] = None
         card_fetch, name_fetch = CARD_FETCH, NAME_FETCH
         while True:
@@ -235,7 +235,7 @@ class DriveSearchService:
     async def _filter_only(self, user_id: str, request: DriveSearchRequest, kinds: FrozenSet[str],
                            folder: Optional[_Folder], ancestry: _Ancestry, stats: _Stats) -> DriveSearchResult:
         """§10.1: a plain query on kind / effective_date, newest first, no kNN, and how many matched. A kind
-        family runs one query per member kind, merged (Δ20)."""
+        family runs one query per member kind, merged (RFC Δ20)."""
         members: List[Optional[str]] = list(sorted(kinds)) or [None]
         fetch = CARD_FETCH
         while True:
@@ -303,12 +303,12 @@ class DriveSearchService:
 
     async def _name_candidates(self, user_id: str, keys: Sequence[str], limit: int, kind: Optional[str],
                                stats: _Stats) -> Tuple[List[DriveIndexRecord], bool]:
-        """The name stream's pool (§10.1 step 3a, plan Δ17): one query per whole-token key and one per
+        """The name stream's pool (§10.1 step 3a, RFC Δ17): one query per whole-token key and one per
         trigram key, each in query order and at most NAME_KEY_QUERIES of each kind, plus one any-key query
         for the remaining keys (at most NAME_QUERY_KEYS_MAX), all in parallel. A record sharing a query key
         held by at most `limit` records is always in the pool: a common key (`img`, `ent`) can no longer
         crowd out a rare one (`4912`), and a query that reaches its target only through trigrams (every
-        token misspelled, a prefix) still finds it (premise audit P1). Returns (records, any page full)."""
+        token misspelled, a prefix) still finds it. Returns (records, any page full)."""
         whole = [k for k in keys if k.startswith("w:")][:NAME_KEY_QUERIES]
         grams = [k for k in keys if k.startswith("t:")][:NAME_KEY_QUERIES]
         rest = [k for k in keys if k not in whole and k not in grams]
@@ -368,7 +368,7 @@ class DriveSearchService:
 
     @staticmethod
     def _covered_first(fused: List[DriveIndexRecord], query: str, stats: _Stats) -> List[DriveIndexRecord]:
-        """The step after RRF (plan Δ17): names that cover every query token first."""
+        """The step after RRF (RFC Δ17): names that cover every query token first."""
         groups = query_token_groups(query)
         stats.covered = sum(1 for r in fused if covers_query(r.name_tokens, groups))
         return cover_first(fused, groups)
@@ -425,7 +425,7 @@ class DriveSearchService:
             return _not_indexed(hider.name)   # the path runs into a folder whose contents are not indexed
         matches = await self._as_folders(anchored, ancestry)
         page_full = not descent_complete
-        guessed = False   # one suffix match from a full name page: another may sit past it (rev_31 F3)
+        guessed = False   # one suffix match from a full name page: another may sit past it (§10.1)
         if not matches:
             keys = [k for k in query_name_keys(segments[-1]) if k.startswith("w:")]
             named, page_full_by_name = (await self._name_candidates(user_id, keys, NAME_FETCH, "folder", _Stats())
@@ -508,7 +508,7 @@ class DriveSearchService:
         """The folder's subtree, level by level, up to _WALK_PARALLEL folders listed at once, never entering
         an opaque or deleting folder; stops once more than FOLDER_INMEM_CARDS records are read. One budget is
         shared by every listing and checked before each page, so the walk overshoots by at most one page
-        per parallel listing (rev_31 F4). Returns (records, complete)."""
+        per parallel listing. Returns (records, complete)."""
         out: List[DriveIndexRecord] = []
         budget = [FOLDER_INMEM_CARDS + 1]   # records left to read before the walk is known incomplete
         level = [folder.item_id]
@@ -541,7 +541,7 @@ class DriveSearchService:
 
     async def _building(self, user_id: str, state: DriveSyncState) -> bool:
         """The set of items may be incomplete (§10.2): an epoch not idle, a first-seen or re-listing record
-        due (class 2, plan Δ18), or an unresolved record being resolved at CASCADE priority — limit-1 queries,
+        due (class 2, RFC Δ18), or an unresolved record being resolved at CASCADE priority — limit-1 queries,
         never a counter. Edits and other cascades do not count; nor does an unresolved record waiting on a
         RETRY-class lookup or parked, or a parent that is never found would keep `building` true for good."""
         if state.epoch_phase is not EpochPhase.IDLE:

@@ -1,4 +1,4 @@
-"""Drive indexing in the Cabinet: status, toggle, task on toggle (USER_DRIVE_INDEXING_RFC §6, §7.6; plan Δ2)."""
+"""Drive indexing in the Cabinet: status, toggle, task on toggle (USER_DRIVE_INDEXING_RFC §6, §7.6; RFC Δ2)."""
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock

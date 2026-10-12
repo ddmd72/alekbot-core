@@ -226,7 +226,7 @@ class DriveSyncState:
     epoch: int = 0
     epoch_phase: EpochPhase = EpochPhase.IDLE
     initial_enumeration_done: bool = False
-    purging: bool = False                     # a purge started: it finishes before anything else (review A M1)
+    purging: bool = False                     # a purge started: it finishes before anything else (§7.6)
     created_at: Optional[datetime] = None     # first tick; the staleness baseline before any success (§12.1)
     lease_owner: Optional[str] = None
     lease_until: Optional[datetime] = None
@@ -243,7 +243,7 @@ class DriveSyncState:
     last_error: Optional[ErrorCategory] = None
     systemic_failures: int = 0                # consecutive ticks ended by a systemic error (backoff, §8.2)
     stale_alerted: bool = False
-    reconnect_notified: bool = False          # plan Δ6
+    reconnect_notified: bool = False          # the fan-out told the user once (RFC Δ6)
     counters: Mapping[str, int] = field(default_factory=dict)
 
     def cards_in_space(self, embedding_space: str) -> bool:

@@ -1,4 +1,5 @@
-"""Review fixes R2 of the tick (retro_tick.md F1, F2, F3, F6) and the two RFC behaviours it found unpinned (F8a, F8b)."""
+"""The tick keeps saved progress under systemic errors, classifies probe errors, treats nudged items as class 0,
+and never spins an upgrade pass; plus two RFC behaviours no other test pinned (§7.1, §7.8, §8.2, §12.3)."""
 from dataclasses import replace
 
 import aiohttp
@@ -35,7 +36,7 @@ def _fail_on_call(w, n_fail, exc):
 
 
 class TestSystemicErrorKeepsObserveProgress:
-    """F1: a systemic error mid-observe must not roll back the cursor/epoch observe saved page by page."""
+    """A systemic error mid-observe must not roll back the cursor/epoch observe saved page by page."""
 
     @pytest.mark.parametrize("exc, status, category", [
         (DriveThrottled(retry_after_s=30), "throttled", ErrorCategory.THROTTLED),
@@ -85,7 +86,7 @@ class TestSystemicErrorKeepsObserveProgress:
 
 
     async def test_throttle_right_after_a_410_keeps_the_new_epoch(self):
-        """Review R2 M2: the 410 restart is saved at once; a throttle on the next page call must not write back
+        """The 410 restart is saved at once; a throttle on the next page call must not write back
         the pre-410 cursor and epoch (the next tick would take another 410 and open epoch E+2)."""
         w = World(page_size=5)
         for i in range(20):
@@ -120,7 +121,7 @@ def _photos_world():
 
 
 class TestSystemicErrorInsideInlineProbe:
-    """F2: the inline density probe's errors are classified, not charged to the item."""
+    """The inline density probe's errors are classified, not charged to the item."""
 
     async def test_disconnect_during_inline_probe_does_not_lose_the_observation(self):
         w, top = _photos_world()
@@ -178,7 +179,7 @@ class TestSystemicErrorInsideInlineProbe:
 
 
 class TestNudgedItemsAreClassZero:
-    """F3: items named in a nudge are class 0 (§7.8), even when first seen."""
+    """Items named in a nudge are class 0 (§7.8), even when first seen."""
 
     async def test_nudged_new_file_is_class_zero(self):
         w = World()
@@ -207,7 +208,7 @@ class TestNudgedItemsAreClassZero:
 
 
 class TestUpgradePassDoesNotSpin:
-    """F6: a pass that restarts because its stale records cannot be worked yet must not chain zero-delay ticks."""
+    """A pass that restarts because its stale records cannot be worked yet must not chain zero-delay ticks."""
 
     async def test_card_bump_with_a_backed_off_stale_record_does_not_spin(self, monkeypatch):
         """A reopened repository's re-listing keeps failing, so the folder backs off (due later) while it still
@@ -260,7 +261,7 @@ class TestUpgradePassDoesNotSpin:
         assert not await w.svc._has_more("u", replace(st, upgrade_cursor=None), w.clock.now)
 
     async def test_a_pass_that_wrote_continues_to_verify_in_chain(self, monkeypatch):
-        """Review R2 fix 1: a pass that ended this tick having written (re-stamped or scheduled) continues the
+        """A pass that ended this tick having written (re-stamped or scheduled) continues the
         chain, so the verification pass runs in-chain; one that wrote nothing waits."""
         w = World()
         for i in range(5):
@@ -273,7 +274,7 @@ class TestUpgradePassDoesNotSpin:
 
 
 class TestRfcBehaviourPinned:
-    """F8 (a), (b): required behaviour that no test pinned."""
+    """Required behaviour that no other test pinned."""
 
     async def test_page_from_another_drive_purges_and_onboards(self):
         """§7.1 step 1: credentials carry no drive id, so only the page's drive_id reveals the switch."""
@@ -362,7 +363,7 @@ async def _converge_with_fanout(w, target, rounds=10):
 
 
 class TestUpgradePassSkipsParkedRecords:
-    """F6 remainder (review R2 fix 2): a record parked under an unresolved parent (UNRESOLVED, due_at None) is
+    """A record parked under an unresolved parent (UNRESOLVED, due_at None) is
     not re-scheduled by the upgrade pass; the parent's rescope re-plans it. Scheduling it only re-parked it,
     a zero-delay spin."""
 

@@ -1,11 +1,11 @@
 """
 DriveSyncSchedulerService — the `start_drive_sync` fan-out on the main service
-(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §7.1 "Trigger", §7.7, §12.1; plan Δ5, Δ6).
+(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §7.1 "Trigger", §7.7, §12.1; RFC Δ5, Δ6).
 
 Every TICK_INTERVAL Cloud Scheduler calls it once. It enqueues one `drive_sync` tick per user with
 indexing on, or with a stored sync state (so an orphaned index always gets purged), and skips a user
 whose continuation is already queued. It also runs the two checks that must work while the drive
-queue is stuck: the staleness alert (§12.1) and the one reconnect notice per lost grant (§7.7, Δ6).
+queue is stuck: the staleness alert (§12.1) and the one reconnect notice per lost grant (§7.7, RFC Δ6).
 It writes the two fan-out flags, through `update_sync_flags`, and a minimal sync state for an enabled
 user with a working grant who has none (`create_sync_state_if_absent`): its `created_at` is the staleness baseline, so a user
 whose ticks never land is alerted too (§12.1). The tick onboards from it as from no state at all.
@@ -149,7 +149,7 @@ class DriveSyncSchedulerService:
 
     async def _reconnect_notice(self, user_id: str, profile: Any, state: DriveSyncState,
                                 connection: DriveConnection) -> int:
-        """One notice per lost grant (§7.7, plan Δ6). Retried on the next fan-out when no send was attempted
+        """One notice per lost grant (§7.7, RFC Δ6). Retried on the next fan-out when no send was attempted
         (no channel, a formatter failure, `notify` raising); once a send was attempted the flag stays up,
         delivered or not, because a partial delivery would otherwise repeat every 10 minutes. A good
         grant again clears the flag."""

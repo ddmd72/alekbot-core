@@ -102,7 +102,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   date, folder, photo facets and place (no file content yet). Context fields `drive_query`, `drive_folder`,
   `drive_kind`, `drive_date_from`, `drive_date_to` — names no other intent uses, because the delegate tool keeps the
   first description seen per field name. An empty `drive_query` is a filter-only request; `drive_kind` is a format
-  or a family (`spreadsheet`, `document`, `presentation`, `photo`; plan Δ20), anything else is refused. Results come
+  or a family (`spreadsheet`, `document`, `presentation`, `photo`; RFC Δ20), anything else is refused. Results come
   inside a nonce-tagged, escaped `<drive_document>` wrapper (the same one `open_file_from_drive` text now uses; its
   vision and video results carry the reference-material reminder too) with a
   coverage envelope (`building`, `index_as_of`, `reconnect_needed`). Indexing off → `disabled`, read uncached.

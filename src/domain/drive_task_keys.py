@@ -1,6 +1,6 @@
 """
 Cloud Tasks dedup keys and payloads for `drive_sync` (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §7.1;
-plan Δ2-Δ4). A key, once used, is reserved by Cloud Tasks for up to a day, so every family carries a
+RFC Δ2-Δ4). A key, once used, is reserved by Cloud Tasks for up to a day, so every family carries a
 component that is never reused.
 """
 from __future__ import annotations

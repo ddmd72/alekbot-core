@@ -1,10 +1,10 @@
-"""Review fixes R11 for the Cabinet drive card (USER_DRIVE_INDEXING_RFC §6, §7.7; plan Δ2).
+"""The Cabinet drive card stays usable whatever the index does (USER_DRIVE_INDEXING_RFC §6, §7.7; RFC Δ2).
 
-- The connection card (Connect/Disconnect/Reconnect) never depends on the index read (rev_34 F1, P5).
-- The index block is shown whether or not the drive is connected (rev_34 F2).
-- Each toggle gets its own dedup key (rev_34 F3).
-- The flag is saved before the toggle tick is enqueued, and saved with no queue at all (rev_34 F4).
-- With no drive queue, the log does not claim a scheduler will run (rev_34 F5).
+- The connection card (Connect/Disconnect/Reconnect) never depends on the index read.
+- The index block is shown whether or not the drive is connected.
+- Each toggle gets its own dedup key.
+- The flag is saved before the toggle tick is enqueued, and saved with no queue at all.
+- With no drive queue, the log does not claim a scheduler will run.
 """
 import logging
 from datetime import datetime, timedelta, timezone

@@ -1,7 +1,7 @@
 # Offline place table (`places_v1.tsv`)
 
 The bundled city table that names the place a photo was taken in, for drive photo cards
-(`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §5.3; Slice 1 plan Δ7). Lookups are offline: no geocoding
+(`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §5.3; RFC Δ7). Lookups are offline: no geocoding
 service is called, and a photo's coordinates never leave the service.
 
 ## Attribution

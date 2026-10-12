@@ -1,4 +1,4 @@
-"""Review fixes (rev_39 F2–F4): FixtureDrive dates, cross-process id stability and pass-through facets."""
+"""FixtureDrive dates, cross-process id stability and pass-through facets."""
 from datetime import datetime, timedelta, timezone
 
 from scripts.validation.drive_eval.fixture_drive import DEFAULT_FS_MODIFIED, FixtureDrive, item_id_for

@@ -1,4 +1,4 @@
-"""Review fix R2b round 2 (premise_audit P9): a non-429 4xx from the embedding SDK reaches callers as a typed
+"""A non-429 4xx from the embedding SDK reaches callers as a typed
 LLMClientError carrying the HTTP status, so the drive indexer can tell a per-input refusal (400) from a config
 failure (401/403/404) without importing the SDK.
 

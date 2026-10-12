@@ -1,5 +1,5 @@
 """Drive eval runner: the real tick and the real search over FixtureDrive, offline (FakeEmbeddings, a fixed
-place lookup). USER_DRIVE_INDEXING_RFC §17.8; plan Δ13. Policy over the committed fixture is
+place lookup). USER_DRIVE_INDEXING_RFC §17.8; RFC Δ13. Policy over the committed fixture is
 tests/unit/services/test_drive_index_hostile_tree.py."""
 import json
 from datetime import datetime, timezone

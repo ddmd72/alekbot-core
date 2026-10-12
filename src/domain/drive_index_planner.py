@@ -64,7 +64,7 @@ class Classification:
     content_class: ContentClass
     probe_pending: bool = False
     density_count: int = 0       # childCount the density decision was taken at (0: none taken)
-    density_reset: bool = False  # decided by size alone: an earlier density anchor no longer stands (retro F3)
+    density_reset: bool = False  # decided by size alone: an earlier density anchor no longer stands (§5.2)
 
 
 @dataclass(frozen=True)
@@ -214,7 +214,8 @@ def _refusal_stands(existing: Optional[DriveIndexRecord], rec: DriveIndexRecord)
 
 
 def _stamp(existing: Optional[DriveIndexRecord], ctx: PlanContext, observed: bool) -> int:
-    """Only an observation stamps the epoch (§7.5); a re-plan of a stored record keeps its own (retro F10)."""
+    """Only an observation stamps the epoch (§7.5); a re-plan of a stored record keeps its own, so a record
+    the drive no longer has is still swept."""
     return ctx.epoch if observed or existing is None else existing.seen_epoch
 
 
@@ -241,7 +242,7 @@ def _marker_left(change: DriveChange, existing: Optional[DriveIndexRecord],
     if not (previous_parent.scope is Scope.OPAQUE_ROOT and previous_parent.reason is Reason.OPAQUE_ROOT):
         return False
     if previous_parent.state is RecordState.DELETING:
-        return False   # a dying folder is never re-opened: its tombstone was already applied (retro F1)
+        return False   # a dying folder is never re-opened: its tombstone was already applied (§7.6)
     return change.deleted or change.parent_id != existing.parent_id or not is_marker_child(change.name)
 
 
@@ -308,7 +309,7 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
         if observed and ctx.phase is EpochPhase.ENUMERATING and existing.seen_epoch < ctx.epoch:
             stamped = replace(existing, seen_epoch=ctx.epoch)
         if existing.due_at is None and _has_work(existing):
-            # nothing observable changed, but a version constant did (§12.3): the card is stale (review A B1)
+            # nothing observable changed, but a version constant did (§12.3): the card is stale
             stamped = schedule(stamped, ctx.now, first_seen=False)
         if stamped is existing:
             return ObservationPlan(parent_updates=parent_updates)
@@ -418,7 +419,7 @@ def access_action(enabled: bool, state: Optional[DriveSyncState], connection: Dr
     if not enabled:
         return AccessAction.PURGE_OPT_OUT if state is not None else AccessAction.NOOP_DISABLED
     if state is not None and state.purging:
-        return AccessAction.PURGE_THEN_RESTART   # a started purge always finishes, then onboarding (review A M1)
+        return AccessAction.PURGE_THEN_RESTART   # a started purge always finishes, then onboarding (§7.6)
     lost = not connection.connected or connection.needs_reconnect
     if lost:
         if state is None:

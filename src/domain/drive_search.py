@@ -9,7 +9,7 @@ Public interface:
     search_gate(enabled, state, connection, now) -> gate (.status, .reconnect_needed, .rebuilding)
     request_from_fields(query, folder, kind, date_from, date_to) -> DriveSearchRequest
     require_search_terms(request)       raises ValueError when there is nothing to search for
-    canonical_kind(raw) -> Optional[str];  kinds_for(kind) -> FrozenSet[str]     (plan Δ20)
+    canonical_kind(raw) -> Optional[str];  kinds_for(kind) -> FrozenSet[str]     (RFC Δ20)
     record_visible(rec) / hides_descendants(rec) / in_date_range(rec, request)
     resolve_chain(rec, lookup, root_item_id) -> Optional[(path, ancestor_ids)]
     normalize_path(path) -> str;  path_match(candidate, wanted) -> Optional[str]
@@ -53,7 +53,7 @@ KIND_NAMES: FrozenSet[str] = frozenset({
     "markdown", "text", "csv", "json", "rtf", "msg", "eml", "subtitles", "iwork", "image", "audio", "video",
     "archive", "code", "log", "data_dump", "database", "executable", "disk_image", "other", "folder",
 })
-# Words a user means as several kinds (plan Δ20). "all my spreadsheets" is the RFC's own example (§10.1).
+# Words a user means as several kinds (RFC Δ20). "all my spreadsheets" is the RFC's own example (§10.1).
 KIND_FAMILIES: Mapping[str, FrozenSet[str]] = {
     "spreadsheet": frozenset({"xlsx", "xls", "ods", "csv"}),
     "document": frozenset({"docx", "doc", "odt", "rtf", "pdf"}),
@@ -220,7 +220,7 @@ def _known_kind(word: str) -> Optional[str]:
 
 def canonical_kind(raw: Optional[str]) -> Optional[str]:
     """A kind name ("pdf", "image"), a family ("spreadsheet", plural and aliases too) or a file extension
-    ("jpg" -> "image"). Anything else is refused with the accepted values (plan Δ20): an unknown word would
+    ("jpg" -> "image"). Anything else is refused with the accepted values (RFC Δ20): an unknown word would
     match nothing and read as "no such files"."""
     text = (raw or "").strip().lower().lstrip(".")
     if not text:
@@ -500,17 +500,17 @@ def render_results(result: DriveSearchResult) -> str:
         return "\n".join(out)
     request = result.request
     if request.filter_only and result.matched_at_least and not result.cards:
-        # The fetch cap, not the data, emptied the page (overnight review rev_31 F2).
+        # The fetch cap, not the data, emptied the page: never "no matching files" (§10.2).
         out.append("None of the newest files this search could read passed the filters here; that does not "
                    "mean there are none. Browse the folder with list_files_in_drive, or narrow the dates.")
         return "\n".join(out)
-    # While building, a zero count would state a non-existence the envelope forbids (rev_30 F3).
+    # While building, a zero count would state a non-existence the envelope forbids (§10.4).
     zero_while_building = result.envelope.building and result.matched_total == 0
     if request.filter_only and result.matched_total is not None and not zero_while_building:
         shown = len(result.cards)
         if not (request.folder or request.kind or request.date_from or request.date_to):
             out.append(f"No name words or filters were given: these are the {shown} newest files and folders "
-                       f"in the drive.")   # nothing to match (rev_30 F2)
+                       f"in the drive.")   # nothing to match
         else:
             total = f"at least {result.matched_total}" if result.matched_at_least else str(result.matched_total)
             out.append(f"{total} files and folders match the filters; showing the newest {shown}.")
@@ -535,6 +535,6 @@ def rank_names(recs: Sequence[DriveIndexRecord], scores: Mapping[str, int]) -> L
 
 
 def cover_first(fused: Sequence[DriveIndexRecord], groups: Sequence[FrozenSet[str]]) -> List[DriveIndexRecord]:
-    """The step after RRF (plan Δ17, the §14 seam): records whose name covers every query token rank first,
+    """The step after RRF (RFC Δ17, the §14 seam): records whose name covers every query token rank first,
     RRF order kept inside each group. A query no name covers keeps plain RRF order."""
     return sorted(fused, key=lambda r: 0 if covers_query(r.name_tokens, groups) else 1)

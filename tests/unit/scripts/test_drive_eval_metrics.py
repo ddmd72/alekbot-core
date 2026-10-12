@@ -1,4 +1,4 @@
-"""Recall@K and recorded bars of the drive eval (USER_DRIVE_INDEXING_RFC §17.8; plan Task 0 hit rule)."""
+"""Recall@K and recorded bars of the drive eval (USER_DRIVE_INDEXING_RFC §17.8 hit rule)."""
 from scripts.validation.drive_eval.metrics import (
     OVERALL, CaseOutcome, bar_mismatch, case_hit, lost_cases, make_bars, recall, regressions,
 )

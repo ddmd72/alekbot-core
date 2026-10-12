@@ -282,7 +282,7 @@ the Cabinet hides the drive card only when the adapter itself is absent (To Do k
 same image: a `/worker` that serves `drive_sync` only (plus `/health`), gen2, 2 GiB, concurrency 1, timeout 1800 s,
 min 0, max 1. **Ingress is internal** and the in-app OIDC check stays: a request from outside Google's network gets
 404 before it reaches the app, and on Cloud Run the check fails closed when `SERVICE_ACCOUNT_EMAIL` is unset (plan
-Δ21). The token audience is pinned to the indexer's own URL (`{url}` or `{url}/worker`), so a manual task sent to a
+RFC Δ21). The token audience is pinned to the indexer's own URL (`{url}` or `{url}/worker`), so a manual task sent to a
 run.app URL form other than the one in `INDEXER_URL_DEV` gets 401. The main service (1 GiB) never indexes. The
 scheduler job `alek-bot-dev-start-drive-sync` sends it `start_drive_sync` every 10 minutes (minutes 3, 13, …), and
 it fans out one `drive_sync` per user; it also nudges after bot writes, and the Cabinet toggle enqueues one. All of
@@ -315,7 +315,7 @@ URL silently disables indexing in the live environment, with no alert.
 
 0. **Once:** the Cloud Build service account needs `roles/cloudtasks.queueAdmin`
    ([SCHEDULERS.md](SCHEDULERS.md) § Start Drive Sync).
-   **Indexes first.** They are declared for the `development_` collections only (plan Δ22). `make deploy-indexes`
+   **Indexes first.** They are declared for the `development_` collections only (RFC Δ22). `make deploy-indexes`
    creates the composite indexes from `config/firestore.indexes.json`. `deploy_firestore_indexes.py` skips vector
    entries, so the two `card_vector` indexes come from
    `PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh` (`COLLECTION_PREFIX` defaults
@@ -337,7 +337,7 @@ URL silently disables indexing in the live environment, with no alert.
 3. **Put it in `.env`** as `INDEXER_URL_DEV=<that https:// URL>` (no trailing slash). The `deploy` target passes it
    to Cloud Build as `_INDEXER_URL`, and `cloudbuild-dev.yaml` sets `DRIVE_INDEXER_URL` on both services. It is a key
    of its own, never a reuse of `SERVICE_URL_DEV` or another dual-purpose `.env` key (CLAUDE.md, "Deploy-substitution
-   trap"; the new substitution is declared in plan Δ21). Manual tasks must use this same URL (see the 401 above).
+   trap"; the new substitution is declared in RFC Δ21). Manual tasks must use this same URL (see the 401 above).
 4. **`make deploy` again**, then check:
    ```bash
    gcloud run services describe alek-bot-indexer-dev --region=us-central1 --format=yaml | grep -A1 DRIVE_INDEXER_URL

@@ -7,7 +7,7 @@ and never duplicates identical content; append keeps everything that was there; 
 root is never deleted or moved; a folder's file count is taken before it is deleted.
 
 After every successful mutation it nudges the drive index (USER_DRIVE_INDEXING_RFC §7.1 step 1, §13):
-one `drive_sync` task per mutation carrying every item id the mutation touched (plan Δ3), so the
+one `drive_sync` task per mutation carrying every item id the mutation touched (RFC Δ3), so the
 indexer applies the bot's own write before delta catches up. A nudge is best-effort: it runs inside
 the agent's shielded mutation, after the provider call succeeded, and its failure is logged, never
 raised — the mutation already happened.
@@ -193,7 +193,7 @@ class UserDriveService:
         return DeleteOutcome(item=item, file_count=count, count_capped=capped)
 
     async def _nudge(self, user_id: str, item_ids: Sequence[str]) -> None:
-        """Tell the indexer which items this mutation touched (§7.1 step 1, plan Δ3). Never raises."""
+        """Tell the indexer which items this mutation touched (§7.1 step 1, RFC Δ3). Never raises."""
         ids = tuple(dict.fromkeys(i for i in item_ids if i))
         if self._nudge_queue is None or not ids:
             return

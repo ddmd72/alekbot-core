@@ -1,4 +1,4 @@
-"""Card fixes from the retrospective review of Part A (retro_domain.md F13)."""
+"""A photo taken date without an offset is read as UTC, so it compares with stored dates (§3.1, §8.5)."""
 from datetime import datetime, timezone
 
 from src.domain.drive_card import effective_date

@@ -1,4 +1,4 @@
-"""A small manifest and gold set in the eval's schema (plan Task 0), for the harness tests."""
+"""A small manifest and gold set in the eval's schema (§17.8), for the harness tests."""
 
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 LEASE_HASH = {"file": {"hashes": {"quickXorHash": "bGVhc2U="}}}

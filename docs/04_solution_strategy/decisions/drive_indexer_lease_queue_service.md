@@ -8,15 +8,14 @@
 - **One writer per user is a lease.** A tick takes `DriveSyncState.lease_until` in a Firestore transaction, set to
   start + `TICK_DEADLINE` + a margin (31 min). The lease is sized so that a tick normally ends inside it: no new
   work starts after `TICK_START_BUDGET` (8 min). A tick that still outlives it (a hung await, or Cloud Run answering
-  504 at its timeout without cancelling the coroutine) can no longer overwrite or release the next holder's lease
-  through a save or a release (fix R4, below). Its other writes (the delta cursor, records, a purge's deletion of
-  the whole state document, lease included) are not fenced: that is an open owner item
-  ([run log](../../superpowers/plans/2026-10-12-user-drive-indexing-slice1.run-log.md), Fix R4, "OWNER part … not
-  done"). A tick that finds a live lease answers `busy`; a nudge that finds one re-enqueues itself under a new key.
+  504 at its timeout without cancelling the coroutine) is **fenced** (RFC §7.1, Δ26): it writes nothing once its clock
+  reaches `lease_until - LEASE_MARGIN`, and its sync-state save and delete apply only while it still holds the
+  stored lease, so it can neither overwrite nor purge the state of the tick that took over. A tick that finds a live
+  lease answers `busy` and comes back once per holder; a nudge that finds one re-enqueues itself under a new key.
 - **Own queue** `drive-sync-{suffix}`, `max-concurrent-dispatches=1`, deadline 1800 s, dedup keys per family
   (scheduler bucket, continuation, nudge, toggle). Concurrency 1 caps memory; correctness comes from the lease.
 - **Own service** `alek-bot-indexer-{suffix}` (`indexer_main.py`, same image, gen2, 2 GiB, concurrency 1,
-  min 0, max 1, `--ingress=internal` plus the in-app OIDC check, plan Δ21) runs the whole tick. The main
+  min 0, max 1, `--ingress=internal` plus the in-app OIDC check, RFC Δ21) runs the whole tick. The main
   service fans out and nudges; it never indexes.
 
 **How the code applies it:**
@@ -24,14 +23,17 @@
   the span is `TICK_DEADLINE_S` (1800) + `LEASE_MARGIN` (1 min) from `src/domain/drive_index_params.py`. Release
   happens in the tick's `finally` and clears the lease only when this tick still owns it.
 - `save_sync_state` never writes `lease_owner`/`lease_until` (like the fan-out flags), and `release_lease` clears
-  them only for the owner. Changed after review (fix R4): in the plan a tick that outlived its lease saved its whole
-  state, lease fields included, over the next holder's lease. A purge is not fenced: its `delete_sync_state`
-  (from `_purge`, reachable mid-tick when a page comes from another drive) deletes the whole state document, a newer
-  holder's lease included, and that holder's next `save_sync_state` recreates the document without a lease, so a
-  third tick can take it. Fencing a stale tick's writes beyond the lease fields is the open owner item above.
+  them only for the owner. `save_sync_state(state, owner)` and `delete_sync_state(user_id, owner)` run in a
+  transaction that reads `lease_owner` first and writes only when it is `owner` (None: only while nobody holds it);
+  otherwise they raise `LeaseLost` and write nothing. The tick checks its own clock before every write (the lease
+  travels in a per-tick context variable) and treats `LeaseLost` as a quiet stop (INFO, status `lease_lost`). Both
+  repositories, Firestore and in-memory, implement the same fence.
+- The continuation is enqueued after `release_lease`, on every path, so it can never meet its own parent's lease
+  (RFC Δ27).
 - Busy outcomes: a nudge comes back after `NUDGE_RETRY_DELAY_S` (60 s) under `{user_id}:nudge:{mutation_id}:r{n}`;
-  a toggle that finds a live lease is dropped (plan Δ19c): the running tick re-reads the flag before its write
-  batches (an opt-out enqueues a continuation whose gate purges), and the 10-minute fan-out is the backstop.
+  any other tick (a toggle, a continuation, the fan-out's) comes back once per holder after the same delay, under
+  `{user_id}:cont:busy-{holder}`, which dedups redeliveries and every other busy tick against that holder. The running
+  tick also re-reads the flag before its write batches (an opt-out enqueues a continuation whose gate purges).
 - Queue: provisioned by `cloudbuild-dev.yaml`, never by the app (`GcpTaskQueue.create_queue_if_not_exists` would use
   concurrency 5): one dispatch at a time, one per second, three attempts with 60–600 s backoff. The 1800 s deadline
   is per task: every `drive_sync` enqueue passes `deadline_seconds=TICK_DEADLINE_S`. A manual

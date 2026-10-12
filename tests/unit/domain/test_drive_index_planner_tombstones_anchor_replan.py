@@ -1,4 +1,4 @@
-"""Planner fixes from the retrospective review of Part A (retro_domain.md F1, F3, F10)."""
+"""Planner: tombstone order of a dying repository, the density anchor, and re-plans that keep their epoch."""
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -23,7 +23,7 @@ def folder_rec(item_id, name, scope=Scope.NORMAL, reason=Reason.FOLDER, parent=R
 
 
 class TestDyingRepositoryIsNotReopened:
-    """F1: a marker tombstone that follows its folder's tombstone must not revive the folder (§5.2, §7.6)."""
+    """A marker tombstone that follows its folder's tombstone must not revive the folder (§5.2, §7.6)."""
 
     def test_marker_tombstone_after_its_folder_tombstone_does_not_revive_the_folder(self):
         site = folder_rec("p", "alek-site", scope=Scope.OPAQUE_ROOT, reason=Reason.OPAQUE_ROOT)
@@ -43,7 +43,7 @@ class TestDyingRepositoryIsNotReopened:
 
 
 class TestDensityAnchor:
-    """F3: a size-only re-decision clears the hysteresis anchor, so a refilled dense tree is probed again (§3.6)."""
+    """A size-only re-decision clears the hysteresis anchor, so a refilled dense tree is probed again (§3.6)."""
 
     def test_dense_tree_cleaned_below_half_then_refilled_is_probed_again(self):
         dense = folder_rec("c", "cache", scope=Scope.OPAQUE_ROOT, reason=Reason.DENSE_TREE,
@@ -63,7 +63,7 @@ class TestDensityAnchor:
 
 
 class TestReplanKeepsSeenEpoch:
-    """F10: re-planning a stored record is not an observation; only observations stamp seen_epoch (§7.5)."""
+    """Re-planning a stored record is not an observation; only observations stamp seen_epoch (§7.5)."""
 
     def test_replan_of_stored_record_keeps_seen_epoch(self):
         parent = folder_rec("p", "Docs", seen_epoch=2)

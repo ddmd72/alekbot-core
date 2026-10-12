@@ -1326,7 +1326,7 @@ def create_user_cabinet_blueprint(
 
         Off purges the index (an explicit request, §6); search reads the flag uncached, so the index is
         hidden at once. Either way, with a drive queue wired, a `drive_sync` task is enqueued under a toggle
-        key (plan Δ2): the tick's gate purges or starts onboarding without waiting for the next scheduler
+        key (RFC Δ2): the tick's gate purges or starts onboarding without waiting for the next scheduler
         round. With no drive queue the flag is saved, a WARNING is logged and nothing runs (`queued` false)."""
         try:
             body = await request.get_json(force=True) or {}

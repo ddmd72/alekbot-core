@@ -102,7 +102,7 @@ class TestOidcGate:
         verify.assert_not_called()
 
     async def test_gate_fails_closed_on_cloud_run_without_service_account(self, monkeypatch, caplog):
-        """A dropped secret must not open /worker (plan Δ21)."""
+        """A dropped secret must not open /worker (RFC Δ21)."""
         verify = AsyncMock()
         monkeypatch.setattr(indexer_worker_app, "verify_worker_oidc", verify)
         gate = worker_oidc_gate(None, ("https://indexer.example.invalid",), on_cloud_run=True)

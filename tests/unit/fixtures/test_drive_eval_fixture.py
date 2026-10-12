@@ -1,5 +1,5 @@
 """The eval fixture is well-formed and PII-free (USER_DRIVE_INDEXING_RFC §17.8). Pure JSON checks: this
-test is written before any Slice 1 code (plan Task 0)."""
+test was written before any Slice 1 code (§18)."""
 import json
 import re
 from pathlib import Path
@@ -7,7 +7,7 @@ from pathlib import Path
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 _CASE_TYPES = {"exact", "partial", "translit", "misspelled", "kind", "date", "place", "folder", "filter_only",
                "version_family", "semantic"}
-# Per-format kinds of the policy (§5.1) and the drive-kind families of plan Δ20.
+# Per-format kinds of the policy (§5.1) and the drive-kind families of RFC Δ20.
 _KINDS = {"pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "odt", "ods", "odp", "csv", "markdown", "text",
           "html", "image", "audio", "video", "archive", "code",
           "spreadsheet", "document", "presentation", "photo", "picture"}

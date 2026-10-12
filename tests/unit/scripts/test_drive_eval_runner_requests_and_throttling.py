@@ -1,4 +1,5 @@
-"""Review fixes R13 for the drive eval runner (rev_41 F1, F2, F3). USER_DRIVE_INDEXING_RFC §17.8; plan Δ13, Δ20."""
+"""The drive eval runner: requests as production builds them, throttled ticks, runner edge cases.
+USER_DRIVE_INDEXING_RFC §17.8; RFC Δ13, Δ20."""
 import json
 from types import SimpleNamespace
 
@@ -35,7 +36,7 @@ async def _eval(tmp_path, gold, embeddings=None, record=True):
 
 
 # ---------------------------------------------------------------------------------------------
-# F1 — the request is built exactly as production builds it, and a refused gold case fails fast
+# The request is built exactly as production builds it, and a refused gold case fails fast
 # ---------------------------------------------------------------------------------------------
 
 class TestRequestsAreBuiltAsInProduction:
@@ -73,7 +74,7 @@ class TestRequestsAreBuiltAsInProduction:
 
 
 # ---------------------------------------------------------------------------------------------
-# F2 — a throttled tick waits as long as the service asked, and throttling is bounded
+# A throttled tick waits as long as the service asked, and throttling is bounded
 # ---------------------------------------------------------------------------------------------
 
 class _Throttled(FakeEmbeddings):
@@ -150,7 +151,7 @@ class TestThrottledTicks:
 
 
 # ---------------------------------------------------------------------------------------------
-# F3 — test gaps: also_at coverage, k lower bound, the status check in `hit`, the MAX_ERRORS raise
+# Edge cases: also_at coverage, k lower bound, the status check in `hit`, the MAX_ERRORS raise
 # ---------------------------------------------------------------------------------------------
 
 class TestRunnerGaps:

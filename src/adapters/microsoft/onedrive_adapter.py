@@ -67,10 +67,10 @@ _RETRIES = 3
 _MAX_RETRY_AFTER_S = 30.0
 _UNKNOWN_PARENT = "…"
 # Provider-transport default (also used for a failed token refresh): a Retry-After that is missing or
-# an HTTP date. The tick continues after it (Part A keeps its own default for LLM errors).
+# an HTTP date. The tick continues after it (the tick has its own backoff for embedding errors).
 _THROTTLE_HINT_S = 60.0
 # Bound on one Graph call (aiohttp's default is 300 s), well under TICK_DEADLINE_S: a hanging call
-# ends as a TimeoutError instead of holding the user's tick (premise_audit P8).
+# ends as a TimeoutError instead of holding the user's tick (RFC Δ9, §8.2).
 GRAPH_CALL_TIMEOUT_S = 60.0
 # The App Folder item. Its parentReference.driveId is the drive id; the OAuth callback
 # (src/web/oauth_app.py, _read_drive_id) reads the same field of the same call, so the two compare equal.
@@ -307,7 +307,7 @@ class OneDriveAdapter(UserDrivePort):
             if (bound_drive and drive_id and bound_drive != drive_id) or \
                     (bound_root and root_id and bound_root != root_id):
                 # Never follow it: Graph may refuse it with something other than 410, which would fail
-                # every tick before the per-page drive check runs (retro F1). The restart page carries
+                # every tick before the per-page drive check runs. The restart page carries
                 # the fresh drive id, so the tick sees the switch.
                 logger.warning(f"Drive change cursor belongs to another drive or App Folder for user "
                                f"{user_id[:8]}; restarting enumeration")

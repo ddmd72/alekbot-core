@@ -1,4 +1,4 @@
-"""Review fix (rev_36 F1): two RFC §6 clauses of the Cabinet drive disclosure, each pinned by a fragment
+"""Two RFC §6 clauses of the Cabinet drive disclosure, each pinned by a fragment
 only that clause contains.
 
 The shared `DISCLOSURE_FRAGMENTS` pins the telemetry clause with "30 days", which the 30-day-keep clause

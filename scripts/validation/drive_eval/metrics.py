@@ -2,7 +2,7 @@
 Recall@K and the recorded bars (USER_DRIVE_INDEXING_RFC §17.8). Pure.
 
 A case is a hit when every expected path is among the paths of its top K cards; a case with more than
-K expected paths is a hit when K of them are (plan Task 0). A case may ask for a smaller K (`"k": 1`:
+K expected paths is a hit when K of them are (RFC §17.8). A case may ask for a smaller K (`"k": 1`:
 the file must come first), or for fewer hits (`"min_hits": 5`: five of a trip's twelve photos, when the
 rest of its top K is the trip's folder and other right answers). A collapsed duplicate card covers its own
 path and its `also_at` paths.

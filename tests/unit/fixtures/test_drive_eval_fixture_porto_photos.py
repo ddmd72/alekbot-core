@@ -1,4 +1,4 @@
-"""Review fixes R5 (retro_domain F6): every photo in the eval fixture's Photos/Porto folder must resolve to
+"""Every photo in the eval fixture's Photos/Porto folder must resolve to
 Porto through the bundled place table, or the gold cases place-porto-en / place-porto-ru can never pass."""
 import json
 from pathlib import Path

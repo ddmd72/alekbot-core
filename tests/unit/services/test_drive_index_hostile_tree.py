@@ -1,4 +1,4 @@
-"""Policy and scope over a hostile tree (USER_DRIVE_INDEXING_RFC §17.2, §5.2, §5.5; plan Δ16).
+"""Policy and scope over a hostile tree (USER_DRIVE_INDEXING_RFC §17.2, §5.2, §5.5; RFC Δ16).
 
 The real tick runs over the eval fixture (tests/fixtures/drive_eval/tree.json) through the eval's FixtureDrive,
 imported as a namespace package like tests/unit/validation/test_price_consensus.py. Every listed path has the
@@ -31,7 +31,7 @@ EXPECTED = {
     "Projects/venv-tools": (OR, Reason.OPAQUE_ROOT),
     "Projects/venv-tools/pyvenv.cfg": (IO, Reason.KIND_NOT_ADMITTED),
     "Projects/venv-tools/lib/python3.13/site-packages/requests/mod_00.py": None,
-    # an extracted repository without .git: only the tool-made folders collapse (Δ16)
+    # an extracted repository without .git: only the tool-made folders collapse (RFC Δ16)
     "Projects/site-export": (N, Reason.FOLDER),
     "Projects/site-export/src/app.js": (N, Reason.KIND_NOT_ADMITTED),
     "Projects/site-export/node_modules": (OR, Reason.OPAQUE_ROOT),

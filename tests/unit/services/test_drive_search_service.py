@@ -163,7 +163,7 @@ class TestEnvelope:
         assert not (await w.search("doc")).envelope.building
 
     async def test_a_first_seen_or_relisting_record_due_sets_building(self, w):
-        """Class 2 holds first-seen records and re-listings (plan Δ18): one limit-1 query decides."""
+        """Class 2 holds first-seen records and re-listings (RFC Δ18): one limit-1 query decides."""
         folder = w.drive.add("Old", folder=True)
         await w.settle()
         assert not (await w.search("old")).envelope.building
@@ -405,7 +405,7 @@ class TestFolderScope:
         assert paths(result) == ["Inbox/Lease agreement.pdf"] and result.matched_total == 1
 
 
-# --- scale: the name stream and the cover rule (plan Δ17; review E findings 1, 2, 6) ---------------
+# --- scale: the name stream and the cover rule (RFC Δ17) ---------------
 
 def names(result):
     return [c.name for c in result.cards]
@@ -443,7 +443,7 @@ class TestScale:
         batches = w.repo.name_keys[before:]
         whole = [b for b in batches if len(b) == 1 and b[0].startswith("w:")]
         assert ("w:4912",) in whole and ("w:img",) in whole
-        # Every whole-token and trigram key of this short query has its own call (premise audit P1): no
+        # Every whole-token and trigram key of this short query has its own call (RFC Δ17): no
         # common key shares a capped page with a rare one, so nothing is left for a remainder call.
         assert sorted(batches) == sorted([("w:img",), ("w:4912",), ("w:имг",),
                                           ("t:img",), ("t:491",), ("t:912",), ("t:имг",)])

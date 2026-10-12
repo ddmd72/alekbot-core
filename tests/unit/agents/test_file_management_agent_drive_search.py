@@ -1,5 +1,5 @@
 """search_files_in_drive and the untrusted wrapper on open_file_from_drive
-(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §10.4, D2; plan Δ11)."""
+(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §10.4, D2; RFC Δ11)."""
 import re
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock

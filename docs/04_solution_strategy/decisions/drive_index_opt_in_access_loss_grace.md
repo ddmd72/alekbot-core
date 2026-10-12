@@ -20,22 +20,25 @@
 - A purge first writes `purging=True`, so a started purge always finishes (`PURGE_THEN_RESTART`), then deletes in
   batches of `RECORD_WRITE_BATCH` within the tick's time budget and enqueues its own continuation. With indexing still
   on (drive switch, restart), the last batch enqueues onboarding of the connected drive at once.
-- Both directions of the Cabinet toggle enqueue a `drive_sync` task under the `toggle` key family (plan Δ2), so
+- Both directions of the Cabinet toggle enqueue a `drive_sync` task under the `toggle` key family (RFC Δ2), so
   onboarding starts at once instead of after up to one tick interval.
-- An opt-out seen mid-tick (the gate is re-read before write batches, at most every 5 s, plan Δ19b) drops the tick's
-  result and enqueues a continuation; that continuation's gate purges. Changed after review (premise audit P2): the
-  plan's tick only dropped the result, leaving the purge to a fan-out that skipped the user for up to 30 min.
+- An opt-out seen mid-tick (the gate is re-read before write batches, at most every 5 s, RFC Δ19b) drops the tick's
+  result and enqueues a continuation; that continuation's gate purges. Dropping the result alone would leave the
+  purge to a fan-out that skips the user for up to 30 min on the continuation marker.
 - A drive switch is caught twice. The gate compares `drive_id`s, and the delta cursor carries the drive id and App
   Folder id it came from: a mismatch with the fresh App Folder read raises a resync before the old URL is followed,
-  and the first page of the restarted enumeration, from the other drive, purges. Changed after review (fix R3): the
-  plan's cursor was unbound, so an account switch whose connect-time drive id read failed looped on `error`.
+  and the first page of the restarted enumeration, from the other drive, purges. An unbound cursor would loop on
+  `error` after an account switch whose connect-time drive id read failed.
 - A rejected refresh during a tick sets `needs_reconnect` and saves `last_error=RECONNECT_NEEDED` onto the latest
-  saved state; page-by-page progress (cursor, epoch) is kept. Changed after review (fix R2): the plan's handlers
-  wrote onto the tick-start copy and lost that progress.
-- The one reconnect notice (plan Δ6) is posted by the fan-out on the main service, not by the indexer: it loads the
-  user's agents first, sets `reconnect_notified` before sending and rolls it back only when nothing could have been
-  sent. A cut-off notice is never repeated but may be lost, at most once, as on the Gmail path. Changed after review
-  (fixes R7, R8): the plan's order could repeat a notice, and lost it whenever the user's agents were not loaded.
+  saved state, never onto the tick-start copy, so page-by-page progress (cursor, epoch) is kept.
+- The one reconnect notice (RFC Δ6) is posted by the fan-out on the main service, not by the indexer: it loads the
+  user's agents first (the formatter agent is registered only while they are loaded) and sets `reconnect_notified`
+  before sending. The flag comes down only when no send was attempted (no channel, a formatter failure, `notify`
+  raising; `NotifyResult.sent`), so the next fan-out retries; once a send was attempted it stays up, so a notice cut
+  off after it left is never repeated, at the price of one that may be lost.
+- The fan-out creates a minimal sync state for a user with indexing on, a working grant and no state (RFC Δ28), so
+  the staleness alert covers a user whose ticks never land; never under a lost grant, where it would restart the
+  grace period and its notice.
 - `is_stale` is false while `access_lost_at` is set: a lost grant is the user's to fix, not an ops alert.
 
 **Rejected alternatives:**

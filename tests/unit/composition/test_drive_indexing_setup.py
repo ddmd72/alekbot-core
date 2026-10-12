@@ -1,4 +1,4 @@
-"""Drive indexing wiring (USER_DRIVE_INDEXING_RFC §4, §12.5, §13; plan Δ1)."""
+"""Drive indexing wiring (USER_DRIVE_INDEXING_RFC §4, §12.5, §13; RFC Δ1)."""
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

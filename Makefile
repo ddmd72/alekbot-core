@@ -53,7 +53,7 @@ _VOICE_RELAY_URL = $(patsubst https://%,wss://%,$(VOICE_RELAY_URL_DEV))
 # DRIVE_INDEXER_URL on BOTH services (the main service enqueues drive_sync to it;
 # the indexer enqueues its own continuations to it). Never a dual-purpose key read
 # from local .env (CLAUDE.md, "Deploy-substitution trap"). It is a declared
-# exception to RFC §12.4a (plan Δ21), like VOICE_RELAY_URL_DEV.
+# exception to RFC §12.4a (RFC Δ21), like VOICE_RELAY_URL_DEV.
 # Prerequisite, once: the Cloud Build service account needs
 # roles/cloudtasks.queueAdmin to create/update drive-sync-dev (SCHEDULERS.md §
 # Start Drive Sync). Two-pass first deploy: alek-bot-indexer-dev has no URL until

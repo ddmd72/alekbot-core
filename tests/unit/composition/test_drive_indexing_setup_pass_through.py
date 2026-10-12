@@ -1,4 +1,4 @@
-"""Review fixes R8 for drive indexing composition (rev_24 F1, F2; rev_25 F1)."""
+"""Drive indexing composition passes every collaborator through and uses the real repository (RFC §13)."""
 from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
@@ -12,7 +12,7 @@ from src.ports.oauth_credentials_port import OAuthCredentialsPort
 
 class TestSchedulerBuilderPassThrough:
     def test_notifier_alert_sink_and_ensure_agents_reach_the_service(self):
-        """rev_24 F1 + rev_25 F1: dropping any of them silences the reconnect notice or the alert."""
+        """Dropping any of them silences the reconnect notice or the alert."""
         notifier, alert_sink = object(), object()
 
         async def ensure_agents(user_id: str) -> dict:
@@ -29,7 +29,7 @@ class TestSchedulerBuilderPassThrough:
 
 class TestContainerDriveIndexRepositoryConcrete:
     def test_configured_container_uses_the_firestore_repository(self, monkeypatch):
-        """rev_24 F2: the main service reads the real index, never an in-memory stand-in."""
+        """The main service reads the real index, never an in-memory stand-in."""
         monkeypatch.setenv("APP_ENV", "test")
         monkeypatch.delenv("DRIVE_INDEXER_URL", raising=False)
         config = {

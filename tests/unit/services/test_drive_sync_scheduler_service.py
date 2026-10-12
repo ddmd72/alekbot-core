@@ -1,5 +1,5 @@
 """DriveSyncSchedulerService: fan-out, staleness alert, reconnect notice
-(USER_DRIVE_INDEXING_RFC §7.1, §7.7, §12.1; plan Δ5, Δ6)."""
+(USER_DRIVE_INDEXING_RFC §7.1, §7.7, §12.1; RFC Δ5, Δ6)."""
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -185,7 +185,7 @@ class TestStaleness:
 
     async def test_never_succeeded_user_alerts_after_stale_window(self, env):
         """A broken onboarding: every tick failed, so there is no last_success_at; created_at is the
-        baseline (review D M2)."""
+        baseline (§12.1)."""
         await env.repo.save_sync_state(DriveSyncState(user_id="u", created_at=env.clock.now,
                                                       last_error=ErrorCategory.PROVIDER_ERROR))
         env.clock.advance(STALE_ALERT_AFTER.total_seconds() - 60)

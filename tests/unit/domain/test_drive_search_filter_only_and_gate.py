@@ -1,5 +1,5 @@
-"""Drive search domain review fixes (overnight reviews rev_30 F2, F3, F5 and rev_31 F2;
-USER_DRIVE_INDEXING_RFC §10.1, §10.2)."""
+"""Drive search domain: filter-only answers, the building rule, date filters and the gate's drive id guard
+(USER_DRIVE_INDEXING_RFC §10.1, §10.2)."""
 from datetime import datetime, timezone
 
 import pytest
@@ -25,7 +25,7 @@ def card(item_id):
     return make_card(rec(item_id), f"{item_id}.pdf", f"{item_id} | PDF document", "a1b2c3d4e5f60718")
 
 
-# --- rev_30 F2: an all-empty request has no filters to match ---------------------------------------
+# --- An all-empty request has no filters to match ----------------------------------------------
 
 class TestNoFiltersGiven:
     def test_all_empty_request_says_newest_files_not_match_the_filters(self):
@@ -42,7 +42,7 @@ class TestNoFiltersGiven:
         assert "at least 50 files and folders match the filters; showing the newest 1." in render_results(result)
 
 
-# --- rev_30 F3: while building, no "0 files match" next to "do not say a file does not exist" -------
+# --- While building, no "0 files match" next to "do not say a file does not exist" -------
 
 class TestBuildingFilterOnly:
     def test_building_filter_only_drops_the_zero_count_line(self):
@@ -64,7 +64,7 @@ class TestBuildingFilterOnly:
         assert "3 files and folders match" in render_results(result)
 
 
-# --- rev_31 F2: a capped filter-only page with no survivors is not "no matches" ----------------------
+# --- A capped filter-only page with no survivors is not "no matches" ----------------------
 
 class TestFilterOnlyHonesty:
     def test_capped_page_with_no_cards_says_that_does_not_mean_none(self):
@@ -93,7 +93,7 @@ class TestFilterOnlyHonesty:
         assert "No name words or filters were given" not in text
 
 
-# --- rev_30 F5: dates and the gate guard (test gaps) --------------------------------------------------
+# --- Dates and the gate guard ----------------------------------------------------------------------
 
 class TestDateFilter:
     def test_an_undated_record_never_passes_a_date_filter(self):

@@ -1,6 +1,6 @@
-"""Pins RFC-required planner and name-key behaviour that no other test pinned (retro_domain.md F15).
+"""Pins RFC-required planner and name-key behaviour that no other test pinned.
 
-Each test names the surviving mutant it kills. The code was already right; these tests keep it right.
+Each test kills a mutant that survived the rest of the suite. The code was already right; these tests keep it right.
 """
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone

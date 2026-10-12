@@ -601,7 +601,7 @@ class FileManagementAgent(BaseAgent):
             return self._ok(message, f"'{item.path}' is {format_size(item.size_bytes)}; files above "
                                      f"{format_size(e.limit_bytes)} cannot be opened yet.", [item])
         content = await self._conversion_service.resolve_content(ref, user_id)
-        # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, plan Δ11).
+        # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11).
         wrapped = wrap_untrusted(f"{drive_label(item)}\n{content}", nonce=secrets.token_hex(8),
                                  ref=item.ref, path=item.path)
         return self._ok(message, f"{REFERENCE_REMINDER}\n{wrapped}", [item])

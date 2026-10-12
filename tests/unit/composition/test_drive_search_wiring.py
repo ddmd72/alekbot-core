@@ -38,7 +38,7 @@ class TestContainer:
         # The wiring is under test, not the adapter: any UserDrivePort will do.
         monkeypatch.setattr(service_container, "OneDriveAdapter", lambda **kw: MagicMock(spec=UserDrivePort))
         c = _container(monkeypatch, MICROSOFT_TODO_CLIENT_ID="cid", MICROSOFT_TODO_CLIENT_SECRET="sec")
-        assert c.user_drive is not None and c.drive_index_repo is not None   # Part D wires the repository
+        assert c.user_drive is not None and c.drive_index_repo is not None   # drive indexing wires the repository
         assert c.drive_search_service is not None
         assert c.drive_search_service._repo is c.drive_index_repo
         assert c.drive_search_service._drive is c.user_drive

@@ -1,4 +1,4 @@
-"""WorkerHandler start_drive_sync delegates to DriveSyncSchedulerService (plan Δ5)."""
+"""WorkerHandler start_drive_sync delegates to DriveSyncSchedulerService (RFC Δ5)."""
 from unittest.mock import AsyncMock, MagicMock
 
 from src.handlers.worker_handler import WorkerHandler

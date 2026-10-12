@@ -64,7 +64,7 @@ def build_drive_task_queue(config: Mapping[str, Any], env_config: EnvironmentCon
 
 
 def build_place_lookup() -> PlaceOf:
-    """Offline place names from the bundled city table (§5.3, plan Δ7); loaded once per process."""
+    """Offline place names from the bundled city table (§5.3, RFC Δ7); loaded once per process."""
     return PlaceIndex(load_place_rows()).lookup
 
 
@@ -74,7 +74,7 @@ def build_drive_sync_scheduler(*, repo: DriveIndexRepository, queue: TaskQueue, 
                                alert_sink: Optional[AlertSinkPort],
                                ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None,
                                ) -> DriveSyncSchedulerService:
-    """The `start_drive_sync` fan-out (plan Δ5, Δ6). The provider name stays here, in composition:
+    """The `start_drive_sync` fan-out (RFC Δ5, Δ6). The provider name stays here, in composition:
     the service only sees a callable listing the users with stored drive credentials."""
     def connected_users() -> Awaitable[List[str]]:
         return oauth_credentials.list_users_by_provider(ONEDRIVE_PROVIDER)

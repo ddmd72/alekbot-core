@@ -56,7 +56,7 @@ class GeminiEmbeddingAdapter(EmbeddingService):
     """Adapter: Gemini-specific embedding implementation (v2 model, 768-dim)."""
 
     # The vector space every embedding of this adapter lives in. Composition injects it into the
-    # drive index, which stamps it on each card (USER_DRIVE_INDEXING_RFC §12.3; plan Δ1: a class
+    # drive index, which stamps it on each card (USER_DRIVE_INDEXING_RFC §12.3; RFC Δ1: a class
     # attribute, not a port member). A model, dimension or task-prefix (_TASK_PREFIXES) change alters
     # every vector and must change this string.
     EMBEDDING_SPACE = f"{_MODEL}/{_OUTPUT_DIM}"

@@ -1,4 +1,5 @@
-"""Tick-level twins of the retrospective review fixes of Part A (retro_domain.md F1, F10)."""
+"""Tick level: a deleted repository stays deleted, and a sweep spanning ticks removes what the drive lost
+(§7.5, §7.6)."""
 from dataclasses import replace
 
 import pytest
@@ -10,7 +11,7 @@ from .test_drive_indexing_service import World
 
 
 class TestDeletedRepositoryStaysDeleted:
-    """F1: the feed delivers the folder's tombstone before its `.git` tombstone (no post-order promise)."""
+    """The feed delivers the folder's tombstone before its `.git` tombstone (no post-order promise)."""
 
     @pytest.mark.parametrize("page_size", [50, 1])
     async def test_folder_tombstone_then_git_tombstone_removes_the_repository(self, page_size):
@@ -32,7 +33,7 @@ class TestDeletedRepositoryStaysDeleted:
 
 
 class TestSweepSpanningTicks:
-    """F10: a record gone from the drive must not escape a sweep that spans ticks by being re-planned."""
+    """A record gone from the drive must not escape a sweep that spans ticks by being re-planned."""
 
     async def test_unresolved_ghost_resolved_mid_sweep_is_still_swept(self, monkeypatch):
         monkeypatch.setattr(svc_mod, "CASCADE_OPS_PER_TICK", 2)

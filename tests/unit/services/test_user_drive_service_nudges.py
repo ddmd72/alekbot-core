@@ -1,5 +1,5 @@
 """UserDriveService nudges the drive index after each successful mutation
-(USER_DRIVE_INDEXING_RFC §7.1 step 1, §13; plan Δ3)."""
+(USER_DRIVE_INDEXING_RFC §7.1 step 1, §13; RFC Δ3)."""
 from unittest.mock import AsyncMock
 
 import pytest

@@ -1,4 +1,4 @@
-"""Review fixes R2b of the tick (premise_audit.md P2, P8, P9)."""
+"""The tick: an opt-out mid-tick, item calls within the time budget, and card refusals (§7.1, §8.2)."""
 from dataclasses import replace
 
 import pytest
@@ -21,7 +21,7 @@ _SLOW_S = 200.0   # one slow provider call; three of them overrun the tick's sta
 
 
 class TestOptOutMidTickContinues:
-    """P2: an opt-out met mid-tick enqueues a continuation, so a lost toggle task does not leave the purge to a
+    """An opt-out met mid-tick enqueues a continuation, so a lost toggle task does not leave the purge to a
     fan-out that skips the user for 30 min on the stale `continuation_enqueued_at`."""
 
     @staticmethod
@@ -96,7 +96,7 @@ async def _timed_ticks(w, tick_start: dict, n: int):
 
 
 class TestItemCallsRespectTheTimeBudget:
-    """P8: no item call (probe, parent lookup, re-listing page) starts after the tick's start budget."""
+    """No item call (probe, parent lookup, re-listing page) starts after the tick's start budget."""
 
     async def test_inline_and_work_off_probes_stop_at_the_budget_and_resume(self):
         w = World(page_size=50)
@@ -156,7 +156,7 @@ class _RefusingEmbeddings(FakeEmbeddings):
 
 
 class TestOneRefusedCardDoesNotStallTheUser:
-    """P9: a card text the embedding service refuses backs off alone; the rest of the batch is stored (§8.2)."""
+    """A card text the embedding service refuses backs off alone; the rest of the batch is stored (§8.2)."""
 
     @pytest.mark.parametrize("exc", [LLMClientError("400 INVALID_ARGUMENT", http_status=400)])
     async def test_refused_card_backs_off_alone(self, exc):
@@ -184,7 +184,7 @@ class TestOneRefusedCardDoesNotStallTheUser:
 
 
 class TestSystemicEmbeddingErrorsMoveNoRecord:
-    """P9 round 2: only a definite bad-input refusal (LLMClientError 400) backs a card off alone. Every other
+    """Only a definite bad-input refusal (LLMClientError 400) backs a card off alone. Every other
     embedding error is systemic (RFC §8.2, Systemic row): the tick ends with `last_error` set, and the failing record
     is not moved: no card, `attempts` untouched, not backed off. The batch's other vectors are kept."""
 

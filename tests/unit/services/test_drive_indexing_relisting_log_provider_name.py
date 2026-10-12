@@ -1,4 +1,4 @@
-"""Final-review fixes R14 (final_review.md N1, N2): the gone re-listing target is logged; no provider name in the
+"""The gone re-listing target is logged; no provider name in the
 indexing domain docstrings."""
 import logging
 from dataclasses import replace
@@ -10,7 +10,7 @@ from .test_drive_indexing_service import World
 
 
 class TestRelistingTargetGoneIsLogged:
-    """N1: the `DriveItemNotFoundError` handler of the re-listing path must log before it handles."""
+    """The `DriveItemNotFoundError` handler of the re-listing path must log before it handles."""
 
     async def test_gone_relisted_folder_logs_one_info_line(self, caplog):
         w = World()
@@ -30,7 +30,7 @@ class TestRelistingTargetGoneIsLogged:
 
 
 class TestNoProviderNameInDomainDocstrings:
-    """N2: the provider is named only in src/adapters/microsoft/ (plan Global Constraints)."""
+    """The provider is named only in src/adapters/microsoft/ (Step 1 §4.3)."""
 
     def test_planner_module_docstring(self):
         assert "Graph" not in (planner.__doc__ or "")

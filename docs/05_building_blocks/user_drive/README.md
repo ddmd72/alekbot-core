@@ -25,7 +25,7 @@ Cloud Scheduler every 10 min (minutes 3, 13, …) → main /worker start_drive_s
 Step 1 mutation (save, move, delete, …) → UserDriveService → drive_sync task (nudge key, item ids)
 
 Cloud Tasks queue drive-sync-dev (max-concurrent-dispatches=1)
-  → alek-bot-indexer-dev /worker (indexer_main.py; ingress internal + OIDC, plan Δ21)
+  → alek-bot-indexer-dev /worker (indexer_main.py; ingress internal + OIDC, RFC Δ21)
       → DriveIndexingService.tick(user_id, nudge)
           gate → lease → observe (nudged items, then delta pages) → work off due records → continue
           → UserDrivePort (get_changes / get_change / list_children_changes)
@@ -63,22 +63,22 @@ tick does, tested without Firestore, Graph or a clock.
   are derived from the `parent_id` chain at read time, so a folder rename touches no descendant.
 - **One sync state per user** (`DriveSyncState`, doc id `user_id`): delta cursor, drive and root ids, epoch and
   phase, lease, `observed_as_of`, `access_lost_at`, `purging`, `systemic_failures`, applied versions, counters.
-  `save_sync_state` never writes the lease fields, and `release_lease` clears them only for the owner (fix R4), so
-  a stale tick's save or release cannot touch a newer holder's lease. Its other writes are not fenced (an open owner
-  item). These include the cursor, the records, and a purge's deletion of the whole state document, lease included.
+  `save_sync_state` never writes the lease fields, and `release_lease` clears them only for the owner. A tick
+  writes nothing once its clock reaches `lease_until - LEASE_MARGIN`, and `save_sync_state` / `delete_sync_state`
+  apply only while it still holds the stored lease (`LeaseLost` otherwise, a quiet stop; RFC Δ26).
   A subtree that must be listed again (a folder leaving an opaque root, or restored after a delete) is a flag on the
-  folder's own record (`reobserve_pending`, `reobserve_cursor`), worked page by page in class 2 (plan Δ18).
+  folder's own record (`reobserve_pending`, `reobserve_cursor`), worked page by page in class 2 (RFC Δ18).
 - **Policy (§5).** Slice 1 admits no content kind: every file is `metadata_only` (reason `kind_not_admitted`, or a never-download rule) with a card.
   Dot-names, secret-shaped names (`id_rsa*`, `*.kdbx`, …), OS artefacts and remote/package/malware items keep a card
   with their reason. A dot-folder, a folder with a `.git` or `pyvenv.cfg` child, a `node_modules`, `__pycache__` or
-  `site-packages` folder anywhere (plan Δ16), or a dense tree (more than 500 children, mostly neither document nor
+  `site-packages` folder anywhere (RFC Δ16), or a dense tree (more than 500 children, mostly neither document nor
   media, judged from a probe of the first 200 and kept until the child count doubles or halves) becomes one
   `opaque_root` card. The files inside get no record; its subfolders and the marker are kept without a card, so a
   deleted `.git` re-opens the folder. Why each rule exists:
   [decisions/drive_problem_content_classes.md](../../04_solution_strategy/decisions/drive_problem_content_classes.md).
 - **Card** (`card_text`): `name | kind | key facets`, where the facets are the photo's taken date, camera,
   `place_name`, image dimensions, and video duration and dimensions. The place name is resolved offline from
-  `src/assets/geo/places_v1.tsv` (GeoNames, plan Δ7: the heaviest place within 15 km, else the nearest within
+  `src/assets/geo/places_v1.tsv` (GeoNames, RFC Δ7: the heaviest place within 15 km, else the nearest within
   50 km) and stored on the record. A card is re-embedded only when its hash changes.
 
 ---
@@ -96,7 +96,7 @@ tick does, tested without Firestore, Graph or a clock.
    epoch; the sweep at its end deletes what it did not see.
 4. **Work off** due records after a complete round, by class: 0 edits and nudges, 1 cascades (folder deletes,
    rescopes, probes), 2 first-seen cards and subtree re-listings, 3 maintenance (version upgrades, card-cap
-   release), 4 retries. When one class runs out of budget, lower classes wait (plan Δ19).
+   release), 4 retries. When one class runs out of budget, lower classes wait (RFC Δ19).
 5. **Continue**: if anything is left, enqueue a continuation; release the lease.
 
 Purge is keyed on facts only, never on an exception: a rejected refresh sets `needs_reconnect` and stops. Errors are
@@ -105,7 +105,7 @@ classified by what the call is about (§8.2):
   backoff). After `MAX_ATTEMPTS` a probe or a re-listing is settled without it (not dense; the subtree not
   re-listed), and a record whose parent lookup keeps failing is removed as an orphan (a folder with its stored
   subtree); a failed nudge read is left to the delta feed. Item calls share
-  one budget (`ITEM_CALLS_PER_TICK` = 20, plan Δ9) and also stop once the tick's time is spent. A change that fails inside a page is skipped and logged at ERROR, and
+  one budget (`ITEM_CALLS_PER_TICK` = 20, RFC Δ9) and also stop once the tick's time is spent. A change that fails inside a page is skipped and logged at ERROR, and
   the page still applies. A card whose embedding is refused with HTTP 400 backs off alone.
 - **Systemic.** The delta feed, the token endpoint, any other embedding error and the repository end the tick. A
   throttled drive waits the throttle hint (the provider's Retry-After; a flat 60 s for a failed token refresh);
@@ -129,12 +129,12 @@ Lease, queue and service: [decisions/drive_indexer_lease_queue_service.md](../..
   query order, plus one query for the remaining keys; they run in parallel, are merged by id and cut by the
   `name_match` floor (one whole token or three trigrams). Firestore returns the first 100 matches by id, so a shared
   query would let a common key crowd out the target: `4912` among 1 000 `IMG_…` names, or a misspelled `contarto`.
-  After RRF, records whose name covers every query token rank first (plan Δ17). No cosine threshold; `K = 8` and
+  After RRF, records whose name covers every query token rank first (RFC Δ17). No cosine threshold; `K = 8` and
   Smart's judgement bound the output. Fewer than K results with a full page widens the fetch once, to 1 000: at
   most 18 parallel queries per round (17 name, 1 kNN), 36 with the widening.
 - Without a query (filter-only, "all my spreadsheets"): a plain query on kind and `effective_date`, newest first.
   `drive_kind` takes a format (`pdf`, `xlsx`, …) or a family: `spreadsheet`, `document`, `presentation`, `photo`
-  (plan Δ20); an unknown value is refused. Date-only bounds are UTC days. When the fetch cap, not the data, empties
+  (RFC Δ20); an unknown value is refused. Date-only bounds are UTC days. When the fetch cap, not the data, empties
   the page, the answer says so and points to `list_files_in_drive`; a request with no words and no filters is
   answered as "the N newest files"; while building, no "0 match" count is given.
 - `building` is true while an epoch is not idle or a first-seen record (class 2) is due.

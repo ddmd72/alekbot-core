@@ -1,5 +1,5 @@
-"""Review fix R8 (rev_25 F1): the reconnect notice loads the user's agents before `notify`
-(USER_DRIVE_INDEXING_RFC §7.7; plan Δ6). The formatter agent is eager and only registered while the
+"""The reconnect notice loads the user's agents before `notify`
+(USER_DRIVE_INDEXING_RFC §7.7; RFC Δ6). The formatter agent is eager and only registered while the
 user's agent set is cached, so on a cold start or after idle eviction `route_message` answers
 "Unknown recipient" and the one notice is lost unless the agents are loaded first."""
 from typing import List

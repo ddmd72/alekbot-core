@@ -1,4 +1,5 @@
-"""Review fixes R11 for indexer_main wiring (USER_DRIVE_INDEXING_RFC §5.3, §12.5; rev_27 F2, F3).
+"""indexer_main wiring: the Firestore database, the place lookup, the first-pass log level (USER_DRIVE_INDEXING_RFC
+§5.3, §12.5).
 
 Google clients are replaced the same way as in `test_indexer_main.py`, so nothing leaves the process."""
 import logging
@@ -53,7 +54,7 @@ class TestIndexerWiring:
         wired["_client"].assert_called_once_with(project="p", database="us-production")
 
     def test_indexing_gets_the_place_lookup(self, wired):
-        """Photo cards are named by place (§5.3, plan Δ7)."""
+        """Photo cards are named by place (§5.3, RFC Δ7)."""
         indexer_main.build_app()
         assert wired["place_of"] is _place_of
 

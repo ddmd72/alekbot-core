@@ -1,4 +1,4 @@
-"""Review fix R4 (retro_drive_storage F2, LOCAL part): `save_sync_state` never writes the lease.
+"""`save_sync_state` never writes the lease.
 
 A tick that outlived its lease (USER_DRIVE_INDEXING_RFC §7.1) still holds a state naming itself as the lease owner.
 If its final `save_sync_state` writes that lease back, its `finally: release_lease` clears the lease of the tick that

@@ -1,5 +1,5 @@
 """
-Drive search eval (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §17.8; plan Δ13).
+Drive search eval (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §17.8; RFC Δ13).
 
 Runs the real tick (DriveIndexingService) and the real search (DriveSearchService) on the in-memory
 repository over a synthetic, PII-free drive (tests/fixtures/drive_eval/tree.json), then measures

@@ -593,16 +593,16 @@ agents first and sets `reconnect_notified` before sending, so a cut-off notice i
 and nudges after each Step 1 mutation. **Slice 1 admits no content kind:** every file is
 `metadata_only` (reason `kind_not_admitted`, or a never-download rule) with a card `name | kind | key facets` (photo date, camera, an offline
 `place_name` from `src/assets/geo/places_v1.tsv`); dot-folders, folders with a `.git`/`pyvenv.cfg` child,
-`node_modules`/`__pycache__`/`site-packages` anywhere (plan Δ16) and dense trees collapse to one card.
+`node_modules`/`__pycache__`/`site-packages` anywhere (RFC Δ16) and dense trees collapse to one card.
 `search_files_in_drive` (SYNC) → `DriveSearchService`: card kNN + a lexical name stream fused with RRF, names covering
-every query token first (plan Δ17). The name stream gives every whole-token key and every trigram key (≤ 8 of each,
+every query token first (RFC Δ17). The name stream gives every whole-token key and every trigram key (≤ 8 of each,
 query order) its own single-key `array-contains-any` query, plus one remainder query (≤ 30 keys), in parallel and
 merged by id, then the `name_match` floor — Firestore returns the first 100 matches by id, so a common key (`img`, a
 shared trigram) can no longer crowd out the target (≤ 18 parallel queries per round with the kNN, ≤ 36 with the one
 widening; exact, partial, transliterated, misspelled). An empty query is filter-only (no name words and no filters →
 "the N newest", said so); a fetch-capped empty filter-only page never claims "no matching files"; a folder resolved
 only by a single suffix match from a full name page is refused, never guessed (an exact path is used). `drive_kind`
-takes a format or a family (`spreadsheet`, `document`, `presentation`, `photo`, plan Δ20); at most 8 cards inside a
+takes a format or a family (`spreadsheet`, `document`, `presentation`, `photo`, RFC Δ20); at most 8 cards inside a
 nonce-tagged, escaped `<drive_document>` wrapper, with a coverage envelope (`building`, `index_as_of`,
 `reconnect_needed`). Not in `SearchEnrichmentService`, by decision. Turning indexing off purges at once (inside a
 tick, under the lease); losing access keeps the index 30 days, then the tick purges. Eval:

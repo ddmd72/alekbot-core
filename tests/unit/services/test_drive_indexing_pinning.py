@@ -1,7 +1,7 @@
-"""Pins RFC-required tick behaviour that no other test pinned (retro_tick.md F8 c-j).
+"""Pins RFC-required tick behaviour that no other test pinned.
 
-Each test names the surviving mutation of retro_tick_mutations.txt it kills. The code was already right;
-these tests keep it right.
+Each test kills a mutant that survived the rest of the suite. The code was already right; these tests keep it
+right.
 """
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
@@ -32,7 +32,7 @@ def _bump_card_version(monkeypatch):
 
 class TestRelistingRetryBudget:
     async def test_relisting_is_dropped_after_max_attempts(self):
-        """(c) M35 — §8.2, plan Δ18: a re-listing that keeps failing is dropped, never retried forever."""
+        """§8.2, RFC Δ18: a re-listing that keeps failing is dropped, never retried forever."""
         w = World()
         hidden = w.drive.add(".hidden", folder=True)
         w.drive.add("a.pdf", parent=hidden)
@@ -58,7 +58,7 @@ class TestRelistingRetryBudget:
 
 class TestVersionUpgradeVerification:
     async def test_versions_are_applied_only_after_a_clean_verification_pass(self, monkeypatch):
-        """(d) M29 — §12.3: a pass that found stale records schedules work; it does not apply the versions."""
+        """§12.3: a pass that found stale records schedules work; it does not apply the versions."""
         w = World()
         for i in range(3):
             w.drive.add(f"f{i}.pdf")
@@ -73,7 +73,7 @@ class TestVersionUpgradeVerification:
 
 class TestMaintenanceShare:
     async def test_maintenance_class_stops_at_its_share_of_the_tick(self, monkeypatch):
-        """(e) M22 — §7.8: classes 3-4 get MAINTENANCE_SHARE of the tick budget, not the whole of it."""
+        """§7.8: classes 3-4 get MAINTENANCE_SHARE of the tick budget, not the whole of it."""
         w = World(page_size=1000)
         for i in range(250):
             w.drive.add(f"f{i:03d}.pdf")
@@ -97,7 +97,7 @@ class TestMaintenanceShare:
 
 class TestCardEviction:
     async def test_an_equal_rank_record_never_evicts_a_card(self, monkeypatch):
-        """(f) M19 — §5.4: eviction only by a strictly higher-ranked record; an equal one is capped itself."""
+        """§5.4: eviction only by a strictly higher-ranked record; an equal one is capped itself."""
         w = World()
         monkeypatch.setattr(svc_mod, "MAX_CARD_RECORDS_PER_USER", 3)
         codes = [w.drive.add(f"c{i}.py") for i in range(3)]
@@ -110,10 +110,10 @@ class TestCardEviction:
 
 
 class TestBookkeeping:
-    """(g) The fields the fan-out and the staleness alert read (§12.1, Part D)."""
+    """The fields the fan-out and the staleness alert read (§12.1, RFC Δ5)."""
 
     async def test_success_resets_systemic_failures(self):
-        """M15: a clean tick ends the systemic backoff."""
+        """A clean tick ends the systemic backoff."""
         w = World()
         w.drive.add("a.pdf")
         await w.settle()
@@ -141,7 +141,7 @@ class TestBookkeeping:
         return state
 
     async def test_last_success_moves_only_on_progress(self):
-        """M13 — §12.1: a tick that continues without doing anything is not a success."""
+        """§12.1: a tick that continues without doing anything is not a success."""
         w = self._stalled_tick_world()
         await w.settle()
         w.clock.advance(600)
@@ -153,7 +153,7 @@ class TestBookkeeping:
         assert after.last_success_at == before.last_success_at
 
     async def test_continuation_marker_is_the_tick_start(self):
-        """M39 — Part D: the fan-out skips a user whose continuation is in flight, read from this marker."""
+        """RFC Δ5: the fan-out skips a user whose continuation is in flight, read from this marker."""
         w = self._stalled_tick_world()
         await w.settle()
         w.clock.advance(600)
@@ -165,7 +165,7 @@ class TestBookkeeping:
         assert (await w.repo.get_sync_state("u")).continuation_enqueued_at == tick_now
 
     async def test_observed_as_of_is_the_round_start(self):
-        """M30 — §12.1: a round spanning ticks is as fresh as its start, not as its last page."""
+        """§12.1: a round spanning ticks is as fresh as its start, not as its last page."""
         w = World(page_size=5)
         for i in range(40):
             w.drive.add(f"f{i}.pdf")
@@ -192,7 +192,7 @@ class TestBookkeeping:
 
 class TestSweepContinues:
     async def test_unfinished_sweep_enqueues_a_continuation(self):
-        """(h) M3 — §7.5: a sweep cut by the budget continues in-chain, not on the next fan-out."""
+        """§7.5: a sweep cut by the budget continues in-chain, not on the next fan-out."""
         w = World()
         w.drive.add("a.pdf")
         b = w.drive.add("b.pdf")
@@ -215,7 +215,7 @@ class TestSweepContinues:
 
 class TestSecondResync:
     async def test_a_second_410_in_one_tick_is_systemic(self):
-        """(i) M27 — a restart cursor that expires again ends the tick instead of looping on new epochs."""
+        """A restart cursor that expires again ends the tick instead of looping on new epochs."""
         w = World()
         w.drive.add("a.pdf")
         await w.settle()
@@ -237,7 +237,7 @@ class TestSecondResync:
 
 class TestEmbedFreshness:
     async def test_a_card_renamed_during_its_embedding_is_not_written_with_the_old_vector(self):
-        """(j) M7 — §8.5: a vector is written only over a record whose card text is still the one embedded."""
+        """§8.5: a vector is written only over a record whose card text is still the one embedded."""
         w = World()
         fid = w.drive.add("a.pdf")
         renamed = {"done": False}

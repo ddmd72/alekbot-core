@@ -1,4 +1,4 @@
-"""drive_sync dedup keys and payloads (USER_DRIVE_INDEXING_RFC §7.1; plan Δ2-Δ4)."""
+"""drive_sync dedup keys and payloads (USER_DRIVE_INDEXING_RFC §7.1; RFC Δ2-Δ4)."""
 from datetime import datetime, timedelta, timezone
 
 from src.domain.drive_index import Nudge

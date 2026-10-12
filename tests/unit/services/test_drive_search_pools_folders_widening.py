@@ -1,4 +1,5 @@
-"""DriveSearchService review fixes (overnight review rev_31: F1-F5; USER_DRIVE_INDEXING_RFC §10.1, §10.2)."""
+"""DriveSearchService: the name-key pool, filter-only honesty, folder lookup, the walk budget and widening
+(USER_DRIVE_INDEXING_RFC §10.1, §10.2)."""
 from datetime import datetime, timezone
 
 import pytest
@@ -42,7 +43,7 @@ def _limit_calls(w, method, most):
     setattr(w.repo, method, guarded)
 
 
-# --- F1: every trigram key gets its own capped call (premise audit P1) ----------------------------
+# --- Every trigram key gets its own capped call (RFC Δ17) -----------------------------------------
 
 class TestTrigramPool:
     @pytest.mark.parametrize("query,target,filler,word", [
@@ -73,7 +74,7 @@ class TestTrigramPool:
         assert len(rest) == 1 and list(rest[0]) == grams[NAME_KEY_QUERIES:] and len(rest[0]) <= NAME_QUERY_KEYS_MAX
 
 
-# --- F2: a capped filter-only page with no survivors is not "no matches" ----------------------------
+# --- A capped filter-only page with no survivors is not "no matches" ----------------------------
 
 class TestFilterOnlyHonesty:
     async def test_filter_only_in_a_large_folder_does_not_claim_no_matches(self, w, monkeypatch):
@@ -93,7 +94,7 @@ class TestFilterOnlyHonesty:
         assert "does not mean there are none" in text and "list_files_in_drive" in text
 
 
-# --- F3: one folder from a full name page is a guess (§10.1 "instead of guessing") ------------------
+# --- One folder from a full name page is a guess (§10.1 "instead of guessing") ------------------
 
 class TestFolderLookupNeverGuesses:
     async def test_single_suffix_match_from_a_full_name_page_could_not_resolve(self, w, monkeypatch):
@@ -121,8 +122,7 @@ class TestFolderLookupNeverGuesses:
 
     async def test_single_exact_path_match_from_a_full_name_page_is_used(self, monkeypatch):
         """An exact full path is unique in a drive: one exact match is not a guess even when the name page
-        was full. The root descent is cut by its budget, so only the name lookup can find the folder
-        (review R10 F-a)."""
+        was full. The root descent is cut by its budget, so only the name lookup can find the folder."""
         w = World(page_size=10_000)
         taxes = w.drive.add("Taxes", folder=True)
         t = w.drive.add("2025", parent=taxes, folder=True)          # lowest '2025' id: inside the capped page
@@ -150,7 +150,7 @@ class TestFolderLookupNeverGuesses:
         assert result.status == STATUS_FOLDER_NOT_FOUND and result.folder_lookup_truncated
 
 
-# --- F4: the subtree walk stops after FOLDER_INMEM_CARDS records (§10.1 Folder) ---------------------
+# --- The subtree walk stops after FOLDER_INMEM_CARDS records (§10.1 Folder) ---------------------
 
 class TestWalkBudget:
     async def test_walk_reads_at_most_the_budget_plus_one_page_per_parallel_listing(self, monkeypatch):
@@ -177,11 +177,11 @@ class TestWalkBudget:
         assert walked <= 30 + 1 + search_mod._WALK_PARALLEL * 2, walked
 
 
-# --- F5: decisions the task says are each tested (rev_31 mutations M3, M7, M8, M12, M18, M20) -------
+# --- Search decisions, each pinned by its own test ------------------------------------------------
 
 class TestSearchDecisions:
     async def test_ranked_widens_at_most_once_even_when_the_widened_page_is_full(self, w, monkeypatch):
-        """M3: without the once-guard a full FETCH_MAX page with fewer than K survivors loops forever."""
+        """Without the once-guard a full FETCH_MAX page with fewer than K survivors loops forever."""
         monkeypatch.setattr(search_mod, "CARD_FETCH", 2)
         monkeypatch.setattr(search_mod, "NAME_FETCH", 2)
         monkeypatch.setattr(search_mod, "FETCH_MAX", 3)
@@ -204,7 +204,7 @@ class TestSearchDecisions:
         assert w.repo.filter_limits == [2, 3]
 
     async def test_a_duplicate_below_the_k_cut_still_adds_its_path(self, w):
-        """M7: the identical copy is the 10th newest; the shown card still lists where it is."""
+        """The identical copy is the 10th newest; the shown card still lists where it is."""
         same = {"hashes": {"quickXorHash": "QX1"}}
         old = w.drive.add("Old", folder=True)
         w.drive.add("copy.pdf", parent=old, size_bytes=10, facets={**same, **taken("2026-01-01")})
@@ -217,7 +217,7 @@ class TestSearchDecisions:
         assert result.cards[0].also_at == ("Old/copy.pdf",)
 
     async def test_matched_at_least_when_the_widened_fetch_was_full(self, w, monkeypatch):
-        """M8: the count is a lower bound once the fetch hit its cap."""
+        """The count is a lower bound once the fetch hit its cap."""
         monkeypatch.setattr(search_mod, "CARD_FETCH", 2)
         monkeypatch.setattr(search_mod, "FETCH_MAX", 3)
         for i in range(5):
@@ -228,7 +228,7 @@ class TestSearchDecisions:
         assert "at least 3 files and folders match the filters" in render_results(result)
 
     async def test_a_scope_folder_needs_no_card_of_its_own(self, w):
-        """M12: a folder without a card (index full, capped) still scopes a search, by ref and by path."""
+        """A folder without a card (index full, capped) still scopes a search, by ref and by path."""
         folder = w.drive.add("Contracts", folder=True)
         w.drive.add("lease.pdf", parent=folder)
         w.drive.add("lease.pdf")
@@ -240,7 +240,7 @@ class TestSearchDecisions:
         assert by_path.status == STATUS_OK and paths(by_path) == ["Contracts/lease.pdf"]
 
     async def test_could_not_resolve_from_a_full_name_page_alone(self, w, monkeypatch):
-        """M18: the descent read everything and found nothing; only the name page was full."""
+        """The descent read everything and found nothing; only the name page was full."""
         for i in range(6):
             w.drive.add("2025", parent=w.drive.add(f"Project {i}", folder=True), folder=True)
         await w.settle()
@@ -249,7 +249,7 @@ class TestSearchDecisions:
         assert result.status == STATUS_FOLDER_NOT_FOUND and result.folder_lookup_truncated
 
     async def test_family_filter_only_widens_when_one_member_page_is_full(self, w, monkeypatch):
-        """M20: any full member page makes the count a lower bound and widens the fetch."""
+        """Any full member page makes the count a lower bound and widens the fetch."""
         monkeypatch.setattr(search_mod, "CARD_FETCH", 2)
         monkeypatch.setattr(search_mod, "FETCH_MAX", 4)
         for i in range(5):

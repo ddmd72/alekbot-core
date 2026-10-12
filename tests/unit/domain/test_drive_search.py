@@ -1,5 +1,5 @@
 """Drive search domain: gate, request, kinds, visibility, paths, wrapper, rendering
-(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §10.1, §10.2, §10.4, §5.2, §17.1 d, §17.6; plan Δ17, Δ20)."""
+(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §10.1, §10.2, §10.4, §5.2, §17.1 d, §17.6; RFC Δ17, Δ20)."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -255,7 +255,7 @@ class TestRender:
         assert '</drive_document nonce="n0000002">' in text and "path: Contracts/a.pdf" in text
 
     def test_filter_only_says_how_many_matched(self):
-        # A filter is given: an all-empty request now says it had none (overnight review rev_30 F2).
+        # A filter is given: only an all-empty request says it had none.
         result = DriveSearchResult(status=STATUS_OK, cards=(_card("f1", "a.pdf"),),
                                    request=DriveSearchRequest(date_from=NOW - timedelta(days=30)),
                                    matched_total=50, matched_at_least=True)

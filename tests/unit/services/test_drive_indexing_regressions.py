@@ -1,4 +1,4 @@
-"""Regression tests from the adversarial review of Part A (review_A.md, B1-M6) and the scenarios the property
+"""Regression tests for the planner and the tick (§3.4, §5.2, §7, §12.3) and the scenarios the property
 oracle does not generate (§16, §17.1, §17.2): versions, a failing re-listing, a re-enable during a purge,
 crash windows, card release, systemic backoff, orphans, a 410 mid-enumeration, density through delta."""
 from dataclasses import replace

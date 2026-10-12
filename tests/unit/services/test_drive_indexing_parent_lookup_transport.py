@@ -1,5 +1,5 @@
-"""The real OneDriveAdapter behind a fake HTTP layer, driven by a real DriveIndexingService (overnight review R3,
-required fix 1; USER_DRIVE_INDEXING_RFC §8.2).
+"""The real OneDriveAdapter behind a fake HTTP layer, driven by a real DriveIndexingService
+(USER_DRIVE_INDEXING_RFC §8.2).
 
 A timeout or transport failure on a call about ONE item (here: the parent lookup of an unresolved record) is the
 per-item class: the record backs off, the tick goes on. It must not end the tick as throttling, or a failure that

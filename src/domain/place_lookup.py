@@ -1,5 +1,5 @@
 """
-Offline place names from a bundled city table (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §5.3; plan Δ7).
+Offline place names from a bundled city table (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §5.3; RFC Δ7).
 The nearest place within PLACE_MAX_DISTANCE_KM names a photo, unless a much heavier place lies within
 PLACE_PREFER_RADIUS_KM: weight at least PLACE_PREFER_WEIGHT_FACTOR times the nearest's, and either in the nearest
 place's country, or with the photo inside its own footprint (PLACE_FOOTPRINT_K * sqrt(weight) km) and outside the
@@ -45,7 +45,7 @@ def _km(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
 
 def _lon_cells(lat: float, co: int) -> List[int]:
     """Longitude cells within PLACE_MAX_DISTANCE_KM of a point in cell `co`; a degree of longitude narrows
-    towards the poles, so above ~63 degrees a 3x3 grid misses candidates (retro F14). The span is taken at the
+    towards the poles, so above ~63 degrees a 3x3 grid misses candidates. The span is taken at the
     poleward edge of the search disc; near a pole every cell is scanned, each once."""
     edge = min(90.0, abs(lat) + PLACE_MAX_DISTANCE_KM / _KM_PER_DEGREE)
     width_km = _KM_PER_DEGREE * math.cos(math.radians(edge))

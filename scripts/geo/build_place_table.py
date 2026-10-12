@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Builds src/assets/geo/places_v1.tsv — the offline place table for photo cards
-(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §5.3; plan Δ7). One-off: run it only to (re)build the asset, then bump
+(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §5.3; RFC Δ7). One-off: run it only to (re)build the asset, then bump
 GEO_TABLE_VERSION if the table changed (the upgrade step re-resolves place names).
 
 Inputs (GeoNames, CC BY 4.0, https://www.geonames.org), downloaded into scripts/memory/geo/ (gitignored):

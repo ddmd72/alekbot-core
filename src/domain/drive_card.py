@@ -30,7 +30,7 @@ def _parse_dt(value: Any) -> Optional[datetime]:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    # an offset-less timestamp is read as UTC, so it compares with the aware datetimes stored (retro F13)
+    # an offset-less timestamp is read as UTC, so it compares with the aware datetimes stored
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 

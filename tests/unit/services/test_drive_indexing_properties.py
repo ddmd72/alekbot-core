@@ -1,4 +1,4 @@
-"""Planner + tick properties over random drives (USER_DRIVE_INDEXING_RFC §17.1; plan Δ8: seeded random).
+"""Planner + tick properties over random drives (USER_DRIVE_INDEXING_RFC §17.1; RFC Δ8: seeded random).
 
 Each seed builds a random tree, interleaves random mutations with ticks (random page sizes, a resync,
 re-emissions, `.git` arriving late or leaving), settles, and checks the index against an oracle that

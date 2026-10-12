@@ -1,4 +1,4 @@
-"""Place lookup fixes from the retrospective review of Part A (retro_domain.md F14)."""
+"""Place lookup at high latitudes: every longitude cell within reach is scanned (§5.3)."""
 from src.domain.place_lookup import PlaceIndex, PlaceRow
 
 

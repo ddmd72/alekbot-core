@@ -27,7 +27,7 @@ Environment variables (set at deploy time in cloudbuild-dev.yaml):
   MICROSOFT_TODO_CLIENT_SECRET  Secret: same.
   SERVICE_ACCOUNT_EMAIL         Secret: the /worker OIDC gate and the OIDC identity of the tasks this
                                 service enqueues. Unset locally (gate open); unset on Cloud Run
-                                (K_SERVICE set) the gate fails closed (plan Δ21).
+                                (K_SERVICE set) the gate fails closed (RFC Δ21).
   K_SERVICE                     Injected by Cloud Run; tells Cloud Run from local dev.
   PORT                          Injected by Cloud Run; 8080 locally.
 

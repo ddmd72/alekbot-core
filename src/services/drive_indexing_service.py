@@ -76,7 +76,7 @@ class _DriveSwitched(Exception):
 @dataclass
 class _Saved:
     """The sync state as last written during this tick. A systemic error writes its fields onto this, never
-    onto the tick-start copy, so the cursor and epoch observe already saved survive (retro_tick F1)."""
+    onto the tick-start copy, so the cursor and epoch observe already saved survive (§8.2)."""
     state: DriveSyncState
 
 
@@ -121,7 +121,7 @@ class _Budget:
 
     def item_call_allowed(self) -> bool:
         """An item call (probe, parent lookup, re-listing page) starts only within both budgets: a slow provider
-        must not push the tick past its deadline (premise_audit P8). The item waits for the next tick."""
+        must not push the tick past its deadline (RFC Δ9). The item waits for the next tick."""
         return self.item_calls > 0 and self.time_left()
 
     def maintenance_allowed(self) -> bool:
@@ -235,7 +235,7 @@ class DriveIndexingService:
         except _OptedOut:
             logger.info(f"[DriveIndex] indexing turned off mid-tick for {user_id[:8]}; result dropped")
             # The next tick's gate purges. Without it a lost toggle task leaves the purge to a fan-out that skips
-            # the user on the stale continuation marker for up to 30 min (premise_audit P2).
+            # the user on the stale continuation marker for up to 30 min (§7.1).
             cont.request()
             return TickResult("disabled", summary)
         except _DriveSwitched:
@@ -405,7 +405,7 @@ class DriveIndexingService:
         except (DriveNotConnectedError, DriveThrottled) as exc:
             logger.warning(f"[DriveIndex] density probe hit a systemic error for {user_id[:8]}: {type(exc).__name__}")
             raise   # the caller ends the tick
-        except Exception as exc:   # any other provider failure is a failed probe: the folder waits (retro_tick F2)
+        except Exception as exc:   # any other provider failure is a failed probe: the folder waits (§8.2)
             logger.warning(f"[DriveIndex] density probe failed for {user_id[:8]}: {type(exc).__name__}: {exc}")
             return None
         return probe_from_children(page.changes)
@@ -422,7 +422,7 @@ class DriveIndexingService:
             await self._repo.delete_records(user_id, sorted(deletes))
 
     # ------------------------------------------------------------------------------------------
-    # Work off (only after a complete round, plan Δ15)
+    # Work off (only after a complete round, RFC Δ15)
     # ------------------------------------------------------------------------------------------
 
     async def _work_off(self, user_id: str, state: DriveSyncState, now: datetime, budget: _Budget,
@@ -467,7 +467,7 @@ class DriveIndexingService:
         any record was worked.
 
         A class that runs out of its budget stops the loop: lower classes wait for the next tick. That is
-        what keeps a repository's files from being carded while its rescope is unfinished (plan Δ15)."""
+        what keeps a repository's files from being carded while its rescope is unfinished (RFC Δ15)."""
         worked = False
         while budget.time_left():
             batch = await self._repo.due_records(user_id, now, _DUE_PAGE)
@@ -606,7 +606,7 @@ class DriveIndexingService:
         return True
 
     async def _remove_orphan(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext) -> None:
-        """A folder goes through the cascade, so children parked under it go with it (§3.4, review A M6)."""
+        """A folder goes through the cascade, so children parked under it go with it (§3.4)."""
         if rec.is_folder:
             await self._commit(user_id, [_dying(rec, ctx.now)], set())
         else:
@@ -711,7 +711,7 @@ class DriveIndexingService:
         systemic: Optional[BaseException] = None
         for rec, outcome in zip(to_embed, outcomes):
             if isinstance(outcome, LLMClientError) and outcome.http_status == 400:
-                # A definite bad-input refusal of this card text: the record backs off alone (premise_audit P9).
+                # A definite bad-input refusal of this card text: the record backs off alone (§8.2, RFC Δ24).
                 logger.warning(f"[DriveIndex] card embedding refused for item {rec.item_id} of {user_id[:8]}: "
                                f"{outcome}; backing off")
                 refused.append(rec)
@@ -822,7 +822,7 @@ class DriveIndexingService:
 
     async def _purge(self, user_id: str, state: DriveSyncState, action: AccessAction, enabled: bool,
                      summary: Dict[str, int], cont: _Continuation) -> TickResult:
-        """Durable: `purging` is written before the first delete, so a purge always finishes (review A M1)."""
+        """Durable: `purging` is written before the first delete, so a purge always finishes (§7.6)."""
         if not state.purging:
             await self._save_state(replace(state, purging=True))
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
@@ -846,7 +846,7 @@ class DriveIndexingService:
             return True
         if self._upgrade_due(state) and (state.upgrade_cursor is not None or upgrade_wrote):
             # a pass is mid-way, or this tick's pass wrote (re-stamped or scheduled) and the verification pass
-            # runs in-chain; a restarted pass that wrote nothing waits for due work or the fan-out (retro_tick F6)
+            # runs in-chain; a restarted pass that wrote nothing waits for due work or the fan-out (RFC Δ30)
             return True
         # backed-off work waits for its due_at; a folder that stepped aside is due right after this tick
         return bool(await self._repo.due_records(user_id, now + _STEP_ASIDE, 1))

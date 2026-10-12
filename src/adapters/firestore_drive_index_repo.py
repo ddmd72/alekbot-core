@@ -430,7 +430,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
     async def find_by_name_keys(self, user_id: str, keys: Sequence[str], limit: int,
                                 kind: Optional[str] = None) -> List[DriveIndexRecord]:
         """One `array_contains_any` query. The search service sends one whole-token or trigram key per call (at
-        most NAME_KEY_QUERIES of each) plus one call with the remaining keys (plan Δ17, premise audit P1).
+        most NAME_KEY_QUERIES of each) plus one call with the remaining keys (RFC Δ17), so a common key cannot
+        crowd out a rare one.
         Firestore takes at most NAME_QUERY_KEYS_MAX values: the distinct keys are cut there, in order."""
         wanted = list(dict.fromkeys(keys))[:NAME_QUERY_KEYS_MAX]
         if not wanted:
