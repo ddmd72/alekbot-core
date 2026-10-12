@@ -52,6 +52,7 @@ _DUE_PAGE = 100
 # Errors about ONE item (a probe, a parent lookup, a re-listing page, a nudge read): defer that item, never
 # the user (§8.2). ValueError is the adapter's 5xx; OSError covers connection resets.
 _PER_ITEM_ERRORS = (DriveAccessDenied, DriveItemNotFoundError, asyncio.TimeoutError, ValueError, OSError)
+_STEP_ASIDE = timedelta(seconds=1)   # a deleting folder waiting for its children comes back after them
 _GATE_RECHECK_S = 5.0   # the opt-out flag is re-read before a write batch at most this often
 
 
@@ -447,6 +448,7 @@ class DriveIndexingService:
         ctx = self._ctx(user_id, state, now)
         cards: List[DriveIndexRecord] = []
         progressed = False
+        page_ids = {r.item_id for r in recs}
         for stale in recs:
             # An earlier step of this batch may have changed or removed it: always work the stored version.
             rec_or_none = (await self._repo.get_records(user_id, [stale.item_id])).get(stale.item_id)
@@ -455,7 +457,7 @@ class DriveIndexingService:
                 continue
             rec = rec_or_none
             if rec.state is RecordState.DELETING:
-                progressed |= await self._cascade_step(user_id, rec, now, budget, summary)
+                progressed |= await self._cascade_step(user_id, rec, now, budget, summary, page_ids)
             elif rec.probe_pending:
                 progressed |= await self._probe_step(user_id, rec, ctx, budget)
             elif rec.state is RecordState.UNRESOLVED:
@@ -478,8 +480,12 @@ class DriveIndexingService:
         return progressed
 
     async def _cascade_step(self, user_id: str, folder: DriveIndexRecord, now: datetime, budget: _Budget,
-                            summary: Dict[str, int]) -> bool:
-        """Folder delete, post-order: files go, child folders become deleting, the folder goes last (§7.6)."""
+                            summary: Dict[str, int], page_ids: Set[str]) -> bool:
+        """Folder delete, post-order: files go, child folders become deleting, the folder goes last (§7.6).
+
+        `page_ids`: the due page being worked. A folder whose children are all deleting folders waits for them;
+        when none of them is in this page it steps aside behind them, or a page full of such folders would keep
+        their children from ever being worked."""
         if budget.cascade_ops <= 0:
             return False
         kids = await self._repo.children(user_id, folder.item_id, None, min(budget.cascade_ops, RECORD_WRITE_BATCH))
@@ -490,8 +496,11 @@ class DriveIndexingService:
             return True
         files = {k.item_id for k in kids if not k.is_folder}
         dying = [_dying(k, now) for k in kids if k.is_folder and k.state is not RecordState.DELETING]
-        if not files and not dying:
-            return False   # its children are folders already deleting: their own steps do the work, uncharged here
+        if not files and not dying:   # its children are folders already deleting: their own steps do the work
+            if any(k.item_id in page_ids for k in kids):
+                return False   # worked in this page; the folder comes back in the next one
+            await self._commit(user_id, [replace(folder, due_at=now + _STEP_ASIDE)], set())
+            return True
         await self._commit(user_id, dying, files)
         budget.cascade_ops -= len(files) + len(dying)
         summary["deleted"] = summary.get("deleted", 0) + len(files)
@@ -797,7 +806,8 @@ class DriveIndexingService:
             # a pass is mid-way, or this tick's pass wrote (re-stamped or scheduled) and the verification pass
             # runs in-chain; a restarted pass that wrote nothing waits for due work or the fan-out (retro_tick F6)
             return True
-        return bool(await self._repo.due_records(user_id, now, 1))   # backed-off work waits for its due_at
+        # backed-off work waits for its due_at; a folder that stepped aside is due right after this tick
+        return bool(await self._repo.due_records(user_id, now + _STEP_ASIDE, 1))
 
     async def _continue(self, user_id: str, tick_id: str, delay_seconds: int = 0) -> None:
         name = await self._queue.enqueue_worker_task(DRIVE_SYNC_TASK, tick_payload(user_id),
