@@ -38,7 +38,7 @@ from ..domain.drive_extraction import (
 )
 from ..domain.drive_index import (
     CURRENT_VERSIONS, DriveChange, DriveChanges, DriveChunk, DriveIndexRecord, DriveSyncState, EpochPhase,
-    ErrorCategory, FolderProbe, LeaseLost, Nudge, Priority, Reason, RecordState, Scope, TriageVerdict,
+    ErrorCategory, FolderProbe, LeaseLost, Nudge, Priority, Reason, RecordState, Scope,
 )
 from ..domain.drive_index_params import (
     CASCADE_OPS_PER_TICK, EMBED_FILE_BUDGET_S, EMBED_IN_FLIGHT, ITEM_CALLS_PER_TICK, LEASE_MARGIN, MAINTENANCE_SHARE,
@@ -49,8 +49,9 @@ from ..domain.drive_index_params import (
 )
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, attempt_crashed, can_start_file, capped,
-    card_refused, change_from_record, content_due, content_retry, deferred, demoted, extractor_stale,
-    generation_started, indexed, model_available, model_outage, model_recovered, needs_probe, next_month_start,
+    card_refused, change_from_record, chunks_reembedded, content_due, content_retry, deferred, demoted,
+    extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered, needs_probe,
+    next_month_start,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
     stale_versions, triage_due, triaged, usage_now, with_card, with_retry, with_usage, without_card,
 )
@@ -59,13 +60,14 @@ from ..domain.drive_index_policy import (
 )
 from ..domain.drive_index_run import (
     READER_IMAGE_MAX_BYTES, README_MAX_BYTES, RunStep, camera_prior, chunk_cap_refuses, chunk_released, file_suffix,
-    gate_exempt, image_mime, original_fallback, outcome_step, readme_choice, releasable, routed,
+    gate_exempt, image_mime, no_rendition, original_fallback, outcome_step, reader_pages, readme_choice, releasable,
+    routed,
 )
 from ..domain.drive_search import UNREAD_COUNTER
 from ..domain.drive_sniff import SNIFF_HEAD_BYTES, sniff_kind
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_key, nudge_key, tick_payload
 from ..domain.drive_text_gate import is_machine_text
-from ..domain.exceptions import LLMClientError, LLMRateLimitError, LLMUnavailableError
+from ..domain.exceptions import LLMClientError, LLMError, LLMRateLimitError, LLMUnavailableError
 from ..domain.user_drive import (
     DriveAccessDenied, DriveFileTooLarge, DriveItemNotFoundError, DriveNotConnectedError, DriveReauthRequired,
     DriveResyncRequired, DriveThrottled,
@@ -104,9 +106,24 @@ class _DriveSwitched(Exception):
     """A page came from another drive than the stored one (§7.1 step 1): purge and start fresh."""
 
 
+class _NotWired(RuntimeError):
+    """A content port the work needs is not wired: an internal error of the tick, never a per-file failure."""
+
+
 class _ItemGone(Exception):
     """The provider has no such item any more (a download or a rendition said so): re-observe it, never read it as
     "no content" or "no thumbnail"."""
+
+
+# What ends the tick when it escapes an index run (§8.2): the drive connection, a provider's throttling or outage, the
+# embedding provider's errors and a wiring error. Anything else is this file's: a counted per-file retry.
+_RUN_SYSTEMIC = (DriveNotConnectedError, DriveThrottled, DriveReauthRequired, LLMError, _NotWired)
+
+
+@dataclass
+class _RunMark:
+    """Set once an index run's outcome is written: an error after it never rolls the outcome back."""
+    committed: bool = False
 
 
 @dataclass
@@ -666,6 +683,9 @@ class DriveIndexingService:
                 progressed = True
             elif content_due(rec, now) and await self._index_step(user_id, rec, ctx, budget, summary, models):
                 progressed = True
+            elif (rec.chunk_reembed_pending and rec.indexed_generation is not None and not content_due(rec, now)
+                  and rec.state is RecordState.INDEXED):
+                progressed |= await self._reembed_step(user_id, rec, ctx, budget, summary)
             elif triage_due(rec, now):
                 images.append(rec)
             elif card_eligible(rec) and rec.card_hash != card_hash(rec):
@@ -1036,41 +1056,54 @@ class DriveIndexingService:
         budget.files -= 1
         run = generation_started(rec, now)
         await self._commit(user_id, [run], set())   # persisted before the download (§8.1 step 2)
+        mark = _RunMark()
         try:
-            await self._index_run(user_id, run, rec.priority, ctx, budget, summary, models)
+            await self._index_run(user_id, run, rec.priority, ctx, budget, summary, models, mark)
         except (LeaseLost, _OptedOut):
             raise   # nothing more may be written; an opt-out purges anyway
-        except Exception as exc:
+        except _RUN_SYSTEMIC as exc:
+            if mark.committed:
+                logger.warning(f"[DriveIndex] index run of item {rec.item_id} for {user_id[:8]} committed its "
+                               f"outcome, then hit {type(exc).__name__}")
+                raise
             logger.warning(f"[DriveIndex] index run of item {rec.item_id} for {user_id[:8]} ended by "
                            f"{type(exc).__name__}; the attempt is not counted")
             await self._abandon_run(user_id, run, rec.priority, now)
             raise
+        except Exception as exc:
+            if mark.committed:   # its debris is the sweep's (§7.5); the outcome stands and the tick goes on
+                logger.error(f"[DriveIndex] index run of item {rec.item_id} for {user_id[:8]} failed after its "
+                             f"outcome was committed: {type(exc).__name__}: {exc}", exc_info=True)
+                return True
+            logger.error(f"[DriveIndex] index run of item {rec.item_id} for {user_id[:8]} failed: "
+                         f"{type(exc).__name__}: {exc}; counted as a per-file failure", exc_info=True)
+            await self._end_run(user_id, run, content_retry(run, Reason.EXTRACT_ERROR, now), rec.priority, summary)
         return True
 
     async def _index_run(self, user_id: str, run: DriveIndexRecord, cls: Optional[int], ctx: PlanContext,
-                         budget: _Budget, summary: Dict[str, int], models: _Models) -> None:
+                         budget: _Budget, summary: Dict[str, int], models: _Models, mark: _RunMark) -> None:
         """§8.1 steps 3-9 for a record whose generation is persisted. Every outcome is one record write through
-        `_end_run`; an exception out of here is systemic (§8.2)."""
+        `_end_run`, which sets `mark`; `cls` is the class the run started from."""
         now = ctx.now
         with tempfile.TemporaryDirectory(prefix="drive-index-") as tmp:   # the temp file goes in any case (§8.1)
             path = os.path.join(tmp, "source" + file_suffix(run.name))
             try:
                 kind, final = await self._fetch(user_id, run, path, now)
             except _ItemGone:
-                await self._item_gone(user_id, run, cls, ctx, budget, summary)
+                await self._item_gone(user_id, run, cls, ctx, budget, summary, mark)
                 return
             if final is None and kind is not None and routed(kind) and not routed(run.kind) \
                     and not can_start_file(budget.monotonic() - budget.started, routed=True):
                 # its bytes say it may go to the reader, whose worst case no longer fits this tick (§7.1): the run
                 # waits for the next tick, which starts it first
-                final = deferred(_cleared(run), now + _STEP_ASIDE, now)
+                final = deferred(_cleared(run), now + _STEP_ASIDE, now, priority=cls)
             outcome: Optional[ExtractionOutcome] = None
             if final is None and kind is not None:
-                outcome, final = await self._extract(user_id, run, path, kind, now, summary, models)
+                outcome, final = await self._extract(user_id, run, path, kind, now, summary, models, cls)
         if final is None and outcome is not None and kind is not None:
-            final = await self._read_text(user_id, run, outcome, kind, now, summary)
+            final = await self._read_text(user_id, run, outcome, kind, now, summary, mark)
         if final is not None:
-            await self._end_run(user_id, run, final, cls, summary)
+            await self._end_run(user_id, run, final, cls, summary, mark)
 
     async def _fetch(self, user_id: str, run: DriveIndexRecord, path: str,
                      now: datetime) -> Tuple[Optional[str], Optional[DriveIndexRecord]]:
@@ -1108,10 +1141,11 @@ class DriveIndexingService:
         return kind, None
 
     async def _extract(self, user_id: str, run: DriveIndexRecord, path: str, kind: str, now: datetime,
-                       summary: Dict[str, int],
-                       models: _Models) -> Tuple[Optional[ExtractionOutcome], Optional[DriveIndexRecord]]:
+                       summary: Dict[str, int], models: _Models,
+                       cls: Optional[int]) -> Tuple[Optional[ExtractionOutcome], Optional[DriveIndexRecord]]:
         """§9 / §24.3 router: the kind's chain, the next link only on the parser-failed signals. The reader runs
-        only while the model is available and the month has pages left (§24.7, §24.8)."""
+        only while the model is available and the month has the pages the file needs left (§24.7, §24.8); a
+        deferral keeps `cls`, the class the run started from."""
         outcome: Optional[ExtractionOutcome] = None
         for position, extractor_id in enumerate(chain_for(kind)):
             if position > 0:
@@ -1121,7 +1155,8 @@ class DriveIndexingService:
                 logger.info(f"[DriveIndex] item {run.item_id} of {user_id[:8]} goes to the {extractor_id}: {why}")
             max_pages = 0
             if extractor_id == READER:
-                held = self._model_hold(run, now, models)
+                pages = reader_pages(kind, outcome if position > 0 else None)
+                held = self._model_hold(run, now, models, cls=cls, pages=pages)
                 if held is not None:
                     return None, held
                 max_pages = models.pages_left(now)
@@ -1138,7 +1173,7 @@ class DriveIndexingService:
                 _count_reader(models, summary, now, calls=exc.model_calls, cost=exc.model_cost, pages=exc.pages_sent,
                               outage=True)
                 models.outage(now)   # after the usage: `used` ends an outage, this one must stand (C-M1)
-                return None, deferred(_cleared(run), _backoff_until(models), now)
+                return None, deferred(_cleared(run), _backoff_until(models), now, priority=cls)
             except Exception as exc:   # the port reports per-file failures as outcomes; anything else is this file's
                 logger.error(f"[DriveIndex] {extractor_id} failed on item {run.item_id} of {user_id[:8]}: {exc}",
                              exc_info=True)
@@ -1147,7 +1182,7 @@ class DriveIndexingService:
                 _count_reader(models, summary, now, calls=outcome.model_calls, cost=outcome.model_cost,
                               pages=outcome.pages_sent)
         if outcome is None:   # an empty chain: no kind is admitted without an extractor (§5.1)
-            raise RuntimeError(f"no extractor chain for kind {kind}")
+            raise _NotWired(f"no extractor chain for kind {kind}")
         step, reason = outcome_step(outcome.status)
         if step is RunStep.WAIT_MONTH:
             return None, deferred(_cleared(run), next_month_start(now), now, maintenance=True)
@@ -1161,12 +1196,13 @@ class DriveIndexingService:
         return outcome, None
 
     async def _read_text(self, user_id: str, run: DriveIndexRecord, outcome: ExtractionOutcome, kind: str,
-                         now: datetime, summary: Dict[str, int]) -> Optional[DriveIndexRecord]:
+                         now: datetime, summary: Dict[str, int], mark: _RunMark) -> Optional[DriveIndexRecord]:
         """§8.1 steps 6-9: gate, chunks, the chunk cap, embeddings, chunk writes, the fence and the commit. Returns
         the record to write, or None when the fence dropped the result."""
-        if not gate_exempt(kind) and is_machine_text(outcome.text):
+        # CPU work on up to MAX_TEXT_CHARS: in a worker thread, so the event loop keeps serving (lease, embeddings)
+        if not gate_exempt(kind) and await asyncio.to_thread(is_machine_text, outcome.text):
             return demoted(run, Reason.MACHINE_TEXT, now, outcome=outcome)
-        chunked = chunk_text(outcome.text)
+        chunked = await asyncio.to_thread(chunk_text, outcome.text)
         if not chunked.chunks:
             return demoted(run, Reason.NO_TEXT, now, outcome=outcome)
         if chunk_cap_refuses(await self._repo.readable_chunk_total(user_id), run, len(chunked.chunks)):
@@ -1189,10 +1225,10 @@ class DriveIndexingService:
             return content_retry(run, Reason.EXTRACT_ERROR, now)
         summary["embed_ms"] = summary.get("embed_ms", 0) + int((self._monotonic() - started) * 1000)
         generation = run.index_generation
+        terms = await asyncio.to_thread(_terms_of, [c.text for c in chunked.chunks])
         chunks = [DriveChunk(user_id=user_id, item_id=run.item_id, generation=generation, index=i, text=c.text,
-                             char_start=c.char_start, char_end=c.char_end, kind=run.kind,
-                             content_terms=content_terms(c.text))
-                  for i, c in enumerate(chunked.chunks)]
+                             char_start=c.char_start, char_end=c.char_end, kind=run.kind, content_terms=t)
+                  for i, (c, t) in enumerate(zip(chunked.chunks, terms))]
         _fence()
         await self._recheck_gate(user_id)
         for start in range(0, len(chunks), RECORD_WRITE_BATCH):
@@ -1202,6 +1238,7 @@ class DriveIndexingService:
         fresh = (await self._repo.get_records(user_id, [run.item_id])).get(run.item_id)
         if fresh is None or fresh.content_version != run.content_version or fresh.index_generation != generation:
             logger.info(f"[DriveIndex] item {run.item_id} of {user_id[:8]} changed during its run; result dropped")
+            mark.committed = True   # the record is newer than the run: nothing may write the run back over it
             _fence()
             await self._repo.delete_chunks_except(user_id, run.item_id,
                                                   fresh.indexed_generation if fresh is not None else None)
@@ -1211,7 +1248,7 @@ class DriveIndexingService:
             return None
         summary["chunks"] = summary.get("chunks", 0) + len(chunks)
         return indexed(fresh, outcome=replace(outcome, truncated=outcome.truncated or chunked.truncated),
-                       generation=generation, chunk_count=len(chunks), now=now)
+                       generation=generation, chunk_count=len(chunks), now=now, chunk_space=self._space)
 
     async def _embed_texts(self, texts: List[str]) -> List[List[float]]:
         """At most EMBED_IN_FLIGHT calls at once (§8.1 step 8). Any error but a 400 wins, so a quota error is never
@@ -1228,13 +1265,88 @@ class DriveIndexingService:
             raise next((e for e in errors if not (isinstance(e, LLMClientError) and e.http_status == 400)), errors[0])
         return [r for r in results if not isinstance(r, BaseException)]
 
+    async def _reembed_step(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
+                            summary: Dict[str, int]) -> bool:
+        """§12.3: the readable chunks are in another embedding space. Their stored text is embedded again into a new
+        generation, with no download and no extraction; the old generation serves until the new one commits under
+        the same fence as an index run (§7.4). Chunks that cannot be read back as stored send the file to a full
+        index run, and so does a per-file embedding failure, which that run counts (§8.2)."""
+        if not budget.file_allowed(routed=False):
+            return False
+        now = ctx.now
+        readable = rec.indexed_generation
+        if readable is None:
+            return True
+        stored = sorted(await self._repo.get_chunks(user_id, rec.item_id, readable, range(rec.chunk_count)),
+                        key=lambda c: c.index)
+        if rec.chunk_count == 0 or [c.index for c in stored] != list(range(rec.chunk_count)):
+            logger.warning(f"[DriveIndex] chunks of item {rec.item_id} for {user_id[:8]} cannot be re-embedded as "
+                           f"stored; the file is read again")
+            await self._reread(user_id, rec, ctx)
+            return True
+        budget.files -= 1
+        generation = rec.index_generation + 1
+        await self._commit(user_id, [replace(rec, index_generation=generation)], set())   # never reused (§8.1 step 2)
+        started = self._monotonic()
+        try:
+            vectors = await asyncio.wait_for(self._embed_texts([c.text for c in stored]), timeout=EMBED_FILE_BUDGET_S)
+        except asyncio.TimeoutError:
+            logger.warning(f"[DriveIndex] re-embedding item {rec.item_id} for {user_id[:8]} passed "
+                           f"{EMBED_FILE_BUDGET_S}s; the file is read again")
+            await self._reread(user_id, rec, ctx)
+            return True
+        except LLMClientError as exc:
+            if exc.http_status != 400:
+                raise   # systemic (§8.2)
+            logger.warning(f"[DriveIndex] a chunk of item {rec.item_id} for {user_id[:8]} was refused: {exc}")
+            await self._reread(user_id, rec, ctx)
+            return True
+        summary["embed_ms"] = summary.get("embed_ms", 0) + int((self._monotonic() - started) * 1000)
+        terms = await asyncio.to_thread(_terms_of, [c.text for c in stored])
+        chunks = [replace(c, generation=generation, content_terms=t) for c, t in zip(stored, terms)]
+        _fence()
+        await self._recheck_gate(user_id)
+        for start in range(0, len(chunks), RECORD_WRITE_BATCH):
+            await self._repo.write_chunks(chunks[start:start + RECORD_WRITE_BATCH],
+                                          vectors[start:start + RECORD_WRITE_BATCH])
+        fresh = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id)
+        if (fresh is None or fresh.content_version != rec.content_version or fresh.indexed_generation != readable
+                or fresh.index_generation != generation):
+            logger.info(f"[DriveIndex] item {rec.item_id} of {user_id[:8]} changed while re-embedding; dropped")
+            _fence()
+            await self._repo.delete_chunks_except(user_id, rec.item_id,
+                                                  fresh.indexed_generation if fresh is not None else None)
+            return True
+        await self._commit(user_id, [_maintenance_kept(chunks_reembedded(fresh, generation, self._space, now),
+                                                       rec.priority)], set())
+        _fence()
+        await self._repo.delete_chunks_except(user_id, rec.item_id, generation)
+        summary["reembedded"] = summary.get("reembedded", 0) + 1
+        return True
+
+    async def _reread(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext) -> None:
+        """The content no longer stands: planned again, the file is pending for a full index run (§9, §12.3)."""
+        fresh = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id) or rec
+        parent = await self._parent_of(user_id, fresh, ctx)
+        writes: Dict[str, DriveIndexRecord] = {}
+        deletes: Set[str] = set()
+        collects: Set[str] = set()
+        current = replace(reextraction_due(fresh), chunk_reembed_pending=False)
+        self._fold(_as_maintenance(plan_observation(change_from_record(fresh), current, parent, None, ctx, parent,
+                                                    observed=False)), {}, writes, deletes, collects)
+        if fresh.item_id not in writes and fresh.item_id not in deletes:
+            writes[fresh.item_id] = _maintenance(schedule(current, ctx.now, first_seen=False))
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects)
+
     async def _end_run(self, user_id: str, before: DriveIndexRecord, final: DriveIndexRecord, cls: Optional[int],
-                       summary: Dict[str, int]) -> None:
+                       summary: Dict[str, int], mark: Optional[_RunMark] = None) -> None:
         """The run's one record write, then its debris: every generation but the readable one goes (§7.4), a crashed
         run's partial chunks included. Terminal outcomes of maintenance work keep class 3 for the card (§7.8)."""
         if final.state is not RecordState.PENDING:
             final = _maintenance_kept(final, cls)
         await self._commit(user_id, [final], set())
+        if mark is not None:
+            mark.committed = True
         _fence()
         await self._repo.delete_chunks_except(user_id, final.item_id, final.indexed_generation)
         key = _outcome_key(before, final)
@@ -1252,18 +1364,20 @@ class DriveIndexingService:
             logger.warning(f"[DriveIndex] could not clear the run of item {run.item_id} for {user_id[:8]}: {exc}; "
                            f"it counts as a crashed attempt")
 
-    def _model_hold(self, rec: DriveIndexRecord, now: datetime, models: _Models) -> Optional[DriveIndexRecord]:
-        """Model work waits while the model is out (§24.8) or the month's pages are spent (§24.7), still pending."""
+    def _model_hold(self, rec: DriveIndexRecord, now: datetime, models: _Models, *, cls: Optional[int] = None,
+                    pages: int = 1) -> Optional[DriveIndexRecord]:
+        """Model work waits, still pending, while the model is out (§24.8) or until a month has the `pages` the file
+        needs (reader_pages): it is never cut to what is left of this month (§24.7)."""
         if not models.available(now):
-            return deferred(_cleared(rec), _backoff_until(models), now)
-        if models.pages_left(now) <= 0:
+            return deferred(_cleared(rec), _backoff_until(models), now, priority=cls)
+        if models.pages_left(now) < pages:
             return deferred(_cleared(rec), next_month_start(now), now, maintenance=True)
         return None
 
     def _extractor(self, extractor_id: str) -> ContentExtractorPort:
         extractor = self._extractors.get(extractor_id)
         if extractor is None:
-            raise RuntimeError(f"content extractor {extractor_id!r} is not wired into the indexing service")
+            raise _NotWired(f"content extractor {extractor_id!r} is not wired into the indexing service")
         return extractor
 
     # -- content: image triage (§5.3, §24.5) ---------------------------------------------------
@@ -1324,8 +1438,9 @@ class DriveIndexingService:
                                f"{type(exc).__name__}: {exc}")
                 writes.append(content_retry(rec, Reason.DOWNLOAD_ERROR, now))
                 continue
-            if thumbnail is None:   # no rendition: a photograph without a caption, deterministic (§24.5)
-                writes.append(_verdict(rec, TriageResult(item_id=rec.item_id, verdict=TriageVerdict.PHOTO), now))
+            if thumbnail is None:   # no rendition yet: retried; a photograph without a caption at MAX_ATTEMPTS (§24.5)
+                after = no_rendition(rec, now)
+                writes.append(_maintenance_kept(after, rec.priority) if after.triage_verdict is not None else after)
                 continue
             images.append(TriageImage(item_id=rec.item_id, thumbnail=thumbnail, mime_type=image_mime(thumbnail[:8]),
                                       camera_prior=camera_prior(rec.facets)))
@@ -1357,7 +1472,7 @@ class DriveIndexingService:
             await self._item_gone(user_id, rec, rec.priority, ctx, budget, summary)
 
     async def _item_gone(self, user_id: str, rec: DriveIndexRecord, cls: Optional[int], ctx: PlanContext,
-                         budget: _Budget, summary: Dict[str, int]) -> None:
+                         budget: _Budget, summary: Dict[str, int], mark: Optional[_RunMark] = None) -> None:
         """A download or a rendition found no item (§7.6): it is observed again at once instead of waiting for its
         tombstone. A deletion removes the record and its chunks; an item that is there after all costs a per-file
         attempt (§8.2), so a provider that keeps contradicting itself cannot loop."""
@@ -1371,21 +1486,23 @@ class DriveIndexingService:
             raise
         except _PER_ITEM_ERRORS as exc:
             logger.warning(f"[DriveIndex] re-reading item {rec.item_id} failed for {user_id[:8]}: {exc}")
-            await self._end_run(user_id, rec, content_retry(rec, Reason.DOWNLOAD_ERROR, ctx.now), cls, summary)
+            await self._end_run(user_id, rec, content_retry(rec, Reason.DOWNLOAD_ERROR, ctx.now), cls, summary, mark)
             return
         await self._apply(user_id, ctx, [change], budget, summary)
+        if mark is not None:
+            mark.committed = True   # the re-observation is written: the run's snapshot is outdated
         summary["gone"] = summary.get("gone", 0) + int(change.deleted)
         fresh = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id)
         if fresh is None:
             return   # deleted, its chunks with it (§7.6)
         if fresh.content_version == rec.content_version and (content_due(fresh) or triage_due(fresh)):
-            await self._end_run(user_id, rec, content_retry(fresh, Reason.DOWNLOAD_ERROR, ctx.now), cls, summary)
+            await self._end_run(user_id, rec, content_retry(fresh, Reason.DOWNLOAD_ERROR, ctx.now), cls, summary, mark)
         elif fresh.attempt_started_at is not None and fresh.attempt_started_at == rec.attempt_started_at:
             await self._commit(user_id, [replace(fresh, attempt_started_at=None)], set())   # a new version: no crash
 
     def _triage_port(self) -> ImageTriagePort:
         if self._triage is None:
-            raise RuntimeError("image triage is not wired into the indexing service")
+            raise _NotWired("image triage is not wired into the indexing service")
         return self._triage
 
     async def _release_chunk_cap(self, user_id: str, now: datetime, summary: Dict[str, int]) -> None:
@@ -1638,6 +1755,10 @@ def _outcome_key(before: DriveIndexRecord, final: DriveIndexRecord) -> str:
     if final.state is RecordState.METADATA_ONLY:
         return "demoted"
     return "retried" if final.attempts > before.attempts else "deferred"
+
+
+def _terms_of(texts: Sequence[str]) -> List[Tuple[str, ...]]:
+    return [content_terms(t) for t in texts]
 
 
 def _write_file(path: str, data: bytes) -> None:
