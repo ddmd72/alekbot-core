@@ -109,7 +109,7 @@ class TestKinds:
         ("spreadsheet", "spreadsheet", {"xlsx", "xls", "ods", "csv"}),
         ("Spreadsheets", "spreadsheet", {"xlsx", "xls", "ods", "csv"}),
         ("excel", "spreadsheet", {"xlsx", "xls", "ods", "csv"}),
-        ("documents", "document", {"docx", "doc", "odt", "rtf"}), ("word", "document", {"docx", "doc", "odt", "rtf"}),
+        ("documents", "document", {"docx", "doc", "odt", "rtf", "pdf"}), ("word", "word", {"docx", "doc"}),
         ("slides", "presentation", {"pptx", "ppt", "odp"}), ("photos", "photo", {"image"}),
         ("pictures", "photo", {"image"}), ("images", "image", {"image"}),
     ])
