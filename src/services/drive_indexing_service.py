@@ -78,6 +78,16 @@ class _Saved:
 
 
 @dataclass
+class _Continuation:
+    """The continuation a tick asks for. It is enqueued only after the lease is released, so it can never be
+    dispatched while its own parent still holds the lease (§7.1)."""
+    delay_s: Optional[int] = None
+
+    def request(self, delay_s: int = 0) -> None:
+        self.delay_s = delay_s
+
+
+@dataclass
 class _Budget:
     started: float
     monotonic: Callable[[], float]
@@ -145,6 +155,7 @@ class DriveIndexingService:
                 await self._requeue_busy(user_id, tick_id)
             return TickResult("busy")
         summary: Dict[str, int] = {}
+        cont = _Continuation()
         try:
             state = lease if lease.created_at is not None else replace(lease, created_at=now)
             if state.epoch == 0 and state.cursor is None and not state.applied_versions:
@@ -153,7 +164,7 @@ class DriveIndexingService:
             action = access_action(enabled, state, connection, now)   # facts may have moved before the lease
             if action in (AccessAction.PURGE_OPT_OUT, AccessAction.PURGE_EXPIRED,
                           AccessAction.PURGE_DRIVE_SWITCH, AccessAction.PURGE_THEN_RESTART):
-                return await self._purge(user_id, state, tick_id, action, enabled, summary)
+                return await self._purge(user_id, state, action, enabled, summary, cont)
             if action is AccessAction.RECORD_LOSS:
                 if state.access_lost_at is None:
                     await self._repo.save_sync_state(replace(state, access_lost_at=now))
@@ -162,12 +173,14 @@ class DriveIndexingService:
             if action is AccessAction.RESUME_AFTER_REGAIN:
                 state = replace(state, access_lost_at=None)
                 logger.info(f"[DriveIndex] access regained for {user_id[:8]}; continuing from the cursor")
-            return await self._run(user_id, state, tick_id, nudge, now, enabled, summary)
+            return await self._run(user_id, state, nudge, now, enabled, summary, cont)
         finally:
             await self._repo.release_lease(user_id, tick_id)
+            if cont.delay_s is not None:
+                await self._continue(user_id, tick_id, delay_seconds=cont.delay_s)
 
-    async def _run(self, user_id: str, state: DriveSyncState, tick_id: str, nudge: Optional[Nudge],
-                   now: datetime, enabled: bool, summary: Dict[str, int]) -> TickResult:
+    async def _run(self, user_id: str, state: DriveSyncState, nudge: Optional[Nudge], now: datetime,
+                   enabled: bool, summary: Dict[str, int], cont: _Continuation) -> TickResult:
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
         self._gate_checked[user_id] = budget.started   # the gate just read the flag
         state = replace(state, continuation_enqueued_at=None)
@@ -180,7 +193,7 @@ class DriveIndexingService:
                 state = await self._work_off(user_id, state, now, budget, summary)
             more = await self._has_more(user_id, state, now, upgrade_wrote=summary.get("upgraded", 0) > 0)
             if more:
-                await self._continue(user_id, tick_id)
+                cont.request()
             else:
                 state = replace(state, counters=await self._repo.count_by_state(user_id))   # settled: refresh
             progressed = any(v for k, v in summary.items() if k != "pages")
@@ -194,11 +207,11 @@ class DriveIndexingService:
             logger.info(f"[DriveIndex] indexing turned off mid-tick for {user_id[:8]}; result dropped")
             # The next tick's gate purges. Without it a lost toggle task leaves the purge to a fan-out that skips
             # the user on the stale continuation marker for up to 30 min (premise_audit P2).
-            await self._continue(user_id, tick_id)
+            cont.request()
             return TickResult("disabled", summary)
         except _DriveSwitched:
             logger.warning(f"[DriveIndex] a page came from another drive for {user_id[:8]}; purging")
-            return await self._purge(user_id, state, tick_id, AccessAction.PURGE_DRIVE_SWITCH, enabled, summary)
+            return await self._purge(user_id, state, AccessAction.PURGE_DRIVE_SWITCH, enabled, summary, cont)
         except DriveReauthRequired:
             flagged = await self._drive.flag_reconnect(user_id)
             logger.warning(f"[DriveIndex] refresh rejected for {user_id[:8]} (flag set now: {flagged})")
@@ -210,7 +223,7 @@ class DriveIndexingService:
                 retry_after = int(exc.retry_after_s)
                 delay = retry_after if state.systemic_failures == 0 else max(retry_after, delay)
             logger.warning(f"[DriveIndex] throttled for {user_id[:8]}: {exc}; continuing in {delay}s")
-            await self._continue(user_id, tick_id, delay_seconds=delay)
+            cont.request(delay)
             await self._repo.save_sync_state(replace(saved.state, last_error=ErrorCategory.THROTTLED,
                                                      continuation_enqueued_at=now,
                                                      systemic_failures=state.systemic_failures + 1))
@@ -220,7 +233,7 @@ class DriveIndexingService:
                 else ErrorCategory.INTERNAL
             delay = _backoff_s(state.systemic_failures)
             logger.error(f"[DriveIndex] tick failed for {user_id[:8]}: {exc}; continuing in {delay}s", exc_info=True)
-            await self._continue(user_id, tick_id, delay_seconds=delay)
+            cont.request(delay)
             await self._repo.save_sync_state(replace(saved.state, last_error=category, continuation_enqueued_at=now,
                                                      systemic_failures=state.systemic_failures + 1))
             return TickResult("error", summary)
@@ -779,8 +792,8 @@ class DriveIndexingService:
     # Purge, continuation, helpers
     # ------------------------------------------------------------------------------------------
 
-    async def _purge(self, user_id: str, state: DriveSyncState, tick_id: str, action: AccessAction,
-                     enabled: bool, summary: Dict[str, int]) -> TickResult:
+    async def _purge(self, user_id: str, state: DriveSyncState, action: AccessAction, enabled: bool,
+                     summary: Dict[str, int], cont: _Continuation) -> TickResult:
         """Durable: `purging` is written before the first delete, so a purge always finishes (review A M1)."""
         if not state.purging:
             await self._repo.save_sync_state(replace(state, purging=True))
@@ -792,9 +805,9 @@ class DriveIndexingService:
                 await self._repo.delete_sync_state(user_id)
                 logger.info(f"[DriveIndex] index purged for {user_id[:8]} ({action.value})")
                 if enabled and action is not AccessAction.PURGE_EXPIRED:
-                    await self._continue(user_id, tick_id)   # onboarding of the connected drive starts now
+                    cont.request()   # onboarding of the connected drive starts now
                 return TickResult("purged", summary)
-        await self._continue(user_id, tick_id)
+        cont.request()
         return TickResult("purging", summary)
 
     async def _has_more(self, user_id: str, state: DriveSyncState, now: datetime, *,
