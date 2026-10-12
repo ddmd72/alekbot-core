@@ -524,11 +524,17 @@ class DriveIndexingService:
         budget.item_calls -= 1
         try:
             parent_change = await self._drive.get_change(user_id, rec.parent_id)
+        except DriveItemNotFoundError:
+            parent_change = DriveChange(item_id=rec.parent_id, deleted=True)   # definite: the parent is gone
         except _PER_ITEM_ERRORS as exc:
-            logger.warning(f"[DriveIndex] parent lookup failed for {user_id[:8]}: {exc}")
             if rec.attempts + 1 >= MAX_ATTEMPTS:
-                await self._remove_orphan(user_id, rec, ctx)   # an orphan after the retry budget (§8.2)
+                # Transient failures prove nothing about the parent: the record is parked (unresolved, not due),
+                # never deleted with its subtree. The next full enumeration resolves it or sweeps it (§7.5).
+                logger.warning(f"[DriveIndex] parent lookup failed {MAX_ATTEMPTS} times for {user_id[:8]}: {exc}; "
+                               f"record parked until the next full enumeration")
+                await self._commit(user_id, [replace(rec, attempts=0, due_at=None, priority=None)], set())
             else:
+                logger.warning(f"[DriveIndex] parent lookup failed for {user_id[:8]}: {exc}; backing off")
                 await self._commit(user_id, [with_retry(rec, ctx.now)], set())
             return True
         if parent_change.deleted:

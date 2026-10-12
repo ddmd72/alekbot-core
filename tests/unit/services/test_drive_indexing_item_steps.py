@@ -69,3 +69,31 @@ class TestAttemptsResetAfterASuccessfulStep:
         assert lookups["n"] == 3
         assert not w.rec("big").probe_pending and w.rec("big").scope is Scope.NORMAL
         assert probes.count("big") == MAX_ATTEMPTS
+
+
+class TestParentLookupExhaustionParks:
+
+    async def test_transient_lookup_failures_park_the_record_instead_of_deleting_its_subtree(self):
+        w = await _onboarded()
+        await _seed_unresolved(w, "orphan", "Projects", "far")
+        await _seed_unresolved(w, "kid", "plan.pdf", "orphan", folder=False, due=False)
+        lookups = []
+
+        async def failing_get(user_id, item_id):
+            lookups.append(item_id)
+            raise ValueError("Graph 503 on the parent lookup")
+
+        w.drive.get_change = failing_get
+        await _ticks(w, MAX_ATTEMPTS + 3)
+        assert lookups == ["far"] * MAX_ATTEMPTS
+        orphan = w.rec("orphan")
+        assert orphan is not None and orphan.state is RecordState.UNRESOLVED and orphan.due_at is None
+        assert orphan.attempts == 0
+        assert w.rec("kid") is not None
+
+    async def test_a_definite_not_found_still_removes_the_orphan_subtree(self):
+        w = await _onboarded()
+        await _seed_unresolved(w, "orphan", "Projects", "gone")     # the drive has no "gone": a deletion
+        await _seed_unresolved(w, "kid", "plan.pdf", "orphan", folder=False, due=False)
+        await _ticks(w, 2)
+        assert w.rec("orphan") is None and w.rec("kid") is None
