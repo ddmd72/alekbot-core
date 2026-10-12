@@ -8,7 +8,7 @@ query first (Δ17) -> widen once -> collapse duplicates -> top K with the covera
 no I/O is in `src/domain/drive_search.py`; this class reads and calls it.
 
 Public interface:
-    DriveSearchService(repo, embeddings, users, drive, *, clock, nonce, monotonic, embedding_space)
+    DriveSearchService(repo, embeddings, users, drive, *, embedding_space, clock, nonce, monotonic)
     await search(user_id, request) -> DriveSearchResult
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
 """
@@ -130,11 +130,10 @@ class _Folder:
 
 class DriveSearchService:
     def __init__(self, repo: DriveIndexRepository, embeddings: EmbeddingService, users: UserRepository,
-                 drive: UserDrivePort, *, clock: Callable[[], datetime] = _utcnow,
-                 nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic,
-                 embedding_space: Optional[str] = None) -> None:
+                 drive: UserDrivePort, *, embedding_space: str, clock: Callable[[], datetime] = _utcnow,
+                 nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic) -> None:
         """`embedding_space` is the space query vectors are embedded in (the adapter's EMBEDDING_SPACE). The
-        card stream runs only while the index's cards are in it (§12.3); None does not check."""
+        card stream runs only while the index's cards are in it (§12.3)."""
         self._repo = repo
         self._embeddings = embeddings
         self._users = users
@@ -176,7 +175,7 @@ class DriveSearchService:
             envelope = DriveSearchEnvelope(building=True, reconnect_needed=gate.reconnect_needed)
             return DriveSearchResult(status=STATUS_OK, envelope=envelope, request=request,
                                      matched_total=0 if request.filter_only else None)
-        use_cards = self._space is None or state.cards_in_space(self._space)
+        use_cards = state.cards_in_space(self._space)
         envelope, result = await asyncio.gather(self._envelope(user_id, state, gate.reconnect_needed, use_cards),
                                                 self._body(user_id, request, state, use_cards, stats))
         return replace(result, envelope=envelope)

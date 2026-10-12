@@ -81,3 +81,15 @@ def test_production_and_the_eval_pin_the_query_space(monkeypatch):
     import inspect
     from scripts.validation.drive_eval import runner
     assert "embedding_space=embedding_space" in inspect.getsource(runner.run_eval)
+
+
+def test_the_query_space_is_required():
+    """No default that skips the check: a wiring that forgets the space must fail at construction."""
+    import inspect
+
+    import pytest
+    param = inspect.signature(DriveSearchService.__init__).parameters["embedding_space"]
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY and param.default is inspect.Parameter.empty
+    w = World()
+    with pytest.raises(TypeError):
+        DriveSearchService(w.repo, w.emb, w.users, w.drive)
