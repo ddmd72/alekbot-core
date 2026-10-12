@@ -36,3 +36,11 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 ### Task 2 — done
 - Commit `cc2b2d3`. `make check` (coordinator, worktree at the commit): 6957 passed, 3 skipped, 1 xfailed.
 - Deviations: none (byte-identical to the plan). Reviewer: APPROVED, round 1.
+
+### Task 3 — done
+- Commit `978935b`. `make check` (coordinator, worktree at the commit): 7009 passed, 3 skipped, 1 xfailed.
+- Deviations: none (byte-identical). Reviewer: APPROVED, round 1.
+- Notes for the owner (no action taken): (1) the task's Interfaces line says `kind_of` "returns one of `KINDS`",
+  but the plan never defines `KINDS` and nothing imports it — left out. (2) RFC §5.1 lists `*.key` as secret-shaped
+  and also iWork `.key` as kind_not_admitted; the plan's code settles it by mime (Keynote mime → not SECRET_NAME).
+  Not in the Δ table; the reviewer suggests a Δ row for the record.
