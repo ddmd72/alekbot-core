@@ -15,8 +15,9 @@ The indexer service (`indexer_main.py`) serves exactly two routes:
   a 400 (a bug in the sender, never retried into success); an exception the tick did not handle is
   a 500, so the queue's retry config applies. Without a tick service (the first pass of the two-pass
   first deploy: `DRIVE_INDEXER_URL` not known yet) the service still starts, so the deploy step
-  succeeds, and `/worker` answers 503; nothing enqueues to it until the second pass, and the
-  indexer deploys before the main service, so the main service never targets a 503 revision.
+  succeeds, and `/worker` answers 503; nothing enqueues to it until the second pass. The indexer
+  deploys after the main service (cloudbuild-dev.yaml), so on that second pass a task can meet the
+  503 for a minute or two; the queue retries it.
 - `GET /health` — the Cloud Run probe.
 `/extract` joins in Slice 3.
 """

@@ -289,7 +289,8 @@ it fans out one `drive_sync` per user; it also nudges after bot writes, and the 
 them go through the dedicated queue `drive-sync-dev` (`max-concurrent-dispatches=1`) with a 1800 s dispatch
 deadline. Queue, scheduler job and the Cloud Build service account's queue permission
 (`roles/cloudtasks.queueAdmin`, granted once): [SCHEDULERS.md](SCHEDULERS.md). `cloudbuild-dev.yaml` deploys the
-indexer before the main service.
+queue and the indexer after the main service, so a failing drive step never blocks a fix of the bot; on the second
+pass of the first deploy a task may meet the indexer's 503 for a minute or two and is retried by the queue.
 
 ### Indexer URL — two-pass first deploy
 
