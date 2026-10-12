@@ -358,3 +358,18 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   clear divergence. No local fix (the service has no access to the flag). Options: (a) accept and reword §7.1 step 0
   (reviewer's recommendation); (b) inject `UserRepository` or a `should_nudge` predicate (one Firestore read per
   mutation); (c) the agent-cached flag (not recommended, up to ~1 h stale).
+
+### Fix R7 (reconnect notice) — done
+- Commit `6943931`. `make check` (reviewer, worktree): 7751 passed, 3 skipped, 1 xfailed. Reviewer: APPROVED, 8/8
+  mutations killed. The flag is written before `notify`; rolled back only when nothing was sent or `notify` raised
+  (re-checked: `notify` raises only before any send); a `CancelledError` keeps it up → a cut-off notice is never
+  repeated but may be lost (at-most-once, as the Gmail path). Docs tasks 44/46 should say so.
+
+### Task 24 — done
+- Commit `200ae43` (byte-identical; no adaptation needed). `make check` (reviewer, worktree): 7748 passed, 3 skipped,
+  1 xfailed. Reviewer (adversarial + system context): APPROVED. Boot checked: `DRIVE_INDEXER_URL` unset → no queue,
+  no I/O, nothing new can crash startup; Step 1 drive unchanged without a queue; `os.getenv` vs `config.get` correct.
+- MINOR test gaps (queued for a small test batch): the scheduler builder's notifier/alert-sink pass-through is
+  untested (dropping either survives → the reconnect notice and staleness alert would silently never fire); the
+  container repository type is untested.
+- Task 47 note (= premise audit P12): Step 3 expects a WARNING, but "drive queue disabled" is INFO (INFO is right).
