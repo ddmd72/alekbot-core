@@ -1,8 +1,10 @@
 """
 DriveIndexRepository — storage of the drive index (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §4, §12.5).
 
-Records and the per-user sync state; chunks join in Slice 2. Batching and transactions are the
-adapter's business. Card vectors travel with record writes but never inside the domain record.
+Records, their chunks and the per-user sync state: records and chunks change together, so one repository.
+Batching and transactions are the adapter's business. Card and chunk vectors travel with writes but never inside
+the domain objects. Chunk reads never apply the read fence (§7.4): the search service checks each chunk's
+generation against its record's `indexed_generation`.
 Ownership of DriveSyncState fields: the tick writes everything through `save_sync_state` under the
 lease, except `stale_alerted` and `reconnect_notified`, which only the fan-out writes, through
 `update_sync_flags`; `save_sync_state` must leave those two untouched. It also leaves the lease
@@ -17,7 +19,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from src.domain.drive_index import DriveIndexRecord, DriveSyncState, RecordState
+from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, RecordState
 
 
 class DriveIndexRepository(ABC):
@@ -142,3 +144,45 @@ class DriveIndexRepository(ABC):
     @abstractmethod
     async def card_vectors(self, user_id: str, item_ids: Sequence[str]) -> Dict[str, List[float]]:
         """Stored card vectors of the given records (folder-scoped ranking in memory)."""
+
+    # -- chunks (Slice 2, §3.3, §7.4, §24.6) ---------------------------------------------------
+
+    @abstractmethod
+    async def write_chunks(self, chunks: Sequence[DriveChunk], vectors: Sequence[Sequence[float]]) -> None:
+        """Write chunks with their vectors (`vectors[i]` belongs to `chunks[i]`; the lengths must match). A chunk
+        with the same key `(user_id, item_id, generation, index)` is replaced."""
+
+    @abstractmethod
+    async def delete_chunks_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
+        """Delete the item's chunks of every generation but `keep_generation` (None: all of them); returns how
+        many were deleted (collection after a commit, a demotion or a deletion, §7.4, §7.6)."""
+
+    @abstractmethod
+    async def find_nearest_chunks(self, user_id: str, vector: Sequence[float], limit: int,
+                                  kind: Optional[str] = None) -> List[Tuple[DriveChunk, float]]:
+        """Chunk kNN under the user (+ kind) pre-filter; (chunk, cosine distance), nearest first. Not fenced."""
+
+    @abstractmethod
+    async def find_chunks_by_term(self, user_id: str, term: str, limit: int,
+                                  kind: Optional[str] = None) -> List[DriveChunk]:
+        """Chunks whose `content_terms` contain `term` (one array-contains query), ordered by
+        (item_id, generation, index). Not fenced."""
+
+    @abstractmethod
+    async def get_chunks(self, user_id: str, item_id: str, generation: int,
+                         indexes: Sequence[int]) -> List[DriveChunk]:
+        """The chunks among `indexes` of one generation that exist, by index (a hit's neighbour window, §10.2)."""
+
+    @abstractmethod
+    async def readable_chunk_total(self, user_id: str) -> int:
+        """Σ chunk_count over the user's records with an `indexed_generation` (the chunk cap, §5.4)."""
+
+    @abstractmethod
+    async def chunks_page(self, user_id: str, after: Optional[Tuple[str, int, int]],
+                          limit: int) -> List[DriveChunk]:
+        """The user's chunks ordered by (item_id, generation, index), starting after the key `after` (the sweep's
+        chunk backstop, §7.5)."""
+
+    @abstractmethod
+    async def delete_user_chunks(self, user_id: str, limit: int) -> int:
+        """Delete up to `limit` of the user's chunks; returns how many were deleted (purge)."""

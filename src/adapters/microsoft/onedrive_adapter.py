@@ -299,6 +299,14 @@ class OneDriveAdapter(UserDrivePort):
         async with aiohttp.ClientSession() as s:
             await self._call(s, user_id, "DELETE", f"/me/drive/items/{_q(item_id)}")
 
+    # -- content for the index (USER_DRIVE_INDEXING_RFC §8.1, §24.5): not built yet ----
+
+    async def download_to_file(self, user_id: str, item_id: str, dest_path: str, max_bytes: int) -> int:
+        raise NotImplementedError("streamed download — plan part C")
+
+    async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
+        raise NotImplementedError("thumbnails — plan part C")
+
     # -- change capture for the index (USER_DRIVE_INDEXING_RFC §4, §7.2) -------
 
     async def get_changes(self, user_id: str, cursor: Optional[str]) -> DriveChanges:
