@@ -261,3 +261,17 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   on a version difference while a pass is mid-way **or** this tick's upgrade wrote anything; `_upgrade_page` skips
   parked `UNRESOLVED` records with no due time (the remaining spin: 30 back-to-back ticks → 2, then converges).
 - Review: round 1 CHANGES REQUIRED, round 2 APPROVED (mutations killed; one equivalent survivor).
+
+### Fix R2b (tick, from the premise audit) — done
+- Commits `9b799d9` (round 1), `4998508` (reviewer-approved narrowing of the implementer's own new P9 test to the
+  400 case), `f248047` (round 2). `make check` (reviewer, at `f248047`): 7638 passed, 3 skipped, 1 xfailed.
+- P2: the opt-out branch enqueues a continuation; the next tick's gate purges. P8: `_Budget.item_call_allowed()` (item
+  calls left **and** time left) at all four item-call sites. P9: card embedding gathers per record; **only**
+  `LLMClientError(http_status=400)` backs one card off; everything else (429/503/5xx/other 4xx/network/unknown) stays
+  systemic per RFC §8.2.
+- Round 1 had it backwards (treated 5xx/403/network as per-record → `attempts` climbed, tick "done", staleness alert
+  silent); caught by the reviewer reading the real adapter. Round 2 also maps non-429 `genai` `ClientError` →
+  `LLMClientError(code)` in `GeminiEmbeddingAdapter` (wire tests at the SDK boundary; all other embedding callers
+  catch `Exception` or propagate — unchanged). Docs: embedding_system README §2.3, `src/adapters/CLAUDE.md`.
+- Accepted residual: a configuration 400 (invalid API key) backs cards off one by one (non-terminal; memory search
+  breaks at the same time). **OWNER/doc:** RFC §8.2 has no explicit row for a card refused with a 400.
