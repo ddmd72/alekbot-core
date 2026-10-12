@@ -515,8 +515,9 @@ def render_results(result: DriveSearchResult) -> str:
             total = f"at least {result.matched_total}" if result.matched_at_least else str(result.matched_total)
             out.append(f"{total} files and folders match the filters; showing the newest {shown}.")
     if result.capped:
-        out.append(f"The filters were applied to the best {result.candidates} name and meaning matches only, not "
-                   f"to every file, so more files may match.")
+        streams = "name" if result.envelope.refreshing else "name and meaning"   # no card stream while refreshing
+        out.append(f"The filters were applied to the best {result.candidates} {streams} matches only, not to "
+                   f"every file, so more files may match.")
         if not result.cards:
             out.append("None of them passed the filters; that does not mean no file does. Search again with "
                        "drive_query empty to apply the filters to every file, or add a folder or more name words.")
